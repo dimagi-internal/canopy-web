@@ -185,6 +185,12 @@ def role_of(vault: Vault | None, user) -> str | None:
     return m.role if m is not None else None
 
 
+def granters(ms: dict[int, Membership], held) -> list[str]:
+    """The emails of the people in `held` (holding a copy of the key) who can grant it:
+    the vault's owners and admins — a member's copy opens the vault but lets nobody in."""
+    return sorted(ms[u].user.email or "" for u in held if u in ms and is_admin(ms[u].role))
+
+
 def agent_member_ids(agent: Agent) -> set[int]:
     """The members of the agent's own vault — who the agent's wraps may go to."""
 
