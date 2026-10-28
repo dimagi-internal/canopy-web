@@ -303,6 +303,8 @@ from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
 from apps.shareouts.api import router as shareouts_router  # noqa: E402
 from apps.dynamic_views.api import router as dynamic_views_router  # noqa: E402
+from apps.workspace_apps.api import public_router as public_apps_router  # noqa: E402
+from apps.workspace_apps.api import router as workspace_apps_router  # noqa: E402
 from apps.slack.api import router as slack_config_router  # noqa: E402
 from apps.slack.ingest_api import router as slack_ingests_router  # noqa: E402
 from apps.slack.session_api import router as slack_session_router  # noqa: E402
@@ -346,6 +348,8 @@ api.add_router("/reviews", reviews_router)
 api.add_router("/ddd", runs_router)
 api.add_router("/shareouts", shareouts_router)
 api.add_router("/dynamic-views", dynamic_views_router)
+api.add_router("", workspace_apps_router)
+api.add_router("", public_apps_router)
 api.add_router("/sessions", sessions_router)
 # Agents are workspace-scoped. Mounted flat (single, clean schema); the canonical
 # tenant URL /api/w/{ws}/agents/... is gated + stripped to this flat path by

@@ -106,6 +106,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
+    "/api/public-apps/",         # auth=None — an enabled AND public workspace app's public pages, projections and create-only forms (apps/workspace_apps)
     # NOTE: "/about" and "/get-started" are NOT here. Every other entry above
     # ends in "/" (or is a full path), so prefix-matching it is safe; "/about"
     # alone would also admit any future "/about-billing" or "/aboutus" route as
@@ -127,7 +128,7 @@ def _is_public(path: str) -> bool:
 # lists, plural) and every other tenant page stay behind the gate — the
 # trailing slash after the viewer name is load-bearing.
 _SCOPED_VIEWER = re.compile(
-    r"^/w/[^/]+/(walkthrough|review|share|storyboard|narrative|ddd-release)/"
+    r"^/w/[^/]+/(walkthrough|review|share|storyboard|narrative|ddd-release|app)/"
 )
 
 

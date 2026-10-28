@@ -38,9 +38,44 @@ export interface AgentTaskStatus {
   finished_at?: string | null
 }
 
+/**
+ * What a WORKSPACE APP's page is drawn for (apps/workspace_apps): which app, the
+ * caller's roles in it, and the page's own parameters. Absent for a plain dynamic
+ * view, whose frame then refuses every app operation.
+ */
+export interface AppContext {
+  key: string
+  name: string
+  page: string
+  params: Record<string, string>
+  roles: string[]
+  /** Drawn on the public door, for an anonymous visitor (or previewed as one). */
+  public: boolean
+  /** The app's collections and fields (labels, types, options) and its actions'
+   * inputs — how a page draws a field the workspace added after it was written. */
+  dataModel: Record<string, unknown>
+  settings: Record<string, unknown>
+  /** What the workspace put in this page's slots: {slot: [{key, code}]}. */
+  fills: Record<string, { key: string; code: string }[]>
+  /** Drawn on a draft's test copy. */
+  draft: boolean
+}
+
+/** An app page's call out of the frame, answered by `read-result`. */
+export type AppOp =
+  | { op: 'query'; collection: string; where?: Record<string, unknown>; order?: string; limit?: number }
+  | { op: 'act'; action: string; record?: number | null; input?: Record<string, unknown>; params?: Record<string, unknown> }
+  /** One bulk action over many records; each runs alone ({done, failed}). */
+  | { op: 'bulk'; action: string; records: number[]; input?: Record<string, unknown>; params?: Record<string, unknown> }
+  /** A record's private link (to copy to a candidate): {url, days}. */
+  | { op: 'link'; link: string; record: number }
+  | { op: 'history'; record: number }
+  | { op: 'upload'; collection: string; field: string; name: string; type: string; bytes: ArrayBuffer }
+  | { op: 'open_file'; id: number }
+
 /** Page → frame. */
 export type HostMessage =
-  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark' }
+  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: true; data: unknown }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: false; error: string }
@@ -56,6 +91,8 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'agent-task'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'agent-task-read'; id: number; taskId: string }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
+  | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
+  | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }
   | { channel: typeof CHANNEL; type: 'resize'; height: number }
   | { channel: typeof CHANNEL; type: 'error'; message: string }
 

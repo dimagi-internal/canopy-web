@@ -21,14 +21,16 @@ export function scopedPath(workspace: string, path: string): string {
 /**
  * The scoped public viewers — `/w/<ws>/walkthrough/<id>`, `/w/<ws>/review/<id>`,
  * `/w/<ws>/share/<token>`, `/w/<ws>/storyboard/<slug>`,
- * `/w/<ws>/narrative/<slug>` and `/w/<ws>/ddd-release/<narrative>/<run>`. They
- * self-gate on their token like the flat routes did, so an anonymous visitor is
- * not bounced to login there. The trailing slash after the viewer's name is
- * load-bearing: `/w/<ws>/walkthroughs` and `/w/<ws>/storyboards` (the lists)
- * stay behind the gate. Mirrors `_SCOPED_VIEWER` in apps/common/middleware.py.
+ * `/w/<ws>/narrative/<slug>`, `/w/<ws>/ddd-release/<narrative>/<run>` and a
+ * workspace app's public pages, `/w/<ws>/app/<key>/…`. They self-gate (on their
+ * token, or the app being public) like the flat routes did, so an anonymous
+ * visitor is not bounced to login there. The trailing slash after the viewer's
+ * name is load-bearing: `/w/<ws>/walkthroughs`, `/w/<ws>/storyboards` and
+ * `/w/<ws>/apps` (the member pages) stay behind the gate. Mirrors
+ * `_SCOPED_VIEWER` in apps/common/middleware.py.
  */
 export const SCOPED_VIEWER_RE =
-  /^\/w\/[^/]+\/(walkthrough|review|share|storyboard|narrative|ddd-release)\//
+  /^\/w\/[^/]+\/(walkthrough|review|share|storyboard|narrative|ddd-release|app)\//
 
 export function isScopedViewerPath(path: string): boolean {
   return SCOPED_VIEWER_RE.test(path)

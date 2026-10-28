@@ -1,0 +1,86 @@
+[
+  {"name": "A visitor applies to an open job: Applied, active, and its first stage change logged",
+   "steps": [
+     {"act": "apply", "as": "public", "save": "app", "input": {"job": "@job_eng", "name": "Check Applicant", "email": "check.applicant@example.org", "region": "US", "privacy_notice": "2026-10"}},
+     {"expect": {"collection": "application", "where": {"email": "check.applicant@example.org", "stage": "Applied", "status": "active"}, "count": 1}},
+     {"expect": {"collection": "stage_change", "where": {"application": "@app", "to_stage": "Applied"}, "count": 1}}]},
+  {"name": "Nobody can apply to a closed, draft or confidential job",
+   "steps": [
+     {"act": "apply", "as": "public", "input": {"job": "@job_closed", "name": "Late", "email": "late@example.org"}, "expect_error": true},
+     {"act": "apply", "as": "public", "input": {"job": "@job_draft", "name": "Early", "email": "early@example.org"}, "expect_error": true},
+     {"act": "apply", "as": "public", "input": {"job": "@job_confidential", "name": "Nosy", "email": "nosy@example.org"}, "expect_error": true}]},
+  {"name": "The portal lists only open, live, non-confidential jobs",
+   "steps": [{"expect": {"collection": "job", "public": true, "count": 2}}]},
+  {"name": "Taking a job's post offline removes it from the portal; the job stays open",
+   "steps": [
+     {"act": "set_post", "as": "recruiter", "record": "@job_pm", "input": {"post_status": "offline"}},
+     {"expect": {"collection": "job", "public": true, "count": 1}},
+     {"expect": {"collection": "job", "where": {"status": "open"}, "count": 3}}]},
+  {"name": "A job stays in approval until its last approver approves, then opens",
+   "steps": [
+     {"act": "add_approver", "as": "recruiter", "input": {"kind": "Job", "job": "@job_draft", "approver": "ceo.approver@example.org"}, "save": "second"},
+     {"act": "submit_job", "as": "recruiter", "record": "@job_draft"},
+     {"act": "approve", "as": "member", "actor": "cfo.approver@example.org", "record": "@first_job_approval"},
+     {"expect": {"collection": "job", "where": {"id": "@job_draft", "status": "pending_approval"}, "count": 1}},
+     {"act": "approve", "as": "member", "actor": "ceo.approver@example.org", "record": "@second"},
+     {"expect": {"collection": "job", "where": {"id": "@job_draft", "status": "open"}, "count": 1}}]},
+  {"name": "Only the named approver may approve",
+   "steps": [
+     {"act": "add_approver", "as": "recruiter", "input": {"kind": "Job", "job": "@job_draft", "approver": "boss@example.org"}, "save": "appr"},
+     {"act": "submit_job", "as": "recruiter", "record": "@job_draft"},
+     {"act": "approve", "as": "member", "actor": "someone.else@example.org", "record": "@appr", "expect_error": true},
+     {"expect": {"collection": "approval", "where": {"id": "@appr", "status": "pending"}, "count": 1}}]},
+  {"name": "A recruiter rejects a candidate with a reason; the rejection is logged and cannot be repeated",
+   "steps": [
+     {"act": "reject", "as": "recruiter", "record": "@cand_screen", "input": {"rejection_reason": "Skills mismatch"}},
+     {"expect": {"collection": "application", "where": {"id": "@cand_screen", "status": "rejected", "stage": "Rejected", "rejection_reason": "Skills mismatch"}, "count": 1}},
+     {"expect": {"collection": "stage_change", "where": {"application": "@cand_screen", "to_stage": "Rejected"}, "count": 1}},
+     {"act": "reject", "as": "recruiter", "record": "@cand_screen", "input": {"rejection_reason": "Other"}, "expect_error": true}]},
+  {"name": "Rejecting with an edited email records the email (and sends nothing from a test copy)",
+   "steps": [
+     {"act": "reject_and_email", "as": "recruiter", "record": "@cand_new", "input": {"rejection_reason": "Position filled"}, "params": {"subject": "About {{job.title}}", "body": "Hi {{name}}, the role is filled."}},
+     {"expect": {"collection": "application", "where": {"id": "@cand_new", "status": "rejected"}, "count": 1}}]},
+  {"name": "A rejected candidate can be un-rejected into a stage",
+   "steps": [
+     {"act": "unreject", "as": "recruiter", "record": "@cand_rejected", "input": {"stage": "Screen"}},
+     {"expect": {"collection": "application", "where": {"id": "@cand_rejected", "status": "active", "stage": "Screen"}, "count": 1}}]},
+  {"name": "Moving a stage logs it",
+   "steps": [
+     {"act": "move_stage", "as": "recruiter", "record": "@cand_new", "input": {"stage": "Screen"}},
+     {"expect": {"collection": "stage_change", "where": {"application": "@cand_new", "to_stage": "Screen"}, "count": 1}}]},
+  {"name": "An interviewer submits a scorecard and the interview is marked done",
+   "steps": [
+     {"act": "add_scorecard", "as": "interviewer", "input": {"application": "@cand_interview", "interview": "@int_tech", "rating": "Strong yes", "attribute_ratings": "Problem solving: Strong yes"}},
+     {"expect": {"collection": "scorecard", "where": {"application": "@cand_interview"}, "count": 2}},
+     {"expect": {"collection": "interview", "where": {"id": "@int_tech", "status": "Done"}, "count": 1}}]},
+  {"name": "A candidate picks a time from their link and the interview is scheduled",
+   "steps": [
+     {"act": "pick_slot", "record": "@int_requested", "input": {"date": "2026-11-04", "time": "15:00"}},
+     {"expect": {"collection": "interview", "where": {"id": "@int_requested", "status": "Scheduled", "date": "2026-11-04"}, "count": 1}},
+     {"act": "pick_slot", "record": "@int_requested", "input": {"date": "2026-11-05", "time": "11:30"}, "expect_error": true}]},
+  {"name": "An offer goes from approval to sent to accepted to hired, closing its opening",
+   "steps": [
+     {"act": "request_offer_approval", "as": "recruiter", "record": "@offer_noor"},
+     {"act": "send_offer", "as": "recruiter", "record": "@offer_noor", "expect_error": true},
+     {"act": "approve", "as": "member", "actor": "maria.manager@example.org", "record": "@offer_approval"},
+     {"expect": {"collection": "offer", "where": {"id": "@offer_noor", "status": "approved"}, "count": 1}},
+     {"act": "send_offer", "as": "recruiter", "record": "@offer_noor"},
+     {"act": "accept_offer", "record": "@offer_noor", "input": {"candidate_note": "Delighted to accept."}},
+     {"act": "mark_hired", "as": "recruiter", "record": "@offer_noor"},
+     {"expect": {"collection": "application", "where": {"id": "@cand_offer", "status": "hired", "stage": "Hired"}, "count": 1}},
+     {"expect": {"collection": "opening", "where": {"id": "@open_pm_1", "status": "closed", "close_reason": "Hired"}, "count": 1}}]},
+  {"name": "A candidate cannot accept an offer that was never sent",
+   "steps": [{"act": "accept_offer", "record": "@offer_noor", "input": {}, "expect_error": true}]},
+  {"name": "Any employee can refer someone; the referral becomes an application credited to them",
+   "steps": [
+     {"act": "refer", "as": "member", "input": {"job": "@job_pm", "name": "Ref Erred", "email": "ref.erred@example.org"}},
+     {"expect": {"collection": "application", "where": {"email": "ref.erred@example.org", "source": "Referral", "stage": "Applied"}, "count": 1}}]},
+  {"name": "A prospect is considered for a job and becomes an applicant",
+   "steps": [
+     {"act": "convert_prospect", "as": "recruiter", "record": "@cand_prospect", "input": {"job": "@job_eng"}},
+     {"expect": {"collection": "application", "where": {"id": "@cand_prospect", "kind": "applicant", "stage": "Applied"}, "count": 1}}]},
+  {"name": "Mark hired closes the job's opening only once",
+   "steps": [
+     {"act": "close_opening", "as": "recruiter", "record": "@open_eng_1", "input": {"close_reason": "Cancelled"}},
+     {"act": "close_opening", "as": "recruiter", "record": "@open_eng_1", "input": {"close_reason": "Cancelled"}, "expect_error": true}]}
+]

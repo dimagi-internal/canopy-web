@@ -3080,6 +3080,560 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-app-store/{workspace}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The app store: apps this workspace can install
+         * @description canopy's own apps, and this workspace's own templates.
+         */
+        readonly get: operations["list_app_store"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The apps installed in a workspace
+         * @description Switched-off apps are listed only for those who manage apps here.
+         */
+        readonly get: operations["list_workspace_apps"];
+        readonly put?: never;
+        /**
+         * Install an app
+         * @description `template` installs one from the store (`list_app_store`); `manifest`
+         *     installs one you wrote. Either way it starts enabled and NOT public.
+         */
+        readonly post: operations["install_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One installed app: its pages for you, your roles, its fields and settings
+         * @description `draft=<id>` describes that draft's test copy instead (maintainers).
+         */
+        readonly get: operations["get_workspace_app"];
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove an app AND every record it holds */
+        readonly delete: operations["uninstall_workspace_app"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Switch an app on or off, or its public pages */
+        readonly patch: operations["update_workspace_app"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/guide": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How to change this app for a person: the operations, and the app as it is now
+         * @description Read this before adding changes. `manifest` is the open draft's composed
+         *     manifest if there is one, else the live one.
+         */
+        readonly get: operations["get_workspace_app_guide"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/versions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every version of an app, newest first */
+        readonly get: operations["list_workspace_app_versions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/draft": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The app's open draft, with a plain-language review of what it changes */
+        readonly get: operations["get_workspace_app_draft"];
+        readonly put?: never;
+        /**
+         * Start a draft (a change, or the template's update) with its own test copy
+         * @description The draft starts as the live app. Its test copy holds the template's sample
+         *     records — never live data — and sends nothing. `upgrade=true` puts the same
+         *     changes over the newest template version.
+         */
+        readonly post: operations["start_workspace_app_draft"];
+        /** Throw a draft away, with its test copy */
+        readonly delete: operations["discard_workspace_app_draft"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/draft/ops": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add one change to the app's draft (see the guide for the operations)
+         * @description One change, as a JSON object: `op` names it, `intent` is the person's own
+         *     words, the rest are the op's fields (see the guide). Validated against the
+         *     draft as it stands: a change that cannot apply is refused with the reason
+         *     (422) and the draft is unchanged.
+         */
+        readonly post: operations["add_workspace_app_change"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/draft/ops/{op_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Take one change out of the app's draft */
+        readonly delete: operations["remove_workspace_app_change"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/draft/checks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Run the app's checks (its scenarios) against the draft */
+        readonly post: operations["check_workspace_app_draft"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/draft/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Publish the draft: it becomes the live app
+         * @description Refused while a change is set aside or a check fails. A change to what the
+         *     public sees or who can do what needs a workspace admin.
+         */
+        readonly post: operations["publish_workspace_app_draft"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Make an earlier version live again (as a new version) */
+        readonly post: operations["rollback_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read records of one of an app's collections
+         * @description `where` is a JSON object of field equalities (plus `id`). Needs the
+         *     collection's `read` role. `as_public` reads as a visitor would (a maintainer
+         *     previewing a public page in a draft).
+         */
+        readonly get: operations["query_workspace_app"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/actions/{action}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Run one of an app's actions (its only way to write) */
+        readonly post: operations["act_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/records/{record_id}/history": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every action that wrote one record, newest first */
+        readonly get: operations["workspace_app_record_history"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/files": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Upload a file for a file field (then pass its id to an action) */
+        readonly post: operations["upload_workspace_app_file"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/files/{file_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Download a file a record you can read points at */
+        readonly get: operations["download_workspace_app_file"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** App roles given to members by name */
+        readonly get: operations["list_workspace_app_grants"];
+        readonly put?: never;
+        /** Give a workspace member one of an app's roles (or `maintainer`) */
+        readonly post: operations["add_workspace_app_grant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/grants/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Take back an app role given by name */
+        readonly delete: operations["delete_workspace_app_grant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/actions/{action}/bulk": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Run one of an app's bulk actions over many records (bulk reject) */
+        readonly post: operations["bulk_act_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/links/{link}/{record_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Make a record's private link (to send a candidate by hand) */
+        readonly post: operations["make_workspace_app_link"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/retention": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** What the app's retention rules would anonymize or delete now */
+        readonly get: operations["preview_workspace_app_retention"];
+        readonly put?: never;
+        /** Run the app's retention rules now (the clock also runs them daily) */
+        readonly post: operations["apply_workspace_app_retention"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/subject-export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Everything the app holds about one person, by email (a data-subject access request) */
+        readonly get: operations["export_workspace_app_subject"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** An app's public pages (anonymous) */
+        readonly get: operations["get_public_app"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Read an app collection's public projection (anonymous) */
+        readonly get: operations["query_public_app"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/actions/{action}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Submit one of an app's public forms (anonymous, rate-limited) */
+        readonly post: operations["act_public_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/files": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Upload a file for a public form's file field (anonymous, rate-limited) */
+        readonly post: operations["upload_public_app_file"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/feed/{collection}.json": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A public collection's schema.org JobPosting feed (anonymous) */
+        readonly get: operations["feed_public_app"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/feed/{collection}.xml": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The same feed as XML, for job boards that pull one (anonymous) */
+        readonly get: operations["feed_xml_public_app"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/link/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The page behind a private link (anonymous; the token is the credential) */
+        readonly get: operations["get_link_page"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/public-apps/{workspace}/{key}/link/{token}/actions/{action}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Run a link action on the link's own record (anonymous, rate-limited) */
+        readonly post: operations["act_link_page"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sessions/upload": {
         readonly parameters: {
             readonly query?: never;
@@ -21052,6 +21606,406 @@ export interface components {
         readonly DynamicViewRollbackIn: {
             /** Version */
             readonly version: number;
+        };
+        /** StoreAppOut */
+        readonly StoreAppOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Version */
+            readonly version: string;
+            /** Publisher */
+            readonly publisher: string;
+            /** Changelog */
+            readonly changelog: string;
+        };
+        /** InstallationSummaryOut */
+        readonly InstallationSummaryOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Template */
+            readonly template: string;
+            /** Template Version */
+            readonly template_version: string;
+            /** Live Version */
+            readonly live_version: number;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Public */
+            readonly public: boolean;
+            /** Has Public Pages */
+            readonly has_public_pages: boolean;
+            /** Upgrade Available */
+            readonly upgrade_available?: string | null;
+            /** Has Draft */
+            readonly has_draft: boolean;
+            /**
+             * Installed At
+             * Format: date-time
+             */
+            readonly installed_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** DraftInfoOut */
+        readonly DraftInfoOut: {
+            /** Id */
+            readonly id: number;
+            /** Number */
+            readonly number: number;
+            /** Origin */
+            readonly origin: string;
+            /** Template Version */
+            readonly template_version: string;
+            /** Space */
+            readonly space: string;
+        };
+        /** InstallationOut */
+        readonly InstallationOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Template */
+            readonly template: string;
+            /** Template Version */
+            readonly template_version: string;
+            /** Live Version */
+            readonly live_version: number;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Public */
+            readonly public: boolean;
+            /** Has Public Pages */
+            readonly has_public_pages: boolean;
+            /** Upgrade Available */
+            readonly upgrade_available?: string | null;
+            /** Has Draft */
+            readonly has_draft: boolean;
+            /**
+             * Installed At
+             * Format: date-time
+             */
+            readonly installed_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** My Roles */
+            readonly my_roles: readonly string[];
+            /** May Maintain */
+            readonly may_maintain: boolean;
+            /** May Manage */
+            readonly may_manage: boolean;
+            /** Pages */
+            readonly pages: readonly components["schemas"]["PageOut"][];
+            /** Data Model */
+            readonly data_model: {
+                readonly [key: string]: unknown;
+            };
+            /** Settings */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+            readonly draft?: components["schemas"]["DraftInfoOut"] | null;
+            /** Manifest */
+            readonly manifest?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
+        /** PageOut */
+        readonly PageOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Title */
+            readonly title: string;
+            /** Audience */
+            readonly audience: string;
+            /** Role */
+            readonly role: string;
+            /** Nav */
+            readonly nav: boolean;
+            /** Code */
+            readonly code: string;
+            /** Sources */
+            readonly sources: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Slots
+             * @default []
+             */
+            readonly slots: readonly string[];
+            /**
+             * Fills
+             * @default {}
+             */
+            readonly fills: {
+                readonly [key: string]: readonly {
+                    readonly [key: string]: unknown;
+                }[];
+            };
+            /**
+             * Forked
+             * @default false
+             */
+            readonly forked: boolean;
+            /**
+             * Origin
+             * @default template
+             */
+            readonly origin: string;
+        };
+        /** InstallIn */
+        readonly InstallIn: {
+            /**
+             * Template
+             * @default
+             */
+            readonly template: string;
+            /** Manifest */
+            readonly manifest?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
+        /** InstallationPatch */
+        readonly InstallationPatch: {
+            /** Enabled */
+            readonly enabled?: boolean | null;
+            /** Public */
+            readonly public?: boolean | null;
+        };
+        /** GuideOut */
+        readonly GuideOut: {
+            /** Contract */
+            readonly contract: string;
+            /** Manifest */
+            readonly manifest: {
+                readonly [key: string]: unknown;
+            };
+            /** Draft */
+            readonly draft?: number | null;
+        };
+        /** VersionOut */
+        readonly VersionOut: {
+            /** Number */
+            readonly number: number;
+            /** Status */
+            readonly status: string;
+            /** Origin */
+            readonly origin: string;
+            /** Template Version */
+            readonly template_version: string;
+            /** Note */
+            readonly note: string;
+            /** Changes */
+            readonly changes: number;
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Published By */
+            readonly published_by?: string | null;
+            /** Published At */
+            readonly published_at?: string | null;
+        };
+        /** DraftOut */
+        readonly DraftOut: {
+            /** Id */
+            readonly id: number;
+            /** Number */
+            readonly number: number;
+            /** Origin */
+            readonly origin: string;
+            /** Template Version */
+            readonly template_version: string;
+            /** Note */
+            readonly note: string;
+            /** Space */
+            readonly space: string;
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Review */
+            readonly review: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** DraftIn */
+        readonly DraftIn: {
+            /**
+             * Upgrade
+             * @default false
+             */
+            readonly upgrade: boolean;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /** RollbackIn */
+        readonly RollbackIn: {
+            /** Number */
+            readonly number: number;
+        };
+        /** ActionIn */
+        readonly ActionIn: {
+            /** Record */
+            readonly record?: number | null;
+            /**
+             * Input
+             * @default {}
+             */
+            readonly input: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Params
+             * @default {}
+             */
+            readonly params: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** FileOut */
+        readonly FileOut: {
+            /** Id */
+            readonly id: number;
+            /** Name */
+            readonly name: string;
+            /** Size */
+            readonly size: number;
+            /** Content Type */
+            readonly content_type: string;
+        };
+        /** GrantOut */
+        readonly GrantOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Role */
+            readonly role: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+        };
+        /** GrantIn */
+        readonly GrantIn: {
+            /** Email */
+            readonly email: string;
+            /** Role */
+            readonly role: string;
+        };
+        /** BulkActionIn */
+        readonly BulkActionIn: {
+            /** Records */
+            readonly records: readonly number[];
+            /**
+             * Input
+             * @default {}
+             */
+            readonly input: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Params
+             * @default {}
+             */
+            readonly params: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** LinkOut */
+        readonly LinkOut: {
+            /** Url */
+            readonly url: string;
+            /** Token */
+            readonly token: string;
+            /** Days */
+            readonly days: number;
+        };
+        /** PublicAppOut */
+        readonly PublicAppOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Workspace Name */
+            readonly workspace_name: string;
+            /** Pages */
+            readonly pages: readonly components["schemas"]["PageOut"][];
+            /** Data Model */
+            readonly data_model: {
+                readonly [key: string]: unknown;
+            };
+            /** Settings */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** LinkPageOut */
+        readonly LinkPageOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Workspace Name */
+            readonly workspace_name: string;
+            /** Link */
+            readonly link: string;
+            /** Label */
+            readonly label: string;
+            /** Record */
+            readonly record: {
+                readonly [key: string]: unknown;
+            };
+            readonly page: components["schemas"]["PageOut"];
+            /** Actions */
+            readonly actions: {
+                readonly [key: string]: unknown;
+            };
+            /** Data Model */
+            readonly data_model: {
+                readonly [key: string]: unknown;
+            };
+            /** Settings */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+            /** Draft */
+            readonly draft: boolean;
         };
         /**
          * SessionUploadOut
@@ -45683,6 +46637,979 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
+                };
+            };
+        };
+    };
+    readonly list_app_store: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["StoreAppOut"][];
+                };
+            };
+        };
+    };
+    readonly list_workspace_apps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["InstallationSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly install_workspace_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InstallIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_app: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+        };
+    };
+    readonly uninstall_workspace_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_workspace_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InstallationPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_app_guide: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GuideOut"];
+                };
+            };
+        };
+    };
+    readonly list_workspace_app_versions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["VersionOut"][];
+                };
+            };
+        };
+    };
+    readonly get_workspace_app_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+        };
+    };
+    readonly start_workspace_app_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DraftIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+        };
+    };
+    readonly discard_workspace_app_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly add_workspace_app_change: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": {
+                    readonly [key: string]: unknown;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+        };
+    };
+    readonly remove_workspace_app_change: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly op_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+        };
+    };
+    readonly check_workspace_app_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+        };
+    };
+    readonly publish_workspace_app_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+        };
+    };
+    readonly rollback_workspace_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RollbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+        };
+    };
+    readonly query_workspace_app: {
+        readonly parameters: {
+            readonly query: {
+                readonly collection: string;
+                readonly where?: string;
+                readonly order?: string;
+                readonly limit?: number;
+                readonly draft?: number | null;
+                readonly as_public?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly act_workspace_app: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+                readonly as_public?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly action: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly workspace_app_record_history: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly record_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly upload_workspace_app_file: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /** Collection */
+                    readonly collection: string;
+                    /** Field */
+                    readonly field: string;
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FileOut"];
+                };
+            };
+        };
+    };
+    readonly download_workspace_app_file: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly file_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly list_workspace_app_grants: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["GrantOut"][];
+                };
+            };
+        };
+    };
+    readonly add_workspace_app_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GrantIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GrantOut"];
+                };
+            };
+        };
+    };
+    readonly delete_workspace_app_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly bulk_act_workspace_app: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly action: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BulkActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly make_workspace_app_link: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly link: string;
+                readonly record_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LinkOut"];
+                };
+            };
+        };
+    };
+    readonly preview_workspace_app_retention: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly apply_workspace_app_retention: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly export_workspace_app_subject: {
+        readonly parameters: {
+            readonly query: {
+                readonly email: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly get_public_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PublicAppOut"];
+                };
+            };
+        };
+    };
+    readonly query_public_app: {
+        readonly parameters: {
+            readonly query: {
+                readonly collection: string;
+                readonly where?: string;
+                readonly order?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly act_public_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly action: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly upload_public_app_file: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /** Collection */
+                    readonly collection: string;
+                    /** Field */
+                    readonly field: string;
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FileOut"];
+                };
+            };
+        };
+    };
+    readonly feed_public_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly collection: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly feed_xml_public_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly collection: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly get_link_page: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LinkPageOut"];
+                };
+            };
+        };
+    };
+    readonly act_link_page: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly token: string;
+                readonly action: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
         };

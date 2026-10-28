@@ -75,6 +75,16 @@ GLOBALS (no imports — the code is not a module)
     <Link to="/tasks/CON-1">text</Link>
     <Empty>nothing here</Empty>, <Loading/>
     Grid({cols, children}) and Stack({gap, children}) for layout.
+    Form controls (a view rarely needs them; a workspace app's pages write with them):
+    <Form onSubmit>…</Form>                  NOT <form>: the sandbox has no allow-forms, so a <form>
+                                             never submits. Checks fields' own validity, then onSubmit().
+    <Button tone? size? type?="submit" onClick? confirm?/>   tone: "default"|"primary"|"destructive";
+                                             confirm="Send it?" asks inline first. NEVER window.confirm/alert/prompt:
+                                             the sandbox has no allow-modals, so confirm() is silently false.
+    <Input label? value onChange={(v) => …} type? required?/>, <TextArea …/>,
+    <Select label? value onChange options={["a", {value, label}]}/>   onChange gets the VALUE.
+    Only on a workspace app's page (they read the app; a view has none): FileInput, FieldInput,
+    FieldInputs, FieldValues, Slot — see the app guide (GET /api/workspace-apps/{ws}/{key}/guide).
 - Tailwind utility classes that canopy itself uses, and canopy's semantic colours:
   bg-card, bg-muted, text-foreground, text-muted-foreground, border, text-success,
   text-warning, text-destructive. Never raw palette colours (stone-*, red-*).

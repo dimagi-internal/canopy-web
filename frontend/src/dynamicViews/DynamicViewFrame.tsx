@@ -22,6 +22,8 @@ import {
   CHANNEL,
   isMessage,
   type AgentTaskStatus,
+  type AppContext,
+  type AppOp,
   type FrameMessage,
   type HostMessage,
   type ReadRequest,
@@ -53,6 +55,20 @@ interface Props {
   scope: ViewScope
   /** Called with the frame's compile or runtime error, or null once it draws again. */
   onError?: (message: string | null) => void
+  /**
+   * A workspace app's page (apps/workspace_apps). `load` replaces the catalog
+   * reads of `view.sources` (an app reads its own collections, through its own
+   * routes); `call` answers the page's query/act/history, `go` its moves between
+   * pages. Without it the frame is a plain dynamic view and every app call is refused.
+   */
+  app?: {
+    context: AppContext
+    load: () => Promise<Record<string, unknown>>
+    call: (op: AppOp) => Promise<unknown>
+    go: (page: string, params: Record<string, string>) => void
+    /** May the page use canopy.read (the dynamic-view catalog)? Never on the public door. */
+    canopyReads: boolean
+  }
 }
 
 async function readAs(url: string): Promise<unknown> {
@@ -90,7 +106,7 @@ function theme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
-export function DynamicViewFrame({ view, scope, onError }: Props) {
+export function DynamicViewFrame({ view, scope, onError, app }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const loads = useRef(0)
   const [height, setHeight] = useState(240)
@@ -124,12 +140,18 @@ export function DynamicViewFrame({ view, scope, onError }: Props) {
     frame.current?.contentWindow?.postMessage(msg, '*')
   }, [])
 
-  const draw = useCallback(async () => {
+  const load = useCallback(async () => {
+    if (app) return app.load()
     const guide = await getDynamicViewGuide()
-    const data = await readSources(guide.catalog, ctx, view.sources)
-    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme() })
+    return readSources(guide.catalog, ctx, view.sources)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [post, view.code, view.sources, ctxKey, scope.view.version])
+  }, [app, view.sources, ctxKey])
+
+  const draw = useCallback(async () => {
+    const data = await load()
+    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post, load, view.code, ctxKey, scope.view.version, app?.context])
 
   useEffect(() => {
     async function onMessage(ev: MessageEvent) {
@@ -142,11 +164,29 @@ export function DynamicViewFrame({ view, scope, onError }: Props) {
           draw().catch((e) => onError?.(e instanceof Error ? e.message : String(e)))
           return
         case 'refresh': {
-          const guide = await getDynamicViewGuide()
-          post({ channel: CHANNEL, type: 'data', data: await readSources(guide.catalog, ctx, view.sources) })
+          post({ channel: CHANNEL, type: 'data', data: await load() })
           return
         }
+        case 'app': {
+          if (!app) {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: 'this is a view, not an app: it cannot query or act' })
+            return
+          }
+          try {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: true, data: await app.call(msg.request) })
+          } catch (e) {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+        case 'go':
+          if (app && typeof msg.page === 'string') app.go(msg.page, msg.params ?? {})
+          return
         case 'read': {
+          if (app && !app.canopyReads) {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: 'a public page reads only its own app' })
+            return
+          }
           const guide = await getDynamicViewGuide()
           const r = resolveRead(guide.catalog, ctx, msg.request as ReadRequest)
           if (!r.ok) {
@@ -193,13 +233,13 @@ export function DynamicViewFrame({ view, scope, onError }: Props) {
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draw, post, navigate, gone, ctxKey, view.sources])
+  }, [draw, load, post, navigate, gone, ctxKey, view.sources, app])
 
   // A changed view (an edit, a restored version) redraws in the same frame.
   useEffect(() => {
     if (loads.current > 0 && !gone) draw().catch((e) => onError?.(e instanceof Error ? e.message : String(e)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view.code, view.sources])
+  }, [view.code, view.sources, app?.context])
 
   if (gone) {
     return (
