@@ -9290,7 +9290,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/sites/sign-offs/": {
+    readonly "/api/sites/sign-offs": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

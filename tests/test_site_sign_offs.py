@@ -74,7 +74,7 @@ def _ask(w, *, subject, key=None, return_url=RETURN, site_ref="pending-1"):
                            title="Create a full-access labs MCP token", site_ref=site_ref,
                            return_url=return_url)
     token = wire.request_assertion(SITE, key or w["key"], url, ask=ask)
-    return Client().post("/api/sites/sign-offs/", HTTP_AUTHORIZATION=f"Bearer {token}")
+    return Client().post(wire.PATH, HTTP_AUTHORIZATION=f"Bearer {token}")
 
 
 def _asked(w, subject) -> dict:
@@ -167,8 +167,8 @@ def test_a_replayed_request_is_refused(w):
     url = wire.create_url(client_identity.public_base())
     token = wire.request_assertion(SITE, w["key"], url, ask=wire.ask_payload(
         subject="mo@dimagi.com", action_key="k", title="t", site_ref="r", return_url=RETURN))
-    assert Client().post("/api/sites/sign-offs/", HTTP_AUTHORIZATION=f"Bearer {token}").status_code == 201
-    again = Client().post("/api/sites/sign-offs/", HTTP_AUTHORIZATION=f"Bearer {token}")
+    assert Client().post(wire.PATH, HTTP_AUTHORIZATION=f"Bearer {token}").status_code == 201
+    again = Client().post(wire.PATH, HTTP_AUTHORIZATION=f"Bearer {token}")
     assert again.status_code == 401
     assert "replayed" in again.json()["detail"]
 
