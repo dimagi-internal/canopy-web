@@ -165,6 +165,10 @@ def test_a_throwing_check_never_costs_the_beat(cloud_runner, monkeypatch):
 @pytest.fixture
 def refresh(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "RUNNER_HOME", str(tmp_path))
+    monkeypatch.setattr(cloud_runner, "IN_FLIGHT_FILE", tmp_path / "in-flight")
+    monkeypatch.setattr(cloud_runner, "RUNNER_INSTANCE", "")
+    monkeypatch.setattr(cloud_runner, "_stop", False)
+    monkeypatch.setattr(cloud_runner, "_EXIT_FOR_REFRESH", False)
     calls = []
     monkeypatch.setattr(cloud_runner.subprocess, "run",
                         lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
@@ -212,6 +216,29 @@ def test_health_reports_when_the_floor_lets_it_restart_again(refresh):
     assert cr.maybe_self_refresh(True, now=2000.0) is True
     assert cr._refresh_floor_until() == 2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS
     assert cr.health_report()["refresh_floor_until"] == 2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS
+
+
+def test_a_runner_sharing_its_machine_exits_for_its_unit_to_restart_it(refresh, monkeypatch, tmp_path):
+    # cloud-ec2-2-marshellis, 2026-10-28: a `canopy-runner@<id>` runner has no sudo
+    # and cannot write /opt/canopy-runner, so its refresh sat pending, idle, for hours.
+    cr, calls = refresh
+    monkeypatch.setattr(cr, "RUNNER_INSTANCE", "d0bb2dd6")
+    monkeypatch.setattr(cr, "RUNNER_HOME", "/nonexistent/opt/canopy-runner")
+    monkeypatch.setattr(cr, "IN_FLIGHT_FILE", tmp_path / "home" / ".canopy-runner" / "in-flight")
+    assert cr.maybe_self_refresh(True, now=2000.0) is True
+    assert calls == []
+    assert cr._stop and cr._EXIT_FOR_REFRESH and cr.REFRESH_EXIT_CODE != 0
+    assert cr._refresh_floor_until() == 2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS
+
+
+def test_a_refresh_it_cannot_start_says_so_in_the_refresh_check(refresh, monkeypatch, tmp_path):
+    cr, _ = refresh
+    def denied(cmd, **kw):
+        raise subprocess.CalledProcessError(1, cmd)
+    monkeypatch.setattr(cr.subprocess, "run", denied)
+    assert cr.maybe_self_refresh(True, now=2000.0) is False
+    check = cr._HEALTH["refresh"]
+    assert check["status"] == "fail" and "could not restart" in check["detail"]
 
 
 def test_a_failed_bootstrap_says_why_in_the_check(cloud_runner, monkeypatch, tmp_path, capsys):

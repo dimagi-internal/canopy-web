@@ -112,6 +112,17 @@ def test_a_floor_already_past_is_not_a_reason(box):
     assert _refresh(box)["waiting_on"] == []
 
 
+def test_pending_on_an_idle_box_that_cannot_restart_says_why(box):
+    # cloud-ec2-2-marshellis, 2026-10-28: pending, waiting on nothing, for hours.
+    health = _health()
+    health["checks"].append({"name": "refresh", "status": "fail",
+                             "detail": "could not restart to refresh: restart failed (exit 1)"})
+    _beat(box["client"], box["runner"], health=health)
+    st = _refresh(box)
+    assert st["state"] == "pending" and st["waiting_on"] == []
+    assert st["problems"] == ["refresh: could not restart to refresh: restart failed (exit 1)"]
+
+
 def test_pending_on_a_dark_box_says_offline(box):
     Runner.objects.filter(pk=box["runner"].pk).update(last_heartbeat_at=timezone.now() - timedelta(hours=2))
     assert _refresh(box)["waiting_on"] == ["offline"]

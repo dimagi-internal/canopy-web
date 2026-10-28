@@ -91,7 +91,8 @@ class Status:
     eligible_at: datetime | None = None
     finished_at: datetime | None = None
     took_seconds: int | None = None
-    #: Done only: what moved since the request, and what did not come back clean.
+    #: Done: what moved since the request, and what did not come back clean.
+    #: Pending: why a box that is due and idle could not start it.
     changes: list[Change] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
@@ -149,8 +150,10 @@ def status(runner, now=None) -> Status:
     floor = floor_until(runner)
     if floor and floor > now:
         waiting.append("floor")
+    # `problems` on a pending refresh too: a box that is due, idle and still not
+    # restarting says why in its `refresh` check, and that is the line to show.
     return Status("pending", runner.refresh_requested_at, who, waiting_on=waiting, in_flight=busy,
-                  eligible_at=floor if floor and floor > now else None)
+                  eligible_at=floor if floor and floor > now else None, problems=problems(runner))
 
 
 def snapshot(runner) -> dict[str, str]:
