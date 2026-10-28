@@ -499,6 +499,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Open an app', 'Install an app from the catalog', 'Switch an app on or off', "Make an app's public pages live", 'Remove an app'],
   },
   {
+    path: '/w/:workspace/apps/store',
+    home: '/w/:workspace/apps',
+    title: 'App in the store',
+    audience: 'Anyone in the workspace; installing is for admins',
+    what: "One app in canopy's catalog, before anyone installs it: screenshots, what it does and for whom, the roles it adds and who holds them, the records it keeps and which fields only one role reads, what it shows the public, the emails it can send, and its versions.",
+    actions: ['Look through the screenshots', 'Read what the app keeps and who sees it', 'Install the app'],
+  },
+  {
     path: '/w/:workspace/apps/:appKey/:page?',
     home: '/w/:workspace/apps',
     title: 'App',

@@ -46,6 +46,8 @@ from apps.dynamic_views import catalog as dv_catalog
 from apps.dynamic_views import services as dv_services
 from apps.workspaces import permissions as perms
 
+from . import scope
+
 IDENT = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 SLUG = re.compile(r"^[a-z][a-z0-9-]{0,38}[a-z0-9]$|^[a-z]$")
 KEY = re.compile(r"^[a-z][a-z0-9-]{1,38}[a-z0-9]$")
@@ -240,6 +242,11 @@ def _validate_collections(raw, roles: set[str]) -> dict:
             _fail(f"{where}.read", "must name a role of this app (not 'public' — use the public projection)")
         entry = {"fields": fields, "read": read, "title_field": spec.get("title_field") or next(iter(fields)),
                  "label": str(spec.get("label") or name)[:120], "origin": spec.get("origin", "template")}
+        also = spec.get("read_also") or []
+        if not isinstance(also, list) or any(r not in roles or r in BUILTIN_ROLES for r in also):
+            _fail(f"{where}.read_also", "must list roles of this app that may also read it")
+        if also:
+            entry["read_also"] = list(also)
         if entry["title_field"] not in fields:
             _fail(f"{where}.title_field", "must be a field")
         public = spec.get("public")
@@ -317,6 +324,13 @@ def _validate_effect(where: str, raw, fields: dict, settings: dict, params: dict
         if raw["link"] not in links:
             _fail(f"{where}.link", "must name a link of this app")
         out["link"] = raw["link"]
+    delay = raw.get("delay_param")
+    if delay is not None:
+        if delay not in params or params[delay]["type"] != "number":
+            _fail(f"{where}.delay_param", "must name a number param (hours) of the action")
+        if out.get("ics"):
+            _fail(f"{where}.delay_param", "an invite is sent at once, never delayed")
+        out["delay_param"] = delay
     return out
 
 
@@ -381,6 +395,13 @@ def _validate_then(where: str, raw, coll: str, collections: dict, params: dict) 
                 if v.startswith("$param.") and name not in params:
                     _fail(f"{sw}.set.{k}", f"the action has no param '{name}'")
         entry["set"] = dict(sets)
+        back = step.get("link_back")
+        if back is not None:
+            if step["op"] != "create":
+                _fail(f"{sw}.link_back", "records the id of a record a create step made")
+            if back not in fields or fields[back]["type"] != "ref" or fields[back]["collection"] != target:
+                _fail(f"{sw}.link_back", f"must be a ref field of '{coll}' pointing at '{target}'")
+            entry["link_back"] = back
         if step.get("when") is not None:
             entry["when"] = _validate_where(f"{sw}.when", step["when"], fields, lists=True)
         if step.get("if_target") is not None:
@@ -829,6 +850,34 @@ def _validate_scenarios(raw, roles: set[str], actions: dict, collections: dict) 
     return out
 
 
+_SHOT = re.compile(r"^screenshots/[a-z0-9][a-z0-9-]{0,60}\.(png|jpg|webp)$")
+
+
+def _validate_listing(raw) -> dict:
+    """What the store shows before anyone installs: a tagline, an overview, the
+    highlights, who it is for, what data it keeps, and screenshots (files beside
+    a bundled template's manifest; a workspace's own template has none)."""
+    if raw in (None, ""):
+        return {}
+    if not isinstance(raw, dict):
+        _fail("listing", "must be an object")
+    out: dict[str, Any] = {k: str(raw.get(k) or "")[:limit] for k, limit in
+                           (("tagline", 200), ("overview", 4000), ("audience", 1000), ("data", 2000))}
+    highlights = raw.get("highlights") or []
+    if not isinstance(highlights, list) or len(highlights) > 12 or any(
+            not isinstance(h, dict) or not h.get("title") for h in highlights):
+        _fail("listing.highlights", "must be a list of at most 12 {title, body}")
+    out["highlights"] = [{"title": str(h["title"])[:120], "body": str(h.get("body") or "")[:600]} for h in highlights]
+    shots = raw.get("screenshots") or []
+    if not isinstance(shots, list) or len(shots) > 12:
+        _fail("listing.screenshots", "must be a list of at most 12 {file, caption}")
+    for i, sh in enumerate(shots):
+        if not isinstance(sh, dict) or not _SHOT.match(str(sh.get("file") or "")):
+            _fail(f"listing.screenshots[{i}].file", "must be screenshots/<name>.png|jpg|webp")
+    out["screenshots"] = [{"file": sh["file"], "caption": str(sh.get("caption") or "")[:300]} for sh in shots]
+    return out
+
+
 def validate(raw) -> dict:
     """A normalised copy of `raw`, or ValueError naming what is wrong."""
     if not isinstance(raw, dict):
@@ -836,6 +885,8 @@ def validate(raw) -> dict:
     key = raw.get("key")
     if not isinstance(key, str) or not KEY.match(key):
         _fail("key", "must be 3-40 lowercase letters, digits and hyphens, starting with a letter")
+    if key == "store":
+        _fail("key", "'store' is the app store's own address")
     name = str(raw.get("name") or "").strip()
     if not name:
         _fail("name", "is required")
@@ -843,6 +894,7 @@ def validate(raw) -> dict:
     names = set(roles) | set(BUILTIN_ROLES)
     settings = _validate_settings(raw.get("settings"))
     collections = _validate_collections(raw.get("collections"), names)
+    scope.validate(collections, raw.get("collections"), names, settings, _fail)
     links = _validate_links(raw.get("links"), collections)
     actions = _validate_actions(raw.get("actions"), names, collections, settings, links)
     for lname, link in links.items():
@@ -862,6 +914,7 @@ def validate(raw) -> dict:
         "version": str(raw.get("version") or "")[:40], "changelog": str(raw.get("changelog") or "")[:5000],
         "roles": roles, "settings": settings, "collections": collections, "actions": actions, "pages": pages,
         "links": links, "retention": _validate_retention(raw.get("retention"), collections, settings),
+        "listing": _validate_listing(raw.get("listing")),
         "fixtures": _validate_fixtures(raw.get("fixtures"), collections),
         "scenarios": _validate_scenarios(raw.get("scenarios"), names, actions, collections),
     }

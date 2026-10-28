@@ -217,3 +217,30 @@ class AppFile(models.Model):
     uploaded_by_label = models.CharField(max_length=254, blank=True, default="")
     client_ip = models.GenericIPAddressField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AppScheduledEmail(models.Model):
+    """An action's email held back until `send_at` (a rejection sent the next
+    morning, not the minute someone clicked). Rendered when the action ran; sent
+    by the clock only if its record still exists and still matches `when`, so an
+    un-rejected candidate never gets the letter."""
+
+    SCHEDULED, SENT, CANCELLED, FAILED = "scheduled", "sent", "cancelled", "failed"
+    STATUSES = [(s, s) for s in (SCHEDULED, SENT, CANCELLED, FAILED)]
+
+    installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="scheduled_emails")
+    #: Deleting the record (retention, a removed candidate) takes its letter with it.
+    record = models.ForeignKey(AppRecord, on_delete=models.CASCADE, related_name="scheduled_emails")
+    action = models.CharField(max_length=40)
+    to = models.TextField()
+    subject = models.CharField(max_length=200)
+    body = models.TextField()
+    when = models.JSONField(default=dict, blank=True)
+    send_at = models.DateTimeField()
+    status = models.CharField(max_length=12, choices=STATUSES, default=SCHEDULED)
+    note = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "send_at"])]

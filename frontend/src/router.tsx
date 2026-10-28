@@ -93,6 +93,7 @@ const DynamicViewPage = lazySection(() => import('./pages/DynamicViewPage'))
 const WorkspaceAppsPage = lazySection(() => import('./pages/WorkspaceAppsPage'))
 const WorkspaceAppPage = lazySection(() => import('./pages/WorkspaceAppPage'))
 const WorkspaceAppCustomizePage = lazySection(() => import('./pages/WorkspaceAppCustomizePage'))
+const WorkspaceAppStoreDetailPage = lazySection(() => import('./pages/WorkspaceAppStoreDetailPage'))
 const PublicAppPage = lazySection(() => import('./pages/PublicAppPage'))
 const LinkAppPage = lazySection(() => import('./pages/LinkAppPage'))
 const NewAgentPage = lazySection(() =>
@@ -406,6 +407,7 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/views/:id', element: <LazySection><DynamicViewPage /></LazySection> },
       // Self-contained apps the workspace runs (apps/workspace_apps), drawn in the same sandbox.
       { path: '/w/:workspace/apps', element: <LazySection><WorkspaceAppsPage /></LazySection> },
+      { path: '/w/:workspace/apps/store', element: <LazySection><WorkspaceAppStoreDetailPage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/customize', element: <LazySection><WorkspaceAppCustomizePage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/:page?', element: <LazySection><WorkspaceAppPage /></LazySection> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },

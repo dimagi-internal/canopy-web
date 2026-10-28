@@ -17,6 +17,20 @@ function View({ data, app, scope }) {
   const [everyone, setEveryone] = useState(false)
   const [cands, setCands] = useState({})
   const [jobs, setJobs] = useState({})
+  const [picked, setPicked] = useState({})
+  const [result, setResult] = useState(null)
+  const canCancel = recruiter && everyone && (((app.dataModel && app.dataModel._actions) || {}).cancel_interview || {}).enabled !== false
+  const pickedIds = Object.keys(picked).filter((k) => picked[k]).map(Number)
+  async function cancelPicked() {
+    setResult(null)
+    try {
+      const out = await app.bulk('cancel_interview', { records: pickedIds })
+      const failed = arr(out && out.failed)
+      setResult(`Cancelled ${arr(out && out.done).length}` + (failed.length ? `; ${failed.length} could not be: ${failed.map((f) => f.error).join('; ')}` : ''))
+      setPicked({})
+      app.refresh()
+    } catch (e) { setResult(e.message) }
+  }
 
   // Names and job titles for the interviews on screen (a `where` list takes at most 50 ids).
   const appIds = useMemo(() => [...new Set(interviews.map((x) => x.application).filter(Boolean))], [interviews])
@@ -62,6 +76,10 @@ function View({ data, app, scope }) {
   }
   const row = (x, right) => (
     <div key={`${x.id}`} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 text-sm last:border-0">
+      {canCancel && ['Requested', 'Scheduled'].includes(x.status) && (
+        <input type="checkbox" aria-label={`Select interview ${x.id}`} checked={!!picked[x.id]}
+          onChange={(e) => setPicked((p) => ({ ...p, [x.id]: e.target.checked }))} />
+      )}
       <div className="w-28 shrink-0 tabular-nums text-muted-foreground">{x.date || '—'}{x.time ? ` ${x.time}` : ''}</div>
       <div className="min-w-0 flex-1">{who(x)}</div>
       {everyone && <div className="hidden max-w-xs truncate text-xs text-muted-foreground sm:block">{x.interviewers}</div>}
@@ -83,6 +101,15 @@ function View({ data, app, scope }) {
           </label>
         )}
       </div>
+
+      {canCancel && pickedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm">
+          <span>{pickedIds.length} selected</span>
+          <Button size="sm" tone="destructive" confirm={`Cancel ${pickedIds.length} interview${pickedIds.length === 1 ? '' : 's'}? Candidates are emailed if interview emails are on.`} onClick={cancelPicked}>Cancel selected</Button>
+          <Button size="sm" onClick={() => setPicked({})}>Clear</Button>
+        </div>
+      )}
+      {result && <div className="text-sm text-muted-foreground">{result}</div>}
 
       <Card title={everyone ? 'Scorecards still owed' : 'Scorecards I owe'}>
         {due.length === 0 ? <Empty>All caught up.</Empty> : due.map((x) => row(x, (

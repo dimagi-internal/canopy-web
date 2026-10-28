@@ -108,7 +108,13 @@ def test_a_workspace_can_install_an_app_it_wrote(world):
 
 def test_app_roles_follow_workspace_capabilities_and_grants(world, hiring):
     editor, viewer, admin = _client(world["editor"]), _client(world["viewer"]), _client(world["admin"])
-    job = _job(editor)
+    # An editor is an interviewer; recruiter is the admins' role, or given by name (the fixture names the editor).
+    hiring.grants.filter(user=world["editor"], role="recruiter").delete()
+    assert _act(editor, "create_job", {"title": "x", "description": "y"}).status_code == 403
+    assert _act(admin, "create_job", {"title": "x", "description": "y"}).status_code == 200
+    assert admin.post(f"{BASE}/hiring/grants", {"email": "editor@dimagi.com", "role": "recruiter"},
+                      content_type=J).status_code == 201
+    job = _job(editor, hiring_team="viewer@dimagi.com")
     assert viewer.get(f"{BASE}/hiring/query?collection=job").status_code == 200
     assert viewer.get(f"{BASE}/hiring/query?collection=application").status_code == 403
     assert _act(viewer, "create_job", {"title": "x", "description": "y"}).status_code == 403
@@ -271,15 +277,15 @@ def test_a_template_update_keeps_customizations_and_quarantines_what_no_longer_f
 
     tmpl = hiring.template
     m = copy.deepcopy(services.bundled_manifest("hiring"))
-    m["version"], m["changelog"] = "2.1.0", "2.1.0 — adds a salary expectation field; the candidate page is redesigned without a sidebar."
+    m["version"], m["changelog"] = "9.9.0", "9.9.0 — adds a salary expectation field; the candidate page is redesigned without a sidebar."
     m["collections"]["application"]["fields"]["salary_expectation"] = {"type": "text", "label": "Salary expectation"}
     next(p for p in m["pages"] if p["slug"] == "candidate")["slots"] = []
-    tmpl.versions.create(version="2.1.0", manifest=mf.validate(m), changelog=m["changelog"])
+    tmpl.versions.create(version="9.9.0", manifest=mf.validate(m), changelog=m["changelog"])
 
-    assert admin.get(f"{BASE}/").json()[0]["upgrade_available"] == "2.1.0"
+    assert admin.get(f"{BASE}/").json()[0]["upgrade_available"] == "9.9.0"
     d = admin.post(f"{BASE}/hiring/draft", {"upgrade": True}, content_type=J).json()
     review = d["review"]
-    assert review["template_change"]["to"] == "2.1.0"
+    assert review["template_change"]["to"] == "9.9.0"
     assert [c["summary"] for c in review["changes"]] == ["Adds “Job fair” to “Source” on Candidate."]
     assert [q["reason"] for q in review["quarantine"]] == ["page 'candidate' has no slot 'sidebar'"]
     assert admin.post(f"{BASE}/hiring/draft/publish").status_code == 409
@@ -287,7 +293,7 @@ def test_a_template_update_keeps_customizations_and_quarantines_what_no_longer_f
     admin.delete(f"{BASE}/hiring/draft/ops/{review['quarantine'][0]['id']}")
     assert admin.post(f"{BASE}/hiring/draft/publish").status_code == 200
     app = admin.get(f"{BASE}/hiring").json()
-    assert app["template_version"] == "2.1.0" and app["upgrade_available"] is None
+    assert app["template_version"] == "9.9.0" and app["upgrade_available"] is None
     fields = app["data_model"]["application"]["fields"]
     assert "salary_expectation" in fields and "Job fair" in fields["source"]["options"]
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  appStoreScreenshotUrl,
   installApp,
   listAppStore,
   listInstalledApps,
@@ -114,13 +115,22 @@ export default function WorkspaceAppsPage() {
       <h2 className="mb-2 mt-8 text-sm font-semibold uppercase tracking-wide text-muted-foreground">App store</h2>
       <div className="grid gap-3 sm:grid-cols-2">
         {store.map((a) => (
-          <div key={a.key} className="flex flex-col justify-between gap-3 rounded-lg border border-border bg-card p-4">
-            <div>
-              <div className="font-medium">{a.name}</div>
-              <div className="text-xs text-muted-foreground">by {a.publisher} · {a.version}</div>
-              <p className="mt-2 text-sm text-muted-foreground">{a.description}</p>
-            </div>
-            <div>
+          <div key={a.key} className="flex flex-col justify-between gap-3 overflow-hidden rounded-lg border border-border bg-card">
+            <Link to={scoped(`/apps/store?template=${encodeURIComponent(a.key)}`)} className="group block">
+              {a.cover && (
+                <img src={appStoreScreenshotUrl(workspace, a.key, a.cover)} alt="" loading="lazy"
+                  className="block h-40 w-full border-b border-border object-cover object-top" />
+              )}
+              <div className="p-4 pb-0">
+                <div className="font-medium group-hover:underline">{a.name}</div>
+                <div className="text-xs text-muted-foreground">by {a.publisher} · {a.version}</div>
+                <p className="mt-2 text-sm text-muted-foreground">{a.tagline || a.description}</p>
+              </div>
+            </Link>
+            <div className="flex items-center gap-3 p-4 pt-0">
+              <Link to={scoped(`/apps/store?template=${encodeURIComponent(a.key)}`)} className="text-sm text-primary hover:underline">
+                Screenshots and details
+              </Link>
               {have.has(a.key) ? (
                 <span className="text-sm text-muted-foreground">Installed</span>
               ) : manage ? (

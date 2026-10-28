@@ -3100,6 +3100,43 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-app-store/{workspace}/detail": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One store app in full: screenshots, what it does, its roles, records and versions
+         * @description `template` is the store key (`hiring`, or `<workspace>/<key>` for the workspace's own).
+         */
+        readonly get: operations["get_app_store_detail"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-app-store/{workspace}/screenshot": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A store app's screenshot, by the file its listing names */
+        readonly get: operations["get_app_store_screenshot"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-apps/{workspace}/": {
         readonly parameters: {
             readonly query?: never;
@@ -21705,6 +21742,131 @@ export interface components {
             readonly version: string;
             /** Publisher */
             readonly publisher: string;
+            /** Changelog */
+            readonly changelog: string;
+            /**
+             * Tagline
+             * @default
+             */
+            readonly tagline: string;
+            /**
+             * Cover
+             * @default
+             */
+            readonly cover: string;
+        };
+        /** StoreAppDetailOut */
+        readonly StoreAppDetailOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Version */
+            readonly version: string;
+            /** Publisher */
+            readonly publisher: string;
+            readonly listing: components["schemas"]["StoreListingOut"];
+            /** Roles */
+            readonly roles: readonly components["schemas"]["StoreRoleOut"][];
+            /** Pages */
+            readonly pages: readonly components["schemas"]["StorePageOut"][];
+            /** Records */
+            readonly records: readonly components["schemas"]["StoreRecordOut"][];
+            /** Settings */
+            readonly settings: number;
+            /** Retention */
+            readonly retention: readonly string[];
+            /** Public Pages */
+            readonly public_pages: readonly string[];
+            /** Emails */
+            readonly emails: readonly string[];
+            /** Versions */
+            readonly versions: readonly components["schemas"]["StoreVersionOut"][];
+            /** Installed */
+            readonly installed: boolean;
+        };
+        /** StoreHighlightOut */
+        readonly StoreHighlightOut: {
+            /** Title */
+            readonly title: string;
+            /** Body */
+            readonly body: string;
+        };
+        /** StoreListingOut */
+        readonly StoreListingOut: {
+            /**
+             * Tagline
+             * @default
+             */
+            readonly tagline: string;
+            /**
+             * Overview
+             * @default
+             */
+            readonly overview: string;
+            /**
+             * Audience
+             * @default
+             */
+            readonly audience: string;
+            /**
+             * Data
+             * @default
+             */
+            readonly data: string;
+            /**
+             * Highlights
+             * @default []
+             */
+            readonly highlights: readonly components["schemas"]["StoreHighlightOut"][];
+            /**
+             * Screenshots
+             * @default []
+             */
+            readonly screenshots: readonly components["schemas"]["StoreScreenshotOut"][];
+        };
+        /** StorePageOut */
+        readonly StorePageOut: {
+            /** Title */
+            readonly title: string;
+            /** Audience */
+            readonly audience: string;
+        };
+        /** StoreRecordOut */
+        readonly StoreRecordOut: {
+            /** Label */
+            readonly label: string;
+            /** Fields */
+            readonly fields: number;
+            /** Restricted */
+            readonly restricted: readonly string[];
+            /** Scoped */
+            readonly scoped: boolean;
+        };
+        /** StoreRoleOut */
+        readonly StoreRoleOut: {
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Holders */
+            readonly holders: string;
+        };
+        /** StoreScreenshotOut */
+        readonly StoreScreenshotOut: {
+            /** File */
+            readonly file: string;
+            /** Caption */
+            readonly caption: string;
+        };
+        /** StoreVersionOut */
+        readonly StoreVersionOut: {
+            /** Version */
+            readonly version: string;
+            /** Released At */
+            readonly released_at: string;
             /** Changelog */
             readonly changelog: string;
         };
@@ -46748,6 +46910,53 @@ export interface operations {
                 content: {
                     readonly "application/json": readonly components["schemas"]["StoreAppOut"][];
                 };
+            };
+        };
+    };
+    readonly get_app_store_detail: {
+        readonly parameters: {
+            readonly query: {
+                readonly template: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoreAppDetailOut"];
+                };
+            };
+        };
+    };
+    readonly get_app_store_screenshot: {
+        readonly parameters: {
+            readonly query: {
+                readonly template: string;
+                readonly file: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

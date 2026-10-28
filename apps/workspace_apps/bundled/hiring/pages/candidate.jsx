@@ -23,6 +23,8 @@ const BUILT_IN = ['job', 'name', 'email', 'phone', 'location', 'country', 'regio
   'cover_letter', 'source', 'source_tag', 'referrer', 'credited_to', 'kind', 'pool', 'stage', 'status', 'stage_entered_at',
   'applied_on', 'rejected_on', 'hired_on', 'rejection_reason', 'rejection_note', 'tags', 'do_not_email', 'legal_hold',
   'privacy_notice', 'consent_pool', 'eeo_gender', 'eeo_race', 'eeo_veteran', 'eeo_disability']
+// When the rejection email goes: held-back letters are cancelled if the candidate is un-rejected first.
+const DELAYS = [{ value: '0', label: 'Send now' }, { value: '24', label: 'Send tomorrow (in 24 hours)' }, { value: '72', label: 'Send in 3 days' }]
 const NEW_IV = { mode: 'schedule', step: '', kind: '', date: '', time: '', duration: '45', timezone: 'America/New_York',
   interviewers: '', meeting_link: '', slots: [{ date: '', time: '' }] }
 
@@ -100,6 +102,7 @@ function View({ app, scope }) {
   const ivById = Object.fromEntries(interviews.map((x) => [x.id, x]))
   const stepById = Object.fromEntries(steps.map((s) => [s.id, s]))
   const active = a.status === 'active'
+  const activeOthers = others.filter((o) => o.status === 'active' && o.kind !== 'prospect')
   const actionLabel = (k) => (((app.dataModel && app.dataModel._actions) || {})[k] || {}).label || String(k || '').replace(/_/g, ' ')
 
   const timeline = [
@@ -176,7 +179,7 @@ function View({ app, scope }) {
           <div className="flex max-w-md flex-wrap justify-end gap-2">
             {active && can(app, 'move_stage', 'recruiter') && <Button onClick={() => open('move', { stage: a.stage })}>Move stage</Button>}
             {active && can(app, 'transfer', 'recruiter') && <Button onClick={() => open('transfer', { job: '' })}>Transfer</Button>}
-            {active && (can(app, 'reject', 'recruiter') || can(app, 'reject_and_email', 'recruiter')) && <Button tone="destructive" onClick={() => open('reject', { email: true, subject: app.settings.rejection_subject || '', body: app.settings.rejection_body || '' })}>Reject…</Button>}
+            {active && (can(app, 'reject', 'recruiter') || can(app, 'reject_and_email', 'recruiter')) && <Button tone="destructive" onClick={() => open('reject', { email: true, delay: '0', alsoOthers: false, subject: app.settings.rejection_subject || '', body: app.settings.rejection_body || '' })}>Reject…</Button>}
             {a.status === 'rejected' && can(app, 'unreject', 'recruiter') && <Button onClick={() => open('unreject', { stage: (stageOpts[0] || {}).value || 'Applied' })}>Un-reject</Button>}
             {can(app, 'email_candidate', 'recruiter') && <Button onClick={() => open('email', { subject: '', body: '' })}>Email</Button>}
             {can(app, 'update_candidate', 'recruiter') && <Button onClick={() => open('tags', { tags: a.tags || '' })}>Tags</Button>}
@@ -223,14 +226,28 @@ function View({ app, scope }) {
                   options={[{ value: '', label: 'Standard rejection email' }, ...(rejectTemplates.length ? rejectTemplates : templates).map((t) => ({ value: String(t.id), label: t.name }))]} />
                 <Input label="Subject" value={form.subject} onChange={set('subject')} />
                 <TextArea label="Email" rows={7} value={form.body} onChange={set('body')} />
+                <Select label="When" value={form.delay || '0'} onChange={set('delay')} options={DELAYS} />
               </Stack>
+            )}
+            {activeOthers.length > 0 && (
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form.alsoOthers} onChange={(e) => set('alsoOthers')(e.target.checked)} /> Also reject from their {activeOthers.length} other active application{activeOthers.length === 1 ? '' : 's'} ({activeOthers.map((o) => jobTitle[o.job] || 'Prospect').join(', ')})</label>
             )}
             <div className="flex flex-wrap gap-2">
               <Button tone="destructive" onClick={() => {
                 const input = { rejection_reason: form.reason || null, rejection_note: form.note || null }
-                return form.email && can(app, 'reject_and_email', 'recruiter')
-                  ? act('reject_and_email', { input, params: { subject: form.subject || undefined, body: form.body || undefined } }, 'Rejected')
-                  : act('reject', { input }, 'Rejected, no email sent')
+                const emailing = form.email && can(app, 'reject_and_email', 'recruiter')
+                const params = { subject: form.subject || undefined, body: form.body || undefined,
+                  delay_hours: Number(form.delay) > 0 ? Number(form.delay) : undefined }
+                const action = emailing ? 'reject_and_email' : 'reject'
+                const ids = [id, ...(form.alsoOthers ? activeOthers.map((o) => o.id) : [])]
+                if (ids.length > 1) {
+                  return run(() => app.bulk(action, { records: ids, input, ...(emailing ? { params } : {}) }).then((out) => {
+                    const failed = arr(out && out.failed)
+                    if (failed.length) throw new Error(`${failed.length} could not be rejected: ${failed.map((f) => f.error).join('; ')}`)
+                    return out
+                  }), `Rejected from ${ids.length} applications`)
+                }
+                return emailing ? act(action, { input, params }, 'Rejected') : act(action, { input }, 'Rejected, no email sent')
               }}>{form.email ? 'Reject and send email' : 'Reject'}</Button>
               <Button onClick={() => setPanel(null)}>Cancel</Button>
             </div>
