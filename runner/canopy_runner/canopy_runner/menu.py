@@ -493,6 +493,14 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
 
     Prefix-tolerant: a long question is word-wrapped and can be rejoined with
     slightly different spacing than the tool input carried.
+
+    Suffix-tolerant too: when the wrap stopped further short of the frame than
+    `_WRAP_SLACK` allows, `_unwrap_question` keeps only the TAIL — measured on a
+    3-question ask whose second question broke before "(read-only", ten columns
+    short, so the screen read "(read-only Gmail + Calendar, … Salesforce)?" and
+    the driver refused after answering only the first tab (chrome-sales,
+    2026-10-28). The declared list is what disambiguates, so matching a tail
+    against it does not need the subject-swallowing risk a wider slack would.
     """
     shown = normalise(menu.question)
     if not shown:
@@ -504,7 +512,8 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
             continue
         if want == shown:
             return q.get("index", questions.index(q))
-        if (want.startswith(shown) or shown.startswith(want)) and len(shown) >= 12:
+        if (want.startswith(shown) or shown.startswith(want)
+                or want.endswith(shown)) and len(shown) >= 12:
             # Longest match wins: two questions can share an opening clause.
             if best is None or len(want) > best[1]:
                 best = (q.get("index", questions.index(q)), len(want))

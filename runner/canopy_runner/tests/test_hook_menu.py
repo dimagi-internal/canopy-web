@@ -628,3 +628,29 @@ def test_a_cleared_menu_carries_no_error_to_hang_a_note_on():
     hl.handle_payload(ASK)
     hl.note_answer([KEY], hooks.ANSWERED, "")
     assert hl.pending_menu(*KEY) is None
+
+
+def test_an_unmodelled_tabbed_ask_keeps_its_declared_questions():
+    """chrome-sales, 2026-10-28: a 3-question ask the driver could not match came
+    back UNMODELLED with the one-tab screen, which REPLACED the held menu — and a
+    one-tab screen carries no `questions`. Every retry from the web was then
+    refused "has 3 questions but none are held", so the dialog could only be
+    answered in emdash. The screen is still shown; the declared list survives."""
+    from canopy_runner import hooks
+
+    hl = listener()
+    two = {**ASK, "tool_input": {"questions": [
+        ASK["tool_input"]["questions"][0],
+        {"question": "Which size?", "header": "Size",
+         "options": [{"label": "Small"}, {"label": "Large"}]},
+    ]}}
+    hl.handle_payload(two)
+    held = hl.pending_menu(*KEY)["questions"]
+    assert len(held) == 2
+    screen = {"question": "Which size?", "title": "", "body": "", "selected": 1,
+              "source": "screen", "options": [{"number": 1, "label": "Small"}]}
+    hl.note_answer([KEY], hooks.UNMODELLED, hooks.ANSWER_NOTES[hooks.UNMODELLED],
+                   screen=screen)
+    now = hl.pending_menu(*KEY)
+    assert now["question"] == "Which size?"
+    assert now["questions"] == held
