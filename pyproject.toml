@@ -208,7 +208,7 @@ addopts = "--ignore=packages --ignore=deploy --ignore=runner --ignore=sdk"
 # CI runs the main suite with `--nomigrations` (tables built straight from the
 # models: ~3s instead of replaying 400+ migrations per xdist worker, which was
 # most of the suite's wall time). A test that walks the real migration graph
-# fails there, loudly — mark it, and CI runs it in its own job, with migrations.
+# fails there, loudly — mark it, and CI runs it with migrations, on PostgreSQL.
 markers = [
     "needs_migrations: needs the real migration history; CI runs it separately",
     "explicit_opt_in: sees the real ProjectOptIn default (nothing) instead of conftest's opt-in",
