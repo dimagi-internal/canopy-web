@@ -4,7 +4,7 @@
 // filter. "New project" makes a workspace project and opens its page. Each row
 // opens the project's one page, `/w/<ws>/projects/<handle>`.
 import { useEffect, useMemo, useState, type FormEvent, type JSX } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Button, Dialog, DialogContent, DialogTitle } from 'canopy-ui/ui'
 
 import { createWorkspaceProject, listProjects, type Project } from '@/api/work'
@@ -19,6 +19,7 @@ import {
 } from '@/components/work/ProjectTable'
 import { displayAgent } from '@/components/work/meta'
 import { roleAllows } from '@/lib/workspaceRoles'
+import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 export function ProjectsPage(): JSX.Element {
@@ -56,6 +57,8 @@ export function ProjectsPage(): JSX.Element {
         <h1 className="text-xl font-semibold text-foreground">Projects</h1>
         <p className="mt-1 text-[13px] text-muted-foreground">
           Every project in this workspace: who leads it, the agents on it, how far along it is and how it is going.
+          {' '}What projects serve to the whole workspace:{' '}
+          <Link className="underline hover:text-foreground" to={scopedPath(workspace, '/mcp')}>MCP servers</Link>.
         </p>
       </div>
       <ProjectFilters status={status} onStatus={setStatus} q={q} onQ={setQ} sort={sort} onSort={setSort}>

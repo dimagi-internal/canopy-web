@@ -10,11 +10,12 @@
  *   Home        — what needs me, and what changed (personal, every workspace)
  *   Agents ▾    — what the agents are doing, will do, and run on, and where you
  *                 talk to them (Sessions)
- *   Projects ▾  — the work: projects, tasks, Triage, the views and MCP servers
- *                 projects make, and what the work produces (the Demos ▸
- *                 sub-menu: storyboards, walkthroughs, shareouts)
+ *   Projects ▾  — the work: projects, tasks, Triage, and what it produces
+ *                 (the Demos ▸ sub-menu: storyboards, walkthroughs, shareouts).
+ *                 What a project makes — its views, its MCP server — is on
+ *                 the project's own page
  *   Apps        — the apps the workspace runs, and the store to install more
- *   Workspace ▾ — who is in it and how it is set up
+ *   Workspace ▾ — who is in it, how it is set up, and its own views
  *
  * Help (Guide, Get started, System) is not workspace business and has its own
  * `?` menu; personal pages are in the account menu.
@@ -76,10 +77,6 @@ export const NAV: NavEntry[] = [
       { path: 'projects', label: 'All projects', tenant: true },
       { path: 'tasks', label: 'Tasks', tenant: true },
       { path: 'triage', label: 'Triage', tenant: true },
-      // What projects make, listed across the workspace: each also shows on the
-      // page of the project that made it (a view can belong to the workspace).
-      { path: 'views', label: 'Views', tenant: true },
-      { path: 'mcp', label: 'Shared MCP servers', tenant: true },
       // What the work produces for people to read and review.
       { path: 'storyboards', label: 'Storyboards', tenant: true, group: 'Demos' },
       { path: 'walkthroughs', label: 'Walkthroughs', tenant: true, group: 'Demos' },
@@ -99,6 +96,9 @@ export const NAV: NavEntry[] = [
       // Network are its tabs.
       { path: 'health', label: 'Health', tenant: true, capability: 'logs.read' },
       { path: 'timeline', label: 'Timeline', tenant: true },
+      // Generated screens, each drawn in a sandbox: the workspace's own first,
+      // then each project's (which also show on the project's page).
+      { path: 'views', label: 'Views', tenant: true },
       { path: 'settings', label: 'Settings', tenant: true },
     ],
   },

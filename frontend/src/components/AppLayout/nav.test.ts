@@ -19,7 +19,7 @@ const label = (e: ResolvedNavEntry) => (e.kind === 'link' ? e.item.label : e.lab
 describe('NAV', () => {
   it('answers the five questions a person arrives with', () => {
     // Home: what needs me. Agents: what they are doing, and where you talk to
-    // them. Projects: the work and what it makes and produces. Apps: the apps
+    // them. Projects: the work and what it produces. Apps: the apps
     // the workspace runs. Workspace: who is in it and how it is set up.
     expect(NAV.map((e) => (e.kind === 'link' ? e.item.label : e.label))).toEqual([
       'Home', 'Agents', 'Projects', 'Apps', 'Workspace',
@@ -29,7 +29,7 @@ describe('NAV', () => {
   it('files Demos as a sub-menu of Projects, after its own items', () => {
     const projects = resolveNav(authed).find((e) => label(e) === 'Projects')!
     const { items, groups } = menuSections(entryItems(projects))
-    expect(items.map((i) => i.label)).toEqual(['All projects', 'Tasks', 'Triage', 'Views', 'Shared MCP servers'])
+    expect(items.map((i) => i.label)).toEqual(['All projects', 'Tasks', 'Triage'])
     expect(groups).toEqual([
       {
         label: 'Demos',
@@ -131,8 +131,7 @@ describe('active entry', () => {
       '/w/connect/ddd/onboarding': 'Projects',
       '/w/connect/storyboards': 'Projects',
       '/w/connect/shareouts/2026-09-01': 'Projects',
-      '/w/connect/views/3': 'Projects',
-      '/w/connect/mcp': 'Projects',
+      '/w/connect/views/3': 'Workspace',
       '/w/connect/apps': 'Apps',
       '/w/connect/apps/hiring/customize': 'Apps',
       '/w/connect/settings': 'Workspace',
