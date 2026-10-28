@@ -32,7 +32,10 @@ export default function ActivityPage() {
   const log = TABS.some((t) => t.id === params.get("log")) ? params.get("log")! : "turns";
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const [error, setError] = useState("");
-  const [filters, setFilters] = useState<TurnFilters>({ agent: null, origin: null, status: null });
+  // ?agent= and ?status= seed the filters, so an alert's "See failed turns" opens on them.
+  const [filters, setFilters] = useState<TurnFilters>(() => ({
+    agent: params.get("agent"), origin: null, status: params.get("status"),
+  }));
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {

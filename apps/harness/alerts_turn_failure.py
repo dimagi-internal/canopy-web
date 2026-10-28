@@ -99,12 +99,13 @@ def title_for(inv) -> str:
 
 def investigation_path(inv) -> str:
     """No page shows one investigation; the failed turns live on the agent's
-    Turns tab, else the workspace's activity log. App-relative."""
+    Turns tab, else the workspace's activity log, opened on its failed turns
+    (of that agent, when there is one). App-relative."""
     ws = inv.workspace_id
     slug = (inv.agents or [None])[0]
     if slug and Agent.objects.filter(slug=slug, workspace_id=ws).exists():
         return f"/w/{ws}/agents/{slug}/turns"
-    return f"/w/{ws}/activity"
+    return f"/w/{ws}/activity?status=failed" + (f"&agent={slug}" if slug else "")
 
 
 def subject_key(inv) -> str:

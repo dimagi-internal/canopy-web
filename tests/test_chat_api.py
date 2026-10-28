@@ -102,6 +102,9 @@ def test_create_with_runner_id_stashes_requested_runner_id(client, ctx):
     sid = r.json()["id"]
     session = Session.objects.get(pk=sid)
     assert session.metadata["requested_runner_id"] == str(runner.id)
+    # Until its first send binds it, the chat says where it will start.
+    assert r.json()["runner_name"] is None
+    assert r.json()["requested_runner_name"] == "r1"
 
 
 def test_send_with_placement_pins_the_turn(client, ctx):

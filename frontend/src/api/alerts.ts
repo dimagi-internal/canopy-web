@@ -45,3 +45,11 @@ export async function undismissAlert(id: number): Promise<Alert> {
   const res = await apiV2.POST('/api/me/alerts/{id}/undismiss', { params: { path: { id } } })
   return normalize(unwrap(res, 'undismissAlert') as unknown as AlertWire)
 }
+
+export type AlertEvent = components['schemas']['AlertEventOut']
+
+/** An alert's audit trail, oldest first: raised, notified, acted, resolved, reopened… */
+export async function loadAlertHistory(id: number): Promise<AlertEvent[]> {
+  const res = await apiV2.GET('/api/me/alerts/{id}/history', { params: { path: { id } } })
+  return Array.from(unwrap(res, 'alertHistory') as unknown as AlertEvent[])
+}

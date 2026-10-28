@@ -445,6 +445,9 @@ class SessionOut(Schema):
     #: The macOS user@host the live session belongs to ("" when unbound or unreported).
     runner_host: str = ""
     runner_location: str | None = None
+    #: The runner chosen when the chat was started, until its first turn binds it
+    #: there (then `runner_name` says it). None once bound, or when none was chosen.
+    requested_runner_name: str | None = None
     #: The emdash project its worktree lives under — the repo for a project chat,
     #: the agent's own repo (its slug) for an agent chat. What /ide groups by.
     emdash_project: str = ""

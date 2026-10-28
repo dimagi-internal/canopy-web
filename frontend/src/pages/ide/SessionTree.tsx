@@ -256,11 +256,17 @@ export function IdeTree({
                         'max-w-[140px] truncate rounded border px-1 text-[11px]',
                         s.runner_signed_out ? 'border-warning/40 text-warning' : 'border-border text-muted-foreground',
                       )}
-                      title={s.runner_signed_out ? `Claude isn't signed in on ${s.runner_name}: it runs nothing until someone signs in there` : undefined}
+                      title={
+                        s.runner_signed_out
+                          ? `Claude isn't signed in on ${s.runner_name}: it runs nothing until someone signs in there`
+                          : !s.runner_name && s.requested_runner_name
+                            ? `Starts on ${s.requested_runner_name} with its first message`
+                            : undefined
+                      }
                       data-testid={s.runner_signed_out ? `ide-runner-signed-out-${s.id}` : undefined}
                     >
                       {s.runner_signed_out && '⚠ '}
-                      {s.runner_name ?? 'web'}
+                      {s.runner_name ?? (s.requested_runner_name ? `→ ${s.requested_runner_name}` : 'web')}
                     </span>
                     <ModeTag mode={sessionMode(s)} />
                     <span
