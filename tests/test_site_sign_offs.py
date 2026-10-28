@@ -399,7 +399,11 @@ def test_a_closed_request_cannot_be_begun_in_the_frame(w):
     assert _framed(raw, f"{body['id']}/approve/begin", post=True).status_code == 409
 
 
-def test_the_sign_off_shell_is_framed_only_by_the_site(w):
+def test_the_sign_off_shell_is_framed_only_by_the_site(w, monkeypatch):
+    from apps.embedding import views_embed
+
+    # CI's backend job builds no frontend; the shell's body is what is under test.
+    monkeypatch.setattr(views_embed, "_embed_assets", lambda: ("assets/embed-TEST.js", []))
     body = _asked(w, "mo@dimagi.com")
     response = Client().get(f"/embed/sign-off?app={SITE}&sign_off={body['id']}")
     assert response.status_code == 200

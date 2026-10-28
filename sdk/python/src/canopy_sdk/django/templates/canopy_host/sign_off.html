@@ -29,7 +29,13 @@ A site sign-off approved on the page, in canopy's frame (`canopy.signOff`): see
         return window.canopy.signOff(Object.assign({}, config, { id: String(id || ""), csrfToken: csrf }));
       };
       var id = read("canopy-sign-off-id");
-      var then = read("canopy-sign-off-then");
+      // `then` must be this site's own page: a same-origin http(s) URL, never a
+      // `javascript:` one or another site's.
+      var then = null;
+      try {
+        var target = new URL(String(read("canopy-sign-off-then") || ""), window.location.href);
+        if (target.origin === window.location.origin && /^https?:$/.test(target.protocol)) then = target.href;
+      } catch (e) { then = null; }
       if (!id) return;
       // The browser takes the outcome to the host, which reads the approval from canopy.
       function report(outcome) {
