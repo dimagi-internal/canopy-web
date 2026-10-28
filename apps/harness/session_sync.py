@@ -21,6 +21,7 @@ from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.canopy_sessions import lifecycle
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.canopy_sessions.staleness import active
 from apps.workspaces import services as wsvc
@@ -1027,7 +1028,7 @@ def replace_reported_sessions(
     if touched_ids:
         from apps.canopy_sessions.transcript_ingest import REOPENED_KEY
 
-        with transaction.atomic():
+        with transaction.atomic(), lifecycle.acting(by=runner, reason="reported open again"):
             for revived in Session.objects.select_for_update().filter(
                 runner_binding__id__in=touched_ids, status=Session.ARCHIVED,
             ):
@@ -1051,8 +1052,12 @@ def replace_reported_sessions(
             runner_binding__runner=runner,
             runner_binding__session_key__in=closed,
         ).exclude(status=Session.ARCHIVED)
-        newly_closed += list(closing.values_list("id", flat=True))
+        ids = list(closing.values_list("id", flat=True))
+        newly_closed += ids
         closing.update(status=Session.ARCHIVED)
+        # An update() the row never sees: said here, one event per session.
+        lifecycle.record_many(lifecycle.CLOSED, ids, by=runner, reason="archived on its runner",
+                              change={"field": "status", "before": Session.ACTIVE, "after": Session.ARCHIVED})
 
     # The other closing signal: absence from a COMPLETE report. emdash deletes a
     # task it closes (no row, no flag), so for an ordinary close the report's
@@ -1069,8 +1074,12 @@ def replace_reported_sessions(
                    .exclude(session__status=Session.ARCHIVED))
         missing.update(missed_reports=F("missed_reports") + 1)
         gone = Session.objects.filter(runner_binding__in=missing.filter(missed_reports__gte=2))
-        newly_closed += list(gone.values_list("id", flat=True))
+        ids = list(gone.values_list("id", flat=True))
+        newly_closed += ids
         gone.update(status=Session.ARCHIVED)
+        lifecycle.record_many(lifecycle.CLOSED, ids, by=runner,
+                              reason="gone from two complete reports of its runner",
+                              change={"field": "status", "before": Session.ACTIVE, "after": Session.ARCHIVED})
 
     # A menu, unlike the runner FK below, MUST be cleared when its session stops
     # being reported. `pending_question` is only written inside the loop above,

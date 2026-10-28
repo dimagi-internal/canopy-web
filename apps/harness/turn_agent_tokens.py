@@ -33,6 +33,7 @@ from apps.tokens.models import PersonalToken
 
 from .models import Turn, TurnAgentToken
 from .routing import EXECUTING
+from .sensitivity import conversation_of
 
 logger = logging.getLogger(__name__)
 
@@ -163,13 +164,29 @@ def _audit(turn: Turn, runner, agent, session=None) -> None:
                 "summary": (f"{agent.slug}: {'session' if session is not None else 'turn'}-scoped "
                             f"canopy login issued to {runner.name}"),
                 "payload": {"agent": agent.slug, "turn": str(turn.pk), "runner": str(runner.pk),
-                            "session": str(session.pk) if session is not None else "",
+                            "scope": "session" if session is not None else "turn",
+                            "session": _conversation_id(turn, session),
                             "ttl_hours": TTL.total_seconds() / 3600},
             }],
             workspace=agent.workspace,
         )
     except Exception:  # noqa: BLE001
         logger.exception("turn agent token: could not record the event for %s", turn.pk)
+
+
+def _conversation_id(turn: Turn, session=None) -> str:
+    """The conversation a login was issued for, as an id: the session a
+    session-scoped login follows, else the turn's own conversation — a chat turn's
+    `chat_session`, an agent turn's `canopy_session` once its runner has recorded
+    one, or the chat its origin names. Blank only for a turn with no conversation
+    yet (a cloud agent turn asks for its login before its runner records the
+    session it opens, which `session.created` then names with `parent_turn`)."""
+    if session is not None:
+        return str(session.pk)
+    conversation = conversation_of(turn)
+    if conversation is not None:
+        return str(conversation.pk)
+    return str((turn.origin_ref or {}).get("chat_session_id") or "") if isinstance(turn.origin_ref, dict) else ""
 
 
 def _revoke(qs) -> int:

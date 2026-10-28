@@ -20,6 +20,7 @@ from apps.realtime import groups
 
 from . import activity as session_activity
 from . import attachment_storage, conversation_keys, drafts
+from . import lifecycle
 from . import transcript_read
 from .models import Attachment, Message, RunnerBinding, Session
 
@@ -255,6 +256,9 @@ def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = Fa
             fields = {"metadata": meta, **({"title": ""} if became_sensitive else {})}
             Session.objects.filter(pk=s.pk).update(**fields)
             if became_sensitive:
+                # An update() the row's observer never sees, so said here.
+                lifecycle.record(lifecycle.SENSITIVITY_CHANGED, s, sensitive=True,
+                                 change={"field": "sensitive", "before": False, "after": True})
                 # Its words are sealed from now on, to a key made for its people
                 # (`conversation_keys.ensure_key`; a starter with no vault key gets
                 # none, and the send door refuses them).
@@ -553,6 +557,7 @@ def reset_session(session, *, dry_run: bool = False) -> dict:
     if reason != RESET_OK or dry_run:
         return out
     Message.objects.filter(session=session).delete()
+    lifecycle.record(lifecycle.RESET, session, rows_dropped=rows)
     session_activity.rebuild(session)   # counters restart; the re-derive refolds them
     _merge_metadata(session, {TRANSCRIPT_SOURCED: True})
     transcript_read.request_backfill(session)
@@ -579,7 +584,8 @@ def reset_sessions(sessions, *, prune_ghosts: bool = False, dry_run: bool = Fals
         ):
             pruned.append({"session_id": str(session.id), "title": session.title})
             if not dry_run:
-                session.delete()
+                with lifecycle.acting(reason="a runner session with no binding (pruned on reset)"):
+                    session.delete()
             continue
         results.append(result)
     return {

@@ -16,6 +16,7 @@ from apps.harness.models import Turn
 
 from . import activity as session_activity
 from . import conversation_keys, handoff, services, transcript_read
+from . import lifecycle
 from .models import Message, RunnerBinding, Session
 
 
@@ -341,6 +342,10 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
 
         if h.capture_status != handoff.SessionHandoff.PENDING:
             h = handoff.settle(h)
+        lifecycle.record(lifecycle.TRANSFERRED, session, by=user,
+                         change={"field": "runner", "before": str(source.id) if source else None,
+                                 "after": str(target.id)},
+                         handoff=str(h.pk), to_cli=to_cli)
     binding.refresh_from_db()
     return binding, h.turn
 
@@ -446,6 +451,7 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         # copied rows are sealed to it (`conversation_keys.copy_key`).
         conversation_keys.copy_key(session, fork)
         session_activity.rebuild(Session.objects.select_for_update().get(pk=fork.pk))
+        lifecycle.record(lifecycle.FORKED, session, by=user, fork=str(fork.pk))
     return fork
 
 

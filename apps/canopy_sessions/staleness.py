@@ -29,6 +29,8 @@ from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
 from django.utils import timezone
 
+from . import lifecycle
+
 # How long a runner-discovered session survives with no runner sighting before it
 # drops out of `state=active`.
 #
@@ -331,8 +333,10 @@ def archive_stale_sessions(session_model) -> int:
     historical model; note that only works while the predicate stays within fields that
     model has (see the module docstring — migration 0009 no longer uses this).
     """
-    return (
-        session_model.objects.filter(status="active")
-        .filter(unseen_q())
-        .update(status="archived")
-    )
+    rows = session_model.objects.filter(status="active").filter(unseen_q())
+    ids = list(rows.values_list("pk", flat=True))
+    changed = session_model.objects.filter(pk__in=ids).update(status="archived")
+    if session_model is apps.get_model("canopy_sessions", "Session"):   # a historical one writes no log
+        lifecycle.record_many(lifecycle.ARCHIVED, ids, by="system", reason="not seen by any runner",
+                              change={"field": "status", "before": "active", "after": "archived"})
+    return changed
