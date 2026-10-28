@@ -2039,7 +2039,14 @@ class GoogleMintWorkOut(Schema):
     agent_id: str = ""
     kv: int = 0
     #: `{kind, target, public_jwk}` — who may read the agent, for a box without its vault key.
+    #: For a delegated sign-in: the machines that may hold the person's credential and
+    #: their own vault key — the only readers it may be sealed to.
     recipients: list[dict] = []
+    #: A person's OWN account, delegated to the agent: seal to `recipients` only (never
+    #: under the vault key, even when this box holds it), under `name`, and post `name`.
+    delegated: bool = False
+    #: The vault entry the token is sealed under ("" = the agent's `gog-token`).
+    name: str = ""
 
 
 class RunnerMintClaimOut(Schema):
@@ -2067,6 +2074,9 @@ class GoogleMintResultIn(Schema):
     value_zk: str = ""
     kv: int = 0
     account: str = Field(default="", max_length=254)
+    #: The entry name the value was sealed under (the work's `name`; a delegated sign-in
+    #: is refused without it, since a value sealed under another name opens nowhere).
+    name: str = Field(default="", max_length=120)
     error: str = Field(default="", max_length=32)
     detail: str = Field(default="", max_length=900)
 

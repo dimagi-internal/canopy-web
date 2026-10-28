@@ -1,7 +1,7 @@
 """A person's own credentials delegated to agents: see them, and withdraw them.
 
 A delegated credential (`credentials.accounts`) is a standing credential from YOUR own
-account — your GitHub token, given to ACE — sealed so that only the machines that run
+account — your GitHub token, given to ACE, or your Google account, given to Bailey — sealed so that only the machines that run
 the agent can open it. You cannot read it back, nor can anyone else; you can see which
 agent holds it, which machines can open it (and whose they are), what the provider said
 about it, and withdraw it. It is your own, like a token, so it is read by person, not
@@ -52,7 +52,8 @@ def withdraw_my_delegated_credential(request: HttpRequest, credential_id: int) -
     """Delete it from the agent's vault: no turn gets it from the next one on. A turn
     already running keeps it until it ends, and a machine that opened it may have kept a
     copy, so revoke it at the provider too (for GitHub,
-    github.com/settings/personal-access-tokens) — the only true recall."""
+    github.com/settings/personal-access-tokens; for Google, myaccount.google.com/connections)
+    — the only true recall."""
     entry = _mine(request.user).filter(pk=credential_id).first()
     if entry is None:
         raise ProblemError(404, "No such credential", type_=TYPE_NOT_FOUND)

@@ -1897,7 +1897,8 @@ export interface paths {
          * @description Delete it from the agent's vault: no turn gets it from the next one on. A turn
          *     already running keeps it until it ends, and a machine that opened it may have kept a
          *     copy, so revoke it at the provider too (for GitHub,
-         *     github.com/settings/personal-access-tokens) — the only true recall.
+         *     github.com/settings/personal-access-tokens; for Google, myaccount.google.com/connections)
+         *     — the only true recall.
          */
         readonly delete: operations["withdraw_my_delegated_credential"];
         readonly options?: never;
@@ -5809,6 +5810,54 @@ export interface paths {
          * @description `status` and, once it ends, `outcome` — never a code or a token.
          */
         readonly get: operations["get_google_mint"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/google/delegate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start connecting MY OWN Google account to this agent (finished on its runner)
+         * @description Your own Google account (`account`, e.g. you@gmail.com), for the agent to use on its
+         *     runner as a credential you delegate to it: `google-delegated-<account>`, sealed only to
+         *     the cloud runners that run the agent and runners of your own, readable by nobody in
+         *     canopy — you included. `services` defaults to `["gmail"]`. You must be one of the
+         *     agent's admins: a delegated credential is in force only while its person is. 409
+         *     `no_mint_runner` when no runner that may hold it is online. Poll
+         *     `get_google_delegation` until `authorize_url` is set, then open it with a top-level
+         *     navigation and sign in as `account`; you come back to the agent's connect page.
+         *     Withdraw it at Settings, `DELETE /api/me/delegated-credentials/{id}`.
+         */
+        readonly post: operations["start_google_delegation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/google/delegate/{mint_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How connecting my own Google account to this agent is going
+         * @description Your own sign-in only: `status` and, once it ends, `outcome` — never a code or a token.
+         */
+        readonly get: operations["get_google_delegation"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -10637,8 +10686,9 @@ export interface paths {
         readonly put?: never;
         /**
          * The runner reports an agent's Google sign-in: ciphertext only
-         * @description `{value_zk, kv, account}` — the agent's `gog-token`, encrypted on the box for the
-         *     agent's readers — or `{error, detail}`. A value that is not `zk1`/`zks1` ciphertext,
+         * @description `{value_zk, kv, account, name}` — the agent's `gog-token`, encrypted on the box for the
+         *     agent's readers (or a person's own account, sealed to the machines that may hold it,
+         *     under the work's `name`) — or `{error, detail}`. A value that is not `zk1`/`zks1` ciphertext,
          *     or is sealed to someone who may not read the agent, is refused; a token for another
          *     Google account than the agent's is not stored.
          */
@@ -27479,6 +27529,11 @@ export interface components {
              */
             readonly expected_account: string;
             /**
+             * Delegated
+             * @default false
+             */
+            readonly delegated: boolean;
+            /**
              * Detail
              * @default
              */
@@ -27501,6 +27556,16 @@ export interface components {
              * @default
              */
             readonly login_hint: string;
+        };
+        /**
+         * GoogleDelegateIn
+         * @description Connect YOUR OWN Google account to an agent, as a credential you delegate to it.
+         */
+        readonly GoogleDelegateIn: {
+            /** Account */
+            readonly account: string;
+            /** Services */
+            readonly services?: readonly string[];
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -34771,6 +34836,16 @@ export interface components {
             readonly recipients: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /**
+             * Delegated
+             * @default false
+             */
+            readonly delegated: boolean;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
         };
         /**
          * RunnerMintClaimOut
@@ -34859,6 +34934,11 @@ export interface components {
              * @default
              */
             readonly account: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
             /**
              * Error
              * @default
@@ -49362,6 +49442,55 @@ export interface operations {
         };
     };
     readonly get_google_mint: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly mint_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GoogleMintOut"];
+                };
+            };
+        };
+    };
+    readonly start_google_delegation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GoogleDelegateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GoogleMintOut"];
+                };
+            };
+        };
+    };
+    readonly get_google_delegation: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

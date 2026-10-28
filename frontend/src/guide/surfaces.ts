@@ -712,6 +712,15 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Grant a capability (admins)', 'Lower its max concurrency or lease length (admins)', 'Revoke a grant, releasing its live leases (admins)', 'See live leases'],
   },
   {
+    path: '/w/:workspace/agents/:slug/connect/google',
+    group: 'Agent workspace',
+    title: 'Connect your Google account',
+    audience: "One of the agent's admins connecting their OWN Google account (e.g. a personal Gmail) for the agent to use on their behalf",
+    what: "Name your Google account, choose what the agent may use (Gmail by default; `?services=gmail,calendar` preselects), press Connect, sign in at Google, and come back to how it ended. The sign-in finishes on a cloud runner that runs the agent, which seals the token as a credential you delegate to it (`google-delegated-<account>`) — only the machines that run the agent can open it; canopy never holds it and nobody can read it, you included. It is listed, and withdrawn, under Settings → Your credentials delegated to agents. Only the agent's admins may connect one: a delegated credential is used only while its person is an admin.",
+    needsFirst: "You are an admin of the agent, and a cloud runner that runs it (or a runner of your own) is online and can finish a Google sign-in.",
+    actions: ['Connect your Google account', 'Choose which Google services the agent may use', 'See how the sign-in ended'],
+  },
+  {
     path: '/w/:workspace/agents/:slug/settings/:tab',
     group: 'Agent workspace',
     title: 'Agent settings',

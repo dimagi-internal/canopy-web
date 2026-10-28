@@ -65,7 +65,7 @@ def test_the_code_is_exchanged_by_the_cli_and_only_its_answer_goes_back(cr, monk
     assert ran["argv"][-6:] == ["vault", "google-mint", "--agent", "ace", "--runner", "rid"]
     assert ran["stdin"]["code"] == "4/code" and ran["stdin"]["code_verifier"] == "v" * 64
     assert posts == [("/runners/rid/google-mint/m1/result",
-                      {"value_zk": "zk1:abc", "kv": 2, "account": "ace@dimagi-ai.com"})]
+                      {"value_zk": "zk1:abc", "kv": 2, "account": "ace@dimagi-ai.com", "name": "gog-token"})]
     assert "m1" not in cr._GOOGLE_VERIFIERS, "a verifier is used once"
 
 
@@ -97,3 +97,44 @@ def test_a_code_without_its_verifier_is_reported_interrupted(cr, monkeypatch):
     assert posts == [("/runners/rid/google-mint/m9/result", {
         "error": "interrupted",
         "detail": "the sign-in was interrupted on the runner (it restarted) — please start again"})]
+
+
+# --- a person's own Google account, delegated to the agent ----------------------------
+
+def _staging(cr, monkeypatch, tmp_path, delegated):
+    monkeypatch.setattr(cr.pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cr, "_bearer", lambda **kw: "crt_x")
+    monkeypatch.setitem(cr._AGENT_DELEGATED, "bailey", delegated)
+    ran = []
+
+    def fake_run(argv, env=None, **kw):
+        ran.append((argv, env))
+        account = argv[argv.index("--delegated") + 1]
+        f = tmp_path / ".canopy" / "delegated" / "bailey" / "google" / f"{account}.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"access_token": "ya29.x", "expires_at": 9e12, "account": account}))
+        return subprocess.CompletedProcess(argv, 0, stdout=str(f) + "\n", stderr="")
+
+    monkeypatch.setattr(cr.subprocess, "run", fake_run)
+    return ran
+
+
+def test_a_delegated_google_account_is_staged_as_an_access_token_by_the_cli(cr, monkeypatch, tmp_path):
+    ran = _staging(cr, monkeypatch, tmp_path, {
+        "google-delegated-gina@gmail.com": '{"refresh_token": "1//r"}', "github-token": "ghp_x"})
+    assert cr._stage_delegated_google("bailey") == ["gina@gmail.com"]
+    [(argv, env)] = ran
+    assert argv[1:] == ["cred", "google-token", "--runner", "--agent", "bailey", "--delegated", "gina@gmail.com"]
+    assert env["CANOPY_TOKEN"] == "crt_x"
+    assert "1//r" not in json.dumps(argv), "the refresh token never rides argv"
+    # Fresh: not minted again.
+    assert cr._stage_delegated_google("bailey") == ["gina@gmail.com"] and len(ran) == 1
+
+
+def test_a_withdrawn_google_account_loses_its_staged_token(cr, monkeypatch, tmp_path):
+    _staging(cr, monkeypatch, tmp_path, {"google-delegated-gina@gmail.com": "{}"})
+    cr._stage_delegated_google("bailey")
+    staged = tmp_path / ".canopy" / "delegated" / "bailey" / "google" / "gina@gmail.com.json"
+    assert staged.exists()
+    cr._AGENT_DELEGATED["bailey"] = {}
+    assert cr._stage_delegated_google("bailey") == [] and not staged.exists()

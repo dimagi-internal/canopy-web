@@ -38,7 +38,7 @@ from . import vault_engine, zk, zk_endorse, zk_seal
 from .zk import ZkError
 
 GITHUB_ENTRY = "github-token"
-PROVIDER_NAMES = {"github": "GitHub", "salesforce": "Salesforce", "anthropic": "Claude", "other": ""}
+PROVIDER_NAMES = {"github": "GitHub", "google": "Google", "salesforce": "Salesforce", "anthropic": "Claude", "other": ""}
 
 
 def is_delegated(entry, agent) -> bool:

@@ -39,6 +39,19 @@ describe('DelegatedCredentialsPanel', () => {
     expect(await screen.findByText(/delegated no credentials/)).toBeTruthy()
   })
 
+  it('shows a delegated Google account and where to revoke it', async () => {
+    list.mockResolvedValueOnce([{
+      ...ROW, id: 4, agent: 'bailey', agent_name: 'Bailey', name: 'google-delegated-gina@gmail.com',
+      provider: 'google', label: 'Google · delegated by Gina', identity: { email: 'gina@gmail.com' },
+      machines: ['cloud-ec2-2-marshellis'],
+    }])
+    render(<DelegatedCredentialsPanel />)
+    expect(await screen.findByText('Google as gina@gmail.com')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Revoke at Google' }).getAttribute('href'))
+      .toBe('https://myaccount.google.com/connections')
+    expect(screen.getByRole('button', { name: 'Withdraw' })).toBeTruthy()
+  })
+
   it('says when one is no longer used because you are no longer the agent’s admin', async () => {
     list.mockResolvedValueOnce([{ ...ROW, in_force: false }])
     render(<DelegatedCredentialsPanel />)

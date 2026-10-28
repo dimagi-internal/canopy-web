@@ -1356,6 +1356,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             # The reply names this turn if a person asked to stop it — the
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
+            _restage_delegated_google()
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1620,6 +1621,73 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
     except OSError as exc:
         _log(f"warn: could not stage {slug}'s Salesforce credential ({exc})")
         return None
+
+
+#: A delegated Google account's vault entry name (canopy-web `google_mint.DELEGATED_PREFIX`):
+#: a person's OWN Google account, lent to the agent (`/agents/<slug>/connect/google`).
+DELEGATED_GOOGLE_PREFIX = "google-delegated-"
+#: A staged access token with less life left than this is minted again — before a turn,
+#: and on the lease heartbeat while one runs, so a turn never reads one about to lapse.
+DELEGATED_GOOGLE_MIN_LIFE = 900
+
+
+def _delegated_google_home(slug: str) -> pathlib.Path:
+    """Where a turn of `slug` finds the access tokens of the Google accounts people
+    delegated to it — the path `canopy cred google-token --delegated` reads."""
+    return pathlib.Path.home() / ".canopy" / "delegated" / slug / "google"
+
+
+def _delegated_google_accounts(slug: str) -> list[str]:
+    return sorted(n[len(DELEGATED_GOOGLE_PREFIX):] for n in _AGENT_DELEGATED.get(slug, {})
+                  if n.startswith(DELEGATED_GOOGLE_PREFIX))
+
+
+def _stage_delegated_google(slug: str, *, now: float | None = None) -> list[str]:
+    """Stage a short-lived ACCESS token for each Google account a person delegated to
+    `slug` that this box opened (`_AGENT_DELEGATED`), and REMOVE the file of one no
+    longer delegated. The refresh token stays in this process and the canopy CLI's: the
+    CLI (`cred google-token --runner --delegated`, this box's own token and device proof)
+    refreshes it at Google and writes only the access token (0600). Returns the accounts."""
+    if slug and slug not in _AGENT_DELEGATED:
+        _turn_values(slug)
+    now = time.time() if now is None else now
+    accounts = _delegated_google_accounts(slug)
+    home = _delegated_google_home(slug)
+    try:
+        for f in home.glob("*.json") if home.is_dir() else []:
+            if f.stem not in accounts:
+                f.unlink(missing_ok=True)
+    except OSError as exc:
+        _log(f"warn: {slug}: could not clear withdrawn Google accounts ({exc})")
+    for account in accounts:
+        target = home / f"{account}.json"
+        try:
+            if float(json.loads(target.read_text()).get("expires_at") or 0) - now > DELEGATED_GOOGLE_MIN_LIFE:
+                continue
+        except (OSError, ValueError, AttributeError):
+            pass
+        env = _child_safe_env()
+        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+        try:
+            res = subprocess.run([_canopy_cli(), "cred", "google-token", "--runner", "--agent", slug,
+                                  "--delegated", account], env=env, capture_output=True, text=True,
+                                 timeout=120)
+            if res.returncode != 0:
+                raise RuntimeError(" ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}")
+        except Exception as exc:  # noqa: BLE001 — the turn runs; it is told by the CLI's refusal
+            _log(f"warn: {slug}: could not stage the Google account {account} delegated to it ({exc})")
+    return accounts
+
+
+def _restage_delegated_google() -> None:
+    """The lease heartbeat's half: keep every staged delegated Google token fresh while a
+    turn runs (an access token lives an hour; a turn may run longer)."""
+    for slug in [s for s, names in list(_AGENT_DELEGATED.items())
+                 if any(n.startswith(DELEGATED_GOOGLE_PREFIX) for n in names)]:
+        try:
+            _stage_delegated_google(slug)
+        except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
+            _log(f"warn: {slug}: re-staging delegated Google tokens failed ({exc})")
 
 
 # ── Canopy Vault device proof: this box's IAM role (canopy-web#1549, Phase 1b) ──
@@ -3670,6 +3738,12 @@ def _agent_env(slug: str | None) -> dict:
     sf_home = _stage_salesforce(slug)
     if sf_home is not None:
         env["CHROME_SALES_HOME"] = str(sf_home)
+    # Google accounts people delegated to the agent: an access token each, staged for
+    # `canopy cred google-token --delegated <account>`; their names, never a value.
+    env.pop("CANOPY_DELEGATED_GOOGLE", None)
+    google_accounts = _stage_delegated_google(slug)
+    if google_accounts:
+        env["CANOPY_DELEGATED_GOOGLE"] = ",".join(google_accounts)
     # The agent's OWN gog home and keyring password (spec §6) — never another
     # agent's, never a box-wide one. {} on a box without a runner secret.
     env.update(gog_env(slug))
@@ -9469,7 +9543,7 @@ def _drain_google_mint(runner_id: str, work: dict) -> None:
     except Exception as exc:  # noqa: BLE001 — always tell the waiting person
         doc = {"error": "exchange-failed", "detail": f"the runner could not finish the sign-in: {exc}"}
     verifier = ""
-    body = {k: doc[k] for k in ("value_zk", "kv", "account", "error", "detail") if k in doc}
+    body = {k: doc[k] for k in ("value_zk", "kv", "account", "name", "error", "detail") if k in doc}
     status, _ = _api("POST", f"{base}/result", body)
     _log(f"google mint {mint_id[:8]} ({slug}): "
          + (f"stored for {doc.get('account')}" if doc.get("value_zk") and status == 204

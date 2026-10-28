@@ -755,8 +755,9 @@ def post_google_mint_challenge(request: HttpRequest, runner_id: uuid.UUID, mint_
 @gate("runner", setting=True, step_up="runner protocol: the box's own token, and ciphertext only")
 def post_google_mint_result(request: HttpRequest, runner_id: uuid.UUID, mint_id: uuid.UUID,
                             payload: GoogleMintResultIn):
-    """`{value_zk, kv, account}` — the agent's `gog-token`, encrypted on the box for the
-    agent's readers — or `{error, detail}`. A value that is not `zk1`/`zks1` ciphertext,
+    """`{value_zk, kv, account, name}` — the agent's `gog-token`, encrypted on the box for the
+    agent's readers (or a person's own account, sealed to the machines that may hold it,
+    under the work's `name`) — or `{error, detail}`. A value that is not `zk1`/`zks1` ciphertext,
     or is sealed to someone who may not read the agent, is refused; a token for another
     Google account than the agent's is not stored."""
     runner = runner_or_404(request, runner_id)
@@ -766,10 +767,17 @@ def post_google_mint_result(request: HttpRequest, runner_id: uuid.UUID, mint_id:
                                             detail=payload.detail, account=payload.account)
             return Status(204, None)
         mint = agent_google_mint.finish(runner, mint_id, kv=payload.kv, value_zk=payload.value_zk,
-                                        account=payload.account)
+                                        account=payload.account, name=payload.name)
     except agent_google_mint.MintRefused as exc:
         raise _google_mint_problem(exc) from exc
-    if mint.status == mint.DONE:
+    if mint.status == mint.DONE and mint.delegated_by_id:
+        name = agent_google_mint.delegated_entry_name(mint.expected_account)
+        events_audit.note_change(scope=f"agent:{mint.agent.slug}:credential:{name}", before=None,
+                                 after={"google_account": mint.account, "delegated_by": mint.delegated_by.email},
+                                 workspace=mint.agent.workspace,
+                                 summary=f"{mint.delegated_by.email} delegated their Google account "
+                                         f"({mint.account}) to {mint.agent.slug} via {runner.name}")
+    elif mint.status == mint.DONE:
         events_audit.note_change(scope=f"agent:{mint.agent.slug}:credential:gog-token", before=None,
                                  after={"google_account": mint.account}, workspace=mint.agent.workspace,
                                  summary=f"connected {mint.agent.slug}'s Google account ({mint.account}) "
