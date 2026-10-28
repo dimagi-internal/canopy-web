@@ -67,7 +67,7 @@ jobs:
   # with the other fast static gates — once is enough.
   test-backend:
     name: Backend pytest (${{ matrix.shard }}/3)
-    if: github.event_name != 'pull_request'
+    if: true  # PROBE
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -194,7 +194,7 @@ jobs:
   # setup eight times over and hold eight runners per PR.
   test-runner-packages:
     name: Runner packages
-    if: github.event_name != 'pull_request'
+    if: true  # PROBE
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -321,7 +321,7 @@ jobs:
   # on Postgres is minutes longer and adds nothing SQLite does not already cover).
   test-backend-postgres:
     name: Backend pytest (PostgreSQL)
-    if: github.event_name != 'pull_request'
+    if: true  # PROBE
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -543,7 +543,7 @@ jobs:
   # built once, with every migration, which also proves they apply on SQLite.
   test-backend-migrations:
     name: Backend pytest (migrations)
-    if: github.event_name != 'pull_request'
+    if: true  # PROBE
     runs-on: ubuntu-latest
     # A data migration's test walks the graph back and forth, and costs more with
     # every later migration; they are deleted once deployed (CLAUDE.md), so this
@@ -749,7 +749,7 @@ jobs:
   # queue's longest job (~3–5 min). Shard 1 also builds the SPA and the site.
   test-frontend:
     name: Frontend tests (${{ matrix.shard }}/2)
-    if: github.event_name != 'pull_request'
+    if: true  # PROBE
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
