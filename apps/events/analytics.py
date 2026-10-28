@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from allauth.account.models import EmailAddress
 from django.db.models import Case, Count, F, Max, Q, Sum, When
 from django.db.models.functions import Lower, TruncDate
 from django.utils import timezone
@@ -190,8 +191,6 @@ def _contacts_who_are_known(contact_ids: set[str]) -> dict[str, str]:
     login's, or one of its inbound mailboxes), else `person:<pk>` when the contact
     is linked to an account or its address is one account's verified email (the
     rule of `contacts.services.user_for_verified_email`)."""
-    from allauth.account.models import EmailAddress
-
     from apps.agents.models import Agent
     from apps.contacts.models import Contact
     from apps.inbound.models import InboundMailbox
