@@ -161,7 +161,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     flat: 'personal/global: your own profile, the same in every workspace',
     title: 'Your profile',
     audience: 'Everyone',
-    what: 'Your own page: who you are and every workspace you are in (with the page other members there see for you), with your memory and your account settings as its other tabs.',
+    what: 'Your own page: who you are and every workspace you are in (with the page other members there see for you), with your memory and your account settings beside it on the left rail.',
     actions: ['See how members of each workspace see you', 'Open your memory', 'Open your account settings'],
   },
   {
@@ -170,8 +170,17 @@ export const SURFACES: SurfaceDescriptor[] = [
     flat: 'personal/global: your own account',
     title: 'Your settings',
     audience: 'Everyone',
-    what: 'Your own account and this deployment (the workspace\'s own configuration is at /w/:workspace/settings): which AI backend is in use, your Claude subscription connection, presence visibility, and your personal access tokens.',
-    actions: ['Mint a personal access token', 'Revoke a token', 'Switch AI backend', 'Toggle presence'],
+    what: 'Your own account (the workspace\'s configuration is at /w/:workspace/settings), as tabs on your own page: Account (contact details, presence, where your sessions are filed, who may review them), Security (passkeys, recovery, the runners that may open your agents\' secrets), Agents acting for you (credentials you delegated, act-as-you permissions), Runners (the runners you administer, the repos you use canopy in, the runner app) and Connections (GitHub, MCP clients, personal access tokens). Bare /settings, and an old /settings#anchor link, open the tab that holds it.',
+    actions: ['Mint a personal access token', 'Revoke a token', 'Approve a runner', 'Connect GitHub', 'Toggle presence'],
+  },
+  {
+    path: '/settings/:tab',
+    home: '/me',
+    flat: 'personal/global: one tab of your own account settings',
+    title: 'Your settings — one tab',
+    audience: 'Everyone',
+    what: 'One tab of your account settings: account, security, agents, runners or connections.',
+    actions: ['Switch tab'],
   },
   {
     path: '/new-workspace',

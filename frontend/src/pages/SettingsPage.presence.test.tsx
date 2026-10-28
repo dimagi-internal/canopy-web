@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-li
 // SettingsPage is a routed page and now reads the query string — the GitHub
 // OAuth callback returns the browser to /settings?github=… — so it needs a
 // Router here, which is what every other page test in this repo already does.
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import type { PresencePreferenceOut } from '@/api/presence'
 
 // NOTE ON CONVENTION: canopy-web has no @testing-library/jest-dom and no
@@ -49,6 +49,22 @@ const { SettingsPage } = await import('./SettingsPage')
 const { PRESENCE_PREFERENCE_CHANGED_EVENT } = await import('@/presence/events')
 const { usePresenceReconnectNonce } = await import('@/presence/usePresenceReconnectNonce')
 
+// Settings is tabs (`/settings/:tab`); Presence is on Account.
+function AtSettings({ path }: { path: string }) {
+  return (
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/:tab" element={<><SettingsPage /><Where /></>} />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+function Where() {
+  const { pathname, search, hash } = useLocation()
+  return <output data-testid="where">{pathname + search + hash}</output>
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -67,9 +83,7 @@ describe('SettingsPage presence toggle', () => {
     expect(shell.result.current).toBe(0)
 
     render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>,
+      <AtSettings path="/settings/account" />,
     )
 
     const checkbox = await screen.findByRole('checkbox', { name: /show me as viewing/i })
@@ -97,9 +111,7 @@ describe('SettingsPage presence toggle', () => {
     window.addEventListener(PRESENCE_PREFERENCE_CHANGED_EVENT, handler)
 
     render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>,
+      <AtSettings path="/settings/account" />,
     )
     const checkbox = await screen.findByRole('checkbox', { name: /show me as viewing/i })
 
@@ -119,9 +131,7 @@ describe('SettingsPage presence toggle', () => {
     getPresencePreference.mockResolvedValue({ show_presence: true })
 
     render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>,
+      <AtSettings path="/settings/account" />,
     )
 
     // Resolves only if the accessible name is exactly this — a leaked help
@@ -129,5 +139,21 @@ describe('SettingsPage presence toggle', () => {
     const checkbox = await screen.findByRole('checkbox', { name: 'Show me as viewing' })
     expect(checkbox.getAttribute('aria-describedby')).toBe('presence-toggle-help')
     expect(screen.getByText(/they cannot see you/i)).toBeTruthy()
+  })
+})
+
+describe('SettingsPage tabs', () => {
+  it.each([
+    ['/settings', '/settings/account'],
+    ['/settings#vault-key', '/settings/security#vault-key'],
+    ['/settings?device_key=7#your-runners', '/settings/security?device_key=7#your-runners'],
+    ['/settings?github=connected', '/settings/connections?github=connected'],
+    ['/settings#canopy-projects', '/settings/runners#canopy-projects'],
+    ['/settings/account#passkeys', '/settings/security#passkeys'],
+    ['/settings/nope', '/settings/account'],
+  ])('an old address %s opens %s', async (from, to) => {
+    getPresencePreference.mockResolvedValue({ show_presence: true })
+    render(<AtSettings path={from} />)
+    expect((await screen.findByTestId('where')).textContent).toBe(to)
   })
 })
