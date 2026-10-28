@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from apps.workspace_apps.models import AppInstallation
+from apps.workspace_apps.models import AppInstallation, AppRoleGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.workspace_apps import _client, _user
 
@@ -24,6 +24,9 @@ def world():
 def hiring(world):
     r = _client(world["admin"]).post("/api/workspace-apps/dimagi/", {"template": "hiring"}, content_type="application/json")
     assert r.status_code == 201, r.content
-    return AppInstallation.objects.get(workspace_id="dimagi", key="hiring")
+    inst = AppInstallation.objects.get(workspace_id="dimagi", key="hiring")
+    # Recruiter goes to admins and to people named for it — the editor here is the recruiter.
+    AppRoleGrant.objects.create(installation=inst, user=world["editor"], role="recruiter", granted_by=world["admin"])
+    return inst
 
 

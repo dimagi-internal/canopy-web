@@ -62,6 +62,9 @@ WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot a
   `links` (a private page for one record — a candidate picking a time). A field with `read` is
   readable by that role only (self-ID answers: compliance) and is absent for everyone else: never
   show it, mail it or copy it into another field. `retention` rules anonymize records on a clock.
+  A collection's `scope` narrows it to records: a member sees only the jobs (and their candidates)
+  whose team they are on, so a query can return fewer rows than exist — say "none you can see",
+  never "none". An effect's `delay_param` holds its email back that many hours.
 
 ALWAYS: one change per request item; tell the person in plain words what you changed and that they
 should open the draft's test copy and try it before publishing. Never claim it is live.

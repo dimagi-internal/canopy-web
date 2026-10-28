@@ -33,13 +33,17 @@ from .models import (
     AppInstallation,
     AppRecord,
     AppRecordEvent,
+    AppScheduledEmail,
     AppTemplate,
     AppTemplateVersion,
     AppVersion,
 )
+from .scope import Scope
 
 BUNDLED_DIR = Path(__file__).parent / "bundled"
 MAX_QUERY_LIMIT = 2000
+#: The longest an action's email may be held back (two weeks).
+MAX_DELAY_HOURS = 14 * 24
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)\s*\}\}")
@@ -89,10 +93,14 @@ def sync_bundled() -> None:
         if not (d / "manifest.json").is_file():
             continue
         m = _read_bundled(d.name)
-        tmpl, _ = AppTemplate.objects.update_or_create(
-            key=m["key"], defaults={"name": m["name"], "description": m["description"], "owner": None, "listed": True})
-        AppTemplateVersion.objects.get_or_create(template=tmpl, version=m["version"],
-                                                 defaults={"manifest": m, "changelog": m["changelog"]})
+        want = {"name": m["name"], "description": m["description"], "owner_id": None, "listed": True}
+        tmpl = AppTemplate.objects.filter(key=m["key"]).first()
+        # Write only what changed: the store is read on every visit, and a read must not take a write lock.
+        if tmpl is None or any(getattr(tmpl, k) != v for k, v in want.items()):
+            tmpl, _ = AppTemplate.objects.update_or_create(key=m["key"], defaults=want)
+        if not tmpl.versions.filter(version=m["version"]).exists():
+            AppTemplateVersion.objects.get_or_create(template=tmpl, version=m["version"],
+                                                     defaults={"manifest": m, "changelog": m["changelog"]})
 
 
 def _version_key(v: str) -> tuple:
@@ -110,9 +118,68 @@ def store(workspace_id: str) -> list[dict]:
     out = []
     for t in rows.prefetch_related("versions"):
         v = latest_version(t)
+        listing = v.manifest.get("listing") or {}
+        shots = listing.get("screenshots") or [] if t.owner_id is None else []
         out.append({"key": t.key, "name": t.name, "description": t.description, "version": v.version,
-                    "publisher": "canopy" if t.owner_id is None else t.owner_id, "changelog": v.changelog})
+                    "publisher": "canopy" if t.owner_id is None else t.owner_id, "changelog": v.changelog,
+                    "tagline": listing.get("tagline") or "", "cover": shots[0]["file"] if shots else ""})
     return out
+
+
+def _store_template(workspace_id: str, key: str, *, sync: bool = True) -> AppTemplate:
+    if sync:
+        sync_bundled()
+    t = AppTemplate.objects.filter(key=key).filter(Q(owner__isnull=True, listed=True) | Q(owner_id=workspace_id)).first()
+    if t is None:
+        raise LookupError(f"no app '{key}' in the store")
+    return t
+
+
+def store_detail(workspace_id: str, key: str) -> dict:
+    """One store app, as someone deciding whether to install it reads it: the
+    listing, what it adds (pages, roles, records, settings, retention), what it
+    shows the public, and every version's changelog."""
+    t = _store_template(workspace_id, key)
+    v = latest_version(t)
+    m = v.manifest
+    listing = m.get("listing") or {}
+    if t.owner_id is not None:
+        listing = {**listing, "screenshots": []}
+    caps = {"content.write": "every editor", "members.manage": "workspace admins", "integrations": "workspace admins",
+            "read": "every member"}
+    roles = [{"name": "maintainer", "description": "Customizes the app, tests changes on a copy and publishes them.",
+              "holders": "workspace admins, and anyone given it by name"}]
+    roles += [{"name": n, "description": r.get("description") or "",
+               "holders": (caps.get(r["capability"], r["capability"]) + ", and anyone given it by name")
+               if r.get("capability") else "only people given it by name"} for n, r in (m.get("roles") or {}).items()]
+    pages = [{"title": p["title"], "audience": p["audience"]} for p in m.get("pages") or []
+             if p.get("nav", True) or p["audience"] != "member"]
+    records = [{"label": c.get("label") or n, "fields": len(c["fields"]),
+                "restricted": sorted({f["read"] for f in c["fields"].values() if f.get("read")}),
+                "scoped": "scope" in c} for n, c in m["collections"].items()]
+    retention = [str(r.get("label") or r.get("collection") or "") for r in m.get("retention") or []]
+    versions = sorted(t.versions.all(), key=lambda x: (_version_key(x.version), x.released_at), reverse=True)
+    return {"key": t.key, "name": t.name, "description": t.description, "version": v.version,
+            "publisher": "canopy" if t.owner_id is None else t.owner_id, "listing": listing, "roles": roles,
+            "pages": pages, "records": records, "settings": len(m.get("settings") or {}), "retention": retention,
+            "public_pages": [p["title"] for p in pages if p["audience"] == "public"],
+            "emails": sorted({a["label"] for a in m["actions"].values() if a.get("effects")}),
+            "versions": [{"version": x.version, "released_at": x.released_at.isoformat(), "changelog": x.changelog}
+                         for x in versions[:10]],
+            "installed": AppInstallation.objects.filter(workspace_id=workspace_id, template=t).exists()}
+
+
+def store_screenshot(workspace_id: str, key: str, file: str) -> tuple[bytes, str]:
+    """A bundled template's screenshot, by the name its listing gives it."""
+    t = _store_template(workspace_id, key, sync=False)  # read-only: a page of images must not write
+    listing = latest_version(t).manifest.get("listing") or {}
+    if t.owner_id is not None or file not in {s["file"] for s in listing.get("screenshots") or []}:
+        raise LookupError("no such screenshot")
+    path = (BUNDLED_DIR / t.key / file).resolve()
+    if BUNDLED_DIR.resolve() not in path.parents or not path.is_file():
+        raise LookupError("no such screenshot")
+    kind = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[path.suffix.lstrip(".")]
+    return path.read_bytes(), kind
 
 
 # --- installing --------------------------------------------------------------------------
@@ -455,6 +522,17 @@ def readable(spec: dict, roles: set[str] | None) -> list[str]:
     return [k for k, f in spec["fields"].items() if roles is None or not f.get("read") or f["read"] in roles]
 
 
+def may_read(spec: dict, roles: set[str]) -> bool:
+    """The collection's `read` role, or one of its `read_also` roles."""
+    return spec["read"] in roles or bool(roles & set(spec.get("read_also") or []))
+
+
+def scope_for(inst: AppInstallation, m: dict, space: str, user, roles: set[str]) -> Scope | None:
+    """The record-level narrowing for a member's session (scope.py), or None for
+    the app itself, a visitor and a link holder, which are not scoped."""
+    return Scope(inst, m, space, user, roles) if getattr(user, "is_authenticated", False) else None
+
+
 def _row(rec: AppRecord, fields: list[str] | None = None) -> dict:
     data = rec.data if fields is None else {k: rec.data[k] for k in fields if k in rec.data}
     return {"id": rec.pk, "created_at": rec.created_at.isoformat(), "updated_at": rec.updated_at.isoformat(), **data}
@@ -473,7 +551,7 @@ def _matches(data: dict, where: dict) -> bool:
 
 def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dict | None = None,
           order: str = "-created_at", limit: int = 100, public: bool = False, space: str = LIVE,
-          manifest: dict | None = None) -> list[dict]:
+          manifest: dict | None = None, user=None) -> list[dict]:
     """Records of one collection the caller may read. `public=True` is the
     anonymous door: the collection's public projection, its `where` always
     applied on top of the caller's and only its fields returned."""
@@ -491,12 +569,16 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
             return []
         where.update(pub["where"])
         projection = pub["fields"]
-    elif spec["read"] not in roles:
+    elif not may_read(spec, roles):
         raise Refused(f"reading '{collection}' needs the '{spec['read']}' role")
     else:
         projection = readable(spec, roles)
     fields = spec["fields"]
     qs = AppRecord.objects.filter(installation=inst, space=space, collection=collection)
+    sc = None if public else scope_for(inst, m, space, user, roles)
+    ids = sc.allowed(collection) if sc else None
+    if ids is not None:
+        qs = qs.filter(pk__in=ids)
     for k, v in where.items():
         if k == "id":
             qs = qs.filter(pk__in=v) if isinstance(v, list) else qs.filter(pk=v)
@@ -524,13 +606,16 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
     return [_row(r, projection) for r in qs[:limit]]
 
 
-def history(inst: AppInstallation, *, roles: set[str], record_id: int, space: str = LIVE) -> list[dict]:
+def history(inst: AppInstallation, *, roles: set[str], record_id: int, space: str = LIVE, user=None) -> list[dict]:
     m = manifest_for(inst, space)
     rec = AppRecord.objects.filter(installation=inst, space=space, pk=record_id).first()
     if rec is None:
         raise Refused(f"record {record_id} not found", status=404)
     spec = m["collections"].get(rec.collection)
-    if spec is None or spec["read"] not in roles:
+    if spec is None or not may_read(spec, roles):
+        raise Refused(f"record {record_id} not found", status=404)
+    sc = scope_for(inst, m, space, user, roles)
+    if sc and not sc.sees(rec.collection, rec.pk):
         raise Refused(f"record {record_id} not found", status=404)
     shown = set(readable(spec, roles))
     return [{"action": e.action, "op": e.op, "changes": {k: v for k, v in (e.changes or {}).items() if k in shown},
@@ -753,8 +838,16 @@ def _effects(inst: AppInstallation, m: dict, spec: dict, rec: AppRecord, space: 
                              minutes=int(dur) if str(dur).isdigit() else 45,
                              location=str(rec.data.get(e["ics"].get("location_field") or "") or ""), description=body)
             out["invite"] = True
+        hours = min(float(params.get(e["delay_param"]) or 0), MAX_DELAY_HOURS) if e.get("delay_param") else 0
         if space != LIVE:
             out["status"] = "test copy — not sent"
+        elif hours > 0:
+            at = timezone.now() + timedelta(hours=hours)
+            literal = {k: v for k, v in (spec.get("set") or {}).items() if not (isinstance(v, str) and v.startswith("$"))}
+            AppScheduledEmail.objects.create(installation=inst, record=rec, action=str(spec.get("label") or "")[:40],
+                                             to=out["to"], subject=subject, body=body,
+                                             when={**(e.get("when") or {}), **literal}, send_at=at)
+            out["status"] = f"scheduled for {at:%Y-%m-%d %H:%M} UTC"
         elif not getattr(django_settings, "WORKSPACE_APPS_SEND_EMAIL", False):
             out["status"] = "not sent — app email is off on this server"
         else:
@@ -805,6 +898,9 @@ def _then(inst: AppInstallation, m: dict, action: str, spec: dict, rec: AppRecor
             target = AppRecord.objects.create(installation=inst, space=space, collection=step["collection"],
                                               data=data, created_by_label=label)
             changes = data
+            if step.get("link_back"):
+                rec.data = {**rec.data, step["link_back"]: target.pk}
+                rec.save(update_fields=["data", "updated_at"])
         else:
             target_id = rec.pk if step["ref"] == "$record" else rec.data.get(step["ref"])
             target = (AppRecord.objects.select_for_update()
@@ -866,11 +962,15 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
     # A visitor with no account is labelled by the first address they gave (normalised).
     given = next((v for k, v in values.items() if fields[k]["type"] == "email" and v), "")
     label = (user.email if authed else "") or given or label or (f"link:{link['name']}" if link else "") or "anonymous"
+    sc = scope_for(inst, m, space, user, roles) if not public and link is None else None
     for k, target in spec["refs"].items():
         if values.get(k) is not None:
             ref = AppRecord.objects.filter(installation=inst, space=space, pk=values[k]).first()
             if not _matches(ref.data, target["where"]):
                 raise ValueError(f"{k}: that {fields[k]['collection']} is not available")
+    for k, f in fields.items():
+        if sc and f["type"] == "ref" and values.get(k) is not None and not sc.sees(f["collection"], values[k]):
+            raise ValueError(f"{k}: that {f['collection']} is not available")
     values.update({k: _token(v, user, label, pvals) for k, v in spec["set"].items()})
     if link is not None and spec["op"] == "create":
         values[spec["link_ref"]] = link["record"]
@@ -891,7 +991,7 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
     else:
         rec = (AppRecord.objects.select_for_update()
                .filter(installation=inst, space=space, collection=spec["collection"], pk=record_id or 0).first())
-        if rec is None:
+        if rec is None or (sc and not sc.sees(rec.collection, rec.pk)):
             raise Refused(f"no {spec['collection']} {record_id}", status=404)
         if spec.get("when") and not _matches(rec.data, spec["when"]):
             raise Refused(f"'{spec['label']}' does not apply to this {spec['collection']} as it stands", status=409)
@@ -1210,6 +1310,38 @@ def retention_sweep(now=None) -> dict:
     return out
 
 
+def send_scheduled(now=None) -> dict:
+    """Send every held-back email that is due (the clock's door). One whose record
+    no longer matches what the action left it as (an un-rejected candidate, an
+    anonymized address) is cancelled, not sent; each outcome lands in the
+    record's history."""
+    now = now or timezone.now()
+    counts = {"sent": 0, "cancelled": 0, "failed": 0}
+    due = (AppScheduledEmail.objects.filter(status=AppScheduledEmail.SCHEDULED, send_at__lte=now)
+           .select_related("installation", "record"))
+    for row in due[:500]:
+        rec, inst = row.record, row.installation
+        to = [a.strip() for a in row.to.split(",") if _EMAIL.match(a.strip())]
+        if not inst.enabled or not _matches(rec.data, row.when) or not to:
+            row.status, row.note = AppScheduledEmail.CANCELLED, "the record changed before it was due"
+        elif not getattr(django_settings, "WORKSPACE_APPS_SEND_EMAIL", False):
+            row.status, row.note = AppScheduledEmail.FAILED, "not sent — app email is off on this server"
+        else:
+            try:
+                EmailMessage(row.subject, row.body, django_settings.DEFAULT_FROM_EMAIL, to).send()
+                row.status, row.sent_at = AppScheduledEmail.SENT, now
+            except Exception as exc:  # noqa: BLE001 — one failed send must not stop the rest
+                row.status, row.note = AppScheduledEmail.FAILED, f"failed: {exc}"[:200]
+        row.save(update_fields=["status", "note", "sent_at"])
+        counts[row.status] += 1
+        AppRecordEvent.objects.create(
+            installation=inst, space=LIVE, record=rec, record_ref=rec.pk, collection=rec.collection,
+            action=f"{row.action}"[:31] + " (email)", op="email", changes={},
+            effects=[{"type": "email", "to": row.to, "subject": row.subject,
+                      "status": row.status if not row.note else row.note}], actor_label="scheduled")
+    return counts
+
+
 def subject_export(inst: AppInstallation, *, email: str) -> dict:
     """Everything the app holds about one person, found by their address in any
     email field (a data-subject access request): records, their history and
@@ -1285,17 +1417,23 @@ def file_bytes(f: AppFile) -> bytes:
     return bytes(f.local or b"")
 
 
-def readable_file(inst: AppInstallation, *, roles: set[str], file_id: int, space: str) -> AppFile:
+def readable_file(inst: AppInstallation, *, roles: set[str], file_id: int, space: str, user=None) -> AppFile:
     """A file the caller may read: one a record they can read points at."""
     m = manifest_for(inst, space)
     f = AppFile.objects.filter(installation=inst, space=space, pk=file_id).first()
     if f is None:
         raise Refused("not found", status=404)
+    sc = scope_for(inst, m, space, user, roles)
     for cname, c in m["collections"].items():
-        if c["read"] not in roles:
+        if not may_read(c, roles):
             continue
+        ids = sc.allowed(cname) if sc else None
         for fname, fs in c["fields"].items():
-            if fs["type"] == "file" and AppRecord.objects.filter(installation=inst, space=space, collection=cname,
-                                                                 **{f"data__{fname}": file_id}).exists():
+            if fs["type"] != "file":
+                continue
+            qs = AppRecord.objects.filter(installation=inst, space=space, collection=cname, **{f"data__{fname}": file_id})
+            if ids is not None:
+                qs = qs.filter(pk__in=ids)
+            if qs.exists():
                 return f
     raise Refused("not found", status=404)

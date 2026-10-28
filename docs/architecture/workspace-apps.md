@@ -41,6 +41,10 @@ What an app can say without code, each enforced in `services.act` / `services.qu
 | `links` + role `link` | a signed private link to ONE record; its holder reads declared fields and runs only the link's actions on it | a candidate picks an interview time; accepts an offer |
 | effect `ics`, `to_field: "ref.email"`, `link` | a calendar invite, an address one ref away, the record's private link | interview invites; offer emails |
 | `public.feed` | schema.org JobPosting JSON-LD (in the page head) and an XML feed, from public fields only | Google for Jobs, LinkedIn/Indeed XML |
+| collection `scope` (`scope.py`) | record-level access for a member's session: a record's `team` fields name who works on it, a root's `private_field` hides it from everyone off its team, a child follows its `via` parent (its TEAM when `team_only_setting` is on), `shared_by` lets another record's people see it; `bypass` roles see all | a job's candidates seen by its hiring team; confidential jobs; an interviewer sees the candidate their interview names |
+| collection `read_also` | more roles that may read the whole collection | compliance reads applications for self-ID totals |
+| effect `delay_param` | hold the email back N hours (`AppScheduledEmail`, sent by a 10-minute tick); cancelled if the record no longer matches what the action left it as | a rejection sent tomorrow, not the minute someone clicked |
+| then `link_back` | a create step writes the new record's id back onto the action's record | a referral links to the application it became |
 | `retention` | on a clock (`ticks`, twice a day): anonymize or delete records matching a `where` after N days (or a setting), skipping a `hold_field`, deleting `cascade` children and files | rejected candidates by region; expired talent-pool consent |
 
 A workspace's own actions (overlay `add_action`) may not declare `then` or be link actions: both
@@ -109,8 +113,10 @@ portal at its canopy link (`/w/<ws>/app/<key>/careers`; no custom domain), priva
 self-ID, an application-review queue, the pipeline with bulk actions, interview plans and kits,
 scorecards, pick-a-time links with calendar invites, offers with approvals and an accept link,
 referrals, prospects, templates, reports and retention, plus an importer for the outgoing ATS's export API
-(`manage.py import_ats`). Still to do: per-job access (a hiring team sees only its jobs;
-confidential jobs hidden from other interviewers), Google Calendar free/busy and Meet links,
+(`manage.py import_ats`). 2.1 adds per-job access (a hiring team sees only its jobs' candidates;
+confidential jobs hidden from everyone off their team), recruiter as an admin-or-named role,
+held-back rejection emails, reject-from-all-jobs and bulk cancel. Still to do: duplicate merge,
+Google Calendar free/busy and Meet links,
 Gmail-threaded email, Slack nudges, e-signature, a hire webhook to the HR system, SSO-driven
 interviewer groups, legal sign-off on the retention defaults, and turning on `WORKSPACE_APPS_SEND_EMAIL` with an SES sender.
 

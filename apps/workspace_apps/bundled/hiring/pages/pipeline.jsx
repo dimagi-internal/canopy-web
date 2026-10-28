@@ -15,7 +15,9 @@ function daysSince(iso) {
 }
 function tagList(tags) { return String(tags || '').split(',').map((t) => t.trim()).filter(Boolean) }
 const CONFIRM_ABOVE = 30
-const NO_REJECT = { reason: '', note: '', email: true, template: '', subject: '', body: '' }
+const NO_REJECT = { reason: '', note: '', email: true, template: '', subject: '', body: '', delay: '0' }
+// When the rejection email goes: held-back letters are cancelled if the candidate is un-rejected first.
+const DELAYS = [{ value: '0', label: 'Send now' }, { value: '24', label: 'Send tomorrow (in 24 hours)' }, { value: '72', label: 'Send in 3 days' }]
 
 function View({ data, app }) {
   const jobs = arr(data.jobs)
@@ -84,6 +86,7 @@ function View({ data, app }) {
       const params = {}
       if (rej.subject) params.subject = rej.subject
       if (rej.body) params.body = rej.body
+      if (Number(rej.delay) > 0) params.delay_hours = Number(rej.delay)
       return runBulk('reject_and_email', { input, params }, 'Rejected and emailed')
     }
     return runBulk('reject', { input }, 'Rejected')
@@ -185,6 +188,7 @@ function View({ data, app }) {
                   <Stack gap={2}>
                     <Select label="Email template" value={rej.template} onChange={pickTemplate}
                       options={[{ value: '', label: 'The app’s standard rejection email' }, ...templates.map((t) => ({ value: String(t.id), label: t.name }))]} />
+                    <Select label="When" value={rej.delay} onChange={(delay) => setRej((r) => ({ ...r, delay }))} options={DELAYS} />
                     {rej.template && <Input label="Subject" value={rej.subject} onChange={(subject) => setRej((r) => ({ ...r, subject }))} />}
                     {rej.template && <TextArea label="Email" rows={6} value={rej.body} onChange={(body) => setRej((r) => ({ ...r, body }))} />}
                     <div className="text-xs text-muted-foreground">{'{{name}}'}, {'{{job.title}}'} and other fields are filled in for each candidate when the email is sent.</div>

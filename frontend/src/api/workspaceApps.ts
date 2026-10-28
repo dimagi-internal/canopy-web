@@ -6,6 +6,7 @@ import { unwrap } from "./problem";
 import type { AppOp } from "../dynamicViews/protocol";
 
 export type StoreApp = components["schemas"]["StoreAppOut"];
+export type StoreAppDetail = components["schemas"]["StoreAppDetailOut"];
 export type InstalledAppSummary = components["schemas"]["InstallationSummaryOut"];
 export type InstalledApp = components["schemas"]["InstallationOut"];
 export type PublicApp = components["schemas"]["PublicAppOut"];
@@ -40,6 +41,19 @@ const P = (workspace: string, key: string) => ({ workspace, key });
 export async function listAppStore(workspace: string): Promise<StoreApp[]> {
   const res = await apiV2.GET("/api/workspace-app-store/{workspace}/", { params: { path: { workspace } } });
   return Array.from(unwrap(res, "Failed to load the app store"));
+}
+
+export async function getAppStoreDetail(workspace: string, template: string): Promise<StoreAppDetail> {
+  const res = await apiV2.GET("/api/workspace-app-store/{workspace}/detail", {
+    params: { path: { workspace }, query: { template } },
+  });
+  return unwrap(res, "Failed to load the app") as unknown as StoreAppDetail;
+}
+
+/** A store app's screenshot, as a URL an <img> can load (same-origin, the session's cookie). */
+export function appStoreScreenshotUrl(workspace: string, template: string, file: string): string {
+  const q = new URLSearchParams({ template, file });
+  return apiUrl(`/api/workspace-app-store/${encodeURIComponent(workspace)}/screenshot?${q}`);
 }
 
 export async function listInstalledApps(workspace: string): Promise<InstalledAppSummary[]> {

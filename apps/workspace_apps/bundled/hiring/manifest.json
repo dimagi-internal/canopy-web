@@ -1,12 +1,86 @@
 {
   "key": "hiring",
   "name": "Hiring",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "An applicant tracking system: requisitions with approvals and openings, an application portal at a direct link with pay ranges and privacy notices, an application-review queue, a pipeline by stage with bulk actions, per-job interview plans and kits, structured scorecards, self-scheduling links with calendar invites, offers with approvals and a candidate accept/decline link, referrals, prospect pools, email templates, reports with the industry's standard formulas, voluntary self-ID readable only by a compliance role, and retention rules that anonymize candidates automatically. Add your own questions, stages and reasons without losing updates.",
-  "changelog": "2.0.0 — a full applicant tracker, built from public ATS research: job approvals, openings and requisition IDs, pay ranges (required by Massachusetts law) and a JobPosting feed for Google and job boards, privacy notices, voluntary self-ID for a compliance role only, an application-review queue, bulk reject with per-candidate emails, stage history, notes, per-job interview plans and kits, structured scorecards, availability links candidates pick a time from, calendar invites, offers with approvals and an accept/decline link, mark hired closing the opening, referrals, prospect pools, email templates, reports, retention by region with legal hold. 1.0.0 — jobs, careers page, applications with résumé upload, pipeline, interviews, scorecards, reject with reason (and email), reports.",
+  "changelog": "2.1.0 — per-job access: a job's applications, interviews, notes, scorecards and offers are seen by its hiring team (hiring manager, recruiter, coordinator, interviewers) and by anyone an interview or approval names, and a confidential job by its team alone; recruiters see everything. Recruiter is now a role for workspace admins and people given it by name, not every editor. The compliance role reads applications for self-ID totals. Rejection emails can wait a day or three, and are cancelled if the candidate is un-rejected first. Reject a candidate from all their applications at once; cancel interviews in bulk; a referral links to the application it became.\n\n2.0.0 — a full applicant tracker, built from public ATS research: job approvals, openings and requisition IDs, pay ranges (required by Massachusetts law) and a JobPosting feed for Google and job boards, privacy notices, voluntary self-ID for a compliance role only, an application-review queue, bulk reject with per-candidate emails, stage history, notes, per-job interview plans and kits, structured scorecards, availability links candidates pick a time from, calendar invites, offers with approvals and an accept/decline link, mark hired closing the opening, referrals, prospect pools, email templates, reports, retention by region with legal hold. 1.0.0 — jobs, careers page, applications with résumé upload, pipeline, interviews, scorecards, reject with reason (and email), reports.",
+  "listing": {
+      "tagline": "An applicant tracker for the whole hiring loop: jobs, applications, interviews, offers and reports, in your workspace.",
+      "overview": "Hiring runs recruiting end to end inside canopy. Recruiters open jobs from templates, get them approved, and post them to an application portal at a direct link. Applications land in a review queue; the pipeline shows every candidate by stage, with bulk moves and rejections. Interviewers get a kit and a scorecard for each interview; candidates pick an interview time and accept their offer through private links, with no account.\n\nIt keeps candidates' data the way the law asks: pay ranges on every posting, privacy notices whose version is recorded, voluntary self-ID questions only one role can read, and candidates anonymized automatically after a period you set by region. A job's candidates are seen by its hiring team, and a confidential search by its team alone.\n\nLike every canopy app, it is yours once installed: add fields, stages, wording or whole pages, test the change on a copy, and keep receiving the template's updates.",
+      "audience": "People Ops and recruiters run it; hiring managers and interviewers see the jobs they work on; every employee can refer someone. Candidates never need a canopy account.",
+      "data": "Jobs, openings and approvals; candidates (name, contact details, résumé, answers, stage history, notes, scorecards, offers); referrals and talent pools. Self-ID answers are readable only by the compliance role and are reported as totals. Rejected candidates are anonymized after 180 days (EU/UK) or 365 days (US) unless on legal hold — both are settings. Nothing is emailed until the server's app email is switched on.",
+      "highlights": [
+          {
+              "title": "Jobs with approvals",
+              "body": "Start from a template, add openings with IDs, and route the job to approvers. It stays a draft until the last one approves. A pay range is required before it opens."
+          },
+          {
+              "title": "An application portal at a link",
+              "body": "Open, live, non-confidential jobs appear at your workspace's careers link, with pay ranges, a privacy notice and an accommodation contact. Google for Jobs data and an XML feed for job boards come with it."
+          },
+          {
+              "title": "Review queue and pipeline",
+              "body": "Work through new applications one at a time with keyboard shortcuts and duplicate warnings, then move or reject candidates in bulk. Each rejection email is filled in for its own candidate, and can wait a day."
+          },
+          {
+              "title": "Interviews, kits and scorecards",
+              "body": "Per-job interview plans give each interviewer the questions and the attributes to rate. Candidates choose from times you offer through a private link; everyone gets a calendar invite."
+          },
+          {
+              "title": "Offers",
+              "body": "Draft an offer, get it approved, send it; the candidate accepts or declines through a private link. Marking them hired closes the opening."
+          },
+          {
+              "title": "Per-job access",
+              "body": "A job's candidates are seen by its hiring team and by whoever interviews them; a confidential job is hidden from everyone else. Recruiters see everything."
+          },
+          {
+              "title": "Reports",
+              "body": "Pipeline now and ever, pass-through rates, days in stage, time to hire and to fill, source of hire and offer acceptance, using the standard ATS definitions."
+          },
+          {
+              "title": "Privacy built in",
+              "body": "Retention rules anonymize candidates on a schedule by region, respect a legal hold, and an admin can export everything held about one person."
+          }
+      ],
+      "screenshots": [
+          {
+              "file": "screenshots/pipeline.jpg",
+              "caption": "The pipeline: every candidate for a job by stage, with bulk move and reject."
+          },
+          {
+              "file": "screenshots/review.jpg",
+              "caption": "The review queue: one new application at a time, with duplicate warnings."
+          },
+          {
+              "file": "screenshots/candidate.jpg",
+              "caption": "A candidate: where they stand, interviews, scorecards, notes and a timeline."
+          },
+          {
+              "file": "screenshots/kit.jpg",
+              "caption": "An interview kit: the questions, the attributes to rate, and the scorecard."
+          },
+          {
+              "file": "screenshots/job-setup.jpg",
+              "caption": "Setting up a job: details, pay range, hiring team, interview plan and approvals."
+          },
+          {
+              "file": "screenshots/offers.jpg",
+              "caption": "Offers: drafts, approvals, sent and accepted."
+          },
+          {
+              "file": "screenshots/reports.jpg",
+              "caption": "Reports with the formulas written out."
+          },
+          {
+              "file": "screenshots/careers.jpg",
+              "caption": "The application portal candidates see, at a direct link."
+          }
+      ]
+  },
   "roles": {
-    "recruiter": {"capability": "content.write", "description": "Opens jobs, moves and rejects candidates, schedules interviews, makes offers."},
-    "interviewer": {"capability": "content.write", "description": "Reads candidates, sees interview kits and writes scorecards. Grant it to a viewer who interviews."},
+    "recruiter": {"capability": "members.manage", "description": "Opens jobs, moves and rejects candidates, schedules interviews, makes offers, and sees every job. Workspace admins hold it; give it to others by name."},
+    "interviewer": {"capability": "content.write", "description": "Sees the candidates of the jobs they are on the hiring team of (or interview for), their interview kits, and writes scorecards. Grant it to a viewer who interviews."},
     "compliance": {"description": "Reads voluntary self-identification answers, as totals only. Grant it to People Ops or legal — never to a hiring team."}
   },
   "settings": {
@@ -18,6 +92,7 @@
     "privacy_notice_version": {"type": "text", "label": "Privacy notice version", "help": "Change it whenever you change the notice; each application records the version its applicant saw.", "default": "2026-10"},
     "ask_self_id": {"type": "bool", "label": "Ask US applicants the voluntary self-identification questions", "default": true},
     "require_pay_range": {"type": "bool", "label": "A job cannot open without a pay range", "help": "Massachusetts (and several other states) require a good-faith pay range on every posting.", "default": true},
+    "team_only_access": {"type": "bool", "label": "Only a job's hiring team sees its candidates", "help": "Off: every interviewer sees the candidates of every non-confidential job. Confidential jobs are always team-only.", "default": true},
     "send_acknowledgement": {"type": "bool", "label": "Email applicants when their application arrives", "default": false},
     "ack_subject": {"type": "text", "label": "Acknowledgement subject", "default": "We received your application for {{job.title}}"},
     "ack_body": {"type": "longtext", "label": "Acknowledgement email", "default": "Hi {{name}},\n\nThank you for applying for {{job.title}} at {{settings.company_name}}. We read every application and will be in touch.\n\nThe {{settings.company_name}} hiring team"},
@@ -49,6 +124,8 @@
   "collections": {
     "job": {
       "label": "Job",
+      "scope": {"bypass": ["recruiter", "compliance"], "team": ["hiring_manager", "recruiter", "coordinator", "hiring_team"], "private_field": "confidential",
+                "shared_by": [{"collection": "approval", "ref": "job", "team": ["approver"]}, {"collection": "interview", "ref": "job", "team": ["interviewers"]}]},
       "title_field": "title",
       "read": "member",
       "fields": {
@@ -89,6 +166,7 @@
     },
     "opening": {
       "label": "Opening",
+      "scope": {"via": "job", "team_only_setting": "team_only_access"},
       "title_field": "opening_id",
       "read": "interviewer",
       "fields": {
@@ -103,6 +181,7 @@
     },
     "approval": {
       "label": "Approval",
+      "scope": {"via": "job", "team_only_setting": "team_only_access", "team": ["approver"]},
       "title_field": "approver",
       "read": "member",
       "fields": {
@@ -118,6 +197,8 @@
     },
     "application": {
       "label": "Candidate",
+      "scope": {"via": "job", "team_only_setting": "team_only_access", "shared_by": [{"collection": "interview", "ref": "application", "team": ["interviewers"]}]},
+      "read_also": ["compliance"],
       "title_field": "name",
       "read": "interviewer",
       "fields": {
@@ -159,6 +240,8 @@
     },
     "stage_change": {
       "label": "Stage change",
+      "scope": {"via": "application"},
+      "read_also": ["compliance"],
       "title_field": "to_stage",
       "read": "interviewer",
       "fields": {
@@ -172,6 +255,7 @@
     },
     "note": {
       "label": "Note",
+      "scope": {"via": "application"},
       "title_field": "body",
       "read": "interviewer",
       "fields": {
@@ -183,6 +267,7 @@
     },
     "interview_step": {
       "label": "Interview plan step",
+      "scope": {"via": "job", "team_only_setting": "team_only_access", "team": ["interviewers"], "shared_by": [{"collection": "interview", "ref": "step", "team": ["interviewers"]}]},
       "title_field": "name",
       "read": "interviewer",
       "fields": {
@@ -199,6 +284,7 @@
     },
     "interview": {
       "label": "Interview",
+      "scope": {"via": "application", "team": ["interviewers"]},
       "title_field": "kind",
       "read": "interviewer",
       "fields": {
@@ -218,6 +304,7 @@
     },
     "scorecard": {
       "label": "Scorecard",
+      "scope": {"via": "application", "team": ["interviewer"]},
       "title_field": "rating",
       "read": "interviewer",
       "fields": {
@@ -234,6 +321,7 @@
     },
     "offer": {
       "label": "Offer",
+      "scope": {"via": "application"},
       "title_field": "title",
       "read": "recruiter",
       "fields": {
@@ -279,6 +367,7 @@
     },
     "referral": {
       "label": "Referral",
+      "scope": {"via": "job", "team_only_setting": "team_only_access", "team": ["referrer"]},
       "title_field": "name",
       "read": "member",
       "fields": {
@@ -315,7 +404,7 @@
       "input": ["job", "name", "email", "linkedin", "note"], "set": {"referrer": "$actor.email"},
       "refs": {"job": {"where": {"status": "open", "post_status": "live", "confidential": false}}},
       "effects": [{"type": "email", "to_field": "referrer", "subject_setting": "referral_subject", "body_setting": "referral_body", "enabled_setting": "referral_emails"}],
-      "then": [{"op": "create", "collection": "application", "set": {"job": "$record.job", "name": "$record.name", "email": "$record.email", "linkedin": "$record.linkedin", "cover_letter": "$record.note", "referrer": "$record.referrer", "credited_to": "$record.referrer", "source": "Referral", "stage": "Applied", "status": "active", "kind": "applicant", "applied_on": "$today", "stage_entered_at": "$now"}}]
+      "then": [{"op": "create", "collection": "application", "link_back": "application", "set": {"job": "$record.job", "name": "$record.name", "email": "$record.email", "linkedin": "$record.linkedin", "cover_letter": "$record.note", "referrer": "$record.referrer", "credited_to": "$record.referrer", "source": "Referral", "stage": "Applied", "status": "active", "kind": "applicant", "applied_on": "$today", "stage_entered_at": "$now"}}]
     },
 
     "create_job": {"label": "Create a job", "role": "recruiter", "op": "create", "collection": "job",
@@ -384,8 +473,8 @@
       "then": [{"op": "create", "collection": "stage_change", "set": {"application": "$record.id", "job": "$record.job", "to_stage": "Rejected", "at": "$now", "day": "$today", "by": "$actor.email"}}]},
     "reject_and_email": {"label": "Reject and email", "role": "recruiter", "op": "update", "collection": "application", "bulk": true,
       "when": {"status": "active"}, "input": ["rejection_reason", "rejection_note"], "set": {"stage": "Rejected", "status": "rejected", "rejected_on": "$today", "stage_entered_at": "$now"},
-      "params": {"subject": {"type": "text", "max": 200, "label": "Subject"}, "body": {"type": "longtext", "max": 10000, "label": "Email"}},
-      "effects": [{"type": "email", "to_field": "email", "when": {"do_not_email": false}, "subject_setting": "rejection_subject", "body_setting": "rejection_body", "subject_param": "subject", "body_param": "body"}],
+      "params": {"subject": {"type": "text", "max": 200, "label": "Subject"}, "body": {"type": "longtext", "max": 10000, "label": "Email"}, "delay_hours": {"type": "number", "label": "Send after (hours)"}},
+      "effects": [{"type": "email", "to_field": "email", "when": {"do_not_email": false}, "subject_setting": "rejection_subject", "body_setting": "rejection_body", "subject_param": "subject", "body_param": "body", "delay_param": "delay_hours"}],
       "then": [{"op": "create", "collection": "stage_change", "set": {"application": "$record.id", "job": "$record.job", "to_stage": "Rejected", "at": "$now", "day": "$today", "by": "$actor.email"}}]},
     "unreject": {"label": "Un-reject", "role": "recruiter", "op": "update", "collection": "application",
       "when": {"status": "rejected"}, "input": ["stage"], "set": {"status": "active", "rejected_on": null, "rejection_reason": null, "stage_entered_at": "$now"},
@@ -421,7 +510,7 @@
         {"type": "email", "to_field": "interviewers", "subject_setting": "invite_subject", "body_setting": "invite_body", "enabled_setting": "send_interview_emails", "ics": {"date_field": "date", "time_field": "time", "duration_field": "duration", "location_field": "meeting_link"}}]},
     "update_interview": {"label": "Update an interview", "role": "recruiter", "op": "update", "collection": "interview",
       "input": ["kind", "date", "time", "duration", "timezone", "interviewers", "meeting_link", "slot_options", "status"]},
-    "cancel_interview": {"label": "Cancel the interview", "role": "recruiter", "op": "update", "collection": "interview",
+    "cancel_interview": {"label": "Cancel the interview", "role": "recruiter", "op": "update", "collection": "interview", "bulk": true,
       "when": {"status": ["Requested", "Scheduled"]}, "set": {"status": "Cancelled"},
       "effects": [{"type": "email", "to_field": "application.email", "subject_setting": "cancel_subject", "body_setting": "cancel_body", "enabled_setting": "send_interview_emails"}]},
     "complete_interview": {"label": "Mark done", "role": "interviewer", "op": "update", "collection": "interview",

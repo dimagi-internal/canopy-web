@@ -13,6 +13,70 @@ class StoreAppOut(Schema):
     version: str
     publisher: str
     changelog: str
+    tagline: str = ""
+    #: The first screenshot's file, for the card (`/workspace-app-store/{ws}/screenshot`).
+    cover: str = ""
+
+
+class StoreHighlightOut(Schema):
+    title: str
+    body: str
+
+
+class StoreScreenshotOut(Schema):
+    file: str
+    caption: str
+
+
+class StoreListingOut(Schema):
+    tagline: str = ""
+    overview: str = ""
+    audience: str = ""
+    data: str = ""
+    highlights: list[StoreHighlightOut] = []
+    screenshots: list[StoreScreenshotOut] = []
+
+
+class StoreRoleOut(Schema):
+    name: str
+    description: str
+    holders: str
+
+
+class StorePageOut(Schema):
+    title: str
+    audience: str
+
+
+class StoreRecordOut(Schema):
+    label: str
+    fields: int
+    restricted: list[str]
+    scoped: bool
+
+
+class StoreVersionOut(Schema):
+    version: str
+    released_at: str
+    changelog: str
+
+
+class StoreAppDetailOut(Schema):
+    key: str
+    name: str
+    description: str
+    version: str
+    publisher: str
+    listing: StoreListingOut
+    roles: list[StoreRoleOut]
+    pages: list[StorePageOut]
+    records: list[StoreRecordOut]
+    settings: int
+    retention: list[str]
+    public_pages: list[str]
+    emails: list[str]
+    versions: list[StoreVersionOut]
+    installed: bool
 
 
 class InstallationSummaryOut(Schema):

@@ -53,6 +53,7 @@ from .schemas import (
     PageOut,
     PublicAppOut,
     RollbackIn,
+    StoreAppDetailOut,
     StoreAppOut,
     VersionOut,
 )
@@ -188,6 +189,33 @@ def list_app_store(request: HttpRequest, workspace: str) -> list[StoreAppOut]:
     """canopy's own apps, and this workspace's own templates."""
     _member_or_404(request, workspace)
     return [StoreAppOut(**a) for a in services.store(workspace)]
+
+
+@router.get("/workspace-app-store/{workspace}/detail", response=StoreAppDetailOut,
+            summary="One store app in full: screenshots, what it does, its roles, records and versions")
+@gate("member")
+def get_app_store_detail(request: HttpRequest, workspace: str, template: str) -> StoreAppDetailOut:
+    """`template` is the store key (`hiring`, or `<workspace>/<key>` for the workspace's own)."""
+    _member_or_404(request, workspace)
+    try:
+        return StoreAppDetailOut(**services.store_detail(workspace, template))
+    except LookupError as exc:
+        raise HttpError(404, str(exc)) from exc
+
+
+@router.get("/workspace-app-store/{workspace}/screenshot", response={200: None},
+            summary="A store app's screenshot, by the file its listing names")
+@gate("member")
+def get_app_store_screenshot(request: HttpRequest, workspace: str, template: str, file: str):
+    _member_or_404(request, workspace)
+    try:
+        body, kind = services.store_screenshot(workspace, template, file)
+    except LookupError as exc:
+        raise HttpError(404, str(exc)) from exc
+    response = HttpResponse(body, content_type=kind)
+    response["Cache-Control"] = "private, max-age=3600"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @router.get("/workspace-apps/{workspace}/", response=list[InstallationSummaryOut],
@@ -419,7 +447,7 @@ def query_workspace_app(request: HttpRequest, workspace: str, key: str, collecti
         m = services.manifest_for(inst, space)
         return services.query(inst, roles=_roles(request, inst, space, m), collection=collection,
                               where=_where(where), order=order, limit=limit, space=space, manifest=m,
-                              public=as_public)
+                              public=as_public, user=request.user)
     except services.Refused as exc:
         raise _refusal(exc) from exc
     except ValueError as exc:
@@ -457,7 +485,7 @@ def workspace_app_record_history(request: HttpRequest, workspace: str, key: str,
     try:
         space = _space(request, inst, draft)
         return services.history(inst, roles=_roles(request, inst, space, services.manifest_for(inst, space)),
-                                record_id=record_id, space=space)
+                                record_id=record_id, space=space, user=request.user)
     except services.Refused as exc:
         raise _refusal(exc) from exc
 
@@ -502,7 +530,7 @@ def download_workspace_app_file(request: HttpRequest, workspace: str, key: str, 
     try:
         space = _space(request, inst, draft)
         f = services.readable_file(inst, roles=_roles(request, inst, space, services.manifest_for(inst, space)),
-                                   file_id=file_id, space=space)
+                                   file_id=file_id, space=space, user=request.user)
     except services.Refused as exc:
         raise _refusal(exc) from exc
     response = HttpResponse(services.file_bytes(f), content_type=f.content_type)
@@ -590,10 +618,12 @@ def make_workspace_app_link(request: HttpRequest, workspace: str, key: str, link
     spec = (m.get("links") or {}).get(link)
     if spec is None:
         raise HttpError(404, f"no link '{link}'")
-    if m["collections"][spec["collection"]]["read"] not in _roles(request, inst, space, m):
+    roles = _roles(request, inst, space, m)
+    if not services.may_read(m["collections"][spec["collection"]], roles):
         raise HttpError(403, f"making this link needs the role that reads '{spec['collection']}'")
     rec = inst.records.filter(space=space, collection=spec["collection"], pk=record_id).first()
-    if rec is None:
+    sc = services.scope_for(inst, m, space, request.user, roles)
+    if rec is None or (sc and not sc.sees(rec.collection, rec.pk)):
         raise HttpError(404, f"no {spec['collection']} {record_id}")
     token = services.mint_link(inst, link, rec)
     return LinkOut(url=services.link_url(inst, token), token=token, days=spec["days"])
