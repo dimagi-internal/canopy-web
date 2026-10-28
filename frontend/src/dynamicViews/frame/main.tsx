@@ -2,7 +2,15 @@ import { Component, useEffect, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import './frame.css'
-import { CHANNEL, isMessage, type FrameMessage, type HostMessage, type ReadRequest, type ViewScope } from '../protocol'
+import {
+  CHANNEL,
+  isMessage,
+  type AgentTaskStatus,
+  type FrameMessage,
+  type HostMessage,
+  type ReadRequest,
+  type ViewScope,
+} from '../protocol'
 import { compile, type ViewComponent } from './compile'
 import { NavigateContext } from './kit'
 
@@ -38,20 +46,39 @@ function toHost(msg: FrameMessage) {
 
 let nextId = 1
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+const statusListeners = new Map<number, (task: AgentTaskStatus) => void>()
+
+function ask(msg: (id: number) => FrameMessage): Promise<unknown> {
+  const id = nextId++
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject })
+    toHost(msg(id))
+  })
+}
 
 const canopy = {
   read(model: string, opts: Omit<ReadRequest, 'model'> = {}): Promise<unknown> {
-    const id = nextId++
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject })
-      toHost({ channel: CHANNEL, type: 'read', id, request: { model, params: opts.params, path: opts.path } })
-    })
+    return ask((id) => ({ channel: CHANNEL, type: 'read', id, request: { model, params: opts.params, path: opts.path } }))
   },
   refresh() {
     toHost({ channel: CHANNEL, type: 'refresh' })
   },
   navigate(path: string) {
     if (typeof path === 'string' && path) toHost({ channel: CHANNEL, type: 'navigate', path })
+  },
+  /** Give an agent a task the view declares; resolves with its result (see the guide). */
+  runAgentTask(request: Record<string, unknown> & { onStatus?: (task: AgentTaskStatus) => void }): Promise<unknown> {
+    const { onStatus, ...rest } = request ?? {}
+    let asked = 0
+    return ask((id) => {
+      asked = id
+      if (typeof onStatus === 'function') statusListeners.set(id, onStatus)
+      return { channel: CHANNEL, type: 'agent-task', id, request: rest }
+    }).finally(() => statusListeners.delete(asked))
+  },
+  /** Re-read a task this view started: its status, error and, once done, result. */
+  agentTask(id: string): Promise<AgentTaskStatus> {
+    return ask((n) => ({ channel: CHANNEL, type: 'agent-task-read', id: n, taskId: id })) as Promise<AgentTaskStatus>
   },
 }
 
@@ -108,6 +135,12 @@ function App() {
         }
       } else if (msg.type === 'data') {
         setState((s) => (s.kind === 'ready' ? { ...s, data: msg.data ?? {} } : s))
+      } else if (msg.type === 'agent-task-status') {
+        try {
+          statusListeners.get(msg.id)?.(msg.task)
+        } catch (e) {
+          toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+        }
       } else if (msg.type === 'read-result') {
         const waiter = pending.get(msg.id)
         if (!waiter) return

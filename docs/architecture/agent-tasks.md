@@ -6,6 +6,8 @@ answer it needs, and gets back a result that validates against that schema. It i
 a chat panel ([embedding-a-canopy-agent.md](embedding-a-canopy-agent.md) is that) and
 its output is not a transcript: the only output is the result.
 
+A dynamic view can start one it declares, as its viewer — [dynamic-views.md](dynamic-views.md) § The one write.
+
 Code: `apps/agent_tasks` (framework tier, L1 core — see `ARCHITECTURE.md`). Client:
 `canopy_sdk.agent_tasks.AgentTasks` (`sdk/python/README.md` § Agent tasks).
 

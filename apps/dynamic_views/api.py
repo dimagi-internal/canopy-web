@@ -49,6 +49,7 @@ def _summary_fields(view: DynamicView) -> dict:
 
 def _out(view: DynamicView) -> DynamicViewOut:
     return DynamicViewOut(**_summary_fields(view), code=view.code, sources=view.sources or [],
+                          agent_tasks=view.agent_tasks or [],
                           created_by_email=view.created_by.email if view.created_by_id else None,
                           created_at=view.created_at)
 
@@ -114,8 +115,10 @@ def list_dynamic_views(request: HttpRequest, project: str = "") -> list[DynamicV
 @router.post("/", response={201: DynamicViewOut}, summary="Create a dynamic view")
 @gate("agent.work", kind="content")
 def create_dynamic_view(request: HttpRequest, payload: DynamicViewIn) -> Status:
-    """Validates the code (it must define `View`) and every source against the
-    catalog; a refusal names what is wrong. Returns the view with its `url`."""
+    """Validates the code (it must define `View`), every source against the
+    catalog, and every declared agent task (`agent_tasks`: the agent must be in the
+    view's workspace and one you may give tasks to yourself); a refusal names what
+    is wrong. Returns the view with its `url`."""
     ws = _ws_for_write(request, payload.workspace)
     project = _project_or_422(ws, payload.project) if payload.project else None
     _require_edit(request, ws, project)
@@ -136,7 +139,9 @@ def get_dynamic_view(request: HttpRequest, view_id: int) -> DynamicViewOut:
 @gate("agent.work", kind="content")
 def update_dynamic_view(request: HttpRequest, view_id: int, payload: DynamicViewPatch) -> DynamicViewOut:
     """Only the fields given change. Each change that alters something is a new
-    version; `GET /{id}/revisions/` lists them and `POST /{id}/rollback` restores one."""
+    version; `GET /{id}/revisions/` lists them and `POST /{id}/rollback` restores one.
+    Changing `agent_tasks`, or the code of a view that declares any, needs you to be
+    able to give each declared agent a task yourself."""
     view = _view_or_404(request, view_id)
     _require_edit(request, view.workspace_id, view.project)
     data = payload.model_dump(exclude_unset=True)
@@ -170,7 +175,8 @@ def list_dynamic_view_revisions(request: HttpRequest, view_id: int) -> list[Dyna
     view = _view_or_404(request, view_id)
     return [DynamicViewRevisionOut(version=r.version, title=r.title, note=r.note,
                                    changed_by_email=r.changed_by.email if r.changed_by_id else None,
-                                   changed_at=r.changed_at, code=r.code, sources=r.sources or [])
+                                   changed_at=r.changed_at, code=r.code, sources=r.sources or [],
+                                   agent_tasks=r.agent_tasks or [])
             for r in view.revisions.select_related("changed_by")]
 
 

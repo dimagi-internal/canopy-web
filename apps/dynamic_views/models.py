@@ -31,6 +31,9 @@ class DynamicView(models.Model):
     code = models.TextField()
     #: Declared catalog reads: [{"alias", "model", "params"?, "path"?}].
     sources = models.JSONField(default=list, blank=True)
+    #: The agent tasks the code may start, as the viewer: [{"agent", "name"}]
+    #: (`declared_tasks.py`). Empty for a view that only reads.
+    agent_tasks = models.JSONField(default=list, blank=True)
     version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="dynamic_views_created")
@@ -58,6 +61,7 @@ class DynamicViewRevision(models.Model):
     description = models.TextField(blank=True, default="")
     code = models.TextField()
     sources = models.JSONField(default=list, blank=True)
+    agent_tasks = models.JSONField(default=list, blank=True)
     note = models.CharField(max_length=300, blank=True, default="")
     changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
