@@ -10,7 +10,7 @@
  * no refresh token: it ends at its time on its own, or when the viewer ends it here.
  * Nothing is left in Settings afterwards. Backend: apps/agents/credentials/google_mint.py.
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { getGoogleDelegation, startGoogleDelegation } from '@/api/agents'
 import { apiV2 } from '@/api/client.v2'
 import { withdrawMyDelegatedCredential } from '@/api/delegatedCredentials'
@@ -91,11 +91,13 @@ export function GoogleAccessDialog({ ask, onDone }: {
   const [account, setAccount] = useState(ask.account)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const cancelled = useRef(false)
   const name = agentName(ask.agent)
   const what = ask.services.map((s) => SERVICE_WORDS[s]).join(', and ')
 
   const go = async () => {
     setError(null)
+    cancelled.current = false
     const popup = window.open('about:blank', 'canopy-google-session', 'popup,width=520,height=680')
     if (!popup) {
       setError('Your browser blocked the Google window. Allow pop-ups for canopy, then press Continue again.')
@@ -112,13 +114,17 @@ export function GoogleAccessDialog({ ask, onDone }: {
         throw new Error(ready?.detail || `${name}'s machine did not prepare the sign-in in time. Try again in a minute.`)
       }
       popup.location.href = ready.authorize_url
-      setBusy('Finish signing in to Google in the small window.')
+      setBusy('Finish signing in to Google in the small window. This page carries on by itself when you are done.')
+      // Only the mint says when the sign-in is over. `popup.closed` cannot: Google's sign-in
+      // page cuts the window off from this one (its Cross-Origin-Opener-Policy), and from then
+      // on `closed` reads true while the person is still signing in.
       const end = await followMint(
         () => getGoogleDelegation(ask.agent, mint.id),
-        (m) => m.status === 'done' || m.status === 'failed' || (popup.closed && m.status === 'awaiting'),
+        (m) => cancelled.current || m.status === 'done' || m.status === 'failed',
         { intervalMs: 1500, timeoutMs: 10 * 60_000 })
-      if (!popup.closed) popup.close()
-      if (!end || end.status === 'awaiting') throw new Error('The Google window was closed before you finished signing in.')
+      if (cancelled.current) return
+      try { popup.close() } catch { /* cut off by Google: it closes itself */ }
+      if (!end) throw new Error('The Google sign-in did not finish within 10 minutes. Press Continue to try again.')
       if (end.status !== 'done' || end.outcome !== 'ok') {
         const why = delegationOutcome(end.outcome || 'expired', { slug: name, account: end.account, expected: end.expected_account })
         throw new Error(why?.text || end.detail || 'The sign-in did not finish.')
@@ -161,7 +167,7 @@ export function GoogleAccessDialog({ ask, onDone }: {
         {error && <p className="text-destructive" data-testid="google-access-error">{error}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" className="rounded-md border border-border px-3 py-1.5 hover:bg-muted"
-            onClick={() => onDone({ ok: false, error: 'cancelled' })}>Cancel</button>
+            onClick={() => { cancelled.current = true; onDone({ ok: false, error: 'cancelled' }) }}>Cancel</button>
           <button type="button" disabled={!!busy || !account.trim()} onClick={go}
             className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50">
             Continue to Google
