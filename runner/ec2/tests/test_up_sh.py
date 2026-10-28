@@ -102,14 +102,16 @@ def canopy():
 
 def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=(),
           old_parts=0, stack_workspace="dimagi", pat_secret="", ecdh_slots="",
-          stack_runners="", ecdh_read="", runners_read="") -> pathlib.Path:
+          stack_runners="", old_stack_runners="", ecdh_read="", runners_read="") -> pathlib.Path:
+    """`old_stack_runners`: the runner stack's RunnerUnits, as a stack made before the
+    rename names its runners (`stack_runners` is its Runners)."""
     state = tmp / "state"
     state.mkdir()
     (state / "calls").write_text("")
     cfg = {"stack_status": stack_status, "change_set": change_set, "secrets": list(secrets),
            "old_parts": old_parts, "stack_workspace": stack_workspace, "role_arn": ROLE_ARN, "spki": SPKI,
            "pat_secret": pat_secret, "ecdh_slots": ecdh_slots, "stack_runners": stack_runners,
-           "ecdh_read": ecdh_read, "runners_read": runners_read}
+           "old_stack_runners": old_stack_runners, "ecdh_read": ecdh_read, "runners_read": runners_read}
     (state / "cfg.json").write_text(json.dumps(cfg))
     bin_ = tmp / "bin"
     bin_.mkdir()
@@ -144,6 +146,8 @@ elif "describe-stacks" in a and "starts_with(ParameterKey" in arg("--query"):
         print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
         sys.exit(254)
     print(cfg["ecdh_slots"].replace(" ", chr(10)).replace("=", chr(9)))
+elif "describe-stacks" in a and "ParameterKey=='RunnerUnits'" in arg("--query"):
+    print(cfg["old_stack_runners"] or "None")
 elif "describe-stacks" in a and "ParameterKey=='Runners'" in arg("--query"):
     if cfg.get("runners_read") == "throttled":
         print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
@@ -543,16 +547,20 @@ def test_dropping_a_runner_needs_remove_runner(tmp_path, canopy):
     assert " Runner1= " in ecdh and " Runner2=agent-eva " in ecdh
 
 
-def test_a_plain_rerun_keeps_the_stacks_runners(tmp_path, canopy):
+@pytest.mark.parametrize("named", ["stack_runners", "old_stack_runners"])
+def test_a_plain_rerun_keeps_the_stacks_runners(tmp_path, canopy, named):
+    """`old_stack_runners`: a stack made before the rename names them RunnerUnits, and
+    its -ecdh stack's slots Unit<i>: both are read, and deployed under the new names."""
+    slot = "Runner1" if named == "stack_runners" else "Unit1"
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  stack_runners="tree:connect,agent:eva@connect", ecdh_slots="Runner1=agent-eva")
+                  **{named: "tree:connect,agent:eva@connect"}, ecdh_slots=f"{slot}=agent-eva")
     canopy.handler.runners = [{"kind": "cloud", "name": n, "status": "online"} for n in
                               ("cloud-ec2-test", "cloud-ec2-test-agent-eva")]
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
     assert res.returncode == 0, res.stdout + res.stderr
     assert " Runners=tree:connect,agent:eva@connect " in _deploy(state)
     ecdh = _ecdh_deploy(state)
-    assert " Runner1=agent-eva " in ecdh
+    assert " Runner1=agent-eva " in ecdh and "Unit1" not in ecdh
 
 
 def test_in_place_always_invites_because_adopting_needs_approval(tmp_path, canopy):
