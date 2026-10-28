@@ -956,13 +956,16 @@ describe('agent memory in the conversation header', () => {
     serve(200, { id: 'sess-1', sensitive: true, sealed_key: null })
     open()
     await say()
-    expect(await screen.findByText(/Private — only the people in this conversation can read it/)).toBeTruthy()
+    // One line says it; the sentences behind it are a click away.
+    const facts = await screen.findByRole('button', { name: /^Private/ })
     await waitFor(() => expect(calls.some((c) => /\/canopy-sessions\/sess-1$/.test(c.url))).toBe(true))
     expect(screen.queryByRole('button', { name: /Learn on/ })).toBeNull()
     // Nothing sealed has arrived: no unlock banner on a fresh conversation.
     expect(screen.queryByTestId('sealed-banner')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Private/ }))
-    expect(screen.getByTestId('sensitive-details').textContent).toMatch(/Memory is off in private conversations/)
+    expect(screen.queryByTestId('sensitive-details')).toBeNull()
+    fireEvent.click(facts)
+    expect(screen.getByTestId('sensitive-details').textContent).toMatch(
+      /^Private — only the people in this conversation can read it\..*Memory is off in private conversations/)
   })
 
   it('a site acting for the person shows the state read-only, with a link to change it', async () => {
@@ -1258,7 +1261,7 @@ describe('the act-as-you permission', () => {
     expect(String((created()?.init?.headers as Record<string, string>).Authorization)).toBe('Bearer granted')
 
     const line = await screen.findByTestId('page-grant-line')
-    expect(line.textContent).toMatch(/^Hal can act as you on this page until /)
+    expect(line.textContent).toMatch(/^Hal can act as you until .*·Stop$/)
     expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
