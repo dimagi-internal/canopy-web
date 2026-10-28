@@ -1,8 +1,8 @@
 """Every migration applies to an empty database: the test DB here is built by
 replaying the whole graph, so reaching the assertion is most of the proof.
 
-needs_migrations: it is the one standing test of `Backend pytest (migrations)`
-(ci.yml). A data migration's own test (walk back to BEFORE, seed, migrate to
+needs_migrations: it is the one standing migration test, run first in
+`Backend pytest (PostgreSQL)` (ci.yml), whose test DB is built this way. A data migration's own test (walk back to BEFORE, seed, migrate to
 AFTER) lives only until that migration has deployed — see CLAUDE.md."""
 from __future__ import annotations
 

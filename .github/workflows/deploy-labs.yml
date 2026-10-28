@@ -77,6 +77,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       already_live: ${{ steps.live.outputs.already_live }}
+      live_sha: ${{ steps.live.outputs.live_sha }}
       sha: ${{ steps.tip.outputs.sha }}
     steps:
       - name: Check ref is refs/heads/main
@@ -143,6 +144,7 @@ jobs:
               --output text 2>/dev/null) || true
             LIVE="${IMAGE##*:}"
           fi
+          echo "live_sha=$LIVE" >> "$GITHUB_OUTPUT"
           if [ "$LIVE" = "${{ steps.tip.outputs.sha }}" ]; then
             echo "already_live=true" >> "$GITHUB_OUTPUT"
             echo "::notice::${{ steps.tip.outputs.sha }} is already live — skipping build and deploy. Dispatch with force=true to roll it again."
@@ -289,14 +291,38 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.guard.outputs.sha }}
+          fetch-depth: 0
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # The migrate task is a cold Fargate start (~1 min) even when nothing is
+      # pending. Skip it only when NO migration file and no dependency pin changed
+      # between the live image and this one (a dependency can ship its own
+      # migrations). Fails OPEN: an unknown live sha, one not in this history, or
+      # a force deploy all migrate.
+      - name: Does this deploy carry a migration?
+        id: pending
+        env:
+          LIVE: ${{ needs.guard.outputs.live_sha }}
+          SHA: ${{ needs.guard.outputs.sha }}
+        run: |
+          if [ -z "$LIVE" ] || ! git cat-file -e "$LIVE^{commit}" 2>/dev/null; then
+            echo "Live sha '${LIVE:-<unknown>}' not in history; migrating."
+            echo "migrate=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$LIVE" "$SHA" -- '*/migrations/*' pyproject.toml uv.lock; then
+            echo "::notice::No migration or dependency change since live $LIVE; skipping the migrate task."
+            echo "migrate=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only "$LIVE" "$SHA" -- '*/migrations/*' pyproject.toml uv.lock
+            echo "migrate=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Register migration task definition (image swap only)
         id: register-task
+        if: ${{ inputs.skip_migrations != true && steps.pending.outputs.migrate == 'true' }}
         run: |
           # A THROWAWAY task def used only to run migrations. The real one is
           # registered by CloudFormation in the deploy step below, which owns it.
@@ -335,11 +361,10 @@ jobs:
           echo "::notice::Migration task def $NEW_ARN"
 
       - name: Run database migrations
-        if: ${{ inputs.skip_migrations != true }}
+        if: ${{ inputs.skip_migrations != true && steps.pending.outputs.migrate == 'true' }}
         run: |
-          # Runs on EVERY deploy by default — `migrate --noinput` is idempotent, a
-          # near-instant no-op when nothing is pending, so there is no cost to always
-          # running it and no way to forget. (A deploy of new code that SELECTs a
+          # Runs on every deploy that carries a migration (see the step above) —
+          # decided from the diff, not remembered, so there is no way to forget. (A deploy of new code that SELECTs a
           # not-yet-added column is exactly how /api/agents/tasks 500'd in prod when a
           # migration shipped un-run; automatic migration removes that whole failure
           # class.) Escape hatch: skip_migrations=true for the rare emergency.
@@ -588,8 +613,8 @@ jobs:
             echo "|---|---|"
             echo "| Ref | \`${{ github.ref_name }}\` @ \`${{ needs.guard.outputs.sha }}\` (dispatched at \`${{ github.sha }}\`) |"
             echo "| Image | \`${{ env.ECR_REPO }}:${{ needs.guard.outputs.sha }}\` |"
-            echo "| Task definition | \`${{ steps.register-task.outputs.task-def-arn }}\` |"
-            echo "| Migrations | \`${{ inputs.skip_migrations == true && 'SKIPPED (emergency)' || 'ran automatically' }}\` |"
+            echo "| Migration task definition | \`${{ steps.register-task.outputs.task-def-arn || 'none (not migrating)' }}\` |"
+            echo "| Migrations | \`${{ inputs.skip_migrations == true && 'SKIPPED (emergency)' || (steps.pending.outputs.migrate == 'true' && 'ran automatically' || 'none pending (no migration changed since live)') }}\` |"
             echo "| Service | \`${{ env.ECS_SERVICE }}\` |"
             echo "| URL | https://canopy.dimagi.com/ |"
           } >> "$GITHUB_STEP_SUMMARY"

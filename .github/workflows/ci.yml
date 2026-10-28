@@ -57,22 +57,22 @@ jobs:
   # for anyone, and any future backend job joins `needs:` below rather than
   # the ruleset.
   #
-  # `Backend pytest` is a matrix of 2 shards (conftest.py's PYTEST_SHARD
+  # `Backend pytest` is a matrix of 3 shards (conftest.py's PYTEST_SHARD
   # hook: whole files, balanced by test count, union = the whole suite), run
   # with `--nomigrations`. Of the ~5 min one runner used to take, ~2.5 was each
   # xdist worker replaying 400+ migrations to build its test DB; building the
-  # tables from the models takes seconds. Migrations are still applied in full
-  # by `Backend pytest (PostgreSQL)` (on the production engine) and by
-  # `Backend pytest (migrations)`, and `makemigrations --check` runs on shard 1
-  # with the other fast static gates — once is enough.
+  # tables from the models takes seconds. Migrations are still applied in full,
+  # once, by `Backend pytest (PostgreSQL)` (on the production engine, where the
+  # needs_migrations tests also run), and `makemigrations --check` runs on
+  # shard 1 with the other fast static gates — once is enough.
   test-backend:
-    name: Backend pytest (${{ matrix.shard }}/2)
+    name: Backend pytest (${{ matrix.shard }}/3)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
 
@@ -182,7 +182,7 @@ jobs:
         # in-memory test DB, so the suite is isolated per worker; serially it was
         # ~160s here, nearly all of it single-threaded.
         env:
-          PYTEST_SHARD: ${{ matrix.shard }}/2
+          PYTEST_SHARD: ${{ matrix.shard }}/3
         run: uv run pytest -n auto --nomigrations -m "not needs_migrations"
 
   # The standalone in-repo packages. None of them touches Django or a
@@ -237,9 +237,10 @@ jobs:
       # thing standing between a scheduling bug and a fleet that silently never
       # fires (or fires a slot predating its schedule). Also covers the
       # session-reuse regressions.
+      # -n logical: 1,392 tests, 85s serial → 33s on 4 workers (measured).
       - name: Run canopy_runner tests
         working-directory: runner/canopy_runner
-        run: uv run --with pytest pytest
+        run: uv run --with pytest --with pytest-xdist --with psutil pytest -n logical
 
       # cloud_runner.py has a 48-test suite that had never run in CI — the file
       # is loaded by path (it lives under a hyphenated dir and can't be imported
@@ -345,12 +346,69 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra dev
 
+      # A throwaway database: durability buys nothing, and building the test DB
+      # (every migration, ~530 of them) is nearly all of this job's time.
+      - name: Make the CI database skip durability
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for setting in "fsync = off" "synchronous_commit = off" "full_page_writes = off"; do
+            psql -h localhost -U postgres -c "ALTER SYSTEM SET $setting"
+          done
+          psql -h localhost -U postgres -c "SELECT pg_reload_conf()"
+
+      # The migrated test DB is a pure function of the migrations, the settings and
+      # the pinned dependencies, so it is built once per distinct set of them: a
+      # push to main that changes any of them replays the whole graph on the
+      # production engine (the proof every migration applies —
+      # tests/test_migrations_apply.py) and saves a dump; a queue run on the same
+      # inputs restores it in seconds (a merge_group ref reads main's caches). A
+      # PR that adds a migration misses the key and replays for real.
+      - name: Restore the migrated test DB
+        id: testdb
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/testdb.dump
+          key: pg-testdb-v1-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+
+      - name: Build the test DB (every migration) — or load the cached build
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_canopy_web
+          DJANGO_SETTINGS_MODULE: config.settings.pgtest
+          HIT: ${{ steps.testdb.outputs.cache-hit }}
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
+          if [ "$HIT" = "true" ]; then
+            pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump
+            echo "::notice::Restored the migrated test DB (migrations unchanged since main built it)."
+          else
+            uv run python manage.py migrate --noinput
+            pg_dump -h localhost -U postgres -Fc -f /tmp/testdb.dump test_canopy_web
+          fi
+
+      - name: Save the migrated test DB
+        if: github.event_name == 'push' && steps.testdb.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/testdb.dump
+          key: ${{ steps.testdb.outputs.cache-primary-key }}
+
+      # Both runs reuse that DB (pytest-django's test_<NAME>): first the tests that
+      # walk migrations (marked needs_migrations; each is deleted once its migration
+      # deploys), then the PostgreSQL-only suites. One process each, not xdist:
+      # every worker would build its own DB again (measured slower).
+      - name: Run the migration tests
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
+        run: uv run pytest --ds=config.settings.pgtest --reuse-db -m needs_migrations -q
+
       - name: Run the PostgreSQL suites
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
         run: >-
-          uv run pytest --ds=config.settings.pgtest tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
-          tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py -q
+          uv run pytest --ds=config.settings.pgtest --reuse-db tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
+          tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py -q --durations=10
 
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the
@@ -394,7 +452,7 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra dev
 
-      # The same commands `Backend pytest (1/2)` runs; keep them in step.
+      # The same commands `Backend pytest (1/3)` runs; keep them in step.
       - name: Lint (ruff — pyflakes + lazy imports)
         run: uv run ruff check . --select F,PLC0415 --ignore F403,F405
 
@@ -536,34 +594,6 @@ jobs:
           done
           exit $failed
 
-  # The tests that walk the real migration graph (marked needs_migrations),
-  # which the `--nomigrations` suite above cannot run. One process: the DB is
-  # built once, with every migration, which also proves they apply on SQLite.
-  test-backend-migrations:
-    name: Backend pytest (migrations)
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    # A data migration's test walks the graph back and forth, and costs more with
-    # every later migration; they are deleted once deployed (CLAUDE.md), so this
-    # job stays near the cost of building the DB once.
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Sync dependencies
-        run: uv sync --extra dev
-
-      - name: Run the migration tests
-        run: uv run pytest -m needs_migrations
-
   # The frontend half of the PR's fast checks: type-check the SPA and run the
   # vitest files that import what this PR changed. Frontend failures were a
   # fifth of merge-queue ejections, each one rebuilding every entry behind it.
@@ -630,7 +660,7 @@ jobs:
 
   test-backend-gate:
     name: Backend tests
-    needs: [test-backend, test-backend-migrations, test-runner-packages, test-backend-postgres, pr-guards, pr-fast-checks]
+    needs: [test-backend, test-runner-packages, test-backend-postgres, pr-guards, pr-fast-checks]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
     if: always()
@@ -742,10 +772,17 @@ jobs:
           "$RUNNER_TEMP/gitleaks" git . --no-banner --redact --config .gitleaks.toml \
             --log-opts="--no-merges ${BASE_SHA}..${HEAD_SHA}"
 
+  # Two shards: vitest's cost on a 4-vCPU runner is per-file setup (a fresh
+  # jsdom + module graph for each of ~350 files), not the tests, so it was the
+  # queue's longest job (~3–5 min). Shard 1 also builds the SPA and the site.
   test-frontend:
-    name: Frontend tests
+    name: Frontend tests (${{ matrix.shard }}/2)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
 
@@ -760,23 +797,26 @@ jobs:
         run: npm ci
 
       - name: Build
+        if: matrix.shard == 1
         working-directory: frontend
         run: npm run build
 
       - name: Run vitest
         working-directory: frontend
-        run: npm run test
+        run: npm run test -- --shard=${{ matrix.shard }}/2
 
       # The public product site (site/, Astro) — static pages served at / to
       # signed-out visitors. Built here so a broken page fails the PR, not the deploy.
       # Astro needs Node 22; the SPA above still builds on 20, so the site gets
       # its own toolchain rather than moving the whole job.
       - uses: actions/setup-node@v7
+        if: matrix.shard == 1
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: site/package-lock.json
 
       - name: Build the public site
+        if: matrix.shard == 1
         working-directory: site
         run: npm ci && npm run build

@@ -43,7 +43,7 @@ Pipeline: build → push to ECR (`labs-jj-canopy-web`) → **migrate** on a thro
 - One writer per resource: the pipeline only passes `ImageTag`; CFN registers the task definition and rolls the service. Never register task-definition revisions or call `ecs update-service` outside CFN — the stack's `ImageTag` would go stale and the next plain `cloudformation deploy` would silently roll prod back.
 - CFN resolves intrinsics (`!Ref`, `!Sub`) itself; don't add a step that reads the template outside CloudFormation.
 - **The migration seam.** CFN rolls `Service` and its `TaskDefinition` atomically, so migrations run first on a throwaway task def built from the LIVE one with only the image swapped. Its env is therefore one deploy stale: if a deploy both changes an env var and ships a migration that reads it, deploy twice.
-- Migrations are idempotent (`migrate --noinput`) and run before cutover. Write them the obvious way — destructive migrations are fine, and a brief window of errors during a deploy is accepted; don't split a one-line migration into expand/contract PRs.
+- Migrations are idempotent (`migrate --noinput`) and run before cutover, on every deploy whose diff from the live image touches a `migrations/` file, `pyproject.toml` or `uv.lock` (otherwise the ~1 min migrate task is skipped; an unknown live sha or `force` migrates). Write them the obvious way — destructive migrations are fine, and a brief window of errors during a deploy is accepted; don't split a one-line migration into expand/contract PRs.
 - CFN's own overhead is ~10s; the ~6min deploy is the ECS rollout.
 
 ### Preflight
@@ -86,7 +86,7 @@ A grant canopy needs goes into the role stack, or into the owning stack's `TaskR
 
 CI (`.github/workflows/ci.yml`) runs on every PR, in the merge queue, and on push to `main`. Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).
 
-The full suites run once, in the merge queue. On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the import ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
+The full suites run once, in the merge queue, sharded so no job sets the wait alone: `Backend pytest` ×3, `Frontend tests` ×2, the PostgreSQL and runner suites under xdist. On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the import ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
 
 ### Every PR: arm auto-merge, no strategy flag
 
