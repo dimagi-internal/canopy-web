@@ -9,6 +9,7 @@ per organisation: you can withdraw it after you stop being the agent's admin, or
 its workspace.
 
     GET    /api/me/delegated-credentials/
+    GET    /api/me/connected-accounts/   (just which accounts, for pages: dynamic views)
     DELETE /api/me/delegated-credentials/{id}
 """
 from __future__ import annotations
@@ -23,7 +24,7 @@ from apps.events import audit
 
 from .credentials import accounts
 from .models import AgentCredential
-from .schemas import MyDelegatedCredentialOut
+from .schemas import MyConnectedAccountOut, MyDelegatedCredentialOut
 
 me_router = Router(auth=session_auth, tags=["agents"])
 
@@ -43,6 +44,23 @@ def list_my_delegated_credentials(request: HttpRequest) -> list[MyDelegatedCrede
     still one of the agent's admins). Never the value."""
     return [MyDelegatedCredentialOut(id=c.pk, agent=c.agent.slug, agent_name=c.agent.name,
                                      **accounts.describe(c, c.agent)) for c in _mine(request.user)]
+
+
+@me_router.get("/me/connected-accounts/", response=list[MyConnectedAccountOut],
+               summary="Which of my own accounts agents can use")
+@gate("self")
+def list_my_connected_accounts(request: HttpRequest) -> list[MyConnectedAccountOut]:
+    """The accounts you connected to agents — agent, provider, account, in force — and
+    nothing else about the credential. Safe to show on a page (a dynamic view reads it
+    to say "Connected"); the full record is GET /me/delegated-credentials/."""
+    out = []
+    for c in _mine(request.user):
+        identity = c.identity or {}
+        out.append(MyConnectedAccountOut(
+            agent=c.agent.slug, provider=c.provider,
+            account=str(identity.get("email") or identity.get("login") or ""),
+            in_force=accounts.serves(c, c.agent)))
+    return out
 
 
 @me_router.delete("/me/delegated-credentials/{int:credential_id}", response={204: None},

@@ -147,10 +147,11 @@ export function ProjectPage(): JSX.Element {
         </p>
       )}
 
+      {/* A project's views come first: when it has one, it is usually the thing people came to use. */}
+      <ProjectViewsSection workspace={workspace} handle={handle} projectName={detail.name} />
       <UpdatesSection detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       <ProjectWork detail={detail} workspace={workspace} handle={handle} address={address} onChanged={reload} />
       <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
-      <ProjectViewsSection workspace={workspace} handle={handle} projectName={detail.name} />
 
       {detail.proposal && (
         <Section id="project-proposal" title="Proposal" description="This project was proposed. Start it or decline it here.">

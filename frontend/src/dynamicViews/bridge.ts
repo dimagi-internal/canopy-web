@@ -77,10 +77,12 @@ export function resolveRead(catalog: CatalogModel[], ctx: ReadContext, req: Read
 }
 
 /** Where a view's navigate() lands: a canopy page, under the view's workspace
- * unless it names one; or an outside https link, which the page confirms first. */
+ * unless it names one; or an outside https or mailto: link, which the page confirms
+ * first (a mailto: only opens the viewer's own mail app; nothing is sent for them). */
 export function resolveNavigation(workspace: string, path: string):
   { kind: 'app'; to: string } | { kind: 'external'; url: string } | { kind: 'refused' } {
   if (typeof path !== 'string' || !path) return { kind: 'refused' }
+  if (/^mailto:[^\s]+$/i.test(path)) return { kind: 'external', url: path }
   if (/^https?:\/\//i.test(path)) {
     try {
       const u = new URL(path)

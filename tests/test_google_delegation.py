@@ -260,6 +260,9 @@ def test_it_lists_and_withdraws_like_a_github_token(home):
     assert (row["agent"], row["name"], row["provider"]) == ("bailey", ENTRY, "google")
     assert row["identity"] == {"email": GINA} and row["machines"] == ["cloud-ec2-2"] and row["in_force"]
     assert "value_zk" not in row
+    # The page-safe read: which account, nothing about the credential.
+    assert home["client"].get("/api/me/connected-accounts/").json() == [
+        {"agent": "bailey", "provider": "google", "account": GINA, "in_force": True}]
     r = home["client"].delete(f"/api/me/delegated-credentials/{row['id']}")
     assert r.status_code == 204
     assert not AgentCredential.objects.filter(name=ENTRY).exists()

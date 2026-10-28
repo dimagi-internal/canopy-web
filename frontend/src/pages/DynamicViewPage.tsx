@@ -104,7 +104,8 @@ export default function DynamicViewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl p-6">
+    // pb-28: room under the view for the site-wide floating "Canopy AI" button.
+    <div className="mx-auto max-w-6xl p-6 pb-28">
       <header className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">

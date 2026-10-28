@@ -217,7 +217,9 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
         case 'navigate': {
           const to = resolveNavigation(ctx.workspace, msg.path)
           if (to.kind === 'app') navigate(to.to)
-          else if (to.kind === 'external' && window.confirm(`This view wants to open ${to.url}`)) {
+          else if (to.kind === 'external' && window.confirm(to.url.toLowerCase().startsWith('mailto:')
+            ? `Open your email app to write to ${to.url.slice(7).split('?')[0]}?`
+            : `Open ${new URL(to.url).host} in a new tab?\n\n${to.url}`)) {
             window.open(to.url, '_blank', 'noopener,noreferrer')
           }
           return

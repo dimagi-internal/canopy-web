@@ -59,4 +59,10 @@ describe('resolveNavigation', () => {
     }
     expect(resolveNavigation('dimagi', 'https://example.com/a')).toEqual({ kind: 'external', url: 'https://example.com/a' })
   })
+
+  it('lets a mailto: link out (confirmed, to the viewer\'s own mail app)', () => {
+    expect(resolveNavigation('dimagi', 'mailto:leave@list.example?subject=unsubscribe'))
+      .toEqual({ kind: 'external', url: 'mailto:leave@list.example?subject=unsubscribe' })
+    expect(resolveNavigation('dimagi', 'mailto:a b')).toEqual({ kind: 'refused' })
+  })
 })

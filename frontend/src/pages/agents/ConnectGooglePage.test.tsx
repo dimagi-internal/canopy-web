@@ -10,7 +10,7 @@ vi.mock('@/api/agents', () => ({
   getGoogleDelegation: (...a: unknown[]) => get(...a),
 }))
 
-import { ConnectGooglePage, delegationOutcome, servicesFrom } from './ConnectGooglePage'
+import { ConnectGooglePage, delegationOutcome, safeReturn, servicesFrom } from './ConnectGooglePage'
 
 afterEach(() => {
   cleanup()
@@ -38,7 +38,7 @@ describe('ConnectGooglePage', () => {
     get.mockResolvedValue({ id: 'm1', status: 'failed', authorize_url: '', detail: 'no runner' })
     at('/w/marshellis/agents/bailey/connect/google?services=gmail')
     fireEvent.change(screen.getByPlaceholderText('you@gmail.com'), { target: { value: 'gina@gmail.com' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Connect with Google' }))
     await waitFor(() => expect(start).toHaveBeenCalledWith('bailey', 'gina@gmail.com', ['gmail']))
     expect(await screen.findByTestId('connect-google-error')).toBeTruthy()
   })
@@ -46,7 +46,30 @@ describe('ConnectGooglePage', () => {
   it('follows the sign-in to its end after Google sends the person back', async () => {
     get.mockResolvedValue({ id: 'm1', status: 'done', outcome: 'ok', account: 'gina@gmail.com', expected_account: 'gina@gmail.com' })
     at('/w/marshellis/agents/bailey/connect/google?google=pending&mint=m1')
-    expect(await screen.findByText(/gina@gmail.com is delegated to bailey/)).toBeTruthy()
+    expect(await screen.findByText(/Bailey can now use gina@gmail.com/)).toBeTruthy()
+  })
+
+  it('offers only the services the page asked for', () => {
+    at('/w/marshellis/agents/bailey/connect/google?services=gmail')
+    expect(screen.getByLabelText('Gmail')).toBeTruthy()
+    expect(screen.queryByLabelText('Calendar')).toBeNull()
+    expect(screen.getByText(/also allows sending/)).toBeTruthy()
+  })
+
+  it('sends the person back where they came from once connected', async () => {
+    sessionStorage.clear()
+    at('/w/marshellis/agents/bailey/connect/google?services=gmail&return=/w/marshellis/views/2')
+    cleanup()
+    get.mockResolvedValue({ id: 'm1', status: 'done', outcome: 'ok', account: 'gina@gmail.com', expected_account: 'gina@gmail.com' })
+    at('/w/marshellis/agents/bailey/connect/google?google=pending&mint=m1')
+    const back = await screen.findByTestId('connect-google-back')
+    expect(back.getAttribute('href')).toBe('/w/marshellis/views/2')
+  })
+
+  it('never sends the person to another site', () => {
+    expect(safeReturn('https://evil.example')).toBeNull()
+    expect(safeReturn('//evil.example')).toBeNull()
+    expect(safeReturn('/w/marshellis/views/2')).toBe('/w/marshellis/views/2')
   })
 
   it('says why nothing was stored', () => {
