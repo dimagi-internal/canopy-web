@@ -25,6 +25,7 @@ from ninja import Body, File, Form, Router, Status
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
+from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_RATE_LIMIT, ProblemError
 from apps.api.route_gates import gate
@@ -44,6 +45,8 @@ from .schemas import (
     GrantIn,
     GrantOut,
     GuideOut,
+    HelperIn,
+    HelperOut,
     InstallationOut,
     InstallationPatch,
     InstallationSummaryOut,
@@ -53,6 +56,8 @@ from .schemas import (
     PageOut,
     PublicAppOut,
     RollbackIn,
+    SetupIn,
+    SetupOut,
     StoreAppDetailOut,
     StoreAppOut,
     VersionOut,
@@ -95,8 +100,9 @@ def _space(request: HttpRequest, inst: AppInstallation, draft: int | None) -> st
     """`?draft=<id>` → that draft's test copy, for a maintainer; else live."""
     if not draft:
         return LIVE
-    _require_maintain(request, inst)
     v = inst.versions.filter(pk=draft, status=AppVersion.DRAFT).first()
+    if not (v is not None and access.is_helper(request.user, v)):
+        _require_maintain(request, inst)
     if v is None:
         raise HttpError(404, "that draft is no longer open")
     return v.space
@@ -293,10 +299,15 @@ def _draft_out(v: AppVersion) -> DraftOut:
                     review=services.review(v))
 
 
-def _open_draft(request: HttpRequest, workspace: str, key: str) -> tuple[AppInstallation, AppVersion]:
+def _open_draft(request: HttpRequest, workspace: str, key: str, *,
+                helper_ok: bool = False) -> tuple[AppInstallation, AppVersion]:
+    """The open draft, for a maintainer — or, with `helper_ok`, for an agent a
+    maintainer asked to work on it (`AppVersion.helpers`): reading, changing,
+    testing and checking it, never publishing or throwing it away."""
     inst = _installation(request, workspace, key, enabled=False)
-    _require_maintain(request, inst)
     v = services.open_draft(inst)
+    if not (helper_ok and v is not None and access.is_helper(request.user, v)):
+        _require_maintain(request, inst)
     if v is None:
         raise HttpError(404, "this app has no open draft — start one first")
     return inst, v
@@ -309,8 +320,9 @@ def get_workspace_app_guide(request: HttpRequest, workspace: str, key: str) -> G
     """Read this before adding changes. `manifest` is the open draft's composed
     manifest if there is one, else the live one."""
     inst = _installation(request, workspace, key, enabled=False)
-    _require_maintain(request, inst)
     v = services.open_draft(inst)
+    if not (v is not None and access.is_helper(request.user, v)):
+        _require_maintain(request, inst)
     m = services.effective(v)[0] if v else inst.manifest
     return GuideOut(contract=guide.CONTRACT, manifest=m, draft=v.pk if v else None)
 
@@ -331,7 +343,7 @@ def list_workspace_app_versions(request: HttpRequest, workspace: str, key: str) 
             summary="The app's open draft, with a plain-language review of what it changes")
 @gate("member")
 def get_workspace_app_draft(request: HttpRequest, workspace: str, key: str) -> DraftOut:
-    return _draft_out(_open_draft(request, workspace, key)[1])
+    return _draft_out(_open_draft(request, workspace, key, helper_ok=True)[1])
 
 
 @router.post("/workspace-apps/{workspace}/{key}/draft", response={201: DraftOut},
@@ -367,7 +379,7 @@ def add_workspace_app_change(request: HttpRequest, workspace: str, key: str,
     words, the rest are the op's fields (see the guide). Validated against the
     draft as it stands: a change that cannot apply is refused with the reason
     (422) and the draft is unchanged."""
-    _, v = _open_draft(request, workspace, key)
+    _, v = _open_draft(request, workspace, key, helper_ok=True)
     try:
         services.add_op(v, payload, by=request.user.email)
     except services.Refused as exc:
@@ -382,7 +394,7 @@ def add_workspace_app_change(request: HttpRequest, workspace: str, key: str,
                summary="Take one change out of the app's draft")
 @gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
 def remove_workspace_app_change(request: HttpRequest, workspace: str, key: str, op_id: str) -> DraftOut:
-    _, v = _open_draft(request, workspace, key)
+    _, v = _open_draft(request, workspace, key, helper_ok=True)
     try:
         services.remove_op(v, op_id)
     except services.Refused as exc:
@@ -395,9 +407,76 @@ def remove_workspace_app_change(request: HttpRequest, workspace: str, key: str, 
              summary="Run the app's checks (its scenarios) against the draft")
 @gate("member", kind="action", viewer_write="an app's maintainer may be a viewer granted the role by name")
 def check_workspace_app_draft(request: HttpRequest, workspace: str, key: str) -> DraftOut:
-    _, v = _open_draft(request, workspace, key)
+    _, v = _open_draft(request, workspace, key, helper_ok=True)
     services.run_checks(v)
     return _draft_out(v)
+
+
+@router.get("/workspace-apps/{workspace}/{key}/setup", response=SetupOut,
+            summary="The app's first-run steps, and which are done")
+@gate("member")
+def get_workspace_app_setup(request: HttpRequest, workspace: str, key: str) -> SetupOut:
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_maintain(request, inst)
+    return SetupOut(**services.setup_status(inst))
+
+
+@router.post("/workspace-apps/{workspace}/{key}/setup", response=SetupOut,
+             summary="Tick a first-run step done by hand, or put the list away")
+@gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
+def update_workspace_app_setup(request: HttpRequest, workspace: str, key: str, payload: SetupIn) -> SetupOut:
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_maintain(request, inst)
+    if payload.step is not None:
+        step = next((s for s in inst.manifest.get("setup") or [] if s["id"] == payload.step), None)
+        if step is None or "manual" not in step["check"]:
+            raise HttpError(422, "only a step the app cannot check for itself is ticked by hand")
+        done = [s for s in inst.setup_done or [] if s != payload.step] + ([payload.step] if payload.done else [])
+        inst.setup_done = done
+    if payload.hidden is not None:
+        inst.setup_hidden = payload.hidden
+    inst.save(update_fields=["setup_done", "setup_hidden", "updated_at"])
+    return SetupOut(**services.setup_status(inst))
+
+
+def _helpers(request: HttpRequest, inst: AppInstallation) -> list[HelperOut]:
+    draft = services.open_draft(inst)
+    helping = set(draft.helpers.values_list("pk", flat=True)) if draft else set()
+    agents = (Agent.objects.filter(workspace_id__in=perms.slugs_with(request.user, perms.READ), user__isnull=False)
+              .select_related("user").order_by("name"))
+    out = [HelperOut(slug=a.slug, name=a.name, home=a.workspace_id, login=a.user.email,
+                     reachable=access.may_help(a.user, inst.workspace_id), helping=a.user_id in helping)
+           for a in agents]
+    return sorted(out, key=lambda h: (not h.reachable, h.home != inst.workspace_id, h.name.lower()))
+
+
+@router.get("/workspace-apps/{workspace}/{key}/helpers", response=list[HelperOut],
+            summary="Agents you could ask to change this app, and whether each can reach it")
+@gate("member")
+def list_workspace_app_helpers(request: HttpRequest, workspace: str, key: str) -> list[HelperOut]:
+    """Every agent you can see whose login is an agent's own. `reachable` means its
+    login is a member of this workspace; an agent that is not cannot touch the app
+    until a workspace admin adds that login as a member."""
+    inst = _installation(request, workspace, key, enabled=False)
+    _require_maintain(request, inst)
+    return _helpers(request, inst)
+
+
+@router.post("/workspace-apps/{workspace}/{key}/draft/helpers", response=list[HelperOut],
+             summary="Let an agent work on the open draft (change, test, check — never publish)")
+@gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
+def add_workspace_app_helper(request: HttpRequest, workspace: str, key: str, payload: HelperIn) -> list[HelperOut]:
+    """For as long as the draft is open: published or thrown away, the access ends
+    with it. The agent's login must already be a member of the workspace."""
+    inst, v = _open_draft(request, workspace, key)
+    agent = Agent.objects.filter(slug=payload.agent, user__isnull=False).select_related("user").first()
+    if agent is None or not perms.can(request.user, agent.workspace_id, perms.READ):
+        raise HttpError(404, f"agent '{payload.agent}' not found")
+    if not access.may_help(agent.user, inst.workspace_id):
+        raise HttpError(422, f"{agent.name} is not a member of this workspace: a workspace admin adds "
+                             f"{agent.user.email} as a member first")
+    v.helpers.add(agent.user)
+    return _helpers(request, inst)
 
 
 @router.post("/workspace-apps/{workspace}/{key}/draft/publish", response=InstallationOut,

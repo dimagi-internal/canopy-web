@@ -45,6 +45,8 @@ What an app can say without code, each enforced in `services.act` / `services.qu
 | collection `read_also` | more roles that may read the whole collection | compliance reads applications for self-ID totals |
 | effect `delay_param` | hold the email back N hours (`AppScheduledEmail`, sent by a 10-minute tick); cancelled if the record no longer matches what the action left it as | a rejection sent tomorrow, not the minute someone clicked |
 | then `link_back` | a create step writes the new record's id back onto the action's record | a referral links to the application it became |
+| effect `name`, `audience` | how the store names an email and who gets it (else the action's label and its `to_field`) | "Not moving forward · to the applicant" |
+| `setup` | a maintainer's first-run list on top of the app; each step's `check` is read off the live app (`setting` changed from its default, `role_granted`, `records` ≥ min, `public`) or ticked by hand (`manual`); `go` opens a page or Customize | Hiring: name your recruiters, open a first job, turn on the careers page |
 | `retention` | on a clock (`ticks`, twice a day): anonymize or delete records matching a `where` after N days (or a setting), skipping a `hold_field`, deleting `cascade` children and files | rejected candidates by region; expired talent-pool consent |
 
 A workspace's own actions (overlay `add_action`) may not declare `then` or be link actions: both
@@ -71,10 +73,18 @@ error boundary.
 
 1. **Draft** (`POST …/draft`): starts as the live app, with a **test copy** seeded from `fixtures` —
    never live data. On the test copy the maintainer holds every app role, and nothing is emailed.
-2. **Change**: in plain words to an agent (the Customize page opens a canopy chat; the agent reads
-   `…/guide` and POSTs ops to `…/draft/ops` — every route is an MCP tool), or with the page's own
-   forms (add a question, add a stage, settings and email wording). Each change is reviewed as a
-   plain-English line with its intent; a refused one says why.
+2. **Change**, three ways, all into the same draft:
+   - **an agent**: the Customize page lists the agents the maintainer can see whose own login is a
+     member of the app's workspace (`…/helpers`), lets the chosen one onto THIS draft
+     (`…/draft/helpers` → `AppVersion.helpers`: read the guide, add/remove ops, open the test copy,
+     run checks — never publish, discard, roll back or start a draft; publishing or discarding
+     closes the draft and the access with it), and opens a chat with it in its home workspace;
+   - **the person's own Claude** (or any MCP client): canopy's MCP server (`/api/mcp/`, OAuth sign-in)
+     serves every route as a tool as that person, so `get_workspace_app_guide` →
+     `start_workspace_app_draft` → `add_workspace_app_change` → `check_workspace_app_draft` is the
+     same draft, under the person's own rights. The Customize page shows the address and a prompt;
+   - **the page's own forms** (add a question, add a stage, settings and email wording).
+   Each change is reviewed as a plain-English line with its intent; a refused one says why.
 3. **Try it**: every page of the draft, public ones as a visitor, on the test copy.
 4. **Check**: the scenarios run on a scratch copy; the workspace can add its own.
 5. **Publish**: refused while anything is quarantined or a check fails. A change to what the

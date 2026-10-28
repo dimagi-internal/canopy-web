@@ -331,6 +331,11 @@ def _validate_effect(where: str, raw, fields: dict, settings: dict, params: dict
         if out.get("ics"):
             _fail(f"{where}.delay_param", "an invite is sent at once, never delayed")
         out["delay_param"] = delay
+    for k in ("name", "audience"):  # how the store names it: "Application received", "to the applicant"
+        if raw.get(k) is not None:
+            if not isinstance(raw[k], str) or not raw[k].strip() or len(raw[k]) > 80:
+                _fail(f"{where}.{k}", "must be a short text (at most 80 characters)")
+            out[k] = raw[k].strip()
     return out
 
 
@@ -878,6 +883,52 @@ def _validate_listing(raw) -> dict:
     return out
 
 
+#: What marks a setup step done: a setting changed from its default, an app
+#: role given to someone by name, at least `min` live records, the public pages
+#: switched on, or the person ticking it.
+SETUP_CHECKS = ("setting", "role_granted", "records", "public", "manual")
+
+
+def _validate_setup(raw, settings: dict, roles: set[str], collections: dict, pages: list[dict]) -> list[dict]:
+    """The first-run list a maintainer sees on the app until every step is done
+    (or they hide it): what to do, where to do it, and how the app can tell."""
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list) or len(raw) > 12:
+        _fail("setup", "must be a list of at most 12 steps")
+    slugs = {p["slug"] for p in pages if p["audience"] == "member"}
+    out, seen = [], set()
+    for i, s in enumerate(raw):
+        where = f"setup[{i}]"
+        if not isinstance(s, dict) or not IDENT.match(str(s.get("id") or "")) or s["id"] in seen:
+            _fail(f"{where}.id", "must be a unique identifier")
+        seen.add(s["id"])
+        if not str(s.get("title") or "").strip():
+            _fail(f"{where}.title", "is required")
+        check = s.get("check")
+        if not isinstance(check, dict) or len(check) != 1 or next(iter(check)) not in SETUP_CHECKS:
+            _fail(f"{where}.check", f"must be one of {{{', '.join(SETUP_CHECKS)}: …}}")
+        kind, arg = next(iter(check.items()))
+        if kind == "setting" and arg not in settings:
+            _fail(f"{where}.check.setting", "must name a setting of the app")
+        if kind == "role_granted" and arg not in roles:
+            _fail(f"{where}.check.role_granted", "must name a role of the app (or maintainer)")
+        if kind == "records":
+            if not isinstance(arg, dict) or arg.get("collection") not in collections:
+                _fail(f"{where}.check.records", "must be {collection, min?}")
+            if not isinstance(arg.get("min", 1), int):
+                _fail(f"{where}.check.records.min", "must be a whole number")
+            arg = {"collection": arg["collection"], "min": max(1, arg.get("min") or 1)}
+        if kind in ("public", "manual"):
+            arg = True
+        go = s.get("go")
+        if go is not None and go != "customize" and go not in slugs:
+            _fail(f"{where}.go", "must be a member page of the app, or 'customize'")
+        out.append({"id": s["id"], "title": str(s["title"]).strip()[:120], "body": str(s.get("body") or "")[:600],
+                    "check": {kind: arg}, "go": go})
+    return out
+
+
 def validate(raw) -> dict:
     """A normalised copy of `raw`, or ValueError naming what is wrong."""
     if not isinstance(raw, dict):
@@ -915,6 +966,7 @@ def validate(raw) -> dict:
         "roles": roles, "settings": settings, "collections": collections, "actions": actions, "pages": pages,
         "links": links, "retention": _validate_retention(raw.get("retention"), collections, settings),
         "listing": _validate_listing(raw.get("listing")),
+        "setup": _validate_setup(raw.get("setup"), settings, set(roles) | {"maintainer"}, collections, pages),
         "fixtures": _validate_fixtures(raw.get("fixtures"), collections),
         "scenarios": _validate_scenarios(raw.get("scenarios"), names, actions, collections),
     }

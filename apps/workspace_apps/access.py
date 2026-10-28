@@ -56,6 +56,21 @@ def may_maintain(user, installation: AppInstallation) -> bool:
             and AppRoleGrant.objects.filter(installation=installation, user=user, role=MAINTAINER).exists())
 
 
+def is_helper(user, draft) -> bool:
+    """Is `user` an agent a maintainer asked to work on this open draft? Still
+    only while it is a member of the workspace and the draft is open."""
+    return (getattr(user, "pk", None) is not None and draft.status == draft.DRAFT
+            and perms.can(user, draft.installation.workspace_id, perms.READ)
+            and draft.helpers.filter(pk=user.pk).exists())
+
+
+def may_help(agent_user, workspace) -> bool:
+    """May this agent login be asked to work on an app's draft here? Only an
+    agent's own login (never a person's), and only a member of the workspace."""
+    return (agent_user is not None and hasattr(agent_user, "agent_identity")
+            and perms.can(agent_user, workspace, perms.READ))
+
+
 def may_grant(user, workspace) -> bool:
     """Give or take an app role by name: the tier that already manages members."""
     return perms.can(user, workspace, perms.MEMBERS_MANAGE)

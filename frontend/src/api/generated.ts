@@ -3325,6 +3325,67 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-apps/{workspace}/{key}/setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The app's first-run steps, and which are done */
+        readonly get: operations["get_workspace_app_setup"];
+        readonly put?: never;
+        /** Tick a first-run step done by hand, or put the list away */
+        readonly post: operations["update_workspace_app_setup"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/helpers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agents you could ask to change this app, and whether each can reach it
+         * @description Every agent you can see whose login is an agent's own. `reachable` means its
+         *     login is a member of this workspace; an agent that is not cannot touch the app
+         *     until a workspace admin adds that login as a member.
+         */
+        readonly get: operations["list_workspace_app_helpers"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/draft/helpers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Let an agent work on the open draft (change, test, check — never publish)
+         * @description For as long as the draft is open: published or thrown away, the access ends
+         *     with it. The agent's login must already be a member of the workspace.
+         */
+        readonly post: operations["add_workspace_app_helper"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-apps/{workspace}/{key}/draft/publish": {
         readonly parameters: {
             readonly query?: never;
@@ -21831,11 +21892,22 @@ export interface components {
             /** Public Pages */
             readonly public_pages: readonly string[];
             /** Emails */
-            readonly emails: readonly string[];
+            readonly emails: readonly components["schemas"]["StoreEmailOut"][];
             /** Versions */
             readonly versions: readonly components["schemas"]["StoreVersionOut"][];
             /** Installed */
             readonly installed: boolean;
+        };
+        /** StoreEmailOut */
+        readonly StoreEmailOut: {
+            /** Name */
+            readonly name: string;
+            /** To */
+            readonly to: string;
+            /** Optional */
+            readonly optional: boolean;
+            /** Delayable */
+            readonly delayable: boolean;
         };
         /** StoreHighlightOut */
         readonly StoreHighlightOut: {
@@ -22165,6 +22237,63 @@ export interface components {
              * @default
              */
             readonly note: string;
+        };
+        /** SetupOut */
+        readonly SetupOut: {
+            /** Steps */
+            readonly steps: readonly components["schemas"]["SetupStepOut"][];
+            /** Hidden */
+            readonly hidden: boolean;
+        };
+        /** SetupStepOut */
+        readonly SetupStepOut: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Body */
+            readonly body: string;
+            /** Go */
+            readonly go?: string | null;
+            /** Manual */
+            readonly manual: boolean;
+            /** Done */
+            readonly done: boolean;
+        };
+        /** SetupIn */
+        readonly SetupIn: {
+            /** Step */
+            readonly step?: string | null;
+            /**
+             * Done
+             * @default true
+             */
+            readonly done: boolean;
+            /** Hidden */
+            readonly hidden?: boolean | null;
+        };
+        /**
+         * HelperOut
+         * @description An agent the caller could ask to work on the app's draft.
+         */
+        readonly HelperOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Home */
+            readonly home: string;
+            /** Login */
+            readonly login: string;
+            /** Reachable */
+            readonly reachable: boolean;
+            /** Helping */
+            readonly helping: boolean;
+        };
+        /** HelperIn */
+        readonly HelperIn: {
+            /** Agent */
+            readonly agent: string;
         };
         /** RollbackIn */
         readonly RollbackIn: {
@@ -47360,6 +47489,106 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_app_setup: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SetupOut"];
+                };
+            };
+        };
+    };
+    readonly update_workspace_app_setup: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SetupIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SetupOut"];
+                };
+            };
+        };
+    };
+    readonly list_workspace_app_helpers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HelperOut"][];
+                };
+            };
+        };
+    };
+    readonly add_workspace_app_helper: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HelperIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HelperOut"][];
                 };
             };
         };

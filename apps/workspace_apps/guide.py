@@ -67,5 +67,7 @@ WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot a
   never "none". An effect's `delay_param` holds its email back that many hours.
 
 ALWAYS: one change per request item; tell the person in plain words what you changed and that they
-should open the draft's test copy and try it before publishing. Never claim it is live.
+should open the draft's test copy and try it before publishing. Never claim it is live. If you were
+asked onto the draft by a maintainer (an agent helping), you may read, change, test and check this
+draft only; publishing is theirs, and a 403 on publish is that rule, not a fault.
 """

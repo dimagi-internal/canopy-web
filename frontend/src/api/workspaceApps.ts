@@ -161,6 +161,36 @@ export async function addGrant(workspace: string, key: string, email: string, ro
   return unwrap(res, "Could not give the role");
 }
 
+export type AppHelper = components["schemas"]["HelperOut"];
+export type AppSetup = components["schemas"]["SetupOut"];
+
+export async function listHelpers(workspace: string, key: string): Promise<AppHelper[]> {
+  const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/helpers", { params: { path: P(workspace, key) } });
+  return Array.from(unwrap(res, "Failed to load the agents you could ask"));
+}
+
+/** Let an agent work on the open draft (change, test, check — never publish). */
+export async function addHelper(workspace: string, key: string, agent: string): Promise<AppHelper[]> {
+  const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/draft/helpers", {
+    params: { path: P(workspace, key) },
+    body: { agent },
+  });
+  return Array.from(unwrap(res, "Could not let the agent work on the draft"));
+}
+
+export async function getSetup(workspace: string, key: string): Promise<AppSetup> {
+  const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/setup", { params: { path: P(workspace, key) } });
+  return unwrap(res, "Failed to load the setup list") as unknown as AppSetup;
+}
+
+export async function updateSetup(workspace: string, key: string, body: { step?: string; done?: boolean; hidden?: boolean }): Promise<AppSetup> {
+  const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/setup", {
+    params: { path: P(workspace, key) },
+    body: { step: body.step ?? null, done: body.done ?? true, hidden: body.hidden ?? null },
+  });
+  return unwrap(res, "Could not update the setup list") as unknown as AppSetup;
+}
+
 export async function removeGrant(workspace: string, key: string, grantId: number): Promise<void> {
   const res = await apiV2.DELETE("/api/workspace-apps/{workspace}/{key}/grants/{grant_id}", {
     params: { path: { ...P(workspace, key), grant_id: grantId } },

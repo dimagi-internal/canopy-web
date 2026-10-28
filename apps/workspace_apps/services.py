@@ -163,10 +163,61 @@ def store_detail(workspace_id: str, key: str) -> dict:
             "publisher": "canopy" if t.owner_id is None else t.owner_id, "listing": listing, "roles": roles,
             "pages": pages, "records": records, "settings": len(m.get("settings") or {}), "retention": retention,
             "public_pages": [p["title"] for p in pages if p["audience"] == "public"],
-            "emails": sorted({a["label"] for a in m["actions"].values() if a.get("effects")}),
+            "emails": _store_emails(m),
             "versions": [{"version": x.version, "released_at": x.released_at.isoformat(), "changelog": x.changelog}
                          for x in versions[:10]],
             "installed": AppInstallation.objects.filter(workspace_id=workspace_id, template=t).exists()}
+
+
+def setup_status(inst: AppInstallation) -> dict:
+    """The app's first-run steps (manifest `setup`) and which are done — read off
+    the live app itself, so a step finished some other way (a setting changed by
+    an agent, a job opened from the jobs page) ticks itself."""
+    m = inst.manifest
+    steps = []
+    for s in m.get("setup") or []:
+        kind, arg = next(iter(s["check"].items()))
+        if kind == "setting":
+            spec = (m.get("settings") or {}).get(arg) or {}
+            value = spec.get("value", spec.get("default"))
+            done = "value" in spec and value not in (None, "") and value != spec.get("default")
+        elif kind == "role_granted":
+            done = inst.grants.filter(role=arg).exists()
+        elif kind == "records":
+            done = AppRecord.objects.filter(installation=inst, space=LIVE,
+                                            collection=arg["collection"])[:arg["min"]].count() >= arg["min"]
+        elif kind == "public":
+            done = inst.public
+        else:
+            done = s["id"] in (inst.setup_done or [])
+        steps.append({"id": s["id"], "title": s["title"], "body": s["body"], "go": s["go"],
+                      "manual": kind == "manual", "done": bool(done)})
+    return {"steps": steps, "hidden": inst.setup_hidden}
+
+
+def _store_emails(m: dict) -> list[dict]:
+    """Each distinct email the app can send, as the store names it: the effect's
+    own `name` and `audience` where the manifest gives them, else the action that
+    sends it and the field it goes to. Two effects with one name are one email
+    (an invite sent on scheduling and on picking a time)."""
+    out: dict[str, dict] = {}
+    for a in m["actions"].values():
+        fields = m["collections"][a["collection"]]["fields"]
+        for e in a.get("effects") or []:
+            name = e.get("name") or a["label"]
+            to = e.get("audience")
+            if not to:
+                head = (e.get("to_field") or "").partition(".")[0]
+                to = f"to the {(fields.get(head) or {}).get('label', head).lower()}" if head else ""
+            entry = out.setdefault(name, {"name": name, "to": [], "optional": False, "delayable": False})
+            if to and to not in entry["to"]:
+                entry["to"].append(to)
+            entry["optional"] |= bool(e.get("enabled_setting"))
+            entry["delayable"] |= bool(e.get("delay_param"))
+    def joined(to: list[str]) -> str:  # "to the candidate and the interviewers"
+        return " and ".join([to[0], *(t.removeprefix("to ") for t in to[1:])]) if to else ""
+
+    return [{**e, "to": joined(e["to"])} for e in out.values()]
 
 
 def store_screenshot(workspace_id: str, key: str, file: str) -> tuple[bytes, str]:
