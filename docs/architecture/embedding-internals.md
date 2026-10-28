@@ -147,6 +147,20 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
 - `tests/test_embedding_doc_is_true.py` fails if the host guide documents a
   variable, part or field the code does not read.
 
+## A site sign-off in the frame (`canopy.signOff`)
+
+The widget's second entry point, beside `init`: `canopy.signOff({baseUrl, app, tokenUrl,
+csrfToken, id})` (`frontend/packages/canopy-widget/src/signOff.ts`) opens a modal over the
+host's page holding `/embed/sign-off?app=&sign_off=` — the same shell and framing policy
+as the chat (`views_embed.embed_sign_off`), rendering `SignOffFrame` instead of
+`EmbedApp`. No launcher, no chat, no act-as-you permission: the frame mints a plain token
+(`{}`) at the host's panel endpoint, shows the request (`/api/embed/sign-offs/{id}`, only
+the frame of the site that asked), and approves with a passkey assertion made in the frame,
+as `PageGrantConfirm` does. It posts `sign-off {id, state}` to the page and nothing else:
+the approval stays in canopy for the site's server to read. Django hosts use the SDK's
+`{% canopy_sign_off %}`. Tests: `canopy-widget/src/signOff.test.ts`,
+`src/embed/SignOffFrame.test.tsx`, `tests/test_site_sign_offs.py` (§ in canopy's frame).
+
 ## canopy as an MCP Apps host
 
 canopy hosts MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`). Spec:

@@ -25,10 +25,15 @@ def data(request):
     })
 
 
+def sign_off_page(request):
+    return render(request, "sign_off_page.html", {"sign_off_id": "so_abcdefghijklmnop"})
+
+
 urlpatterns = [
     path("canopy/", include("canopy_sdk.django.urls")),
     path("o/token/", jwt_bearer_view(toolkit_token_view)),
     path("marketplace/network/", network, name="network"),
     path("elsewhere/", elsewhere, name="elsewhere"),
+    path("sign-off/", sign_off_page, name="sign_off_page"),
     path("data/visits/", data, name="data"),
 ]

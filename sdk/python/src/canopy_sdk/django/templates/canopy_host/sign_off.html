@@ -1,0 +1,72 @@
+{% comment %}
+A site sign-off approved on the page, in canopy's frame (`canopy.signOff`): see
+`{% canopy_sign_off %}` in templatetags/canopy_host.py. Values reach the script through
+`json_script` only, as in panel.html.
+{% endcomment %}
+{% if canopy_sign_off.ready %}
+  {{ canopy_sign_off.options|json_script:"canopy-sign-off-options" }}
+  {{ canopy_sign_off.sign_off|json_script:"canopy-sign-off-id" }}
+  {{ canopy_sign_off.then|json_script:"canopy-sign-off-then" }}
+  <script src="{{ canopy_sign_off.options.baseUrl }}/embed/widget.js"></script>
+  <script data-csrf="{{ csrf_token|default:'' }}">
+    (function () {
+      var fallbackCsrf = (document.currentScript && document.currentScript.getAttribute("data-csrf")) || "";
+      function read(id) {
+        var el = document.getElementById(id);
+        if (!el) return null;
+        try { return JSON.parse(el.textContent); } catch (e) { return null; }
+      }
+      function csrf() {
+        var field = document.querySelector("[name=csrfmiddlewaretoken]");
+        return field ? field.value : fallbackCsrf;
+      }
+      var config = read("canopy-sign-off-options") || {};
+      // Open one request; resolves with {id, state}: approved, declined, expired or closed.
+      window.canopySignOff = function (id) {
+        if (!window.canopy || typeof window.canopy.signOff !== "function") {
+          return Promise.reject(new Error("canopy could not be loaded"));
+        }
+        return window.canopy.signOff(Object.assign({}, config, { id: String(id || ""), csrfToken: csrf }));
+      };
+      var id = read("canopy-sign-off-id");
+      // `then` must be this site's own page: a same-origin http(s) URL, never a
+      // `javascript:` one or another site's.
+      var then = null;
+      try {
+        var target = new URL(String(read("canopy-sign-off-then") || ""), window.location.href);
+        if (target.origin === window.location.origin && /^https?:$/.test(target.protocol)) then = target.href;
+      } catch (e) { then = null; }
+      if (!id) return;
+      // The browser takes the outcome to the host, which reads the approval from canopy.
+      function report(outcome) {
+        if (!then || outcome.state === "closed") return;
+        var form = document.createElement("form");
+        form.method = "post";
+        form.action = then;
+        [["csrfmiddlewaretoken", csrf()], ["sign_off", outcome.id], ["state", outcome.state]].forEach(function (pair) {
+          var input = document.createElement("input");
+          input.type = "hidden";
+          input.name = pair[0];
+          input.value = pair[1];
+          form.appendChild(input);
+        });
+        document.body.appendChild(form);
+        form.submit();
+      }
+      function open() {
+        window.canopySignOff(id).then(report, function () {
+          document.dispatchEvent(new CustomEvent("canopy:sign-off-failed", { detail: { id: id } }));
+        });
+      }
+      document.addEventListener("click", function (event) {
+        var el = event.target && event.target.closest && event.target.closest("[data-canopy-sign-off-open]");
+        if (el) { event.preventDefault(); open(); }
+      });
+      open();
+    })();
+  </script>
+{% else %}
+  <script>
+    window.canopySignOff = function () { return Promise.reject(new Error("canopy is not configured here")); };
+  </script>
+{% endif %}

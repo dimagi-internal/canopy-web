@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.25.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.26.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.25.0/dimagi_canopy-0.25.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.26.0/dimagi_canopy-0.26.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -591,6 +591,34 @@ workspace approves their own (15 minutes); for one of the workspace's agents, it
 or an admin approves (24 hours); anyone else is `no_approver`, and the site decides what
 that means. `return_url` must be https on an origin the site registered (its frame
 origins or its JWKS URL). The wire is `canopy_sdk.sign_offs`.
+
+### On the site's own page (no trip to canopy)
+
+The person can approve without leaving the page: canopy's frame opens over it as a small
+dialog (no launcher, no chat), the passkey is asked in that frame, on canopy's origin,
+and the page is told only how it ended. Ask as above, then render instead of redirecting:
+
+```django
+{% load canopy_host %}
+<p>Waiting for your passkey… <button data-canopy-sign-off-open>Approve</button></p>
+{% canopy_sign_off asked.id then=collect_url %}
+```
+
+When the person decides, the browser POSTs `sign_off` (the id) and `state` (`approved`,
+`declined` or `expired`) to `then`. That view does not believe the browser: it reads
+the request from canopy and checks the approval itself.
+
+```python
+state = sign_offs.status(request.POST["sign_off"])     # the id the host stored for pending
+if state.state == "approved":
+    approval = sign_offs.verify(state.approval, action_key=..., site_ref=pending.ref,
+                                subject=user.email)
+```
+
+The frame mints its token at the panel's endpoint (`TOKEN_URL`, no page), so a site that
+shows the panel needs nothing more. Without Django: `canopy.signOff({baseUrl, app,
+tokenUrl, csrfToken, id})` from canopy's `/embed/widget.js` resolves with `{id, state}`.
+Keep `approve_url` as the fallback when the dialog cannot load.
 
 ## Host-held results: return facts + a link
 

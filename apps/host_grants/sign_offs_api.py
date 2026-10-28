@@ -4,6 +4,15 @@ A connected site, signed with its own key: `POST /api/sites/sign-offs` asks, and
 `GET /api/sites/sign-offs/{id}` reads one request back. The approver, in canopy's web
 app: `GET /api/sign-offs/{id}` shows it, `POST .../approve` (a browser, a person, a
 passkey step-up) and `POST .../decline` decide it.
+
+Or the approver decides ON THE SITE'S PAGE, in canopy's frame (`canopy.signOff` in the
+widget, `/embed/sign-off`): `GET /api/embed/sign-offs/{id}`, `POST .../approve/begin`
+and `/finish` (a WebAuthn assertion made in canopy's frame) and `POST .../decline`,
+with the frame's own token. The site that framed it holds that token, so the token
+alone proves nothing about the person: the passkey assertion, signed over canopy's
+origin, does — as for the panel's act-as-you permission (`grants_api.py`). Only the
+site that asked can frame its request, and the approval itself never reaches the
+browser: the site reads it with `GET /api/sites/sign-offs/{id}`.
 """
 from __future__ import annotations
 
@@ -13,6 +22,8 @@ from django.http import HttpRequest, JsonResponse
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
+from apps.api.auth import session_auth
+from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.route_gates import gate
 from apps.embedding.audit import client_ip
 from apps.embedding.rate_limit import (
@@ -20,7 +31,9 @@ from apps.embedding.rate_limit import (
     check_site_agents_client,
     check_site_agents_issuer,
 )
+from apps.passkeys import services as passkeys
 from apps.passkeys import stepup
+from apps.passkeys.schemas import PasskeyAssertIn, PasskeyOptionsOut
 from apps.tokens.models import SiteSignOff
 
 from . import client_identity, site_agents
@@ -29,6 +42,7 @@ from .api import _bearer
 
 sites_router = Router(tags=["connected apps"])
 router = Router(tags=["connected apps"])
+embed_router = Router(auth=session_auth, tags=["connected apps"])
 
 
 def _verified(request: HttpRequest, *, sign_off_id: str | None = None):
@@ -196,3 +210,86 @@ def decline_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecidedOu
     except service.SignOffClosedError as exc:
         raise HttpError(409, f"closed: this request is {exc}")
     return SignOffDecidedOut(**_out(row), redirect_url=service.redirect_url(row, None))
+
+
+# --- the approver, on the site's page (canopy's frame) ---------------------------------
+
+
+def _framed(request: HttpRequest, sign_off_id: str) -> SiteSignOff:
+    """The request, if the frame's site asked it and the token's person may decide it.
+    Anyone else, and any other site's frame, gets the same 404 as no request at all."""
+    app = getattr(request, "delegated_app", None)
+    if app is None or app.revoked_at is not None:
+        raise HttpError(403, "forbidden: this is the site's frame's; present its delegated token")
+    stepup.require_a_person(request, "approving a site's sign-off")
+    row = (SiteSignOff.objects.select_related("app", "agent", "decided_by")
+           .filter(pk=sign_off_id, app=app).first())
+    if row is None or not service.may_approve(row, request.user):
+        raise HttpError(404, "not_found: no such sign-off request")
+    return row
+
+
+def _slot(row: SiteSignOff, request: HttpRequest) -> str:
+    # One ceremony per request and person: a challenge begun for one cannot approve another.
+    return f"sign-off:{row.pk}:{request.user.pk}"
+
+
+@embed_router.get("/{sign_off_id}", response=SignOffOut, summary="A sign-off request, in the site's frame")
+@gate("sign-off-approver")
+def get_framed_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffOut:
+    """What the site that framed canopy asks you to approve, for its frame to show.
+    404 unless that site asked it and you may decide it."""
+    return SignOffOut(**_out(_framed(request, sign_off_id)))
+
+
+@embed_router.post("/{sign_off_id}/approve/begin", response=PasskeyOptionsOut,
+                   summary="Start approving a site's sign-off request with my passkey, in its frame")
+@gate("sign-off-approver", kind="ephemeral-credential")  # a ceremony's challenge, for this one request
+def begin_framed_approval(request: HttpRequest, sign_off_id: str) -> PasskeyOptionsOut:
+    """Options for navigator.credentials.get(), to approve this request with one of your
+    passkeys in canopy's frame. 409 `closed` when it was decided already or expired, 409
+    `no_passkey` when you have none registered."""
+    row = _framed(request, sign_off_id)
+    if row.state_now() != SiteSignOff.OPEN:
+        raise HttpError(409, f"closed: this request is {row.state_now()}")
+    options = passkeys.begin_assertion(request, slot=_slot(row, request))
+    if options is None:
+        raise ProblemError(
+            409, "No passkey registered", type_=TYPE_CONFLICT,
+            detail="Register a passkey (canopy Settings → Passkeys), then try again.",
+            members={"error": "no_passkey", "register_url": stepup.REGISTER_PATH},
+        )
+    return PasskeyOptionsOut(options=options)
+
+
+@embed_router.post("/{sign_off_id}/approve/finish", response=SignOffOut,
+                   summary="Approve a site's sign-off request with my passkey, in its frame")
+@gate("sign-off-approver", setting=True)
+def finish_framed_approval(request: HttpRequest, sign_off_id: str, payload: PasskeyAssertIn) -> SignOffOut:
+    """Verify the passkey assertion and approve. The site reads the signed approval
+    itself (`GET /api/sites/sign-offs/{id}`); the frame is told only the new state.
+    400 when the assertion fails, 409 `closed` when it was decided already or expired."""
+    row = _framed(request, sign_off_id)
+    try:
+        passkeys.finish_assertion(request, payload.credential, slot=_slot(row, request))
+    except passkeys.CeremonyError as exc:
+        raise HttpError(400, f"passkey_failed: {exc}") from exc
+    try:
+        row = service.approve(row, request.user)
+    except service.SignOffClosedError as exc:
+        raise HttpError(409, f"closed: this request is {exc}")
+    return SignOffOut(**_out(row))
+
+
+@embed_router.post("/{sign_off_id}/decline", response=SignOffOut,
+                   summary="Decline a site's sign-off request, in its frame")
+@gate("sign-off-approver", setting=True)
+def decline_framed_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffOut:
+    """Decline; the site is told when it next reads the request. 409 `closed` when it
+    was decided already or expired."""
+    row = _framed(request, sign_off_id)
+    try:
+        row = service.decline(row, request.user)
+    except service.SignOffClosedError as exc:
+        raise HttpError(409, f"closed: this request is {exc}")
+    return SignOffOut(**_out(row))

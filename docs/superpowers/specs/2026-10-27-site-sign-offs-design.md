@@ -223,3 +223,14 @@ where the approver's browser goes back to the site but the requester is somewher
    staff tick (labs Admin). It is on for ACE, which is never in a project space with real
    data, so its `labs-token-mint` keeps working with nobody approving. The agent path here
    stays for any agent that does not have it.
+
+## Addendum (2026-10-28): approving on the site's own page
+
+Jonathan: the person should approve without leaving the site's page, as they confirm the
+panel's act-as-you permission, and it should be a first-class, easy call for a host. So
+the request can also be decided in canopy's frame over the site's page: the widget's
+`canopy.signOff`, the shell at `/embed/sign-off`, `/api/embed/sign-offs/{id}` with
+`approve/begin|finish` (a WebAuthn assertion in the frame) and `decline`, and the SDK's
+`{% canopy_sign_off %}` (0.26.0). The page learns the state only; the site reads the
+approval from canopy as before. `approve_url` stays as the fallback.
+
