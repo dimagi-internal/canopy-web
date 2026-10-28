@@ -1,24 +1,25 @@
 import type { JSX } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
-import { WorkbenchMain, WorkbenchNavItem, WorkbenchRail, WorkbenchShell, WorkbenchSubHeader } from 'canopy-ui'
+import { WorkbenchMain, WorkbenchNavItem, WorkbenchRail, WorkbenchShell } from 'canopy-ui'
 
 import { useAuth } from '@/auth/AuthProvider'
 import { useMemoryVisible } from '@/auth/memoryRollout'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '@/lib/scopedLinks'
+import { SETTINGS_SECTIONS } from '@/pages/settingsSections'
 
 /**
- * Your own page: one frame over the pages that are about YOU — who you are and
- * where you are a member (Profile), what agents know about you (Memory), and
- * your account (Settings, itself tabbed). The same shape as an agent's page:
- * who it is and its sections down a left rail, a section's own tabs across the
- * top. Memory and Settings keep the addresses they have always had
- * (/people/me, /settings), so every link already handed out still lands.
+ * Settings: one frame over everything about YOU, the same in every workspace —
+ * who you are and where you are a member (Profile), your account's settings in
+ * sections, and what agents know about you (Memory). Every section is one entry
+ * down the left rail, one click away; no section has tabs of its own.
+ * Memory keeps the address it has always had (/people/me), and /me forwards to
+ * Profile, so every link already handed out still lands.
  */
-export function MeLayout(): JSX.Element {
+export function SettingsLayout(): JSX.Element {
   return (
     <WorkbenchShell>
-      <MeLeftNav />
+      <SettingsLeftNav />
       <WorkbenchMain>
         <Outlet />
       </WorkbenchMain>
@@ -26,15 +27,14 @@ export function MeLayout(): JSX.Element {
   )
 }
 
-function MeLeftNav(): JSX.Element {
+function SettingsLeftNav(): JSX.Element {
   const auth = useAuth()
   const memoryVisible = useMemoryVisible()
   const me = auth.status === 'authenticated' ? auth.user : null
   const items = [
-    { to: '/me', label: 'Profile', end: true },
+    ...SETTINGS_SECTIONS.map((s) => ({ to: `/settings/${s.section}`, label: s.label })),
     // Memory is shown only to the people it is on for (memoryRollout.ts).
-    ...(memoryVisible ? [{ to: '/people/me', label: 'Memory', end: false }] : []),
-    { to: '/settings', label: 'Settings', end: false },
+    ...(memoryVisible ? [{ to: '/people/me', label: 'Memory' }] : []),
   ]
 
   const header = (
@@ -49,11 +49,15 @@ function MeLeftNav(): JSX.Element {
 
   return (
     <WorkbenchRail header={header}>
-      {/* Phone: a horizontal strip, as on an agent's page; a rail from md up. */}
-      <nav aria-label="Your profile" className="px-2 py-3">
+      {/* Phone: a horizontal strip, as on an agent's page; a rail from md up.
+          The strip scrolls, so its right edge fades to say so. */}
+      <nav
+        aria-label="Settings"
+        className="relative px-2 py-3 after:pointer-events-none after:absolute after:inset-y-3 after:right-0 after:w-10 after:bg-gradient-to-l after:from-background after:via-background/80 after:to-transparent md:after:hidden"
+      >
         <div className="flex gap-0.5 overflow-x-auto md:flex-col md:overflow-x-visible">
           {items.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} className="shrink-0 md:shrink">
+            <NavLink key={item.to} to={item.to} className="shrink-0 md:shrink">
               {({ isActive }) => <WorkbenchNavItem active={isActive}>{item.label}</WorkbenchNavItem>}
             </NavLink>
           ))}
@@ -72,19 +76,16 @@ function Avatar({ me, size }: { me: { name: string; email: string; avatar_url?: 
   )
 }
 
-/** The Profile tab: who you are, and each workspace you are in — with the link to
- *  the page other members there see for you. */
-export function MeProfileTab(): JSX.Element | null {
+/** Profile: each workspace you are in, your role there, and the page other
+ *  members there see for you. Who you are heads the rail beside it. */
+export function ProfileSection(): JSX.Element | null {
   const auth = useAuth()
   const { workspaces } = useWorkspace()
   if (auth.status !== 'authenticated') return null
   const me = auth.user
 
   return (
-    <div className="max-w-4xl px-6 py-8">
-      <WorkbenchSubHeader title="Profile" />
-
-      <section>
+    <section>
         <h2 className="mb-2 text-sm font-semibold text-foreground">Your workspaces</h2>
         {workspaces.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">You are not in a workspace yet.</p>
@@ -119,6 +120,5 @@ export function MeProfileTab(): JSX.Element | null {
           </table>
         )}
       </section>
-    </div>
   )
 }

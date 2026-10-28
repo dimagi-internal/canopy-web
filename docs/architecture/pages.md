@@ -610,14 +610,16 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/schedules`** — every recurring schedule across your workspaces,
   filterable by workspace/agent. Same `ScheduleCalendar` as the tenant route;
   edits reuse the agent rail's `ScheduleEditor`.
-- **`/me`, `/people/me`, `/settings`** — your own page, one frame (`MeLayout`):
-  who you are and Profile / Memory / Settings down a left rail, as on an
-  agent's page (Memory only for those it is on for). Profile lists your
-  workspaces and how members of each see you.
-- **`/settings/<tab>`** — your account, as tabs (`frontend/src/pages/accountSettingsTabs.ts`);
-  bare `/settings`, and every old `/settings#anchor` or `?device_key=` /
-  `?github=` link, forward to the tab holding it, keeping query and hash. An
-  agent asking to sign in as you shows above every tab.
+- **`/settings/<section>`** — Settings: everything about you, the same in every
+  workspace, one frame (`SettingsLayout`) with who you are and one rail entry
+  per section (`frontend/src/pages/settingsSections.ts`); no section has tabs.
+  The account menu's Settings opens it. Bare `/settings` opens Profile; every
+  old `/settings#anchor` or `?device_key=` / `?github=` link forwards to the
+  section holding it, keeping query and hash; `/me` forwards to Profile; Memory
+  keeps `/people/me` and is in the rail only for people it is on for. An agent
+  asking to sign in as you shows above every section.
+  - **Profile** — every workspace you are in, your role, and how members there
+    see you.
   - **Account** — contact details, presence, where your sessions are filed,
     who may review them.
   - **Security** — passkeys and your vault key (`#vault-key`: set up with a PRF
@@ -640,7 +642,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/system`** — capability catalog + Workflows view, read live from the
   canopy plugin.
 - **`/guide`** — the in-app guide, generated from `frontend/src/guide/surfaces.ts`.
-- **`/people/me`** — what agents know about you, and your agent-memory settings (a section of `/me`).
+- **`/people/me`** — what agents know about you, and your agent-memory settings (a section of `/settings`).
 - **`/hcp-clients`** — the HCP service's client registry (superusers).
 - **`/beta-requests`** (+ `/:requestId`) — requests for access to Canopy from
   the public site; only their reviewer or a superuser sees them.

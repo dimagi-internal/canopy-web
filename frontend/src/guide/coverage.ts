@@ -41,6 +41,7 @@ export const NOT_PAGES: Record<string, string> = {
   '/agents/*': 'redirect: legacy flat path → /w/:workspace/agents',
   '/ddd/*': 'redirect: legacy flat path → /w/:workspace/ddd',
   '/ddd-plans': 'redirect: retired, → /',
+  '/me': 'redirect: your profile, now a section of Settings → /settings/profile',
   '/reviews': 'redirect: retired, → /',
   '/insights': 'redirect: retired feed, → /',
   '/projects': 'redirect: retired (pre-tenancy), → /',
