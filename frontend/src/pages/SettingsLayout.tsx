@@ -1,5 +1,5 @@
-import type { JSX } from 'react'
-import { Link, NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useRef, type JSX } from 'react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { WorkbenchMain, WorkbenchNavItem, WorkbenchRail, WorkbenchShell } from 'canopy-ui'
 
 import { useAuth } from '@/auth/AuthProvider'
@@ -37,6 +37,20 @@ function SettingsLeftNav(): JSX.Element {
     ...(memoryVisible ? [{ to: '/people/me', label: 'Memory' }] : []),
   ]
 
+  // On a phone the strip is narrower than its entries, so bring the open one
+  // into view (centred). Only the strip scrolls: scrollIntoView would move the
+  // page too. From md up the rail never overflows and this does nothing.
+  const stripRef = useRef<HTMLDivElement>(null)
+  const { pathname } = useLocation()
+  useEffect(() => {
+    const strip = stripRef.current
+    const active = strip?.querySelector<HTMLElement>('[aria-current="page"]')
+    if (!strip || !active || strip.scrollWidth <= strip.clientWidth) return
+    const s = strip.getBoundingClientRect()
+    const a = active.getBoundingClientRect()
+    strip.scrollLeft += a.left - s.left - (s.width - a.width) / 2
+  }, [pathname, items.length])
+
   const header = (
     <div className="flex items-start gap-3 px-4 py-4">
       <Avatar me={me} size="h-10 w-10 text-sm" />
@@ -55,7 +69,7 @@ function SettingsLeftNav(): JSX.Element {
         aria-label="Settings"
         className="relative px-2 py-3 after:pointer-events-none after:absolute after:inset-y-3 after:right-0 after:w-10 after:bg-gradient-to-l after:from-background after:via-background/80 after:to-transparent md:after:hidden"
       >
-        <div className="flex gap-0.5 overflow-x-auto md:flex-col md:overflow-x-visible">
+        <div ref={stripRef} className="flex gap-0.5 overflow-x-auto md:flex-col md:overflow-x-visible">
           {items.map((item) => (
             <NavLink key={item.to} to={item.to} className="shrink-0 md:shrink">
               {({ isActive }) => <WorkbenchNavItem active={isActive}>{item.label}</WorkbenchNavItem>}
