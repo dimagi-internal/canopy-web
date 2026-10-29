@@ -6003,7 +6003,9 @@ export interface paths {
          * @description `{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
          *     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
          *     browser makes them whenever you wrap the vault key to someone (turn on,
-         *     grant, rotate) or confirm who can read the agent.
+         *     grant, rotate) or confirm who can read the agent — and when a member of the
+         *     vault approves their own machine, which a keeper then grants (they may vouch
+         *     for nothing else).
          */
         readonly post: operations["add_agent_zk_endorsements"];
         readonly delete?: never;
@@ -28327,6 +28329,18 @@ export interface components {
             readonly name: string;
         };
         /**
+         * DeviceKeyVouchOut
+         * @description An agent whose vault the caller is a member of but does not manage, that
+         *     their own machine waits on: they sign for the machine (an endorsement) and a
+         *     keeper hands it the vault key (spec 2026-10-22 vault-access-follows-canopy-access §1).
+         */
+        readonly DeviceKeyVouchOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Agent Id */
+            readonly agent_id: string;
+        };
+        /**
          * RunnerDeviceKeyOut
          * @description A device key and its state. Public material only — there is no secret.
          */
@@ -28423,6 +28437,11 @@ export interface components {
              * @default []
              */
             readonly zk_pending_agents: readonly string[];
+            /**
+             * Zk Vouch Agents
+             * @default []
+             */
+            readonly zk_vouch_agents: readonly components["schemas"]["DeviceKeyVouchOut"][];
             /**
              * Ecdh Store
              * @default

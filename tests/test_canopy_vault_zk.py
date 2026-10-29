@@ -19,8 +19,8 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.credentials import pat_rotation, zk, zk_seal
 from apps.agents import services
+from apps.agents.credentials import pat_rotation, zk, zk_seal
 from apps.agents.models import (
     Agent,
     AgentAdmin,
@@ -1664,3 +1664,88 @@ def test_a_browser_rotates_a_workspace_vault_only_after_a_passkey_step_up(fleet)
     res = c.post(f"/api/vaults/{vid}/zk/rotate", content_type="application/json",
                  data={"new_kv": 2, "wraps": _ws_wraps(fleet, binding, vk2, kv=2), "values": []})
     assert res.status_code == 403 and res.json()["error"] == "step_up_required"
+
+
+# ---- a member's own machine: they sign for it, a keeper grants it (DIM-W154, 2026-10-29) ----
+
+def _members_own_laptop(fleet, name):
+    """A vault member who does NOT manage it registers and approves their own computer,
+    which reads the agent through their license (as egeoffroy's DIM-W154 reads ACE)."""
+    from apps.agents.models import AgentLicense
+
+    ed, priv = _editor_with_a_key(fleet, name=name)
+    AgentLicense.objects.create(agent=fleet.agent, user=ed, status=AgentLicense.ACTIVE, basis="test")
+    laptop = Runner.objects.create(name=f"{name}-laptop", kind=Runner.COMPUTER, owner=ed, private=True,
+                                   status=Runner.ONLINE, workspace=fleet.ws, last_heartbeat_at=timezone.now(),
+                                   capabilities={})
+    ecdh = ec.generate_private_key(ec.SECP256R1())
+    res = Client().post("/api/runner-device-keys/", content_type="application/json",
+                        HTTP_AUTHORIZATION=f"Bearer {_pat(ed)}",
+                        data={"runner": str(laptop.pk), "public_jwk": _jwk(ec.generate_private_key(ec.SECP256R1())),
+                              "kind": "tpm", "label": f"{name} (Windows)",
+                              "ecdh_public_jwk": ref.jwk(ecdh.public_key())})
+    assert res.status_code in (200, 201), res.content
+    key = RunnerDeviceKey.objects.get(pk=res.json()["id"])
+    c = Client()
+    c.force_login(ed)
+    grant_step_up(c)
+    return ed, priv, key, ecdh, c
+
+
+def _endorse_device(fleet, key, ecdh, priv, by):
+    e = ref.endorse(_aid(fleet), "device", key.ecdh_jkt, ecdh.public_key(), priv, str(by.pk))
+    return {k: e[k] for k in ("kind", "target", "key_jkt", "by_jkt", "sig")}
+
+
+def test_a_member_approving_their_own_machine_is_asked_to_sign_for_it_and_a_keeper_grants_it(fleet):
+    assert _enable(fleet).status_code == 200
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, "beth")
+    # Wrap the member themselves first, as an owner would have: only the MACHINE waits.
+    assert fleet.client.post(f"{ZK}/wraps", content_type="application/json", data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=ed, pub=priv.public_key())]}).status_code == 200
+    res = c.post(f"/api/runner-device-keys/{key.pk}/approve")
+    assert res.status_code == 200, res.content
+    body = res.json()
+    assert body["zk_pending_agents"] == []          # they manage nothing: no grant to offer
+    assert body["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    key.refresh_from_db()
+
+    # Before they sign, the owner's box will not pass the key on.
+    [work] = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    assert ("device", str(key.pk)) in {(p["kind"], p["target"]) for p in work["pending"]}
+    assert not [e for e in work["endorsements"] if e["target"] == key.ecdh_jkt]
+
+    res = c.post(f"{ZK}/endorsements", content_type="application/json",
+                 data={"endorsements": [_endorse_device(fleet, key, ecdh, priv, ed)]})
+    assert res.status_code == 200 and res.json() == {"stored": 1}, res.content
+    [work] = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    [mine] = [e for e in work["endorsements"] if e["target"] == key.ecdh_jkt]
+    assert mine["by"] == str(ed.pk)
+
+
+def test_a_member_vouches_for_nobody_but_their_own_machine(fleet):
+    assert _enable(fleet).status_code == 200
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, "beth2")
+    assert c.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    key.refresh_from_db()
+    # Someone else's machine (the owner's box) — refused.
+    res = c.post(f"{ZK}/endorsements", content_type="application/json",
+                 data={"endorsements": [_endorse_device(fleet, fleet.device, fleet.ecdh, priv, ed)]})
+    assert res.status_code == 403 and res.json()["error"] == "zk_not_your_machine", res.content
+    # Another person — refused too: only the vault's managers confirm people.
+    other, other_priv = _editor_with_a_key(fleet, name="other")
+    e = ref.endorse(_aid(fleet), "member", str(other.pk), other_priv.public_key(), priv, str(ed.pk))
+    res = c.post(f"{ZK}/endorsements", content_type="application/json",
+                 data={"endorsements": [{k: e[k] for k in ("kind", "target", "key_jkt", "by_jkt", "sig")}]})
+    assert res.status_code == 403 and res.json()["error"] == "zk_not_your_machine", res.content
+
+
+def test_someone_outside_the_vault_vouches_for_nothing(fleet):
+    assert _enable(fleet).status_code == 200
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, "beth3")
+    assert c.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    key.refresh_from_db()
+    _leave_the_vault(fleet)  # the agent's vault no longer follows its access list
+    res = c.post(f"{ZK}/endorsements", content_type="application/json",
+                 data={"endorsements": [_endorse_device(fleet, key, ecdh, priv, ed)]})
+    assert res.status_code == 403, res.content

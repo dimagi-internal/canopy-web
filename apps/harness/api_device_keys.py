@@ -38,7 +38,13 @@ from apps.passkeys import stepup
 from . import device_key_notify, device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey, RunnerFleet
 from .runners import can_administer_runner, may_trust_device_keys, set_runner_machine
-from .schemas import DeviceKeyAgentOut, RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
+from .schemas import (
+    DeviceKeyAgentOut,
+    DeviceKeyVouchOut,
+    RunnerDeviceKeyCreatedOut,
+    RunnerDeviceKeyIn,
+    RunnerDeviceKeyOut,
+)
 
 router = Router(auth=session_auth, tags=["harness"])
 
@@ -268,6 +274,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
         # passkey touch (canopy-web#1550); for an approved key, what it came to
         # serve since (a runner made private, a new license) — "Give access".
         row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready)
+        row.zk_vouch_agents = zk_agents_to_vouch_for(request.user, k, assume_active=not k.ecdh_ready)
         out.append(row)
     return out
 
@@ -310,6 +317,7 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
                       before=before, after=key.status)
     out = key_out(key, can_manage=True)
     out.zk_pending_agents = zk_agents_waiting_on(request.user, key)
+    out.zk_vouch_agents = zk_agents_to_vouch_for(request.user, key)
     return out
 
 
@@ -333,6 +341,37 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
         if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
         and zk.device_waits(agent, key)
     )
+
+
+def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = False) -> list[DeviceKeyVouchOut]:
+    """Zero-knowledge agents whose vault `user` is a member of WITHOUT managing it, that
+    this key — `user`'s own machine — waits on a copy of the vault key for.
+
+    A member cannot wrap the key (only its managers grant), but the spec has their
+    approval sign the machine (2026-10-22 vault-access-follows-canopy-access §1): a
+    keeper then wraps to it, with nobody else asked. Without this, a member who approved
+    their own box was told nothing and the agent's owner got a "no vault-key wrap" alert
+    (DIM-W154, 2026-10-29). The agents `zk_agents_waiting_on` lists are left out: their
+    manager grants directly."""
+    if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
+        return []
+    from apps.agents.credentials import vault_members, zk
+    from apps.passkeys.models import UserVaultKeyset
+
+    # Whose machine it is: the runner's owner, else whoever approves it — the caller,
+    # for a key they are about to approve.
+    person = key.runner.owner_id or key.approved_by_id or (user.pk if assume_active else None)
+    if person != user.pk or not UserVaultKeyset.objects.filter(user=user).exists():
+        return []
+    out = []
+    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gt=0).select_related("workspace", "owner"):
+        vault = vault_members.vault_for_agent(agent)
+        role = vault_members.role_of(vault, user)
+        if role is None or (agent.is_admin(user) and vault_members.is_admin(role)):
+            continue
+        if device_keys.runner_serves_agent(key.runner, agent) and zk.device_waits(agent, key):
+            out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
+    return sorted(out, key=lambda a: a.slug)
 
 
 def vault_agents_of(user) -> list:

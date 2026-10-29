@@ -835,15 +835,19 @@ export async function recoverWithCode(slug: string, code: string): Promise<ZkSta
  * for the passphrase (`prompt`). Returns the approved key and the agents
  * granted; an agent that fails to grant is left for the Grant button.
  */
-export async function approveAndGrant(keyId: string, agents: string[], prompt: UnlockPrompt):
-    Promise<{ key: RunnerDeviceKeyOut; granted: string[]; failed: string[] }> {
-  const ks = agents.length ? await getKeyset() : null
+export async function approveAndGrant(keyId: string, agents: string[], prompt: UnlockPrompt, vouch: readonly VouchAgent[] = []):
+    Promise<{ key: RunnerDeviceKeyOut; granted: string[]; failed: string[]; vouched: string[] }> {
+  const ks = agents.length || vouch.length ? await getKeyset() : null
   let me: Unlocked | null = ks ? await stepUpAndUnlock(ks) : null
   const key = await approveRunnerDeviceKey(keyId)
   const granted: string[] = [], failed: string[] = []
   const todo = key.zk_pending_agents ?? agents
-  if (!todo.length || !ks?.exists) return { key, granted, failed: [...todo] }
+  const toVouch = key.zk_vouch_agents ?? vouch
+  if ((!todo.length && !toVouch.length) || !ks?.exists) return { key, granted, failed: [...todo], vouched: [] }
   me = me ?? (await unlockVaultKey(prompt, ks))
+  // My own machine, for agents whose vault I am a member of but do not manage: I
+  // cannot hand the key over, but my signature is what lets a keeper do it.
+  const vouched = await vouchForMyMachine(key, toVouch, me)
   for (const slug of todo) {
     try {
       await giveAccess(slug, async () => me!)
@@ -858,7 +862,27 @@ export async function approveAndGrant(keyId: string, agents: string[], prompt: U
       await endorseMachine(slug, key, me!)
     }
   }
-  return { key, granted, failed }
+  return { key, granted, failed, vouched }
+}
+
+export type VouchAgent = { slug: string; agent_id: string }
+
+/**
+ * Sign "this machine — mine — may read this agent" for each agent whose vault I am a
+ * member of without managing it (`zk_vouch_agents`). A keeper (a box that holds the
+ * vault key and works for a manager) then passes the key on with nobody asked
+ * (spec 2026-10-22-vault-access-follows-canopy-access-design.md §1). Returns the
+ * slugs it signed for.
+ */
+export async function vouchForMyMachine(key: RunnerDeviceKeyOut, agents: readonly VouchAgent[], me: Unlocked): Promise<string[]> {
+  if (!key.ecdh_jkt || !key.ecdh_public_jwk) return []
+  const done: string[] = []
+  for (const a of agents) {
+    const n = await endorseQuietly(a.slug, a.agent_id, me,
+      [{ kind: 'device', target: key.ecdh_jkt, publicJwk: key.ecdh_public_jwk as Jwk }])
+    if (n) done.push(a.slug)
+  }
+  return done
 }
 
 /** Sign "this machine may read this agent" with my own key; best effort. */

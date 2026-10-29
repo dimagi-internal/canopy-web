@@ -84,9 +84,13 @@ def endorsements(agent) -> list[dict]:
             for e in rows]
 
 
-def add(agent, *, user, items: list) -> int:
+def add(agent, *, user, items: list, own_machines_only: bool = False) -> int:
     """Store the caller's endorsements. Each must be signed by the caller's OWN
-    vault key, name a current recipient by its current key, and verify."""
+    vault key, name a current recipient by its current key, and verify.
+
+    `own_machines_only`: the caller is a member of the vault, not a manager, and may
+    vouch only for a machine that works for THEM (spec 2026-10-22 §1: "a machine is
+    trusted through the person who approved it, who must be a member of the vault")."""
 
     if len(items) > MAX_ENDORSEMENTS:
         raise _shape(f"at most {MAX_ENDORSEMENTS} endorsements")
@@ -95,6 +99,13 @@ def add(agent, *, user, items: list) -> int:
     if vault_members.not_a_person([user.pk]):
         raise ZkError(403, "not_a_person",
                       "an agent's login is not a person, and vouches for no key")
+    if own_machines_only:
+        mine = {k.ecdh_jkt for k in zk.eligible_device_keys(agent) if vault_members.person_of_device(k) == user.pk}
+        for i, it in enumerate(items):
+            if it.kind != "device" or str(it.target) not in mine:
+                raise ZkError(403, "zk_not_your_machine",
+                              f"endorsements[{i}]: a member of {agent.slug}'s vault vouches only for their own "
+                              "machine; a manager of the vault confirms anyone else")
     ks = UserVaultKeyset.objects.filter(user=user).first()
     if ks is None:
         raise ZkError(409, "zk_no_keyset", "set up your vault key first (Settings → Vault key)")

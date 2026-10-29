@@ -666,16 +666,29 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
 
 @router.post("/{slug}/vault/zk/endorsements", response=ZkEndorsementsOut,
              summary="Vouch, with your own vault key, that keys may read this agent")
-@gate("agent-admin", "vault-admin", setting=True, step_up=True)  # own vault key's signatures; browser: + step-up
+# own vault key's signatures; browser: + step-up. self: a member of the vault who does
+# not manage it, vouching for their OWN machine only.
+@gate("agent-admin", "vault-admin", "self", setting=True, step_up=True)
 def add_agent_zk_endorsements(request: HttpRequest, slug: str, payload: ZkEndorsementsIn) -> ZkEndorsementsOut:
     """`{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
     browser makes them whenever you wrap the vault key to someone (turn on,
-    grant, rotate) or confirm who can read the agent."""
+    grant, rotate) or confirm who can read the agent — and when a member of the
+    vault approves their own machine, which a keeper then grants (they may vouch
+    for nothing else)."""
 
-    agent = _zk_admin(request, slug)
+    agent = agent_for_read(request, slug)
+    role = vault_members.role_of(vault_members.vault_for_agent(agent), request.user)
+    manager = agent.is_admin(request.user) and vault_members.is_admin(role)
+    if manager:
+        agent = _zk_admin(request, slug)
+    elif role is None:
+        raise HttpError(403, "this action requires a member of this agent's vault")
+    elif stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     try:
-        n = zk_endorse.add(agent, user=request.user, items=payload.endorsements)
+        n = zk_endorse.add(agent, user=request.user, items=payload.endorsements,
+                           own_machines_only=not manager)
     except zk_endorse.ZkError as exc:
         raise zk_problem(exc) from exc
     return ZkEndorsementsOut(stored=n)
