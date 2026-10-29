@@ -13,6 +13,8 @@ Stdlib only, like the rest of this package.
 """
 from __future__ import annotations
 
+from .closeout import find as find_closeout
+
 #: The longest note a runner sends. Unchanged from the old `[:2000]`.
 MAX_CHARS = 2000
 
@@ -44,7 +46,11 @@ def turn_url(base: str, turn: dict) -> str:
 
 def cap(text: str, url: str = "", limit: int = MAX_CHARS) -> str:
     """`text` unchanged when it fits in `limit`; otherwise cut so that it, plus a
-    marker naming the cut and `url`, fits in `limit` exactly or less."""
+    marker naming the cut and `url`, fits in `limit` exactly or less.
+
+    A closeout status line (`[closeout: <VERDICT>]`, canopy_transcript.closeout) is the
+    LAST line of the reply and the one part of it a reader of the note acts on, so a cut
+    keeps it: the head is shortened instead, and the line follows the marker."""
     text = text or ""
     if len(text) <= limit:
         return text
@@ -52,4 +58,8 @@ def cap(text: str, url: str = "", limit: int = MAX_CHARS) -> str:
               else f" {ELLIPSIS} [truncated]")
     if len(marker) >= limit:  # a cap too small for the marker: the marker alone
         return marker.strip()[:limit]
+    _, line = find_closeout(text)
+    tail = f"\n\n{line}" if line and text.rstrip().endswith(line) else ""
+    if tail and len(marker) + len(tail) < limit // 2:
+        return text[: limit - len(marker) - len(tail)].rstrip() + marker + tail
     return text[: limit - len(marker)].rstrip() + marker

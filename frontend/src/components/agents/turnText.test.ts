@@ -29,6 +29,8 @@ function unreported(over: Partial<AgentTurnOut> = {}): AgentTurnOut {
     content_hidden: false,
     chat_session_id: null,
     has_transcript: false,
+    closeout_verdict: '',
+    closeout_line: '',
     ...over,
   }
 }
