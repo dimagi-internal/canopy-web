@@ -1412,6 +1412,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
             _restage_delegated_google()
+            _restage_sf_token(turn_id)
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1743,6 +1744,86 @@ def _restage_delegated_google() -> None:
             _stage_delegated_google(slug)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
             _log(f"warn: {slug}: re-staging delegated Google tokens failed ({exc})")
+
+
+# ── Salesforce: the agent's own connection, staged per TURN ──
+#
+# canopy-web holds the agent's Salesforce connection (or one a person granted it). Like
+# GitHub, the identity is per turn: the canopy CLI (`cred salesforce-token --runner`, this
+# box's bearer + the turn id) fetches a short-lived ACCESS token and writes it 0600 to
+# ~/.canopy/connections/<slug>/salesforce.json; the refresh token never reaches the box.
+# The file is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+SALESFORCE_TOKEN_MIN_LIFE = 900
+#: CLI exit code for "this agent has no Salesforce connection" (409 not_connected).
+SALESFORCE_NOT_CONNECTED_EXIT = 3
+#: Turns holding a staged file: {turn_id: (slug, runner_id)}.
+_SF_STAGED: dict = {}
+_SF_LOCK = threading.Lock()
+
+
+def _salesforce_token_path(slug: str) -> pathlib.Path:
+    return pathlib.Path.home() / ".canopy" / "connections" / slug / "salesforce.json"
+
+
+def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | None = None) -> None:
+    """Stage `slug`'s Salesforce access token for this turn, if it has a connection.
+    Exit 3 from the CLI is silent (and clears a stale file); any other failure is a warn
+    line and the turn still runs. No token is ever logged."""
+    if not slug:
+        return
+    now = time.time() if now is None else now
+    target = _salesforce_token_path(slug)
+    try:
+        if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
+            with _SF_LOCK:
+                _SF_STAGED[turn_id] = (slug, runner_id)
+            return
+    except (OSError, ValueError, AttributeError):
+        pass
+    env = _child_safe_env()
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+    try:
+        res = subprocess.run([_canopy_cli(), "cred", "salesforce-token", "--runner", "--agent", slug,
+                              "--runner-id", runner_id, "--turn", turn_id],
+                             env=env, capture_output=True, text=True, timeout=120)
+    except Exception as exc:  # noqa: BLE001 — the turn runs
+        _log(f"warn: {slug}: could not stage its Salesforce token ({exc})")
+        return
+    if res.returncode == SALESFORCE_NOT_CONNECTED_EXIT:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
+    if res.returncode != 0:
+        _log(f"warn: {slug}: could not stage its Salesforce token "
+             f"({' '.join((res.stderr or '').split())[-300:] or f'exit {res.returncode}'})")
+        return
+    with _SF_LOCK:
+        _SF_STAGED[turn_id] = (slug, runner_id)
+
+
+def _restage_sf_token(turn_id: str) -> None:
+    """The lease heartbeat's half: refresh this turn's staged token when near expiry."""
+    with _SF_LOCK:
+        held = _SF_STAGED.get(turn_id)
+    if held:
+        try:
+            _stage_sf_token(held[1], turn_id, held[0])
+        except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
+            _log(f"warn: {held[0]}: re-staging its Salesforce token failed ({exc})")
+
+
+def _unstage_sf_token(turn_id: str) -> None:
+    """Turn end: delete the staged file unless another running turn of the same agent holds it."""
+    with _SF_LOCK:
+        held = _SF_STAGED.pop(turn_id, None)
+        if not held or any(v[0] == held[0] for v in _SF_STAGED.values()):
+            return
+    try:
+        _salesforce_token_path(held[0]).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 # ── Canopy Vault device proof: this box's IAM role (canopy-web#1549, Phase 1b) ──
@@ -6068,6 +6149,12 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     _log(f"turn {turn_id[:8]}: no GitHub identity (HTTP {status}) — pushes and pull requests "
          f"will fail; the agent's owner lends one at the agent's Settings → Credentials → GitHub")
     return {"CANOPY_REQUESTED_BY": requested_by}
+
+
+def _salesforce_stage_for(runner_id: str, turn: dict) -> dict:
+    """Stage this turn's agent's Salesforce token (see `_stage_sf_token`); adds no env."""
+    _stage_sf_token(runner_id, str(turn["id"]), _turn_agent_slug(turn) or "")
+    return {}
 
 
 def _delegated_value(slug: str, name: str) -> str:
@@ -12577,6 +12664,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
                         **_page_site_env(turn),
+                        **_salesforce_stage_for(runner_id, turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
@@ -12791,6 +12879,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()
+            _unstage_sf_token(turn_id)
             if tail is not None:
                 # Before the turn-end ship below, which is the final flush: two
                 # posts of one transcript must never race.
