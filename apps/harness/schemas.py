@@ -1546,6 +1546,9 @@ class TriggerIn(Schema):
     subject_pattern: str = ""
     # "" = the agent's routing decides (bounded by you); manual | auto (agent admin).
     turn_mode: Literal["", "manual", "auto"] = ""
+    # inbound_mail: minutes a thread stays quiet after a turn on it before further
+    # mail starts another (that turn carries every message since). 0 = immediately.
+    mail_quiet_minutes: int = Field(30, ge=0, le=1440)
     enabled: bool = True
     routing: str = "prefer_local"
     grace_minutes: int = 120
@@ -1591,6 +1594,7 @@ class TriggerPatch(SchedulePatch):
     sender_address: str | None = None
     subject_pattern: str | None = None
     turn_mode: Literal["", "manual", "auto"] | None = None
+    mail_quiet_minutes: int | None = Field(None, ge=0, le=1440)
 
 
 class TriggerOut(ScheduleOut):
@@ -1599,6 +1603,7 @@ class TriggerOut(ScheduleOut):
     sender_address: str = ""
     subject_pattern: str = ""
     turn_mode: str = ""
+    mail_quiet_minutes: int = 30
     # Why this trigger may not fire now (its creator lost the right to it), or null.
     stopped: str | None = None
     updated_by_email: str | None = None

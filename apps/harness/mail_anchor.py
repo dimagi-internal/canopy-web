@@ -33,7 +33,7 @@ from django.utils import timezone
 from apps.canopy_sessions import lifecycle
 from apps.canopy_sessions.models import RunnerBinding, Session
 
-from .models import Turn
+from .models import PendingMail, Turn
 from .session_sync import EMAIL_THREAD_KEY, EMAIL_THREAD_PREFIX, fire_sessions_closed
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,8 @@ def why_not(anchor, now=None) -> str:
     live = turns.filter(status__in=list(Turn.NON_TERMINAL)).values_list("pk", flat=True).first()
     if live is not None:
         return f"turn {live} is not finished"
+    if PendingMail.objects.filter(session=anchor).exists():
+        return "mail on it is held for its quiet window (mail_coalesce)"
     if not turns.exists() and anchor.created_at and anchor.created_at > now - TURNLESS_GRACE:
         return "new, and its first turn may not be written yet"
     open_work = (Session.objects.filter(pk__in=work_sessions(anchor))

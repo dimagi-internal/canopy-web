@@ -165,6 +165,7 @@ def _apply_kind(fields: dict, *, current: AgentSchedule | None = None) -> dict:
             raise InvalidSchedule("a cron trigger has no sender_address or subject_pattern")
         fields.pop("sender_address", None)
         fields.pop("subject_pattern", None)
+        fields.pop("mail_quiet_minutes", None)
         prompt = fields.get("prompt", current.prompt if current else "")
         if not (prompt or "").strip():
             raise InvalidSchedule("a cron trigger needs a prompt")
@@ -317,6 +318,7 @@ def serialize_trigger(trigger: AgentSchedule) -> dict:
         "sender_address": trigger.sender_address,
         "subject_pattern": trigger.subject_pattern,
         "turn_mode": trigger.turn_mode,
+        "mail_quiet_minutes": trigger.mail_quiet_minutes,
         "stopped": triggers.refusal(trigger) if trigger.enabled else None,
         "updated_by_email": trigger.updated_by.email if trigger.updated_by_id else None,
     }
