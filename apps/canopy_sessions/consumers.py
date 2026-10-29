@@ -651,6 +651,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "data": {"uri": message.get("uri", "")},
         })
 
+    async def host_grant_requested(self, message):
+        """The agent's turn needs the person's act-as-you permission for this page,
+        still waiting for their passkey (`host_gateway._push_ask`): their panel opens
+        its prompt now. Only to the grant's own person — another participant's panel
+        holds no such grant and is not asked. The grant id only; the panel re-reads
+        the grant, and the agent's reason, through its own token."""
+        user = getattr(self, "user", None)
+        if user is None or user.id != message.get("user_id"):
+            return
+        await self.send_json({"event": "host_grant.requested",
+                              "data": {"grant_id": message.get("grant_id")}})
+
     async def app_resource_updated(self, message):
         """A host resource an MCP Apps View subscribed to changed
         (`mcp_apps_views.resources_updated`, from the host's signed notification).

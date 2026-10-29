@@ -408,9 +408,8 @@ export function EmbedApp({ link, app }: Props) {
       // with the token that carries it.
       await pageGrant.ensure()
       // The permission is usable only once the person confirms it with their
-      // passkey, and the panel asks for that only if the turn needs it: the send
-      // never waits, and the tab watches for the turn's ask.
-      pageGrant.watch()
+      // passkey, and the panel asks for that only when the turn needs it (canopy
+      // pushes `host_grant.requested`): the send never waits.
       const declared = link.pageState()
       const context = declared ? null : pendingContext.current
       const body = context ? `${text}\n\n${context}` : text
@@ -1132,13 +1131,12 @@ function EmbedChat({
    *  when this is what asked for one, tell canopy the page acted here (a page
    *  declaration stamps the conversation with the new token's grant) — before the
    *  turn this send starts, so the turn reads through it. A send never waits for
-   *  the passkey: the tab watches, and asks only if the turn needs it. */
+   *  the passkey: canopy pushes `host_grant.requested` if the turn needs it. */
   const withGrant = useCallback(async () => {
     if (!pageGrant) return
     if (await pageGrant.ensure()) {
       await declarePage(client, link, sessionBase(isContact, sessionId))
     }
-    pageGrant.watch()
   }, [pageGrant, client, link, isContact, sessionId])
   /** A live card needs the grant now: ask for the passkey and wait for the
    *  person's answer (confirmed or declined) before it tries again. */
@@ -1178,6 +1176,12 @@ function EmbedChat({
         setLiveJoinRequests(asking)
         return
       }
+      if (frame.event === 'host_grant.requested') {
+        // The agent's turn needs this tab's act-as-you permission: re-read it
+        // (now `requested`, with the agent's reason) and the prompt opens.
+        void pageGrant?.refresh()
+        return
+      }
       if (frame.event === 'page.invalidate') {
         // Relayed straight out to the host page, which owns what "re-read"
         // means. The kit deliberately does not know this frame — it is canopy's
@@ -1206,7 +1210,7 @@ function EmbedChat({
           .catch(() => undefined)
       })()
     },
-    [client, link, sessionId, isContact, appUpdates],
+    [client, link, sessionId, isContact, appUpdates, pageGrant],
   )
 
   // AG-UI on the wire. `session.page_action` and `page.invalidate` still reach
@@ -1805,12 +1809,18 @@ function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGrant; agen
          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
          data-testid="page-grant-confirm">
       <div className="w-full max-w-sm space-y-3 rounded-lg border border-border bg-card p-4">
-        <p className="text-sm text-foreground">
-          Let {who} act as you on this page for 30 minutes?
+        <p className="text-sm font-medium text-foreground">
+          {who} wants to act as you on {grant.site}
         </p>
+        {grant.requested_reason && (
+          <p className="rounded bg-muted px-2 py-1.5 text-sm text-foreground" data-testid="page-grant-reason">
+            To {grant.requested_reason.replace(/^to\s+/i, '')}
+          </p>
+        )}
         <p className="text-[12px] text-muted-foreground">
-          It can do what you can do on {grant.site} for this page ({grant.scope || 'this page'}),
-          and nothing more. Confirm with your passkey; you can stop it at any time.
+          For 30 minutes, it can do what you can do on {grant.site} for this page
+          ({grant.scope || 'this page'}), and nothing more. Confirm with your passkey;
+          you can stop it at any time.
         </p>
         {inBrowser ? (
           <p className="text-[12px] text-foreground" data-testid="page-grant-in-browser">

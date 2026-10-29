@@ -78,12 +78,12 @@ def _current_turn_id() -> str:
     return turn_id
 
 
-async def _context(tool: str):
+async def _context(tool: str, reason: str = ""):
     from apps.host_grants import host_gateway
 
     turn_id = await sync_to_async(_current_turn_id, thread_sensitive=True)()
     try:
-        return await sync_to_async(host_gateway.resolve, thread_sensitive=True)(turn_id)
+        return await sync_to_async(host_gateway.resolve, thread_sensitive=True)(turn_id, reason=reason)
     except host_gateway.GatewayRefusal as exc:
         await write_audit(user_id=current_user_id(), tool=tool,
                           args_summary=f"turn={turn_id}", ok=False, error=exc.code)
@@ -127,7 +127,7 @@ async def site_tools() -> dict:
     """
     from apps.host_grants import host_gateway
 
-    ctx = await _context("site_tools")
+    ctx = await _context("site_tools", "see what it can do for you on this page")
     try:
         tools = await host_gateway.list_tools(ctx)
     except host_gateway.GatewayRefusal as exc:
@@ -142,12 +142,18 @@ async def site_tools() -> dict:
 
 
 @mcp.tool
-async def site_call(tool: str, arguments: dict | None = None) -> dict:
+async def site_call(tool: str, arguments: dict | None = None, reason: str = "") -> dict:
     """Call one of `site_tools` at the visitor's site, as the visitor.
 
     `tool` is the name `site_tools` listed. The result is the site's own answer;
     `is_error` true means the site refused or failed, which usually means the
     visitor is not allowed that at the site — say so rather than retrying.
+
+    `reason`: one short, plain sentence for the person saying what you are about to
+    do as them ("close the 3 sessions you picked"). Until they confirm with their
+    passkey that you may act as them on this page, the call is refused and they are
+    asked in their panel, with this reason in front of them — so make it specific
+    and honest.
     """
     from apps.host_grants import host_gateway
 
@@ -163,7 +169,7 @@ async def site_call(tool: str, arguments: dict | None = None) -> dict:
             f"{tool} is an action of the page the person is on, not one of the site's tools: "
             f"call canopy's own tool `{page_tool}` directly (load it with ToolSearch if it is "
             "not in your list). It runs in their open tab, as them.")
-    ctx = await _context("site_call")
+    ctx = await _context("site_call", reason or f"use {host_gateway.host_tool_name(tool)}")
     # `app=<pk>` names the Connected site unambiguously (a site NAME is unique
     # only per tenant); the Connected sites table reads it for real-traffic health.
     summary = (f"turn={ctx.turn_id} site={ctx.site} app={ctx.app_id} "
@@ -197,7 +203,7 @@ async def site_read(uri: str) -> dict:
     """
     from apps.host_grants import host_gateway  # noqa: PLC0415 — as site_call: the gateway loads with a call
 
-    ctx = await _context("site_read")
+    ctx = await _context("site_read", "read a result it fetched for you")
     # The URI only: never what came back (same as site_call, which records the tool).
     summary = f"turn={ctx.turn_id} site={ctx.site} app={ctx.app_id} uri={str(uri or '')[:200]}"
     try:

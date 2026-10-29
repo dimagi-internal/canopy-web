@@ -845,6 +845,23 @@
   },
   {
     "canopy": {
+      "event": "host_grant.requested",
+      "data": {
+        "grant_id": 7
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.host_grant.requested",
+        "value": {
+          "grant_id": 7
+        }
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "app.resource_updated",
       "data": {
         "tool_call_id": "toolu_01RESULTS",

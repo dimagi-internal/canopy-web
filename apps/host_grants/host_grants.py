@@ -247,17 +247,25 @@ def _inherit(grant) -> None:
         asked = pending(same_page(grant)).filter(requested_at__isnull=False).order_by("requested_at").first()
         if asked is not None:
             grant.requested_at = asked.requested_at
+            grant.requested_reason = asked.requested_reason
         return
     grant.confirmed_at = held.confirmed_at
     grant.expires_at = min(grant.expires_at, held.confirmed_at + timedelta(seconds=CONFIRM_SECONDS))
 
 
-def ask(grant) -> int:
+#: The longest reason an agent can put in front of the person.
+MAX_REASON = 300
+
+
+def ask(grant, reason: str = "") -> int:
     """An agent needs `grant`, still waiting for the passkey: mark its page's waiting
-    rows requested, so the panel (which polls them) asks the person now. A send alone
-    never asks — the turn may never act as them. Returns how many rows it marked."""
-    return pending(same_page(grant)).filter(requested_at__isnull=True).update(
-        requested_at=timezone.now())
+    rows requested, with what the agent said it needs it for, so the panel asks the
+    person now (`host_gateway.resolve` pushes it there). A send alone never asks — the
+    turn may never act as them. The first ask's time stands; a later ask's reason
+    replaces the earlier one. Returns how many rows it marked."""
+    rows = pending(same_page(grant))
+    rows.filter(requested_at__isnull=True).update(requested_at=timezone.now())
+    return rows.update(requested_reason=" ".join(str(reason or "").split())[:MAX_REASON])
 
 
 def confirm(grant, *, now=None) -> None:

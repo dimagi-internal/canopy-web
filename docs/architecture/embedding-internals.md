@@ -271,11 +271,16 @@ page within their own access. The rules:
   `host_gateway.context_for_grant` refuse it. **The passkey is asked for only when
   something needs the grant — a send never waits for it**, since most turns never act
   as the person. When the agent's turn calls the site and `lookup` says
-  `UNCONFIRMED`, the gateway marks the page's waiting rows `requested_at`
-  (`host_grants.ask`, carried across re-mints by `_inherit`) and tells the agent it
-  asked and to retry in ~20s (`host_gateway.page_grant_asked`). The panel re-reads
-  its grant every 3s for 10 minutes after each send (`pageGrant.watch`) and shows
-  the prompt (`PageGrantConfirm` in `EmbedApp.tsx`) once it reads `requested: true`;
+  `UNCONFIRMED`, the gateway marks the page's waiting rows `requested_at` and
+  `requested_reason` — the agent's own sentence, `site_call(reason=…)`, else "use
+  <tool>" (`host_grants.ask`, carried across re-mints by `_inherit`) — and tells the
+  agent it asked and to retry in ~20s (`host_gateway.page_grant_asked`). It **pushes**
+  `host_grant.requested` (the grant id only) down the conversation's socket
+  (`_push_ask` → `SessionConsumer.host_grant_requested`, which passes it only to the
+  grant's own person; AG-UI `CUSTOM canopy.host_grant.requested`); the panel re-reads
+  its grant and opens the prompt (`PageGrantConfirm` in `EmbedApp.tsx`): who is
+  asking, the reason, the site, scope and 30 minutes. No polling for the ask;
+  the panel's 60s re-read stays only to notice a Stop elsewhere or the end;
   a live card refused for want of a grant asks at once (`pageGrant.need`) and waits
   for the answer (`pageGrant.settled`). **Confirm with passkey** runs a WebAuthn
   assertion in canopy's frame against `POST /api/embed/host-grant/confirm/begin|finish`

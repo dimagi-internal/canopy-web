@@ -193,8 +193,12 @@ def tool_allowed(tool: str, *, ceiling: list[str]) -> bool:
 # --- resolution ----------------------------------------------------------------
 
 
-def resolve(turn_id: str) -> SiteContext:
-    """The site, grant and effective tools for this turn — or a refusal."""
+def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
+    """The site, grant and effective tools for this turn — or a refusal.
+
+    `reason` is what the agent says it needs the person's permission for; when the
+    page's permission still waits for their passkey it is put in front of them in the
+    panel's prompt (`host_grants.ask`, pushed by `_push_ask`)."""
     from apps.harness.models import Turn
 
     from apps.tokens.models import AppCredential
@@ -265,7 +269,8 @@ def resolve(turn_id: str) -> SiteContext:
     if grant is None and found.waiting is not None:
         # The page holds a permission the person has not confirmed: the panel asks
         # for their passkey only now, when this turn actually needs it.
-        ask(found.waiting)
+        ask(found.waiting, reason)
+        _push_ask(session, found.waiting)
         raise GatewayRefusal("unconfirmed", page_grant_asked(agent.name or agent.slug))
     if grant is None:
         code = {EXPIRED: "expired", REVOKED: "revoked",
@@ -300,6 +305,17 @@ def resolve(turn_id: str) -> SiteContext:
                             execution=execution.facts_for(turn, agent, session, effective))
     ctx.session_id = str(session.pk)
     return ctx
+
+
+def _push_ask(session, grant) -> None:
+    """Tell the person's own panel in this conversation, at once, that the agent asked
+    (the conversation's socket: `SessionConsumer.host_grant_requested` passes it only
+    to the grant's own person). It carries the grant's id and nothing else: the panel
+    re-reads the grant, reason included, through its own token."""
+    from apps.realtime.groups import publish, session_group  # noqa: PLC0415 — as this module's other reads: loads with a call
+
+    publish(session_group(session.id),
+            {"type": "host_grant.requested", "grant_id": grant.pk, "user_id": grant.user_id})
 
 
 def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
