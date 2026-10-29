@@ -19,15 +19,20 @@ queued behind another's refresh uses that refresh's token instead of spending a
 dead one (`github_app.access_token_for` is the same structure, for the same
 reason).
 
-A REJECTION IS NOT AN OUTAGE. `invalid_grant` (revoked, rotated elsewhere, user
-deactivated) stamps `refresh_failed_at`, which is what turns an opaque 401 into
-"Reconnect" in the UI. A timeout or a 5xx says nothing about the grant, so it
-stamps nothing and raises `ConnectionError("provider_unavailable")`.
+ONLY `invalid_grant` MEANS RECONNECT. `invalid_grant` (revoked, rotated
+elsewhere, user deactivated) stamps `refresh_failed_at`, which is what turns an
+opaque 401 into "Reconnect" in the UI. Any other rejection (`invalid_client`,
+`unsupported_grant_type`, ...) is canopy's own configuration, which reconnecting
+cannot fix: it raises `ConnectionError("provider_error")` and stamps nothing. A
+timeout or a 5xx says nothing about the grant either: it raises
+`ConnectionError("provider_unavailable")` and stamps nothing.
 
-EVENTS. Recorded in the agent's workspace for an agent's connection. A person's
-connection records none: `Event.workspace` is NOT NULL by design and a person's
-grant belongs to no workspace. Payloads carry provider, owner and account label,
-never a token.
+AUDIT. An agent's connection records events in the agent's workspace (connect,
+disconnect, grant, grant revoked; token handouts are recorded by the routes that
+know the turn). A person's connection belongs to no workspace and
+`Event.workspace` is NOT NULL by design, so connect, disconnect and every token
+issue are written to the log at INFO instead. Either way the record carries
+provider, owner, account label and who acted, never a token.
 """
 from __future__ import annotations
 
@@ -40,7 +45,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
@@ -129,19 +134,36 @@ def _configured(provider: str) -> providers.Provider:
 
 # ---- events ------------------------------------------------------------------
 
-def _event(conn: Connection, kind: str, by, summary: str, **extra) -> None:
-    if conn.agent_id is None:
-        return  # a person's grant belongs to no workspace (module docstring)
+def _audit_fields(conn: Connection) -> dict:
+    """What an audit record says about a connection, captured while the row
+    exists (a disconnect records after deleting). Never a token."""
+    return {"provider": conn.provider, "owner": conn.owner_label, "account_label": conn.account_label,
+            "workspace": conn.agent.workspace if conn.agent_id is not None else None}
+
+
+def _event(fields: dict, kind: str, by, summary: str, **extra) -> None:
+    """An agent's connection: an Event in its workspace. A person's: an INFO log line."""
+    who = (getattr(by, "email", "") or getattr(by, "username", "")) if by is not None else ""
+    payload = {"provider": fields["provider"], "owner": fields["owner"],
+               "account_label": fields["account_label"], "by": who, **extra}
+    if fields["workspace"] is None:
+        logger.info("connections.%s by=%s provider=%s owner=%s account_label=%s", kind, who or "-",
+                    payload["provider"], payload["owner"], payload["account_label"])
+        return
     try:
         events.record([{
             "source": EVENT_SOURCE, "kind": f"connections.{kind}", "level": "info",
-            "summary": summary[:500],
-            "payload": {"provider": conn.provider, "owner": conn.owner_label,
-                        "account_label": conn.account_label,
-                        "by": getattr(by, "email", "") or "", **extra},
-        }], workspace=conn.agent.workspace)
+            "summary": summary[:500], "payload": payload,
+        }], workspace=fields["workspace"])
     except Exception:  # noqa: BLE001 - the audit row must never undo the change it records
-        logger.exception("could not record connections.%s for connection %s", kind, conn.pk)
+        logger.exception("could not record connections.%s for %s", kind, fields["owner"])
+
+
+def _issued(conn: Connection) -> None:
+    """A person's token handout, logged. An agent's is recorded by the route
+    that hands it out (it knows the turn and runner)."""
+    if conn.agent_id is None:
+        _event(_audit_fields(conn), "token_issued", None, "")
 
 
 # ---- the authorization web flow ----------------------------------------------
@@ -202,24 +224,36 @@ def complete(session, *, provider: str, code: str, state: str, redirect_uri: str
         raise ConnectionError("provider_error", f"{p.title} issued no refresh token")
 
     if parked["owner_kind"] == "agent":
-        owner_kw = {"agent": Agent.objects.get(pk=parked["owner_id"])}
+        agent = Agent.objects.filter(pk=parked["owner_id"]).first()
+        if agent is None:  # deleted between begin and complete
+            raise ConnectionError("bad_state", "that agent no longer exists")
+        owner_kw = {"agent": agent}
     else:
         owner_kw = {"user_id": parked["owner_id"]}
-    with transaction.atomic():
-        conn, _ = Connection.objects.update_or_create(
-            provider=provider, account_id=ident.account_id, **owner_kw,
-            defaults={
-                "account_label": ident.label,
-                "instance_url": token.instance_url,
-                "scopes": " ".join(p.scopes),
-                "refresh_token_enc": encrypt_secret(token.refresh_token),
-                "access_token_enc": encrypt_secret(token.access_token),
-                "access_token_expires_at": token.expires_at,
-                "refresh_failed_at": None,
-                "connected_by": by,
-            },
-        )
-    _event(conn, "connected", by, f"{conn.owner_label} connected {p.title} as {conn.account_label}")
+    lookup = {"provider": provider, "account_id": ident.account_id, **owner_kw}
+    defaults = {
+        "account_label": ident.label,
+        "instance_url": token.instance_url,
+        "scopes": " ".join(p.scopes),
+        "refresh_token_enc": encrypt_secret(token.refresh_token),
+        "access_token_enc": encrypt_secret(token.access_token),
+        "access_token_expires_at": token.expires_at,
+        "refresh_failed_at": None,
+        "connected_by": by,
+    }
+    try:
+        with transaction.atomic():
+            conn, _ = Connection.objects.update_or_create(**lookup, defaults=defaults)
+    except IntegrityError:
+        # A concurrent completion for the same account inserted the row between
+        # our lookup and insert. It exists now: update it with this grant.
+        with transaction.atomic():
+            conn = Connection.objects.select_for_update().get(**lookup)
+            for k, v in defaults.items():
+                setattr(conn, k, v)
+            conn.save()
+    _event(_audit_fields(conn), "connected", by,
+           f"{conn.owner_label} connected {p.title} as {conn.account_label}")
     return conn
 
 
@@ -252,6 +286,7 @@ def access_token_for(conn: Connection) -> AccessToken:
     if cached:
         conn.last_used_at = timezone.now()
         Connection.objects.filter(pk=conn.pk).update(last_used_at=conn.last_used_at)
+        _issued(conn)
         return _handout(conn, cached)
 
     p = _configured(conn.provider)
@@ -266,6 +301,7 @@ def access_token_for(conn: Connection) -> AccessToken:
         if cached:
             conn.last_used_at = timezone.now()
             conn.save(update_fields=["last_used_at", "updated_at"])
+            _issued(conn)
             return _handout(conn, cached)
 
         try:
@@ -273,6 +309,10 @@ def access_token_for(conn: Connection) -> AccessToken:
         except providers.ProviderUnavailable as e:
             raise ConnectionError("provider_unavailable", str(e)) from None
         except providers.ProviderError as e:
+            if e.code != "invalid_grant":
+                # Not about the grant (our client config, an unexpected answer):
+                # reconnecting would not fix it, so nothing is stamped.
+                raise ConnectionError("provider_error", str(e)) from None
             # Stamped inside the block and raised after it, so the stamp commits
             # rather than rolling back with the exception.
             conn.refresh_failed_at = timezone.now()
@@ -291,11 +331,11 @@ def access_token_for(conn: Connection) -> AccessToken:
                 "refresh_token_enc", "instance_url", "access_token_enc", "access_token_expires_at",
                 "refresh_failed_at", "last_used_at", "updated_at",
             ])
+            _issued(conn)
             return _handout(conn, token.access_token)
 
-    logger.warning("connection %s refresh rejected (%s); reconnect required", conn.pk,
-                   getattr(rejected, "code", "") or "rejected")
-    raise ReconnectRequired(f"{conn.provider} rejected the stored grant ({rejected.code or 'rejected'})")
+    logger.warning("connection %s refresh rejected (%s); reconnect required", conn.pk, rejected.code)
+    raise ReconnectRequired(f"{conn.provider} rejected the stored grant ({rejected.code})")
 
 
 def disconnect(conn: Connection, *, by) -> None:
@@ -314,8 +354,10 @@ def disconnect(conn: Connection, *, by) -> None:
             providers.get(conn.provider).revoke(refresh)
         except Exception as e:  # noqa: BLE001
             logger.warning("connection %s: revoke failed (%s); deleting anyway", conn.pk, type(e).__name__)
-    _event(conn, "disconnected", by, f"{conn.owner_label} disconnected {conn.provider} ({conn.account_label})")
+    fields = _audit_fields(conn)
     conn.delete()
+    _event(fields, "disconnected", by, f"{fields['owner']} disconnected {fields['provider']} "
+                                       f"({fields['account_label']})")
 
 
 # ---- which connection an agent uses; grants ----------------------------------
@@ -341,9 +383,6 @@ def connection_for_agent(agent, provider: str) -> Connection:
     raise NotConnected(f"{agent.slug} has no {provider} connection")
 
 
-def _require_admin_of_both(conn: Connection, agent, by) -> None:
-    if not (conn.agent.is_admin(by) and agent.is_admin(by)):
-        raise PermissionDenied("granting a connection needs admin of both agents")
 
 
 def grant(conn: Connection, agent, *, by) -> ConnectionGrant:
@@ -352,19 +391,23 @@ def grant(conn: Connection, agent, *, by) -> ConnectionGrant:
         raise ConnectionError("not_grantable", "a person's connection is never granted to an agent")
     if conn.agent_id == agent.pk:
         raise ConnectionError("own_connection", "an agent already uses its own connection")
-    _require_admin_of_both(conn, agent, by)
+    if not (conn.agent.is_admin(by) and agent.is_admin(by)):
+        raise PermissionDenied("granting a connection needs admin of both agents")
     g, created = ConnectionGrant.objects.get_or_create(
         connection=conn, agent=agent, defaults={"granted_by": by},
     )
     if created:
-        _event(conn, "granted", by, f"{conn.owner_label}'s {conn.provider} granted to {agent.slug}",
+        _event(_audit_fields(conn), "granted", by, f"{conn.owner_label}'s {conn.provider} granted to {agent.slug}",
                grantee=agent.slug)
     return g
 
 
 def revoke_grant(g: ConnectionGrant, *, by) -> None:
+    """Stop `g.agent` using the connection. Admin of EITHER agent may: taking
+    access away should never need more standing than either side has."""
     conn, agent = g.connection, g.agent
-    _require_admin_of_both(conn, agent, by)
+    if not (conn.agent.is_admin(by) or agent.is_admin(by)):
+        raise PermissionDenied("revoking a grant needs admin of either agent")
     g.delete()
-    _event(conn, "grant_revoked", by, f"{conn.owner_label}'s {conn.provider} no longer granted to {agent.slug}",
-           grantee=agent.slug)
+    _event(_audit_fields(conn), "grant_revoked", by,
+           f"{conn.owner_label}'s {conn.provider} no longer granted to {agent.slug}", grantee=agent.slug)

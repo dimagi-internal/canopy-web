@@ -14,6 +14,7 @@ so the provider's real HTTP handling runs under every test here. What is pinned:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -22,6 +23,7 @@ import pytest
 import requests
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -278,6 +280,40 @@ def test_complete_identity_failure_stores_nothing(user):
     assert not Connection.objects.exists()
 
 
+def test_complete_refuses_foreign_identity_url(user):
+    fake = FakeSF(token=[_resp(body=_token_body(id="https://evil.example/id/00Dorg/005user"))])
+    with pytest.raises(services.ConnectionError) as e:
+        _connect({}, ("user", user.pk), user, fake)
+    assert e.value.code == "provider_error"
+    assert not Connection.objects.exists()
+    assert [c for c in fake.calls if c[0] == "GET"] == []
+
+
+def test_complete_agent_deleted_since_begin_is_bad_state(user, eva):
+    session = {}
+    url = _begin(session, ("agent", eva.pk))
+    state = parse_qs(urlparse(url).query)["state"][0]
+    eva.delete()
+    with FakeSF(), pytest.raises(services.ConnectionError) as e:
+        services.complete(session, provider="salesforce", code="c", state=state,
+                          redirect_uri=REDIRECT, by=user)
+    assert e.value.code == "bad_state"
+    assert not Connection.objects.exists()
+
+
+def test_complete_concurrent_insert_updates_the_winner(user):
+    """Another completion for the same account inserted between lookup and insert."""
+    # The winner's row is committed; our update_or_create saw no row and its insert collides.
+    _stored({"user": user}, user, refresh="5Aep_theirs")
+    with mock.patch.object(Connection.objects, "update_or_create",
+                           side_effect=IntegrityError("duplicate key")):
+        conn = _connect({}, ("user", user.pk), user)
+    assert Connection.objects.count() == 1
+    conn.refresh_from_db()
+    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_refresh_1"
+    assert decrypt_secret(conn.access_token_enc) == "00D!access_1"
+
+
 def test_complete_upserts_same_account(user):
     first = _connect({}, ("user", user.pk), user)
     Connection.objects.filter(pk=first.pk).update(refresh_failed_at=timezone.now())
@@ -434,6 +470,17 @@ def test_invalid_grant_as_http_200_stamps_reconnect(user):
     assert conn.refresh_failed_at is not None
 
 
+@pytest.mark.parametrize("error", ["invalid_client", "unsupported_grant_type"])
+def test_non_grant_rejection_is_provider_error_without_stamp(user, error):
+    conn = _stored({"user": user}, user, access="")
+    with FakeSF(token=[_resp(400, {"error": error})]), pytest.raises(services.ConnectionError) as e:
+        services.access_token_for(conn)
+    assert not isinstance(e.value, services.ReconnectRequired)
+    assert e.value.code == "provider_error"
+    conn.refresh_from_db()
+    assert conn.refresh_failed_at is None
+
+
 @pytest.mark.parametrize("failure", [
     requests.Timeout("slow"), requests.ConnectionError("down"),
     _resp(503, text="<html>maintenance"), _resp(200, text="<html>"),
@@ -494,11 +541,28 @@ def test_no_token_in_event_payloads(user, eva, echo):
             assert secret not in blob
 
 
-def test_person_connection_records_no_event(user):
+def test_person_connection_is_logged_not_evented(user, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
     conn = _connect({}, ("user", user.pk), user)
+    services.access_token_for(conn)  # cached
+    Connection.objects.filter(pk=conn.pk).update(access_token_enc="", access_token_expires_at=None)
+    with FakeSF(token=[_resp(body=_token_body(access_token="00D!second", refresh_token="5Aep_second"))]):
+        services.access_token_for(conn)  # refreshed
     with FakeSF():
         services.disconnect(conn, by=user)
+
     assert not Event.objects.exists()
+    lines = [r.getMessage() for r in caplog.records if r.name == "apps.connections.services"]
+    kinds = [m.split(" ", 1)[0] for m in lines]
+    assert kinds == ["connections.connected", "connections.token_issued", "connections.token_issued",
+                     "connections.disconnected"]
+    for m in lines:
+        assert "provider=salesforce" in m and "owner=jj@dimagi.com" in m
+        assert "account_label=jj@dimagi.com" in m
+    assert "by=jj@dimagi.com" in lines[0] and "by=jj@dimagi.com" in lines[-1]
+    blob = caplog.text
+    for secret in ("00D!access_1", "5Aep_refresh_1", "00D!second", "5Aep_second"):
+        assert secret not in blob
 
 
 # ---- which connection an agent uses; grants ----------------------------------
@@ -556,9 +620,25 @@ def test_grant_needs_admin_of_both_agents(user, eva, ws):
         services.grant(conn, theirs, by=stranger)  # admin of theirs, not of eva
     assert not ConnectionGrant.objects.exists()
     g = services.grant(conn, theirs, by=WorkspaceOwner.of(ws))
+    # Revoking needs admin of EITHER agent: someone who administers neither is refused...
+    nobody = get_user_model().objects.create_user(username="n", email="n@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=nobody, role=WorkspaceMembership.EDITOR)
     with pytest.raises(PermissionDenied):
-        services.revoke_grant(g, by=stranger)
+        services.revoke_grant(g, by=nobody)
     assert ConnectionGrant.objects.filter(pk=g.pk).exists()
+    # ...and the grantee's admin alone may cut it off.
+    services.revoke_grant(g, by=stranger)
+    assert not ConnectionGrant.objects.filter(pk=g.pk).exists()
+
+
+def test_revoke_grant_by_owner_agent_admin_only(user, eva, ws):
+    stranger = get_user_model().objects.create_user(username="s", email="s@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=stranger, role=WorkspaceMembership.EDITOR)
+    theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=stranger)
+    conn = _stored({"agent": eva}, user)
+    g = services.grant(conn, theirs, by=WorkspaceOwner.of(ws))
+    services.revoke_grant(g, by=user)  # admin of eva only
+    assert not ConnectionGrant.objects.exists()
 
 
 class WorkspaceOwner:
