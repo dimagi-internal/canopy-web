@@ -21,7 +21,8 @@ What a provider declares, and where providers differ:
   Salesforce, for an agent: `prompt=login consent`.
 - `required_scopes`: scopes a grant must include to be stored; a consent screen
   that let the person untick one is refused (`insufficient_scope`). The granted
-  scopes are read from the token response's `scope`.
+  scopes are read from the token response's `scope`; `scope_implies` names a
+  broader scope that satisfies narrower ones (Salesforce: `full` gives `api`).
 - `client_auth`: how the client authenticates to the token and revocation
   endpoints, `"body"` (client_secret_post, the default) or `"basic"` (HTTP Basic).
 - Expiry: a token response's `expires_in` when it sends one; otherwise
@@ -107,6 +108,9 @@ class Provider:
     settings_prefix: ClassVar[str]
     scopes: ClassVar[tuple[str, ...]]
     required_scopes: ClassVar[tuple[str, ...]] = ()
+    # A granted scope that includes others (Salesforce: `full` includes `api`), so a
+    # grant naming the broader one is not refused for lacking the narrower.
+    scope_implies: ClassVar[Mapping[str, tuple[str, ...]]] = {}
     client_auth: ClassVar[Literal["body", "basic"]] = "body"
     rotates_refresh_token: ClassVar[bool] = False
     pkce: ClassVar[bool] = True
@@ -189,7 +193,8 @@ class Provider:
         did not say, which is taken as what was asked for."""
         if not granted:
             return ()
-        return tuple(s for s in self.required_scopes if s not in granted)
+        held = set(granted).union(*(self.scope_implies.get(s, ()) for s in granted))
+        return tuple(s for s in self.required_scopes if s not in held)
 
     def revoke(self, token: str) -> None:
         """Revoke a refresh token (RFC 7009), with the client's authentication."""

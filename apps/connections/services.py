@@ -197,13 +197,20 @@ def _who(by) -> str:
 
 
 def log_line(kind: str, payload: dict) -> str:
-    """`connections.<kind> key=value …`. A value that is empty, not printable, or
-    holds whitespace, `=` or `"` is a JSON string (`json.dumps`, non-ASCII kept
-    as is); `parse_log_line` reverses it exactly."""
+    """`connections.<kind> key=value …`, always one line. A value that is empty,
+    not printable, or holds whitespace, `=` or `"` is a JSON string (printable
+    non-ASCII kept as is, every non-printable character `\\uXXXX`);
+    `parse_log_line` reverses it exactly."""
     def value(v) -> str:
         s = "" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
         plain = s and s.isprintable() and not any(c.isspace() or c in '="' for c in s)
-        return s if plain else json.dumps(s, ensure_ascii=False)
+        if plain:
+            return s
+        # Readable non-ASCII, but every non-printable character escaped (\uXXXX),
+        # not only the ones JSON must: U+2028/U+2029/U+0085 and friends would
+        # otherwise reach a log shipper that splits lines on them.
+        return "".join(c if c.isprintable() else json.dumps(c)[1:-1]
+                       for c in json.dumps(s, ensure_ascii=False))
 
     return f"connections.{kind} " + " ".join(f"{k}={value(v)}" for k, v in payload.items())
 

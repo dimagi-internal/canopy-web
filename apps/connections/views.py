@@ -11,8 +11,8 @@ revoked in between; a revoked admin must not be able to finish attaching a
 login to the agent. An agent's start is a POST only (CSRF-checked): a GET link
 could otherwise be used to make an admin's browser attach whatever provider
 login it holds to the agent. The provider is also asked to show a login where
-it supports one (`Provider.authorize_params(for_agent=True)`; Salesforce:
-`prompt=login consent`), so the account is chosen, not inherited.
+it supports one (`Provider.authorize_params(owner_kind="agent", owner=agent)`;
+Salesforce: `prompt=login consent`), so the account is chosen, not inherited.
 
 A person's flow is checked at callback too: the user who started it must be the
 one finishing it (the session is the same browser, but it may have changed

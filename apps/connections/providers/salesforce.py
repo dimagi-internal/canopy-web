@@ -30,6 +30,8 @@ class SalesforceProvider(Provider):
     # Salesforce names what it granted in `scope` ("refresh_token api", plus any
     # the Connected App adds); without both, canopy can neither call nor refresh.
     required_scopes = ("api", "refresh_token")
+    # A Connected App set to `full` reports "full refresh_token": `full` includes `api`.
+    scope_implies = {"full": ("api",)}
     rotates_refresh_token = True
     default_access_token_seconds = 1800
 

@@ -733,3 +733,20 @@ def test_basic_client_auth_is_used_for_token_and_revoke(user, monkeypatch):
     for url, data, auth in seen:
         assert auth == ("3MVG-client", "shh") and "client_secret" not in data
     assert seen[-1][1] == {"token": "5Aep_r", "token_type_hint": "refresh_token"}
+
+
+@pytest.mark.parametrize("value", [" para", "line sep", "nel\u0085here", "\x0bvt", "\x1cfs", "zw​sp"])
+def test_log_line_escapes_every_line_separator(value):
+    line = services.log_line("x", {"a": value, "by": "rené"})
+    assert len(line.splitlines()) == 1 and line.isprintable()
+    assert "by=rené" in line                                   # printable non-ASCII stays readable
+    assert services.parse_log_line(line) == ("x", {"a": value, "by": "rené"})
+
+
+def test_a_full_scope_grant_satisfies_api(user):
+    """A Connected App set to `full` reports "full refresh_token", not `api`."""
+    conn = _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope="full refresh_token"))]))
+    assert conn.scopes == "full refresh_token"
+    with pytest.raises(services.ConnectionError) as e:
+        _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope="full"))]))
+    assert e.value.code == "insufficient_scope"
