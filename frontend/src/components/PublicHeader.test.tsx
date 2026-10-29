@@ -26,7 +26,7 @@ function renderAs(status: 'authenticated' | 'anonymous') {
                   avatar_url: '',
                   can_create_workspace: false,
                   memory_enabled: false,
-                  memory_paused: false,
+                  memory_paused: false, passkeys_here: true,
                 },
               }
             : { status, user: null }

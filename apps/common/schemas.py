@@ -68,6 +68,15 @@ class MeOut(StrictModel):
             "memory page still shows it, to download or delete."
         ),
     )
+    passkeys_here: bool = Field(
+        default=True,
+        description=(
+            "Can a passkey be used on this session? False for a session minted from a "
+            "token (the Canopy Runner desktop app signs in that way): a step-up or an "
+            "approval is refused on one, so the app hands the passkey to the person's "
+            "browser instead of asking for it."
+        ),
+    )
 
 
 class PresencePreferenceOut(StrictModel):

@@ -34,6 +34,7 @@ import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
 import { ActAsApprovalPage } from './pages/ActAsApprovalPage'
+import { PagePermissionConfirmPage } from './pages/PagePermissionConfirmPage'
 import { SignOffPage } from './pages/SignOffPage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
@@ -345,6 +346,10 @@ export const routeTable: RouteObject[] = [
       // /act-as/:requestId — approve an agent acting as you on canopy (the push's link).
       // Root: it is about you, not a workspace. Signed-in only; approving takes a passkey.
       { path: '/act-as/:requestId', element: <ActAsApprovalPage /> },
+      // /confirm/page-permission/:grantId — confirm a page's act-as-you permission
+      // in the browser, for a panel that cannot use a passkey (the Runner app).
+      // Root, for the same reason as /act-as: it is about you. Signed-in only.
+      { path: '/confirm/page-permission/:grantId', element: <PagePermissionConfirmPage /> },
 
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },

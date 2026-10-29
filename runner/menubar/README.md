@@ -42,6 +42,25 @@ status item like any other app.
   canopy has deployed and respects `~/.canopy/hold-updates`. Reads "Updating the runner…"
   while it runs; the result is in `~/.canopy/updater.log`.
 
+## Passkeys open in your browser
+
+The web view can use no passkey: WebKit gives WebAuthn only to an app holding Apple's
+associated-domains entitlement (a Developer ID build with a provisioning profile, plus
+an `apple-app-site-association` file on canopy's host), and the window's session is
+minted from the runner's token, on which canopy refuses every step-up and approval by
+design (`apps/passkeys/stepup.py`). Making WebAuthn work here would still fail on the
+server. So the app says what it is — `CanopyRunner/<version>` in its user agent — and
+the page hands each passkey moment to your default browser through `window.open`
+(routed to `NSWorkspace` by the `WKUIDelegate`), then follows the result: an act-as
+approval, a page's act-as-you permission (`/confirm/page-permission/<id>`), or a
+step-up-gated action redone in the browser. `frontend/src/auth/passkeyHere.ts` holds
+the logic; `/api/me/`'s `passkeys_here` covers an app built before the marker.
+
+**Any other host of canopy's pages needs the same two things** — a Windows tray app on
+WebView2 included: put `CanopyRunner/` in the user agent
+(`CoreWebView2Settings.UserAgent`), and send new-window requests to the system browser
+(`NewWindowRequested` → the default browser). Nothing else is platform-specific.
+
 ## Relationship to the daemon
 
 Deliberately a **separate process** from the Python runner daemon (`canopy_runner`):

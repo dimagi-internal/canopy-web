@@ -410,6 +410,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     func buildWindow() {
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
+        // Say what this frame is. WebKit refuses passkeys to an app without Apple's
+        // associated-domains entitlement, and this window's session is minted from the
+        // runner's token, on which canopy refuses every step-up anyway — so on seeing
+        // `CanopyRunner/` the page hands each passkey moment to the default browser
+        // (frontend/src/auth/passkeyHere.ts), through window.open below.
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        cfg.applicationNameForUserAgent = "CanopyRunner/\(version)"
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 640), configuration: cfg)
         // Without a UI delegate WKWebView answers every window.confirm() with false and
         // drops alert()/prompt()/window.open() — so "Delete session…" in the IDE silently

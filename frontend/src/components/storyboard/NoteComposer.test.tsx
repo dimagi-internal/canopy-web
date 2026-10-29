@@ -142,7 +142,7 @@ describe('NoteComposer', () => {
             avatar_url: '',
             can_create_workspace: false,
             memory_enabled: false,
-            memory_paused: false,
+            memory_paused: false, passkeys_here: true,
           },
         }}
       >

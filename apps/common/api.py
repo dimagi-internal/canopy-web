@@ -6,6 +6,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.common.views_debug import is_machine
 from apps.realtime.models import PresencePreference, show_presence_for
 
 from .schemas import (
@@ -65,6 +66,7 @@ def me(request: HttpRequest) -> MeOut:
         can_create_workspace=can_create_workspace(user),
         memory_enabled=memory_enabled,
         memory_paused=memory_paused,
+        passkeys_here=not is_machine(request),
     )
 
 

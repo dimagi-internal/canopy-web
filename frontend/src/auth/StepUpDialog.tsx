@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Input } from 'canopy-ui'
 import { performStepUp, registerThisDevice } from '@/api/passkeys'
+import { openInBrowser, passkeysWorkHere } from './passkeyHere'
 import { setStepUpHandler, type StepUpRequest } from './stepUp'
 import { defaultLabel, webauthnSupported } from './webauthn'
 
@@ -18,12 +19,17 @@ const GESTURE_REFUSAL_MS = 1500
  * A person with no passkey yet is offered to register THIS device right here —
  * registering verifies them, which opens the step-up window too, so the
  * original request then goes through without a second prompt.
+ *
+ * Where no passkey can be used — the Canopy Runner app, whose session is minted
+ * from a token (`passkeyHere.ts`) — the dialog says so and opens this same page in
+ * the person's browser, to do the action there.
  */
 export function StepUpDialog(): JSX.Element {
   const [req, setReq] = useState<StepUpRequest | null>(null)
   const [label, setLabel] = useState(defaultLabel())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [handedOff, setHandedOff] = useState(false)
   const settle = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null)
 
   useEffect(() => {
@@ -32,9 +38,11 @@ export function StepUpDialog(): JSX.Element {
         settle.current = { resolve, reject }
         setError(why)
         setBusy(false)
+        setHandedOff(false)
         setReq(next)
       })
     setStepUpHandler(async (next) => {
+      if (next.inBrowser || !passkeysWorkHere()) return openDialog({ ...next, inBrowser: true })
       if (!next.hasPasskey || !webauthnSupported()) return openDialog(next)
       // Go straight to the browser's passkey sheet: the dialog is only a fresh
       // click for browsers (Safari) that refuse WebAuthn outside one. Such a
@@ -72,6 +80,39 @@ export function StepUpDialog(): JSX.Element {
       setError(e instanceof Error && e.name !== 'NotAllowedError' ? e.message : 'The passkey prompt was dismissed.')
       setBusy(false)
     }
+  }
+
+  if (req?.inBrowser) {
+    const open = () => {
+      openInBrowser(window.location.href)
+      setHandedOff(true)
+    }
+    return (
+      <Dialog open onOpenChange={(o: boolean) => !o && close(false)}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md bg-card" data-testid="step-up-dialog">
+          <DialogTitle className="text-sm font-semibold text-foreground">Finish this in your browser</DialogTitle>
+          <DialogDescription className="text-[13px] text-foreground-secondary">
+            This action needs your passkey, and passkeys don’t work inside the Canopy Runner app. Open this page
+            in your browser and do it there — your passkey works in your browser.
+          </DialogDescription>
+          {handedOff && (
+            <p className="text-[13px] text-foreground" data-testid="step-up-handed-off">
+              Opened in your browser. Finish there; you can close this.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => close(false)} data-testid="step-up-cancel">
+              {handedOff ? 'Close' : 'Cancel'}
+            </Button>
+            {!handedOff && (
+              <Button type="button" size="sm" onClick={open} data-testid="step-up-in-browser">
+                Open in your browser
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   const supported = webauthnSupported()

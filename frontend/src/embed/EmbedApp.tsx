@@ -37,6 +37,7 @@ import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from '@/pages/chat/
 import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
 import { formDataSafeFetch, panelAttachmentApi, panelSealedFilesApi } from './panelFiles'
 import { createPageGrant, isNoGrant, untilLabel, type PageGrant } from './pageGrant'
+import { openInBrowser, PASSKEY_IN_BROWSER, passkeysWorkHere, useWhileAway } from '@/auth/passkeyHere'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -1530,7 +1531,7 @@ function EmbedChat({
         // Only when unlocking cannot work in this frame — the browser will not let it
         // use a passkey, or the unlock failed — is it read in canopy itself, where the
         // vault has its own page.
-        openElsewhere={(framePasskeys === false && unlockMethod === 'passkey') || sealed.state === 'error' ? (
+        openElsewhere={((framePasskeys === false || !passkeysWorkHere()) && unlockMethod === 'passkey') || sealed.state === 'error' ? (
           <a href={`${currentFrameBaseUrl()}/w/${encodeURIComponent(agent.workspace)}/sessions/${encodeURIComponent(sessionId)}`}
              target="_blank" rel="noopener noreferrer" className="text-primary underline">
             Read it in canopy
@@ -1748,14 +1749,25 @@ function ConversationFacts({ pageName, audience, sensitive, pageGrant, agentName
 /** The passkey prompt for an act-as-you permission the page is waiting on. Nothing
  *  the host granted is usable until the person confirms here, in canopy's frame;
  *  "Not now" stops it and the message goes without. Its own button, because
- *  Safari runs WebAuthn only inside a click. */
+ *  Safari runs WebAuthn only inside a click. Where the frame cannot use a passkey
+ *  (the Canopy Runner app), or the passkey failed here, the person confirms the same
+ *  grant on canopy's page in their browser, and this prompt closes when it sees that
+ *  (`passkeyHere.ts`). */
 function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGrant; agentName: string }) {
   const [grant, setGrant] = useState(() => pageGrant.current())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [inBrowser, setInBrowser] = useState(false)
   useEffect(() => pageGrant.subscribe(() => setGrant(pageGrant.current())), [pageGrant])
+  useWhileAway(() => pageGrant.refresh(), inBrowser && !!grant && !grant.confirmed)
   if (!grant || grant.confirmed) return null
   const who = grant.agent_name || agentName
+  const here = passkeysWorkHere()
+  const confirmInBrowser = () => {
+    openInBrowser(`/confirm/page-permission/${grant.id}`)
+    setError(null)
+    setInBrowser(true)
+  }
   const confirm = () => {
     setBusy(true)
     setError(null)
@@ -1782,15 +1794,30 @@ function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGrant; agen
           It can do what you can do on {grant.site} for this page ({grant.scope || 'this page'}),
           and nothing more. Confirm with your passkey; you can stop it at any time.
         </p>
-        {error && <p className="text-[12px] text-destructive">{error}</p>}
+        {inBrowser ? (
+          <p className="text-[12px] text-foreground" data-testid="page-grant-in-browser">
+            Waiting for you to confirm in your browser…
+          </p>
+        ) : !here && (
+          <p className="text-[12px] text-muted-foreground">{PASSKEY_IN_BROWSER}</p>
+        )}
+        {error && (
+          <p className="text-[12px] text-destructive">
+            {error}{' '}
+            <button type="button" onClick={confirmInBrowser} className="underline"
+                    data-testid="page-grant-try-browser">
+              Confirm in your browser instead
+            </button>
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={decline} disabled={busy}
                   className="rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted disabled:opacity-50">
             Not now
           </button>
-          <button type="button" onClick={confirm} disabled={busy}
+          <button type="button" onClick={here && !inBrowser ? confirm : confirmInBrowser} disabled={busy}
                   className="rounded bg-primary px-3 py-1 text-[12px] text-primary-foreground hover:opacity-90 disabled:opacity-50">
-            Confirm with passkey
+            {inBrowser ? 'Open it again' : here ? 'Confirm with passkey' : 'Confirm in your browser'}
           </button>
         </div>
       </div>

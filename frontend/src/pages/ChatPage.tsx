@@ -52,6 +52,7 @@ import { useSessionMeta } from './chat/useSessionMeta'
 import { useSlashCommands } from './chat/useSlashCommands'
 import { CanopyAIButton } from '@/widget/CanopyAIButton'
 import { useTranscriptPaging } from './chat/useTranscriptPaging'
+import { openInBrowser, passkeysWorkHere } from '@/auth/passkeyHere'
 import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
 /**
@@ -515,6 +516,12 @@ function ChatPageInner({
         onUnlock={() => void sealed.unlock()}
         unlockElement={vault.element}
         hasSealed={sealed.hasSealed}
+        // The Runner app cannot use a passkey to unlock: read it in the browser.
+        openElsewhere={passkeysWorkHere() ? undefined : (
+          <button type="button" className="text-primary underline" onClick={() => openInBrowser(window.location.href)}>
+            Read it in your browser
+          </button>
+        )}
         onSetAside={sealed.copyBroken ? () => {
           void setAsideMyKeyCopy(id)
             .then(() => getSession(id))

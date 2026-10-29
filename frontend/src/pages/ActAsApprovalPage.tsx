@@ -10,18 +10,26 @@ import {
   stopActAsRequest,
   type ActAsRequest,
 } from '@/api/actAs'
+import { openInBrowser, PASSKEY_IN_BROWSER, passkeysWorkHere, useWhileAway } from '@/auth/passkeyHere'
 
 /**
  * Approve an agent acting as you on canopy (`/act-as/:requestId`) — the link the push
  * and the supervisor feed carry. Shows which agent asks, its reason verbatim, the
  * conversation it is working in and what it asked for; approving takes a passkey touch
  * made for this request, and lasts 30 minutes from that touch while the turn runs.
+ * In the Canopy Runner app, where no passkey can be used, the decision is made on
+ * this same page in the person's browser, and this one follows it (`passkeyHere.ts`).
  */
 export function ActAsApprovalPage(): JSX.Element | null {
   const { requestId } = useParams()
   const [req, setReq] = useState<ActAsRequest | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [inBrowser, setInBrowser] = useState(false)
+  useWhileAway(
+    () => requestId && getActAsRequest(requestId).then(setReq).catch(() => undefined),
+    inBrowser && req?.status === 'pending',
+  )
 
   useEffect(() => {
     if (!requestId) return
@@ -95,7 +103,23 @@ export function ActAsApprovalPage(): JSX.Element | null {
           settings or these permissions. You can stop it any time.
         </p>}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
-        {req.status === 'pending' && (
+        {req.status === 'pending' && !passkeysWorkHere() && (
+          <div className="mt-4 space-y-2" data-testid="act-as-in-browser">
+            <p className="text-[12px] text-muted-foreground">
+              {inBrowser ? 'Waiting for you to decide in your browser…' : PASSKEY_IN_BROWSER}
+            </p>
+            <Button
+              variant={inBrowser ? 'outline' : 'default'}
+              onClick={() => {
+                openInBrowser(`/act-as/${req.id}`)
+                setInBrowser(true)
+              }}
+            >
+              {inBrowser ? 'Open it again' : 'Decide in your browser'}
+            </Button>
+          </div>
+        )}
+        {req.status === 'pending' && passkeysWorkHere() && (
           <div className="mt-4 flex flex-wrap gap-2">
             {offeredScopes(req.requested_scope ?? 'either').map((scope, i) => (
               <Button

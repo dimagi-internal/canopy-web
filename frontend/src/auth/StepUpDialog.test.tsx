@@ -10,6 +10,7 @@ vi.mock('@/api/passkeys', () => passkeys)
 
 const { StepUpDialog } = await import('./StepUpDialog')
 const { requestStepUp } = await import('./stepUp')
+const { setSessionPasskeys } = await import('./passkeyHere')
 
 function notAllowed(): Error {
   const e = new Error('not allowed')
@@ -29,6 +30,33 @@ afterEach(() => {
 })
 
 describe('StepUpDialog', () => {
+  it('in the Runner app, opens this page in the browser instead of asking for a passkey', async () => {
+    setSessionPasskeys(false)
+    const open = vi.fn()
+    vi.stubGlobal('open', open)
+    try {
+      render(<StepUpDialog />)
+      const asked = requestStepUp({ hasPasskey: true })
+      fireEvent.click(await screen.findByTestId('step-up-in-browser'))
+      expect(open).toHaveBeenCalledWith(window.location.href, '_blank', 'noopener')
+      expect(passkeys.performStepUp).not.toHaveBeenCalled()
+      expect(screen.getByTestId('step-up-handed-off')).toBeTruthy()
+      fireEvent.click(screen.getByTestId('step-up-cancel'))
+      await expect(asked).rejects.toThrow('cancelled')
+    } finally {
+      setSessionPasskeys(true)
+    }
+  })
+
+  it('hands a browser_session_required refusal to the browser too', async () => {
+    render(<StepUpDialog />)
+    const asked = requestStepUp({ hasPasskey: true, inBrowser: true })
+    expect(await screen.findByTestId('step-up-in-browser')).toBeTruthy()
+    expect(passkeys.performStepUp).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('step-up-cancel'))
+    await expect(asked).rejects.toThrow('cancelled')
+  })
+
   it('asks for the passkey directly, with no dialog', async () => {
     passkeys.performStepUp.mockResolvedValue({})
     render(<StepUpDialog />)

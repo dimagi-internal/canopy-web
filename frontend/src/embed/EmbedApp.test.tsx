@@ -1228,7 +1228,7 @@ describe('the act-as-you permission', () => {
       getClientExtensionResults: () => ({}),
     }))
     Object.defineProperty(navigator, 'credentials', { value: { get }, configurable: true })
-    return { asked, requestToken, get }
+    return { asked, requestToken, get, confirmElsewhere: () => { confirmed = true } }
   }
 
   function renderGranting(requestToken: ReturnType<typeof grantingWorld>['requestToken']) {
@@ -1283,5 +1283,48 @@ describe('the act-as-you permission', () => {
     expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant') && c.init?.method === 'DELETE')).toBe(true)
     expect(screen.queryByTestId('page-grant-line')).toBeNull()
     expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
+  })
+
+  it('in the Runner app, confirms in the browser and the panel follows it', async () => {
+    const { requestToken, get, confirmElsewhere } = grantingWorld()
+    const ua = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent')
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 AppleWebKit/605.1.15 CanopyRunner/2.0', configurable: true })
+    const winOpen = vi.fn()
+    vi.stubGlobal('open', winOpen)
+    try {
+      renderGranting(requestToken)
+      await screen.findByPlaceholderText(/^Type a message/)
+      await say('what am I looking at?')
+      await screen.findByTestId('page-grant-confirm')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm in your browser' }))
+      expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/confirm/page-permission/7`, '_blank', 'noopener')
+      expect(get).not.toHaveBeenCalled()
+      expect(await screen.findByTestId('page-grant-in-browser')).toBeTruthy()
+      expect(created()).toBeUndefined()
+
+      confirmElsewhere()
+      window.dispatchEvent(new Event('focus'))
+      await waitFor(() => expect(screen.queryByTestId('page-grant-confirm')).toBeNull())
+      await waitFor(() => expect(created()).toBeDefined())
+      expect(await screen.findByTestId('page-grant-line')).toBeTruthy()
+    } finally {
+      delete (navigator as { userAgent?: string }).userAgent
+      if (ua) Object.defineProperty(Navigator.prototype, 'userAgent', ua)
+    }
+  })
+
+  it('after a failed passkey, offers to confirm in the browser instead', async () => {
+    const { requestToken, get } = grantingWorld()
+    get.mockRejectedValueOnce(Object.assign(new Error('nope'), { name: 'SecurityError' }))
+    const winOpen = vi.fn()
+    vi.stubGlobal('open', winOpen)
+    renderGranting(requestToken)
+    await screen.findByPlaceholderText(/^Type a message/)
+    await say('what am I looking at?')
+    await screen.findByTestId('page-grant-confirm')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm with passkey' }))
+    fireEvent.click(await screen.findByTestId('page-grant-try-browser'))
+    expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/confirm/page-permission/7`, '_blank', 'noopener')
   })
 })

@@ -249,6 +249,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     needsFirst: 'An agent asking, and a passkey on this device.',
     actions: ['Allow read-only for 30 minutes', 'Allow read + write for 30 minutes', 'Decline', 'Stop it early'],
   },
+  {
+    path: '/confirm/page-permission/:grantId',
+    group: 'Letting an agent act as you',
+    flat: 'personal/global: a permission to act as YOU, on a page of any site you use',
+    title: 'Confirm a page’s act-as-you permission',
+    audience: 'Someone whose panel cannot use a passkey — the Canopy Runner app opens this in their browser',
+    what: "The same question a page's panel asks — let this agent act as you on that site's page for 30 minutes, within your own access — answered in your browser, where your passkey works. Confirming here confirms the panel's waiting permission, and the panel closes its prompt on its next read; Not now stops it. Only the permission's own person can open it, signed in through a browser; a token cannot confirm.",
+    needsFirst: 'A page waiting on your passkey, and a passkey in this browser.',
+    actions: ['Confirm with passkey', 'Not now'],
+  },
 
   // --- Tenant-scoped surfaces under /w/:workspace ---
   {
