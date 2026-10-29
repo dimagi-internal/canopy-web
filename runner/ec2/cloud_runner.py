@@ -1767,61 +1767,78 @@ def _salesforce_token_path(slug: str) -> pathlib.Path:
 
 def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | None = None) -> None:
     """Stage `slug`'s Salesforce access token for this turn, if it has a connection.
+    The turn registers as a holder BEFORE the CLI runs (so a sibling turn ending cannot
+    delete the file out from under it) and drops out again when nothing was staged.
     Exit 3 from the CLI is silent (and clears a stale file); any other failure is a warn
     line and the turn still runs. No token is ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
     target = _salesforce_token_path(slug)
+    with _SF_LOCK:
+        _SF_STAGED[turn_id] = (slug, runner_id)
     try:
         if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
-            with _SF_LOCK:
-                _SF_STAGED[turn_id] = (slug, runner_id)
             return
     except (OSError, ValueError, AttributeError):
         pass
-    env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
     try:
+        env = _child_safe_env()
+        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
         res = subprocess.run([_canopy_cli(), "cred", "salesforce-token", "--runner", "--agent", slug,
                               "--runner-id", runner_id, "--turn", turn_id],
                              env=env, capture_output=True, text=True, timeout=120)
     except Exception as exc:  # noqa: BLE001 — the turn runs
         _log(f"warn: {slug}: could not stage its Salesforce token ({exc})")
+        _drop_sf_holder(turn_id, remove_file=False)
         return
     if res.returncode == SALESFORCE_NOT_CONNECTED_EXIT:
-        try:
-            target.unlink(missing_ok=True)
-        except OSError:
-            pass
+        _drop_sf_holder(turn_id, remove_file=True)
         return
     if res.returncode != 0:
         _log(f"warn: {slug}: could not stage its Salesforce token "
              f"({' '.join((res.stderr or '').split())[-300:] or f'exit {res.returncode}'})")
-        return
+        _drop_sf_holder(turn_id, remove_file=False)
+
+
+def _drop_sf_holder(turn_id: str, *, remove_file: bool) -> None:
+    """Release this turn's hold; delete the file (inside the lock) when it was the last
+    holder of its agent, or when `remove_file` and no other turn of the agent holds it."""
     with _SF_LOCK:
-        _SF_STAGED[turn_id] = (slug, runner_id)
+        held = _SF_STAGED.pop(turn_id, None)
+        if not held or any(v[0] == held[0] for v in _SF_STAGED.values()):
+            return
+        if remove_file:
+            try:
+                _salesforce_token_path(held[0]).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
-def _restage_sf_token(turn_id: str) -> None:
+def _restage_sf_token(turn_id: str, *, now: float | None = None) -> None:
     """The lease heartbeat's half: refresh this turn's staged token when near expiry."""
     with _SF_LOCK:
         held = _SF_STAGED.get(turn_id)
     if held:
         try:
-            _stage_sf_token(held[1], turn_id, held[0])
+            _stage_sf_token(held[1], turn_id, held[0], now=now)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
             _log(f"warn: {held[0]}: re-staging its Salesforce token failed ({exc})")
+        with _SF_LOCK:  # a failed re-stage keeps the turn a holder, so its end still cleans up
+            _SF_STAGED[turn_id] = held
 
 
 def _unstage_sf_token(turn_id: str) -> None:
     """Turn end: delete the staged file unless another running turn of the same agent holds it."""
-    with _SF_LOCK:
-        held = _SF_STAGED.pop(turn_id, None)
-        if not held or any(v[0] == held[0] for v in _SF_STAGED.values()):
-            return
+    _drop_sf_holder(turn_id, remove_file=True)
+
+
+def _clear_stale_sf_tokens() -> None:
+    """Runner start: no turn of this process holds a leftover file of a previous one."""
+    root = pathlib.Path.home() / ".canopy" / "connections"
     try:
-        _salesforce_token_path(held[0]).unlink(missing_ok=True)
+        for f in root.glob("*/salesforce.json"):
+            f.unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -6149,12 +6166,6 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     _log(f"turn {turn_id[:8]}: no GitHub identity (HTTP {status}) — pushes and pull requests "
          f"will fail; the agent's owner lends one at the agent's Settings → Credentials → GitHub")
     return {"CANOPY_REQUESTED_BY": requested_by}
-
-
-def _salesforce_stage_for(runner_id: str, turn: dict) -> dict:
-    """Stage this turn's agent's Salesforce token (see `_stage_sf_token`); adds no env."""
-    _stage_sf_token(runner_id, str(turn["id"]), _turn_agent_slug(turn) or "")
-    return {}
 
 
 def _delegated_value(slug: str, name: str) -> str:
@@ -12664,7 +12675,6 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
                         **_page_site_env(turn),
-                        **_salesforce_stage_for(runner_id, turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
@@ -12866,7 +12876,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _update_turn_state(turn_id, phase="running", cwd=str(cwd) if cwd is not None else "",
                                slug=slug or "", off_disk_env=off_disk_env, started_at=time.time(),
                                resume_id=resume_id or "")
+        # An agent's ordinary (non-confined) turn only: a confined turn holds no
+        # credentials. Staged immediately before the try whose finally unstages it, so no
+        # exit leaves the file behind.
         lease_stop = _start_lease_renewal(runner_id, turn_id)
+        if not confined:
+            _stage_sf_token(runner_id, turn_id, slug or "")  # never raises
         try:
             try:
                 if tail is not None:
