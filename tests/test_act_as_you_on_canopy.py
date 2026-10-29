@@ -609,3 +609,120 @@ def test_a_laptop_session_permission_ends_when_someone_else_drives_the_session(w
     token = _status(login, gid).json()["token"]
     _turn(w, by=w["col"], chat_session=session, status=Turn.DONE)  # a colleague's message
     assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 401
+
+
+# --- a chat: the link reaches the person only when the asking turn ends -----------------------
+
+
+def _chat(w):
+    from apps.canopy_sessions.models import Session
+
+    return Session.objects.create(workspace=w["ws"], agent=w["hal"], status=Session.ACTIVE)
+
+
+def _chat_turn(w, session, *, by=None, status=Turn.RUNNING):
+    return _turn(w, chat_session=session, by=by, status=status)
+
+
+def test_a_request_waits_thirty_minutes(w):
+    gid = _ask(_login(w, _turn(w))).json()["id"]
+    grant = ActAsGrant.objects.get(pk=gid)
+    assert grant.request_expires_at - grant.created_at >= dt.timedelta(minutes=29, seconds=59)
+
+
+def test_in_a_chat_the_request_outlives_the_turn_and_a_later_turn_collects_it_once(w):
+    session = _chat(w)
+    first = _chat_turn(w, session)
+    first_login = _login(w, first)
+    gid = _ask(first_login, scope="read").json()["id"]
+    # The turn ends, and only now does its reply (with the link) reach Jonathan.
+    Turn.objects.filter(pk=first.pk).update(status=Turn.DONE)
+    assert _status(first_login, gid).json()["status"] == "pending"
+    assert _approve(w, gid, "read").status_code == 200
+    # He answers in the chat: a new turn, with a new login, picks it up.
+    Turn.objects.filter(pk=first.pk).update(status=Turn.DONE)
+    second = _chat_turn(w, session)
+    second_login = _login(w, second)
+    got = _status(second_login, gid).json()
+    assert got["status"] == "approved" and got["token"].startswith(act_as.PREFIX)
+    assert _status(second_login, gid).json()["token"] is None
+    assert _status(first_login, gid).json()["token"] is None  # once, whoever collects it
+    token = got["token"]
+    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+    # The asking turn has long ended; the conversation is what keeps it.
+    Turn.objects.filter(pk=second.pk).update(status=Turn.DONE)
+    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+
+
+def test_in_a_chat_the_permission_ends_when_someone_else_speaks_or_the_chat_closes(w):
+    session = _chat(w)
+    turn = _chat_turn(w, session)
+    login = _login(w, turn)
+    gid = _ask(login, scope="read").json()["id"]
+    _approve(w, gid, "read")
+    token = _status(login, gid).json()["token"]
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+    type(session).objects.filter(pk=session.pk).update(status="archived")
+    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 401
+
+
+def test_in_a_chat_a_colleagues_message_ends_a_waiting_request(w):
+    session = _chat(w)
+    turn = _chat_turn(w, session)
+    login = _login(w, turn)
+    gid = _ask(login).json()["id"]
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    _chat_turn(w, session, by=w["col"], status=Turn.DONE)
+    assert _status(login, gid).json()["status"] == "expired"
+
+
+def test_a_turn_outside_the_chat_or_another_agent_cannot_collect_it(w):
+    session = _chat(w)
+    turn = _chat_turn(w, session)
+    gid = _ask(_login(w, turn)).json()["id"]
+    _approve(w, gid, "read")
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    elsewhere = _login(w, _turn(w))  # hal, Jonathan, but not in this chat
+    assert _status(elsewhere, gid).status_code == 404
+    eva = _login(w, _turn(w, agent=w["eva"]))
+    assert _status(eva, gid).status_code == 404
+
+
+def test_a_later_turn_in_the_chat_may_stop_it(w):
+    session = _chat(w)
+    turn = _chat_turn(w, session)
+    gid = _ask(_login(w, turn)).json()["id"]
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    later = _login(w, _chat_turn(w, session))
+    assert Client(**_bearer(later)).post(f"{REQUESTS}{gid}/stop").json()["status"] == "stopped"
+
+
+def test_one_request_waits_per_chat(w):
+    session = _chat(w)
+    turn = _chat_turn(w, session)
+    assert _ask(_login(w, turn)).status_code == 201
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    assert _ask(_login(w, _chat_turn(w, session))).status_code == 409
+
+
+def test_the_agent_lists_its_requests_in_this_chat_without_tokens(w):
+    session = _chat(w)
+    turn = _chat_turn(w, session)
+    gid = _ask(_login(w, turn), scope="read").json()["id"]
+    _approve(w, gid, "read")
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    later = _login(w, _chat_turn(w, session))
+    listed = Client().get(REQUESTS, **_bearer(later)).json()
+    assert [r["id"] for r in listed] == [gid] and "token" not in listed[0]
+    other = _login(w, _turn(w, agent=w["eva"]))
+    assert Client().get(REQUESTS, **_bearer(other)).json() == []
+    # The token is still uncollected: the later turn collects it.
+    assert _status(later, gid).json()["token"]
+
+
+def test_the_push_is_recorded(w, monkeypatch):
+    monkeypatch.setattr("apps.push.services.send_to_user", lambda user, **kw: 2)
+    gid = _ask(_login(w, _turn(w))).json()["id"]
+    assert ActAsGrant.objects.get(pk=gid).push_sent == 2
+    assert Event.objects.get(kind="act_as.requested").payload["pushed"] == 2

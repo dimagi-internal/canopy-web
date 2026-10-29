@@ -15,7 +15,7 @@ vi.mock('@/api/actAs', async (orig) => ({
 }))
 
 import { ActAsApprovalPage } from './ActAsApprovalPage'
-import { offeredScopes } from '@/api/actAs'
+import { offeredScopes, statusLine } from '@/api/actAs'
 
 afterEach(() => {
   cleanup()
@@ -55,7 +55,7 @@ describe('ActAsApprovalPage', () => {
     expect(buttons).toEqual(['Allow read-only (30 min)', 'Allow read + write (30 min)', 'Decline'])
     fireEvent.click(screen.getByTestId('act-as-allow-read'))
     await waitFor(() => expect(approve).toHaveBeenCalledWith('r1', 'read'))
-    expect(await screen.findByText(/Read-only until/)).toBeTruthy()
+    expect(await screen.findByText(/Approved, read-only until/)).toBeTruthy()
   })
 
   it('a read request offers only read-only, and can be declined', async () => {
@@ -66,6 +66,26 @@ describe('ActAsApprovalPage', () => {
     expect(screen.queryByTestId('act-as-allow-write')).toBeNull()
     fireEvent.click(screen.getByTestId('act-as-decline'))
     await waitFor(() => expect(decline).toHaveBeenCalledWith('r1'))
-    expect(await screen.findByText('Declined.')).toBeTruthy()
+    expect(await screen.findByText('You declined this request.')).toBeTruthy()
+  })
+
+  it('says plainly what happened, with times', () => {
+    const at = '2026-10-29T02:34:00Z'
+    const t = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const now = new Date('2026-10-29T03:00:00Z').getTime()
+    expect(statusLine({ ...REQ, status: 'expired', expires_at: at }, 'Ada', now)).toBe(
+      `This request expired at ${t} — ask Ada again.`)
+    expect(statusLine({ ...REQ, status: 'pending', expires_at: at }, 'Ada', now)).toBe(
+      `Waiting for you — decide by ${t}.`)
+    expect(statusLine({ ...REQ, status: 'approved', scope: 'read', expires_at: at, approved_at: at }, 'Ada', now))
+      .toBe(`Approved, read-only until ${t}.`)
+  })
+
+  it('an expired request shows no buttons and no approval text', async () => {
+    get.mockResolvedValue({ ...REQ, status: 'expired', expires_at: '2026-10-29T02:34:00Z' })
+    open()
+    expect(await screen.findByText(/This request expired at .* — ask Hal again\./)).toBeTruthy()
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryByText(/Approving lets/)).toBeNull()
   })
 })

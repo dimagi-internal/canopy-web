@@ -16,12 +16,14 @@ by `tests/test_act_as_you_on_canopy.py`:
   The person picks the scope: `read` (GET routes and read-only tools) or `write`.
 * **30 minutes from the touch, never extended** (`LIFETIME`; `expires_at` is written
   once). A new approval needs a new request and a new touch.
-* **Dies with the turn.** Every use re-checks that the turn it was asked from is still
-  executing (`held`). On a laptop, where emdash finishes the turn as soon as its session
-  exists and the person keeps working in it, the agent asks with a SESSION-scoped turn
-  login; the permission then lives while that session is active and bound to the login's
-  runner and its newest turn is still the person's — the same rule that keeps the login
-  itself alive (`turn_agent_tokens.revoke_stale`).
+* **Dies with its turn, or its conversation.** Every use re-checks `held`: the turn it was
+  asked from still executing — or, when it was asked in a conversation (a chat session, or
+  a laptop's session-scoped login), that conversation still active with its newest turn
+  still the person's. A chat reply carrying the approve link reaches the person only when
+  the asking turn ends, and each later message is a new turn with a new login, so a
+  request waits 30 minutes for the person whatever its turn does, and any later turn
+  login of the same agent in that conversation for that person reads it, collects the
+  token (once) and stops it (`agent_may`).
 * **Returned once.** The agent collects the token on its first status read after the
   approval (`collect_token`); only its hash is kept, and later reads omit it.
 * **One list of what it never reaches** (`EXCLUDED_PREFIXES`, `EXCLUDED_PATTERNS`,
@@ -44,6 +46,7 @@ import datetime as dt
 import logging
 import re
 import secrets
+import uuid
 
 from django.db import transaction
 from django.utils import timezone
@@ -53,7 +56,7 @@ from apps.events import services as events
 from apps.tokens import kinds
 
 from . import turn_asker
-from .models import ActAsGrant, TurnAgentToken
+from .models import ActAsGrant
 from .routing import EXECUTING
 
 logger = logging.getLogger(__name__)
@@ -61,8 +64,9 @@ logger = logging.getLogger(__name__)
 PREFIX = "cact_"
 #: How long an approval lasts, from the passkey touch. Never extended.
 LIFETIME = dt.timedelta(minutes=30)
-#: How long a request waits for the person before it lapses.
-REQUEST_TTL = dt.timedelta(minutes=10)
+#: How long a request waits for the person before it lapses. Long enough for a chat reply
+#: carrying the link to reach them after the asking turn ends, and for the push.
+REQUEST_TTL = dt.timedelta(minutes=30)
 REASON_MAX = 500
 
 _RUNNER = "the runner protocol and its enrolment"
@@ -178,19 +182,61 @@ def dead_reason(grant: ActAsGrant, *, now=None) -> str | None:
 
 
 def held(grant: ActAsGrant) -> bool:
-    """The turn it was asked from still runs — or, for a request made with a SESSION-scoped
-    turn login (a laptop: the turn finishes as soon as its session exists, and the person
-    goes on working in it), that session is still active and bound to the login's runner
-    and its newest turn is still this person's."""
+    """What keeps a request or a permission alive besides its clock: the turn it was asked
+    from still runs — or, when it was asked in a conversation (a chat session, or a
+    laptop's session-scoped login), that conversation is still active and its newest turn
+    is still this person's. A chat reply carrying the approve link reaches the person only
+    when the asking turn ends, and every message after is a new turn, so the conversation —
+    not the one turn — is what the request belongs to."""
     if grant.turn.status in EXECUTING:
         return True
     if not grant.login_session_id:
         return False
-    login = TurnAgentToken(session_id=grant.login_session_id, runner_id=grant.login_runner_id)
-    if not turn_asker.session_held(login):
+    if not turn_asker.session_active(grant.login_session_id):
         return False
     person = turn_asker.session_person(grant.login_session_id)
     return person is not None and person.pk == grant.person_id
+
+
+def session_of(turn, login=None):
+    """The conversation a turn (or the session-scoped login serving it) belongs to, or None."""
+    if login is not None and login.session_id:
+        return login.session_id
+    if turn.chat_session_id:
+        return turn.chat_session_id
+    sid = (turn.origin_ref or {}).get("chat_session_id") if isinstance(turn.origin_ref, dict) else None
+    try:
+        return uuid.UUID(str(sid)) if sid else None
+    except ValueError:
+        return None
+
+
+def agent_turn(user, credential: dict | None):
+    """The OnBehalf of a turn login now (session-scoped logins count while their session
+    is held), or None."""
+    try:
+        return turn_asker.check(user, credential, session_login_live=True)
+    except turn_asker.Refused:
+        return None
+
+
+def agent_may(user, credential: dict | None, grant: ActAsGrant) -> bool:
+    """May this agent request read, collect or stop `grant`? The login that asked, or ANY
+    turn login of the same agent now working in the same conversation for the same person
+    — a later chat message is a new turn with a new login, and it is the one that sees the
+    approval (exactly once: `collect_token`)."""
+    cred = credential or {}
+    if kinds.kind_of(cred) is not kinds.KINDS[kinds.PAT] or cred.get("id") is None:
+        return False
+    if user.pk != grant.agent.user_id:
+        return False
+    if int(cred["id"]) == grant.login_token_id:
+        return True
+    if not grant.login_session_id:
+        return False
+    ob = agent_turn(user, cred)
+    return bool(ob is not None and ob.agent.pk == grant.agent_id and ob.user.pk == grant.person_id
+                and session_of(ob.turn, ob.login) == grant.login_session_id)
 
 
 def status_of(grant: ActAsGrant, *, now=None) -> str:
@@ -264,20 +310,24 @@ def ask(user, credential: dict | None, *, reason: str, scope: str) -> ActAsGrant
         raise Refused(f"{ob.user.email} has no passkey, so they cannot approve an act-as-you "
                       "permission; they register one in canopy Settings → Passkeys")
     now = timezone.now()
+    session_id = session_of(ob.turn, ob.login)
     with transaction.atomic():
-        waiting = [g for g in ActAsGrant.objects.select_for_update(of=("self",)).select_related("turn")
-                   .filter(turn=ob.turn, status=ActAsGrant.PENDING)
+        same = (dict(agent=ob.agent, person=ob.user, login_session_id=session_id) if session_id
+                else dict(turn=ob.turn))
+        waiting = [g for g in ActAsGrant.objects.select_for_update(of=("self",))
+                   .select_related("turn", "person", "agent")
+                   .filter(status=ActAsGrant.PENDING, **same)
                    if status_of(g, now=now) == ActAsGrant.PENDING]
         if waiting:
-            raise Refused(f"a request from this turn is already waiting for {ob.user.email} "
-                          f"({waiting[0].pk}); wait for it, or stop it first", status=409)
+            raise Refused(f"a request is already waiting for {ob.user.email} ({waiting[0].pk}); "
+                          "wait for it, or stop it first", status=409)
         grant = ActAsGrant.objects.create(
             person=ob.user, agent=ob.agent, turn=ob.turn, login_token_id=int(credential["id"]),
-            login_session_id=ob.login.session_id if ob.login is not None else None,
+            login_session_id=session_id,
             login_runner_id=ob.login.runner_id if ob.login is not None and ob.login.session_id else None,
             reason=reason, requested_scope=scope, request_expires_at=now + REQUEST_TTL)
-    _event(grant, "act_as.requested", requested_scope=scope)
-    _notify(grant)
+    pushed = _notify(grant)
+    _event(grant, "act_as.requested", requested_scope=scope, pushed=pushed)
     return grant
 
 
@@ -400,20 +450,29 @@ def approve_path(grant: ActAsGrant) -> str:
     return f"/act-as/{grant.pk}"
 
 
-def _notify(grant: ActAsGrant) -> None:
+def _notify(grant: ActAsGrant) -> int:
     """A push to the person's devices; the request is on their supervisor feed and in
-    Settings either way. Never raises."""
+    Settings either way. Returns how many devices the push service accepted it for (0: no
+    subscribed device, push not configured, or it failed), recorded on the grant and in the
+    `act_as.requested` event so "did the push fire?" has an answer. Never raises."""
+    sent = 0
     try:
         from apps.push.services import send_to_user  # noqa: PLC0415 — as sign_in_requests
 
         name = grant.agent.name or grant.agent.slug
         asked = {"read": "read as you", "write": "act as you (read + write)",
                  "either": "act as you"}[grant.requested_scope]
-        send_to_user(grant.person, title=f"{name} asks to {asked} on canopy",
-                     body=f"{grant.reason[:160]} — 30 minutes, with your passkey. Tap to decide.",
-                     url=approve_path(grant), ttl=int(REQUEST_TTL.total_seconds()), urgency="high")
+        sent = send_to_user(grant.person, title=f"{name} asks to {asked} on canopy",
+                            body=f"{grant.reason[:160]} — tap to decide with your passkey.",
+                            url=approve_path(grant), ttl=int(REQUEST_TTL.total_seconds()),
+                            urgency="high") or 0
     except Exception:  # noqa: BLE001 — the row is the record; a push is best-effort
         logger.exception("act-as: could not push request %s", grant.pk)
+        sent = -1
+    ActAsGrant.objects.filter(pk=grant.pk).update(push_sent=sent)
+    grant.push_sent = sent
+    logger.info("act-as: request %s pushed to %d device(s)", grant.pk, sent)
+    return sent
 
 
 def _event(grant: ActAsGrant, kind: str, **extra) -> None:

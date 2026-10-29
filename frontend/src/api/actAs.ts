@@ -60,3 +60,34 @@ export function offeredScopes(requested: string): ActAsScope[] {
   if (requested === 'write') return ['write']
   return ['read', 'write']
 }
+
+/** What happened to the request, in plain words, with times. */
+export function statusLine(req: ActAsRequest, agent: string, now: number = Date.now()): string {
+  const at = when(req.expires_at)
+  const past = req.expires_at ? new Date(req.expires_at).getTime() <= now : false
+  switch (req.status) {
+    case 'pending':
+      return `Waiting for you — decide by ${at}.`
+    case 'approved':
+      return `Approved, ${req.scope === 'write' ? 'read + write' : 'read-only'} until ${at}.`
+    case 'declined':
+      return 'You declined this request.'
+    case 'stopped':
+      return req.approved_at ? 'This permission was stopped.' : 'This request was withdrawn.'
+    case 'expired':
+      if (req.approved_at) {
+        return past ? `This permission ended at ${at}.` : 'This permission ended when its conversation did.'
+      }
+      return past
+        ? `This request expired at ${at} — ask ${agent} again.`
+        : `This request ended when its conversation did — ask ${agent} again.`
+    default:
+      return req.status
+  }
+}
+
+function when(iso?: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}

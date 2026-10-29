@@ -138,6 +138,12 @@ def session_held(login: TurnAgentToken) -> bool:
         session__status=Session.ACTIVE).exists()
 
 
+def session_active(session_id) -> bool:
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — only a session check pays
+
+    return Session.objects.filter(pk=session_id, status=Session.ACTIVE).exists()
+
+
 def session_person(session_id):
     """The person a session's newest turn works for, or None (`_principal`)."""
     current = (Turn.objects.select_related("initiator_user")
