@@ -6,13 +6,21 @@ every call — from a handful of class attributes. A provider module subclasses
 it, fills in those attributes, implements `identity()` and overrides only
 what its service does differently (see `salesforce.py`).
 
+A provider is a class; an instance is that provider bound to one workspace's
+`ConnectionApp` (`providers.for_app(app)`), which supplies the client id, the
+client secret, the provider's options and the extra scopes the workspace chose.
+Nothing is read from Django settings.
+
 What a provider declares, and where providers differ:
 
-- `name` (the URL and database key), `title` (what the UI calls it), `scopes`.
-- `settings_prefix`: the provider's settings are `<PREFIX>_CLIENT_ID`,
-  `<PREFIX>_CLIENT_SECRET` and `<PREFIX>_ACCESS_TOKEN_SECONDS`, plus any of its
-  own (`SALESFORCE_LOGIN_URL`). Without a client id and secret it is "not set
-  up" (`is_configured`), a state the UI shows rather than an error.
+- `name` (the URL and database key), `title` (what the UI calls it), `scopes`
+  (always asked for).
+- `scope_choices`: extra scopes a workspace may add, scope -> human label
+  ("Read mail"). Chosen ones are asked for and required on top of `scopes`.
+- `option_fields` and `clean_options(raw)`: the provider's own settings
+  (Salesforce: its login host and the access-token lifetime), validated when an
+  admin saves the app. Without a client id and secret the app is "not set up"
+  (`is_configured`), a state the UI shows rather than an error.
 - Endpoints: `authorize_url_base()`, `token_url()`, `revoke_url()` ("" when the
   provider has no revocation endpoint).
 - `authorize_params(owner_kind=…, owner=…)`: extra authorize-URL parameters,
@@ -23,10 +31,13 @@ What a provider declares, and where providers differ:
   that let the person untick one is refused (`insufficient_scope`). The granted
   scopes are read from the token response's `scope`; `scope_implies` names a
   broader scope that satisfies narrower ones (Salesforce: `full` gives `api`).
+- `check_owner(identity, owner_kind=…, owner=…)`: refuse an account that is not
+  the one this owner must connect (raise `ProviderError(code="wrong_account")`);
+  by default any account is accepted.
 - `client_auth`: how the client authenticates to the token and revocation
   endpoints, `"body"` (client_secret_post, the default) or `"basic"` (HTTP Basic).
-- Expiry: a token response's `expires_in` when it sends one; otherwise
-  `<PREFIX>_ACCESS_TOKEN_SECONDS`, else `default_access_token_seconds`.
+- Expiry: a token response's `expires_in` when it sends one; otherwise the
+  app's `access_token_seconds` option, else `default_access_token_seconds`.
 - `rotates_refresh_token`: whether a refresh may hand back a NEW refresh token
   (Salesforce, Intacct) that replaces the old one. The service stores a
   returned refresh token either way; the flag documents the provider and is
@@ -44,12 +55,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, ClassVar, Literal
-from urllib.parse import urlencode
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from urllib.parse import urlencode, urlparse
 
 import requests
-from django.conf import settings
 from django.utils import timezone
+
+if TYPE_CHECKING:
+    from ..models import ConnectionApp
 
 # Every outbound provider call gets one, because a hung request blocks a worker.
 HTTP_TIMEOUT = 15
@@ -100,14 +113,28 @@ class Identity:
     label: str  # display only, never used for authorization
 
 
+@dataclass(frozen=True)
+class OptionField:
+    """One provider option a workspace admin sets on its app."""
+
+    name: str
+    label: str
+    kind: Literal["url", "int", "text"]
+    required: bool = False
+    default: Any = None
+
+
 class Provider:
-    """One OAuth 2.0 authorization-code provider. Subclass per service."""
+    """One OAuth 2.0 authorization-code provider. Subclass per service; an
+    instance is bound to one workspace's app (or to none: "not set up")."""
 
     name: ClassVar[str]
     title: ClassVar[str]
-    settings_prefix: ClassVar[str]
     scopes: ClassVar[tuple[str, ...]]
     required_scopes: ClassVar[tuple[str, ...]] = ()
+    # Extra scopes a workspace may choose, scope -> what to call it in the UI.
+    scope_choices: ClassVar[Mapping[str, str]] = {}
+    option_fields: ClassVar[tuple[OptionField, ...]] = ()
     # A granted scope that includes others (Salesforce: `full` includes `api`), so a
     # grant naming the broader one is not refused for lacking the narrower.
     scope_implies: ClassVar[Mapping[str, tuple[str, ...]]] = {}
@@ -115,6 +142,9 @@ class Provider:
     rotates_refresh_token: ClassVar[bool] = False
     pkce: ClassVar[bool] = True
     default_access_token_seconds: ClassVar[int] = 3600
+
+    def __init__(self, app: ConnectionApp | None = None) -> None:
+        self.app = app
 
     # ---- what a provider module fills in ------------------------------------
 
@@ -137,28 +167,75 @@ class Provider:
     def identity(self, token: TokenResponse) -> Identity:
         raise NotImplementedError
 
-    # ---- settings -----------------------------------------------------------
+    def check_owner(self, identity: Identity, *, owner_kind: Literal["user", "agent"], owner: Any) -> None:
+        """Refuse an account this owner must not connect: raise
+        `ProviderError(..., code="wrong_account")`. Any account by default."""
 
-    def setting(self, key: str, default: Any = "") -> Any:
-        """`<PREFIX>_<KEY>` from Django settings."""
-        return getattr(settings, f"{self.settings_prefix}_{key}", default)
+    # ---- the workspace's app ------------------------------------------------
 
     @property
     def client_id(self) -> str:
-        return self.setting("CLIENT_ID")
+        return self.app.client_id if self.app is not None else ""
 
     @property
     def client_secret(self) -> str:
-        return self.setting("CLIENT_SECRET")
+        return self.app.client_secret if self.app is not None else ""
+
+    @property
+    def options(self) -> Mapping[str, Any]:
+        return (self.app.options or {}) if self.app is not None else {}
 
     def is_configured(self) -> bool:
-        return bool(self.client_id and self.client_secret)
+        return bool(self.app is not None and self.client_id and self.client_secret)
+
+    def requested_scopes(self) -> tuple[str, ...]:
+        """What the authorize URL asks for: the provider's own scopes plus the app's chosen ones."""
+        extra = self.app.extra_scopes if self.app is not None else ()
+        return tuple(dict.fromkeys((*self.scopes, *extra)))
 
     def access_token_lifetime(self) -> timedelta:
         """How long a fresh access token lives when the token response does not
-        say (`expires_in`): `<PREFIX>_ACCESS_TOKEN_SECONDS`, else the default."""
-        seconds = self.setting("ACCESS_TOKEN_SECONDS", None) or self.default_access_token_seconds
+        say (`expires_in`): the app's `access_token_seconds` option, else the default."""
+        seconds = self.options.get("access_token_seconds") or self.default_access_token_seconds
         return timedelta(seconds=int(seconds))
+
+    @classmethod
+    def clean_options(cls, raw: Mapping[str, Any]) -> dict[str, Any]:
+        """`raw` as the options an app stores: every declared field, defaults
+        filled, values checked by kind. Raises `ValueError(message)`, the message
+        safe to show the admin. A provider adds its own checks by overriding and
+        calling this first."""
+        raw = dict(raw or {})
+        fields = {f.name: f for f in cls.option_fields}
+        unknown = sorted(set(raw) - set(fields))
+        if unknown:
+            raise ValueError(f"{cls.title} has no option {', '.join(unknown)}")
+        cleaned: dict[str, Any] = {}
+        for f in cls.option_fields:
+            value = raw.get(f.name)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                value = f.default
+            if value is None or value == "":
+                if f.required:
+                    raise ValueError(f"{f.label} is required")
+                continue
+            if f.kind == "int":
+                if isinstance(value, bool):
+                    raise ValueError(f"{f.label} must be a whole number")
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f"{f.label} must be a whole number") from None
+            else:
+                if not isinstance(value, str):
+                    raise ValueError(f"{f.label} must be text")
+                value = value.strip()
+                if f.kind == "url":
+                    parsed = urlparse(value)
+                    if parsed.scheme != "https" or not parsed.hostname:
+                        raise ValueError(f"{f.label} must be an https URL")
+            cleaned[f.name] = value
+        return cleaned
 
     # ---- the OAuth flow -----------------------------------------------------
 
@@ -170,7 +247,7 @@ class Provider:
             "client_id": self.client_id,
             "redirect_uri": redirect_uri,
             "state": state,
-            "scope": " ".join(self.scopes),
+            "scope": " ".join(self.requested_scopes()),
         }
         if self.pkce:
             query |= {"code_challenge": code_challenge, "code_challenge_method": "S256"}
@@ -189,12 +266,14 @@ class Provider:
         return self._token_response(body)
 
     def missing_scopes(self, granted: tuple[str, ...]) -> tuple[str, ...]:
-        """The required scopes a grant lacks. An empty `granted` means the provider
-        did not say, which is taken as what was asked for."""
+        """The required scopes a grant lacks: the provider's own required ones
+        and every extra scope the app chose. An empty `granted` means the
+        provider did not say, which is taken as what was asked for."""
         if not granted:
             return ()
         held = set(granted).union(*(self.scope_implies.get(s, ()) for s in granted))
-        return tuple(s for s in self.required_scopes if s not in held)
+        extra = self.app.extra_scopes if self.app is not None else ()
+        return tuple(s for s in dict.fromkeys((*self.required_scopes, *extra)) if s not in held)
 
     def revoke(self, token: str) -> None:
         """Revoke a refresh token (RFC 7009), with the client's authentication."""

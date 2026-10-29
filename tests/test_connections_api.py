@@ -20,9 +20,9 @@ from apps.events.models import Event
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import REVOKE_URL, FakeSF, _resp, _stored, _token_body
+from tests.fixtures.connections import REVOKE_URL, FakeSF, _resp, _stored, _token_body, home, sf_app
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
+pytestmark = pytest.mark.django_db
 
 
 def _mk(username):
@@ -83,9 +83,19 @@ def test_list_shows_providers_and_only_my_connections(client, user, other):
     assert "token" not in str(c).lower()
 
 
-def test_list_reports_unconfigured_provider(client, settings):
-    settings.SALESFORCE_CLIENT_ID = ""
+def test_list_reports_unconfigured_provider(client, user):
+    assert client.get("/api/connections/").json()["providers"][0]["configured"] is False   # no app anywhere
+    app = sf_app(home(user))
+    assert client.get("/api/connections/").json()["providers"][0]["configured"] is True
+    app.client_id = ""
+    app.save()
     assert client.get("/api/connections/").json()["providers"][0]["configured"] is False
+
+
+def test_agent_list_reports_its_workspaces_app(client, eva):
+    assert client.get("/api/agents/eva/connections").json()["providers"][0]["configured"] is False
+    sf_app(eva.workspace)
+    assert client.get("/api/agents/eva/connections").json()["providers"][0]["configured"] is True
 
 
 def test_delete_mine_revokes_and_removes(client, user):
@@ -117,7 +127,7 @@ def test_agent_list_has_own_and_granted(client, user, eva, echo):
     own = _stored({"agent": echo}, user)
     shared = Connection.objects.create(
         provider="salesforce", account_id="00Dorg/005eva", account_label="eva@dimagi-ai.com",
-        agent=eva, connected_by=user)
+        agent=eva, connected_by=user, app=sf_app(eva.workspace))
     ConnectionGrant.objects.create(connection=shared, agent=echo, granted_by=user)
     rows = client.get("/api/agents/echo/connections").json()["connections"]
     by_id = {r["id"]: r for r in rows}
@@ -271,9 +281,9 @@ def test_token_reconnect_required_is_409_and_stamps(user):
 
 
 def test_token_ambiguous_lists_accounts(user):
-    _stored({"user": user}, user)
+    first = _stored({"user": user}, user)
     Connection.objects.create(provider="salesforce", account_id="00Dother/005x",
-                              account_label="second@dimagi.com", user=user, connected_by=user)
+                              account_label="second@dimagi.com", user=user, connected_by=user, app=first.app)
     resp = _token(user)
     assert resp.status_code == 409
     body = resp.json()
@@ -326,9 +336,10 @@ def test_refreshed_token_is_returned_and_rotated(user):
     assert conn.refresh_failed_at is None
 
 
-def test_token_unconfigured_provider_is_409_even_with_a_stale_cached_token(user, settings):
+def test_token_unconfigured_provider_is_409_even_with_a_stale_cached_token(user):
     conn = _stored({"user": user}, user, access="00D!stale", expires_in=timedelta(seconds=-60))
-    settings.SALESFORCE_CLIENT_ID = ""
+    conn.app.client_id = ""
+    conn.app.save()
     resp = _token(user)
     assert resp.status_code == 409 and resp.json()["error"] == "not_configured"
     assert "00D!stale" not in resp.content.decode()
@@ -504,7 +515,7 @@ def test_grantee_admin_in_another_workspace_may_stop_using_it(user, other, ws, e
     ConnectionGrant.objects.create(connection=shared, agent=theirs, granted_by=user)
     unshared = Connection.objects.create(
         provider="salesforce", account_id="00Dorg/005other", account_label="x", agent=eva,
-        refresh_token_enc="x", connected_by=user)
+        refresh_token_enc="x", connected_by=user, app=shared.app)
     o = Client()
     o.force_login(other)
     grant_step_up(o)

@@ -1,9 +1,9 @@
 """Salesforce: OAuth 2.0 web-server flow with PKCE, against a Connected App.
 
-What differs from the generic provider: the endpoints hang off a configurable
-login host (`SALESFORCE_LOGIN_URL`: a sandbox, or a My Domain); the token
+What differs from the generic provider: the endpoints hang off the app's login
+host (its `login_url` option: production, a sandbox, or a My Domain); the token
 response carries no `expires_in` (the Connected App's session timeout decides,
-so `SALESFORCE_ACCESS_TOKEN_SECONDS` must be set to it, never longer); the
+so the app's `access_token_seconds` must be set to it, never longer); the
 refresh token may rotate; each account has its own API host (`instance_url`);
 and identity is read from the `id` URL the token response names.
 """
@@ -15,17 +15,25 @@ from urllib.parse import urlparse
 
 import requests
 
-from .base import Identity, Provider, ProviderError, TokenResponse
+from .base import Identity, OptionField, Provider, ProviderError, TokenResponse
 
 # Where an identity URL may point. The URL comes back in the token response and
 # the access token is sent to it as a bearer, so it is checked rather than trusted.
 SALESFORCE_HOST_SUFFIXES = (".salesforce.com", ".force.com")
 
+DEFAULT_LOGIN_URL = "https://login.salesforce.com"
+# Where the login host may be: the client secret is sent there, so only Salesforce's
+# own login hosts or a My Domain.
+LOGIN_HOSTS = ("login.salesforce.com", "test.salesforce.com")
+MY_DOMAIN_SUFFIX = ".my.salesforce.com"
+# The access-token lifetime an app may declare: above the runner's re-stage margin
+# is advisable (see docs/architecture/deploy.md), never longer than a day.
+MIN_ACCESS_TOKEN_SECONDS, MAX_ACCESS_TOKEN_SECONDS = 300, 86400
+
 
 class SalesforceProvider(Provider):
     name = "salesforce"
     title = "Salesforce"
-    settings_prefix = "SALESFORCE"
     scopes = ("api", "refresh_token")
     # Salesforce names what it granted in `scope` ("refresh_token api", plus any
     # the Connected App adds); without both, canopy can neither call nor refresh.
@@ -34,10 +42,31 @@ class SalesforceProvider(Provider):
     scope_implies = {"full": ("api",)}
     rotates_refresh_token = True
     default_access_token_seconds = 1800
+    option_fields = (
+        OptionField("login_url", "Login URL", "url", required=True, default=DEFAULT_LOGIN_URL),
+        # Salesforce never says how long a token lives: set this to the Connected
+        # App's session timeout, never longer.
+        OptionField("access_token_seconds", "Access token lifetime (seconds)", "int",
+                    default=default_access_token_seconds),
+    )
+
+    @classmethod
+    def clean_options(cls, raw):
+        cleaned = super().clean_options(raw)
+        host = (urlparse(cleaned["login_url"]).hostname or "").lower()
+        if host not in LOGIN_HOSTS and not (host.endswith(MY_DOMAIN_SUFFIX) and len(host) > len(MY_DOMAIN_SUFFIX)):
+            raise ValueError("Login URL must be login.salesforce.com, test.salesforce.com "
+                             "or a My Domain (….my.salesforce.com)")
+        cleaned["login_url"] = f"https://{host}"
+        seconds = cleaned["access_token_seconds"]
+        if not MIN_ACCESS_TOKEN_SECONDS <= seconds <= MAX_ACCESS_TOKEN_SECONDS:
+            raise ValueError(f"Access token lifetime must be between {MIN_ACCESS_TOKEN_SECONDS} "
+                             f"and {MAX_ACCESS_TOKEN_SECONDS} seconds")
+        return cleaned
 
     @property
     def _base(self) -> str:
-        return (self.setting("LOGIN_URL") or "https://login.salesforce.com").rstrip("/")
+        return (self.options.get("login_url") or DEFAULT_LOGIN_URL).rstrip("/")
 
     def authorize_url_base(self) -> str:
         return f"{self._base}/services/oauth2/authorize"

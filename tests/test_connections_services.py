@@ -29,7 +29,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.connections import providers, services
-from apps.connections.models import Connection, ConnectionGrant
+from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
 from apps.connections.providers.base import TokenResponse
 from apps.events.models import Event
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -41,9 +41,11 @@ from tests.fixtures.connections import (
     _resp,
     _stored,
     _token_body,
+    home,
+    sf_app,
 )
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
+pytestmark = pytest.mark.django_db
 
 
 
@@ -69,16 +71,36 @@ def echo(ws, user):
     return Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
 
 
+def _app_of(owner):
+    """The app an owner connects with: an agent's workspace's, a person's home workspace's."""
+    kind, pk = owner
+    if kind == "agent":
+        return sf_app(Agent.objects.get(pk=pk).workspace)
+    return sf_app(home(get_user_model().objects.get(pk=pk)))
+
+
 def _begin(session, owner, **kw):
-    return services.begin(session, provider="salesforce", owner=owner, redirect_uri=REDIRECT, **kw)
+    return services.begin(session, app=_app_of(owner), owner=owner, redirect_uri=REDIRECT, **kw)
+
+
+def _complete(session, state, by, code="c0de", **kw):
+    """`services.complete` for the workspace the flow was begun in (a forged state: any)."""
+    parked = services.pending_for(session, state) or {}
+    kw.setdefault("workspace", parked.get("workspace", "w"))
+    kw.setdefault("provider", "salesforce")
+    return services.complete(session, code=code, state=state, redirect_uri=REDIRECT, by=by, **kw)
 
 
 def _connect(session, owner, by, fake=None):
     url = _begin(session, owner)
     state = parse_qs(urlparse(url).query)["state"][0]
     with fake or FakeSF():
-        return services.complete(session, provider="salesforce", code="c0de", state=state,
-                                 redirect_uri=REDIRECT, by=by)
+        return _complete(session, state, by)
+
+
+def _set_options(conn_or_app, **options):
+    app = conn_or_app.app if isinstance(conn_or_app, Connection) else conn_or_app
+    ConnectionApp.objects.filter(pk=app.pk).update(options={**app.options, **options})
 
 
 # ---- begin / complete --------------------------------------------------------
@@ -94,6 +116,9 @@ def test_begin_parks_state_and_pkce(user):
     state = q["state"][0]
     parked = session[services.SESSION_KEY][state]
     assert parked["provider"] == "salesforce"
+    app = sf_app(home(user))
+    assert (parked["app"], parked["workspace"]) == (app.pk, app.workspace_id)
+    assert q["client_id"] == ["3MVG-client"]
     assert (parked["owner_kind"], parked["owner_id"]) == ("user", user.pk)
     assert parked["return_to"] == "/settings"
     # The challenge is the S256 of the parked verifier, and the verifier never leaves.
@@ -104,8 +129,10 @@ def test_begin_parks_state_and_pkce(user):
     assert parked["verifier"] not in url
 
 
-def test_begin_not_configured(settings, user):
-    settings.SALESFORCE_CLIENT_SECRET = ""
+def test_begin_not_configured(user):
+    app = sf_app(home(user))
+    app.client_secret = ""
+    app.save()
     with pytest.raises(services.NotConfigured):
         _begin({}, ("user", user.pk))
 
@@ -115,16 +142,13 @@ def test_complete_rejects_unknown_or_reused_state(user):
     url = _begin(session, ("user", user.pk))
     state = parse_qs(urlparse(url).query)["state"][0]
     with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:
-        services.complete(session, provider="salesforce", code="c", state="forged",
-                          redirect_uri=REDIRECT, by=user)
+        _complete(session, "forged", user, code="c")
     assert e.value.code == "bad_state"
     assert fake.calls == []
     with FakeSF():
-        services.complete(session, provider="salesforce", code="c", state=state,
-                          redirect_uri=REDIRECT, by=user)
+        _complete(session, state, user, code="c")
     with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:  # replay
-        services.complete(session, provider="salesforce", code="c", state=state,
-                          redirect_uri=REDIRECT, by=user)
+        _complete(session, state, user, code="c")
     assert e.value.code == "bad_state"
     assert fake.calls == []
 
@@ -135,8 +159,7 @@ def test_complete_exchanges_with_verifier_and_stores_encrypted(user):
     state = parse_qs(urlparse(url).query)["state"][0]
     verifier = session[services.SESSION_KEY][state]["verifier"]
     with FakeSF() as fake:
-        conn = services.complete(session, provider="salesforce", code="c0de", state=state,
-                                 redirect_uri=REDIRECT, by=user)
+        conn = _complete(session, state, user, code="c0de")
     _, _, data = fake.token_calls()[0]
     assert data["grant_type"] == "authorization_code"
     assert data["code"] == "c0de" and data["code_verifier"] == verifier
@@ -202,8 +225,7 @@ def test_complete_agent_deleted_since_begin_is_bad_state(user, eva):
     state = parse_qs(urlparse(url).query)["state"][0]
     eva.delete()
     with FakeSF(), pytest.raises(services.ConnectionError) as e:
-        services.complete(session, provider="salesforce", code="c", state=state,
-                          redirect_uri=REDIRECT, by=user)
+        _complete(session, state, user, code="c")
     assert e.value.code == "bad_state"
     assert not Connection.objects.exists()
 
@@ -253,7 +275,7 @@ def test_identity_refuses_non_salesforce_host(id_url):
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
                           instance_url="", raw={"id": id_url})
     with FakeSF() as fake, pytest.raises(providers.ProviderError):
-        providers.get("salesforce").identity(token)
+        providers.get_class("salesforce")().identity(token)
     assert fake.calls == []
 
 
@@ -267,16 +289,17 @@ def test_identity_allows_salesforce_hosts(id_url):
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
                           instance_url="", raw={"id": id_url})
     with FakeSF():
-        ident = providers.get("salesforce").identity(token)
+        ident = providers.get_class("salesforce")().identity(token)
     assert ident.account_id == "00Dorg/005user"
 
 
-def test_identity_allows_configured_login_host(settings):
-    settings.SALESFORCE_LOGIN_URL = "https://sso.dimagi.example"
+def test_identity_allows_the_apps_login_host():
+    # Saved options only allow Salesforce hosts; the check still trusts whatever the app holds.
+    app = ConnectionApp(provider="salesforce", options={"login_url": "https://sso.dimagi.example"})
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
                           instance_url="", raw={"id": "https://sso.dimagi.example/id/00D/005"})
     with FakeSF():
-        assert providers.get("salesforce").identity(token).label == "jj@dimagi.com"
+        assert providers.for_app(app).identity(token).label == "jj@dimagi.com"
 
 
 # ---- access_token_for --------------------------------------------------------
@@ -312,11 +335,11 @@ def test_min_life_decides_whether_the_cache_is_enough(user):
     assert len(fake.token_calls()) == 1 and tok.token == "00D!access_1"
 
 
-def test_min_life_is_capped_at_half_a_fresh_tokens_lifetime(user, settings):
+def test_min_life_is_capped_at_half_a_fresh_tokens_lifetime(user):
     """A lifetime at or under what the runner asks for (900 s) must not refresh on
     every call: a fresh token satisfies the caller for half its life."""
-    settings.SALESFORCE_ACCESS_TOKEN_SECONDS = 900
     conn = _stored({"user": user}, user, expires_in=timedelta(seconds=850))
+    _set_options(conn, access_token_seconds=900)
     with FakeSF() as fake:
         assert services.access_token_for(conn, min_life=timedelta(seconds=900)).token == "00D!cached"
     assert fake.token_calls() == []
@@ -336,9 +359,9 @@ def test_refresh_true_skips_a_fresh_cache(user):
     assert decrypt_secret(conn.refresh_token_enc) == "5Aep_new"
 
 
-def test_access_token_lifetime_is_the_setting(user, settings):
-    settings.SALESFORCE_ACCESS_TOKEN_SECONDS = 600
+def test_access_token_lifetime_is_the_apps_option(user):
     conn = _stored({"user": user}, user, access="")
+    _set_options(conn, access_token_seconds=600)
     with FakeSF():
         tok = services.access_token_for(conn)
     assert timezone.now() + timedelta(minutes=9) < tok.expires_at <= timezone.now() + timedelta(minutes=10)
@@ -352,7 +375,7 @@ def test_refresh_stores_rotated_refresh_token(user):
     _, _, data = fake.token_calls()[0]
     assert data["grant_type"] == "refresh_token" and data["refresh_token"] == "5Aep_old"
     assert tok.token == "00D!new"
-    # SALESFORCE_ACCESS_TOKEN_SECONDS (default 1800): Salesforce sends no expires_in.
+    # The app's access_token_seconds (1800): Salesforce sends no expires_in.
     assert timezone.now() + timedelta(minutes=29) < tok.expires_at <= timezone.now() + timedelta(minutes=30)
     conn.refresh_from_db()
     assert decrypt_secret(conn.refresh_token_enc) == "5Aep_new"
@@ -688,9 +711,9 @@ def test_a_provider_error_on_refresh_is_logged_after_the_transaction(user, caplo
 
 # ---- the lifetime the cap uses is the one observed --------------------------------
 
-def test_min_life_cap_uses_the_lifetime_the_provider_gave(user, settings):
-    settings.SALESFORCE_ACCESS_TOKEN_SECONDS = 3600
+def test_min_life_cap_uses_the_lifetime_the_provider_gave(user):
     conn = _stored({"user": user}, user, access="")
+    _set_options(conn, access_token_seconds=3600)
     with FakeSF(token=[_resp(body=_token_body(expires_in=600))]):
         services.access_token_for(conn)
     conn.refresh_from_db()
@@ -719,8 +742,7 @@ def test_non_ascii_stays_readable_in_the_line():
 # ---- client authentication ------------------------------------------------------
 
 def test_basic_client_auth_is_used_for_token_and_revoke(user, monkeypatch):
-    sf = providers.get("salesforce")
-    monkeypatch.setattr(type(sf), "client_auth", "basic")
+    monkeypatch.setattr(providers.get_class("salesforce"), "client_auth", "basic")
     seen = []
 
     def post(url, data=None, headers=None, timeout=None, auth=None):

@@ -1,8 +1,8 @@
-"""A provider is one module plus settings: nothing else in canopy-web names one.
+"""A provider is one module: nothing else in canopy-web names one.
 
 `Acme` below is everything a new provider (Google, Sage Intacct) is: a
-`Provider` subclass with endpoints, a settings prefix, its own authorize
-parameters and an identity lookup. It is registered for these tests only, and
+`Provider` subclass with endpoints, its own authorize parameters and an
+identity lookup, used with a workspace's app (client id and secret). It is registered for these tests only, and
 then driven through every surface — the Settings list, the browser connect flow
 for a person and for an agent, the CLI token route, the runner's turn routes
 and disconnect — without touching shared code. It also differs from Salesforce
@@ -31,6 +31,7 @@ from apps.connections.providers.base import Identity, Provider
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.connections import sf_app
 
 pytestmark = pytest.mark.django_db
 
@@ -43,7 +44,6 @@ USERINFO = "https://api.acme.test/v1/me"
 class AcmeProvider(Provider):
     name = "acme"
     title = "Acme Books"
-    settings_prefix = "ACME"
     scopes = ("books.read", "offline_access")
     required_scopes = ("books.read",)
     rotates_refresh_token = False
@@ -112,10 +112,8 @@ class FakeAcme:
 
 
 @pytest.fixture(autouse=True)
-def acme(monkeypatch, settings):
-    settings.ACME_CLIENT_ID = "acme-client"
-    settings.ACME_CLIENT_SECRET = "acme-secret"
-    monkeypatch.setitem(providers.ALL, "acme", AcmeProvider())
+def acme(monkeypatch):
+    monkeypatch.setitem(providers.CLASSES, "acme", AcmeProvider)
     with FakeAcme() as fake:
         yield fake
 
@@ -126,9 +124,16 @@ def user():
 
 
 @pytest.fixture
-def eva(user):
-    ws = Workspace.objects.create(slug="w", display_name="W", created_by=user)
-    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.EDITOR)
+def ws(user):
+    """The workspace with Acme set up: its admin saved the client id and secret."""
+    w = Workspace.objects.create(slug="w", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=w, user=user, role=WorkspaceMembership.EDITOR)
+    sf_app(w, provider="acme", client_id="acme-client", secret="acme-secret")
+    return w
+
+
+@pytest.fixture
+def eva(user, ws):
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=user, email="eva@agents.test")
     AgentAdmin.objects.get_or_create(agent=agent, user=user)
     return agent
@@ -145,7 +150,7 @@ def _connect(client, **agent):
     return authorize, query, landed
 
 
-def test_a_person_connects_lists_and_fetches_a_token(acme, user):
+def test_a_person_connects_lists_and_fetches_a_token(acme, user, ws):
     client = Client()
     client.force_login(user)
     listed = client.get("/api/connections/").json()
@@ -214,7 +219,7 @@ def test_an_unregistered_provider_is_404_everywhere(user):
     assert Client(HTTP_AUTHORIZATION=f"Bearer {raw}").post("/api/me/connections/nope/token").status_code == 404
 
 
-def test_a_grant_with_fewer_scopes_than_required_is_refused(acme, user):
+def test_a_grant_with_fewer_scopes_than_required_is_refused(acme, user, ws):
     acme.granted = "offline_access"                           # the person unticked books.read
     client = Client()
     client.force_login(user)
@@ -223,7 +228,7 @@ def test_a_grant_with_fewer_scopes_than_required_is_refused(acme, user):
     assert not Connection.objects.filter(provider="acme").exists()
 
 
-def test_the_stored_scopes_are_the_granted_ones(acme, user):
+def test_the_stored_scopes_are_the_granted_ones(acme, user, ws):
     acme.granted = "books.read offline_access books.write"
     client = Client()
     client.force_login(user)

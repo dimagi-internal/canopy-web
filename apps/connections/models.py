@@ -1,13 +1,18 @@
 """Server-held OAuth connections to third-party providers (Salesforce first).
 
+A `ConnectionApp` is one workspace's OAuth client for one provider: the client
+id, the client secret and the provider's options, configured by a workspace
+admin. Every `Connection` was minted by one app and is refreshed and revoked
+with that app's credentials; there is no site-wide client.
+
 A `Connection` is one grant canopy holds so work can be done AS an owner: a
 person (their CLI, their sessions) or an agent (its turns). Exactly one owner,
 never both, and there is no fallback between them.
 
-Tokens are Fernet ciphertext (`apps.common.encryption`); a provider may rotate
-the refresh token on every refresh, so only canopy-web refreshes, under a row
-lock (see the service layer). What differs between providers lives in
-`providers/`, never here: `provider` is just the registry key.
+Secrets and tokens are Fernet ciphertext (`apps.common.encryption`); a provider
+may rotate the refresh token on every refresh, so only canopy-web refreshes,
+under a row lock (see the service layer). What differs between providers lives
+in `providers/`, never here: `provider` is just the registry key.
 """
 from __future__ import annotations
 
@@ -15,6 +20,59 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+
+from apps.common.encryption import decrypt_secret, encrypt_secret
+
+
+class ConnectionApp(models.Model):
+    """One workspace's OAuth client for one provider.
+
+    Removed only through `services.remove_app`, which disconnects every
+    connection made with it first (`Connection.app` is PROTECT)."""
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="connection_apps",
+    )
+    provider = models.CharField(max_length=40)
+    client_id = models.CharField(max_length=255)
+    # Never returned by any route, never logged, never in an event: `client_secret`.
+    client_secret_enc = models.TextField(blank=True, default="")
+    # The provider's own settings, as its `clean_options` returned them.
+    options = models.JSONField(default=dict, blank=True)
+    # Extra scopes chosen from the provider's `scope_choices`, space-separated, on
+    # top of the ones the provider always asks for.
+    scopes = models.CharField(max_length=1000, blank=True, default="")
+    configured_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "provider"], name="connectionapp_unique_workspace_provider"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.workspace_id}:{self.provider}"
+
+    @property
+    def client_secret(self) -> str:
+        """The decrypted secret; "" when none is stored or it cannot be read."""
+        if not self.client_secret_enc:
+            return ""
+        try:
+            return decrypt_secret(self.client_secret_enc)
+        except Exception:  # noqa: BLE001 - an unreadable secret is a missing one
+            return ""
+
+    @client_secret.setter
+    def client_secret(self, value: str) -> None:
+        self.client_secret_enc = encrypt_secret(value) if value else ""
+
+    @property
+    def extra_scopes(self) -> tuple[str, ...]:
+        return tuple(self.scopes.split())
 
 
 class Connection(models.Model):
@@ -26,6 +84,8 @@ class Connection(models.Model):
         "agents.Agent", null=True, blank=True, on_delete=models.CASCADE,
         related_name="connections",
     )
+    # The workspace app that minted this grant; its credentials refresh and revoke it.
+    app = models.ForeignKey(ConnectionApp, on_delete=models.PROTECT, related_name="connections")
     provider = models.CharField(max_length=40)
     # The provider's stable id for the account (Salesforce: "<org id>/<user id>").
     account_id = models.CharField(max_length=255)
@@ -62,11 +122,12 @@ class Connection(models.Model):
                            | Q(user__isnull=True, agent__isnull=False)),
                 name="connection_exactly_one_owner",
             ),
+            # Per app: the same account connected through two workspaces' apps is two grants.
             models.UniqueConstraint(
-                fields=["user", "provider", "account_id"], name="connection_unique_user_account",
+                fields=["user", "app", "account_id"], name="connection_unique_user_app_account",
             ),
             models.UniqueConstraint(
-                fields=["agent", "provider", "account_id"], name="connection_unique_agent_account",
+                fields=["agent", "app", "account_id"], name="connection_unique_agent_app_account",
             ),
         ]
 

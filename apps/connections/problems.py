@@ -11,8 +11,12 @@ from apps.api.errors import ProblemError
 from . import services
 
 # code -> (status, title). 409: the caller's state needs changing (connect,
-# reconnect, disconnect one); 502/503: the provider, not the caller.
+# reconnect, disconnect one); 400: what the caller sent; 502/503: the provider,
+# not the caller.
 _PROBLEMS: dict[str, tuple[int, str]] = {
+    "invalid_app": (400, "Invalid app settings"),
+    "client_id_locked": (409, "Client id in use"),
+    "wrong_account": (409, "Wrong account"),
     "not_configured": (409, "Not set up"),
     "not_connected": (409, "Not connected"),
     "reconnect_required": (409, "Reconnect required"),
@@ -32,7 +36,11 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, **memb
     still the provider's or canopy's failure, never the caller's."""
     status, heading = _PROBLEMS.get(exc.code, (502, "Provider error"))
     detail = {
-        "not_configured": f"{title} is not set up on this deployment.",
+        "not_configured": f"{title} is not set up for this workspace.",
+        "client_id_locked": f"Accounts are connected with this {title} client id; remove the app (which "
+                            "disconnects them) to switch to another.",
+        "wrong_account": f"That {title} account is not one {owner.lower() if owner == 'Your' else owner} "
+                         "connection may use; sign in with the right account.",
         "not_connected": f"{owner} {title} is not connected.",
         "reconnect_required": f"{owner} {title} connection no longer works; connect it again.",
         "ambiguous": f"{owner} {title} has more than one account connected; disconnect all but one.",

@@ -84,9 +84,19 @@ def _redirect_uri(request: HttpRequest, provider: str) -> str:
 
 def _check_provider(provider: str) -> None:
     try:
-        providers.get(provider)
+        providers.get_class(provider)
     except providers.UnknownProvider:
         raise Http404("unknown provider") from None
+
+
+def _person_app(user, provider: str):
+    """The one workspace app a person connects with while the URL names no
+    workspace: their only readable workspace with `provider` set up, else
+    NotConfigured (none, or several to choose between)."""
+    found = services.apps_for_person(user, provider)
+    if len(found) != 1:
+        raise services.NotConfigured(f"{provider}: {len(found)} workspaces set up")
+    return found[0]
 
 
 @login_required
@@ -108,7 +118,10 @@ def connections_start(request: HttpRequest, provider: str) -> HttpResponse:
     else:
         owner = ("user", request.user.pk)
     try:
-        url = services.begin(request.session, provider=provider, owner=owner,
+        # An agent connects with its own workspace's app.
+        app = (services.app_for(agent.workspace_id, provider) if slug
+               else _person_app(request.user, provider))
+        url = services.begin(request.session, app=app, owner=owner,
                              redirect_uri=_redirect_uri(request, provider), return_to=return_to)
     except services.NotConfigured:
         return _land(request, return_to, provider, "error", "not_configured")
@@ -143,8 +156,10 @@ def connections_callback(request: HttpRequest, provider: str) -> HttpResponse:
         return _land(request, return_to, provider, "error", reason)
 
     try:
-        services.complete(request.session, provider=provider, code=request.GET.get("code") or "",
-                          state=state, redirect_uri=_redirect_uri(request, provider), by=request.user)
+        # The callback URL names no workspace yet, so the parked one is the only one.
+        services.complete(request.session, provider=provider, workspace=parked.get("workspace") or "",
+                          code=request.GET.get("code") or "", state=state,
+                          redirect_uri=_redirect_uri(request, provider), by=request.user)
     except services.ConnectionError as e:  # the service logs a provider failure itself
         return _land(request, return_to, provider, "error", e.code)
     return _land(request, return_to, provider, "connected")

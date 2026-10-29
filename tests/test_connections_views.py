@@ -17,9 +17,9 @@ from django.urls import reverse
 from apps.agents.models import Agent
 from apps.connections.models import Connection
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FakeSF, _resp, _token_body
+from tests.fixtures.connections import FakeSF, _resp, _token_body, sf_app
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
+pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
@@ -28,17 +28,24 @@ def user():
 
 
 @pytest.fixture
-def client(user):
+def ws(user):
+    """The person's one workspace, with Salesforce set up: where their flow connects."""
+    w = Workspace.objects.create(slug="w", display_name="W", created_by=user)
+    WorkspaceMembership.objects.create(workspace=w, user=user, role=WorkspaceMembership.EDITOR)
+    sf_app(w)
+    return w
+
+
+@pytest.fixture
+def client(user, ws):
     c = Client()
     c.force_login(user)
     return c
 
 
 @pytest.fixture
-def eva(user):
-    w = Workspace.objects.create(slug="w", display_name="W", created_by=user)
-    WorkspaceMembership.objects.create(workspace=w, user=user, role=WorkspaceMembership.EDITOR)
-    return Agent.objects.create(slug="eva", name="Eva", workspace=w, owner=user)
+def eva(user, ws):
+    return Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=user)
 
 
 def _start(client, **params):
@@ -122,11 +129,40 @@ def test_return_to_rejects_offsite(client, bad):
     assert "evil" not in resp["Location"]
 
 
-def test_not_configured_redirects_with_reason(client, settings):
-    settings.SALESFORCE_CLIENT_SECRET = ""
+def test_not_configured_redirects_with_reason(client, ws):
+    app = sf_app(ws)
+    app.client_secret = ""
+    app.save()
     resp = _start(client, return_to="/settings")
     assert _landing(resp) == ("/settings", {"connection": "salesforce", "status": "error",
                                             "reason": "not_configured"})
+
+
+def test_an_agents_start_uses_its_own_workspaces_app(client, user, eva):
+    # The person's workspace has no app; eva's does, with its own client.
+    other = Workspace.objects.create(slug="eva-home", display_name="E", created_by=user)
+    WorkspaceMembership.objects.create(workspace=other, user=user, role=WorkspaceMembership.OWNER)
+    eva.workspace = other
+    eva.save()
+    sf_app(other, client_id="eva-client")
+    q = parse_qs(urlparse(_start(client, agent="eva")["Location"]).query)
+    assert q["client_id"] == ["eva-client"]
+    eva.workspace.connection_apps.all().delete()
+    resp = _start(client, agent="eva", return_to="/settings")
+    assert _landing(resp)[1]["reason"] == "not_configured"
+
+
+def test_a_person_with_no_or_several_set_up_workspaces_is_not_configured(user, ws):
+    c = Client()
+    c.force_login(user)
+    second = Workspace.objects.create(slug="w2", display_name="W2", created_by=user)
+    WorkspaceMembership.objects.create(workspace=second, user=user, role=WorkspaceMembership.EDITOR)
+    sf_app(second)
+    assert _landing(_start(c))[1]["reason"] == "not_configured"     # which one? (the URL names none yet)
+    ws.connection_apps.all().delete()
+    assert _start(c).status_code == 302 and "salesforce.com" in _start(c)["Location"]
+    second.connection_apps.all().delete()
+    assert _landing(_start(c))[1]["reason"] == "not_configured"
 
 
 def test_unknown_provider_is_404(client):
@@ -143,7 +179,7 @@ def test_callback_bad_state_and_provider_denied(client):
     assert not Connection.objects.exists()
 
 
-def test_start_requires_login():
+def test_start_requires_login(ws):
     resp = Client().get(reverse("connections_start", args=["salesforce"]))
     assert resp.status_code == 302 and "salesforce.com" not in resp["Location"]
 

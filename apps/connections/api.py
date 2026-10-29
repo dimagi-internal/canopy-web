@@ -34,14 +34,29 @@ agents_router = Router(auth=session_auth, tags=["connections"])
 me_router = Router(auth=session_auth, tags=["connections"])
 
 
-def _provider_rows() -> list[ProviderOut]:
-    return [ProviderOut(name=p.name, title=p.title, configured=p.is_configured())
-            for p in providers.ALL.values()]
+def _person_provider_rows(user) -> list[ProviderOut]:
+    # Configured: set up in some workspace this person can read.
+    return [ProviderOut(name=c.name, title=c.title, configured=bool(services.apps_for_person(user, c.name)))
+            for c in providers.CLASSES.values()]
+
+
+def _agent_provider_rows(agent: Agent) -> list[ProviderOut]:
+    # Configured: set up in the agent's own workspace, whose app it connects with.
+    rows = []
+    for c in providers.CLASSES.values():
+        try:
+            services.app_for(agent.workspace_id, c.name)
+        except services.NotConfigured:
+            configured = False
+        else:
+            configured = True
+        rows.append(ProviderOut(name=c.name, title=c.title, configured=configured))
+    return rows
 
 
 def _title(provider: str) -> str:
     # A row for a provider no longer registered still lists (and can be disconnected).
-    return getattr(providers.ALL.get(provider), "title", provider)
+    return getattr(providers.CLASSES.get(provider), "title", provider)
 
 
 def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
@@ -64,9 +79,9 @@ def _connect_url(request: HttpRequest, provider: str) -> str:
     return request.build_absolute_uri(reverse("connections_start", args=[provider]))
 
 
-def _provider_or_404(provider: str) -> providers.Provider:
+def _provider_or_404(provider: str) -> type[providers.Provider]:
     try:
-        return providers.get(provider)
+        return providers.get_class(provider)
     except providers.UnknownProvider:
         raise HttpError(404, "unknown provider") from None
 
@@ -82,7 +97,7 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     Whether a grant still works shows as `needs_reconnect`, which the next real
     use of it keeps up to date."""
     rows = services.connections_for(("user", request.user.pk)).select_related("connected_by")
-    return ConnectionsOut(providers=_provider_rows(), connections=[_out(c) for c in rows])
+    return ConnectionsOut(providers=_person_provider_rows(request.user), connections=[_out(c) for c in rows])
 
 
 @router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")
@@ -109,7 +124,7 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     granted = (Connection.objects.filter(grants__agent=agent).select_related("connected_by", "agent")
                .order_by("provider", "account_label", "pk").distinct())
     return ConnectionsOut(
-        providers=_provider_rows(),
+        providers=_agent_provider_rows(agent),
         connections=[_out(c) for c in own] + [_out(c, granted_from=c.agent.slug) for c in granted],
     )
 
@@ -246,8 +261,7 @@ def my_connection_token(request: HttpRequest, provider: str, refresh: bool = Fal
         if exc.code in ("not_connected", "reconnect_required", "ambiguous"):
             members["connect_url"] = _connect_url(request, provider)
         if exc.code == "ambiguous":
-            members["accounts"] = [c.account_label for c in
-                                   services.connections_for(("user", request.user.pk)).filter(provider=provider)]
+            members["accounts"] = [c.account_label for c in services.person_connections(request.user, provider)]
         raise problem_for(exc, title=p.title, owner="Your", **members) from None
     return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
                           expires_at=token.expires_at, account_label=token.account_label)

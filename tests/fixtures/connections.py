@@ -1,23 +1,22 @@
 """What the connections suites share: the fake Salesforce (faked at the
-`requests` boundary), a stored-connection helper (plain helpers, imported by
-name), and the `salesforce_configured` fixture (a plugin fixture, registered in
-the root conftest's `pytest_plugins`)."""
+`requests` boundary), a workspace's Salesforce app (`sf_app`), a person's home
+workspace (`home`) and a stored-connection helper (`_stored`) — plain helpers,
+imported by name. This module is also registered in the root conftest's
+`pytest_plugins`, for fixtures; it declares none today."""
 from __future__ import annotations
 
 from datetime import timedelta
 from unittest import mock
 
-import pytest
 from django.utils import timezone
 
 from apps.common.encryption import encrypt_secret
-from apps.connections.models import Connection
+from apps.connections.models import Connection, ConnectionApp
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
-SF = {
-    "SALESFORCE_CLIENT_ID": "3MVG-client",
-    "SALESFORCE_CLIENT_SECRET": "shh",
-    "SALESFORCE_LOGIN_URL": "https://login.salesforce.com",
-}
+CLIENT_ID = "3MVG-client"
+CLIENT_SECRET = "shh"
+SF_OPTIONS = {"login_url": "https://login.salesforce.com", "access_token_seconds": 1800}
 TOKEN_URL = "https://login.salesforce.com/services/oauth2/token"
 REVOKE_URL = "https://login.salesforce.com/services/oauth2/revoke"
 ID_URL = "https://login.salesforce.com/id/00Dorg/005user"
@@ -99,23 +98,46 @@ class FakeSF:
         self._p.stop()
 
 
-def _stored(owner_kw, by, *, access="00D!cached", expires_in=timedelta(hours=1), refresh="5Aep_r"):
+# ---- workspaces and their apps ---------------------------------------------------
+
+def sf_app(workspace, *, provider="salesforce", client_id=CLIENT_ID, secret=CLIENT_SECRET, **options):
+    """The workspace's app for `provider`, created set up (as a row: no audit
+    record, so a suite's Event assertions are untouched). `options` override the
+    Salesforce defaults; for another provider they are the whole options."""
+    app = ConnectionApp.objects.filter(workspace=workspace, provider=provider).first()
+    if app is None:
+        app = ConnectionApp(workspace=workspace, provider=provider, client_id=client_id,
+                            options={**SF_OPTIONS, **options} if provider == "salesforce" else options)
+        app.client_secret = secret
+        app.save()
+    return app
+
+
+def home(user):
+    """The workspace a person's connections are made in: the first one they are a
+    member of, else a new one of their own."""
+    slug = (WorkspaceMembership.objects.filter(user=user).order_by("workspace_id")
+            .values_list("workspace_id", flat=True).first())
+    if slug is not None:
+        return Workspace.objects.get(slug=slug)
+    ws = Workspace.objects.create(slug=f"{user.username}-home", display_name=user.username, created_by=user)
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.EDITOR)
+    return ws
+
+
+def _stored(owner_kw, by, *, app=None, access="00D!cached", expires_in=timedelta(hours=1), refresh="5Aep_r",
+            **fields):
+    """A stored Salesforce connection, made with `app` — by default the agent's
+    workspace's app, or the person's `home` workspace's (each created if missing)."""
+    if app is None:
+        owner = owner_kw.get("agent") or owner_kw.get("user")
+        app = sf_app(owner.workspace if "agent" in owner_kw else home(owner))
+    values = {"provider": app.provider, "account_id": "00Dorg/005user", "account_label": "jj@dimagi.com",
+              "instance_url": "https://dimagi.my.salesforce.com", **fields}
     return Connection.objects.create(
-        provider="salesforce", account_id="00Dorg/005user", account_label="jj@dimagi.com",
-        instance_url="https://dimagi.my.salesforce.com",
+        app=app,
         refresh_token_enc=encrypt_secret(refresh),
         access_token_enc=encrypt_secret(access) if access else "",
         access_token_expires_at=(timezone.now() + expires_in) if access else None,
-        connected_by=by, **owner_kw,
+        connected_by=by, **values, **owner_kw,
     )
-
-
-# ---- fixtures (registered in the root conftest; never autouse) ------------------
-
-@pytest.fixture
-def salesforce_configured(settings):
-    """Salesforce set up on this deployment. Suites ask for it with
-    `pytestmark = pytest.mark.usefixtures("salesforce_configured")`."""
-    for k, v in SF.items():
-        setattr(settings, k, v)
-    return settings
