@@ -10,8 +10,10 @@ const { approveRunnerDeviceKey, revokeRunnerDeviceKey } = vi.hoisted(() => ({
   revokeRunnerDeviceKey: vi.fn(),
 }))
 vi.mock('@/api/deviceKeys', () => ({ approveRunnerDeviceKey, revokeRunnerDeviceKey }))
-const { giveAccess, approveAndGrant } = vi.hoisted(() => ({ giveAccess: vi.fn(), approveAndGrant: vi.fn() }))
-vi.mock('@/vault/operations', () => ({ giveAccess, approveAndGrant, unlockVaultKey: vi.fn() }))
+const { giveAccess, approveAndGrant, vouchForMyMachine } = vi.hoisted(() => ({
+  giveAccess: vi.fn(), approveAndGrant: vi.fn(), vouchForMyMachine: vi.fn(),
+}))
+vi.mock('@/vault/operations', () => ({ giveAccess, approveAndGrant, unlockVaultKey: vi.fn(), vouchForMyMachine }))
 
 const { DeviceKeysTable } = await import('./DeviceKeysTable')
 
@@ -21,6 +23,7 @@ const KEY = {
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
   ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[], reapproval: false, ecdh_waiting: false,
   runner_host: '', runner_kind: 'emdash', ecdh_store: '', can_open: [] as { slug: string; name: string }[],
+  zk_vouch_agents: [] as { slug: string; agent_id: string }[],
 }
 
 afterEach(() => {
@@ -29,6 +32,26 @@ afterEach(() => {
 })
 
 describe('DeviceKeysTable', () => {
+  it('a vault member approving their own machine signs for it in the same touch (DIM-W154)', async () => {
+    const mine = [{ slug: 'ace', agent_id: '2' }]
+    approveAndGrant.mockResolvedValue({ key: { ...KEY, status: 'active' }, granted: [], failed: [], vouched: ['ace'] })
+    render(<DeviceKeysTable keys={[{ ...KEY, zk_vouch_agents: mine }]} onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(approveAndGrant).toHaveBeenCalledWith('k1', [], expect.any(Function), mine))
+    expect(approveRunnerDeviceKey).not.toHaveBeenCalled()
+  })
+
+  it('offers an approved machine of mine that still waits one touch to sign for it', async () => {
+    const mine = [{ slug: 'ace', agent_id: '2' }]
+    const k = { ...KEY, status: 'active' as const, zk_vouch_agents: mine }
+    vouchForMyMachine.mockResolvedValue(['ace'])
+    const onChange = vi.fn()
+    render(<DeviceKeysTable keys={[k]} onChange={onChange} />)
+    fireEvent.click(screen.getByTestId('device-key-vouch-k1'))
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...k, zk_vouch_agents: [] }))
+    expect(vouchForMyMachine).toHaveBeenCalledWith(k, mine, undefined)
+  })
+
   it('shows an online machine whose new key waits, and approves it in one touch', async () => {
     const waiting = { ...KEY, status: 'active' as const, ecdh_waiting: true, zk_pending_agents: ['hal', 'eva'] }
     approveAndGrant.mockResolvedValue({ key: { ...waiting, ecdh_waiting: false }, granted: ['hal', 'eva'], failed: [] })
@@ -37,7 +60,7 @@ describe('DeviceKeysTable', () => {
     expect(screen.getByTestId('device-key-status-k1').textContent).not.toMatch(/Waiting for your approval/)
     expect(screen.queryByTestId('device-key-give-k1')).toBeNull()
     fireEvent.click(screen.getByTestId('device-key-approve-k1'))
-    await waitFor(() => expect(approveAndGrant).toHaveBeenCalledWith('k1', ['hal', 'eva'], expect.any(Function)))
+    await waitFor(() => expect(approveAndGrant).toHaveBeenCalledWith('k1', ['hal', 'eva'], expect.any(Function), []))
   })
 
   it('approves and grants in one go when zero-knowledge agents wait on the key (canopy-web#1550)', async () => {
@@ -46,7 +69,7 @@ describe('DeviceKeysTable', () => {
     render(<DeviceKeysTable keys={[{ ...KEY, zk_pending_agents: ['eva'] }]} onChange={onChange} />)
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
-    expect(approveAndGrant).toHaveBeenCalledWith('k1', ['eva'], expect.any(Function))
+    expect(approveAndGrant).toHaveBeenCalledWith('k1', ['eva'], expect.any(Function), [])
     expect(approveRunnerDeviceKey).not.toHaveBeenCalled()
     expect(await screen.findByText(/this runner can now open eva/)).toBeTruthy()
     expect(screen.queryByTestId('device-key-zk-grant-button')).toBeNull()

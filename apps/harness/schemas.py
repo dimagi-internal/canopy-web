@@ -2604,6 +2604,15 @@ class DeviceKeyAgentOut(Schema):
     name: str
 
 
+class DeviceKeyVouchOut(Schema):
+    """An agent whose vault the caller is a member of but does not manage, that
+    their own machine waits on: they sign for the machine (an endorsement) and a
+    keeper hands it the vault key (spec 2026-10-22 vault-access-follows-canopy-access §1)."""
+
+    slug: str
+    agent_id: str
+
+
 class RunnerDeviceKeyCreatedOut(Schema):
     id: uuid.UUID
     jkt: str
@@ -2649,6 +2658,10 @@ class RunnerDeviceKeyOut(Schema):
     #: On approve only: zero-knowledge agents the caller administers that this
     #: key now waits on a vault-key grant for (offer "Grant" right away).
     zk_pending_agents: list[str] = []
+    #: Zero-knowledge agents whose vault the caller is a MEMBER of (not a manager)
+    #: that this key, the caller's own machine, waits on: approving it signs for it,
+    #: and a keeper passes the vault key on.
+    zk_vouch_agents: list[DeviceKeyVouchOut] = []
     #: Where the box says its ECDH private key lives (see RunnerDeviceKeyIn).
     ecdh_store: str = ""
     #: On the list: agents the caller administers whose secrets this key can

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { approveRunnerDeviceKey, revokeRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
-import { approveAndGrant, giveAccess, unlockVaultKey } from '@/vault/operations'
+import { approveAndGrant, giveAccess, unlockVaultKey, vouchForMyMachine } from '@/vault/operations'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { canOpenText, keyPlace, machineDescription } from './machineText'
 
@@ -60,6 +60,23 @@ export function DeviceKeysTable({
     }
   }
 
+  // My own machine, for agents whose vault I am a member of but do not manage: one
+  // passkey touch signs for it, and a keeper hands it the key within minutes.
+  const vouch = async (k: RunnerDeviceKeyOut) => {
+    setBusy(k.id)
+    setError(null)
+    try {
+      const me = await unlockVaultKey(unlocker.prompt)
+      const done = await vouchForMyMachine(k, k.zk_vouch_agents ?? [], me)
+      onChange({ ...k, zk_vouch_agents: (k.zk_vouch_agents ?? []).filter((a) => !done.includes(a.slug)) })
+      if (done.length < (k.zk_vouch_agents ?? []).length) setError('Could not confirm this machine for every agent')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not confirm this machine')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const act = async (id: string, fn: (id: string) => Promise<RunnerDeviceKeyOut>) => {
     setBusy(id)
     setError(null)
@@ -78,11 +95,12 @@ export function DeviceKeysTable({
   // wait on is approved and handed their vault keys in ONE passkey touch.
   const approve = async (k: RunnerDeviceKeyOut) => {
     const agents = k.zk_pending_agents ?? []
-    if (!agents.length) return act(k.id, approveRunnerDeviceKey)
+    const mine = k.zk_vouch_agents ?? []
+    if (!agents.length && !mine.length) return act(k.id, approveRunnerDeviceKey)
     setBusy(k.id)
     setError(null)
     try {
-      const out = await approveAndGrant(k.id, [...agents], unlocker.prompt)
+      const out = await approveAndGrant(k.id, [...agents], unlocker.prompt, [...mine])
       onChange(out.key)
       if (out.failed.length) setGrant({ key: k.id, agents: [...out.granted, ...out.failed], done: out.granted })
       else if (out.granted.length) setGrant({ key: k.id, agents: out.granted, done: out.granted })
@@ -152,6 +170,19 @@ export function DeviceKeysTable({
                     type="button"
                     data-testid={`device-key-give-${k.id}`}
                     onClick={() => void grantAll({ key: k.id, agents: [...(k.zk_pending_agents ?? [])], done: [] })}
+                    disabled={busy !== null}
+                    className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
+                  >
+                    Give access
+                  </button>
+                )}
+                {/* My own approved machine that an agent whose vault I am only a
+                    member of still waits on: I sign for it, a keeper grants it. */}
+                {k.can_manage && k.status === 'active' && !k.ecdh_waiting && (k.zk_vouch_agents ?? []).length > 0 && (
+                  <button
+                    type="button"
+                    data-testid={`device-key-vouch-${k.id}`}
+                    onClick={() => void vouch(k)}
                     disabled={busy !== null}
                     className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
                   >
