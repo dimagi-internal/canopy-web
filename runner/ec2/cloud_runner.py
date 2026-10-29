@@ -2947,6 +2947,38 @@ def install_broker(*, run=subprocess.run) -> bool:
     return False
 
 
+
+#: Where the AWS broker lives: its own directory, with the kms_broker.py it imports
+#: from the SAME sha, so it never depends on whatever kms_broker.py this box last had.
+AWS_BROKER_DIR = RUNNER_HOME / "aws-broker"
+
+
+def install_aws_broker(*, run=subprocess.run) -> bool:
+    """ROOT: `runner/ec2/aws_broker.py` (+ the kms_broker.py it imports) at this
+    runner's sha into AWS_BROKER_DIR, then `aws_broker.py --install` (its own unit).
+    The broker hands a runner one hour of a named read-only AWS role
+    (docs/architecture/runners.md § The AWS broker). Never raises: a box without it
+    only lacks `canopy aws credentials`' local path."""
+    try:
+        repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
+        if not (repo / ".git").is_dir():
+            return False
+        sha = build_info().get("sha") or ""
+        for ref in ([sha] if sha else []) + ["origin/main"]:
+            files = {n: _git_root("show", f"{ref}:runner/ec2/{n}", run=run)
+                     for n in ("aws_broker.py", "kms_broker.py")}
+            if all(r.returncode == 0 and r.stdout.strip() for r in files.values()):
+                AWS_BROKER_DIR.mkdir(mode=0o755, exist_ok=True)
+                for n, r in files.items():
+                    (AWS_BROKER_DIR / n).write_text(r.stdout)
+                    os.chmod(AWS_BROKER_DIR / n, 0o755)
+                res = run(["/usr/bin/python3", str(AWS_BROKER_DIR / "aws_broker.py"), "--install"],
+                          capture_output=True, text=True, timeout=120)
+                return res.returncode == 0
+    except Exception as exc:  # noqa: BLE001 — never block a box's setup on the broker
+        _log(f"aws broker: not installed ({exc})")
+    return False
+
 #: The stack parameters a machine of several runners needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS",
@@ -3029,6 +3061,7 @@ def install_runners(*, run=subprocess.run, systemd: pathlib.Path | None = None,
         except OSError:
             pass
     install_broker(run=run)
+    install_aws_broker(run=run)
     run(["systemctl", "daemon-reload"], capture_output=True)
     run(["systemctl", "enable", "--now", "canopy-runners.service"], capture_output=True)
     runners = load_runners().get("runners") or []
@@ -12221,6 +12254,7 @@ def _runners_cli(argv: list[str]) -> int:
         _log("setup-runners: egress " + ", ".join(f"{u} {'locked' if on else 'open'}"
                                                 for u, on in sorted(applied.items())))
         _log("setup-runners: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in runners))
+        install_aws_broker()
         # A runner added to Runners later: start it, and pair it.
         for u in runners:
             subprocess.run(["systemctl", "enable", "--now", "--no-block",

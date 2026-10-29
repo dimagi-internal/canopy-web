@@ -234,6 +234,7 @@ from apps.agents.api_vaults import router as workspace_vaults_router  # noqa: E4
 from apps.agents.contributors_api import router as contributors_router  # noqa: E402
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
+from apps.agents.api_aws import router as agent_aws_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.tasks_api import router as workspace_tasks_router  # noqa: E402
@@ -374,6 +375,7 @@ api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
 api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent
 api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
+api.add_router("/agents", agent_aws_router)  # one hour of a named read-only AWS role (labs-observe)
 # The mint's callback is NOT agent-scoped: Google requires every redirect URI
 # to be registered exactly, so one fixed path serves the whole fleet and the
 # agent rides in signed state. A per-agent URI would mean a console edit per

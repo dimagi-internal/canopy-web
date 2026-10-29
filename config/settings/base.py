@@ -799,6 +799,16 @@ else:
 # and send path refuses, and says so, while this is false.
 MAIL_ENABLED = env.bool("MAIL_ENABLED", default=False)
 MAIL_SES_REGION = env("MAIL_SES_REGION", default=CANOPY_SES_REGION)
+
+# AWS roles canopy-web vends to agents for one hour (apps/agents/api_aws.py):
+# name -> role ARN, JSON. Each role's trust policy must also name canopy-web's task
+# role. `labs-observe` is connect-labs' read-only, non-sensitive observability role
+# (infra/labs-observe-readonly.yml): metrics, alarms, resource metadata; no log
+# events, object bodies, secrets or task env.
+CANOPY_AWS_ROLES = env.json("CANOPY_AWS_ROLES", default={
+    "labs-observe": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
+})
+CANOPY_AWS_STS_REGION = env("CANOPY_AWS_STS_REGION", default="us-east-1")
 MAIL_INBOUND_BUCKET = env("MAIL_INBOUND_BUCKET", default="")
 MAIL_INBOUND_TOPIC_ARN = env("MAIL_INBOUND_TOPIC_ARN", default="")
 MAIL_EVENTS_TOPIC_ARN = env("MAIL_EVENTS_TOPIC_ARN", default="")
