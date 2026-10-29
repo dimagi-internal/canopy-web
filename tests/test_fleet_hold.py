@@ -155,3 +155,93 @@ def test_the_stuck_list_names_the_hold_as_the_reason(settings):
 
     assert [r["kind"] for r in rows] == ["hold"]
     assert "fleet is on hold (tracing)" in rows[0]["reason"]
+
+
+# --- the kill switch: hold AND stop what is running ---------------------------------
+#
+# Asked for on 2026-10-29: the people who may stop the fleet must be able to stop it
+# NOW, not only keep new work from starting. `stop_running` holds the fleet, then
+# stops every working session and cancels every executing turn. Superuser only — it
+# cuts people's work off mid-turn, so a named holder (an agent) may hold, not this.
+
+
+def _working_session(ws, runner, owner, key="hal-turn-1"):
+    from apps.agents.models import Agent
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    agent = Agent.objects.create(slug=f"a-{key}", name="A", workspace=ws, owner=owner)
+    session = Session.objects.create(agent=agent, workspace=ws, origin=Session.ORIGIN_RUNNER, title=key)
+    RunnerBinding.objects.create(session=session, runner=runner, session_key=key, agent_status="working")
+    return session
+
+
+def _published(monkeypatch):
+    from apps.realtime import groups
+
+    sent = []
+    monkeypatch.setattr(groups, "publish", lambda group, msg: sent.append(msg))
+    return sent
+
+
+def test_stop_running_interrupts_working_sessions_and_cancels_executing_turns(monkeypatch):
+    user, ws, c, runner = _ctx()
+    sent = _published(monkeypatch)
+    session = _working_session(ws, runner, user)
+    idle = _working_session(ws, runner, user, key="hal-idle")
+    idle.runner_binding.agent_status = "awaiting-input"
+    idle.runner_binding.save()
+    running = _queued(ws)
+    Turn.objects.filter(pk=running.pk).update(status=Turn.RUNNING, claimed_by=runner)
+    waiting = _queued(ws)
+
+    body = c.post("/api/harness/fleet-hold", data={"note": "stop", "stop_running": True},
+                  content_type="application/json").json()
+
+    assert body["held"] is True
+    assert body["stopped_sessions"] == 1 and body["stopped_turns"] == 1
+    interrupts = [m for m in sent if m["type"] == "runner.session_interrupt"]
+    assert [m["session_id"] for m in interrupts] == [str(session.id)]
+    assert {"type": "runner.cancel", "turn_id": str(running.id)} in sent
+    assert running.events.filter(kind="cancel_requested").exists()
+    # Queued work is the hold's list of what tried to start — not touched.
+    waiting.refresh_from_db()
+    assert waiting.status == Turn.QUEUED
+
+
+def test_a_turn_a_session_stop_already_reached_is_not_cancelled_twice(monkeypatch):
+    user, ws, c, runner = _ctx()
+    sent = _published(monkeypatch)
+    running = _queued(ws)
+    Turn.objects.filter(pk=running.pk).update(status=Turn.RUNNING, claimed_by=runner)
+    running.events.create(seq=1, kind="cancel_requested", payload={})
+
+    body = c.post("/api/harness/fleet-hold", data={"stop_running": True},
+                  content_type="application/json").json()
+
+    assert body["stopped_turns"] == 0
+    assert not [m for m in sent if m["type"] == "runner.cancel"]
+
+
+def test_a_plain_hold_stops_nothing_that_is_running(monkeypatch):
+    user, ws, c, runner = _ctx()
+    sent = _published(monkeypatch)
+    _working_session(ws, runner, user)
+
+    body = c.post("/api/harness/fleet-hold", data={}, content_type="application/json").json()
+
+    assert body["stopped_sessions"] == 0 and body["stopped_turns"] == 0
+    assert not [m for m in sent if m["type"] == "runner.session_interrupt"]
+
+
+def test_a_named_holder_may_hold_but_not_stop_running_work(settings, monkeypatch):
+    settings.CANOPY_FLEET_HOLDERS = ["ada@dimagi-ai.com"]
+    user, ws, c, runner = _ctx(superuser=False, email="ada@dimagi-ai.com")
+    sent = _published(monkeypatch)
+    _working_session(ws, runner, user)
+
+    assert c.get("/api/harness/fleet-hold").json()["can_stop_running"] is False
+    resp = c.post("/api/harness/fleet-hold", data={"stop_running": True}, content_type="application/json")
+
+    assert resp.status_code == 403
+    assert FleetHold.current().held is False
+    assert not sent
