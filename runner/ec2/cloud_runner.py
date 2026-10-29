@@ -12609,14 +12609,25 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
         _ADOPTED.add(turn_id)
         thread.start()
     except Exception as exc:  # noqa: BLE001 — one turn never costs the others theirs
-        # No worker will run to release what was reserved for it. Its state stays:
-        # the lease sweep notes it, and the next daemon tries again.
-        _unstage_connections(turn_id)
+        # No worker will follow it: it ends as `_adopt_turn` ends a turn it cannot
+        # follow — connections released, CLI stopped, reported failed, state kept.
         _ADOPTED.discard(turn_id)
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _log(f"adopt: could not start a worker for {turn_id[:8]}: {exc}")
-        summary["swept"].append(f"{turn_id[:8]} (worker did not start)")
+        _unstage_connections(turn_id)
+        proc = None
+        try:
+            proc = RelayProc.attach(attempt)
+        except Exception:  # noqa: BLE001 — nothing to stop, still reported
+            pass
+        _stop_adopted_cli(proc)
+        _conclude_adopted(runner_id, turn_id, turn, state, False,
+                          f"runner error while adopting the turn: {exc}",
+                          state.get("cli_session_id") or "", pathlib.Path(state["cwd"]) if state.get("cwd") else None,
+                          state.get("slug") or "")
+        _adopted_cleanup(turn_id, state, keep_state=True)
+        summary["reported"].append(f"{turn_id[:8]} (worker did not start)")
         return
     summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
                               f"{', exited' if exited else ''})")
@@ -12797,7 +12808,10 @@ def _conclude_adopted(runner_id, turn_id, turn, state, ok, text, cli_session_id,
     _FINISHING.add(turn_id)
     try:
         if cli_session_id and cwd is not None:
-            _record_session_cwd(cli_session_id, cwd)
+            try:
+                _record_session_cwd(cli_session_id, cwd)
+            except Exception as exc:  # noqa: BLE001 — never cost the turn its finish
+                _log(f"warn: could not record session cwd for {turn_id[:8]}: {exc}")
         if cli_session_id:
             for step, fn in (("record session resume", _record_session_resume),
                              ("ship transcript rows", None)):

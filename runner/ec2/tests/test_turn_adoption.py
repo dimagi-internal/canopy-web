@@ -534,14 +534,15 @@ def test_an_adopted_turn_whose_lease_fails_to_start_stops_its_cli(cr, tmp_path, 
     assert (d / "turn.json").exists() and cr._CONN_HOLDS == {} and not mine.exists()
 
 
-def test_a_worker_that_does_not_start_releases_and_the_next_turn_is_adopted(cr, tmp_path, monkeypatch, conns):
+def test_a_worker_that_does_not_start_is_reported_stopped_and_the_next_turn_adopted(
+        cr, tmp_path, monkeypatch, conns):
     _seen, staged = conns
     _quiet_conclusion(cr, monkeypatch)
     mine = staged()
-    # TURN: its CLI exited; its worker will fail to start.
-    d = _state(cr, tmp_path, connections=["salesforce"], confined=False)
-    (d / "attempt-1").mkdir()
-    (d / "attempt-1" / "exit.json").write_text(json.dumps({"code": 0}))
+    # TURN: a live CLI (gated, so it would run forever) whose worker fails to start.
+    stuck = cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=tmp_path / "never"), cwd=tmp_path,
+                               env=dict(os.environ), stdin=False, executor="cli")
+    d = _state(cr, tmp_path, connections=["salesforce"], confined=False, cli_session_id="sess-1")
     # A second turn, adopted normally.
     other = "1f3c2a1e-1111-4222-8333-444455556667"
     proc = cr.RelayProc.spawn(other, _fake_cli(tmp_path), cwd=tmp_path,
@@ -562,6 +563,12 @@ def test_a_worker_that_does_not_start_releases_and_the_next_turn_is_adopted(cr, 
 
     summary = cr.adopt_turns("rid")
     assert [a.split()[0] for a in summary["adopted"]] == [other[:8]]
+    assert [r.split()[0] for r in summary["reported"]] == [TURN[:8]]
     assert TURN not in cr._ADOPTED and TURN not in cr._in_flight_ids()
     assert TURN not in cr._CONN_HOLDS and not mine.exists()
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and finish["session_key"] == "sess-1"
+    assert "runner error while adopting the turn: can't start new thread" in finish["result_note"]
+    assert cr.RelayProc.attach(stuck.dir).poll() is not None             # its CLI was stopped
+    assert json.loads((d / "turn.json").read_text())["reported"] is True  # kept for diagnosis
     assert _wait(lambda: other not in cr._in_flight_ids())
