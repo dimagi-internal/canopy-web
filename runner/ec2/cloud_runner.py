@@ -16,7 +16,8 @@ raw stream-json line the CLI emits is ALSO forwarded verbatim to
 POST /turns/{id}/transcript (batched by bytes; see runner/ec2/README.md), in
 addition to the reduced TurnEvents. And a session turn's CLI session id is captured
 from the stream and round-tripped through the existing resolve-session/record-session
-RPCs so a later turn on the same canopy Session can `--resume` it instead of
+RPCs so a later turn on the same canopy Session — or an agent turn on the same
+named thread, e.g. one email thread (`_agent_thread_key`) — can `--resume` it instead of
 cold-starting — see _session_resume_plan / _record_session_resume below for exactly
 which field carries that id and why.
 
@@ -9898,21 +9899,42 @@ def _agent_session_title(turn: dict) -> str:
 
 
 def _agent_thread_key(turn: dict) -> str:
-    """The thread an AGENT turn records its session under: `<agent>:<turn id>`,
-    the laptop runner's own fallback (execute.py `_thread_key`), so a cloud
-    agent turn gets a canopy Session exactly as a laptop one does. "" for a
-    chat or project turn.
+    """The thread an AGENT turn records its session under — the SAME key the
+    laptop runner derives (canopy_runner execute.py / session_naming.py
+    `_thread_key`; `runner/canopy_runner/tests/test_thread_key_parity.py` pins the
+    two together, since this stdlib-only file cannot import that package). ""
+    for a chat or project turn.
 
-    Always one session PER TURN, even when origin_ref names a thread: a cloud
-    agent turn never resumes (it runs in its own per-turn worktree, not a
-    stable per-session cwd), so a second turn on a named thread would only re-point the
-    first one's binding at a different transcript and interleave two
-    conversations' ordinals in one Session."""
+    - origin_ref names a conversation (`thread_key`, else `thread_id` — an email
+      turn's Gmail thread): that key, so every turn on the thread continues ONE
+      session (`_session_resume_plan` resumes it, `_adopt_resume_transcript`
+      carries its transcript into the new turn's worktree). Until 2026-10-29 a
+      cloud agent turn always took `<agent>:<turn id>`, and one Hal alarm thread
+      re-dispatched four times opened four cold sessions on cloud-ec2-live while
+      the laptop continued one.
+    - otherwise (a schedule's fire, a board turn, a dispatch with no key):
+      `<agent>:<turn id>`, one fresh session per turn. That is the #309 guard —
+      a keyless turn must never sink into a shared, live session.
+
+    A confined (caller's) turn's key carries `#<capability>`, as the laptop's
+    does, so it is never the staff session on the same thread."""
     if _chat_session_id(turn):
         return ""
     slug = turn.get("agent_slug") or ""
     turn_id = str(turn.get("id") or "")
-    return f"{slug}:{turn_id}" if slug and turn_id else ""
+    if not slug or not turn_id:
+        return ""
+    explicit = _explicit_thread(turn)
+    key = explicit or f"{slug}:{turn_id}"
+    cap = _capability(turn)
+    return f"{key}#{cap.get('name') or 'none'}" if cap is not None else key
+
+
+def _explicit_thread(turn: dict) -> str:
+    """The conversation an agent turn's origin names (`thread_key`, else
+    `thread_id`), or "" for a self-contained turn."""
+    ref = turn.get("origin_ref") or {}
+    return str(ref.get("thread_key") or ref.get("thread_id") or "")
 
 
 # Claude Code resolves a `--resume <id>` target by cwd, not by id alone: the
@@ -10044,6 +10066,13 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     fresh-per-turn here rather than failing the turn.
     """
     thread_key = _session_thread_key(turn)
+    agent_turn = False
+    if not thread_key and _explicit_thread(turn) and _capability(turn) is None:
+        # An agent turn on a named conversation (an email thread) continues the
+        # session the thread's last turn on THIS box left. A keyless turn's key is
+        # its own id — nothing to resume — and a confined turn never resumes.
+        thread_key = _agent_thread_key(turn)
+        agent_turn = bool(thread_key)
     if not thread_key:
         return ""
     agent_slug = turn.get("agent_slug") or ""
@@ -10051,6 +10080,9 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     if not agent_slug and not project:
         return ""
     body: dict = {"thread_key": thread_key}
+    if agent_turn and turn.get("id"):
+        # Lets the server refuse a session another turn is executing in (#309).
+        body["turn_id"] = str(turn["id"])
     if project:
         body["project"] = project
         body["workspace"] = turn.get("workspace_slug") or ""
