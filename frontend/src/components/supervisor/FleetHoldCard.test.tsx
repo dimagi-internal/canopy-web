@@ -9,14 +9,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import type { FleetHoldOut } from '@/api/harness'
 
-const holdFleet = vi.fn<(note?: string) => Promise<FleetHoldOut>>()
+const holdFleet = vi.fn<(note?: string, stopRunning?: boolean) => Promise<FleetHoldOut>>()
 const releaseFleetHold = vi.fn<() => Promise<FleetHoldOut>>()
 vi.mock('@/api/harness', () => ({ holdFleet, releaseFleetHold }))
 
 const { FleetHoldCard } = await import('./FleetHoldCard')
 
 function hold(overrides: Partial<FleetHoldOut> = {}): FleetHoldOut {
-  return { held: false, note: '', held_at: null, held_by_email: '', queued: 0, can_hold: false, can_release: false, ...overrides }
+  return { held: false, note: '', held_at: null, held_by_email: '', queued: 0, can_hold: false, can_release: false, can_stop_running: false, stopped_sessions: 0, stopped_turns: 0, ...overrides }
 }
 
 afterEach(() => {
@@ -59,6 +59,27 @@ describe('FleetHoldCard', () => {
     fireEvent.click(screen.getByTestId('fleet-hold-release'))
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ held: false })))
+  })
+
+  it('offers a superuser the kill switch, which also stops running work, and reports what it stopped', async () => {
+    const onChange = vi.fn()
+    holdFleet.mockResolvedValue(hold({ held: true, can_hold: true, can_stop_running: true, stopped_sessions: 2, stopped_turns: 1 }))
+    render(<FleetHoldCard hold={hold({ can_hold: true, can_stop_running: true })} onChange={onChange} />)
+
+    fireEvent.click(screen.getByTestId('fleet-hold-start'))
+    fireEvent.click(screen.getByTestId('fleet-hold-stop-all'))
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(holdFleet).toHaveBeenCalledWith('', true)
+    cleanup()
+    render(<FleetHoldCard hold={onChange.mock.calls[0][0]} onChange={() => {}} />)
+    expect(screen.getByTestId('fleet-hold-stopped').textContent).toContain('Stopped 2 working sessions and 1 more running turn')
+  })
+
+  it('offers a named holder no kill switch', () => {
+    render(<FleetHoldCard hold={hold({ can_hold: true })} onChange={() => {}} />)
+    fireEvent.click(screen.getByTestId('fleet-hold-start'))
+    expect(screen.queryByTestId('fleet-hold-stop-all')).toBeNull()
   })
 
   it('offers a holder who may not release no Release button', () => {

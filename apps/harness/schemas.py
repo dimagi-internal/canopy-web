@@ -704,6 +704,9 @@ class FleetHoldIn(Schema):
     # What you are tracing, so whoever finds the fleet silent knows why and when to
     # release it. Same argument as PauseIn's note, at fleet scale.
     note: str = ""
+    # Also stop everything already running (control.stop_everything): the kill
+    # switch. Off by default, because the plain hold destroys nothing.
+    stop_running: bool = False
 
 
 class FleetHoldOut(Schema):
@@ -718,6 +721,12 @@ class FleetHoldOut(Schema):
     # nobody is handed a button that 403s.
     can_hold: bool = False
     can_release: bool = False
+    # Stopping what is running is for a superuser only, like the release: it cuts
+    # people's work off mid-turn, so a named holder (an agent) may not.
+    can_stop_running: bool = False
+    # What THIS call's `stop_running` reached; 0 on every other response.
+    stopped_sessions: int = 0
+    stopped_turns: int = 0
 
 
 class PauseIn(Schema):

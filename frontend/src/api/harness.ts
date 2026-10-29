@@ -524,8 +524,11 @@ export async function getFleetHold(): Promise<FleetHoldOut> {
   return unwrap(await apiV2.GET('/api/harness/fleet-hold'), 'getFleetHold')
 }
 
-export async function holdFleet(note = ''): Promise<FleetHoldOut> {
-  return unwrap(await apiV2.POST('/api/harness/fleet-hold', { body: { note } }), 'holdFleet')
+export async function holdFleet(note = '', stopRunning = false): Promise<FleetHoldOut> {
+  return unwrap(
+    await apiV2.POST('/api/harness/fleet-hold', { body: { note, stop_running: stopRunning } }),
+    'holdFleet',
+  )
 }
 
 export async function releaseFleetHold(): Promise<FleetHoldOut> {

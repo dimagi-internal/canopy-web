@@ -12359,8 +12359,10 @@ export interface paths {
          * @description Stop EVERY runner from starting anything — the fleet-wide sibling of
          *     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
          *     their trigger, so `list turns?status=queued` shows what tried to start while
-         *     held. Running turns finish normally. A superuser or a named holder
-         *     (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant, but only stops work.
+         *     held. Running turns finish normally unless `stop_running` is set: then every
+         *     session working right now is stopped and every executing turn cancelled — the
+         *     kill switch (superuser only). A superuser or a named holder
+         *     (`CANOPY_FLEET_HOLDERS`, i.e. Ada) may hold — it spans every tenant, but only stops work.
          *     Idempotent — holding again refreshes the note.
          */
         readonly post: operations["hold_fleet"];
@@ -37392,6 +37394,21 @@ export interface components {
              * @default false
              */
             readonly can_release: boolean;
+            /**
+             * Can Stop Running
+             * @default false
+             */
+            readonly can_stop_running: boolean;
+            /**
+             * Stopped Sessions
+             * @default 0
+             */
+            readonly stopped_sessions: number;
+            /**
+             * Stopped Turns
+             * @default 0
+             */
+            readonly stopped_turns: number;
         };
         /** FleetHoldIn */
         readonly FleetHoldIn: {
@@ -37400,6 +37417,11 @@ export interface components {
              * @default
              */
             readonly note: string;
+            /**
+             * Stop Running
+             * @default false
+             */
+            readonly stop_running: boolean;
         };
         /** HeartbeatIn */
         readonly HeartbeatIn: {

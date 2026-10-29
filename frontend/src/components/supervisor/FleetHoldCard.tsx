@@ -74,6 +74,12 @@ export function FleetHoldCard({
           {hold.queued} turn{hold.queued === 1 ? '' : 's'} waiting. Running sessions finish normally; new ones
           queue with their trigger until the hold is released.
         </p>
+        {(hold.stopped_sessions > 0 || hold.stopped_turns > 0) && (
+          <p className="text-[12px] font-medium leading-snug" data-testid="fleet-hold-stopped">
+            Stopped {hold.stopped_sessions} working session{hold.stopped_sessions === 1 ? '' : 's'} and{' '}
+            {hold.stopped_turns} more running turn{hold.stopped_turns === 1 ? '' : 's'}.
+          </p>
+        )}
         {err && <p className="text-[12px]" data-testid="fleet-hold-error">{err}</p>}
       </div>
     )
@@ -103,6 +109,17 @@ export function FleetHoldCard({
             >
               {busy ? '…' : 'Hold every runner'}
             </button>
+            {hold.can_stop_running && (
+              <button
+                type="button"
+                onClick={() => act(holdFleet(note.trim(), true))}
+                disabled={busy}
+                data-testid="fleet-hold-stop-all"
+                className="rounded-md bg-destructive px-2.5 py-1 text-[12px] font-bold text-white disabled:opacity-50"
+              >
+                {busy ? '…' : 'Hold and stop everything'}
+              </button>
+            )}
           </span>
         ) : (
           <button
@@ -117,7 +134,9 @@ export function FleetHoldCard({
       </div>
       <p className="text-[12px] text-muted-foreground">
         {confirming
-          ? 'Every runner, in every workspace, stops starting sessions until you release. Running sessions finish.'
+          ? hold.can_stop_running
+            ? 'Every runner, in every workspace, stops starting sessions until you release. "Hold every runner" lets running sessions finish; "Hold and stop everything" also stops every session working right now.'
+            : 'Every runner, in every workspace, stops starting sessions until you release. Running sessions finish.'
           : 'Stop every runner from starting new sessions, so you can see what tries to start.'}
       </p>
       <input

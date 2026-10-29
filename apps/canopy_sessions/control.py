@@ -9,8 +9,12 @@ import uuid
 from django.db import transaction
 from django.db.models import Q
 
+from apps.harness import services as harness_services
+from apps.harness.models import Turn
+
 from . import lifecycle, staleness
-from .models import Session
+from .models import RunnerBinding, Session
+from .transcript_read import is_session_running
 
 
 def answer_menu(*, session: Session, option: int | None,
@@ -194,6 +198,40 @@ def stop_session(session: Session, *, by: str = "") -> str:
     if cancel_session_turns(session, by=by):
         return "turns"
     return "session" if interrupt_session(session) == "sent" else ""
+
+
+def stop_everything(*, by: str = "") -> dict[str, int]:
+    """Stop ALL work running anywhere in the fleet — the fleet hold's "and stop what
+    is running" half. Returns `{"sessions": n, "turns": n}`: how many sessions a
+    stop reached and how many more executing turns were told to cancel.
+
+    Two passes, because work is reachable two ways (see `stop_session`):
+
+    * every session the engine says is working right now (`is_session_running`) gets
+      THE one stop, `stop_session` — turns first, else the terminal;
+    * then every turn still executing that no stop has reached yet (no
+      `cancel_requested` in its ledger) gets `cancel_turn` — the cloud turn whose
+      session never bound, a turn on a runner that stopped reporting.
+
+    Queued turns are left alone: under the hold they are the list of what tried to
+    start, and the release is what runs them. A rider is reached through the turn it
+    rides. Nothing here closes or archives a session — a stopped session keeps its
+    transcript and can be picked up again; closing would destroy it.
+    """
+    sessions = 0
+    bindings = (RunnerBinding.objects.filter(runner__isnull=False)
+                .exclude(session_key="").select_related("runner", "session"))
+    for binding in bindings:
+        if is_session_running(binding) and stop_session(binding.session, by=by):
+            sessions += 1
+    turns = 0
+    executing = (Turn.objects.filter(status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
+                                     rides_turn__isnull=True)
+                 .exclude(events__kind="cancel_requested"))
+    for turn in executing:
+        if harness_services.cancel_turn(turn, by=by) is not None:
+            turns += 1
+    return {"sessions": sessions, "turns": turns}
 
 
 def is_runner_reported(binding) -> bool:
