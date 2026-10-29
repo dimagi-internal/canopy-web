@@ -49,9 +49,32 @@ def _panel_token(w, grant) -> str:
 
 def test_an_unconfirmed_grant_is_refused_by_the_gateway_and_the_host_is_never_called(w, host):
     sg.grant(w, confirmed_at=None)
-    with sg.visitor(w), pytest.raises(Exception, match="confirm it with your passkey"):
+    with sg.visitor(w), pytest.raises(Exception, match="confirm with their passkey"):
         sg.call(host, "site_call", {"tool": "marketplace_orgs_get"})
     assert host.calls == [] and host.seen == []
+
+
+def test_a_send_alone_never_asks_only_a_turn_that_needs_the_grant_does(w, host):
+    """The panel asks for the passkey only once the agent's turn needs to act as the
+    person: the grant reads `requested: false` until the gateway is refused for it,
+    and `true` after — the agent is told it was asked, and to retry."""
+    waiting = sg.grant(w, confirmed_at=None)
+    panel = passkey_confirm.panel(_panel_token(w, waiting))
+    assert panel.get("/api/embed/host-grant").json()["grant"]["requested"] is False
+    with sg.visitor(w), pytest.raises(Exception, match="I have asked the person"):
+        sg.call(host, "site_call", {"tool": "marketplace_orgs_get"})
+    assert panel.get("/api/embed/host-grant").json()["grant"]["requested"] is True
+    assert host.calls == []
+
+
+def test_a_renewal_while_asked_keeps_the_ask(w):
+    """The panel re-mints every few minutes; a renewal mid-ask must not close the
+    prompt the person is about to answer."""
+    asked = sg.grant(w, confirmed_at=None, requested_at=timezone.now())
+    renewal = HostGrant(app=w["app"], subject=asked.subject, user=asked.user, scope=asked.scope,
+                        expires_at=timezone.now() + timedelta(minutes=10))
+    host_grants._inherit(renewal)
+    assert renewal.requested_at == asked.requested_at and renewal.confirmed_at is None
 
 
 def test_lookup_says_unconfirmed_and_views_get_the_passkey_message(w):

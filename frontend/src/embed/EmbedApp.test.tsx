@@ -1195,9 +1195,10 @@ describe('the act-as-you permission', () => {
     })
     let stopped = false
     let confirmed = false
+    let requested = false
     const grantBody = () => ({
       id: 7, site: 'connect-labs', agent: '', agent_name: '', scope: 'marketplace:read',
-      granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z', confirmed })
+      granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z', confirmed, requested })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
@@ -1228,7 +1229,9 @@ describe('the act-as-you permission', () => {
       getClientExtensionResults: () => ({}),
     }))
     Object.defineProperty(navigator, 'credentials', { value: { get }, configurable: true })
-    return { asked, requestToken, get, confirmElsewhere: () => { confirmed = true } }
+    return { asked, requestToken, get, confirmElsewhere: () => { confirmed = true },
+             // The agent's turn tried to act as the person (canopy's `host_grants.ask`).
+             agentAsks: () => { requested = true } }
   }
 
   function renderGranting(requestToken: ReturnType<typeof grantingWorld>['requestToken']) {
@@ -1240,26 +1243,28 @@ describe('the act-as-you permission', () => {
     )
   }
 
-  it('is never asked for on load; a send asks, and waits for the passkey before it goes', async () => {
-    const { asked, requestToken, get } = grantingWorld()
+  it('is never asked for on load; a send goes at once, and the passkey is asked for only when the turn needs it', async () => {
+    const { asked, requestToken, get, agentAsks } = grantingWorld()
     renderGranting(requestToken)
     await screen.findByPlaceholderText(/^Type a message/)
     expect(asked).not.toContain(true)
     expect(calls.some((c) => c.url.endsWith('/host-grant'))).toBe(false)
 
     await say('what am I looking at?')
-    const prompt = await screen.findByTestId('page-grant-confirm')
+    // The message goes without waiting, on the token that carries the grant.
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(asked).toContain(true)
+    expect(String((created()?.init?.headers as Record<string, string>).Authorization)).toBe('Bearer granted')
+    // Most turns never act as the person: no prompt until one does.
+    expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
+
+    agentAsks()
+    const prompt = await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
     expect(prompt.textContent).toMatch(/Let Hal act as you on this page for 30 minutes\?/)
-    // Nothing is sent until the person decides.
-    expect(created()).toBeUndefined()
     expect(screen.queryByTestId('page-grant-line')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with passkey' }))
-    await waitFor(() => expect(created()).toBeDefined())
-    expect(get).toHaveBeenCalledTimes(1)
-    expect(asked).toContain(true)
-    // The conversation is created with the token that carries the grant.
-    expect(String((created()?.init?.headers as Record<string, string>).Authorization)).toBe('Bearer granted')
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
 
     const line = await screen.findByTestId('page-grant-line')
     expect(line.textContent).toMatch(/^Hal can act as you until .*·Stop$/)
@@ -1270,23 +1275,25 @@ describe('the act-as-you permission', () => {
     expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant') && c.init?.method === 'DELETE')).toBe(true)
   })
 
-  it('"Not now" stops the permission and the message goes without it', async () => {
-    const { requestToken, get } = grantingWorld()
+  it('"Not now" stops the permission', async () => {
+    const { requestToken, get, agentAsks } = grantingWorld()
     renderGranting(requestToken)
     await screen.findByPlaceholderText(/^Type a message/)
     await say('what am I looking at?')
-    await screen.findByTestId('page-grant-confirm')
+    await waitFor(() => expect(created()).toBeDefined())
+    agentAsks()
+    await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
 
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
-    await waitFor(() => expect(created()).toBeDefined())
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant')
+      && c.init?.method === 'DELETE')).toBe(true))
     expect(get).not.toHaveBeenCalled()
-    expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant') && c.init?.method === 'DELETE')).toBe(true)
     expect(screen.queryByTestId('page-grant-line')).toBeNull()
     expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
   })
 
   it('in the Runner app, confirms in the browser and the panel follows it', async () => {
-    const { requestToken, get, confirmElsewhere } = grantingWorld()
+    const { requestToken, get, confirmElsewhere, agentAsks } = grantingWorld()
     const ua = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent')
     Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 AppleWebKit/605.1.15 CanopyRunner/2.0', configurable: true })
     const winOpen = vi.fn()
@@ -1295,18 +1302,18 @@ describe('the act-as-you permission', () => {
       renderGranting(requestToken)
       await screen.findByPlaceholderText(/^Type a message/)
       await say('what am I looking at?')
-      await screen.findByTestId('page-grant-confirm')
+      await waitFor(() => expect(created()).toBeDefined())
+      agentAsks()
+      await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
 
       fireEvent.click(screen.getByRole('button', { name: 'Confirm in your browser' }))
       expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/confirm/page-permission/7`, '_blank', 'noopener')
       expect(get).not.toHaveBeenCalled()
       expect(await screen.findByTestId('page-grant-in-browser')).toBeTruthy()
-      expect(created()).toBeUndefined()
 
       confirmElsewhere()
       window.dispatchEvent(new Event('focus'))
       await waitFor(() => expect(screen.queryByTestId('page-grant-confirm')).toBeNull())
-      await waitFor(() => expect(created()).toBeDefined())
       expect(await screen.findByTestId('page-grant-line')).toBeTruthy()
     } finally {
       delete (navigator as { userAgent?: string }).userAgent
@@ -1315,14 +1322,16 @@ describe('the act-as-you permission', () => {
   })
 
   it('after a failed passkey, offers to confirm in the browser instead', async () => {
-    const { requestToken, get } = grantingWorld()
+    const { requestToken, get, agentAsks } = grantingWorld()
     get.mockRejectedValueOnce(Object.assign(new Error('nope'), { name: 'SecurityError' }))
     const winOpen = vi.fn()
     vi.stubGlobal('open', winOpen)
     renderGranting(requestToken)
     await screen.findByPlaceholderText(/^Type a message/)
     await say('what am I looking at?')
-    await screen.findByTestId('page-grant-confirm')
+    await waitFor(() => expect(created()).toBeDefined())
+    agentAsks()
+    await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with passkey' }))
     fireEvent.click(await screen.findByTestId('page-grant-try-browser'))
     expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/confirm/page-permission/7`, '_blank', 'noopener')

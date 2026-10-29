@@ -119,7 +119,7 @@ def test_a_member_on_the_tasks_page_gets_an_agent_that_reads_as_them(world, gate
 
     # Until the person confirms it with their passkey, the agent cannot use it.
     turn = _visitor_turn(world)
-    with _as_visitor(turn), pytest.raises(Exception, match="confirm it with your passkey"):
+    with _as_visitor(turn), pytest.raises(Exception, match="confirm with their passkey"):
         _in_lifespan(inner, lambda: mcp.call_tool("site_call", {"tool": "list_fleet_tasks",
                                                                 "arguments": {}}))
     confirmed = passkey_confirm.confirm(r.json()["token"], passkey_confirm.give_passkey(visitor))

@@ -76,6 +76,24 @@ describe('the panel act-as-you permission', () => {
     grant.dispose()
   })
 
+  it('asks for the passkey only once the turn (requested) or a card (need) needs it', async () => {
+    const waiting = { ...GRANT, confirmed: false }
+    const { grant } = world([waiting, { ...waiting, requested: true }])
+    await grant.ensure()
+    expect(grant.asking()).toBe(false)
+    await grant.refresh()
+    expect(grant.asking()).toBe(true)
+    grant.dispose()
+
+    const card = world([waiting]).grant
+    await card.ensure()
+    card.need()
+    expect(card.asking()).toBe(true)
+    await card.stop()
+    expect(card.asking()).toBe(false)
+    card.dispose()
+  })
+
   it('recognises a View refused for want of a grant', () => {
     expect(isNoGrant({ detail: 'no_grant: connect-labs has not…' })).toBe(true)
     expect(isNoGrant(new Error('not_allowed: no'))).toBe(false)

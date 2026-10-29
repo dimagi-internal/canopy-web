@@ -268,12 +268,19 @@ page within their own access. The rules:
   press Stop.
 - **Unusable until confirmed with the person's passkey.** A redeemed grant has no
   `confirmed_at`; `host_grants.live`, `lookup` (→ `UNCONFIRMED`) and
-  `host_gateway.context_for_grant` refuse it. The panel shows a prompt
-  (`PageGrantConfirm` in `EmbedApp.tsx`) and the send waits for it
-  (`pageGrant.settled`): **Confirm with passkey** runs a WebAuthn assertion in
-  canopy's frame against `POST /api/embed/host-grant/confirm/begin|finish` (the
-  panel's own token; the challenge in the cache, keyed to the grant), which
-  `host_grants.confirm`s it; **Not now** stops it and the message goes without.
+  `host_gateway.context_for_grant` refuse it. **The passkey is asked for only when
+  something needs the grant — a send never waits for it**, since most turns never act
+  as the person. When the agent's turn calls the site and `lookup` says
+  `UNCONFIRMED`, the gateway marks the page's waiting rows `requested_at`
+  (`host_grants.ask`, carried across re-mints by `_inherit`) and tells the agent it
+  asked and to retry in ~20s (`host_gateway.page_grant_asked`). The panel re-reads
+  its grant every 3s for 10 minutes after each send (`pageGrant.watch`) and shows
+  the prompt (`PageGrantConfirm` in `EmbedApp.tsx`) once it reads `requested: true`;
+  a live card refused for want of a grant asks at once (`pageGrant.need`) and waits
+  for the answer (`pageGrant.settled`). **Confirm with passkey** runs a WebAuthn
+  assertion in canopy's frame against `POST /api/embed/host-grant/confirm/begin|finish`
+  (the panel's own token; the challenge in the cache, keyed to the grant), which
+  `host_grants.confirm`s it; **Not now** stops it, and the agent's retry is told so.
   The token is the host's to hold, so it proves nothing about the person; the
   assertion is signed over canopy's origin, which the framing page cannot produce.
   The frame's `allow="publickey-credentials-get"` is set by the loader.
@@ -282,7 +289,7 @@ page within their own access. The rules:
   30, `canopy_sdk.contract.ACCESS_TOKEN_MAX_LIFETIME`). Each re-mint of the same
   page (`same_page`) inherits the newest live confirmation AND its end
   (`host_grants._inherit`), so renewing the token never prompts and never extends;
-  after the 30 minutes the next send asks for the passkey again.
+  after the 30 minutes the passkey is asked for again the next time a turn needs it.
 - **Never a contact's.** A contact has no passkey: `redeem` refuses a grant with no
   user (only the live probe's synthetic principal, `probe=True`, is exempt and is
   deleted with the probe), `contact_api` sends no ID-JAG on to it, and `lookup`

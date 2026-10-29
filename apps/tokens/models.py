@@ -832,6 +832,10 @@ class HostGrant(models.Model):
     #: When the person confirmed this page's permission with their passkey. Null =
     #: not confirmed: the gateway and Views refuse it as if there were none.
     confirmed_at = models.DateTimeField(null=True, blank=True)
+    #: When an agent's turn first needed this unconfirmed permission (`host_grants.ask`).
+    #: The panel asks the person for their passkey only then, never merely because
+    #: they sent: most turns never act as them.
+    requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

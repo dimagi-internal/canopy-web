@@ -3,12 +3,15 @@
  * for one, what it holds now, the person's passkey confirmation, and their "Stop".
  *
  * A host grant lets the agent read the page's site AS the person, within their own
- * access. The panel never asks for one on load: the first mint is plain, and the
- * panel asks only when the person acts — sends a message (the opening one or any
+ * access. The panel never asks its host for one on load: the first mint is plain, and
+ * the panel asks only when the person acts — sends a message (the opening one or any
  * later one), or opens a conversation whose live card needs to read the site as
  * them. What the host grants then is unusable until the person confirms it with
  * their passkey, here in canopy's frame (`confirm`); it lasts 30 minutes from that
- * touch. The panel's token is renewed every few minutes while the tab is open, and
+ * touch. **The passkey is asked for only when something needs the grant** (`asking`):
+ * the agent's turn tried to act as them (canopy marks the grant `requested`, and the
+ * panel watches for that after each send, `watch`), or a live card did (`need`). A
+ * send never waits for it: most turns never act as the person. The panel's token is renewed every few minutes while the tab is open, and
  * each renewal carries the same confirmation and end (canopy's
  * `host_grants._inherit`), so one touch is one prompt. Stop revokes the page's
  * permission at once and stops asking until they send again. An agent's TURN only
@@ -32,6 +35,8 @@ export interface PageGrantInfo {
   expires_at: string
   /** Confirmed with the person's passkey. Until then no agent may use it. */
   confirmed: boolean
+  /** An agent's turn needs it while it still waits for the passkey: ask now. */
+  requested?: boolean
 }
 
 export interface PageGrant {
@@ -40,17 +45,25 @@ export interface PageGrant {
   /** The grant the panel's current token carries, as last read — confirmed or
    *  waiting for the passkey; null for none. */
   current(): PageGrantInfo | null
+  /** Whether to ask the person for their passkey now: a waiting grant that the
+   *  agent's turn (`requested`) or a live card (`need`) needs. */
+  asking(): boolean
   subscribe(listener: () => void): () => void
   /** The person acted: ask for a grant with the next mint, and read it. Resolves
    *  true when this call is what started asking (the caller then tells canopy the
    *  page acted in the open conversation), false when the tab was already asking. */
   ensure(): Promise<boolean>
+  /** A send's turn may need the grant: re-read it often for a while, so the
+   *  passkey prompt opens soon after the turn asks for it. */
+  watch(): void
+  /** Something here (a live card) needs the grant now: ask for the passkey. */
+  need(): void
   /** The person confirmed with their passkey: run the WebAuthn ceremony against
    *  canopy (its own frame's origin) and mark the waiting grant confirmed. Call
    *  from a click: Safari runs WebAuthn only inside a user gesture. */
   confirm(): Promise<void>
   /** Resolves once nothing waits for the passkey: the grant is confirmed, declined
-   *  (`stop`) or gone. A send awaits this, so its turn has what the person decided. */
+   *  (`stop`) or gone. A live card awaits this before it tries again. */
   settled(): Promise<void>
   /** The person pressed Stop (or declined the passkey): revoke the page's
    *  permission, stop asking. */
@@ -63,26 +76,42 @@ export interface PageGrant {
 /** How often a tab that holds a grant re-reads it, so a Stop pressed elsewhere (or
  *  the grant running out) shows here, and the panel stops asking. */
 const POLL_MS = 60_000
+/** After a send, how often (and for how long) the tab re-reads a grant still waiting
+ *  for the passkey, to see the turn ask for it. */
+const WATCH_POLL_MS = 3_000
+const WATCH_MS = 10 * 60_000
 
 export function createPageGrant(opts: {
   client: () => CanopyClient
   isContact: () => boolean
   pollMs?: number
+  watchPollMs?: number
 }): PageGrant {
   let wanted = false
+  let needed = false
   let current: PageGrantInfo | null = null
-  let timer: ReturnType<typeof setInterval> | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let watchUntil = 0
   const listeners = new Set<() => void>()
   const path = '/api/embed/host-grant'
   const notify = () => listeners.forEach((l) => l())
 
   function poll(on: boolean): void {
-    if (timer) clearInterval(timer)
-    timer = on ? setInterval(() => void api.refresh(), opts.pollMs ?? POLL_MS) : null
+    if (timer) clearTimeout(timer)
+    timer = null
+    if (!on) return
+    // Often while a send's turn may still ask for the passkey, else slowly.
+    const watching = Date.now() < watchUntil && !current?.confirmed
+    timer = setTimeout(() => {
+      // poll() clears any timer first, so this never runs two loops.
+      void api.refresh().finally(() => { if (wanted) poll(true) })
+    }, watching ? (opts.watchPollMs ?? WATCH_POLL_MS) : (opts.pollMs ?? POLL_MS))
   }
 
   function stopAsking(): void {
     wanted = false
+    needed = false
+    watchUntil = 0
     current = null
     poll(false)
     // The token in hand carries the old grant: the next mint must be a plain one.
@@ -92,6 +121,7 @@ export function createPageGrant(opts: {
   const api: PageGrant = {
     wanted: () => wanted,
     current: () => current,
+    asking: () => !!current && !current.confirmed && (!!current.requested || needed),
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -105,6 +135,16 @@ export function createPageGrant(opts: {
       poll(true)
       await api.refresh()
       return true
+    },
+    watch() {
+      if (!wanted) return
+      watchUntil = Date.now() + WATCH_MS
+      poll(true)
+    },
+    need() {
+      if (needed) return
+      needed = true
+      notify()
     },
     settled() {
       return new Promise<void>((resolve) => {
