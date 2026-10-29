@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { FleetHoldCard } from '@/components/supervisor/FleetHoldCard'
+import { OperatorsCard } from '@/components/supervisor/OperatorsCard'
+import { AlertMailSetting } from '@/pwa/AlertMailSetting'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
 import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { ActAsRequests } from '@/components/supervisor/ActAsRequests'
@@ -326,6 +328,7 @@ export default function SupervisorPage(): JSX.Element {
           )}
           <InstallPrompt />
           <PushToggle />
+          <AlertMailSetting />
         </div>
       )}
 
@@ -334,6 +337,7 @@ export default function SupervisorPage(): JSX.Element {
         <div className="flex flex-col gap-4">
           {/* The fleet hold: a superuser's control, and everyone's banner while on. */}
           <FleetHoldCard hold={fleetHold} onChange={setFleetHold} />
+          <OperatorsCard show={fleetHold?.can_stop_running ?? false} />
 
           <AlertList title="Alerts" hideEmpty />
 

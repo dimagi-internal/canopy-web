@@ -244,3 +244,30 @@ def test_other_organisation_user_is_not_notified(source, ws, owner, pushes):
     alerts.tick()
     assert [m.to for m in mail.outbox] == [["owner@dimagi.com"]]
     assert pushes == [owner.pk]
+
+
+def _assigned_only(user):
+    from apps.push.models import NotificationPreference
+
+    NotificationPreference.objects.create(user=user, alert_mail=NotificationPreference.ALERT_MAIL_ASSIGNED)
+
+
+def test_a_closer_on_assigned_only_alert_mail_is_not_told(source, ws, owner, pushes):
+    """An owner who holds the keys without wanting the owner's inbox (a superuser
+    COO, say): the role fan-out skips them while someone else is told."""
+    quiet = User.objects.create_user("coo", "coo@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(workspace=ws, user=quiet, role=WorkspaceMembership.OWNER)
+    _assigned_only(quiet)
+    source.offered = {owner.pk: [FIX], quiet.pk: [FIX]}
+    source.reconcile = lambda now: [_raise(ws)]
+    alerts.tick()
+    assert [m.to for m in mail.outbox] == [["owner@dimagi.com"]]
+
+
+def test_when_every_closer_chose_assigned_only_they_are_all_told(source, ws, owner, pushes):
+    """Thinning out never reaches nobody."""
+    _assigned_only(owner)
+    source.offered = {owner.pk: [FIX]}
+    source.reconcile = lambda now: [_raise(ws)]
+    alerts.tick()
+    assert [m.to for m in mail.outbox] == [["owner@dimagi.com"]]

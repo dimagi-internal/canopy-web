@@ -1,23 +1,28 @@
 // @vitest-environment jsdom
 //
-// The fleet hold stops every runner in every workspace, so the control is for
-// system admins (`can_hold`, and `can_release` = superuser) — a named holder such as
-// Ada may hold but not release. Everyone else sees the banner while
-// it is on — a member whose turn sits queued should see why — and nothing when off.
+// The fleet controls: the HOLD is a toggle (a superuser turns it on and off; a named
+// holder such as Ada may turn it on, never off), and STOP EVERYTHING is a separate
+// two-tap action for superusers. Everyone else sees the banner while held — a member
+// whose turn sits queued should see why — and nothing when off.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import type { FleetHoldOut } from '@/api/harness'
+import type { FleetHoldOut, FleetStopOut } from '@/api/harness'
 
-const holdFleet = vi.fn<(note?: string, stopRunning?: boolean) => Promise<FleetHoldOut>>()
+const holdFleet = vi.fn<(note?: string) => Promise<FleetHoldOut>>()
 const releaseFleetHold = vi.fn<() => Promise<FleetHoldOut>>()
-vi.mock('@/api/harness', () => ({ holdFleet, releaseFleetHold }))
+const stopFleet = vi.fn<() => Promise<FleetStopOut>>()
+vi.mock('@/api/harness', () => ({ holdFleet, releaseFleetHold, stopFleet }))
 
 const { FleetHoldCard } = await import('./FleetHoldCard')
 
 function hold(overrides: Partial<FleetHoldOut> = {}): FleetHoldOut {
-  return { held: false, note: '', held_at: null, held_by_email: '', queued: 0, can_hold: false, can_release: false, can_stop_running: false, stopped_sessions: 0, stopped_turns: 0, ...overrides }
+  return {
+    held: false, note: '', held_at: null, held_by_email: '', queued: 0,
+    can_hold: false, can_release: false, can_stop_running: false, ...overrides,
+  }
 }
+const superuser = { can_hold: true, can_release: true, can_stop_running: true }
 
 afterEach(() => {
   cleanup()
@@ -30,62 +35,56 @@ describe('FleetHoldCard', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('shows a non-admin the banner, without a release button, while held', () => {
+  it('shows a non-admin only the banner while held', () => {
     render(<FleetHoldCard hold={hold({ held: true, note: 'tracing', queued: 3 })} onChange={() => {}} />)
     expect(screen.getByTestId('fleet-hold-banner').textContent).toContain('3 turns waiting')
     expect(screen.getByTestId('fleet-hold-why').textContent).toContain('tracing')
-    expect(screen.queryByTestId('fleet-hold-release')).toBeNull()
+    expect(screen.queryByTestId('fleet-hold-toggle')).toBeNull()
   })
 
-  it('makes an admin confirm before holding, and sends the reason', async () => {
+  it('turns the hold on in one tap, with the reason', async () => {
     const onChange = vi.fn()
-    holdFleet.mockResolvedValue(hold({ held: true, can_hold: true, note: 'tracing' }))
-    render(<FleetHoldCard hold={hold({ can_hold: true })} onChange={onChange} />)
+    holdFleet.mockResolvedValue(hold({ ...superuser, held: true, note: 'tracing' }))
+    render(<FleetHoldCard hold={hold(superuser)} onChange={onChange} />)
 
     fireEvent.change(screen.getByTestId('fleet-hold-note'), { target: { value: ' tracing ' } })
-    fireEvent.click(screen.getByTestId('fleet-hold-start'))
-    expect(holdFleet).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('fleet-hold-confirm'))
+    fireEvent.click(screen.getByTestId('fleet-hold-toggle'))
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ held: true })))
     expect(holdFleet).toHaveBeenCalledWith('tracing')
+    expect(stopFleet).not.toHaveBeenCalled()
   })
 
-  it('lets an admin release in one tap', async () => {
+  it('turns the hold off in one tap', async () => {
     const onChange = vi.fn()
-    releaseFleetHold.mockResolvedValue(hold({ can_hold: true, can_release: true }))
-    render(<FleetHoldCard hold={hold({ held: true, can_hold: true, can_release: true })} onChange={onChange} />)
+    releaseFleetHold.mockResolvedValue(hold(superuser))
+    render(<FleetHoldCard hold={hold({ ...superuser, held: true })} onChange={onChange} />)
 
-    fireEvent.click(screen.getByTestId('fleet-hold-release'))
+    expect(screen.getByTestId('fleet-hold-toggle').getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(screen.getByTestId('fleet-hold-toggle'))
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ held: false })))
   })
 
-  it('offers a superuser the kill switch, which also stops running work, and reports what it stopped', async () => {
+  it('lets a holder who may not release turn it on but not off, and offers no stop', () => {
+    render(<FleetHoldCard hold={hold({ held: true, can_hold: true })} onChange={() => {}} />)
+    expect((screen.getByTestId('fleet-hold-toggle') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByTestId('fleet-stop-start')).toBeNull()
+  })
+
+  it('stops everything as a separate, confirmed action that leaves the hold alone', async () => {
+    stopFleet.mockResolvedValue({ stopped_sessions: 2, stopped_turns: 1 })
     const onChange = vi.fn()
-    holdFleet.mockResolvedValue(hold({ held: true, can_hold: true, can_stop_running: true, stopped_sessions: 2, stopped_turns: 1 }))
-    render(<FleetHoldCard hold={hold({ can_hold: true, can_stop_running: true })} onChange={onChange} />)
+    render(<FleetHoldCard hold={hold(superuser)} onChange={onChange} />)
 
-    fireEvent.click(screen.getByTestId('fleet-hold-start'))
-    fireEvent.click(screen.getByTestId('fleet-hold-stop-all'))
+    fireEvent.click(screen.getByTestId('fleet-stop-start'))
+    expect(stopFleet).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('fleet-stop-confirm'))
 
-    await waitFor(() => expect(onChange).toHaveBeenCalled())
-    expect(holdFleet).toHaveBeenCalledWith('', true)
-    cleanup()
-    render(<FleetHoldCard hold={onChange.mock.calls[0][0]} onChange={() => {}} />)
-    expect(screen.getByTestId('fleet-hold-stopped').textContent).toContain('Stopped 2 working sessions and 1 more running turn')
-  })
-
-  it('offers a named holder no kill switch', () => {
-    render(<FleetHoldCard hold={hold({ can_hold: true })} onChange={() => {}} />)
-    fireEvent.click(screen.getByTestId('fleet-hold-start'))
-    expect(screen.queryByTestId('fleet-hold-stop-all')).toBeNull()
-  })
-
-  it('offers a holder who may not release no Release button', () => {
-    render(<FleetHoldCard hold={hold({ held: true, can_hold: true, can_release: false })} onChange={() => {}} />)
-
-    expect(screen.getByTestId('fleet-hold-banner')).toBeTruthy()
-    expect(screen.queryByTestId('fleet-hold-release')).toBeNull()
+    await waitFor(() =>
+      expect(screen.getByTestId('fleet-stopped').textContent).toContain('Stopped 2 working sessions and 1 more running turn'),
+    )
+    expect(holdFleet).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
   })
 })

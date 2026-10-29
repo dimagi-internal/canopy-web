@@ -26,7 +26,7 @@ from apps.agents.models import AgentTask
 from apps.harness import sensitivity
 from apps.harness.models import Turn
 
-from .models import AgentWaitingSnapshot, PushSubscription, session_idle_minutes_for
+from .models import AgentWaitingSnapshot, NotificationPreference, PushSubscription, session_idle_minutes_for
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,19 @@ def _send_one(sub: PushSubscription, payload: dict, *, ttl: int = DEFAULT_TTL,
                      # would hold a request thread forever — and the bare except below
                      # cannot catch a hang.
     )
+
+
+def alert_mail_recipients(users) -> list:
+    """`users` minus everyone whose `alert_mail` asks for only what is handed to
+    them by name — unless that is all of them, in which case all of them: a role
+    fan-out may thin out, never reach nobody. Not for an alert handed to one
+    person: being named IS being handed it."""
+    users = list(users)
+    muted = set(NotificationPreference.objects.filter(
+        user_id__in=[u.pk for u in users], alert_mail=NotificationPreference.ALERT_MAIL_ASSIGNED,
+    ).values_list("user_id", flat=True))
+    kept = [u for u in users if u.pk not in muted]
+    return kept or users
 
 
 def send_to_user(user, title: str, body: str, url: str, count: int | None = None, *,

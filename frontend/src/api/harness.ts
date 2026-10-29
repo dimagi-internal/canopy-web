@@ -524,13 +524,45 @@ export async function getFleetHold(): Promise<FleetHoldOut> {
   return unwrap(await apiV2.GET('/api/harness/fleet-hold'), 'getFleetHold')
 }
 
-export async function holdFleet(note = '', stopRunning = false): Promise<FleetHoldOut> {
-  return unwrap(
-    await apiV2.POST('/api/harness/fleet-hold', { body: { note, stop_running: stopRunning } }),
-    'holdFleet',
-  )
+export async function holdFleet(note = ''): Promise<FleetHoldOut> {
+  return unwrap(await apiV2.POST('/api/harness/fleet-hold', { body: { note } }), 'holdFleet')
+}
+
+export type FleetStopOut = components['schemas']['FleetStopOut']
+
+export async function stopFleet(): Promise<FleetStopOut> {
+  return unwrap(await apiV2.POST('/api/harness/fleet-stop'), 'stopFleet')
 }
 
 export async function releaseFleetHold(): Promise<FleetHoldOut> {
   return unwrap(await apiV2.POST('/api/harness/fleet-hold/release'), 'releaseFleetHold')
+}
+
+// Site operators — the superusers who hold the fleet controls (apps/system/operators.py).
+export type OperatorOut = components['schemas']['OperatorOut']
+export type AlertMail = OperatorOut['alert_mail']
+
+export async function listOperators(): Promise<OperatorOut[]> {
+  return Array.from(unwrap(await apiV2.GET('/api/system/operators'), 'listOperators'))
+}
+
+export async function addOperator(email: string): Promise<OperatorOut> {
+  return unwrap(await apiV2.POST('/api/system/operators', { body: { email } }), 'addOperator')
+}
+
+export async function setOperatorAlertMail(userId: number, alertMail: AlertMail): Promise<OperatorOut> {
+  return unwrap(
+    await apiV2.PATCH('/api/system/operators/{user_id}', {
+      params: { path: { user_id: userId } },
+      body: { alert_mail: alertMail },
+    }),
+    'setOperatorAlertMail',
+  )
+}
+
+export async function removeOperator(userId: number): Promise<void> {
+  ensureOk(
+    await apiV2.DELETE('/api/system/operators/{user_id}', { params: { path: { user_id: userId } } }),
+    'removeOperator',
+  )
 }

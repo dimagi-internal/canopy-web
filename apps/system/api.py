@@ -10,13 +10,22 @@ from __future__ import annotations
 from django.conf import settings
 from django.http import HttpRequest
 from ninja import Router
+from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 from apps.api.route_gates import gate
+from apps.passkeys import stepup
 
-from . import reader, stats
-from .schemas import CapabilityCatalogOut, CapabilityDetailOut, PublicStatsOut
+from . import operators, reader, stats
+from .schemas import (
+    CapabilityCatalogOut,
+    CapabilityDetailOut,
+    OperatorAddIn,
+    OperatorOut,
+    OperatorUpdateIn,
+    PublicStatsOut,
+)
 
 router = Router(auth=session_auth, tags=["system"])
 
@@ -52,6 +61,73 @@ def public_stats(request: HttpRequest) -> dict:
     not load-bearing.
     """
     return stats.public_stats()
+
+
+# --- site operators (superusers) -------------------------------------------------
+# Declared above `detail()`: `/operators/{user_id}` is two segments, and Django
+# tries patterns in order, so `/{kind}/{name}` would otherwise capture it.
+
+
+def _operator_error(exc: operators.OperatorError) -> HttpError:
+    return HttpError({"not_found": 404, "last": 409}[exc.code], exc.message)
+
+
+def _operator_out(request: HttpRequest, user_id: int) -> dict:
+    return next(o for o in operators.operators(request.user) if o["user_id"] == user_id)
+
+
+@router.get("/operators", response=list[OperatorOut], summary="List superusers (superuser only)")
+@gate("superuser")
+def list_operators(request: HttpRequest) -> list[dict]:
+    """Everyone who holds the fleet-wide switches, with which alert mail reaches each."""
+    if not request.user.is_superuser:
+        raise HttpError(403, "only a superuser may see who the superusers are")
+    return operators.operators(request.user)
+
+
+@router.post("/operators", response={201: OperatorOut}, summary="Make someone a superuser (superuser only)")
+@gate("superuser", setting=True, step_up=True)
+def add_operator(request: HttpRequest, payload: OperatorAddIn):
+    """Grant superuser to the account at `email`. They must have signed in to Canopy
+    once (404 otherwise). Superuser holds the fleet switches only — no workspace
+    access, which is still a membership. Needs a fresh passkey."""
+    if not request.user.is_superuser:
+        raise HttpError(403, "only a superuser may make someone a superuser")
+    stepup.require_recent_step_up(request)
+    try:
+        user = operators.grant(payload.email)
+    except operators.OperatorError as exc:
+        raise _operator_error(exc)
+    return 201, _operator_out(request, user.pk)
+
+
+@router.patch("/operators/{user_id}", response=OperatorOut, summary="Change a superuser's alert mail")
+@gate("superuser", setting=True)
+def update_operator(request: HttpRequest, user_id: int, payload: OperatorUpdateIn) -> dict:
+    """`alert_mail`: `all` (every alert their roles make them a recipient of) or
+    `assigned` (only alerts handed to them by name)."""
+    if not request.user.is_superuser:
+        raise HttpError(403, "only a superuser may change a superuser's alert mail")
+    try:
+        operators.set_alert_mail(user_id, payload.alert_mail)
+    except operators.OperatorError as exc:
+        raise _operator_error(exc)
+    return _operator_out(request, user_id)
+
+
+@router.delete("/operators/{user_id}", response={204: None}, summary="Remove a superuser (superuser only)")
+@gate("superuser", setting=True, step_up=True)
+def remove_operator(request: HttpRequest, user_id: int):
+    """Revoke superuser. Refused (409) for the last one — someone must be able to
+    release a fleet hold. Needs a fresh passkey."""
+    if not request.user.is_superuser:
+        raise HttpError(403, "only a superuser may remove a superuser")
+    stepup.require_recent_step_up(request)
+    try:
+        operators.revoke(user_id)
+    except operators.OperatorError as exc:
+        raise _operator_error(exc)
+    return 204, None
 
 
 @router.get("/{kind}/{name}", response=CapabilityDetailOut)

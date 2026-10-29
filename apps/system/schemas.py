@@ -5,6 +5,8 @@ by :mod:`apps.system.reader` — the plugin file structure is the source of trut
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from apps.common.schemas import StrictModel
 
 
@@ -42,3 +44,23 @@ class PublicStatsOut(StrictModel):
     runners_online: int
     turns_executed: int
     demos_published: int
+
+
+class OperatorOut(StrictModel):
+    """One superuser — a person who holds the fleet-wide switches."""
+
+    user_id: int
+    email: str
+    name: str
+    # Which alert mail reaches them (`push.NotificationPreference.alert_mail`).
+    alert_mail: Literal["all", "assigned"]
+    is_you: bool
+
+
+class OperatorAddIn(StrictModel):
+    # They must have signed in to canopy once, so the account exists.
+    email: str
+
+
+class OperatorUpdateIn(StrictModel):
+    alert_mail: Literal["all", "assigned"]
