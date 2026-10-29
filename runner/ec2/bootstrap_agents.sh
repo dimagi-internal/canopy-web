@@ -224,6 +224,16 @@ step1_tooling() {
     warn "uv not on PATH — cannot install/verify the canopy CLI"
   fi
 
+  # The read-only labs telemetry profile (`aws ... --profile labs-observe`): its keys come
+  # from canopy-aws-broker on this box (runner/ec2/aws_broker.py) via `canopy aws
+  # credentials`, so a turn needs no SSO for metrics, alarms or ECS/ALB state. Idempotent;
+  # a canopy CLI older than the command only warns.
+  if command -v canopy >/dev/null 2>&1; then
+    canopy aws profile --role labs-observe >/dev/null 2>&1 \
+      && ok "aws profile labs-observe present" \
+      || warn "could not add aws profile labs-observe (canopy CLI too old?)"
+  fi
+
   if ! command -v gog >/dev/null 2>&1; then
     log "installing gog (latest steipete/gogcli linux release)"
     if install_gog; then ok "gog installed"; else warn "gog install failed — per-agent gmail steps below will be skipped"; fi
