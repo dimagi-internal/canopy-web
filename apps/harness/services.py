@@ -255,6 +255,13 @@ def enqueue_turn(
                           else session.agent.slug if session is not None and session.agent_id
                           else "")
                 thread_guard.check_message(origin_ref, target, idempotency_key)
+            if origin == Turn.ORIGIN_EMAIL and session is not None:
+                # New mail on a thread whose anchor retired brings it back, under
+                # the row lock `mail_anchor.maybe_retire` takes — so a retirement
+                # can never land between this check and the turn's insert.
+                from . import mail_anchor  # noqa: PLC0415 — cycle: mail_anchor -> session_sync -> harness services
+
+                mail_anchor.revive_for_mail(session)
             turn = Turn.objects.create(
                 **initiator.fields(),
                 **provenance.turn_fields(parent=parent, **(provenance_extra or {})),
@@ -306,6 +313,12 @@ def enqueue_turn(
         raise
     if origin == Turn.ORIGIN_EMAIL:
         email_channel.log_unproven_member(turn)
+        if session is not None and turn.status in Turn.TERMINAL:
+            # Refused at the door (offered nothing, an admission rule): written
+            # terminal without passing `close_turn`, so its anchor is checked here.
+            from . import mail_anchor  # noqa: PLC0415 — cycle: mail_anchor -> session_sync -> harness services
+
+            mail_anchor.retire_later(session.pk)
     if session is not None:
         # New work on the session (apps/push drops any pending "done" push).
         from .signals import session_turn_enqueued

@@ -107,9 +107,24 @@ def wake_due_runners() -> None:
     _wake_due_runners(timezone.now())
 
 
+def mail_anchor_sweep_every_s() -> float:
+    return float(getattr(settings, "HARNESS_MAIL_ANCHOR_SWEEP_TICK_S", 600) or 0)
+
+
+def retire_mail_anchors() -> None:
+    """The backstop for mail-thread anchor sessions whose last turn or work session
+    closed down a path that sends no signal (apps/harness/mail_anchor.py)."""
+    from . import mail_anchor  # noqa: PLC0415 — cycle: mail_anchor -> session_sync -> services
+
+    retired = mail_anchor.sweep()
+    if retired:
+        logger.info("retired %d mail anchor session(s)", len(retired))
+
+
 def register() -> None:
     from apps.common import ticks
 
     ticks.register("harness.queue_sweeps", queue_sweeps, queue_sweeps_every_s)
     ticks.register("harness.wake_due_runners", wake_due_runners, queue_sweeps_every_s)
     ticks.register("harness.sensitive_turn_deadline", expire_unrun_sensitive_turns, 60)
+    ticks.register("harness.retire_mail_anchors", retire_mail_anchors, mail_anchor_sweep_every_s)
