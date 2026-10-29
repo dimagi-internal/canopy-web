@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# The labs-observe assume grant for a LIVE runner's instance role, without updating
+# the runner's own stack.
+#
+# runner.cfn.yaml / fleet.cfn.yaml carry the same grant (`assume-labs-observe`) for
+# every box made or updated from now on. A live runner stack cannot just be updated
+# to get it: its `Ami` parameter is an SSM-resolved `.../ubuntu/.../current` AMI, so
+# ANY stack update re-resolves it to the newest image and REPLACES the instance
+# (measured on canopy-cloud-runner-2, 2026-10-29: the change set showed
+# `Modify Instance Replacement=True` for a policy-only edit). This stack adds the
+# grant as its own inline policy (a different name, so it never fights the
+# template's) and touches nothing else. Delete it once the box is recycled
+# (`./down.sh --keep-runner && ./up.sh && ./wire.sh`) onto a template that has the
+# grant.
+#
+#   aws cloudformation deploy --profile labs --stack-name canopy-cloud-runner-2-observe-grant \
+#     --template-file runner/ec2/observe-grant.cfn.yaml --capabilities CAPABILITY_IAM \
+#     --parameter-overrides RunnerRoleName=<the stack's RunnerRole physical id>
+
+Description: >-
+  labs-observe assume grant (sts:AssumeRole on labs-jj-observe-readonly) for a live
+  runner's instance role, added beside its stack so the instance is not replaced.
+
+Parameters:
+  RunnerRoleName:
+    Type: String
+    Description: Physical name of the runner stack's RunnerRole.
+
+Resources:
+  AssumeLabsObserve:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref RunnerRoleName
+      PolicyName: assume-labs-observe-live
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-observe-readonly'
