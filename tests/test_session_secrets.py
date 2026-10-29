@@ -296,6 +296,16 @@ def test_a_browser_session_is_refused_even_for_the_sharer(world):
     assert r.status_code == 403
 
 
+def test_a_browser_with_a_junk_bearer_header_is_still_refused(world):
+    """The header alone is not a token: the cookie signed the request in, the
+    junk bearer authenticated nothing, so this is a browser and gets nothing."""
+    _share(world)
+    for path in ("/api/session-secrets/key", "/api/session-secrets/key/GH_TOKEN?sealed=true"):
+        r = world["browser"].get(path, HTTP_X_CANOPY_CHAT_KEY=world["keys"]["mine"],
+                                 HTTP_AUTHORIZATION="Bearer junk")
+        assert r.status_code == 403, (path, r.content)
+
+
 def test_forgetting_a_secret_removes_it(world):
     _share(world)
     r = world["browser"].delete(f"/api/canopy-sessions/{world['session'].id}/secrets/GH_TOKEN")
