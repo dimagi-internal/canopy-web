@@ -12,6 +12,7 @@ from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
@@ -42,6 +43,10 @@ urlpatterns = [
     # renamed without editing the app registration too.
     path("auth/github/start/", github_connect_start, name="github_connect_start"),
     path("auth/github/callback/", github_connect_callback, name="github_connect_callback"),
+    # Server-held OAuth connections (Salesforce first), for a person or an agent.
+    # Bare views like the GitHub ones; login required, not public.
+    path("auth/connections/<str:provider>/start/", connections_start, name="connections_start"),
+    path("auth/connections/<str:provider>/callback/", connections_callback, name="connections_callback"),
     # canopy's OAuth CLIENT identity (host grant contract v1): the Client ID
     # Metadata Document — whose URL IS canopy's client_id — and the JWKS it
     # names. Bare views because the URL is the identifier a host allowlists;
