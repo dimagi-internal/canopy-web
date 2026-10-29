@@ -16,7 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.connections.models import ConnectionGrant
+from apps.connections.models import Connection, ConnectionGrant
 from apps.events.models import Event
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -161,3 +161,49 @@ def test_turn_with_no_agent_409(runner):
                             idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=runner)
     r = _ask(runner, t)
     assert r.status_code == 409 and r.json()["error"] == "no_agent"
+
+
+def test_runner_that_no_longer_may_hold_the_agent_404(echo, runner, operator):
+    """The claim required it, but an owner can be demoted mid-turn: asked again."""
+    _stored({"agent": echo}, operator)
+    turn = _turn(echo, runner)
+    assert _ask(runner, turn).status_code == 200
+    other = get_user_model().objects.create_user(username="new", email="new@dimagi.com")
+    Agent.objects.filter(pk=echo.pk).update(owner=other)
+    AgentAdmin.objects.filter(agent=echo, user=operator).delete()
+    r = _ask(runner, turn)
+    assert r.status_code == 404
+    assert Event.objects.filter(kind="connections.token_issued").count() == 1  # only the first
+
+
+def test_ambiguous_409(echo, runner, operator):
+    _stored({"agent": echo}, operator)
+    first = _stored({"agent": echo}, operator)
+    Connection.objects.create(
+        provider="salesforce", agent=echo, account_id="00Dorg/005other", account_label="other@dimagi.com",
+        instance_url=first.instance_url, refresh_token_enc=first.refresh_token_enc, connected_by=operator)
+    r = _ask(runner, _turn(echo, runner))
+    assert r.status_code == 409 and r.json()["error"] == "ambiguous"
+    assert not Event.objects.filter(kind="connections.token_issued").exists()
+
+
+def test_not_configured_409(echo, runner, operator, settings):
+    _stored({"agent": echo}, operator, access="")
+    settings.SALESFORCE_CLIENT_ID = ""
+    settings.SALESFORCE_CLIENT_SECRET = ""
+    r = _ask(runner, _turn(echo, runner))
+    assert r.status_code == 409 and r.json()["error"] == "not_configured"
+
+
+@pytest.mark.parametrize("answer,status", [
+    (_resp(400, {"error": "invalid_client"}), 502),   # canopy's own configuration, not the grant
+    (_resp(503, text="down"), 503),                     # the provider is unreachable
+])
+def test_provider_failures_map_to_502_and_503(echo, runner, operator, answer, status):
+    conn = _stored({"agent": echo}, operator, access="")
+    with FakeSF(token=[answer]):
+        r = _ask(runner, _turn(echo, runner))
+    assert r.status_code == status, r.content
+    conn.refresh_from_db()
+    assert conn.refresh_failed_at is None  # neither says anything about the grant
+    assert not Event.objects.filter(kind="connections.token_issued").exists()
