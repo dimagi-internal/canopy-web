@@ -335,11 +335,20 @@ def test_each_listed_provider_is_staged_held_and_removed(cr, monkeypatch, tmp_pa
     assert not _path(tmp_path, provider="intacct").exists() and not _path(tmp_path).exists()
 
 
-def test_a_listing_failure_warns_and_the_turn_runs(cr, monkeypatch, tmp_path):
-    _listing(cr, monkeypatch, status=503)
+@pytest.mark.parametrize("status,reason", [(503, "listing -> 503"), (0, "listing: canopy-web unreachable")])
+def test_a_listing_failure_warns_and_the_turn_runs(cr, monkeypatch, tmp_path, status, reason):
+    _listing(cr, monkeypatch, status=status)
     _cli(cr, monkeypatch, tmp_path)
     cr._stage_connections("r1", "t1", "eva")
-    assert cr.calls == [] and any("warn: connections.stage_failed agent=eva" in m for m in cr.logs)
+    assert cr.calls == []
+    assert cr.logs == [f'warn: connections.stage_failed agent=eva provider=* turn=t1 reason="{reason}"']
+
+
+def test_a_canopy_web_without_the_listing_route_is_silent(cr, monkeypatch, tmp_path):
+    _listing(cr, monkeypatch, status=404)
+    _cli(cr, monkeypatch, tmp_path)
+    cr._stage_connections("r1", "t1", "eva")
+    assert cr.calls == [] and cr.logs == []
 
 
 def test_an_unusable_provider_key_never_becomes_a_path(cr, monkeypatch, tmp_path):
@@ -360,5 +369,5 @@ def test_a_sibling_holds_only_its_own_providers_files(cr, monkeypatch, tmp_path)
 def test_a_failure_logs_the_connections_vocabulary_without_the_token(cr, monkeypatch, tmp_path):
     _cli(cr, monkeypatch, tmp_path, code=1, stderr="Salesforce refused the request.")
     cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
-    assert cr.logs == ["warn: connections.stage_failed agent=eva provider=salesforce turn=t1 "
-                       "(Salesforce refused the request.)"]
+    assert cr.logs == ['warn: connections.stage_failed agent=eva provider=salesforce turn=t1 '
+                       'reason="Salesforce refused the request."']

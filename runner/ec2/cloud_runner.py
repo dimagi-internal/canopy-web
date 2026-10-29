@@ -1756,9 +1756,10 @@ def _restage_delegated_google() -> None:
 # short-lived ACCESS token 0600 to ~/.canopy/connections/<slug>/<provider>.json. Each file
 # is re-staged on the lease heartbeat near expiry and removed when the turn ends.
 #
-# Log lines use the connections vocabulary: `connections.stage_failed agent= provider=
-# turn=` at warn when a token could not be staged (the turn still runs). An agent with no
-# connection is silent.
+# Log lines use the connections vocabulary: `warn: connections.stage_failed agent=
+# provider= turn= reason="…"` when a token could not be staged (the turn still runs;
+# `provider=*` when the listing itself failed). An agent with no connection is silent,
+# and so is a canopy-web too old to have the listing route (404).
 #: Seconds a staged token must still live; also sent to canopy-web (`--min-life`), so the
 #: server refreshes rather than hand back a cached token that lapses before the next re-stage.
 CONNECTION_TOKEN_MIN_LIFE = 900
@@ -1800,26 +1801,33 @@ def _unlink_quietly(path: pathlib.Path) -> None:
         pass
 
 
+def _stage_failed_line(slug: str, provider: str, turn_id: str, reason: str) -> None:
+    _log(f"warn: connections.stage_failed agent={slug} provider={provider or '*'} turn={turn_id} "
+         f"reason={json.dumps(' '.join(str(reason).split())[-300:], ensure_ascii=False)}")
+
+
 def _stage_connections(runner_id: str, turn_id: str, slug: str) -> None:
     """Turn start: stage a token for each provider the turn's agent can use. One
     canopy-web call for an agent with none; a failure to list is a warn line and the
-    turn runs without."""
+    turn runs without. A 404 is a canopy-web without the listing route: silent."""
     if not slug:
         return
     try:
         status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections")
     except Exception as exc:  # noqa: BLE001 — never cost the turn its start
-        status, body = 0, None
-        _log(f"warn: connections.stage_failed agent={slug} turn={turn_id} (listing failed: {exc})")
-    if status != 200 or not isinstance(body, dict):
-        if status:   # _api has already logged the refusal itself
-            _log(f"warn: connections.stage_failed agent={slug} turn={turn_id} (listing -> {status})")
+        status, body = -1, None
+        _stage_failed_line(slug, "", turn_id, f"listing failed: {exc}")
+    if status == 200 and isinstance(body, dict):
+        for provider in body.get("providers") or []:
+            if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
+                _stage_connection_token(runner_id, turn_id, slug, provider)
+            else:
+                _stage_failed_line(slug, "", turn_id, "unusable provider key")
         return
-    for provider in body.get("providers") or []:
-        if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
-            _stage_connection_token(runner_id, turn_id, slug, provider)
-        else:
-            _log(f"warn: connections.stage_failed agent={slug} turn={turn_id} (unusable provider key)")
+    if status == 0:
+        _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
+    elif status not in (-1, 404):
+        _stage_failed_line(slug, "", turn_id, f"listing -> {status}")
 
 
 def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: str, *,
@@ -1858,7 +1866,7 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
                              env=env, capture_output=True, text=True, timeout=120)
     except BaseException as exc:
         if isinstance(exc, Exception):
-            _log(f"warn: connections.stage_failed agent={slug} provider={provider} turn={turn_id} ({exc})")
+            _stage_failed_line(slug, provider, turn_id, str(exc))
             _stage_failed(turn_id, provider, refresh)
             return
         _drop_holds(turn_id)   # an interrupt: nothing may stay held
@@ -1876,8 +1884,7 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
                 _unlink_quietly(target)
         return
     if res.returncode != 0:
-        detail = " ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}"
-        _log(f"warn: connections.stage_failed agent={slug} provider={provider} turn={turn_id} ({detail})")
+        _stage_failed_line(slug, provider, turn_id, (res.stderr or "").strip() or f"exit {res.returncode}")
         _stage_failed(turn_id, provider, refresh)
         return
     if refresh:
@@ -1919,8 +1926,7 @@ def _restage_connections(turn_id: str, *, now: float | None = None) -> None:
         try:
             _stage_connection_token(runner_id, turn_id, slug, provider, now=now, refresh=True)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
-            _log(f"warn: connections.stage_failed agent={slug} provider={provider} turn={turn_id} "
-                 f"(re-stage: {exc})")
+            _stage_failed_line(slug, provider, turn_id, f"re-stage: {exc}")
 
 
 def _unstage_connections(turn_id: str) -> None:
