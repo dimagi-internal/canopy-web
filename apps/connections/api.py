@@ -1,5 +1,7 @@
 """The JSON half of connections: status, disconnect, sharing, and my CLI token.
 
+Errors from the service layer become responses in one place, `problem_for`.
+
 Three routers, because the URLs live under three prefixes (see `apps/api/api.py`):
 `router` at `/connections` (a person's own), `agents_router` at `/agents`
 (an agent's, admin-only) and `me_router` at `/me/connections` (the CLI token).
@@ -24,6 +26,7 @@ from apps.tokens import kinds
 
 from . import providers, services
 from .models import Connection, ConnectionGrant
+from .problems import problem_for
 from .schemas import AccessTokenOut, ConnectionOut, ConnectionsOut, ProviderOut
 
 router = Router(auth=session_auth, tags=["connections"])
@@ -38,7 +41,9 @@ def _provider_rows() -> list[ProviderOut]:
 
 def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
     return ConnectionOut(
-        id=conn.pk, provider=conn.provider, title=providers.get(conn.provider).title,
+        id=conn.pk, provider=conn.provider,
+        # A row for a provider no longer registered still lists (and can be disconnected).
+        title=getattr(providers.ALL.get(conn.provider), "title", conn.provider),
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
@@ -56,9 +61,9 @@ def _connect_url(request: HttpRequest, provider: str) -> str:
     return request.build_absolute_uri(reverse("connections_start", args=[provider]))
 
 
-def _check_provider(provider: str) -> None:
+def _provider_or_404(provider: str) -> providers.Provider:
     try:
-        providers.get(provider)
+        return providers.get(provider)
     except providers.UnknownProvider:
         raise HttpError(404, "unknown provider") from None
 
@@ -172,8 +177,7 @@ def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_
     except PermissionDenied as exc:
         raise HttpError(403, str(exc)) from None
     except services.ConnectionError as exc:
-        raise ProblemError(409, "Cannot share this connection", detail=str(exc),
-                           members={"error": exc.code}) from None
+        raise problem_for(exc, title=providers.get(conn.provider).title, owner=f"{slug}'s") from None
     return Status(204, None)
 
 
@@ -220,38 +224,27 @@ def my_connection_token(request: HttpRequest, provider: str, refresh: bool = Fal
     command line. Needs a personal access token sent as a bearer: a browser
     session, an MCP call, an OAuth connector's token and a conversation's caller
     token are all refused (403 `token_route_needs_pat`), so neither a stolen
-    cookie nor a model holding my token can pull a Salesforce token. 409 when I
+    cookie nor a model holding my token can pull a provider token. 409 when I
     have not connected, or must reconnect (`connect_url`, an absolute URL, says
     where). `?refresh=true` forces a new token even when the cached one looks
-    fresh (for a CLI whose token Salesforce already rejected)."""
+    fresh (for a CLI whose token the provider already rejected)."""
     if not _plain_pat(request):
         raise ProblemError(403, "A personal access token is required",
                            detail="Use the CLI (`canopy login`) to fetch your own token.",
                            members={"error": "token_route_needs_pat"})
-    _check_provider(provider)
-    url = _connect_url(request, provider)
-    rows = list(services.connections_for(("user", request.user.pk)).filter(provider=provider))
-    if not rows:
-        raise ProblemError(409, "Not connected", detail=f"You have not connected {provider}.",
-                           members={"error": "not_connected", "connect_url": url})
-    if len(rows) > 1:
-        raise ProblemError(409, "More than one account connected",
-                           detail="Disconnect all but one; this route returns a single token.",
-                           members={"error": "ambiguous", "connect_url": url,
-                                    "accounts": [c.account_label for c in rows]})
+    p = _provider_or_404(provider)
     # No outer transaction: a refresh rejection stamps the row, and that stamp
-    # must survive the exception we turn into a 409 below.
+    # must survive the exception turned into a 409 below.
     try:
-        token = services.access_token_for(rows[0], refresh=refresh)
-    except services.NotConfigured:
-        raise ProblemError(409, "Not set up", detail=f"{provider} is not set up on this deployment.",
-                           members={"error": "not_configured"}) from None
-    except services.ReconnectRequired:
-        raise ProblemError(409, "Reconnect required", detail=f"Your {provider} connection no longer works.",
-                           members={"error": "reconnect_required", "connect_url": url}) from None
+        conn = services.connection_for_person(request.user, provider)
+        token = services.issue_token(conn, to="cli", by=request.user, refresh=refresh)
     except services.ConnectionError as exc:
-        if exc.code == "provider_unavailable":
-            raise ProblemError(503, "Provider unavailable", detail=f"{provider} could not be reached.") from None
-        raise ProblemError(502, "Provider error", detail=f"{provider} refused the request.") from None
+        members = {}
+        if exc.code in ("not_connected", "reconnect_required", "ambiguous"):
+            members["connect_url"] = _connect_url(request, provider)
+        if exc.code == "ambiguous":
+            members["accounts"] = [c.account_label for c in
+                                   services.connections_for(("user", request.user.pk)).filter(provider=provider)]
+        raise problem_for(exc, title=p.title, owner="Your", **members) from None
     return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
                           expires_at=token.expires_at, account_label=token.account_label)

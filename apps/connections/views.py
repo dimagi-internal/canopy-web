@@ -8,10 +8,11 @@ are not in `PUBLIC_PATH_PREFIXES`.
 needs the caller to be an admin of it. That is checked at START and again at
 CALLBACK, because the callback may arrive minutes later and admin can be
 revoked in between; a revoked admin must not be able to finish attaching a
-Salesforce login to the agent. An agent's start is a POST only (CSRF-checked):
-a GET link could otherwise be used to make an admin's browser attach whatever
-Salesforce login it holds to the agent. Salesforce is also told to ask for a
-login (`prompt=login`), so the account is chosen, not inherited.
+login to the agent. An agent's start is a POST only (CSRF-checked): a GET link
+could otherwise be used to make an admin's browser attach whatever provider
+login it holds to the agent. The provider is also asked to show a login where
+it supports one (`Provider.authorize_params(for_agent=True)`; Salesforce:
+`prompt=login consent`), so the account is chosen, not inherited.
 
 A person's flow is checked at callback too: the user who started it must be the
 one finishing it (the session is the same browser, but it may have changed
@@ -22,7 +23,6 @@ The browser always lands back on a same-site `return_to` with
 """
 from __future__ import annotations
 
-import logging
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from django.contrib.auth.decorators import login_required
@@ -40,8 +40,6 @@ from django.views.decorators.http import require_http_methods
 from apps.agents.models import Agent
 
 from . import providers, services
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_RETURN = "/settings"
 
@@ -107,13 +105,6 @@ def connections_start(request: HttpRequest, provider: str) -> HttpResponse:
     return HttpResponseRedirect(url)
 
 
-def _spend(request: HttpRequest, state: str) -> None:
-    """Drop one parked flow from the session without completing it."""
-    request.session[services.SESSION_KEY] = {
-        k: v for k, v in request.session.get(services.SESSION_KEY, {}).items() if k != state
-    }
-
-
 @login_required
 @require_http_methods(["GET"])
 def connections_callback(request: HttpRequest, provider: str) -> HttpResponse:
@@ -130,23 +121,20 @@ def connections_callback(request: HttpRequest, provider: str) -> HttpResponse:
     if parked.get("owner_kind") == "agent":
         agent = Agent.objects.filter(pk=parked.get("owner_id")).first()
         if agent is not None and not agent.is_admin(request.user):
-            _spend(request, state)  # nothing exchanged, nothing stored
+            services.spend(request.session, state)  # nothing exchanged, nothing stored
             return _land(request, return_to, provider, "error", "forbidden")
     elif parked.get("owner_id") != request.user.pk:
-        _spend(request, state)
+        services.spend(request.session, state)
         return _land(request, return_to, provider, "error", "forbidden")
 
     if request.GET.get("error"):  # the user declined, or the provider refused
-        _spend(request, state)
+        services.spend(request.session, state)
         return _land(request, return_to, provider, "error", "access_denied"
                      if request.GET["error"] == "access_denied" else "provider_error")
 
     try:
         services.complete(request.session, provider=provider, code=request.GET.get("code") or "",
                           state=state, redirect_uri=_redirect_uri(request, provider), by=request.user)
-    except services.NotConfigured:
-        return _land(request, return_to, provider, "error", "not_configured")
-    except services.ConnectionError as e:
-        logger.warning("connections callback failed provider=%s code=%s", provider, e.code)
+    except services.ConnectionError as e:  # the service logs a provider failure itself
         return _land(request, return_to, provider, "error", e.code)
     return _land(request, return_to, provider, "connected")

@@ -87,7 +87,7 @@ class FakeSF:
 
     def __enter__(self):
         self._p = mock.patch.multiple(
-            "apps.connections.providers.salesforce.requests", post=self.post, get=self.get,
+            "apps.connections.providers.base.requests", post=self.post, get=self.get,
         )
         self._p.start()
         return self

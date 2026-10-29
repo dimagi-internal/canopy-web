@@ -251,30 +251,30 @@ def test_complete_for_agent_owner(user, eva):
 
 # ---- identity host check (the bearer token goes only to Salesforce) ----------
 
-@pytest.mark.parametrize("raw_id", [
+@pytest.mark.parametrize("id_url", [
     "http://login.salesforce.com/id/00D/005",           # not https
     "https://evil.example/id/00D/005",                   # foreign host
     "https://salesforce.com.evil.example/id/00D/005",   # suffix trick
     "https://evilsalesforce.com/id/00D/005",             # no dot boundary
     "",
 ])
-def test_identity_refuses_non_salesforce_host(raw_id):
+def test_identity_refuses_non_salesforce_host(id_url):
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
-                          instance_url="", raw_id=raw_id)
+                          instance_url="", raw={"id": id_url})
     with FakeSF() as fake, pytest.raises(providers.ProviderError):
         providers.get("salesforce").identity(token)
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("raw_id", [
+@pytest.mark.parametrize("id_url", [
     "https://login.salesforce.com/id/00D/005",
     "https://test.salesforce.com/id/00D/005",
     "https://dimagi.my.salesforce.com/id/00D/005",
     "https://dimagi--sb.sandbox.my.force.com/id/00D/005",
 ])
-def test_identity_allows_salesforce_hosts(raw_id):
+def test_identity_allows_salesforce_hosts(id_url):
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
-                          instance_url="", raw_id=raw_id)
+                          instance_url="", raw={"id": id_url})
     with FakeSF():
         ident = providers.get("salesforce").identity(token)
     assert ident.account_id == "00Dorg/005user"
@@ -283,7 +283,7 @@ def test_identity_allows_salesforce_hosts(raw_id):
 def test_identity_allows_configured_login_host(settings):
     settings.SALESFORCE_LOGIN_URL = "https://sso.dimagi.example"
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
-                          instance_url="", raw_id="https://sso.dimagi.example/id/00D/005")
+                          instance_url="", raw={"id": "https://sso.dimagi.example/id/00D/005"})
     with FakeSF():
         assert providers.get("salesforce").identity(token).label == "jj@dimagi.com"
 
@@ -489,10 +489,10 @@ def test_no_token_in_event_payloads(user, eva, echo):
 def test_person_connection_is_logged_not_evented(user, caplog):
     caplog.set_level(logging.INFO, logger="apps.connections.services")
     conn = _connect({}, ("user", user.pk), user)
-    services.access_token_for(conn)  # cached
+    services.issue_token(conn, to="cli", by=user)  # cached
     Connection.objects.filter(pk=conn.pk).update(access_token_enc="", access_token_expires_at=None)
     with FakeSF(token=[_resp(body=_token_body(access_token="00D!second", refresh_token="5Aep_second"))]):
-        services.access_token_for(conn)  # refreshed
+        services.issue_token(conn, to="cli", by=user)  # refreshed
     with FakeSF():
         services.disconnect(conn, by=user)
 
@@ -502,9 +502,9 @@ def test_person_connection_is_logged_not_evented(user, caplog):
     assert kinds == ["connections.connected", "connections.token_issued", "connections.token_issued",
                      "connections.disconnected"]
     for m in lines:
-        assert "provider=salesforce" in m and "owner=jj@dimagi.com" in m
-        assert "account_label=jj@dimagi.com" in m
-    assert "by=jj@dimagi.com" in lines[0] and "by=jj@dimagi.com" in lines[-1]
+        assert "provider=salesforce" in m and f"owner=user:{user.pk}" in m
+        assert "account_label=jj@dimagi.com" in m and "by=jj@dimagi.com" in m
+    assert "refreshed=false" in lines[1] and "refreshed=true" in lines[2]
     blob = caplog.text
     for secret in ("00D!access_1", "5Aep_refresh_1", "00D!second", "5Aep_second"):
         assert secret not in blob

@@ -320,7 +320,7 @@ def test_token_issue_is_logged_without_the_token(user, caplog):
     _stored({"user": user}, user)
     _token(user)
     lines = [r.getMessage() for r in caplog.records if "connections.token_issued" in r.getMessage()]
-    assert len(lines) == 1 and "owner=jj@dimagi.com" in lines[0]
+    assert len(lines) == 1 and f"owner=user:{user.pk}" in lines[0] and "to=cli" in lines[0]
     assert "00D!cached" not in caplog.text
     assert not Event.objects.filter(kind="connections.token_issued").exists()
 
