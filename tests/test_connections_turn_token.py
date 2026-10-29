@@ -177,7 +177,6 @@ def test_runner_that_no_longer_may_hold_the_agent_404(echo, runner, operator):
 
 
 def test_ambiguous_409(echo, runner, operator):
-    _stored({"agent": echo}, operator)
     first = _stored({"agent": echo}, operator)
     Connection.objects.create(
         provider="salesforce", agent=echo, account_id="00Dorg/005other", account_label="other@dimagi.com",
