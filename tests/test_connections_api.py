@@ -20,8 +20,7 @@ from apps.events.models import Event
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-
-from .test_connections_services import REVOKE_URL, SF, FakeSF, _resp, _stored, _token_body
+from tests.fixtures.connections import REVOKE_URL, SF, FakeSF, _resp, _stored, _token_body
 
 pytestmark = pytest.mark.django_db
 

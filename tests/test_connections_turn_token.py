@@ -20,8 +20,7 @@ from apps.connections.models import Connection, ConnectionGrant
 from apps.events.models import Event
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-
-from .test_connections_services import SF, FakeSF, _resp, _stored
+from tests.fixtures.connections import SF, FakeSF, _resp, _stored
 
 pytestmark = pytest.mark.django_db
 
@@ -146,7 +145,7 @@ def test_reconnect_required_409(echo, runner, operator):
 
 def test_expired_cache_refreshes(echo, runner, operator):
     _stored({"agent": echo}, operator, expires_in=timedelta(seconds=-1))
-    from .test_connections_services import _token_body
+    from tests.fixtures.connections import _token_body
     with FakeSF(token=[_resp(body=_token_body(access_token="00D!fresh"))]):
         r = _ask(runner, _turn(echo, runner))
     assert r.status_code == 200 and r.json()["access_token"] == "00D!fresh"
@@ -155,7 +154,7 @@ def test_expired_cache_refreshes(echo, runner, operator):
 def test_min_life_seconds_is_honoured(echo, runner, operator):
     """10 minutes left: enough by default, not for a runner asking for 900 s."""
     _stored({"agent": echo}, operator, expires_in=timedelta(minutes=10))
-    from .test_connections_services import _token_body
+    from tests.fixtures.connections import _token_body
     turn = _turn(echo, runner)
     with FakeSF(token=[_resp(body=_token_body(access_token="00D!fresh"))]) as fake:
         assert _ask(runner, turn).json()["access_token"] == "00D!cached"
@@ -172,7 +171,7 @@ def test_min_life_seconds_is_bounded(echo, runner, operator, bad):
 
 def test_refresh_forces_a_new_token(echo, runner, operator):
     _stored({"agent": echo}, operator)
-    from .test_connections_services import _token_body
+    from tests.fixtures.connections import _token_body
     with FakeSF(token=[_resp(body=_token_body(access_token="00D!forced"))]):
         r = _ask(runner, _turn(echo, runner), refresh=True)
     assert r.status_code == 200 and r.json()["access_token"] == "00D!forced"

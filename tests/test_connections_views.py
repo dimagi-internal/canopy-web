@@ -17,8 +17,7 @@ from django.urls import reverse
 from apps.agents.models import Agent
 from apps.connections.models import Connection
 from apps.workspaces.models import Workspace, WorkspaceMembership
-
-from .test_connections_services import SF, FakeSF
+from tests.fixtures.connections import SF, FakeSF
 
 pytestmark = pytest.mark.django_db
 

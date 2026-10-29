@@ -135,9 +135,12 @@ def test_credential_routes_are_excluded_or_argued(db):
     hands out or acts on a credential: as a tool its answer lands in a model's
     context. So each is excluded, or named in `CREDENTIAL_ROUTES_ON_MCP` with why
     that is harmless — a new one cannot slip onto MCP by default."""
-    from tests.test_every_route_declares_its_gate import declared_gates
+    from apps.api import route_gates
 
-    gates = declared_gates()
+    api.get_openapi_schema()  # binds the routers
+    gates = {op.operation_id or api.get_openapi_operation_id(op): route_gates.gate_of(op.view_func)
+             for bound in api._get_bound_routers()
+             for path_view in bound.path_operations.values() for op in path_view.operations}
     exposed = []
     for path, item in _schema()["paths"].items():
         for method, op in item.items():
