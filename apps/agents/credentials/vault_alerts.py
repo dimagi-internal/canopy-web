@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 from html import escape
 
 from django.conf import settings
@@ -110,11 +111,12 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
             if check:
                 raised.append(raise_alert(
                     agent, "no-turn-check", user=user, runner=runner, refs=sorted(handed),
+                    request=request,
                     detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn, "
                            f"labelled as a verification check: {' '.join(check.split())[:200]}"))
             else:
                 raised.append(raise_alert(
-                    agent, "no-turn", user=user, runner=runner,
+                    agent, "no-turn", user=user, runner=runner, request=request,
                     detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn "
                            "(no X-Canopy-Turn-Id)",
                     refs=sorted(handed)))
@@ -127,13 +129,14 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
         if undeclared:
             raised.append(raise_alert(
                 agent, "undeclared-ref", user=user, runner=runner, turn_id=turn_id,
+                request=request,
                 detail=f"{_who(user)} asked for refs {agent.slug} does not declare: "
                        + ", ".join(undeclared)[:300],
                 refs=undeclared))
         count = _count_read(agent)
         if count > _burst_limit():
             raised.append(raise_alert(
-                agent, "burst", user=user, runner=runner, turn_id=turn_id,
+                agent, "burst", user=user, runner=runner, turn_id=turn_id, request=request,
                 detail=f"{count} reads of {agent.slug}'s secrets in under 5 minutes "
                        f"(limit {_burst_limit()})"))
     except Exception:  # noqa: BLE001 - an alert hiccup must not deny a runner its secrets
@@ -147,7 +150,7 @@ def device_proof_refused(agent, request, *, reason: str, runner=None):
         if not _applies(agent):
             return None
         return raise_alert(
-            agent, "device-proof", user=request.user, runner=runner,
+            agent, "device-proof", user=request.user, runner=runner, request=request,
             turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
             detail=(f"resolve by {_who(request.user)}"
                     + (f" on {runner.name}" if runner is not None else "")
@@ -199,12 +202,20 @@ def _count_read(agent) -> int:
         return 1
 
 
+#: Repeats kept per alert row: enough to see a pattern inside the hour, bounded.
+MAX_REPEATS = 20
+
+
 def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=None,
-                turn_id: str = ""):
+                turn_id: str = "", request=None):
     """Record (and, unless one of this kind is open this hour, notify) an alert.
-    Returns the new row, or None when it only counted against an open one."""
+    Returns the new row, or None when it only counted against an open one.
+
+    With `request`, who asked is kept (`request_context`) — on the row the first time,
+    and appended to `repeats` for each repeat the debounce swallows."""
 
     now = timezone.now()
+    context = request_context(request, turn_id) if request is not None else {}
     with transaction.atomic():
         # Serialise per agent so two concurrent reads cannot both open an alert.
         Agent.objects.select_for_update().filter(pk=agent.pk).first()
@@ -212,13 +223,16 @@ def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=Non
                  .filter(agent=agent, kind=kind, created_at__gte=now - DEBOUNCE)
                  .order_by("-created_at").first())
         if open_ is not None:
+            repeats = list(open_.repeats or [])
+            if len(repeats) < MAX_REPEATS:
+                repeats.append({"at": now.isoformat(), "detail": detail[:300], **context})
             AgentCredentialAlert.objects.filter(pk=open_.pk).update(
-                occurrences=F("occurrences") + 1, last_seen_at=now)
+                occurrences=F("occurrences") + 1, last_seen_at=now, repeats=repeats)
             return None
         alert = AgentCredentialAlert.objects.create(
             agent=agent, kind=kind, detail=detail[:500], refs=list(refs)[:100],
             user=user if getattr(user, "is_authenticated", False) else None,
-            runner=runner, turn_id=(turn_id or "")[:120],
+            runner=runner, turn_id=(turn_id or "")[:120], context=context,
         )
     alert.notified = _notify(agent, alert)
     AgentCredentialAlert.objects.filter(pk=alert.pk).update(notified=alert.notified)
@@ -228,6 +242,91 @@ def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=Non
 
 def _who(user) -> str:
     return getattr(user, "email", "") or "someone"
+
+
+#: Request headers worth keeping on an alert — identity, never a value. The canopy CLI
+#: sends the first four on every call (`orchestrator/provenance.py`); `proof_missing` is
+#: its reason for sending no device proof (`device_key.proof_headers`).
+_CONTEXT_HEADERS = (
+    ("client", "HTTP_X_CANOPY_CLIENT"),
+    ("user_agent", "HTTP_USER_AGENT"),
+    ("parent_session", "HTTP_X_CANOPY_PARENT_SESSION"),
+    ("claude_session", "HTTP_X_CANOPY_CLAUDE_SESSION"),
+    ("proof_missing", "HTTP_X_CANOPY_PROOF_MISSING"),
+    ("purpose", "HTTP_X_CANOPY_READ_PURPOSE"),
+)
+
+
+def request_context(request, turn_id: str = "") -> dict:
+    """Who asked, as far as the request says and canopy-web can resolve: the headers
+    above plus what the named turn IS (`turn_summary`). Best-effort, never raises."""
+    out: dict = {}
+    try:
+        for key, header in _CONTEXT_HEADERS:
+            value = " ".join(str(request.META.get(header, "")).split())[:200]
+            if value:
+                out[key] = value
+        turn = turn_summary(turn_id or request.META.get("HTTP_X_CANOPY_TURN_ID", ""))
+        if turn:
+            out["turn"] = turn
+    except Exception:  # noqa: BLE001 — context is an addition to the alert, never its failure
+        logger.exception("vault alert context failed")
+    return out
+
+
+def turn_summary(turn_id: str) -> dict:
+    """What a turn id names, for the agent's admins: its agent (or project), origin,
+    status, runner, chat session and who started it — never its prompt or transcript.
+    {"id", "found": False} when the id names no turn (a mistyped or forged header is
+    itself worth seeing)."""
+    raw = (turn_id or "").strip()
+    if not raw:
+        return {}
+    from apps.harness.models import Turn  # noqa: PLC0415 — agents→harness only here
+
+    try:
+        tid = uuid.UUID(raw)
+    except ValueError:
+        return {"id": raw[:120], "found": False}
+    t = (Turn.objects.select_related("agent", "claimed_by", "initiator_user", "chat_session")
+         .filter(pk=tid).first())
+    if t is None:
+        return {"id": raw, "found": False}
+    out = {"id": raw, "found": True, "origin": t.origin, "status": t.status,
+           "agent": t.agent.slug if t.agent_id else "",
+           "project": getattr(t, "project", "") or "",
+           "runner": t.claimed_by.name if t.claimed_by_id else "",
+           "started_by": t.initiator_user.email if t.initiator_user_id else "",
+           "created_at": t.created_at.isoformat() if t.created_at else ""}
+    if t.chat_session_id:
+        out["chat_session"] = str(t.chat_session_id)
+    return out
+
+
+def context_lines(context: dict) -> list[str]:
+    """`context` as short plain lines for the email and the alert list."""
+    lines = []
+    turn = context.get("turn") or {}
+    if turn.get("found"):
+        what = turn.get("agent") or turn.get("project") or "a session"
+        bits = [f"{what}'s {turn.get('origin') or ''} turn".replace("  ", " ")]
+        if turn.get("started_by"):
+            bits.append(f"started by {turn['started_by']}")
+        if turn.get("runner"):
+            bits.append(f"on {turn['runner']}")
+        if turn.get("chat_session"):
+            bits.append(f"chat session {turn['chat_session']}")
+        lines.append(f"Turn {turn['id']}: " + ", ".join(bits))
+    elif turn.get("id"):
+        lines.append(f"Turn {turn['id']}: no such turn on canopy-web")
+    if context.get("proof_missing"):
+        lines.append(f"Why the caller sent no proof: {context['proof_missing']}")
+    client = context.get("user_agent") or context.get("client")
+    if client:
+        lines.append(f"Client: {client}")
+    if context.get("claude_session"):
+        lines.append(f"Claude session: {context['claude_session']}")
+    return lines
 
 
 def recipients(agent) -> list:
@@ -303,11 +402,14 @@ def _notify(agent, alert) -> dict:
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
         subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
         why = _WHY.get(alert.kind, "")
-        text = (f"{alert.detail}\n\n" + (f"{why}\n\n" if why else "")
+        who = context_lines(alert.context or {})
+        text = (f"{alert.detail}\n\n" + ("".join(f"{line}\n" for line in who) + "\n" if who else "")
+                + (f"{why}\n\n" if why else "")
                 + f"{act}: {link}\n\n"
                 f"At most one alert of this kind per agent per hour. You are getting this "
                 f"because you own {agent.slug} on Canopy.\n")
         html = (f"<p>{escape(alert.detail)}</p>"
+                + ("<p>" + "<br>".join(escape(line) for line in who) + "</p>" if who else "")
                 + (f"<p>{escape(why)}</p>" if why else "")
                 + f'<p><a href="{escape(link)}">{escape(act)}</a></p>'
                 f"<p style=\"color:#78716c;font-size:13px\">At most one alert of "
@@ -365,6 +467,7 @@ def alerts_for(agent, *, limit: int = 50) -> list[dict]:
         "runner": str(a.runner_id) if a.runner_id else "",
         "runner_name": a.runner.name if a.runner_id else "",
         "turn_id": a.turn_id, "occurrences": a.occurrences,
+        "context": a.context or {}, "repeats": list(a.repeats or []),
         "notified": bool((a.notified or {}).get("emailed") or (a.notified or {}).get("pushed")),
         "created_at": a.created_at, "last_seen_at": a.last_seen_at,
     } for a in qs]

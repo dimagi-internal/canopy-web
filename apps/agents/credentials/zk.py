@@ -380,6 +380,7 @@ def device_wrap_missing(agent, request, device_key) -> None:
     try:
         vault_alerts.raise_alert(
             agent, "zk-wrap-missing", user=request.user, runner=device_key.runner,
+            request=request,
             turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
             detail=(f"{device_key.runner.name} ({device_key.label or device_key.kind}) proved itself "
                     f"but holds no vault-key wrap at kv {agent.zk_kv}"

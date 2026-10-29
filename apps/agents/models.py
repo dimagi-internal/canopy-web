@@ -692,6 +692,15 @@ class AgentCredentialAlert(models.Model):
         "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
     turn_id = models.CharField(max_length=120, blank=True, default="")
+    #: Who asked, as the request said and canopy-web resolved it — enough to name the
+    #: process without SSH-ing to the box (2026-10-28: an alert named a turn id its admin
+    #: could not open, and nothing else): the client and User-Agent, the session headers,
+    #: the CLI's reason for sending no device proof, and what the named turn is (agent,
+    #: origin, chat session, who started it). Never a value. `vault_alerts.request_context`.
+    context = models.JSONField(default=dict, blank=True)
+    #: The same context for each repeat inside the hour, newest last (capped), so a
+    #: debounced repeat is still traceable instead of only a count.
+    repeats = models.JSONField(default=list, blank=True)
     #: How many times it happened inside this row's hour (1 = just this one).
     occurrences = models.PositiveIntegerField(default=1)
     #: What the notification did: {"emailed": [...], "pushed": n, ...}.

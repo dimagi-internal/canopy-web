@@ -2048,6 +2048,12 @@ class AgentCredentialAlertOut(StrictModel):
     runner_name: str = ""
     turn_id: str = ""
     occurrences: int = 1
+    #: Who asked: client, User-Agent, session headers, the caller's reason for sending
+    #: no device proof, and what `turn_id` names (`turn`: agent, origin, status,
+    #: runner, chat session, who started it). Never a value.
+    context: dict = {}
+    #: The same, with `at` and `detail`, for each repeat inside the hour (capped).
+    repeats: list[dict] = []
     #: The owner was emailed or pushed (false: delivery is off, or it failed).
     notified: bool = False
     created_at: dt.datetime

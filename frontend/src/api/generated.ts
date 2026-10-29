@@ -27940,6 +27940,20 @@ export interface components {
              */
             readonly occurrences: number;
             /**
+             * Context
+             * @default {}
+             */
+            readonly context: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Repeats
+             * @default []
+             */
+            readonly repeats: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
              * Notified
              * @default false
              */
