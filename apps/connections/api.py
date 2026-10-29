@@ -130,9 +130,10 @@ def _grant_target(request: HttpRequest, slug: str, connection_id: int, other_slu
 def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
     """Let another agent act through this agent's connection. You must
     administer both agents. Sharing again is harmless."""
+    conn, other = _grant_target(request, slug, connection_id, other_slug)
+    # After the admin check: a non-admin gets 404/403, never a step-up prompt.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    conn, other = _grant_target(request, slug, connection_id, other_slug)
     try:
         services.grant(conn, other, by=request.user)
     except PermissionDenied as exc:
@@ -148,9 +149,10 @@ def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_
 @gate("agent-admin", setting=True, step_up=True)
 def revoke_connection_grant(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
     """Take the other agent's access away. An admin of either agent may."""
+    conn, other = _grant_target(request, slug, connection_id, other_slug)
+    # After the admin check: a non-admin gets 404/403, never a step-up prompt.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    conn, other = _grant_target(request, slug, connection_id, other_slug)
     g = (ConnectionGrant.objects.filter(connection=conn, agent=other)
          .select_related("connection__agent", "agent").first())
     if g is not None:
