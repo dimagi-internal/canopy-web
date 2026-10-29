@@ -155,9 +155,9 @@ def test_agent_routes_need_admin(user, other, ws, eva):
     c = Client()
     c.force_login(other)
     grant_step_up(c)
-    assert c.get("/api/agents/eva/connections").status_code in (403, 404)
+    assert c.get("/api/agents/eva/connections").status_code == 403
     with FakeSF():
-        assert c.delete(f"/api/agents/eva/connections/{conn.pk}").status_code in (403, 404)
+        assert c.delete(f"/api/agents/eva/connections/{conn.pk}").status_code == 403
     assert Connection.objects.filter(pk=conn.pk).exists()
 
 
@@ -370,6 +370,39 @@ def test_junk_bearer_on_credentials_route_still_needs_step_up(user, eva):
     resp = c.put("/api/agents/eva/credentials", data={"values": {"x": "y"}},
                  content_type="application/json", **JUNK)
     assert resp.status_code == 403 and resp.json().get("error") == "step_up_required"
+
+
+def test_cookie_plus_a_valid_pat_is_a_browser_and_needs_step_up(user, eva):
+    """Pinned behaviour after the is_machine fix (I6): when a session cookie
+    already signed the request in, the bearer door does not even look the PAT up
+    (`auth_method` stays unset), so the request is a BROWSER — a step-up route
+    asks for a passkey rather than letting the PAT skip it."""
+    conn = _stored({"agent": eva}, user)
+    c = Client()
+    c.force_login(user)  # no step-up
+    with FakeSF():
+        resp = c.delete(f"/api/agents/eva/connections/{conn.pk}", **_pat(user))
+    assert resp.status_code == 403 and resp.json().get("error") == "step_up_required"
+    assert Connection.objects.filter(pk=conn.pk).exists()
+
+
+def test_embed_cookie_plus_delegated_token_is_a_browser_and_needs_step_up(user, eva):
+    """Pinned behaviour after the is_machine fix (I6), for the embed path: canopy
+    embedding its own widget is same-origin, so the frame's XHRs carry the session
+    cookie AND the delegated token. Identity (and `auth_method`) stay with the
+    session, so the request is a browser and a step-up route still asks."""
+    from apps.tokens.models import AppCredential, DelegatedToken
+    from tests.site_tenant import host_workspace
+
+    app = AppCredential.create_credential(name="canopy-web", created_by=user, workspace=host_workspace())
+    raw, _ = DelegatedToken.issue(app=app, user=user, ttl_seconds=600)
+    conn = _stored({"agent": eva}, user)
+    c = Client()
+    c.force_login(user)  # no step-up
+    with FakeSF():
+        resp = c.delete(f"/api/agents/eva/connections/{conn.pk}", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert resp.status_code == 403 and resp.json().get("error") == "step_up_required"
+    assert Connection.objects.filter(pk=conn.pk).exists()
 
 
 def test_a_real_pat_is_a_machine(user):
