@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import timedelta
 
 from django.http import HttpRequest
 from ninja import Router, Schema
+from pydantic import Field
 from ninja.errors import HttpError
 
 from apps.agents.credentials import delegations
@@ -33,6 +35,15 @@ router = Router(tags=["connections"])
 
 class TurnConnectionTokenIn(Schema):
     provider: str
+    min_life_seconds: int = Field(
+        default=300, ge=0, le=3600,
+        description="Hand out the cached token only if it lives at least this much longer; "
+                    "else refresh first.",
+    )
+    refresh: bool = Field(
+        default=False,
+        description="Refresh even if the cached token looks fresh (Salesforce already rejected it).",
+    )
 
 
 @router.post("/runners/{runner_id}/turns/{turn_id}/connection-token", response=AccessTokenOut,
@@ -45,7 +56,9 @@ def turn_connection_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: u
     own, else one granted to it — never the person who started the turn. 404 unless
     this runner holds the turn, and always for a caller's turn (one confined to a
     capability). 409 with `error` set to `no_agent`, `not_connected`, `ambiguous`,
-    `reconnect_required` or `not_configured`; 502/503 when the provider fails."""
+    `reconnect_required` or `not_configured`; 502/503 when the provider fails.
+    `min_life_seconds` (default 300) is how long the token must still live;
+    `refresh` forces a new one."""
     try:
         providers.get(payload.provider)
     except providers.UnknownProvider:
@@ -81,7 +94,8 @@ def turn_connection_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: u
     # No outer transaction: a refresh rejection stamps the row, and that stamp
     # must survive the exception turned into a 409 below.
     try:
-        token = services.access_token_for(conn)
+        token = services.access_token_for(conn, min_life=timedelta(seconds=payload.min_life_seconds),
+                                          refresh=payload.refresh)
     except services.NotConfigured:
         raise ProblemError(409, "Not set up", detail=f"{provider} is not set up on this deployment.",
                            members={"error": "not_configured"}) from None

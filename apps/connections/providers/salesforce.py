@@ -10,9 +10,16 @@ from django.utils import timezone
 
 from .base import HTTP_TIMEOUT, Identity, ProviderError, ProviderUnavailable, TokenResponse
 
-# Salesforce token responses carry no `expires_in`; the org's session policy
-# decides (default 2h). Assume 2h and let the caller refresh on a 401.
-ACCESS_TOKEN_LIFETIME = timedelta(hours=2)
+
+
+def access_token_lifetime() -> timedelta:
+    """How long a fresh access token is assumed to live.
+
+    Salesforce token responses carry no `expires_in`; the Connected App's session
+    timeout decides. `SALESFORCE_ACCESS_TOKEN_SECONDS` must be set to it (never
+    longer), so a cached token is not handed out after Salesforce has killed it.
+    A caller that still meets a 401 asks for `refresh`."""
+    return timedelta(seconds=settings.SALESFORCE_ACCESS_TOKEN_SECONDS)
 
 # Where an identity URL may point. The URL comes back in the token response and
 # the access token is sent to it as a bearer, so it is checked rather than trusted.
@@ -98,7 +105,7 @@ class SalesforceProvider:
         return TokenResponse(
             access_token=body["access_token"],
             refresh_token=body.get("refresh_token") or fallback_refresh,
-            expires_at=timezone.now() + ACCESS_TOKEN_LIFETIME,
+            expires_at=timezone.now() + access_token_lifetime(),
             instance_url=body.get("instance_url", ""),
             raw_id=body.get("id", ""),
         )

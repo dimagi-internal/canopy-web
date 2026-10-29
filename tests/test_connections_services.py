@@ -245,7 +245,7 @@ def test_complete_exchanges_with_verifier_and_stores_encrypted(user):
     assert "5Aep_refresh_1" not in conn.refresh_token_enc
     assert decrypt_secret(conn.refresh_token_enc) == "5Aep_refresh_1"
     assert decrypt_secret(conn.access_token_enc) == "00D!access_1"
-    assert conn.access_token_expires_at > timezone.now() + timedelta(minutes=100)
+    assert conn.access_token_expires_at > timezone.now() + timedelta(minutes=29)
 
 
 def test_token_error_with_200_is_failure(user):
@@ -395,6 +395,35 @@ def test_token_inside_margin_is_refreshed(user):
     assert tok.token == "00D!access_1"
 
 
+def test_min_life_decides_whether_the_cache_is_enough(user):
+    """A token with 10 minutes left is enough by default (5 min margin) but not
+    for a caller that needs 15 (the runner's re-stage interval)."""
+    conn = _stored({"user": user}, user, expires_in=timedelta(minutes=10))
+    with FakeSF() as fake:
+        assert services.access_token_for(conn).token == "00D!cached"
+        assert fake.token_calls() == []
+        tok = services.access_token_for(conn, min_life=timedelta(seconds=900))
+    assert len(fake.token_calls()) == 1 and tok.token == "00D!access_1"
+
+
+def test_refresh_true_skips_a_fresh_cache(user):
+    conn = _stored({"user": user}, user, expires_in=timedelta(hours=1), refresh="5Aep_old")
+    fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!forced", refresh_token="5Aep_new"))])
+    with fake:
+        tok = services.access_token_for(conn, refresh=True)
+    assert len(fake.token_calls()) == 1 and tok.token == "00D!forced"
+    conn.refresh_from_db()
+    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_new"
+
+
+def test_access_token_lifetime_is_the_setting(user, settings):
+    settings.SALESFORCE_ACCESS_TOKEN_SECONDS = 600
+    conn = _stored({"user": user}, user, access="")
+    with FakeSF():
+        tok = services.access_token_for(conn)
+    assert timezone.now() + timedelta(minutes=9) < tok.expires_at <= timezone.now() + timedelta(minutes=10)
+
+
 def test_refresh_stores_rotated_refresh_token(user):
     conn = _stored({"user": user}, user, access="", refresh="5Aep_old")
     fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!new", refresh_token="5Aep_new"))])
@@ -403,7 +432,8 @@ def test_refresh_stores_rotated_refresh_token(user):
     _, _, data = fake.token_calls()[0]
     assert data["grant_type"] == "refresh_token" and data["refresh_token"] == "5Aep_old"
     assert tok.token == "00D!new"
-    assert tok.expires_at > timezone.now() + timedelta(minutes=100)
+    # SALESFORCE_ACCESS_TOKEN_SECONDS (default 1800): Salesforce sends no expires_in.
+    assert timezone.now() + timedelta(minutes=29) < tok.expires_at <= timezone.now() + timedelta(minutes=30)
     conn.refresh_from_db()
     assert decrypt_secret(conn.refresh_token_enc) == "5Aep_new"
     assert decrypt_secret(conn.access_token_enc) == "00D!new"
@@ -427,7 +457,7 @@ def test_refresh_inside_lock_rechecks_cache(user):
     real = services._cached_token
     seen = {"n": 0}
 
-    def racing(c):
+    def racing(c, min_life):
         seen["n"] += 1
         if seen["n"] == 1:
             # The pre-lock check finds nothing; meanwhile the other worker lands.
@@ -437,7 +467,7 @@ def test_refresh_inside_lock_rechecks_cache(user):
                 refresh_token_enc=encrypt_secret("5Aep_rotated"),
             )
             return ""
-        return real(c)
+        return real(c, min_life)
 
     with mock.patch.object(services, "_cached_token", side_effect=racing), FakeSF() as fake:
         tok = services.access_token_for(conn)

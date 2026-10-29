@@ -82,9 +82,9 @@ def _turn(agent, runner=None, status=Turn.CLAIMED, **kw):
                                claimed_by=runner, **kw)
 
 
-def _ask(runner, turn, provider="salesforce"):
+def _ask(runner, turn, provider="salesforce", **body):
     return Client().post(f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/connection-token",
-                         {"provider": provider}, content_type="application/json",
+                         {"provider": provider, **body}, content_type="application/json",
                          HTTP_AUTHORIZATION=f"Bearer {_bearer(runner)}")
 
 
@@ -150,6 +150,32 @@ def test_expired_cache_refreshes(echo, runner, operator):
     with FakeSF(token=[_resp(body=_token_body(access_token="00D!fresh"))]):
         r = _ask(runner, _turn(echo, runner))
     assert r.status_code == 200 and r.json()["access_token"] == "00D!fresh"
+
+
+def test_min_life_seconds_is_honoured(echo, runner, operator):
+    """10 minutes left: enough by default, not for a runner asking for 900 s."""
+    _stored({"agent": echo}, operator, expires_in=timedelta(minutes=10))
+    from .test_connections_services import _token_body
+    turn = _turn(echo, runner)
+    with FakeSF(token=[_resp(body=_token_body(access_token="00D!fresh"))]) as fake:
+        assert _ask(runner, turn).json()["access_token"] == "00D!cached"
+        r = _ask(runner, turn, min_life_seconds=900)
+    assert r.status_code == 200 and r.json()["access_token"] == "00D!fresh"
+    assert len(fake.token_calls()) == 1
+
+
+@pytest.mark.parametrize("bad", [-1, 3601])
+def test_min_life_seconds_is_bounded(echo, runner, operator, bad):
+    _stored({"agent": echo}, operator)
+    assert _ask(runner, _turn(echo, runner), min_life_seconds=bad).status_code == 422
+
+
+def test_refresh_forces_a_new_token(echo, runner, operator):
+    _stored({"agent": echo}, operator)
+    from .test_connections_services import _token_body
+    with FakeSF(token=[_resp(body=_token_body(access_token="00D!forced"))]):
+        r = _ask(runner, _turn(echo, runner), refresh=True)
+    assert r.status_code == 200 and r.json()["access_token"] == "00D!forced"
 
 
 def test_unknown_provider_404(echo, runner):

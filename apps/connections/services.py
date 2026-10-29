@@ -259,12 +259,12 @@ def complete(session, *, provider: str, code: str, state: str, redirect_uri: str
 
 # ---- using the grant ---------------------------------------------------------
 
-def _cached_token(conn: Connection) -> str:
-    """The row's access token if it is good for at least the margin longer, else
+def _cached_token(conn: Connection, min_life: timedelta) -> str:
+    """The row's access token if it is good for at least `min_life` longer, else
     "". An undecryptable value (a rotated key) counts as no cache."""
     if not (conn.access_token_enc and conn.access_token_expires_at):
         return ""
-    if conn.access_token_expires_at - ACCESS_TOKEN_MARGIN <= timezone.now():
+    if conn.access_token_expires_at - min_life <= timezone.now():
         return ""
     try:
         return decrypt_secret(conn.access_token_enc)
@@ -277,12 +277,20 @@ def _handout(conn: Connection, token: str) -> AccessToken:
                        expires_at=conn.access_token_expires_at, account_label=conn.account_label)
 
 
-def access_token_for(conn: Connection) -> AccessToken:
-    """A usable access token: the cached one while fresh, else refreshed under the row lock."""
+def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MARGIN,
+                     refresh: bool = False) -> AccessToken:
+    """A usable access token: the cached one while it has at least `min_life` left,
+    else refreshed under the row lock.
+
+    `min_life` is what the caller needs (a runner that re-stages every few minutes
+    asks for more than the default margin). `refresh` skips the cache entirely —
+    for a caller whose token Salesforce already rejected (a 401 before the assumed
+    expiry); it still refreshes under the lock, so it cannot race another refresh.
+    """
     conn = Connection.objects.get(pk=conn.pk)
     if conn.needs_reconnect:
         raise ReconnectRequired(f"reconnect {conn.provider}")
-    cached = _cached_token(conn)
+    cached = "" if refresh else _cached_token(conn, min_life)
     if cached:
         conn.last_used_at = timezone.now()
         Connection.objects.filter(pk=conn.pk).update(last_used_at=conn.last_used_at)
@@ -297,7 +305,7 @@ def access_token_for(conn: Connection) -> AccessToken:
         conn = Connection.objects.select_for_update().get(pk=conn.pk)
         if conn.needs_reconnect:
             raise ReconnectRequired(f"reconnect {conn.provider}")
-        cached = _cached_token(conn)
+        cached = "" if refresh else _cached_token(conn, min_life)
         if cached:
             conn.last_used_at = timezone.now()
             conn.save(update_fields=["last_used_at", "updated_at"])
@@ -381,8 +389,6 @@ def connection_for_agent(agent, provider: str) -> Connection:
     if len(granted) > 1:
         raise ConnectionError("ambiguous", f"{agent.slug} is granted more than one {provider} connection")
     raise NotConnected(f"{agent.slug} has no {provider} connection")
-
-
 
 
 def grant(conn: Connection, agent, *, by) -> ConnectionGrant:

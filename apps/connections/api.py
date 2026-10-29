@@ -50,8 +50,9 @@ def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
     )
 
 
-def _connect_url(provider: str) -> str:
-    return reverse("connections_start", args=[provider])
+def _connect_url(request: HttpRequest, provider: str) -> str:
+    # Absolute: the CLI prints it for a person to open, far from any page.
+    return request.build_absolute_uri(reverse("connections_start", args=[provider]))
 
 
 def _check_provider(provider: str) -> None:
@@ -197,19 +198,21 @@ def _plain_pat(request: HttpRequest) -> bool:
 @me_router.post("/{provider}/token", response=AccessTokenOut,
                 summary="A fresh access token for my own connection (CLI)")
 @gate("self", kind="ephemeral-credential", step_up="a person's own token for their own CLI; PAT only")
-def my_connection_token(request: HttpRequest, provider: str) -> AccessTokenOut:
+def my_connection_token(request: HttpRequest, provider: str, refresh: bool = False) -> AccessTokenOut:
     """Mint a short-lived access token for the account I connected, for my own
     command line. Needs a personal access token sent as a bearer: a browser
     session, an MCP call, an OAuth connector's token and a conversation's caller
     token are all refused (403 `token_route_needs_pat`), so neither a stolen
     cookie nor a model holding my token can pull a Salesforce token. 409 when I
-    have not connected, or must reconnect (`connect_url` says where)."""
+    have not connected, or must reconnect (`connect_url`, an absolute URL, says
+    where). `?refresh=true` forces a new token even when the cached one looks
+    fresh (for a CLI whose token Salesforce already rejected)."""
     if not _plain_pat(request):
         raise ProblemError(403, "A personal access token is required",
                            detail="Use the CLI (`canopy login`) to fetch your own token.",
                            members={"error": "token_route_needs_pat"})
     _check_provider(provider)
-    url = _connect_url(provider)
+    url = _connect_url(request, provider)
     rows = list(services.connections_for(("user", request.user.pk)).filter(provider=provider))
     if not rows:
         raise ProblemError(409, "Not connected", detail=f"You have not connected {provider}.",
@@ -222,7 +225,7 @@ def my_connection_token(request: HttpRequest, provider: str) -> AccessTokenOut:
     # No outer transaction: a refresh rejection stamps the row, and that stamp
     # must survive the exception we turn into a 409 below.
     try:
-        token = services.access_token_for(rows[0])
+        token = services.access_token_for(rows[0], refresh=refresh)
     except services.NotConfigured:
         raise ProblemError(409, "Not set up", detail=f"{provider} is not set up on this deployment.",
                            members={"error": "not_configured"}) from None

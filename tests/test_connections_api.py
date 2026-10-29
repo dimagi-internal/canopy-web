@@ -259,7 +259,7 @@ def test_token_not_connected_is_409_with_connect_url(user):
     resp = _token(user)
     assert resp.status_code == 409
     assert resp.json()["error"] == "not_connected"
-    assert resp.json()["connect_url"] == "/auth/connections/salesforce/start/"
+    assert resp.json()["connect_url"] == "http://testserver/auth/connections/salesforce/start/"
 
 
 def test_token_never_falls_back_to_an_agents_connection(user, eva):
@@ -273,7 +273,7 @@ def test_token_reconnect_required_is_409_and_stamps(user):
         resp = _token(user)
     assert resp.status_code == 409
     assert resp.json()["error"] == "reconnect_required"
-    assert resp.json()["connect_url"] == "/auth/connections/salesforce/start/"
+    assert resp.json()["connect_url"] == "http://testserver/auth/connections/salesforce/start/"
     conn.refresh_from_db()
     assert conn.refresh_failed_at is not None  # the stamp survived the 409
 
@@ -299,6 +299,17 @@ def test_token_provider_failures(user, failure, status):
         fake = FakeSF(token=[_resp(400, {"error": "invalid_client"})])
     with fake:
         assert _token(user).status_code == status
+
+
+def test_token_refresh_query_forces_a_new_token(user):
+    _stored({"user": user}, user)
+    fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!forced"))])
+    with fake:
+        assert _token(user).json()["access_token"] == "00D!cached"
+        assert fake.calls == []
+        resp = Client().post("/api/me/connections/salesforce/token?refresh=true", **_pat(user))
+    assert resp.status_code == 200 and resp.json()["access_token"] == "00D!forced"
+    assert len(fake.calls) == 1
 
 
 def test_token_unknown_provider_is_404(user):
