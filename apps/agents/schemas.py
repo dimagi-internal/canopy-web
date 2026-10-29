@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
+from canopy_transcript import closeout as transcript_closeout
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
@@ -953,6 +954,9 @@ class AgentTurnOut(StrictModel):
     # `origin_ref` carries the scheduler slot / manual flag the origin label uses.
     prompt: str = ""
     result_note: str = ""
+    # The closeout verdict lifted off `result_note` (see harness TurnOut.closeout_verdict).
+    closeout_verdict: str = ""
+    closeout_line: str = ""
     origin_ref: dict = Field(default_factory=dict)
     # True when the content above (and `share_token`, the transcript's public
     # link) was blanked: a turn's content is a log (apps/harness/turn_access.py).
@@ -964,6 +968,11 @@ class AgentTurnOut(StrictModel):
     # (`has_transcript`, read via /api/harness/turns/{id}/messages).
     chat_session_id: uuid.UUID | None = Field(default=None, validation_alias="linked_session_id")
     has_transcript: bool = False
+
+    @model_validator(mode="after")
+    def _closeout(self):
+        self.closeout_verdict, self.closeout_line = transcript_closeout.find(self.result_note)
+        return self
 
 
 # ---- Skill catalog ----

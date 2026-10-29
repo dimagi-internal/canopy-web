@@ -20488,6 +20488,16 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Closeout Verdict
+             * @default
+             */
+            readonly closeout_verdict: string;
+            /**
+             * Closeout Line
+             * @default
+             */
+            readonly closeout_line: string;
+            /**
              * Content Hidden
              * @default false
              */
@@ -25350,6 +25360,16 @@ export interface components {
              * @default
              */
             readonly result_note: string;
+            /**
+             * Closeout Verdict
+             * @default
+             */
+            readonly closeout_verdict: string;
+            /**
+             * Closeout Line
+             * @default
+             */
+            readonly closeout_line: string;
             /** Origin Ref */
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
@@ -37250,6 +37270,16 @@ export interface components {
             readonly canopy_session_url?: string | null;
             /** Result Note */
             readonly result_note: string;
+            /**
+             * Closeout Verdict
+             * @default
+             */
+            readonly closeout_verdict: string;
+            /**
+             * Closeout Line
+             * @default
+             */
+            readonly closeout_line: string;
             /**
              * Content Hidden
              * @default false

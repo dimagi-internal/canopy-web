@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import Annotated, Any, Literal
 
 from canopy_cron import validate_cron, validate_timezone
+from canopy_transcript import closeout as transcript_closeout
 from canopy_sdk import contract
 from ninja import Schema
 from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_validator
@@ -1136,6 +1137,14 @@ class TurnOut(Schema):
     # That conversation's page on canopy-web; null when it has no workspace.
     canopy_session_url: str | None = None
     result_note: str
+    # The closeout verdict an unattended incident turn ENDED on, lifted off
+    # `result_note`'s `[closeout: <VERDICT>]` status line (canopy_transcript.closeout):
+    # CLOSED | MONITORING | NEEDS_YOU | INCOMPLETE, "" when the turn printed none.
+    # Code computed it (canopy `closeout record`), the turn did not type it — so a
+    # session may be auto-closed on CLOSED alone, and `closeout_line` is the one
+    # line a NEEDS_YOU shows its owner. Blank whenever `result_note` is.
+    closeout_verdict: str = ""
+    closeout_line: str = ""
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
     # the caller may not read this turn's content (apps/harness/turn_access.py).
     content_hidden: bool = False
@@ -1144,6 +1153,14 @@ class TurnOut(Schema):
     started_at: dt.datetime | None
     finished_at: dt.datetime | None
     lease_expires_at: dt.datetime | None
+
+    @staticmethod
+    def resolve_closeout_verdict(obj) -> str:
+        return transcript_closeout.find(getattr(obj, "result_note", "") or "")[0]
+
+    @staticmethod
+    def resolve_closeout_line(obj) -> str:
+        return transcript_closeout.find(getattr(obj, "result_note", "") or "")[1]
 
     @staticmethod
     def resolve_agent_slug(obj) -> str | None:
