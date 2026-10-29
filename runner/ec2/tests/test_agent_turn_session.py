@@ -32,11 +32,75 @@ def test_an_agent_turn_records_under_agent_and_turn_id(cloud_runner):
     assert cloud_runner._agent_thread_key(_agent_turn()) == f"echo:{TID}"
 
 
-def test_a_named_thread_still_gets_one_session_per_cloud_agent_turn(cloud_runner):
-    """A cloud agent turn never resumes, so sharing a session across a named
-    thread would only re-point one turn's binding at another's transcript."""
-    turn = _agent_turn(origin_ref={"thread_key": "dispatch-ace-0fccbf2661bb"})
-    assert cloud_runner._agent_thread_key(turn) == f"echo:{TID}"
+def test_a_named_thread_is_one_session_across_its_turns(cloud_runner):
+    """2026-10-29: one Hal alarm thread, re-dispatched, opened four cold sessions
+    on cloud-ec2-live (each keyed `hal:<turn id>`) while the laptop runner kept
+    one (keyed by the Gmail thread). Both runners now key it the same way."""
+    email = _agent_turn(agent_slug="hal", prompt="/hal:turn --thread 1a184f500cd30f72",
+                        origin_ref={"thread_id": "1a184f500cd30f72", "subject": "ALARM"})
+    again = {**email, "id": "a72a5d39-3ae9-41ec-8aa4-00776b868b28"}
+    assert cloud_runner._agent_thread_key(email) == "1a184f500cd30f72"
+    assert cloud_runner._agent_thread_key(again) == "1a184f500cd30f72"
+    keyed = _agent_turn(origin_ref={"thread_key": "phone:jj:echo", "thread_id": "x"})
+    assert cloud_runner._agent_thread_key(keyed) == "phone:jj:echo"
+
+
+def test_a_keyless_turn_still_gets_its_own_session(cloud_runner):
+    """The #309 guard: a schedule fire, a board turn, a keyless dispatch never
+    lands in another turn's session."""
+    assert cloud_runner._agent_thread_key(_agent_turn()) == f"echo:{TID}"
+    assert cloud_runner._agent_thread_key(_agent_turn(origin_ref={})) == f"echo:{TID}"
+
+
+def test_a_callers_turn_on_a_thread_is_never_the_staff_session(cloud_runner):
+    confined = _agent_turn(origin_ref={"thread_id": "1a18"},
+                           caller_context={"profile": "confined", "capability": {"name": "ask"}})
+    assert cloud_runner._agent_thread_key(confined) == "1a18#ask"
+
+
+# ── a turn on a named thread resumes the session the thread's last turn left ──
+
+def _resolves(cloud_runner, monkeypatch, plan):
+    posts = []
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda m, path, body=None, **k: posts.append((path, body)) or (200, plan))
+    return posts
+
+
+def test_an_email_turn_asks_to_resume_its_threads_session(cloud_runner, monkeypatch):
+    posts = _resolves(cloud_runner, monkeypatch, {"reuse": True, "session_key": "cli-prev"})
+    email = _agent_turn(agent_slug="hal", origin_ref={"thread_id": "1a184f500cd30f72"})
+    assert cloud_runner._session_resume_plan("r-1", email) == "cli-prev"
+    assert posts == [("/runners/r-1/resolve-session", {
+        "thread_key": "1a184f500cd30f72", "turn_id": TID, "agent_slug": "hal"})]
+
+
+def test_a_busy_or_foreign_session_is_not_resumed(cloud_runner, monkeypatch):
+    _resolves(cloud_runner, monkeypatch,
+              {"reuse": False, "session_key": "cli-prev", "busy": "turn x is executing in it"})
+    email = _agent_turn(origin_ref={"thread_id": "1a18"})
+    assert cloud_runner._session_resume_plan("r-1", email) == ""
+
+
+def test_a_keyless_or_confined_agent_turn_never_asks(cloud_runner, monkeypatch):
+    posts = _resolves(cloud_runner, monkeypatch, {"reuse": True, "session_key": "cli-prev"})
+    assert cloud_runner._session_resume_plan("r-1", _agent_turn()) == ""
+    confined = _agent_turn(origin_ref={"thread_id": "1a18"},
+                           caller_context={"profile": "confined", "capability": {"name": "ask"}})
+    assert cloud_runner._session_resume_plan("r-1", confined) == ""
+    assert posts == []
+
+
+def test_an_email_turn_records_under_its_thread_named_for_its_subject(cloud_runner, monkeypatch):
+    posts = []
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda m, path, body=None, **k: posts.append((path, body)) or (200, {}))
+    email = _agent_turn(agent_slug="hal", origin_ref={"thread_id": "1a18", "subject": "ALARM"})
+    cloud_runner._record_session_resume("r-1", email, "cli-1")
+    assert posts == [("/runners/r-1/record-session", {
+        "thread_key": "1a18", "session_key": "cli-1", "session_id": "cli-1",
+        "title": "ALARM", "turn_id": TID, "agent_slug": "hal",
+    })]
 
 
 def test_a_chat_turn_keeps_its_own_thread(cloud_runner):
@@ -308,6 +372,35 @@ def test_a_resuming_turn_adopts_before_it_runs(run, monkeypatch, tmp_path):
     mod._run_turn("r-1", chat)
     assert adopted == [("cli-1", "echo")]
     assert ("run", "cli-1") in timeline
+
+
+def test_an_email_turn_resumes_the_last_turns_session_from_its_worktree(cloud_runner, roots):
+    """The thread's last turn ran in its own per-turn worktree, which may be gone;
+    its transcript is not (~/.claude/projects). The next turn, in a NEW worktree,
+    adopts it there so `--resume` resolves."""
+    first = roots / "work" / "agents" / "hal" / "a72a5d39"
+    nxt = roots / "work" / "agents" / "hal" / "27d6f56b"
+    _transcript(roots, cloud_runner, first, "cli-1")
+    cloud_runner._record_session_cwd("cli-1", first)
+    assert cloud_runner._resume_target_exists(nxt, "cli-1") is False
+    assert cloud_runner._adopt_resume_transcript(nxt, "cli-1", "hal") is True
+    assert cloud_runner._resume_target_exists(nxt, "cli-1") is True
+
+
+def test_a_resuming_email_turn_runs_with_resume(run, monkeypatch):
+    mod, timeline = run
+    adopted = []
+    monkeypatch.setattr(mod, "_adopt_resume_transcript",
+                        lambda cwd, sid, slug: adopted.append((sid, slug)) or True)
+    monkeypatch.setattr(mod, "execute_prompt",
+                        lambda prompt, tid, emit, cwd=None, agent_slug=None, resume_session_id=None:
+                        (timeline.append(("run", resume_session_id)) or True, "ok", "cli-1"))
+    email = _agent_turn(origin_ref={"thread_id": "1a18", "subject": "ALARM"}, _resume_id="cli-1")
+    mod._run_turn("r-1", email)
+    assert adopted == [("cli-1", "echo")]
+    assert ("run", "cli-1") in timeline
+    recorded = [b for p, b in timeline if p == "/runners/r-1/record-session"]
+    assert recorded and all(b["thread_key"] == "1a18" for b in recorded)
 
 
 def test_a_dropped_acp_connection_carries_the_adapters_exit(cloud_runner, monkeypatch, tmp_path):
