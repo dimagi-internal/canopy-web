@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     "apps.walkthroughs",
     "apps.tokens",
     "apps.github_connect",
+    "apps.connections",
     "apps.oauth_server",
     "apps.mcp_apps_host",
     "apps.host_grants",
@@ -645,6 +646,12 @@ GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
 # The app's slug, used only to build the "install it somewhere else" link
 # (https://github.com/apps/<slug>/installations/new). Public.
 GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
+
+# Salesforce connected app (apps/connections). Scopes `api refresh_token`. The login
+# URL is https://test.salesforce.com for a sandbox.
+SALESFORCE_CLIENT_ID = env("SALESFORCE_CLIENT_ID", default="")
+SALESFORCE_CLIENT_SECRET = env("SALESFORCE_CLIENT_SECRET", default="")
+SALESFORCE_LOGIN_URL = env("SALESFORCE_LOGIN_URL", default="https://login.salesforce.com")
 
 # Slack front door (apps/slack). The client id is public (it is in every
 # install URL); the client + signing secrets are Secrets Manager entries. Any of
