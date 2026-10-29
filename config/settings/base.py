@@ -647,8 +647,11 @@ GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
 # (https://github.com/apps/<slug>/installations/new). Public.
 GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
 
-# Salesforce connected app (apps/connections). Scopes `api refresh_token`. The login
-# URL is https://test.salesforce.com for a sandbox.
+# Connection providers (apps/connections/providers/): each reads <PREFIX>_CLIENT_ID,
+# <PREFIX>_CLIENT_SECRET, <PREFIX>_ACCESS_TOKEN_SECONDS and its own settings, declared
+# here as a block (docs/architecture/deploy.md § Connection provider settings).
+# Salesforce: a Connected App with scopes `api refresh_token`. The login URL is
+# https://test.salesforce.com for a sandbox.
 SALESFORCE_CLIENT_ID = env("SALESFORCE_CLIENT_ID", default="")
 SALESFORCE_CLIENT_SECRET = env("SALESFORCE_CLIENT_SECRET", default="")
 SALESFORCE_LOGIN_URL = env("SALESFORCE_LOGIN_URL", default="https://login.salesforce.com")

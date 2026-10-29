@@ -29,14 +29,37 @@ The vault holds secrets a person pastes. A token canopy gets from **its own OAut
 Rules (`apps/connections/services.py` is the only door; its module docstring is the contract):
 
 - **Owner.** A `Connection` belongs to exactly one person or one agent. There is no fallback between owners: an agent turn uses the agent's own connection or one granted to it, never the person who started the turn; a person's CLI uses that person's only.
-- **Refresh.** Only canopy-web refreshes, inside a transaction holding a row lock, reusing the cached access token while it has at least the caller's `min_life` left (five minutes by default) and re-reading it after the lock is taken; a caller may force a refresh (`refresh`), still under the lock. Salesforce sends no expiry, so a fresh token is assumed to live `SALESFORCE_ACCESS_TOKEN_SECONDS` (default 1800), which must not exceed the Connected App's session timeout. The provider may rotate the refresh token; the new one is always stored. Only `invalid_grant` marks the connection `needs_reconnect`; canopy's own misconfiguration (`provider_error`) and an unreachable provider (`provider_unavailable`) stamp nothing.
+- **Refresh.** Only canopy-web refreshes, inside a transaction holding a row lock, reusing the cached access token while it has at least the caller's `min_life` left (five minutes by default, capped at half a fresh token's lifetime) and re-reading it after the lock is taken; a caller may force a refresh (`refresh`), still under the lock. A token lives what the provider's `expires_in` says; Salesforce sends none, so a fresh one is assumed to live `SALESFORCE_ACCESS_TOKEN_SECONDS` (default 1800), which must not exceed the Connected App's session timeout. A provider may rotate the refresh token; a new one is always stored. Only `invalid_grant` marks the connection `needs_reconnect`; canopy's own misconfiguration (`provider_error`) and an unreachable provider (`provider_unavailable`) stamp nothing.
 - **Grants between agents.** An agent's admin may share one of its connections with another agent (`ConnectionGrant`); the caller must administer both agents. The grantee uses it as the owner's account and cannot re-share it. A person's connection is never grantable. Disconnecting the owner's connection removes every grant with it. Deleting the person who connected or shared a connection keeps it (`connected_by` / `granted_by` become empty).
-- **Connecting an agent.** A POST from its admin panel (never a GET link), with Salesforce told `prompt=login consent`: the account attached is the agent's Salesforce user, typed in, not whatever session the admin's browser holds.
+- **Connecting an agent.** A POST from its admin panel (never a GET link), with the provider asked for a fresh login where it supports one (Salesforce: `prompt=login consent`): the account attached is the agent's own, typed in, not whatever session the admin's browser holds.
 - **Connecting.** A person connects their own account, or an admin of an agent connects it for that agent (`?agent=<slug>`; admin is checked at start and again at callback). Disconnect asks the provider to revoke the token.
-- **Where an access token may leave.** Only as a short-lived access token, never the refresh token, and only through two doors: the runner turn route, to the runner holding a claimed, non-confined turn of the agent (`runner_may_hold_agent` asked again on every call), and `POST /api/me/connections/{provider}/token` to the person's own CLI, with a plain personal access token over REST (a browser session, an MCP call, an OAuth connector token and a caller token are refused). Neither route is an MCP tool (`apps/mcp/api_tools.EXCLUDED`): a live token must never land in a model's context. A caller's (confined) turn is never lent the agent's identity.
-- **Audit.** An agent's connection records events in its workspace (connect, disconnect, grant, revoke, every token issue naming the turn and runner). A person's has no workspace, so the same facts go to the log at INFO. Never a token.
+- **Where an access token may leave.** Only as a short-lived access token, never the refresh token, and only through two doors, both `services.issue_token`: the runner turn route, to the runner holding a claimed, non-confined turn of the agent (`runner_may_hold_agent` asked again on every call), and `POST /api/me/connections/{provider}/token` to the person's own CLI, with a plain personal access token over REST (a browser session, an MCP call, an OAuth connector token and a caller token are refused). Neither route is an MCP tool (`apps/mcp/api_tools.EXCLUDED`): a live token must never land in a model's context. A caller's (confined) turn is never lent the agent's identity.
+- **On a box.** The cloud runner asks which providers a turn's agent has (`GET …/turns/{tid}/connections`) and, for each, has `canopy cred connection-token <provider> --runner` write `~/.canopy/connections/<slug>/<provider>.json` (0600, a sensitive path) for the turn, re-staged on the lease heartbeat and removed when the turn ends. A person's CLI writes `~/.canopy/connections/<provider>.json`. (`canopy cred salesforce-token` is `connection-token salesforce`.)
 
-Routes: [`api-surface.md`](api-surface.md) § Connections. Configuration: `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET`, `SALESFORCE_LOGIN_URL`, `SALESFORCE_ACCESS_TOKEN_SECONDS`; with none set, Connect says "not set up" and everything else works.
+Routes: [`api-surface.md`](api-surface.md) § Connections. Configuration: per provider, `<PREFIX>_CLIENT_ID`, `<PREFIX>_CLIENT_SECRET`, `<PREFIX>_ACCESS_TOKEN_SECONDS` and its own (Salesforce: `SALESFORCE_*`, plus `SALESFORCE_LOGIN_URL`; [`deploy.md`](deploy.md) § Connection provider settings); with none set, Connect says "not set up" and everything else works. Adding a provider (Google, Sage Intacct) is one module in `apps/connections/providers/` plus those settings: the recipe is that package's docstring.
+
+### Connection audit
+
+Every record goes through one function, `apps/connections/services.record`, in one vocabulary. An audited verb about an **agent's** connection is an Event (`source=connections`) in the owning agent's workspace; about a **person's** connection, which belongs to no workspace, it is a log line on `apps.connections.services`. Operational verbs are log lines for every owner. Never a token, code, state, verifier or client secret (`tests/test_connections_audit.py` scans every log record and Event of a full run for each one).
+
+| kind | level | audited | when; keys beyond the common ones |
+|---|---|---|---|
+| `connections.connected` | info | yes | a sign-in completed (new account or reconnect) |
+| `connections.disconnected` | info | yes | the row was deleted (revoke attempted first) |
+| `connections.granted` | info | yes (agents only) | shared with another agent; `grantee` |
+| `connections.grant_revoked` | info | yes (agents only) | sharing stopped; `grantee` |
+| `connections.token_issued` | info | yes | an access token handed out; `to` (`cli` \| `turn`), `refreshed`, and for a turn `agent`, `turn`, `runner` (one turn's re-stages coalesce into one Event) |
+| `connections.reconnect_required` | warn | yes | the provider answered `invalid_grant`; `error` |
+| `connections.provider_error` | warn | no (log) | the provider rejected a request for another reason or could not be reached; `during` (`connect` \| `refresh`), `error` (its code, or `provider_unavailable`) |
+| `connections.revoke_failed` | warn | no (log) | disconnect's best-effort revoke failed (the row is deleted anyway); `error` |
+
+Common keys: `connection` (row id), `provider`, `owner` (`agent:<slug>` or `user:<id>`), `account_label`, `by` (the acting person's email, empty for a runner). A log line is `connections.<kind> key=value key=value …`, in that key order; a value containing a space, `=` or `"`, or an empty one, is JSON-quoted (`by=""`), so `shlex.split` recovers the pairs. Example:
+
+```
+connections.token_issued connection=12 provider=salesforce owner=user:7 account_label=jj@dimagi.com by=jj@dimagi.com to=cli refreshed=false
+```
+
+The cloud runner logs the same vocabulary for what happens on the box: `warn: connections.stage_failed agent=<slug> provider=<p> turn=<id> (<why>)` when a token could not be staged (the turn still runs); an agent with no connection is silent.
 
 ## Everyone has a vault key
 
