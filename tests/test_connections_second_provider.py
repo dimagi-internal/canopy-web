@@ -45,6 +45,7 @@ class AcmeProvider(Provider):
     title = "Acme Books"
     settings_prefix = "ACME"
     scopes = ("books.read", "offline_access")
+    required_scopes = ("books.read",)
     rotates_refresh_token = False
 
     def authorize_url_base(self) -> str:
@@ -56,8 +57,11 @@ class AcmeProvider(Provider):
     def revoke_url(self) -> str:
         return REVOKE
 
-    def authorize_params(self, *, for_agent: bool):
-        return {"access_type": "offline", "prompt": "select_account consent" if for_agent else "consent"}
+    def authorize_params(self, *, owner_kind, owner):
+        # Google's shape: an agent's account is named up front (`login_hint`).
+        if owner_kind == "agent":
+            return {"access_type": "offline", "prompt": "select_account consent", "login_hint": owner.email}
+        return {"access_type": "offline", "prompt": "consent"}
 
     def identity(self, token):
         resp = self._call(requests.get, USERINFO, "identity lookup",
@@ -73,6 +77,7 @@ class FakeAcme:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
         self.n = 0
+        self.granted = "books.read offline_access"
 
     def _resp(self, body):
         r = mock.Mock(status_code=200)
@@ -84,7 +89,8 @@ class FakeAcme:
         self.calls.append((url, dict(data or {})))
         if url == TOKEN:
             self.n += 1
-            body = {"access_token": f"acme-access-{self.n}", "expires_in": 1200, "token_type": "Bearer"}
+            body = {"access_token": f"acme-access-{self.n}", "expires_in": 1200, "token_type": "Bearer",
+                    "scope": self.granted}
             if data["grant_type"] == "authorization_code":
                 body["refresh_token"] = "acme-refresh"
             return self._resp(body)
@@ -123,7 +129,7 @@ def user():
 def eva(user):
     ws = Workspace.objects.create(slug="w", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.EDITOR)
-    agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=user)
+    agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=user, email="eva@agents.test")
     AgentAdmin.objects.get_or_create(agent=agent, user=user)
     return agent
 
@@ -172,7 +178,8 @@ def test_a_person_connects_lists_and_fetches_a_token(acme, user):
     assert decrypt_secret(conn.refresh_token_enc) == "acme-refresh"   # not rotated: kept
 
     assert client.delete(f"/api/connections/{conn.pk}").status_code == 204
-    assert acme.calls[-1] == (REVOKE, {"token": "acme-refresh"})
+    assert acme.calls[-1] == (REVOKE, {"token": "acme-refresh", "token_type_hint": "refresh_token",
+                                       "client_id": "acme-client", "client_secret": "acme-secret"})
 
 
 def test_an_agent_connects_and_its_turn_lists_and_fetches_the_token(acme, user, eva):
@@ -180,6 +187,7 @@ def test_an_agent_connects_and_its_turn_lists_and_fetches_the_token(acme, user, 
     client.force_login(user)
     _, query, landed = _connect(client, agent="eva")
     assert query["prompt"] == "select_account consent"          # the provider's own agent parameter
+    assert query["login_hint"] == "eva@agents.test"             # it was given the agent itself
     assert "status=connected" in landed["Location"]
     assert Connection.objects.filter(provider="acme", agent=eva).exists()
 
@@ -204,3 +212,20 @@ def test_an_unregistered_provider_is_404_everywhere(user):
     assert client.get(reverse("connections_start", args=["nope"])).status_code == 404
     raw, _ = PersonalToken.create_for_user(user=user, label="cli")
     assert Client(HTTP_AUTHORIZATION=f"Bearer {raw}").post("/api/me/connections/nope/token").status_code == 404
+
+
+def test_a_grant_with_fewer_scopes_than_required_is_refused(acme, user):
+    acme.granted = "offline_access"                           # the person unticked books.read
+    client = Client()
+    client.force_login(user)
+    _, _, landed = _connect(client)
+    assert "reason=insufficient_scope" in landed["Location"]
+    assert not Connection.objects.filter(provider="acme").exists()
+
+
+def test_the_stored_scopes_are_the_granted_ones(acme, user):
+    acme.granted = "books.read offline_access books.write"
+    client = Client()
+    client.force_login(user)
+    _connect(client)
+    assert Connection.objects.get(provider="acme").scopes == "books.read books.write offline_access"

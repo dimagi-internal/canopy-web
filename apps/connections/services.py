@@ -45,11 +45,13 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import secrets as _secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
@@ -87,8 +89,8 @@ class ConnectionError(Exception):  # shadows the builtin inside this module only
     """A connection operation failed. `code` is stable and safe to show; the
     routes map it to a response in one place (`problems.problem_for`):
     `not_configured`, `not_connected`, `reconnect_required`, `ambiguous`,
-    `provider_error`, `provider_unavailable`, `bad_state`, `own_connection`,
-    `not_grantable`."""
+    `insufficient_scope`, `provider_error`, `provider_unavailable`, `bad_state`,
+    `own_connection`, `not_grantable`."""
 
     code = ""
 
@@ -166,7 +168,7 @@ class Subject:
     """What a record says about a connection, captured while the row exists (a
     disconnect records after deleting it). Never a token."""
 
-    connection: int
+    connection: int | None  # None before a row exists (a connect that failed)
     provider: str
     owner: str  # "agent:<slug>" | "user:<id>"
     account_label: str
@@ -180,18 +182,40 @@ class Subject:
                    account_label=conn.account_label, workspace=agent.workspace if agent else None)
 
 
+def _parked_subject(provider: str, parked: dict) -> Subject:
+    """A Subject for a connect that has no row yet: the would-be owner, by slug for an agent."""
+    if parked["owner_kind"] == "agent":
+        slug = Agent.objects.filter(pk=parked["owner_id"]).values_list("slug", flat=True).first()
+        owner = f"agent:{slug or parked['owner_id']}"
+    else:
+        owner = f"user:{parked['owner_id']}"
+    return Subject(connection=None, provider=provider, owner=owner, account_label="", workspace=None)
+
+
 def _who(by) -> str:
     return (getattr(by, "email", "") or getattr(by, "username", "")) if by is not None else ""
 
 
 def log_line(kind: str, payload: dict) -> str:
-    """`connections.<kind> key=value …`: values with a space, `=` or `"` (or
-    empty) are JSON-quoted, so the line splits on spaces back into its pairs."""
+    """`connections.<kind> key=value …`. A value that is empty, not printable, or
+    holds whitespace, `=` or `"` is a JSON string (`json.dumps`, non-ASCII kept
+    as is); `parse_log_line` reverses it exactly."""
     def value(v) -> str:
         s = "" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
-        return json.dumps(s) if (not s or any(c in s for c in ' ="')) else s
+        plain = s and s.isprintable() and not any(c.isspace() or c in '="' for c in s)
+        return s if plain else json.dumps(s, ensure_ascii=False)
 
     return f"connections.{kind} " + " ".join(f"{k}={value(v)}" for k, v in payload.items())
+
+
+_PAIR = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S*)')
+
+
+def parse_log_line(line: str) -> tuple[str, dict[str, str]]:
+    """`(kind, {key: value})` from a `log_line`; quoted values are decoded."""
+    head, _, rest = line.partition(" ")
+    pairs = {k: (json.loads(v) if v.startswith('"') else v) for k, v in _PAIR.findall(rest)}
+    return head.removeprefix("connections."), pairs
 
 
 def record(subject: Subject, kind: str, *, by=None, warn: bool = False, summary: str = "",
@@ -241,7 +265,8 @@ def begin(session, *, provider: str, owner: Owner, redirect_uri: str, return_to:
     pending[state] = {"provider": provider, "owner_kind": kind, "owner_id": owner_id,
                       "verifier": verifier, "return_to": return_to}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
-    return p.authorize_url(state, redirect_uri, challenge, for_agent=kind == "agent")
+    owner_obj = (Agent if kind == "agent" else get_user_model()).objects.filter(pk=owner_id).first()
+    return p.authorize_url(state, redirect_uri, challenge, owner_kind=kind, owner=owner_obj)
 
 
 def pending_for(session, state: str) -> dict | None:
@@ -253,6 +278,25 @@ def pending_for(session, state: str) -> dict | None:
 def spend(session, state: str) -> None:
     """Drop one parked flow without completing it (a callback refused before the exchange)."""
     session[SESSION_KEY] = {k: v for k, v in (session.get(SESSION_KEY) or {}).items() if k != state}
+
+
+# An `?error=` the provider sends to the callback is the browser's query string:
+# only a code-shaped one is written to the log.
+_ERROR_CODE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+
+
+def authorize_refused(session, *, provider: str, state: str, error: str, by) -> str:
+    """The provider sent the browser back with `?error=` instead of a code: spend
+    the state, and log it unless the person simply declined (`access_denied`).
+    Returns the callback reason (`access_denied` or `provider_error`)."""
+    parked = pending_for(session, state)
+    spend(session, state)
+    if error == "access_denied":
+        return "access_denied"
+    if parked:
+        record(_parked_subject(provider, parked), "provider_error", by=by, warn=True, during="authorize",
+               error=error if _ERROR_CODE.fullmatch(error or "") else "unrecognised")
+    return "provider_error"
 
 
 def complete(session, *, provider: str, code: str, state: str, redirect_uri: str, by) -> Connection:
@@ -274,30 +318,38 @@ def complete(session, *, provider: str, code: str, state: str, redirect_uri: str
         agent = Agent.objects.filter(pk=parked["owner_id"]).first()
         if agent is None:  # deleted between begin and complete
             raise ConnectionError("bad_state", "that agent no longer exists")
-        owner_kw, owner = {"agent": agent}, f"agent:{agent.slug}"
+        owner_kw = {"agent": agent}
     else:
-        owner_kw, owner = {"user_id": parked["owner_id"]}, f"user:{parked['owner_id']}"
+        owner_kw = {"user_id": parked["owner_id"]}
+    # No row yet: a refusal is logged against the would-be owner.
+    subject = _parked_subject(provider, parked)
     try:
         token = p.exchange_code(code, redirect_uri, parked["verifier"])
         ident = p.identity(token)
     except providers.ProviderError as e:
-        # No row yet, so no Subject: the line names the provider and the would-be owner.
-        logger.warning(log_line("provider_error", {
-            "provider": provider, "owner": owner, "by": _who(by), "during": "connect",
-            "error": e.code or ("provider_unavailable" if isinstance(e, providers.ProviderUnavailable)
-                                else "provider_error")}))
+        record(subject, "provider_error", by=by, warn=True, during="connect",
+               error=e.code or ("provider_unavailable" if isinstance(e, providers.ProviderUnavailable)
+                                else "provider_error"))
         raise ConnectionError("provider_error", str(e)) from None
     if not token.refresh_token:
+        record(subject, "provider_error", by=by, warn=True, during="connect", error="no_refresh_token")
         raise ConnectionError("provider_error", f"{p.title} issued no refresh token")
+    missing = p.missing_scopes(token.scopes)
+    if missing:
+        # The consent screen let the person untick a permission canopy needs.
+        record(subject, "provider_error", by=by, warn=True, during="connect", error="insufficient_scope",
+               missing=" ".join(missing))
+        raise ConnectionError("insufficient_scope", f"{p.title} did not grant {', '.join(missing)}")
 
     lookup = {"provider": provider, "account_id": ident.account_id, **owner_kw}
     defaults = {
         "account_label": ident.label,
         "instance_url": token.instance_url,
-        "scopes": " ".join(p.scopes),
+        "scopes": " ".join(token.scopes or p.scopes),
         "refresh_token_enc": encrypt_secret(token.refresh_token),
         "access_token_enc": encrypt_secret(token.access_token),
         "access_token_expires_at": token.expires_at,
+        "access_token_seconds": int(token.lifetime.total_seconds()) or None,
         "refresh_failed_at": None,
         "connected_by": by,
     }
@@ -350,8 +402,12 @@ def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MAR
     already rejected (a 401 before the assumed expiry); it still refreshes under
     the lock, so it cannot race another refresh.
     """
-    min_life = min(min_life, providers.get(conn.provider).access_token_lifetime() / 2)
     conn = Connection.objects.get(pk=conn.pk)
+    # Half the life the last token actually had (the provider's `expires_in`), else
+    # half the configured lifetime.
+    lifetime = (timedelta(seconds=conn.access_token_seconds) if conn.access_token_seconds
+                else providers.get(conn.provider).access_token_lifetime())
+    min_life = min(min_life, lifetime / 2)
     if conn.needs_reconnect:
         raise ReconnectRequired(f"reconnect {conn.provider}")
     cached = "" if refresh else _cached_token(conn, min_life)
@@ -362,6 +418,7 @@ def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MAR
 
     p = _configured(conn.provider)
     rejected: providers.ProviderError | None = None
+    failed: tuple[str, providers.ProviderError] | None = None
     with transaction.atomic():
         # Re-read under the lock: another process may have refreshed (or had its
         # refresh rejected) while this one waited.
@@ -381,29 +438,37 @@ def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MAR
                 # Not about the grant (unreachable; our client config; an unexpected
                 # answer): reconnecting would not fix it, so nothing is stamped.
                 code = "provider_unavailable" if isinstance(e, providers.ProviderUnavailable) else "provider_error"
-                record(Subject.of(conn), "provider_error", warn=True, during="refresh",
-                       error=e.code or code)
-                raise ConnectionError(code, str(e)) from None
-            # Stamped inside the block and raised after it, so the stamp commits
-            # rather than rolling back with the exception.
-            conn.refresh_failed_at = timezone.now()
-            conn.save(update_fields=["refresh_failed_at", "updated_at"])
-            rejected = e
+                failed = (code, e)
+            else:
+                # Stamped inside the block and raised after it, so the stamp commits
+                # rather than rolling back with the exception.
+                conn.refresh_failed_at = timezone.now()
+                conn.save(update_fields=["refresh_failed_at", "updated_at"])
+                rejected = e
         else:
             if token.refresh_token:  # rotated: the old one is dead now
                 conn.refresh_token_enc = encrypt_secret(token.refresh_token)
             if token.instance_url:
                 conn.instance_url = token.instance_url
+            if token.scopes:  # the provider said what it granted this time
+                conn.scopes = " ".join(token.scopes)
             conn.access_token_enc = encrypt_secret(token.access_token)
             conn.access_token_expires_at = token.expires_at
+            conn.access_token_seconds = int(token.lifetime.total_seconds()) or None
             conn.refresh_failed_at = None
             conn.last_used_at = timezone.now()
             conn.save(update_fields=[
-                "refresh_token_enc", "instance_url", "access_token_enc", "access_token_expires_at",
-                "refresh_failed_at", "last_used_at", "updated_at",
+                "refresh_token_enc", "instance_url", "scopes", "access_token_enc", "access_token_expires_at",
+                "access_token_seconds", "refresh_failed_at", "last_used_at", "updated_at",
             ])
             return _handout(conn, token.access_token, refreshed=True)
 
+    # Records are written after the transaction, never inside it: an Event written
+    # in the block would share its fate, and a record is about what committed.
+    if failed is not None:
+        code, e = failed
+        record(Subject.of(conn), "provider_error", warn=True, during="refresh", error=e.code or code)
+        raise ConnectionError(code, str(e))
     record(Subject.of(conn), "reconnect_required", warn=True, error=rejected.code,
            summary=f"{conn.owner_label}'s {p.title} connection was rejected; reconnect it")
     raise ReconnectRequired(f"{p.title} rejected the stored grant ({rejected.code})")
@@ -411,19 +476,21 @@ def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MAR
 
 def issue_token(conn: Connection, *, to: Literal["cli", "turn"], by=None,
                 min_life: timedelta = ACCESS_TOKEN_MARGIN, refresh: bool = False,
-                agent: str = "", turn: str = "", runner: str = "") -> AccessToken:
+                agent: str = "", turn: str = "", runner: str = "", runner_name: str = "") -> AccessToken:
     """`access_token_for`, plus the `token_issued` record of handing it out.
 
     The one way a token leaves canopy-web: both token routes come through here,
     so no handout goes unrecorded. `to` is `cli` (the owner's own command line;
     `by` is that person) or `turn` (named by `agent`, `turn` and `runner`; one
-    turn's repeated issues, its heartbeat re-stages, coalesce into one Event)."""
+    turn's repeated issues, its heartbeat re-stages, coalesce into one Event;
+    `runner_name` is for the summary only)."""
     token = access_token_for(conn, min_life=min_life, refresh=refresh)
+    title = getattr(providers.ALL.get(conn.provider), "title", conn.provider)
     context = {"agent": agent, "turn": turn, "runner": runner} if to == "turn" else {}
     record(Subject.of(conn), "token_issued", by=by, to=to, refreshed=token.refreshed, **context,
            key=f"token_issued:{conn.provider}:{agent}:{turn}" if to == "turn" else "",
-           summary=(f"{conn.owner_label}'s {conn.provider} token for {agent}'s turn on {runner}"
-                    if to == "turn" else f"{conn.owner_label}'s {conn.provider} token for their CLI"))
+           summary=(f"{conn.owner_label}'s {title} token for {agent}'s turn on {runner_name or runner}"
+                    if to == "turn" else f"{conn.owner_label}'s {title} token for their CLI"))
     return token
 
 

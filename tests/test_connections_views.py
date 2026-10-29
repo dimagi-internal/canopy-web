@@ -17,7 +17,7 @@ from django.urls import reverse
 from apps.agents.models import Agent
 from apps.connections.models import Connection
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FakeSF
+from tests.fixtures.connections import FakeSF, _resp, _token_body
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
 
@@ -212,3 +212,18 @@ def test_revoked_admin_with_provider_error_is_still_forbidden(client, user, eva)
                       {"error": "access_denied", "state": state})
     assert _landing(resp)[1]["reason"] == "forbidden"
     assert not Connection.objects.exists()
+
+
+def test_a_grant_without_a_required_scope_lands_as_insufficient_scope(client):
+    state = _state(_start(client))
+    with FakeSF(token=[_resp(body=_token_body(scope="refresh_token"))]):
+        resp = _callback(client, state)
+    assert _landing(resp)[1] == {"connection": "salesforce", "status": "error", "reason": "insufficient_scope"}
+    assert not Connection.objects.exists()
+
+
+def test_a_provider_error_at_authorize_lands_as_provider_error(client):
+    state = _state(_start(client))
+    resp = client.get(reverse("connections_callback", args=["salesforce"]),
+                      {"error": "temporarily_unavailable", "state": state})
+    assert _landing(resp)[1]["reason"] == "provider_error"

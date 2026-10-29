@@ -80,6 +80,7 @@ const REASONS: Record<string, string> = {
   access_denied: 'was not approved on the provider’s consent screen.',
   bad_state: 'took too long or was started elsewhere. Try again.',
   forbidden: 'needs an administrator of the agent.',
+  insufficient_scope: 'was connected without every permission canopy needs. Connect again and allow them all.',
 }
 
 /** The `?connection=…&status=…&reason=…` result banner, shared with the agent panel.

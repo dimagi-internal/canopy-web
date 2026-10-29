@@ -15,9 +15,15 @@ What a provider declares, and where providers differ:
   up" (`is_configured`), a state the UI shows rather than an error.
 - Endpoints: `authorize_url_base()`, `token_url()`, `revoke_url()` ("" when the
   provider has no revocation endpoint).
-- `authorize_params(for_agent=…)`: extra authorize-URL parameters (Google:
-  `access_type=offline`, `prompt=consent`; Salesforce, for an agent:
-  `prompt=login consent`).
+- `authorize_params(owner_kind=…, owner=…)`: extra authorize-URL parameters,
+  given whose connection it will be (the `User` or the `Agent`). Google:
+  `access_type=offline`, `prompt=consent`, and an agent's `login_hint`;
+  Salesforce, for an agent: `prompt=login consent`.
+- `required_scopes`: scopes a grant must include to be stored; a consent screen
+  that let the person untick one is refused (`insufficient_scope`). The granted
+  scopes are read from the token response's `scope`.
+- `client_auth`: how the client authenticates to the token and revocation
+  endpoints, `"body"` (client_secret_post, the default) or `"basic"` (HTTP Basic).
 - Expiry: a token response's `expires_in` when it sends one; otherwise
   `<PREFIX>_ACCESS_TOKEN_SECONDS`, else `default_access_token_seconds`.
 - `rotates_refresh_token`: whether a refresh may hand back a NEW refresh token
@@ -28,13 +34,16 @@ What a provider declares, and where providers differ:
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
 - `identity(token)`: who the account is — a stable `account_id` and a label.
 - `pkce`: whether the provider takes a PKCE challenge (default yes).
+
+Revocation follows RFC 7009: the token, `token_type_hint=refresh_token`, and the
+client's authentication.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlencode
 
 import requests
@@ -76,6 +85,10 @@ class TokenResponse:
     refresh_token: str = field(repr=False)  # "" when the provider did not return one
     expires_at: datetime
     instance_url: str
+    # What the provider says it granted (its `scope`), sorted; empty when it did not say.
+    scopes: tuple[str, ...] = ()
+    # How long this token lives, as the provider said (or the configured fallback).
+    lifetime: timedelta = timedelta(0)
     # The provider's whole answer, for `identity()` (Salesforce reads its `id` URL).
     raw: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -93,6 +106,8 @@ class Provider:
     title: ClassVar[str]
     settings_prefix: ClassVar[str]
     scopes: ClassVar[tuple[str, ...]]
+    required_scopes: ClassVar[tuple[str, ...]] = ()
+    client_auth: ClassVar[Literal["body", "basic"]] = "body"
     rotates_refresh_token: ClassVar[bool] = False
     pkce: ClassVar[bool] = True
     default_access_token_seconds: ClassVar[int] = 3600
@@ -108,7 +123,8 @@ class Provider:
     def revoke_url(self) -> str:
         return ""
 
-    def authorize_params(self, *, for_agent: bool) -> Mapping[str, str]:
+    def authorize_params(self, *, owner_kind: Literal["user", "agent"], owner: Any) -> Mapping[str, str]:
+        """`owner` is the `User` or `Agent` the connection will belong to."""
         return {}
 
     def instance_url(self, body: Mapping[str, Any]) -> str:
@@ -143,9 +159,9 @@ class Provider:
     # ---- the OAuth flow -----------------------------------------------------
 
     def authorize_url(self, state: str, redirect_uri: str, code_challenge: str, *,
-                      for_agent: bool = False) -> str:
+                      owner_kind: Literal["user", "agent"] = "user", owner: Any = None) -> str:
         query = {
-            **self.authorize_params(for_agent=for_agent),
+            **self.authorize_params(owner_kind=owner_kind, owner=owner),
             "response_type": "code",
             "client_id": self.client_id,
             "redirect_uri": redirect_uri,
@@ -168,11 +184,20 @@ class Provider:
         body = self._token({"grant_type": "refresh_token", "refresh_token": refresh_token}, "refresh")
         return self._token_response(body)
 
+    def missing_scopes(self, granted: tuple[str, ...]) -> tuple[str, ...]:
+        """The required scopes a grant lacks. An empty `granted` means the provider
+        did not say, which is taken as what was asked for."""
+        if not granted:
+            return ()
+        return tuple(s for s in self.required_scopes if s not in granted)
+
     def revoke(self, token: str) -> None:
+        """Revoke a refresh token (RFC 7009), with the client's authentication."""
         url = self.revoke_url()
         if not url:
             return
-        resp = self._call(requests.post, url, "revoke", data={"token": token})
+        data, auth = self._authenticated({"token": token, "token_type_hint": "refresh_token"})
+        resp = self._call(requests.post, url, "revoke", data=data, **auth)
         if resp.status_code != 200:
             raise self._error(resp, "revoke")
 
@@ -188,15 +213,22 @@ class Provider:
             refresh_token=body.get("refresh_token") or "",
             expires_at=timezone.now() + lifetime,
             instance_url=self.instance_url(body),
+            scopes=tuple(sorted(set(str(body.get("scope") or "").split()))),
+            lifetime=lifetime,
             raw=body,
         )
 
+    def _authenticated(self, data: dict) -> tuple[dict, dict]:
+        """`data` plus the client's credentials, as `client_auth` says: in the body,
+        or as HTTP Basic (then `requests`' `auth=`)."""
+        if self.client_auth == "basic":
+            return data, {"auth": (self.client_id, self.client_secret)}
+        return {**data, "client_id": self.client_id, "client_secret": self.client_secret}, {}
+
     def _token(self, data: dict, what: str) -> dict:
-        resp = self._call(
-            requests.post, self.token_url(), what,
-            data={**data, "client_id": self.client_id, "client_secret": self.client_secret},
-            headers={"Accept": "application/json"},
-        )
+        data, auth = self._authenticated(data)
+        resp = self._call(requests.post, self.token_url(), what, data=data,
+                          headers={"Accept": "application/json"}, **auth)
         if resp.status_code != 200:
             raise self._error(resp, what)
         body = self._json(resp, what)

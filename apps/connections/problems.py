@@ -17,6 +17,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "not_connected": (409, "Not connected"),
     "reconnect_required": (409, "Reconnect required"),
     "ambiguous": (409, "More than one account connected"),
+    "insufficient_scope": (409, "Missing permissions"),
     "own_connection": (409, "Cannot share this connection"),
     "not_grantable": (409, "Cannot share this connection"),
     "provider_error": (502, "Provider error"),
@@ -35,6 +36,8 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, **memb
         "not_connected": f"{owner} {title} is not connected.",
         "reconnect_required": f"{owner} {title} connection no longer works; connect it again.",
         "ambiguous": f"{owner} {title} has more than one account connected; disconnect all but one.",
+        "insufficient_scope": f"{title} did not grant every permission canopy needs; connect again "
+                              "and allow them all.",
         "provider_unavailable": f"{title} could not be reached; try again.",
         "provider_error": f"{title} refused the request.",
     }.get(exc.code, str(exc))

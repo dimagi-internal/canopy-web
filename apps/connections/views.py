@@ -19,7 +19,9 @@ one finishing it (the session is the same browser, but it may have changed
 hands between the legs).
 
 The browser always lands back on a same-site `return_to` with
-`?connection=<provider>&status=connected|error[&reason=<code>]`.
+`?connection=<provider>&status=connected|error[&reason=<code>]`; reasons:
+`not_configured`, `bad_state`, `forbidden`, `access_denied`, `insufficient_scope`,
+`provider_error`.
 """
 from __future__ import annotations
 
@@ -128,9 +130,9 @@ def connections_callback(request: HttpRequest, provider: str) -> HttpResponse:
         return _land(request, return_to, provider, "error", "forbidden")
 
     if request.GET.get("error"):  # the user declined, or the provider refused
-        services.spend(request.session, state)
-        return _land(request, return_to, provider, "error", "access_denied"
-                     if request.GET["error"] == "access_denied" else "provider_error")
+        reason = services.authorize_refused(request.session, provider=provider, state=state,
+                                            error=request.GET["error"], by=request.user)
+        return _land(request, return_to, provider, "error", reason)
 
     try:
         services.complete(request.session, provider=provider, code=request.GET.get("code") or "",

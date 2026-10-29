@@ -7,7 +7,8 @@ client, a failed revoke, sharing and unsharing, disconnects. Then every log
 record (any logger) and every Event is checked:
 
 - each kind is in the documented vocabulary (`docs/architecture/vault.md`
-  § Connection audit), and a connections log line parses as `key=value`;
+  § Connection audit), and a connections log line parses back
+  (`services.parse_log_line`);
 - levels: INFO for normal, WARNING for reconnect_required / provider_error /
   revoke_failed, never ERROR from canopy's own code;
 - no secret used anywhere in the run appears: access and refresh tokens (old
@@ -18,7 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -80,6 +80,16 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     browser = Client()
     browser.force_login(user)
 
+    # Connects that fail: the provider refused at authorize; then no refresh token.
+    start = reverse("connections_start", args=["salesforce"])
+    state = parse_qs(urlparse(browser.get(start)["Location"]).query)["state"][0]
+    secrets.append(state)
+    browser.get(reverse("connections_callback", args=["salesforce"]), {"error": "server_error", "state": state})
+    state = parse_qs(urlparse(browser.get(start)["Location"]).query)["state"][0]
+    secrets += [state, browser.session[services.SESSION_KEY][state]["verifier"]]
+    with FakeSF(token=[_resp(body=_token_body(refresh_token=None))]):
+        browser.get(reverse("connections_callback", args=["salesforce"]), {"code": "c0de-secret", "state": state})
+
     # A person: connect, a cached and a refreshed (rotating) CLI token, disconnect.
     _connect_in_browser(browser, secrets)
     pat, _ = PersonalToken.create_for_user(user=user, label="cli")
@@ -136,18 +146,20 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
 
     lines = [r for r in caplog.records if r.getMessage().startswith("connections.")]
     kinds = [r.getMessage().split(" ", 1)[0].removeprefix("connections.") for r in lines]
-    assert kinds == ["connected", "token_issued", "token_issued", "provider_error", "reconnect_required",
-                     "revoke_failed", "disconnected"]
-    for r in lines:
-        kind, _, rest = r.getMessage().partition(" ")
-        pairs = dict(p.split("=", 1) for p in shlex.split(rest))       # key=value, quoted values intact
-        assert all(k in pairs for k in ("provider", "owner")), r.getMessage()
-        assert r.levelno == VOCABULARY[kind.removeprefix("connections.")], r.getMessage()
+    assert kinds == ["provider_error", "provider_error", "connected", "token_issued", "token_issued",
+                     "provider_error", "reconnect_required", "revoke_failed", "disconnected"]
+    parsed = [services.parse_log_line(r.getMessage()) for r in lines]
+    assert [p[1].get("during") for p in parsed[:2]] == ["authorize", "connect"]
+    assert [p[1].get("error") for p in parsed[:2]] == ["server_error", "no_refresh_token"]
+    for r, (kind, pairs) in zip(lines, parsed, strict=True):
+        assert all(k in pairs for k in BASE_KEYS), r.getMessage()
+        assert r.levelno == VOCABULARY[kind], r.getMessage()
     # (Django's own `django.request` logs the 502 at ERROR, as it does every 5xx; ours never do.)
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR and r.name.startswith("apps.")]
 
     # ---- never a secret --------------------------------------------------------------
-    blob = "\n".join([r.getMessage() for r in caplog.records]
+    tracebacks = [logging.Formatter().formatException(r.exc_info) for r in caplog.records if r.exc_info]
+    blob = "\n".join([r.getMessage() for r in caplog.records] + tracebacks
                      + [str(getattr(r, "exc_text", "") or "") for r in caplog.records]
                      + [json.dumps(e.payload) + e.summary for e in Event.objects.all()])
     leaked = [s for s in secrets if s in blob]

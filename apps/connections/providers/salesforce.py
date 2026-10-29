@@ -27,6 +27,9 @@ class SalesforceProvider(Provider):
     title = "Salesforce"
     settings_prefix = "SALESFORCE"
     scopes = ("api", "refresh_token")
+    # Salesforce names what it granted in `scope` ("refresh_token api", plus any
+    # the Connected App adds); without both, canopy can neither call nor refresh.
+    required_scopes = ("api", "refresh_token")
     rotates_refresh_token = True
     default_access_token_seconds = 1800
 
@@ -43,11 +46,12 @@ class SalesforceProvider(Provider):
     def revoke_url(self) -> str:
         return f"{self._base}/services/oauth2/revoke"
 
-    def authorize_params(self, *, for_agent: bool) -> Mapping[str, str]:
+    def authorize_params(self, *, owner_kind, owner) -> Mapping[str, str]:
         # An agent's connection must be the AGENT's Salesforce user, not whoever is
         # signed in to Salesforce in the admin's browser: `login` makes Salesforce ask
         # for credentials even with a live session, `consent` shows what is granted.
-        return {"prompt": "login consent"} if for_agent else {}
+        # (Salesforce has no use for the owner itself.)
+        return {"prompt": "login consent"} if owner_kind == "agent" else {}
 
     def instance_url(self, body: Mapping[str, Any]) -> str:
         return str(body.get("instance_url") or "")

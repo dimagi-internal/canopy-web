@@ -88,4 +88,10 @@ describe('ConnectionsPanel', () => {
     const a = screen.getByRole('link', { name: 'Connect Salesforce' }) as HTMLAnchorElement
     expect(a.getAttribute('href')).toContain('/auth/connections/salesforce/start/')
   })
+
+  it('says what an insufficient_scope connect means', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    at('/settings?connection=salesforce&status=error&reason=insufficient_scope')
+    expect(await screen.findByText(/Salesforce was connected without every permission canopy needs/)).toBeTruthy()
+  })
 })

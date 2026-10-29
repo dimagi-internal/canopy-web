@@ -104,7 +104,8 @@ def turn_connection_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: u
     # must survive the exception turned into a 409 below.
     try:
         conn = services.connection_for_agent(agent, provider.name)
-        token = services.issue_token(conn, to="turn", agent=agent.slug, turn=str(turn.pk), runner=str(runner.pk),
+        token = services.issue_token(conn, to="turn", agent=agent.slug, turn=str(turn.pk),
+                                     runner=str(runner.pk), runner_name=runner.name,
                                      min_life=timedelta(seconds=payload.min_life_seconds),
                                      refresh=payload.refresh)
     except services.ConnectionError as exc:

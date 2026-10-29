@@ -34,10 +34,15 @@ class Connection(models.Model):
     # The account's own API base, for a provider with one per account (Salesforce);
     # empty where the provider's API host is fixed.
     instance_url = models.URLField(blank=True, default="")
+    # What the provider GRANTED (its `scope`), space-separated; what was asked for
+    # when it did not say.
     scopes = models.CharField(max_length=500, blank=True, default="")
     refresh_token_enc = models.TextField(blank=True, default="")
     access_token_enc = models.TextField(blank=True, default="")
     access_token_expires_at = models.DateTimeField(null=True, blank=True)
+    # How long the last access token lived when issued (the provider's `expires_in`,
+    # or the configured lifetime): what a caller's `min_life` is capped against.
+    access_token_seconds = models.PositiveIntegerField(null=True, blank=True)
     # Set when a refresh is rejected; cleared on every successful refresh.
     refresh_failed_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)

@@ -5,7 +5,9 @@ and nothing else — services, views, routes, the frontend, the CLI and the
 runner all read providers from this registry or from `GET /api/connections/`:
 
 1. `providers/<name>.py`: a `Provider` subclass (`base.py` says what to fill in;
-   `salesforce.py` is the worked example) with `identity()` implemented.
+   `salesforce.py` is the worked example) with `identity()` implemented, and
+   `required_scopes`, `client_auth`, `authorize_params(owner_kind, owner)` (e.g.
+   Google's `login_hint=<agent.email>`) where the provider needs them.
 2. List an instance in `ALL` below.
 3. Settings `<PREFIX>_CLIENT_ID`, `<PREFIX>_CLIENT_SECRET` and
    `<PREFIX>_ACCESS_TOKEN_SECONDS` (plus the provider's own) via `env(...)` in

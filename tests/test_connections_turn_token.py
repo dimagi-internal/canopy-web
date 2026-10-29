@@ -256,3 +256,20 @@ def test_turn_connections_refuses_what_the_token_route_refuses(echo, runner, ope
                             idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=runner)
     r = _list(runner, t)
     assert r.status_code == 409 and r.json()["error"] == "no_agent"
+
+
+def test_a_granted_connections_token_issue_lands_in_the_owners_workspace(echo, runner, operator):
+    """The owner's admins see who acted through their connection: the Event is in the
+    OWNER's workspace, naming the grantee as `agent`."""
+    other_ws = Workspace.objects.create(slug="elsewhere", display_name="Elsewhere", created_by=operator)
+    WorkspaceMembership.objects.create(workspace=other_ws, user=operator, role=WorkspaceMembership.EDITOR)
+    hal = _agent(other_ws, operator, "hal")
+    conn = _stored({"agent": hal}, operator)
+    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=operator)
+    turn = _turn(echo, runner)
+    assert _ask(runner, turn).status_code == 200
+    ev = Event.objects.get(kind="connections.token_issued")
+    assert ev.workspace_id == other_ws.pk != echo.workspace_id
+    assert ev.payload["owner"] == "agent:hal" and ev.payload["agent"] == "echo"
+    assert ev.payload["to"] == "turn" and ev.payload["turn"] == str(turn.pk)
+    assert ev.summary == f"agent:hal's Salesforce token for echo's turn on {runner.name}"

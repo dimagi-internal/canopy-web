@@ -597,3 +597,139 @@ class WorkspaceOwner:
         boss = get_user_model().objects.create_user(username="boss", email="boss@dimagi.com")
         WorkspaceMembership.objects.create(workspace=ws, user=boss, role=WorkspaceMembership.OWNER)
         return boss
+
+
+# ---- granted scopes ------------------------------------------------------------
+
+def test_complete_stores_the_granted_scopes(user):
+    fake = FakeSF(token=[_resp(body=_token_body(scope="refresh_token api web"))])
+    conn = _connect({}, ("user", user.pk), user, fake)
+    assert conn.scopes == "api refresh_token web"
+
+
+def test_complete_without_a_scope_answer_stores_what_was_asked(user):
+    conn = _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope=None))]))
+    assert conn.scopes == "api refresh_token"
+
+
+def test_complete_refuses_a_grant_missing_a_required_scope(user, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    with pytest.raises(services.ConnectionError) as e:
+        _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope="refresh_token"))]))
+    assert e.value.code == "insufficient_scope"
+    assert not Connection.objects.exists()
+    kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
+    assert kind == "provider_error" and pairs["error"] == "insufficient_scope" and pairs["missing"] == "api"
+    assert pairs["during"] == "connect" and pairs["owner"] == f"user:{user.pk}"
+    assert caplog.records[-1].levelno == logging.WARNING
+
+
+def test_refresh_updates_scopes_only_when_the_provider_says(user):
+    conn = _stored({"user": user}, user, access="")
+    with FakeSF(token=[_resp(body=_token_body(scope=None))]):
+        services.access_token_for(conn)
+    conn.refresh_from_db()
+    assert conn.scopes == ""                                       # as stored; nothing said
+    with FakeSF(token=[_resp(body=_token_body(scope="api refresh_token chatter_api"))]):
+        services.access_token_for(conn, refresh=True)
+    conn.refresh_from_db()
+    assert conn.scopes == "api chatter_api refresh_token"
+
+
+# ---- connect-time failures are logged -------------------------------------------
+
+def test_a_missing_refresh_token_is_logged(user, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    with pytest.raises(services.ConnectionError):
+        _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(refresh_token=None))]))
+    kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
+    assert (kind, pairs["during"], pairs["error"]) == ("provider_error", "connect", "no_refresh_token")
+
+
+@pytest.mark.parametrize("error,logged", [("server_error", "server_error"),
+                                          ("x\ny <script>", "unrecognised"), ("access_denied", None)])
+def test_an_authorize_error_is_logged_unless_declined(user, eva, caplog, error, logged):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    session = {}
+    url = _begin(session, ("agent", eva.pk))
+    state = parse_qs(urlparse(url).query)["state"][0]
+    reason = services.authorize_refused(session, provider="salesforce", state=state, error=error, by=user)
+    assert reason == ("access_denied" if logged is None else "provider_error")
+    assert services.pending_for(session, state) is None             # spent either way
+    lines = [r for r in caplog.records if r.getMessage().startswith("connections.")]
+    if logged is None:
+        assert lines == []
+    else:
+        kind, pairs = services.parse_log_line(lines[-1].getMessage())
+        assert (kind, pairs["during"], pairs["error"], pairs["owner"]) == \
+            ("provider_error", "authorize", logged, "agent:eva")
+
+
+# ---- an agent's rejected grant is an Event --------------------------------------
+
+def test_an_agents_invalid_grant_is_a_warn_event(user, eva):
+    conn = _stored({"agent": eva}, user, access="")
+    with FakeSF(token=[_resp(400, {"error": "invalid_grant"})]), pytest.raises(services.ReconnectRequired):
+        services.access_token_for(conn)
+    ev = Event.objects.get(kind="connections.reconnect_required")
+    assert ev.level == "warn" and ev.workspace_id == eva.workspace_id
+    assert ev.payload["owner"] == "agent:eva" and ev.payload["error"] == "invalid_grant"
+
+
+def test_a_provider_error_on_refresh_is_logged_after_the_transaction(user, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    conn = _stored({"user": user}, user, access="")
+    with FakeSF(token=[_resp(400, {"error": "invalid_client"})]), pytest.raises(services.ConnectionError):
+        services.access_token_for(conn)
+    assert Connection.objects.get(pk=conn.pk).refresh_failed_at is None
+    kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
+    assert (kind, pairs["during"], pairs["error"]) == ("provider_error", "refresh", "invalid_client")
+
+
+# ---- the lifetime the cap uses is the one observed --------------------------------
+
+def test_min_life_cap_uses_the_lifetime_the_provider_gave(user, settings):
+    settings.SALESFORCE_ACCESS_TOKEN_SECONDS = 3600
+    conn = _stored({"user": user}, user, access="")
+    with FakeSF(token=[_resp(body=_token_body(expires_in=600))]):
+        services.access_token_for(conn)
+    conn.refresh_from_db()
+    assert conn.access_token_seconds == 600
+    # 500 s left: under the asked 900, but over half of the 600 s the token really had.
+    Connection.objects.filter(pk=conn.pk).update(access_token_expires_at=timezone.now() + timedelta(seconds=500))
+    with FakeSF() as fake:
+        services.access_token_for(conn, min_life=timedelta(seconds=900))
+    assert fake.token_calls() == []
+
+
+# ---- the log line format --------------------------------------------------------
+
+@pytest.mark.parametrize("value", ["plain", "", "two words", "a=b", 'say "hi"', "line\nbreak", "tab\there",
+                                   "naïve-ümlaut", "日本", "\x07bell", "back\\slash"])
+def test_log_line_round_trips_any_value(value):
+    line = services.log_line("x", {"a": value, "b": "end"})
+    assert "\n" not in line
+    assert services.parse_log_line(line) == ("x", {"a": value, "b": "end"})
+
+
+def test_non_ascii_stays_readable_in_the_line():
+    assert services.log_line("x", {"by": "rené@dimagi.com"}) == "connections.x by=rené@dimagi.com"
+
+
+# ---- client authentication ------------------------------------------------------
+
+def test_basic_client_auth_is_used_for_token_and_revoke(user, monkeypatch):
+    sf = providers.get("salesforce")
+    monkeypatch.setattr(type(sf), "client_auth", "basic")
+    seen = []
+
+    def post(url, data=None, headers=None, timeout=None, auth=None):
+        seen.append((url, dict(data or {}), auth))
+        return _resp(body=_token_body())
+    conn = _stored({"user": user}, user, access="")
+    with mock.patch.multiple("apps.connections.providers.base.requests", post=post):
+        services.access_token_for(conn)
+        services.disconnect(conn, by=user)
+    for url, data, auth in seen:
+        assert auth == ("3MVG-client", "shh") and "client_secret" not in data
+    assert seen[-1][1] == {"token": "5Aep_r", "token_type_hint": "refresh_token"}

@@ -39,11 +39,14 @@ def _provider_rows() -> list[ProviderOut]:
             for p in providers.ALL.values()]
 
 
+def _title(provider: str) -> str:
+    # A row for a provider no longer registered still lists (and can be disconnected).
+    return getattr(providers.ALL.get(provider), "title", provider)
+
+
 def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
     return ConnectionOut(
-        id=conn.pk, provider=conn.provider,
-        # A row for a provider no longer registered still lists (and can be disconnected).
-        title=getattr(providers.ALL.get(conn.provider), "title", conn.provider),
+        id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
@@ -177,7 +180,7 @@ def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_
     except PermissionDenied as exc:
         raise HttpError(403, str(exc)) from None
     except services.ConnectionError as exc:
-        raise problem_for(exc, title=providers.get(conn.provider).title, owner=f"{slug}'s") from None
+        raise problem_for(exc, title=_title(conn.provider), owner=f"{slug}'s") from None
     return Status(204, None)
 
 
