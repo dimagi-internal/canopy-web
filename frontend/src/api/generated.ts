@@ -438,9 +438,13 @@ export interface paths {
         /**
          * A fresh access token for my own connection (CLI)
          * @description Mint a short-lived access token for the account I connected, for my own
-         *     command line. Needs a personal access token: a browser session is refused,
-         *     so a stolen cookie cannot pull a Salesforce token. 409 when I have not
-         *     connected, or must reconnect (`connect_url` says where).
+         *     command line. Needs a personal access token sent as a bearer: a browser
+         *     session, an MCP call, an OAuth connector's token and a conversation's caller
+         *     token are all refused (403 `token_route_needs_pat`), so neither a stolen
+         *     cookie nor a model holding my token can pull a Salesforce token. 409 when I
+         *     have not connected, or must reconnect (`connect_url`, an absolute URL, says
+         *     where). `?refresh=true` forces a new token even when the cached one looks
+         *     fresh (for a CLI whose token Salesforce already rejected).
          */
         readonly post: operations["my_connection_token"];
         readonly delete?: never;
@@ -10975,6 +10979,8 @@ export interface paths {
          *     this runner holds the turn, and always for a caller's turn (one confined to a
          *     capability). 409 with `error` set to `no_agent`, `not_connected`, `ambiguous`,
          *     `reconnect_required` or `not_configured`; 502/503 when the provider fails.
+         *     `min_life_seconds` (default 300) is how long the token must still live;
+         *     `refresh` forces a new one.
          */
         readonly post: operations["turn_connection_token"];
         readonly delete?: never;
@@ -35908,6 +35914,18 @@ export interface components {
         readonly TurnConnectionTokenIn: {
             /** Provider */
             readonly provider: string;
+            /**
+             * Min Life Seconds
+             * @description Hand out the cached token only if it lives at least this much longer; else refresh first.
+             * @default 300
+             */
+            readonly min_life_seconds: number;
+            /**
+             * Refresh
+             * @description Refresh even if the cached token looks fresh (Salesforce already rejected it).
+             * @default false
+             */
+            readonly refresh: boolean;
         };
         /**
          * RunnerProjectRequestOut
@@ -44228,7 +44246,9 @@ export interface operations {
     };
     readonly my_connection_token: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly refresh?: boolean;
+            };
             readonly header?: never;
             readonly path: {
                 readonly provider: string;
