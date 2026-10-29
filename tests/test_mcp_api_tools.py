@@ -116,6 +116,11 @@ CREDENTIAL_ROUTES_ON_MCP: dict[str, str] = {
     **dict.fromkeys((
         "begin_passkey_registration", "begin_passkey_step_up", "finish_passkey_step_up",
     ), "a passkey ceremony: nothing it returns is a credential without the person's authenticator"),
+    **dict.fromkeys((
+        "begin_confirm_my_host_grant", "begin_approve_act_as_request",
+    ), "a passkey ceremony's start for the person's own act-as grant, in a browser session only "
+       "(`stepup.require_browser`): a token's call is refused, and the answer is a WebAuthn "
+       "challenge, never a credential"),
     "create_capability_uploads": "upload URLs for the caller's own lease, the same as over REST",
     # Anonymous doors whose authority is a proof bound to the request: as a tool there is
     # no proof to carry, so the call is refused before anything is minted.
