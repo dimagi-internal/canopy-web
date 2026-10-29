@@ -7,7 +7,7 @@ re-authorized at completion (admin can be revoked between the two legs).
 """
 from __future__ import annotations
 
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -176,7 +176,7 @@ def test_agent_start_needs_a_csrf_token(user, eva):
     c.get("/api/csrf/")
     token = c.cookies[settings_csrf_cookie()].value
     resp = c.post(url, {"agent": "eva", "csrfmiddlewaretoken": token})
-    assert resp.status_code == 302 and "login.salesforce.com" in resp["Location"]
+    assert resp.status_code == 302 and urlsplit(resp["Location"]).hostname == "login.salesforce.com"
 
 
 def settings_csrf_cookie():

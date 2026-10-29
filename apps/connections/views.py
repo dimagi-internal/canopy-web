@@ -37,6 +37,7 @@ from django.http import (
     HttpResponseRedirect,
 )
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods
 
 from apps.agents.models import Agent
@@ -50,7 +51,14 @@ def _safe_return_to(value: str | None) -> str:
     """A same-site path, else `/settings`. Rejects absolute URLs, `//host`, and
     backslash tricks that browsers normalize into `//host`."""
     v = value or ""
-    if not v.startswith("/") or v.startswith("//") or "\\" in v or any(c in v for c in "\r\n\t"):
+    if (
+        not v.startswith("/")
+        or v.startswith("//")
+        or "\\" in v
+        or any(c in v for c in "\r\n\t")
+        # No host is allowed, so only a relative URL passes (CodeQL models this sanitizer).
+        or not url_has_allowed_host_and_scheme(v, allowed_hosts=set(), require_https=True)
+    ):
         return DEFAULT_RETURN
     return v
 
