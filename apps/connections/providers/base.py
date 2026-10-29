@@ -14,7 +14,23 @@ class UnknownProvider(KeyError):  # noqa: N818 - name fixed by the interface
 
 
 class ProviderError(Exception):
-    """The provider rejected a request (HTTP error, or HTTP 200 carrying `error`)."""
+    """The provider rejected a request (HTTP error, or HTTP 200 carrying `error`).
+
+    `code` is the provider's own error string when it sent one (`invalid_grant`).
+    """
+
+    def __init__(self, message: str, *, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ProviderUnavailable(ProviderError):  # noqa: N818 - a kind of ProviderError
+    """The provider could not be reached or did not answer sensibly: a timeout, a
+    dropped connection, a 5xx, a body that is not JSON.
+
+    Distinct from a rejection because the remedy differs: this says nothing about
+    the stored grant, so a caller must not treat it as "reconnect".
+    """
 
 
 @dataclass(frozen=True)
