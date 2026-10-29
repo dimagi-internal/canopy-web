@@ -18,6 +18,7 @@ and the agent is told what it is missing.
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit
 
 import requests
 from django.conf import settings
@@ -70,7 +71,9 @@ def store(installation, session, user, files) -> tuple[list[dict], list[str]]:
             resp = requests.get(url, headers={"Authorization": f"Bearer {installation.bot_token}"},
                                 timeout=TIMEOUT)
             if _sign_in_page(resp):
-                logger.warning("slack file download landed on a sign-in page: %s", resp.url)
+                # The host only: the URL's path names the file and its query the redirect.
+                logger.warning("slack file download landed on a sign-in page: %s",
+                               urlsplit(resp.url or "").netloc)
                 missed.append(f"{name} ({NO_SCOPE})")
                 continue
             resp.raise_for_status()
