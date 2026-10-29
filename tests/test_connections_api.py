@@ -393,3 +393,66 @@ def test_grantee_admin_may_revoke_but_a_stranger_may_not(user, other, ws, eva):
     grant_step_up(o)
     assert o.delete(url).status_code == 204
     assert not ConnectionGrant.objects.exists()
+
+
+# ---- only a plain PAT over REST reaches the CLI token route (C1) ---------------------
+
+def test_token_route_refuses_an_oauth_connector_token(user):
+    from apps.oauth_server.models import OAuthClient, OAuthGrant
+
+    _stored({"user": user}, user)
+    oc = OAuthClient.objects.create(client_id="c-1", client_name="Claude", redirect_uris=[])
+    grant = OAuthGrant.objects.create(client=oc, user=user)
+    raw, _ = PersonalToken.create_for_user(user=user, label="oauth", ttl=timedelta(hours=1),
+                                           oauth_grant=grant)
+    resp = Client().post("/api/me/connections/salesforce/token", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert resp.status_code == 403 and resp.json()["error"] == "token_route_needs_pat"
+    assert "00D!cached" not in resp.content.decode()
+
+
+def test_token_route_refuses_a_caller_token(user, ws):
+    import uuid
+
+    from apps.canopy_sessions.models import Session
+    from apps.harness import caller_tokens
+    from apps.harness import initiator as who
+    from apps.harness.models import Turn
+
+    _stored({"user": user}, user)
+    session = Session.objects.create(workspace=ws, project="p", created_by=user, title="chat")
+    turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="x",
+                               idempotency_key=uuid.uuid4().hex, initiator_kind=who.USER,
+                               initiator_user=user, initiator_assurance=who.SESSION)
+    # A scoped token reaches REST only on MCP's tool routes (403 at the door); an
+    # unscoped one does not reach REST at all (401).
+    for scoped, status in ((True, 403), (False, 401)):
+        raw = caller_tokens.mint(turn, scoped=scoped)
+        resp = Client().post("/api/me/connections/salesforce/token", HTTP_AUTHORIZATION=f"Bearer {raw}")
+        assert resp.status_code == status, (scoped, resp.content)
+        assert "00D!cached" not in resp.content.decode()
+
+
+def test_token_route_refuses_an_mcp_call_even_with_a_pat(user):
+    """The route itself, not only the tool list: a request the MCP transport
+    dispatched (`via_mcp`) runs as the caller's PAT and is still refused."""
+    from django.test import RequestFactory
+
+    from apps.api.errors import ProblemError
+    from apps.connections import api as conn_api
+    from apps.tokens import kinds
+
+    _stored({"user": user}, user)
+    req = RequestFactory().post("/api/me/connections/salesforce/token")
+    req.user, req.auth_method, req.via_mcp = user, kinds.PAT, True
+    req.auth_credential = {"type": kinds.PAT, "id": 1}
+    with pytest.raises(ProblemError) as exc:
+        conn_api.my_connection_token(req, "salesforce")
+    assert exc.value.status_code == 403
+
+
+def test_token_route_is_not_an_mcp_tool():
+    from apps.mcp import api_tools
+
+    assert "my_connection_token" in api_tools.EXCLUDED
+    assert "turn_connection_token" in api_tools.EXCLUDED
+    assert not api_tools.is_tool_route("POST", "/api/me/connections/salesforce/token")

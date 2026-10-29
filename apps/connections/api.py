@@ -20,6 +20,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.passkeys import stepup
+from apps.tokens import kinds
 
 from . import providers, services
 from .models import Connection, ConnectionGrant
@@ -180,15 +181,30 @@ def revoke_connection_grant(request: HttpRequest, slug: str, connection_id: int,
 
 # ---- my CLI token ----------------------------------------------------------------
 
+def _plain_pat(request: HttpRequest) -> bool:
+    """A personal access token authenticated this request, over REST.
+
+    An allowlist, not "not a browser": a token route must not answer whatever
+    else is not a browser. An MCP tool call runs as the caller's PAT but puts the
+    answer in a model's context; an OAuth-grant PAT is a connector's (Claude's)
+    token, also a model's; a caller token speaks for a turn. All refused."""
+    if getattr(request, "via_mcp", False) or getattr(request, "auth_method", None) != kinds.PAT:
+        return False
+    kind = kinds.kind_of(getattr(request, "auth_credential", None))
+    return kind is not None and kind.name == kinds.PAT
+
+
 @me_router.post("/{provider}/token", response=AccessTokenOut,
                 summary="A fresh access token for my own connection (CLI)")
 @gate("self", kind="ephemeral-credential", step_up="a person's own token for their own CLI; PAT only")
 def my_connection_token(request: HttpRequest, provider: str) -> AccessTokenOut:
     """Mint a short-lived access token for the account I connected, for my own
-    command line. Needs a personal access token: a browser session is refused,
-    so a stolen cookie cannot pull a Salesforce token. 409 when I have not
-    connected, or must reconnect (`connect_url` says where)."""
-    if stepup.is_browser(request):
+    command line. Needs a personal access token sent as a bearer: a browser
+    session, an MCP call, an OAuth connector's token and a conversation's caller
+    token are all refused (403 `token_route_needs_pat`), so neither a stolen
+    cookie nor a model holding my token can pull a Salesforce token. 409 when I
+    have not connected, or must reconnect (`connect_url` says where)."""
+    if not _plain_pat(request):
         raise ProblemError(403, "A personal access token is required",
                            detail="Use the CLI (`canopy login`) to fetch your own token.",
                            members={"error": "token_route_needs_pat"})

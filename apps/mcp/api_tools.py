@@ -176,6 +176,11 @@ EXCLUDED: dict[str, str] = {
     # A connected site telling canopy its resources changed: signed by the site's own
     # key, a host's door, never a person's or an agent's.
     "resources_updated": _HOST,
+    # Connection tokens (apps/connections): a live Salesforce access token is the
+    # answer, so a tool would put it in a model's context. The route refuses an
+    # MCP call too; leaving it out also keeps a caller token off it over REST.
+    "turn_connection_token": _RUNNER,
+    "my_connection_token": "a person's own token, for their CLI — never into a model's context",
 }
 
 def excluded_reason(path: str, method: str, operation: dict) -> str | None:

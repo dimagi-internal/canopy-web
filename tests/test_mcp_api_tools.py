@@ -110,6 +110,47 @@ def test_exclusions_name_routes_that_exist():
         assert any(p.startswith(prefix) for p in paths), prefix
 
 
+#: Routes gated `runner-protocol` / `ephemeral-credential` that ARE tools, and why
+#: that is harmless. A new one must be excluded (`api_tools.EXCLUDED`) or argued here.
+CREDENTIAL_ROUTES_ON_MCP: dict[str, str] = {
+    **dict.fromkeys((
+        "begin_passkey_registration", "begin_passkey_step_up", "finish_passkey_step_up",
+    ), "a passkey ceremony: nothing it returns is a credential without the person's authenticator"),
+    "create_capability_uploads": "upload URLs for the caller's own lease, the same as over REST",
+    "create_runner_session": "starts a session on the caller's own runner; returns no secret",
+    **dict.fromkeys((
+        "box_egress", "claim_runner_pairing", "kept_conversations", "pair_runner_by_role",
+        "post_delegated_checks", "post_google_mint_challenge", "post_handoff_captured",
+        "post_handoff_close", "post_handoff_part", "post_handoff_restored", "post_runner_usage",
+        "post_session_menu", "post_session_subagents", "post_sign_in_request",
+        "post_sign_in_request_result", "register_runner_device_key", "report_runner_logins",
+        "report_runner_project_result", "report_slash_commands", "request_runner_device_key",
+        "turn_agent_token", "update_runner_capabilities",
+    ), "runner protocol on MCP before this guard existed; a person's token reaches only its own runners"),
+}
+
+
+def test_credential_routes_are_excluded_or_argued(db):
+    """Every route gated `kind="runner-protocol"` or `kind="ephemeral-credential"`
+    hands out or acts on a credential: as a tool its answer lands in a model's
+    context. So each is excluded, or named in `CREDENTIAL_ROUTES_ON_MCP` with why
+    that is harmless — a new one cannot slip onto MCP by default."""
+    from tests.test_every_route_declares_its_gate import declared_gates
+
+    gates = declared_gates()
+    exposed = []
+    for path, item in _schema()["paths"].items():
+        for method, op in item.items():
+            g = gates.get(op["operationId"])
+            if g is None or g.kind not in ("runner-protocol", "ephemeral-credential"):
+                continue
+            if api_tools.excluded_reason(path, method, op) is None \
+                    and op["operationId"] not in CREDENTIAL_ROUTES_ON_MCP:
+                exposed.append(op["operationId"])
+    assert exposed == [], f"credential routes served as MCP tools: {exposed}"
+    assert set(CREDENTIAL_ROUTES_ON_MCP) <= _operation_ids()
+
+
 def test_no_generated_tool_collides_with_a_hand_written_one(db):
     """FastMCP resolves hand-written tools first, so a route sharing a
     hand-written tool's name would be silently unreachable. A hand-written tool
