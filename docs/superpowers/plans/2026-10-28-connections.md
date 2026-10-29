@@ -41,12 +41,13 @@
 **Interfaces:**
 - Produces:
   - `Connection` fields: `user` (FK user, null), `agent` (FK `agents.Agent`, null), `provider` (char 40), `account_id` (char 255), `account_label` (char 255, display only), `instance_url` (URL, blank), `scopes` (char 500), `refresh_token_enc`, `access_token_enc` (text, blank), `access_token_expires_at`, `refresh_failed_at`, `last_used_at` (datetime, null), `connected_by` (FK user), `created_at`, `updated_at`. Constraints: check exactly one of `user`/`agent`; unique (`user`,`provider`,`account_id`) and (`agent`,`provider`,`account_id`). Property `needs_reconnect -> bool` (no refresh token, or `refresh_failed_at` set). Property `owner_label -> str`.
+  - `ConnectionGrant(connection FK, agent FK, granted_by FK user, created_at)`, unique (connection, agent): an **agent's** connection used by another agent — today's case is Eva's Salesforce user (eva@dimagi-ai.com) used by Echo, held as `salesforce` in the zero-knowledge workspace vault "Salesforce (Eva's account)". Only for agent-owned connections (a person's connection is never granted to an agent here). Granting needs admin of both agents.
   - `providers.get(name: str) -> Provider` (raises `UnknownProvider`); `providers.ALL: dict[str, Provider]`.
   - `Provider` (dataclass/protocol in `base.py`): `name`, `title`, `scopes: tuple[str, ...]`, `rotates_refresh_token: bool`, `is_configured() -> bool`, `authorize_url(state: str, redirect_uri: str, code_challenge: str) -> str`, `exchange_code(code: str, redirect_uri: str, code_verifier: str) -> TokenResponse`, `refresh(refresh_token: str) -> TokenResponse`, `identity(token: TokenResponse) -> Identity`, `revoke(token: str) -> None`.
   - `TokenResponse(access_token: str, refresh_token: str, expires_at: datetime | None, instance_url: str, raw_id: str)`; `Identity(account_id: str, label: str)`.
   - Salesforce: authorize/token/revoke at `{SALESFORCE_LOGIN_URL}/services/oauth2/{authorize,token,revoke}`; PKCE S256 plus client secret; identity from the `id` URL in the token response (`GET` it with the access token → `user_id`, `username`); `account_id = "<organization_id>/<user_id>"`; Salesforce returns no `expires_in`, so `expires_at = now + 2h` unless the org's session policy is read (builder may hardcode 2h and refresh on 401).
 
-- [ ] **Step 1: Write failing tests** `test_exactly_one_owner_enforced` (IntegrityError for both or neither), `test_unique_per_owner_provider_account`, `test_needs_reconnect_states`, `test_registry_returns_salesforce_and_rejects_unknown`, `test_salesforce_not_configured_without_settings`.
+- [ ] **Step 1: Write failing tests** `test_grant_only_for_agent_owned_connections`, `test_exactly_one_owner_enforced` (IntegrityError for both or neither), `test_unique_per_owner_provider_account`, `test_needs_reconnect_states`, `test_registry_returns_salesforce_and_rejects_unknown`, `test_salesforce_not_configured_without_settings`.
 - [ ] **Step 2:** `pytest tests/test_connections_model.py -q` → FAIL (no module).
 - [ ] **Step 3:** Implement model, migration (`makemigrations connections`), registry and `SalesforceProvider` per the Interfaces block.
 - [ ] **Step 4:** Tests pass; `python manage.py makemigrations --check` clean.
@@ -67,6 +68,8 @@
   - `access_token_for(conn: Connection) -> AccessToken` — `AccessToken(token: str, instance_url: str, expires_at: datetime, account_label: str)`; cached-or-refresh under the row lock; on provider rejection stamps `refresh_failed_at` and raises `ReconnectRequired`; stores a rotated refresh token; sets `last_used_at`.
   - `disconnect(conn: Connection, *, by) -> None` — best-effort `provider.revoke(refresh_token)` (failure logged, not raised), delete row, event `connections.disconnected`.
   - `connections_for(owner: Owner) -> QuerySet[Connection]`.
+  - `connection_for_agent(agent, provider: str) -> Connection` — the agent's own connection for the provider, else one granted to it (`ConnectionGrant`); none → `NotConnected`; more than one candidate → `ConnectionError("ambiguous")`. Never a person's connection.
+  - `grant(conn, agent, *, by) -> ConnectionGrant` / `revoke_grant(grant, *, by)` — `by` must administer both agents; events `connections.granted` / `connections.grant_revoked`.
   - Exceptions: `NotConfigured`, `ConnectionError(code)`, `ReconnectRequired`, `NotConnected`.
 - Events via `apps.events.services.record([...], workspace=…)` (agent's workspace for agents; none for people), payload: provider, owner, account_label — never tokens.
 
@@ -114,6 +117,8 @@
 - `GET /api/connections/` → `{providers: [ProviderOut], connections: [ConnectionOut]}` mine — `@gate("self")`.
 - `DELETE /api/connections/{id}` → 204, mine only (another's id 404) — `@gate("self", setting=True)`.
 - `GET /api/agents/{slug}/connections` — `@gate("agent-admin")` (use `agent_for_admin`).
+- `GET /api/agents/{slug}/connections` also lists connections granted to the agent (`granted_from: <agent slug>`).
+- `PUT /api/agents/{slug}/connections/{id}/grants/{other_slug}` / `DELETE …` — share an agent-owned connection with another agent; `@gate("agent-admin", setting=True, step_up=True)`, caller must administer both.
 - `DELETE /api/agents/{slug}/connections/{id}` — `@gate("agent-admin", setting=True, step_up=True)`; browser callers pass `stepup.require_recent_step_up` as `api_credentials.set_agent_credentials` does.
 - `POST /api/me/connections/{provider}/token` → `AccessTokenOut` — `@gate("self", step_up="a person's own token for their own CLI; PAT only")`; refuses a browser session (403 `token_route_needs_pat`, check `stepup.is_browser(request)`); 409 `not_connected` / `reconnect_required` with `connect_url`; one connection per provider is assumed for v1 (several → 409 `ambiguous`, body lists account labels). Records event `connections.token_issued` (to: cli).
 
@@ -128,9 +133,9 @@
 - Test: `tests/test_connections_turn_token.py`
 
 **Interfaces:**
-- `POST /api/harness/runners/{runner_id}/turns/{turn_id}/connection-token` — `@gate("runner", "runner-holds-agent", kind="runner-protocol", step_up="runner protocol")`. Same turn lookup and `runner_may_hold_agent` re-check as `turn_github_token`; turn's agent via `delegations.turn_agent(turn)`; no agent → 409 `no_agent`; caller-confined turn (capability-confined) → 404; the **agent's** connection for the provider (never the initiator's) → `access_token_for`. Event `connections.token_issued` (to: turn, runner, agent).
+- `POST /api/harness/runners/{runner_id}/turns/{turn_id}/connection-token` — `@gate("runner", "runner-holds-agent", kind="runner-protocol", step_up="runner protocol")`. Same turn lookup and `runner_may_hold_agent` re-check as `turn_github_token`; turn's agent via `delegations.turn_agent(turn)`; no agent → 409 `no_agent`; caller-confined turn (capability-confined) → 404; `services.connection_for_agent(agent, provider)` (its own, else one granted to it; never the initiator's) → `access_token_for`. Event `connections.token_issued` (to: turn, runner, agent).
 
-- [ ] **Step 1: Failing tests:** `test_issues_agent_token_for_claimed_turn`, `test_never_initiators_connection` (initiator has one, agent none → 409 `not_connected`), `test_unclaimed_or_finished_turn_404`, `test_confined_turn_404`, `test_reconnect_required_409`.
+- [ ] **Step 1: Failing tests:** `test_granted_connection_used_by_borrowing_agent` (Echo's turn gets Eva's token after a grant; not before),  `test_issues_agent_token_for_claimed_turn`, `test_never_initiators_connection` (initiator has one, agent none → 409 `not_connected`), `test_unclaimed_or_finished_turn_404`, `test_confined_turn_404`, `test_reconnect_required_409`.
 - [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(connections): a turn gets its agent's Salesforce token`.
 
@@ -168,6 +173,19 @@
 - [ ] **Step 1:** Write the docs. **Step 2:** Run the gate/schema tests and the full `pytest -q -x` for touched apps. **Step 3:** Commit `docs(connections): server-held OAuth connections`.
 
 ---
+
+## Migrating Eva's Salesforce credential (after this plan deploys)
+
+Today: Eva's own Salesforce user's refresh token is `salesforce` in the zero-knowledge workspace
+vault "Salesforce (Eva's account)", attached to Eva and Echo; each runner copies it to
+`~/.eva/chrome-sales/.sf-creds.json` and refreshes it itself; `bin/eva-sf-creds mint` re-mints
+headlessly with `SALESFORCE_LOGIN_PASSWORD` / `SALESFORCE_LOGIN_TOTP`. That token belongs to
+chrome-sales's Connected App, so it cannot be imported: an admin of Eva connects once on
+Eva's page, signing in as eva@dimagi-ai.com through canopy's Connected App, then grants it to
+Echo. Eva's and Echo's tools switch to `canopy cred salesforce-token` (canopy-salesforce S1);
+the vault entry and `bin/eva-sf-creds` are retired after that (eva repo change). The login
+password and MFA seed are pasted secrets and stay in Eva's zero-knowledge vault only if
+headless re-connect is kept (decide then; a revoked grant is rare and an admin can reconnect).
 
 ## Owner-gated, outside this plan's code
 
