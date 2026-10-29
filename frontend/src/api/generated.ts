@@ -6346,7 +6346,8 @@ export interface paths {
         readonly post?: never;
         /**
          * Stop sharing an agent's connection with another agent
-         * @description Take the other agent's access away. An admin of either agent may.
+         * @description Take the other agent's access away. An admin of either the owning agent or
+         *     the agent it was shared with may do this.
          */
         readonly delete: operations["revoke_connection_grant"];
         readonly options?: never;
@@ -28499,13 +28500,6 @@ export interface components {
              * @description What happened: where the token went, or why you think it is exposed.
              */
             readonly reason: string;
-        };
-        /** AgentConnectionsOut */
-        readonly AgentConnectionsOut: {
-            /** Providers */
-            readonly providers: readonly components["schemas"]["ProviderOut"][];
-            /** Connections */
-            readonly connections: readonly components["schemas"]["ConnectionOut"][];
         };
         /** BootstrapReportOut */
         readonly BootstrapReportOut: {
@@ -52391,7 +52385,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AgentConnectionsOut"];
+                    readonly "application/json": components["schemas"]["ConnectionsOut"];
                 };
             };
         };

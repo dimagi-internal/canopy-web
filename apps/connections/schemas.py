@@ -43,11 +43,6 @@ class ConnectionsOut(StrictModel):
     connections: list[ConnectionOut]
 
 
-class AgentConnectionsOut(StrictModel):
-    providers: list[ProviderOut]
-    connections: list[ConnectionOut]
-
-
 class AccessTokenOut(StrictModel):
     access_token: str
     instance_url: str

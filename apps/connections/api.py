@@ -14,7 +14,7 @@ from django.urls import reverse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.agents.gates import agent_for_admin
+from apps.agents.gates import agent_for_admin, agent_for_read
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
@@ -23,7 +23,7 @@ from apps.passkeys import stepup
 
 from . import providers, services
 from .models import Connection, ConnectionGrant
-from .schemas import AccessTokenOut, AgentConnectionsOut, ConnectionOut, ConnectionsOut, ProviderOut
+from .schemas import AccessTokenOut, ConnectionOut, ConnectionsOut, ProviderOut
 
 router = Router(auth=session_auth, tags=["connections"])
 agents_router = Router(auth=session_auth, tags=["connections"])
@@ -84,17 +84,17 @@ def disconnect_mine(request: HttpRequest, connection_id: int) -> Status:
 
 # ---- an agent's ------------------------------------------------------------------
 
-@agents_router.get("/{slug}/connections", response=AgentConnectionsOut,
+@agents_router.get("/{slug}/connections", response=ConnectionsOut,
                    summary="An agent's connections, its own and shared with it")
 @gate("agent-admin")
-def agent_connections(request: HttpRequest, slug: str) -> AgentConnectionsOut:
+def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     """What this agent can act as: connections it owns, and ones another agent
     shares with it (`granted_from` names the owner). Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
     own = services.connections_for(("agent", agent.pk)).select_related("connected_by")
     granted = (Connection.objects.filter(grants__agent=agent).select_related("connected_by", "agent")
                .order_by("provider", "account_label", "pk").distinct())
-    return AgentConnectionsOut(
+    return ConnectionsOut(
         providers=_provider_rows(),
         connections=[_out(c) for c in own] + [_out(c, granted_from=c.agent.slug) for c in granted],
     )
@@ -115,8 +115,19 @@ def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: 
     return Status(204, None)
 
 
-def _grant_target(request: HttpRequest, slug: str, connection_id: int, other_slug: str):
-    agent = agent_for_admin(request, slug)
+def _admin_of_either(request: HttpRequest, slug: str, other_slug: str) -> Agent:
+    """The owner agent `slug`, for a caller who administers it or `other_slug`."""
+    agent = agent_for_read(request, slug)
+    if agent.is_admin(request.user):
+        return agent
+    other = Agent.objects.filter(slug=other_slug).first()
+    if other is not None and other.is_admin(request.user):
+        return agent
+    raise HttpError(403, "this action requires an admin of either agent")
+
+
+def _grant_target(request: HttpRequest, slug: str, connection_id: int, other_slug: str, *, either: bool = False):
+    agent = _admin_of_either(request, slug, other_slug) if either else agent_for_admin(request, slug)
     conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
     other = Agent.objects.filter(slug=other_slug).first()
     if other is None:
@@ -148,8 +159,9 @@ def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_
                       summary="Stop sharing an agent's connection with another agent")
 @gate("agent-admin", setting=True, step_up=True)
 def revoke_connection_grant(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
-    """Take the other agent's access away. An admin of either agent may."""
-    conn, other = _grant_target(request, slug, connection_id, other_slug)
+    """Take the other agent's access away. An admin of either the owning agent or
+    the agent it was shared with may do this."""
+    conn, other = _grant_target(request, slug, connection_id, other_slug, either=True)
     # After the admin check: a non-admin gets 404/403, never a step-up prompt.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
@@ -192,6 +204,9 @@ def my_connection_token(request: HttpRequest, provider: str) -> AccessTokenOut:
     # must survive the exception we turn into a 409 below.
     try:
         token = services.access_token_for(rows[0])
+    except services.NotConfigured:
+        raise ProblemError(409, "Not set up", detail=f"{provider} is not set up on this deployment.",
+                           members={"error": "not_configured"}) from None
     except services.ReconnectRequired:
         raise ProblemError(409, "Reconnect required", detail=f"Your {provider} connection no longer works.",
                            members={"error": "reconnect_required", "connect_url": url}) from None

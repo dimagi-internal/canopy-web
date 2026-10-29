@@ -30,9 +30,14 @@ DEBUG_SESSION_MARKER = "_canopy_debug_session"
 
 def is_machine(request) -> bool:
     """True when a token, not a person signed in through the browser, is behind
-    this request: any Authorization header, an MCP tool call (dispatched
+    this request: a bearer token that authenticated it, an MCP tool call (dispatched
     in-process, so it carries no header), or a session minted from a token."""
-    if request.META.get("HTTP_AUTHORIZATION") or getattr(request, "via_mcp", False):
+    # An Authorization header counts only when a token actually authenticated
+    # the request: every bearer door in apps/tokens/middleware.py stamps
+    # `auth_method`. A signed-in cookie user skips the PAT lookup, so a junk
+    # `Authorization: Bearer x` sent with a stolen cookie leaves it unset and
+    # must not read as "a token" (it would skip every passkey step-up).
+    if getattr(request, "auth_method", None) or getattr(request, "via_mcp", False):
         return True
     session = getattr(request, "session", None)
     try:

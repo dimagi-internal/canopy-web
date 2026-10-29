@@ -8,6 +8,7 @@ an agent's connection, that the CLI token route refuses a browser session, the
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -193,7 +194,7 @@ def test_grant_and_revoke(client, user, eva, echo):
 
 def test_grant_needs_admin_of_both(user, other, ws, eva):
     WorkspaceMembership.objects.create(workspace=ws, user=other, role=WorkspaceMembership.EDITOR)
-    theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=other)
+    Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=other)
     conn = _stored({"agent": eva}, user)
     c = Client()
     c.force_login(user)
@@ -201,7 +202,6 @@ def test_grant_needs_admin_of_both(user, other, ws, eva):
     resp = c.put(f"/api/agents/eva/connections/{conn.pk}/grants/theirs")
     assert resp.status_code == 403
     assert not ConnectionGrant.objects.exists()
-    assert theirs.slug == "theirs"
 
 
 def test_grant_to_unknown_agent_and_to_self(client, user, eva):
@@ -308,3 +308,76 @@ def test_refreshed_token_is_returned_and_rotated(user):
         assert _token(user).json()["access_token"] == "00D!fresh"
     conn.refresh_from_db()
     assert conn.refresh_failed_at is None
+
+
+def test_token_unconfigured_provider_is_409_even_with_a_stale_cached_token(user, settings):
+    conn = _stored({"user": user}, user, access="00D!stale", expires_in=timedelta(seconds=-60))
+    settings.SALESFORCE_CLIENT_ID = ""
+    resp = _token(user)
+    assert resp.status_code == 409 and resp.json()["error"] == "not_configured"
+    assert "00D!stale" not in resp.content.decode()
+    assert Connection.objects.filter(pk=conn.pk).exists()
+
+
+# ---- a junk Authorization header is not a token -----------------------------------
+
+JUNK = {"HTTP_AUTHORIZATION": "Bearer junk"}
+
+
+def test_junk_bearer_with_a_cookie_is_still_a_browser_on_the_token_route(client, user):
+    _stored({"user": user}, user)
+    resp = client.post("/api/me/connections/salesforce/token", **JUNK)
+    assert resp.status_code == 403 and resp.json()["error"] == "token_route_needs_pat"
+
+
+def test_junk_bearer_with_a_cookie_still_needs_step_up(user, eva):
+    conn = _stored({"agent": eva}, user)
+    c = Client()
+    c.force_login(user)  # no step-up
+    with FakeSF():
+        resp = c.delete(f"/api/agents/eva/connections/{conn.pk}", **JUNK)
+    assert resp.status_code == 403 and resp.json().get("error") == "step_up_required"
+    assert Connection.objects.filter(pk=conn.pk).exists()
+
+
+def test_junk_bearer_on_credentials_route_still_needs_step_up(user, eva):
+    c = Client()
+    c.force_login(user)
+    resp = c.put("/api/agents/eva/credentials", data={"values": {"x": "y"}},
+                 content_type="application/json", **JUNK)
+    assert resp.status_code == 403 and resp.json().get("error") == "step_up_required"
+
+
+def test_a_real_pat_is_a_machine(user):
+    from django.test import RequestFactory
+
+    from apps.common.views_debug import is_machine
+    req = RequestFactory().get("/", **_pat(user))
+    assert is_machine(req) is False  # header alone (no middleware) proves nothing
+    req.auth_method = "pat"
+    assert is_machine(req) is True
+
+
+# ---- revoking from the grantee's side ------------------------------------------------
+
+def test_grantee_admin_may_revoke_but_a_stranger_may_not(user, other, ws, eva):
+    for u in (other,):
+        WorkspaceMembership.objects.create(workspace=ws, user=u, role=WorkspaceMembership.EDITOR)
+    stranger = _mk("stranger")
+    WorkspaceMembership.objects.create(workspace=ws, user=stranger, role=WorkspaceMembership.EDITOR)
+    theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=other)
+    conn = _stored({"agent": eva}, user)
+    ConnectionGrant.objects.create(connection=conn, agent=theirs, granted_by=user)
+    url = f"/api/agents/eva/connections/{conn.pk}/grants/theirs"
+
+    s = Client()
+    s.force_login(stranger)
+    grant_step_up(s)
+    assert s.delete(url).status_code in (403, 404)
+    assert ConnectionGrant.objects.exists()
+
+    o = Client()
+    o.force_login(other)
+    grant_step_up(o)
+    assert o.delete(url).status_code == 204
+    assert not ConnectionGrant.objects.exists()
