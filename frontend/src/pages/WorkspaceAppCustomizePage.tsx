@@ -402,7 +402,8 @@ function DraftPanel({ workspace, app, draft, m, busy, run, testHref, onPoll }: {
     return () => { clearInterval(t); clearTimeout(stop) }
   }, [polling, onPoll])
   const checks = r.checks
-  const needsAdmin = r.risks.length > 0 && !app.may_manage
+  const updateRisks = r.template_change?.risks ?? []
+  const needsAdmin = (r.risks.length > 0 || updateRisks.length > 0) && !app.may_manage
   const pages = m.pages.filter((p) => p.nav)
 
   return (
@@ -414,6 +415,14 @@ function DraftPanel({ workspace, app, draft, m, busy, run, testHref, onPoll }: {
           <div className="mb-4 rounded-md border border-primary/30 bg-primary/10 p-3 text-sm">
             <div className="font-medium">Template update {r.template_change.from} → {r.template_change.to}</div>
             {r.template_change.changelog && <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.template_change.changelog}</div>}
+            {updateRisks.length > 0 ? (
+              <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2">
+                <div className="font-medium">This update changes who can see or do what — a workspace admin publishes it:</div>
+                <ul className="mt-1 list-disc pl-5">{updateRisks.map((x) => <li key={x}>{x}</li>)}</ul>
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-muted-foreground">Compared with the version you run, this update changes no roles, no access to records or fields, nothing public, no email recipients and no retention.</div>
+            )}
           </div>
         )}
         {r.quarantine.length > 0 && (
@@ -495,7 +504,7 @@ function DraftPanel({ workspace, app, draft, m, busy, run, testHref, onPoll }: {
             onClick={() => run(() => publishDraft(workspace, app.key), 'Published — the draft is now the live app.')}>
             Publish
           </button>
-          {needsAdmin && <span className="text-sm text-muted-foreground">This draft changes what the public sees or who can do what, so a workspace admin publishes it.</span>}
+          {needsAdmin && <span className="text-sm text-muted-foreground">This draft{updateRisks.length > 0 ? '’s template update' : ''} changes what the public sees or who can do what, so a workspace admin publishes it.</span>}
           {r.quarantine.length > 0 && <span className="text-sm text-muted-foreground">Deal with the set-aside changes first.</span>}
           <span className="text-xs text-muted-foreground">Publishing runs the checks again first.</span>
         </div>

@@ -88,7 +88,11 @@ error boundary.
 3. **Try it**: every page of the draft, public ones as a visitor, on the test copy.
 4. **Check**: the scenarios run on a scratch copy; the workspace can add its own.
 5. **Publish**: refused while anything is quarantined or a check fails. A change to what the
-   public sees or who can do what (`overlay.RISK_REASONS`) needs a workspace admin.
+   public sees or who can do what needs a workspace admin — the workspace's own changes judged op
+   by op (`overlay.is_risky`), and a template UPDATE judged by comparing the two template versions
+   (`template_diff.changes`: roles and who holds them, who reads a collection, field or record,
+   public and link pages, public forms and fields, private links, action roles, email recipients,
+   retention). The review lists each finding in plain words, or says the update changes none.
 6. **Restore**: any earlier version becomes live again, as a new version. Overlays only add, so an
    earlier version reads today's records.
 
