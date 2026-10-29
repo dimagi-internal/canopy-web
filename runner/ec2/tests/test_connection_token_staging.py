@@ -406,3 +406,38 @@ def test_other_calls_through_the_real_api_still_log_their_failures(cr, monkeypat
     monkeypatch.setattr(cr.urllib.request, "urlopen", urlopen)
     assert cr._api("GET", "/x")[0] == 503
     assert cr.logs == ["GET /x -> 503: b'busy'"]
+
+
+# ---- adoption: a new daemon's turn keeps what the old daemon staged for it -----------
+
+def test_the_startup_clear_spares_only_what_an_adopted_turn_holds(cr, tmp_path):
+    for slug, provider in (("eva", "salesforce"), ("eva", "gmail"), ("ace", "salesforce")):
+        _path(tmp_path, slug, provider).parent.mkdir(parents=True, exist_ok=True)
+        _path(tmp_path, slug, provider).write_text("{}")
+    cr._reserve_adopted_connections("r1", "t1", "eva", ["salesforce", "../x"])
+    cr._clear_stale_connection_tokens()
+    assert _path(tmp_path).exists()
+    assert not _path(tmp_path, "eva", "gmail").exists() and not _path(tmp_path, "ace").exists()
+
+
+def test_adoption_lets_go_of_a_provider_no_longer_listed(cr, monkeypatch, tmp_path):
+    for provider in ("salesforce", "gmail"):
+        _path(tmp_path, provider=provider).parent.mkdir(parents=True, exist_ok=True)
+        _path(tmp_path, provider=provider).write_text("{}")
+    cr._reserve_adopted_connections("r1", "t1", "eva", ["salesforce", "gmail"])
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"providers": ["salesforce"]}))
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._adopt_connections("r1", "t1", "eva")
+    assert len(cr.calls) == 1                               # its first stage asks canopy-web
+    assert cr._CONN_HOLDS["t1"][2] == {"salesforce"}
+    assert _path(tmp_path).exists() and not _path(tmp_path, provider="gmail").exists()
+
+
+def test_adoption_whose_stage_fails_leaves_no_file(cr, monkeypatch, tmp_path):
+    _path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    _path(tmp_path).write_text("{}")
+    cr._reserve_adopted_connections("r1", "t1", "eva", ["salesforce"])
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"providers": ["salesforce"]}))
+    _cli(cr, monkeypatch, tmp_path, code=1, stderr="boom")
+    cr._adopt_connections("r1", "t1", "eva")
+    assert cr._CONN_HOLDS == {} and not _path(tmp_path).exists()

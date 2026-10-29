@@ -380,3 +380,98 @@ def test_the_updaters_decision_is_the_update_check(cr, tmp_path, monkeypatch):
     f.write_text(json.dumps({"verdict": "failed", "detail": "could not install", "at": time.time()}))
     cr._update_check()
     assert cr._HEALTH["update"]["status"] == "fail"
+
+
+# ---- connections: an adopted turn keeps and refreshes its staged tokens ---------------
+
+@pytest.fixture
+def conns(cr, tmp_path, monkeypatch):
+    """The adopting daemon's connection plumbing: canopy-web lists `salesforce`; the CLI
+    writes the file. Everything else (the relay among it) runs for real."""
+    home = tmp_path / "home"
+    monkeypatch.setattr(cr.pathlib.Path, "home", lambda: home)
+    monkeypatch.setattr(cr, "_bearer", lambda min_life=0: "runner-bearer")
+    monkeypatch.setattr(cr, "_canopy_cli", lambda: "/bin/canopy")
+    monkeypatch.setattr(cr, "_CONN_HOLDS", {})
+    monkeypatch.setattr(cr, "_ADOPTED", set())
+    real_api, real_run = cr._api, cr.subprocess.run
+    seen = {"listed": [], "cli": []}
+
+    def api(method, path, body=None, **kw):
+        if method == "GET" and path.endswith("/connections"):
+            seen["listed"].append(path)
+            return 200, {"providers": ["salesforce"]}
+        return real_api(method, path, body, **kw)
+
+    def run(argv, **kw):
+        if "connection-token" not in argv:
+            return real_run(argv, **kw)
+        seen["cli"].append(argv)
+        f = home / ".canopy" / "connections" / argv[argv.index("--agent") + 1] / f"{argv[3]}.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"access_token": "NEW", "expires_at": time.time() + 3600}))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    monkeypatch.setattr(cr, "_api", api)
+    monkeypatch.setattr(cr.subprocess, "run", run)
+
+    def staged(slug="echo", provider="salesforce", token="OLD"):
+        f = home / ".canopy" / "connections" / slug / f"{provider}.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"access_token": token, "expires_at": time.time() + 3600}))
+        return f
+    return seen, staged
+
+
+def test_an_adopted_agent_turn_keeps_restages_and_unstages_its_connections(cr, tmp_path, monkeypatch, conns):
+    seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()                                       # the previous daemon staged it
+    other_provider = staged(provider="gmail")             # held by no adopted turn
+    leftover = staged(slug="nobody")
+    gate = tmp_path / "gate"
+    cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
+                       env=dict(os.environ), stdin=False, executor="cli")
+    _state(cr, tmp_path, cli_session_id="sess-1", connections=["salesforce"], confined=False)
+
+    cr.adopt_turns("rid")
+    cr._clear_stale_connection_tokens()                   # main()'s order: adopt, then clear
+    assert mine.exists()
+    assert not other_provider.exists() and not leftover.exists()
+    # Staged as a new turn's start: the same listing, the same CLI, for this turn.
+    assert _wait(lambda: seen["cli"])
+    assert seen["listed"] == [f"/runners/rid/turns/{TURN}/connections"]
+    assert seen["cli"][0][-6:] == ["--runner-id", "rid", "--turn", TURN, "--min-life", "900"]
+    assert json.loads(mine.read_text())["access_token"] == "NEW"
+    assert cr._CONN_HOLDS[TURN][:1] == ("echo",) and cr._CONN_HOLDS[TURN][2] == {"salesforce"}
+    # The heartbeat re-stages it near expiry, as any turn's.
+    cr._restage_connections(TURN, now=time.time() + 3500)
+    assert len(seen["cli"]) == 2 and "--turn" in seen["cli"][1]
+    # Its end unstages like any turn's.
+    gate.write_text("go")
+    assert _wait(lambda: TURN not in cr._in_flight_ids())
+    assert not mine.exists() and cr._CONN_HOLDS == {}
+
+
+def test_an_adopted_confined_turn_stages_nothing(cr, tmp_path, monkeypatch, conns):
+    seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    f = staged()
+    gate = tmp_path / "gate"
+    cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
+                       env=dict(os.environ), stdin=False, executor="cli")
+    d = _state(cr, tmp_path, connections=["salesforce"])
+    state = json.loads((d / "turn.json").read_text())
+    state["turn"]["caller_context"] = {"profile": "confined"}
+    (d / "turn.json").write_text(json.dumps(state))
+
+    cr.adopt_turns("rid")
+    cr._clear_stale_connection_tokens()
+    assert not f.exists() and cr._CONN_HOLDS == {}
+    gate.write_text("go")
+    assert _wait(lambda: TURN not in cr._in_flight_ids())
+    assert seen == {"listed": [], "cli": []} and cr._CONN_HOLDS == {}
+
+
+def test_a_running_turn_records_its_providers_without_a_token(cr):
+    assert cr._without_secrets({"connections": ["salesforce"], "confined": False}) == \
+        {"connections": ["salesforce"], "confined": False}

@@ -1811,12 +1811,13 @@ def _stage_failed_line(slug: str, provider: str, turn_id: str, reason: str) -> N
          f"reason={json.dumps(' '.join(str(reason).split())[-300:], ensure_ascii=False)}")
 
 
-def _stage_connections(runner_id: str, turn_id: str, slug: str) -> None:
+def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
     """Turn start: stage a token for each provider the turn's agent can use. One
     canopy-web call for an agent with none; a failure to list is a warn line and the
-    turn runs without. A 404 is a canopy-web without the listing route: silent."""
+    turn runs without. A 404 is a canopy-web without the listing route: silent.
+    Returns the providers canopy-web listed (none when the listing failed)."""
     if not slug:
-        return
+        return frozenset()
     try:
         # Quiet: the stage_failed line below is the one line for a failure, and a
         # 404 (a canopy-web without this route) writes nothing at all.
@@ -1825,16 +1826,19 @@ def _stage_connections(runner_id: str, turn_id: str, slug: str) -> None:
         status, body = -1, None
         _stage_failed_line(slug, "", turn_id, f"listing failed: {exc}")
     if status == 200 and isinstance(body, dict):
+        listed = set()
         for provider in body.get("providers") or []:
             if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
+                listed.add(provider)
                 _stage_connection_token(runner_id, turn_id, slug, provider)
             else:
                 _stage_failed_line(slug, "", turn_id, "unusable provider key")
-        return
+        return frozenset(listed)
     if status == 0:
         _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
     elif status not in (-1, 404):
         _stage_failed_line(slug, "", turn_id, f"listing -> {status}")
+    return frozenset()
 
 
 def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: str, *,
@@ -1941,12 +1945,55 @@ def _unstage_connections(turn_id: str) -> None:
     _drop_holds(turn_id)
 
 
+def _held_connections(turn_id: str) -> list[str]:
+    """The providers this turn holds a staged file of: what its state file records
+    (`connections`), so a new daemon that adopts the turn knows them. Names only."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+    return sorted(held[2]) if held else []
+
+
+def _reserve_adopted_connections(runner_id: str, turn_id: str, slug: str, providers) -> None:
+    """Adoption, before the start clear: the adopted turn holds the files its state
+    file names, so the clear spares them and no sibling's end deletes them. No call is
+    made here; `_adopt_connections` (on the turn's worker) stages them as a turn's start."""
+    keep = frozenset(p for p in providers or () if isinstance(p, str) and _PROVIDER_KEY.fullmatch(p))
+    if not slug or not keep:
+        return
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | keep)
+
+
+def _adopt_connections(runner_id: str, turn_id: str, slug: str) -> None:
+    """An adopted turn's start: stage exactly as a new turn's (`_stage_connections`:
+    the same listing, the same CLI, a first stage that always asks canopy-web), then
+    let go of every file reserved at adoption that was not staged again: a provider
+    canopy-web no longer lists, or one whose stage failed."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        reserved = held[2] if held else frozenset()
+    listed = _stage_connections(runner_id, turn_id, slug) if slug else frozenset()
+    with _CONN_LOCK:
+        for provider in reserved - listed:
+            _release(turn_id, provider)
+        now_held = (_CONN_HOLDS.get(turn_id) or ("", "", frozenset()))[2]
+        for provider in reserved - now_held:
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(_connection_token_path(slug, provider))
+
+
 def _clear_stale_connection_tokens() -> None:
-    """Runner start: no turn of this process holds a leftover file of a previous one."""
+    """Runner start: a leftover file of a previous process is nobody's, but one an
+    adopted turn holds (`_reserve_adopted_connections`, which runs first)."""
     root = pathlib.Path.home() / ".canopy" / "connections"
     try:
-        for f in root.glob("*/*.json"):
-            _unlink_quietly(f)
+        with _CONN_LOCK:
+            held = {(s, p) for s, _, ps in _CONN_HOLDS.values() for p in ps}
+            for f in root.glob("*/*.json"):
+                if (f.parent.name, f.stem) in held:
+                    continue  # an adopted turn's: still in use (`adopt_turns`)
+                _unlink_quietly(f)
     except OSError:
         pass
 
@@ -12530,6 +12577,10 @@ def adopt_turns(runner_id: str) -> dict:
             _adopted_cleanup(turn_id, state)
             summary["reported"].append(f"{turn_id[:8]} (process gone)")
             continue
+        if not _adopted_confined(state):
+            # Before the start clear, which spares what an adopted turn holds.
+            _reserve_adopted_connections(runner_id, turn_id, state.get("slug") or "",
+                                         state.get("connections"))
         with _TURNS_LOCK:
             _IN_FLIGHT[turn_id] = None
         thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
@@ -12548,6 +12599,12 @@ def adopt_turns(runner_id: str) -> dict:
 
 #: Turn ids this daemon adopted: the start sweeps leave what they hold alone.
 _ADOPTED: set = set()
+
+
+def _adopted_confined(state: dict) -> bool:
+    """Whether an adopted turn is a confined (caller's) one, which holds no credential:
+    as its daemon recorded it, or as its turn says (a state file from before `confined`)."""
+    return bool(state.get("confined")) or _capability(state.get("turn") or {}) is not None
 
 
 def _adopted_cwds() -> set[str]:
@@ -12588,6 +12645,10 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
     _TURN_ENV.relay_turn = turn_id
     try:
         try:
+            if not _adopted_confined(state):
+                # As a new turn's start: inside the try whose finally unstages.
+                _adopt_connections(runner_id, turn_id, slug)
+                _update_turn_state(turn_id, connections=_held_connections(turn_id))
             if executor == "acp":
                 ok, text, cli_session_id = _adopt_acp(turn_id, proc, emit, cwd, state)
             else:
@@ -12599,6 +12660,7 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
             ok, text, cli_session_id = False, f"runner error while adopting the turn: {exc}", ""
         finally:
             lease_stop.set()
+            _unstage_connections(turn_id)
         cli_session_id = cli_session_id or state.get("cli_session_id") or ""
         fault = _CREDENTIAL_FAULT.pop(turn_id, None)
         _CAP_RESET_HINT.pop(turn_id, None)
@@ -12613,6 +12675,7 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
     finally:
         _TURN_ENV.relay_turn = ""
         _ADOPTED.discard(turn_id)
+        _unstage_connections(turn_id)   # idempotent: whatever exit skipped the one above
         _adopted_cleanup(turn_id, state)
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
@@ -12983,7 +13046,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # Everything a new daemon needs to finish this turn if this one goes.
             _update_turn_state(turn_id, phase="running", cwd=str(cwd) if cwd is not None else "",
                                slug=slug or "", off_disk_env=off_disk_env, started_at=time.time(),
-                               resume_id=resume_id or "")
+                               resume_id=resume_id or "", confined=confined)
         # An agent's ordinary (non-confined) turn only: a confined turn holds no
         # credentials. Staged immediately inside the try whose finally unstages it, so no
         # exit leaves a file behind.
@@ -12991,6 +13054,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         try:
             if not confined:
                 _stage_connections(runner_id, turn_id, slug or "")
+                if _relay_turn_id() == turn_id:
+                    # Provider names only (never a token): what an adopting daemon keeps.
+                    _update_turn_state(turn_id, connections=_held_connections(turn_id))
             try:
                 if tail is not None:
                     tail.start()
