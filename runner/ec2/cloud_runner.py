@@ -12632,7 +12632,12 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
     cwd = pathlib.Path(state["cwd"]) if state.get("cwd") else None
     slug = state.get("slug") or ""
     attempt = TURN_STATE_ROOT / turn_id / state["attempt"]
-    proc = RelayProc.attach(attempt)
+    try:
+        proc = RelayProc.attach(attempt)
+    except BaseException:
+        # Before the try whose finally unstages: let go of what adoption reserved.
+        _unstage_connections(turn_id)
+        raise
     executor = state.get("executor") or "cli"
     _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
                session=state.get("cli_session_id"), attempt=attempt.name,

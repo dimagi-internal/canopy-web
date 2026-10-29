@@ -475,3 +475,21 @@ def test_an_adopted_confined_turn_stages_nothing(cr, tmp_path, monkeypatch, conn
 def test_a_running_turn_records_its_providers_without_a_token(cr):
     assert cr._without_secrets({"connections": ["salesforce"], "confined": False}) == \
         {"connections": ["salesforce"], "confined": False}
+
+
+def test_an_adopted_turn_whose_attach_fails_lets_go_of_its_connections(cr, tmp_path, monkeypatch, conns):
+    _seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()
+    sibling = staged(slug="ace")
+    cr._reserve_adopted_connections("rid", TURN, "echo", ["salesforce"])
+    cr._reserve_adopted_connections("rid", "other-turn", "ace", ["salesforce"])
+
+    def boom(_attempt):
+        raise OSError("attempt dir unreadable")
+    monkeypatch.setattr(cr.RelayProc, "attach", staticmethod(boom))
+    state = {"turn": {"id": TURN}, "attempt": "attempt-1", "slug": "echo", "cwd": str(tmp_path)}
+    with pytest.raises(OSError):
+        cr._adopt_turn("rid", TURN, state)
+    assert TURN not in cr._CONN_HOLDS and not mine.exists()
+    assert sibling.exists() and "other-turn" in cr._CONN_HOLDS
