@@ -500,3 +500,23 @@ def test_token_route_is_not_an_mcp_tool():
     assert "my_connection_token" in api_tools.EXCLUDED
     assert "turn_connection_token" in api_tools.EXCLUDED
     assert not api_tools.is_tool_route("POST", "/api/me/connections/salesforce/token")
+
+
+def test_grantee_admin_in_another_workspace_may_stop_using_it(user, other, ws, eva):
+    """T4: the grantee's admin cannot read the owner agent (another workspace),
+    and must still be able to revoke ("Stop using") — and only that grant."""
+    theirs_ws = Workspace.objects.create(slug="theirs-ws", display_name="T", created_by=other)
+    WorkspaceMembership.objects.create(workspace=theirs_ws, user=other, role=WorkspaceMembership.EDITOR)
+    theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=theirs_ws, owner=other)
+    shared = _stored({"agent": eva}, user)
+    ConnectionGrant.objects.create(connection=shared, agent=theirs, granted_by=user)
+    unshared = Connection.objects.create(
+        provider="salesforce", account_id="00Dorg/005other", account_label="x", agent=eva,
+        refresh_token_enc="x", connected_by=user)
+    o = Client()
+    o.force_login(other)
+    grant_step_up(o)
+    assert o.get("/api/agents/eva/connections").status_code == 404  # cannot even read the owner
+    assert o.delete(f"/api/agents/eva/connections/{unshared.pk}/grants/theirs").status_code == 404
+    assert o.delete(f"/api/agents/eva/connections/{shared.pk}/grants/theirs").status_code == 204
+    assert not ConnectionGrant.objects.exists()

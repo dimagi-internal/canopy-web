@@ -120,23 +120,39 @@ def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: 
     return Status(204, None)
 
 
-def _admin_of_either(request: HttpRequest, slug: str, other_slug: str) -> Agent:
-    """The owner agent `slug`, for a caller who administers it or `other_slug`."""
-    agent = agent_for_read(request, slug)
-    if agent.is_admin(request.user):
-        return agent
+def _admin_of_either(request: HttpRequest, slug: str, other_slug: str) -> tuple[Agent, bool]:
+    """The owner agent `slug`, for a caller who administers it or `other_slug`,
+    and whether the caller came in ONLY as the grantee's admin.
+
+    The grantee's admin is confirmed first, then the owner is looked up without
+    the read-scope pin: an agent shared across workspaces has a grantee admin
+    who cannot read the owner, and must still be able to stop using it."""
     other = Agent.objects.filter(slug=other_slug).first()
     if other is not None and other.is_admin(request.user):
-        return agent
+        owner = Agent.objects.filter(slug=slug).first()
+        if owner is None:
+            raise HttpError(404, "unknown agent")
+        return owner, not owner.is_admin(request.user)
+    agent = agent_for_read(request, slug)
+    if agent.is_admin(request.user):
+        return agent, False
     raise HttpError(403, "this action requires an admin of either agent")
 
 
 def _grant_target(request: HttpRequest, slug: str, connection_id: int, other_slug: str, *, either: bool = False):
-    agent = _admin_of_either(request, slug, other_slug) if either else agent_for_admin(request, slug)
+    grantee_only = False
+    if either:
+        agent, grantee_only = _admin_of_either(request, slug, other_slug)
+    else:
+        agent = agent_for_admin(request, slug)
     conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
     other = Agent.objects.filter(slug=other_slug).first()
     if other is None:
         raise HttpError(404, "unknown agent")
+    # The grantee's admin sees only what is shared with their agent: an owner's
+    # connection that is not is "not found" to them, never "nothing to revoke".
+    if grantee_only and not ConnectionGrant.objects.filter(connection=conn, agent=other).exists():
+        raise HttpError(404, "not shared with that agent")
     return conn, other
 
 
