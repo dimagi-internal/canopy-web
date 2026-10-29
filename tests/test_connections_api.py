@@ -520,3 +520,17 @@ def test_grantee_admin_in_another_workspace_may_stop_using_it(user, other, ws, e
     assert o.delete(f"/api/agents/eva/connections/{unshared.pk}/grants/theirs").status_code == 404
     assert o.delete(f"/api/agents/eva/connections/{shared.pk}/grants/theirs").status_code == 204
     assert not ConnectionGrant.objects.exists()
+
+
+def test_deleting_the_person_who_connected_keeps_the_agents_connection(client, user, eva, echo):
+    """M2: an agent's Salesforce identity outlives the admin who attached it
+    (and the one who shared it)."""
+    admin = _mk("former-admin")
+    conn = _stored({"agent": eva}, admin)
+    grant = ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=admin)
+    admin.delete()
+    conn.refresh_from_db()
+    grant.refresh_from_db()
+    assert conn.connected_by_id is None and grant.granted_by_id is None
+    rows = client.get("/api/agents/eva/connections").json()["connections"]
+    assert [(r["id"], r["connected_by_email"], r["shared_with"]) for r in rows] == [(conn.pk, "", ["echo"])]

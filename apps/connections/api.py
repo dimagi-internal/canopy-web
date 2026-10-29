@@ -42,7 +42,8 @@ def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
         account_label=conn.account_label, instance_url=conn.instance_url,
         needs_reconnect=conn.needs_reconnect, connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
-        connected_by_email=conn.connected_by.email or conn.connected_by.get_username(),
+        connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())
+                            if conn.connected_by is not None else ""),
         granted_from=granted_from,
         # Agent-owned, not itself a shared row. Callers prefetch `grants__agent`.
         shared_with=(sorted(g.agent.slug for g in conn.grants.all())

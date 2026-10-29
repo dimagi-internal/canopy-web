@@ -30,7 +30,8 @@ class ConnectionOut(StrictModel):
     needs_reconnect: bool = Field(description="The stored grant can no longer mint a token; connect again.")
     connected_at: datetime
     last_used_at: datetime | None = None
-    connected_by_email: str = Field(description="Who completed the sign-in.")
+    connected_by_email: str = Field(
+        description="Who completed the sign-in; empty when that person's account no longer exists.")
     granted_from: str | None = Field(
         default=None,
         description="For an agent's list: the slug of the agent that owns this connection, "
