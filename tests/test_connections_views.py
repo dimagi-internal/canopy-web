@@ -17,16 +17,9 @@ from django.urls import reverse
 from apps.agents.models import Agent
 from apps.connections.models import Connection
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import SF, FakeSF
+from tests.fixtures.connections import FakeSF
 
-pytestmark = pytest.mark.django_db
-
-
-@pytest.fixture(autouse=True)
-def configured(settings):
-    for k, v in SF.items():
-        setattr(settings, k, v)
-    return settings
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
 
 
 @pytest.fixture

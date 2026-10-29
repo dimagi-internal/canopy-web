@@ -37,22 +37,14 @@ from tests.fixtures.connections import (
     ID_URL,
     REDIRECT,
     REVOKE_URL,
-    SF,
     FakeSF,
     _resp,
     _stored,
     _token_body,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
 
-
-
-@pytest.fixture(autouse=True)
-def configured(settings):
-    for k, v in SF.items():
-        setattr(settings, k, v)
-    return settings
 
 
 @pytest.fixture
@@ -319,6 +311,20 @@ def test_min_life_decides_whether_the_cache_is_enough(user):
         assert fake.token_calls() == []
         tok = services.access_token_for(conn, min_life=timedelta(seconds=900))
     assert len(fake.token_calls()) == 1 and tok.token == "00D!access_1"
+
+
+def test_min_life_is_capped_at_half_a_fresh_tokens_lifetime(user, settings):
+    """A lifetime at or under what the runner asks for (900 s) must not refresh on
+    every call: a fresh token satisfies the caller for half its life."""
+    settings.SALESFORCE_ACCESS_TOKEN_SECONDS = 900
+    conn = _stored({"user": user}, user, expires_in=timedelta(seconds=850))
+    with FakeSF() as fake:
+        assert services.access_token_for(conn, min_life=timedelta(seconds=900)).token == "00D!cached"
+    assert fake.token_calls() == []
+    Connection.objects.filter(pk=conn.pk).update(access_token_expires_at=timezone.now() + timedelta(seconds=400))
+    with FakeSF() as fake:
+        assert services.access_token_for(conn, min_life=timedelta(seconds=900)).token == "00D!access_1"
+    assert len(fake.token_calls()) == 1
 
 
 def test_refresh_true_skips_a_fresh_cache(user):

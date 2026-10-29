@@ -1,10 +1,13 @@
-"""The fake Salesforce the connections suites share, faked at the `requests`
-boundary, and a stored-connection helper. Plain helpers, imported by name."""
+"""What the connections suites share: the fake Salesforce (faked at the
+`requests` boundary), a stored-connection helper (plain helpers, imported by
+name), and the `salesforce_configured` fixture (a plugin fixture, registered in
+the root conftest's `pytest_plugins`)."""
 from __future__ import annotations
 
 from datetime import timedelta
 from unittest import mock
 
+import pytest
 from django.utils import timezone
 
 from apps.common.encryption import encrypt_secret
@@ -105,3 +108,14 @@ def _stored(owner_kw, by, *, access="00D!cached", expires_in=timedelta(hours=1),
         access_token_expires_at=(timezone.now() + expires_in) if access else None,
         connected_by=by, **owner_kw,
     )
+
+
+# ---- fixtures (registered in the root conftest; never autouse) ------------------
+
+@pytest.fixture
+def salesforce_configured(settings):
+    """Salesforce set up on this deployment. Suites ask for it with
+    `pytestmark = pytest.mark.usefixtures("salesforce_configured")`."""
+    for k, v in SF.items():
+        setattr(settings, k, v)
+    return settings

@@ -20,16 +20,9 @@ from apps.connections.models import Connection, ConnectionGrant
 from apps.events.models import Event
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import SF, FakeSF, _resp, _stored
+from tests.fixtures.connections import FakeSF, _resp, _stored
 
-pytestmark = pytest.mark.django_db
-
-
-@pytest.fixture(autouse=True)
-def configured(settings):
-    for k, v in SF.items():
-        setattr(settings, k, v)
-    return settings
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
 
 
 @pytest.fixture
@@ -231,3 +224,35 @@ def test_provider_failures_map_to_502_and_503(echo, runner, operator, answer, st
     conn.refresh_from_db()
     assert conn.refresh_failed_at is None  # neither says anything about the grant
     assert not Event.objects.filter(kind="connections.token_issued").exists()
+
+
+# ---- which providers a turn's agent can use (the runner stages only these) -------------
+
+def _list(runner, turn):
+    return Client().get(f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/connections",
+                        HTTP_AUTHORIZATION=f"Bearer {_bearer(runner)}")
+
+
+def test_turn_connections_lists_own_and_granted_never_the_initiators(eva, echo, runner, operator):
+    turn = _turn(echo, runner, initiator_user=operator)
+    _stored({"user": operator}, operator)
+    assert _list(runner, turn).json() == {"providers": []}
+    conn = _stored({"agent": eva}, operator)
+    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=operator)
+    assert _list(runner, turn).json() == {"providers": ["salesforce"]}
+    assert not Event.objects.exists()                     # listing hands out nothing
+
+
+def test_turn_connections_skips_a_provider_no_longer_registered(echo, runner, operator):
+    Connection.objects.create(provider="retired", account_id="x", agent=echo, connected_by=operator)
+    assert _list(runner, _turn(echo, runner)).json() == {"providers": []}
+
+
+def test_turn_connections_refuses_what_the_token_route_refuses(echo, runner, operator):
+    _stored({"agent": echo}, operator)
+    assert _list(runner, _turn(echo, runner, capability="ask")).status_code == 404
+    assert _list(runner, _turn(echo, runner, Turn.DONE)).status_code == 404
+    t = Turn.objects.create(project="some/repo", origin=Turn.ORIGIN_EMAIL, prompt="x",
+                            idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=runner)
+    r = _list(runner, t)
+    assert r.status_code == 409 and r.json()["error"] == "no_agent"

@@ -31,6 +31,7 @@ import pytest
 # (`pytest.mark.usefixtures`), so it cannot quietly apply to every test.
 pytest_plugins = [
     "tests.fixtures.aws_proof",
+    "tests.fixtures.connections",
     "tests.fixtures.people_brain",
     "tests.fixtures.self_host",
     "tests.fixtures.slack",
