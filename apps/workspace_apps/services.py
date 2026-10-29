@@ -27,6 +27,7 @@ from apps.canopy_sessions import attachment_storage
 
 from . import manifest as mf
 from . import overlay as ov
+from . import template_diff
 from .models import (
     LIVE,
     AppFile,
@@ -145,8 +146,7 @@ def store_detail(workspace_id: str, key: str) -> dict:
     listing = m.get("listing") or {}
     if t.owner_id is not None:
         listing = {**listing, "screenshots": []}
-    caps = {"content.write": "every editor", "members.manage": "workspace admins", "integrations": "workspace admins",
-            "read": "every member"}
+    caps = template_diff.HOLDERS
     roles = [{"name": "maintainer", "description": "Customizes the app, tests changes on a copy and publishes them.",
               "holders": "workspace admins, and anyone given it by name"}]
     roles += [{"name": n, "description": r.get("description") or "",
@@ -392,7 +392,9 @@ def review(v: AppVersion) -> dict:
     template_change = None
     if live and v.template_version_id != live.template_version_id:
         template_change = {"from": live.template_version.version, "to": v.template_version.version,
-                           "changelog": v.template_version.changelog}
+                           "changelog": v.template_version.changelog,
+                           # what the update itself changes about access: each one needs an admin
+                           "risks": template_diff.changes(live.template_version.manifest, v.template_version.manifest)}
     forked = [p["slug"] for p in m["pages"] if p.get("forked")]
     return {
         "changes": changes,
@@ -489,6 +491,9 @@ def publish(v: AppVersion, *, user, may_approve_risk: bool) -> AppVersion:
         raise Refused("some changes no longer fit this template version — fix or remove them first", status=409)
     if r["risks"] and not may_approve_risk:
         raise Refused("this draft " + "; ".join(sorted({x["risk"] for x in r["risks"]}))
+                      + " — a workspace admin must publish it")
+    if r["template_change"] and r["template_change"]["risks"] and not may_approve_risk:
+        raise Refused("this template update " + "; ".join(r["template_change"]["risks"])
                       + " — a workspace admin must publish it")
     checks = run_checks(v)
     if not checks["ok"]:

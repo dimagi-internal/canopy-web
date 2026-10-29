@@ -28,7 +28,8 @@ export interface Review {
   changes: ReviewChange[];
   risks: ReviewChange[];
   quarantine: { id: string; summary: string; intent: string; reason: string }[];
-  template_change: { from: string; to: string; changelog: string } | null;
+  /** `risks`: what the update itself changes about who can see or do what; any one needs an admin. */
+  template_change: { from: string; to: string; changelog: string; risks: string[] } | null;
   forked_pages: string[];
   checks: { ok?: boolean; ran_at?: string; quarantined?: number; results?: { name: string; ok: boolean; error?: string; origin: string }[] };
 }
