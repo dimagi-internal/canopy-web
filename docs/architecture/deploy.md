@@ -21,6 +21,10 @@ The old address `https://labs.connect.dimagi.com/canopy/` (now `https://canopy.d
 - **Browser pages** (GET/HEAD outside machine prefixes) are 302'd to `canopy.dimagi.com`.
 - Docs must not send a reader to the old address: `tests/test_old_address_in_docs.py` fails on a markdown line naming `labs.connect.dimagi.com/canopy` that does not also name `canopy.dimagi.com`.
 
+### Salesforce connection settings
+
+`apps/connections` reads `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` and `SALESFORCE_LOGIN_URL` (default `https://login.salesforce.com`; `https://test.salesforce.com` for a sandbox) from the container environment. The client id is public (it is in every authorize URL) and can be plain env; the client secret belongs in Secrets Manager like `GITHUB_APP_CLIENT_SECRET`, wired in `deploy/aws/canopy-web.cfn.yaml`. Unset, Connect reports "not set up" and nothing else changes. The Salesforce Connected App's callback is `https://canopy.dimagi.com/auth/connections/salesforce/callback/`, scopes `api refresh_token`, PKCE required, refresh-token rotation on.
+
 ### Protocol identity is pinned by connected sites
 
 canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every connected site. `CANOPY_FORMER_BASE_URLS` names the old address so the Slack sync can recognise and move the commands and webhooks it registered there.

@@ -166,6 +166,13 @@ failure again.
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token
   cannot sign an MCP client in on its own.
+- **Browser or machine** is one question, `views_debug.is_machine` (`stepup.is_browser` asks
+  it): a machine is a request a token authenticated (`request.auth_method`, stamped by every
+  bearer door in `apps/tokens/middleware.py`), an in-process MCP call, or a session minted
+  from a token. An `Authorization` header alone proves nothing: a signed-in cookie user
+  skips the token lookup, so a junk `Authorization: Bearer x` sent with a stolen cookie
+  leaves `auth_method` unset and the request is still a browser, which every passkey
+  step-up and browser-only route applies to. Never read the header to decide this.
 - `apps/common/middleware.py::LoginRequiredMiddleware` is **default-deny** with an allowlist;
   the public surfaces and their two-halves rule are in `roles.md` → "The first tier has no
   account at all".

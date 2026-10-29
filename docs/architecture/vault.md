@@ -19,6 +19,24 @@ A vault's roles are the agent's, without contacts: `owner`, `admin` and `member`
 
 A change that would leave the vault with no owner or admin is refused (409 `vault_needs_an_admin`). Membership writes lock the vault's row, so two at once cannot together remove the last owner or admin. Membership routes: `GET|POST /api/agents/{slug}/vault/members`, `DELETE …/members/{user_id}`, `PUT …/vault/agent-link`; writes are gated `vault-admin`.
 
+## OAuth connections are server-held
+
+The vault holds secrets a person pastes. A token canopy gets from **its own OAuth flow** (the connection to a third-party service, Salesforce first) is different: canopy-web must be able to use it, because only canopy-web may refresh it. So the two homes are split by where the secret came from:
+
+- **Pasted secrets** (API keys, passwords, a token a person copied out of another tool) stay in the zero-knowledge vault, sealed to the people and machines that may open them, unreadable to canopy-web.
+- **Tokens from canopy's own OAuth flows** are server-held: `apps/connections` stores them Fernet-encrypted (`encrypt_secret`), never in a response, a log line or an event payload, and refreshes them itself. Nothing outside canopy-web ever holds a refresh token.
+
+Rules (`apps/connections/services.py` is the only door; its module docstring is the contract):
+
+- **Owner.** A `Connection` belongs to exactly one person or one agent. There is no fallback between owners: an agent turn uses the agent's own connection or one granted to it, never the person who started the turn; a person's CLI uses that person's only.
+- **Refresh.** Only canopy-web refreshes, inside a transaction holding a row lock, reusing the cached access token until five minutes before expiry and re-reading it after the lock is taken. The provider may rotate the refresh token; the new one is always stored. Only `invalid_grant` marks the connection `needs_reconnect`; canopy's own misconfiguration (`provider_error`) and an unreachable provider (`provider_unavailable`) stamp nothing.
+- **Grants between agents.** An agent's admin may share one of its connections with another agent (`ConnectionGrant`); the caller must administer both agents. The grantee uses it as the owner's account and cannot re-share it. A person's connection is never grantable. Disconnecting the owner's connection removes every grant with it.
+- **Connecting.** A person connects their own account, or an admin of an agent connects it for that agent (`?agent=<slug>`; admin is checked at start and again at callback). Disconnect asks the provider to revoke the token.
+- **Where an access token may leave.** Only as a short-lived access token, never the refresh token, and only through two doors: the runner turn route, to the runner holding a claimed, non-confined turn of the agent (`runner_may_hold_agent` asked again on every call), and `POST /api/me/connections/{provider}/token` to the person's own CLI, with a personal access token (a browser session is refused). A caller's (confined) turn is never lent the agent's identity.
+- **Audit.** An agent's connection records events in its workspace (connect, disconnect, grant, revoke, every token issue naming the turn and runner). A person's has no workspace, so the same facts go to the log at INFO. Never a token.
+
+Routes: [`api-surface.md`](api-surface.md) § Connections. Configuration: `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET`, `SALESFORCE_LOGIN_URL`; with none set, Connect says "not set up" and everything else works.
+
 ## Everyone has a vault key
 
 A person can be given a vault's key only once they have a vault key of their own, so everyone sets one up at sign-in: after Google sign-in, a person at a browser with no vault key sees one screen (`VaultSetupGate`, from `GET /api/vault/setup`) that registers a passkey and makes the key with it, or with a passphrase where the passkey cannot hold one. A failed check or a browser that cannot make a passkey lets them continue for that tab, and they are asked again next time.
