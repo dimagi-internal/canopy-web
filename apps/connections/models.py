@@ -4,8 +4,10 @@ A `Connection` is one grant canopy holds so work can be done AS an owner: a
 person (their CLI, their sessions) or an agent (its turns). Exactly one owner,
 never both, and there is no fallback between them.
 
-Tokens are Fernet ciphertext (`apps.common.encryption`); the refresh token
-rotates, so only canopy-web refreshes, under a row lock (see the service layer).
+Tokens are Fernet ciphertext (`apps.common.encryption`); a provider may rotate
+the refresh token on every refresh, so only canopy-web refreshes, under a row
+lock (see the service layer). What differs between providers lives in
+`providers/`, never here: `provider` is just the registry key.
 """
 from __future__ import annotations
 
@@ -29,6 +31,8 @@ class Connection(models.Model):
     account_id = models.CharField(max_length=255)
     # Display only — never used for authorization.
     account_label = models.CharField(max_length=255, blank=True, default="")
+    # The account's own API base, for a provider with one per account (Salesforce);
+    # empty where the provider's API host is fixed.
     instance_url = models.URLField(blank=True, default="")
     scopes = models.CharField(max_length=500, blank=True, default="")
     refresh_token_enc = models.TextField(blank=True, default="")
