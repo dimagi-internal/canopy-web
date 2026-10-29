@@ -117,15 +117,24 @@ CREDENTIAL_ROUTES_ON_MCP: dict[str, str] = {
         "begin_passkey_registration", "begin_passkey_step_up", "finish_passkey_step_up",
     ), "a passkey ceremony: nothing it returns is a credential without the person's authenticator"),
     "create_capability_uploads": "upload URLs for the caller's own lease, the same as over REST",
-    "create_runner_session": "starts a session on the caller's own runner; returns no secret",
+    # Anonymous doors whose authority is a proof bound to the request: as a tool there is
+    # no proof to carry, so the call is refused before anything is minted.
+    "create_runner_session": "anonymous: needs a device-key proof header (DPoP / AWS) an MCP call "
+                             "cannot carry, so it is always refused; the runner token it mints never "
+                             "reaches a tool",
+    "claim_runner_pairing": "anonymous: needs the pairing key's DPoP proof header and the approval's "
+                            "one-time secret; returns a runner id and status, never a token",
+    "pair_runner_by_role": "anonymous: needs an EC2 instance-role proof signed for this URL; returns "
+                           "runner and device-key ids and a status, never a token",
+    "request_runner_device_key": "anonymous: lands a PENDING device key its owner or a runner admin must "
+                                 "still approve; returns the key's id and approve link, no credential",
     **dict.fromkeys((
-        "box_egress", "claim_runner_pairing", "kept_conversations", "pair_runner_by_role",
+        "box_egress", "kept_conversations",
         "post_delegated_checks", "post_google_mint_challenge", "post_handoff_captured",
         "post_handoff_close", "post_handoff_part", "post_handoff_restored", "post_runner_usage",
         "post_session_menu", "post_session_subagents", "post_sign_in_request",
         "post_sign_in_request_result", "register_runner_device_key", "report_runner_logins",
-        "report_runner_project_result", "report_slash_commands", "request_runner_device_key",
-        "turn_agent_token", "update_runner_capabilities",
+        "report_runner_project_result", "report_slash_commands", "update_runner_capabilities",
     ), "runner protocol on MCP before this guard existed; a person's token reaches only its own runners"),
 }
 
