@@ -1,6 +1,7 @@
 """Salesforce as a connection provider (OAuth 2.0 web-server flow + PKCE)."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 from urllib.parse import urlencode, urlparse
 
@@ -9,7 +10,6 @@ from django.conf import settings
 from django.utils import timezone
 
 from .base import HTTP_TIMEOUT, Identity, ProviderError, ProviderUnavailable, TokenResponse
-
 
 
 def access_token_lifetime() -> timedelta:
@@ -71,8 +71,10 @@ class SalesforceProvider:
     def is_configured(self) -> bool:
         return bool(settings.SALESFORCE_CLIENT_ID and settings.SALESFORCE_CLIENT_SECRET)
 
-    def authorize_url(self, state: str, redirect_uri: str, code_challenge: str) -> str:
+    def authorize_url(self, state: str, redirect_uri: str, code_challenge: str,
+                      extra: Mapping[str, str] | None = None) -> str:
         query = urlencode({
+            **(extra or {}),
             "response_type": "code",
             "client_id": settings.SALESFORCE_CLIENT_ID,
             "redirect_uri": redirect_uri,

@@ -64,6 +64,11 @@ Owner = tuple[Literal["user", "agent"], int]
 # handed out does not die mid-operation.
 ACCESS_TOKEN_MARGIN = timedelta(minutes=5)
 
+# An agent's connection must be the AGENT's Salesforce user, not whoever happens
+# to be signed in to Salesforce in the admin's browser: `login` makes Salesforce
+# ask for credentials even with a live session, `consent` shows what is granted.
+AGENT_AUTHORIZE_EXTRA = {"prompt": "login consent"}
+
 # Where pending authorizations wait between `begin` and `complete`, keyed by
 # `state`. Session-bound so the callback is tied to this browser; popped so a
 # state is single-use.
@@ -191,7 +196,8 @@ def begin(session, *, provider: str, owner: Owner, redirect_uri: str, return_to:
     pending[state] = {"provider": provider, "owner_kind": kind, "owner_id": owner_id,
                       "verifier": verifier, "return_to": return_to}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
-    return p.authorize_url(state, redirect_uri, challenge)
+    return p.authorize_url(state, redirect_uri, challenge,
+                           extra=AGENT_AUTHORIZE_EXTRA if kind == "agent" else None)
 
 
 def pending_for(session, state: str) -> dict | None:

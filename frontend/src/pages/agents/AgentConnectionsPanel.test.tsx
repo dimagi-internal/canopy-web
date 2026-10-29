@@ -35,12 +35,19 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('AgentConnectionsPanel', () => {
-  it('connect link carries return_to and the agent', async () => {
+  it('connect is a CSRF-carrying form POST with return_to and the agent, never a link', async () => {
+    document.cookie = 'csrftoken=tok123'
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     show()
-    const a = (await screen.findByRole('link', { name: 'Connect Salesforce' })) as HTMLAnchorElement
-    expect(a.getAttribute('href')).toContain('return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
-    expect(a.getAttribute('href')).toContain('agent=eva')
+    const btn = await screen.findByRole('button', { name: 'Connect Salesforce' })
+    const form = btn.closest('form') as HTMLFormElement
+    expect(form.getAttribute('method')).toBe('post')
+    expect(form.getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/start\/$/)
+    const field = (n: string) => (form.querySelector(`input[name="${n}"]`) as HTMLInputElement).value
+    expect(field('return_to')).toBe('/agents/eva/settings/accounts')
+    expect(field('agent')).toBe('eva')
+    expect(field('csrfmiddlewaretoken')).toBe('tok123')
+    expect(screen.queryByRole('link', { name: 'Connect Salesforce' })).toBeNull()
   })
 
   it('disconnects an own connection', async () => {
@@ -56,7 +63,7 @@ describe('AgentConnectionsPanel', () => {
       connections: [conn({ needs_reconnect: true })],
     })
     show()
-    expect(await screen.findByRole('link', { name: 'Reconnect' })).toBeTruthy()
+    expect((await screen.findByRole('button', { name: 'Reconnect' })).closest('form')).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Connect Other' }) as HTMLButtonElement).disabled).toBe(true)
   })
 

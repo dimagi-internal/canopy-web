@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import {
-  connectionStartPath,
+  connectionStartAction,
   disconnectAgentConnection,
   grantConnection,
   listAgentConnections,
@@ -10,7 +10,8 @@ import {
   type ConnectionsView,
 } from '@/api/connections'
 import { listAgents } from '@/api/agents'
-import { ConnectLink, ConnectOutcome, lastUsed } from '@/components/settings/ConnectionsPanel'
+import { getCsrfToken } from '@/api/base'
+import { ConnectOutcome, lastUsed } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
 
 /**
@@ -19,6 +20,11 @@ import { Button } from 'canopy-ui/ui'
  *
  * Disconnecting asks for a fresh passkey; the API client's step-up middleware
  * prompts and retries, so this just calls DELETE.
+ *
+ * Connecting is a form POST (CSRF-checked), never a link: the server refuses a
+ * GET that names an agent, and makes Salesforce ask for a login, so the account
+ * attached is the one the admin types in — the agent's — not whichever
+ * Salesforce session their browser happens to hold.
  */
 export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string } }) {
   const [data, setData] = useState<ConnectionsView | null>(null)
@@ -73,7 +79,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
       {data.providers.map((p) => {
         const rows = data.connections.filter((c) => c.provider === p.name)
         const own = rows.filter((c) => !c.granted_from)
-        const href = connectionStartPath(p.name, pathname, agent.slug)
+        const start = { action: connectionStartAction(p.name), returnTo: pathname, agent: agent.slug }
         return (
           <div key={p.name} className="space-y-2" data-testid={`agent-connection-provider-${p.name}`}>
             <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">{p.title}</p>
@@ -81,7 +87,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
               <Row
                 key={c.id}
                 c={c}
-                href={href}
+                start={start}
                 busy={busy === c.id}
                 others={others}
                 picked={pick[c.id] ?? ''}
@@ -98,7 +104,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 <p className="mt-1 text-[12px] text-muted-foreground">Not set up on this deployment</p>
               </div>
             ) : own.length === 0 ? (
-              <ConnectLink label={`Connect ${p.title}`} href={href} />
+              <ConnectForm label={`Connect ${p.title}`} {...start} />
             ) : null}
           </div>
         )
@@ -107,11 +113,29 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   )
 }
 
+interface StartForm {
+  action: string
+  returnTo: string
+  agent: string
+}
+
+/** Starts an agent's connect: a full-page form POST carrying the CSRF token. */
+function ConnectForm({ label, action, returnTo, agent }: { label: string } & StartForm) {
+  return (
+    <form method="post" action={action} className="inline-block">
+      <input type="hidden" name="csrfmiddlewaretoken" value={getCsrfToken()} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <input type="hidden" name="agent" value={agent} />
+      <Button type="submit" size="sm">{label}</Button>
+    </form>
+  )
+}
+
 function Row({
-  c, href, busy, others, picked, onPick, onDisconnect, onGrant, onRevoke, self,
+  c, start, busy, others, picked, onPick, onDisconnect, onGrant, onRevoke, self,
 }: {
   c: ConnectionOut
-  href: string
+  start: StartForm
   busy: boolean
   others: string[]
   picked: string
@@ -146,7 +170,7 @@ function Row({
             </Button>
           ) : (
             <>
-              {c.needs_reconnect && <ConnectLink label="Reconnect" href={href} />}
+              {c.needs_reconnect && <ConnectForm label="Reconnect" {...start} />}
               <Button size="sm" variant="outline" disabled={busy} onClick={onDisconnect}>
                 {busy ? 'Working…' : 'Disconnect'}
               </Button>

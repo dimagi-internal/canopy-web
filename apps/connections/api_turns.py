@@ -13,8 +13,8 @@ from datetime import timedelta
 
 from django.http import HttpRequest
 from ninja import Router, Schema
-from pydantic import Field
 from ninja.errors import HttpError
+from pydantic import Field
 
 from apps.agents.credentials import delegations
 from apps.agents.services import runner_may_hold_agent

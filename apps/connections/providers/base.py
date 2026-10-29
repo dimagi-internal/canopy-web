@@ -1,6 +1,7 @@
 """The provider contract: what canopy needs from an OAuth provider, nothing more."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -56,7 +57,10 @@ class Provider(Protocol):
 
     def is_configured(self) -> bool: ...
 
-    def authorize_url(self, state: str, redirect_uri: str, code_challenge: str) -> str: ...
+    def authorize_url(self, state: str, redirect_uri: str, code_challenge: str,
+                      extra: Mapping[str, str] | None = None) -> str:
+        """`extra`: more query parameters for the provider (e.g. `prompt`)."""
+        ...
 
     def exchange_code(self, code: str, redirect_uri: str, code_verifier: str) -> TokenResponse: ...
 

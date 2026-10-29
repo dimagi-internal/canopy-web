@@ -4,11 +4,18 @@ Bare Django views, for the reason `apps.github_connect.views` gives: redirects
 and the session do not fit the Ninja contract. Login is required on both; they
 are not in `PUBLIC_PATH_PREFIXES`.
 
-`?agent=<slug>` makes the connection the agent's rather than the caller's, and
+`agent=<slug>` makes the connection the agent's rather than the caller's, and
 needs the caller to be an admin of it. That is checked at START and again at
 CALLBACK, because the callback may arrive minutes later and admin can be
 revoked in between; a revoked admin must not be able to finish attaching a
-Salesforce login to the agent.
+Salesforce login to the agent. An agent's start is a POST only (CSRF-checked):
+a GET link could otherwise be used to make an admin's browser attach whatever
+Salesforce login it holds to the agent. Salesforce is also told to ask for a
+login (`prompt=login`), so the account is chosen, not inherited.
+
+A person's flow is checked at callback too: the user who started it must be the
+one finishing it (the session is the same browser, but it may have changed
+hands between the legs).
 
 The browser always lands back on a same-site `return_to` with
 `?connection=<provider>&status=connected|error[&reason=<code>]`.
@@ -19,7 +26,14 @@ import logging
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from django.contrib.auth.decorators import login_required
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseForbidden, HttpResponseRedirect
+from django.http import (
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseForbidden,
+    HttpResponseNotAllowed,
+    HttpResponseRedirect,
+)
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
@@ -71,6 +85,8 @@ def _check_provider(provider: str) -> None:
 @require_http_methods(["GET", "POST"])
 def connections_start(request: HttpRequest, provider: str) -> HttpResponse:
     _check_provider(provider)
+    if request.method != "POST" and "agent" in request.GET:
+        return HttpResponseNotAllowed(["POST"])
     params = request.POST if request.method == "POST" else request.GET
     return_to = _safe_return_to(params.get("return_to"))
     slug = params.get("agent")
@@ -91,6 +107,13 @@ def connections_start(request: HttpRequest, provider: str) -> HttpResponse:
     return HttpResponseRedirect(url)
 
 
+def _spend(request: HttpRequest, state: str) -> None:
+    """Drop one parked flow from the session without completing it."""
+    request.session[services.SESSION_KEY] = {
+        k: v for k, v in request.session.get(services.SESSION_KEY, {}).items() if k != state
+    }
+
+
 @login_required
 @require_http_methods(["GET"])
 def connections_callback(request: HttpRequest, provider: str) -> HttpResponse:
@@ -102,20 +125,19 @@ def connections_callback(request: HttpRequest, provider: str) -> HttpResponse:
     if parked is None or parked.get("provider") != provider:
         return _land(request, return_to, provider, "error", "bad_state")
 
-    # Re-authorize: admin may have been revoked since `start`.
+    # Re-authorize: admin may have been revoked since `start`; a person's flow
+    # finishes only for the person who started it.
     if parked.get("owner_kind") == "agent":
         agent = Agent.objects.filter(pk=parked.get("owner_id")).first()
         if agent is not None and not agent.is_admin(request.user):
-            # Spend the state without exchanging anything; nothing is stored.
-            request.session[services.SESSION_KEY] = {
-                k: v for k, v in request.session.get(services.SESSION_KEY, {}).items() if k != state
-            }
+            _spend(request, state)  # nothing exchanged, nothing stored
             return _land(request, return_to, provider, "error", "forbidden")
+    elif parked.get("owner_id") != request.user.pk:
+        _spend(request, state)
+        return _land(request, return_to, provider, "error", "forbidden")
 
     if request.GET.get("error"):  # the user declined, or the provider refused
-        request.session[services.SESSION_KEY] = {
-            k: v for k, v in request.session.get(services.SESSION_KEY, {}).items() if k != state
-        }
+        _spend(request, state)
         return _land(request, return_to, provider, "error", "access_denied"
                      if request.GET["error"] == "access_denied" else "provider_error")
 

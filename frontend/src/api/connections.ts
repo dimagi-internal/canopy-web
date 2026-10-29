@@ -1,8 +1,9 @@
 // Server-held OAuth connections (Salesforce first): `apps/connections/api.py`.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
-// `/auth/connections/<provider>/start/` — the provider's consent screen has to
-// be shown by the provider — and it returns to `return_to` with
+// `/auth/connections/<provider>/start/` (a link for a person, a form POST for an
+// agent) — the provider's consent screen has to be shown by the provider — and
+// it returns to `return_to` with
 // `?connection=<provider>&status=connected|error&reason=<code>`.
 //
 // Disconnecting an AGENT's connection needs a fresh passkey; that is answered by
@@ -64,11 +65,17 @@ export async function revokeConnectionGrant(slug: string, id: number, other: str
   ensureOk(res, 'Could not stop sharing the connection.')
 }
 
-/** The full-page navigation that starts a connect. `returnTo` is a router path
- *  (the server adds the deployment prefix when it sends the browser back). */
-export function connectionStartPath(provider: string, returnTo: string, agent?: string): string {
-  const q = new URLSearchParams({ return_to: returnTo })
-  if (agent) q.set('agent', agent)
+/** Where a connect starts. A person's is a GET link (`connectionStartPath`); an
+ *  AGENT's is a form POST to this, CSRF-checked — the server refuses a GET that
+ *  names an agent, so a link cannot attach an admin's Salesforce login to it. */
+export function connectionStartAction(provider: string): string {
   const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-  return `${base}/auth/connections/${encodeURIComponent(provider)}/start/?${q.toString()}`
+  return `${base}/auth/connections/${encodeURIComponent(provider)}/start/`
+}
+
+/** The full-page navigation that starts a PERSON's connect. `returnTo` is a router
+ *  path (the server adds the deployment prefix when it sends the browser back). */
+export function connectionStartPath(provider: string, returnTo: string): string {
+  const q = new URLSearchParams({ return_to: returnTo })
+  return `${connectionStartAction(provider)}?${q.toString()}`
 }

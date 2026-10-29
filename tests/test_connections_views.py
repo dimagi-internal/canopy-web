@@ -50,7 +50,9 @@ def eva(user):
 
 
 def _start(client, **params):
-    return client.get(reverse("connections_start", args=["salesforce"]), params)
+    """An agent's flow starts with a POST (the panel's form); a person's with a GET link."""
+    url = reverse("connections_start", args=["salesforce"])
+    return client.post(url, params) if "agent" in params else client.get(url, params)
 
 
 def _state(resp):
@@ -118,7 +120,8 @@ def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):
     assert fake.token_calls() == []
 
 
-@pytest.mark.parametrize("bad", ["https://evil.example/x", "//evil.example/x", "settings", "/\\evil.example", ""])
+@pytest.mark.parametrize("bad", ["https://evil.example/x", "//evil.example/x", "settings", "/\\evil.example", "",
+                                 "/\t/evil.example", "/\r\n/evil.example", "/x\nLocation: //evil.example"])
 def test_return_to_rejects_offsite(client, bad):
     state = _state(_start(client, return_to=bad))
     with FakeSF():
@@ -151,3 +154,69 @@ def test_callback_bad_state_and_provider_denied(client):
 def test_start_requires_login():
     resp = Client().get(reverse("connections_start", args=["salesforce"]))
     assert resp.status_code == 302 and "salesforce.com" not in resp["Location"]
+
+
+# ---- an agent's connect signs in as the agent's Salesforce user (I3) ---------------
+
+def _authorize_query(resp):
+    return parse_qs(urlparse(resp["Location"]).query)
+
+
+def test_agent_start_forces_a_salesforce_login(client, eva):
+    q = _authorize_query(_start(client, agent="eva"))
+    assert q["prompt"] == ["login consent"]
+
+
+def test_person_start_does_not_force_a_login(client):
+    assert "prompt" not in _authorize_query(_start(client))
+
+
+def test_agent_start_by_get_is_405(client, eva):
+    resp = client.get(reverse("connections_start", args=["salesforce"]), {"agent": "eva"})
+    assert resp.status_code == 405
+
+
+def test_agent_start_needs_a_csrf_token(user, eva):
+    c = Client(enforce_csrf_checks=True)
+    c.force_login(user)
+    url = reverse("connections_start", args=["salesforce"])
+    assert c.post(url, {"agent": "eva"}).status_code == 403
+    c.get("/api/csrf/")
+    token = c.cookies[settings_csrf_cookie()].value
+    resp = c.post(url, {"agent": "eva", "csrfmiddlewaretoken": token})
+    assert resp.status_code == 302 and "login.salesforce.com" in resp["Location"]
+
+
+def settings_csrf_cookie():
+    from django.conf import settings
+
+    return settings.CSRF_COOKIE_NAME
+
+
+# ---- the callback finishes only for whoever started it -----------------------------
+
+def test_person_flow_finished_by_another_user_is_forbidden(client, user):
+    state = _state(_start(client))
+    other = get_user_model().objects.create_user(username="x", email="x@dimagi.com")
+    session = client.session
+    # Same browser session, now signed in as someone else (the parked state survives).
+    pending = session["connections_oauth"]
+    client.force_login(other)
+    s2 = client.session
+    s2["connections_oauth"] = pending
+    s2.save()
+    with FakeSF() as fake:
+        resp = _callback(client, state)
+    assert _landing(resp)[1] == {"connection": "salesforce", "status": "error", "reason": "forbidden"}
+    assert not Connection.objects.exists() and fake.token_calls() == []
+
+
+def test_revoked_admin_with_provider_error_is_still_forbidden(client, user, eva):
+    state = _state(_start(client, agent="eva"))
+    eva.owner = None
+    eva.save()
+    WorkspaceMembership.objects.filter(user=user).delete()
+    resp = client.get(reverse("connections_callback", args=["salesforce"]),
+                      {"error": "access_denied", "state": state})
+    assert _landing(resp)[1]["reason"] == "forbidden"
+    assert not Connection.objects.exists()
