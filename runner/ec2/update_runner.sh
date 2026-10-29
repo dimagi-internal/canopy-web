@@ -2,7 +2,8 @@
 #
 # Should this cloud box install newer runner bytes right now?
 #
-#   canopy-runner-update               # the timer's mode: install iff stale + idle
+#   canopy-runner-update               # the timer's mode: install iff stale (and, for a
+#                                      # daemon that cannot hand its turns off, idle)
 #   canopy-runner-update --check       # print the verdict, change nothing
 #   canopy-runner-update --ref BRANCH  # install something else, deliberately
 #   canopy-runner-update --from-secret # restore the Secrets Manager bytes
@@ -22,8 +23,15 @@
 #     against the server — the staleness banner would then fire forever on exactly
 #     the boxes auto-updating correctly.
 #   * WHETHER NOW IS SAFE — /opt/canopy-runner/in-flight, rewritten by the running
-#     daemon on every heartbeat. An update restarts the service; restarting mid-turn
-#     strands the work.
+#     daemon on every heartbeat. A daemon run by the runner's SUPERVISOR (cloud_runner.py
+#     "turns that outlive the daemon") HANDS OFF: the updater signals the supervisor
+#     (SIGHUP), which swaps the daemon for the new bytes while every turn keeps
+#     running, and the new daemon adopts them. So a busy box installs at once; only a
+#     turn the marker counts as `pinned` (one a handoff cannot carry) still waits, as
+#     does every turn of a daemon that predates the supervisor. A restart of the UNIT
+#     (an idle box, an old daemon) still stops everything, as it always has.
+#     UPDATE_IDLE_ONLY=1, or a file $RUNNER_HOME/update-idle-only, opts back into
+#     installing only on an idle box.
 #
 # READ-ONLY against the control plane, and that is load-bearing: this must never
 # heartbeat. A heartbeat from this second process would stamp the runner ONLINE and
@@ -85,6 +93,13 @@ SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner
 # it is not running its loop at all — stopped, wedged, or crash-looping. That is
 # NOT busy: it is the case this script exists to rescue, so it must never block.
 BUSY_MAX_AGE=120
+IDLE_ONLY_FILE="${IDLE_ONLY_FILE:-$RUNNER_HOME/update-idle-only}"
+idle_only() { [ "${UPDATE_IDLE_ONLY:-0}" = "1" ] || [ -e "$IDLE_ONLY_FILE" ]; }
+# The decision of every tick, for the runner's `update` check (this script never
+# calls canopy-web: the daemon reads this file and reports it on its heartbeat).
+DECISION_FILE="${DECISION_FILE:-$RUNNER_HOME/update-last.json}"
+# How long a handoff gets to show a new daemon before it is called unconfirmed.
+HANDOFF_WAIT="${HANDOFF_WAIT:-90}"
 
 # --- several runners on one machine (docs/architecture/runners.md) ---------------
 # A machine of several runners (`cloud_runner.py --setup-runners` wrote runners.json)
@@ -168,6 +183,67 @@ try:
 except Exception:
     pass
 PY
+}
+# What a runner's state dir says about handing its turns off: "<count> <blocking> <pid>"
+# — `blocking` is how many of its turns an install must wait for (all of them, unless
+# its daemon hands off: then only the `pinned` ones); <pid> is its supervisor's, or 0
+# when none that hands off is running. Nothing at all when the marker is not trusted.
+marker_info() {  # <dir holding in-flight and supervisor.json>
+  local idle=0
+  idle_only && idle=1
+  python3 - "$1/in-flight" "$1/supervisor.json" "$BUSY_MAX_AGE" "$idle" <<'PY' 2>/dev/null
+import json, os, sys, time
+marker, sup, max_age, idle_only = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4] == "1"
+try:
+    raw = json.load(open(marker))
+    if time.time() - float(raw["at"]) > max_age:
+        sys.exit(0)
+    count = int(raw["count"])
+except Exception:
+    sys.exit(0)
+pid = 0
+try:
+    s = json.load(open(sup))
+    cand = int(s.get("pid") or 0)
+    if s.get("handoff") and cand > 0:
+        os.kill(cand, 0)
+        cmd = os.path.join("/proc", str(cand), "cmdline")
+        if not os.path.isdir("/proc/self") or b"cloud_runner.py" in open(cmd, "rb").read():
+            pid = cand
+except Exception:
+    pid = 0
+handoff = bool(pid and raw.get("handoff") and not idle_only)
+blocking = int(raw.get("pinned") or 0) if handoff else count
+print(count, blocking, pid if handoff else 0)
+PY
+}
+# The single runner's state dir (in-flight and supervisor.json sit side by side).
+BUSY_DIR="$(dirname "$BUSY")"
+home_of_runner() { runner_rows | awk -v i="$1" '$1 == i {print $3}'; }
+blocking() {  # how many turns hold an install back ("" = no trustworthy marker)
+  local c b p
+  if [ "$RUNNERS_MODE" != "1" ]; then
+    read -r c b p <<<"$(marker_info "$BUSY_DIR")"
+    printf '%s' "$b"
+    return
+  fi
+  # A box of several runners waits only while EVERY runner is held: one that is idle
+  # or hands off takes the new code at once (`restart_runners`).
+  local total="" id user home
+  while read -r id user home; do
+    [ -n "$home" ] || continue
+    read -r c b p <<<"$(marker_info "$home/.canopy-runner")"
+    [ -n "$b" ] || { printf '0'; return; }
+    [ "$b" -eq 0 ] 2>/dev/null && { printf '0'; return; }
+    total=$(( ${total:-0} + b ))
+  done <<<"$(runner_rows)"
+  printf '%s' "$total"
+}
+# A runner held back only by turns it can hand off: in flight, but none pinned.
+hands_off() {  # <runner id> -> its supervisor pid, or nothing
+  local c b p
+  read -r c b p <<<"$(marker_info "$(home_of_runner "$1")/.canopy-runner")"
+  [ "${p:-0}" != "0" ] && [ "${b:-1}" = "0" ] && echo "$p"
 }
 in_flight() {  # echoes a count, or "" when no marker can be trusted
   if [ "$RUNNERS_MODE" != "1" ]; then
@@ -335,10 +411,76 @@ verdict() {
   local expected="$1" carrying
   if [ -z "$expected" ] || [ -z "$INSTALLED_SHA" ]; then echo "unknown"; return; fi
   if [ "$expected" = "$INSTALLED_SHA" ]; then echo "current"; return; fi
-  carrying="$(in_flight)"
+  carrying="$(blocking)"
   if [ -n "$carrying" ] && [ "$carrying" -gt 0 ] 2>/dev/null; then echo "busy"; return; fi
   echo "stale"
 }
+
+# --- what this tick decided -------------------------------------------------
+# One line in the journal AND the decision file, every tick: current, installed (from
+# -> to, and how each runner took it), deferred (and why), unknown, failed.
+decide() {  # <verdict> <detail>
+  log "decision: $1 — $2"
+  python3 - "$DECISION_FILE" "$1" "$2" "${INSTALLED_SHA:-}" "${EXPECTED:-}" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, verdict, detail, frm, to = sys.argv[1:6]
+tmp = path + ".new"
+with open(tmp, "w") as fh:
+    json.dump({"verdict": verdict, "detail": detail, "from": frm, "to": to,
+               "at": int(time.time())}, fh)
+os.chmod(tmp, 0o644)
+os.replace(tmp, path)
+PY
+}
+
+# Why an install waits, in words (`busy`).
+deferral_reason() {
+  if idle_only; then
+    echo "idle-only is set ($IDLE_ONLY_FILE or UPDATE_IDLE_ONLY=1): waiting for no turn in flight"
+    return
+  fi
+  local c b p
+  if [ "$RUNNERS_MODE" != "1" ]; then
+    read -r c b p <<<"$(marker_info "$BUSY_DIR")"
+    if [ "${p:-0}" = "0" ]; then
+      echo "$c turn(s) in flight and the running daemon cannot hand them off (it predates the supervisor)"
+    else
+      echo "$b of $c turn(s) in flight cannot be handed off (pinned)"
+    fi
+    return
+  fi
+  local out="" id user home
+  while read -r id user home; do
+    [ -n "$home" ] || continue
+    read -r c b p <<<"$(marker_info "$home/.canopy-runner")"
+    out="$out$id: $b of $c turn(s) held$( [ "${p:-0}" = "0" ] && echo ' (no handoff)'); "
+  done <<<"$(runner_rows)"
+  echo "every runner is held — $out"
+}
+
+# Hand a running daemon off to the installed bytes: SIGHUP to its supervisor, which
+# swaps the daemon while every turn keeps running. Waits for the new daemon to show.
+handoff_to_new_bytes() {  # <label> <state dir> <supervisor pid>
+  local label="$1" dir="$2" pid="$3" before after waited=0
+  before="$(json_field "$dir/supervisor.json" daemon_started_at 0)"
+  if ! ${KILL_CMD:-kill} -HUP "$pid" 2>/dev/null; then
+    log "$label: could not signal its supervisor (pid $pid) to hand off"
+    return 1
+  fi
+  log "$label: handing off to the new code (supervisor pid $pid; its turns keep running)"
+  while [ "$waited" -lt "$HANDOFF_WAIT" ]; do
+    after="$(json_field "$dir/supervisor.json" daemon_started_at 0)"
+    if [ "$after" != "$before" ]; then
+      log "$label: handoff done — new daemon pid $(json_field "$dir/supervisor.json" daemon_pid "?")"
+      return 0
+    fi
+    sleep "${HANDOFF_POLL:-2}"
+    waited=$(( waited + ${HANDOFF_POLL:-2} ))
+  done
+  log "$label: handoff NOT confirmed within ${HANDOFF_WAIT}s (no new daemon in $dir/supervisor.json)"
+  return 1
+}
+RESTART_OUTCOME=""
 
 # --- install ----------------------------------------------------------------
 fetch_commit() {  # make <ref> resolvable in the clone
@@ -381,11 +523,28 @@ PY
     restart_runners "$(idle_runners)" "$(runner_rows | cut -d' ' -f1)"
     return
   fi
+  local c b p
+  read -r c b p <<<"$(marker_info "$BUSY_DIR")"
+  if [ -n "$c" ] && [ "$c" -gt 0 ] 2>/dev/null && [ "${p:-0}" != "0" ]; then
+    # Busy, and the daemon hands off: the turns keep running, the new daemon adopts them.
+    log "installed ${sha:-<unknown>} ($ref) -> $TARGET; $c turn(s) in flight — handing off"
+    if handoff_to_new_bytes "runner" "$BUSY_DIR" "$p"; then
+      RESTART_OUTCOME="handed off ($c turn(s) kept running)"
+    else
+      RESTART_OUTCOME="handoff not confirmed"
+    fi
+    return 0
+  fi
   log "installed ${sha:-<unknown>} ($ref) -> $TARGET; restarting $SERVICE"
   # The only privileged step, and the only reason this box grants the service user
   # any sudo at all — scoped to this exact command by a sudoers drop-in.
   # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
-  $RESTART_CMD $SERVICE
+  if $RESTART_CMD $SERVICE; then
+    RESTART_OUTCOME="restarted $SERVICE"
+  else
+    RESTART_OUTCOME="restart of $SERVICE FAILED"
+    log "$RESTART_OUTCOME"
+  fi
 }
 
 # --- restarting a box of several runners ------------------------------------
@@ -419,16 +578,31 @@ restart_runners() {  # <idle ids to restart> <ids still on the old bytes>, one p
     rm -f "$OWED"
     return
   fi
+  local outcome="" pid
   while read -r id; do
     [ -n "$id" ] || continue
     log "runner $id: idle — restarting it onto the new code"
-    $RESTART_CMD "canopy-runner@$id.service" || log "runner $id: did not restart cleanly"
+    if $RESTART_CMD "canopy-runner@$id.service"; then outcome="$outcome$id restarted; "
+    else log "runner $id: did not restart cleanly"; outcome="$outcome$id restart FAILED; "; fi
   done <<<"$idle"
   : > "$OWED"
   while read -r id; do
-    [ -n "$id" ] && grep -qxF "$id" <<<"$busy" && echo "$id" >> "$OWED"
+    [ -n "$id" ] && grep -qxF "$id" <<<"$busy" || continue
+    pid="$(hands_off "$id")"
+    if [ -n "$pid" ]; then
+      # Busy, every turn adoptable: the daemon is swapped, its turns keep running.
+      if handoff_to_new_bytes "runner $id" "$(home_of_runner "$id")/.canopy-runner" "$pid"; then
+        outcome="$outcome$id handed off; "
+      else
+        outcome="$outcome$id handoff not confirmed; "
+      fi
+      continue
+    fi
+    echo "$id" >> "$OWED"
+    outcome="$outcome$id owed (a turn that cannot be handed off); "
   done <<<"$old"
-  log "still owed a restart (a turn in flight): $(tr '\n' ' ' < "$OWED")— root's setup waits for the whole box to be idle"
+  RESTART_OUTCOME="$outcome"
+  log "still owed a restart (a turn that cannot be handed off): $(tr '\n' ' ' < "$OWED")— root's setup waits for the whole box to be idle"
 }
 # A tick with no new code: finish what an earlier install could not.
 settle_owed() {
@@ -440,7 +614,12 @@ settle_owed() {
     [ -n "$id" ] || continue
     grep -qxF "$id" <<<"$now_idle" && owed_idle="$owed_idle$id"$'\n'
   done < "$OWED"
-  if [ -z "$(busy_runners)" ] || [ -n "$owed_idle" ]; then
+  # An owed runner whose daemon can now hand off (its pinned turn ended) takes it too.
+  local ready=""
+  while read -r id; do
+    [ -n "$id" ] && [ -n "$(hands_off "$id")" ] && ready=1
+  done < "$OWED"
+  if [ -z "$(busy_runners)" ] || [ -n "$owed_idle" ] || [ -n "$ready" ]; then
     restart_runners "$owed_idle" "$(cat "$OWED")"
   fi
 }
@@ -688,17 +867,27 @@ fi
 case "$V" in
   stale)
     log "behind — installing ${EXPECTED:0:12} (running ${INSTALLED_SHA:0:12})"
-    install_from_git "$EXPECTED"
+    if install_from_git "$EXPECTED"; then
+      decide installed "${INSTALLED_SHA:0:12} -> ${EXPECTED:0:12}: ${RESTART_OUTCOME:-done}"
+    else
+      decide failed "could not install ${EXPECTED:0:12} (running ${INSTALLED_SHA:0:12}); see the journal"
+    fi
     ;;
   current)
     log "current — no code change."
     settle_owed
+    decide current "${INSTALLED_SHA:0:12}${RESTART_OUTCOME:+; owed restarts: $RESTART_OUTCOME}"
+    ;;
+  busy)
+    log "busy — no code change."
+    decide deferred "${INSTALLED_SHA:0:12} -> ${EXPECTED:0:12} waits: $(deferral_reason)"
     ;;
   *)
     # current | busy | unknown all mean "no new CODE", and all exit 0. This runs on
     # a timer: a non-zero exit for the ordinary case fills the journal with false
     # failures and trains everyone to ignore the one that matters.
     log "$V — no code change."
+    decide unknown "expected=${EXPECTED:-<unknown>} installed=${INSTALLED_SHA:-<unknown>} (why: above)"
     ;;
 esac
 

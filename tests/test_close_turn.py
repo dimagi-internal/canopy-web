@@ -94,3 +94,35 @@ def test_an_admission_refusal_is_one_cancelled_fact(ctx, django_capture_on_commi
     # Its ledger still carries the one status line naming the rule.
     statuses = [e.payload for e in turn.events.filter(kind="status")]
     assert [p.get("admission_rule") for p in statuses if p.get("status") == Turn.CANCELLED] == [rule.pk]
+
+
+def test_a_lost_turn_says_which_runner_and_when_it_last_heartbeat(ctx):
+    """An expired lease never leaves LOST with an empty note: the note names the
+    runner, its last heartbeat and whether it was still beating (it lost track of
+    the turn) or went away."""
+    now = timezone.now()
+    beating = _turn(ctx, "l2", status=Turn.RUNNING, claimed_by=ctx["box"],
+                    lease_expires_at=now - dt.timedelta(minutes=2))
+    assert sweep_expired_leases() == 1
+    beating.refresh_from_db()
+    assert beating.status == Turn.LOST
+    assert "runner box" in beating.result_note
+    assert "last heartbeat" in beating.result_note
+    assert "still heartbeating but stopped renewing" in beating.result_note
+
+    ctx["box"].last_heartbeat_at = now - dt.timedelta(minutes=30)
+    ctx["box"].save(update_fields=["last_heartbeat_at"])
+    gone = _turn(ctx, "l3", status=Turn.RUNNING, claimed_by=ctx["box"],
+                 lease_expires_at=now - dt.timedelta(minutes=1))
+    assert sweep_expired_leases() == 1
+    gone.refresh_from_db()
+    assert "stopped heartbeating" in gone.result_note
+    assert "30 min ago" in gone.result_note
+
+
+def test_a_lost_turn_keeps_a_note_the_runner_already_left(ctx):
+    turn = _turn(ctx, "l4", status=Turn.RUNNING, claimed_by=ctx["box"], result_note="runner said",
+                 lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
+    assert sweep_expired_leases() == 1
+    turn.refresh_from_db()
+    assert turn.result_note == "runner said"

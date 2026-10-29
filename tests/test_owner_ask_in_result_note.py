@@ -102,3 +102,15 @@ def test_a_stranger_cannot_write_the_line(fleet, django_capture_on_commit_callba
                  {"events": [{"kind": "owner_ask", "payload": {"line": "For Hal's owner: x"}}]},
                  content_type="application/json")
     assert res.status_code == 404
+
+
+def test_a_runners_lifecycle_record_is_an_accepted_event(fleet, django_capture_on_commit_callbacks):
+    """`lifecycle` (cloud_runner.py `_lifecycle`): what the runner did with the turn
+    — adopted after a restart, its lease failing to renew — lands on the turn."""
+    turn = _claimed(fleet, capture=django_capture_on_commit_callbacks)
+    res = fleet["client"].post(
+        f"/api/harness/turns/{turn.pk}/events",
+        {"events": [{"kind": "lifecycle", "payload": {"event": "adopted", "pid": 4242}}]},
+        content_type="application/json")
+    assert res.status_code == 200, res.content
+    assert turn.events.filter(kind="lifecycle", payload__event="adopted").exists()

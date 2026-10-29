@@ -861,3 +861,125 @@ def test_at_warn_root_records_where_the_space_is_for_the_runners(runners_box):
     runners_box.disk_pct.write_text("40")
     assert runners_box.run().returncode == 0
     assert not (runners_box.home / "disk-usage.json").exists()
+
+
+# --- handing off instead of waiting for idle ------------------------------------
+# A daemon run by its supervisor hands its turns to the next one (cloud_runner.py
+# "turns that outlive the daemon"): a busy box installs at once, signals the
+# supervisor (SIGHUP) instead of restarting the unit, and its turns keep running.
+
+def _supervisor(dir_: pathlib.Path, bin_: pathlib.Path) -> subprocess.Popen:
+    """A live process whose command line names cloud_runner.py, recorded as the
+    supervisor of `dir_`; and a `kill` stub that, like the real one, makes a new
+    daemon appear in supervisor.json."""
+    proc = subprocess.Popen(["python3", "-c", "import time; time.sleep(60)", "cloud_runner.py"])
+    (dir_ / "supervisor.json").write_text(json.dumps(
+        {"pid": proc.pid, "daemon_pid": 1, "daemon_started_at": 1, "handoff": 1}))
+    kill_log = dir_ / "kill.log"
+    (bin_ / "fake-kill").write_text(
+        "#!/bin/sh\n"
+        f'echo "$*" >> "{kill_log}"\n'
+        f"python3 - \"{dir_ / 'supervisor.json'}\" <<'PY'\n"
+        "import json, sys\n"
+        "d = json.load(open(sys.argv[1])); d['daemon_started_at'] = 2; d['daemon_pid'] = 2\n"
+        "json.dump(d, open(sys.argv[1], 'w'))\n"
+        "PY\n")
+    (bin_ / "fake-kill").chmod(0o755)
+    return proc
+
+
+def _handoff_marker(path: pathlib.Path, count: int, pinned: int) -> None:
+    path.write_text(json.dumps({"count": count, "pinned": pinned, "handoff": 1, "at": time.time()}))
+
+
+def _run_handoff(box, *args):
+    env_extra = {"KILL_CMD": str(box.bin / "fake-kill"), "HANDOFF_POLL": "1", "HANDOFF_WAIT": "5"}
+    orig = box.env
+    box.env = lambda: {**orig(), **env_extra}
+    try:
+        return box.run(*args)
+    finally:
+        box.env = orig
+
+
+def test_a_busy_box_whose_daemon_hands_off_installs_now(box):
+    sup = _supervisor(box.home, box.bin)
+    try:
+        box.stamp("0" * 40)
+        sha = box.seed_repo("#!/usr/bin/env python3\nprint('handed off')\n")
+        box.expect(sha)
+        _handoff_marker(box.home / "in-flight", count=2, pinned=0)
+        assert _run_handoff(box, "--check").stdout.startswith("stale")
+        out = _run_handoff(box)
+        assert out.returncode == 0, out.stderr
+        assert "print('handed off')" in box.installed
+        # The supervisor was signalled; the UNIT was not restarted (that kills the turns).
+        assert (box.home / "kill.log").read_text().split() == ["-HUP", str(sup.pid)]
+        assert not box.restarted
+        decision = json.loads((box.home / "update-last.json").read_text())
+        assert decision["verdict"] == "installed" and "handed off" in decision["detail"]
+        assert decision["to"] == sha
+        assert "handoff done" in out.stdout
+    finally:
+        sup.kill()
+
+
+def test_a_turn_that_cannot_be_handed_off_still_waits_and_says_why(box):
+    sup = _supervisor(box.home, box.bin)
+    try:
+        box.stamp("0" * 40)
+        box.expect(box.seed_repo(GOOD_RUNNER))
+        _handoff_marker(box.home / "in-flight", count=2, pinned=1)
+        assert _run_handoff(box, "--check").stdout.startswith("busy")
+        _run_handoff(box)
+        assert box.installed == "" and not (box.home / "kill.log").exists()
+        decision = json.loads((box.home / "update-last.json").read_text())
+        assert decision["verdict"] == "deferred" and "1 of 2" in decision["detail"]
+        assert "pinned" in decision["detail"]
+    finally:
+        sup.kill()
+
+
+def test_idle_only_opts_back_into_waiting_for_an_idle_box(box):
+    sup = _supervisor(box.home, box.bin)
+    try:
+        box.stamp("0" * 40)
+        box.expect(box.seed_repo(GOOD_RUNNER))
+        _handoff_marker(box.home / "in-flight", count=1, pinned=0)
+        (box.home / "update-idle-only").write_text("")
+        assert _run_handoff(box, "--check").stdout.startswith("busy")
+        _run_handoff(box)
+        assert box.installed == ""
+        assert "idle-only" in json.loads((box.home / "update-last.json").read_text())["detail"]
+    finally:
+        sup.kill()
+
+
+def test_a_dead_supervisor_is_no_handoff(box):
+    # A marker that says "handoff" from a daemon whose supervisor is gone: the old
+    # rule (wait for idle) — a SIGHUP to a recycled pid would hit someone else.
+    box.stamp("0" * 40)
+    box.expect(box.seed_repo(GOOD_RUNNER))
+    _handoff_marker(box.home / "in-flight", count=1, pinned=0)
+    (box.home / "supervisor.json").write_text(json.dumps({"pid": 999999, "handoff": 1}))
+    assert box.run("--check").stdout.startswith("busy")
+
+
+def test_runners_a_busy_runner_that_hands_off_takes_the_code_at_once(runners_box):
+    dimagi = runners_box.home_of("dimagi") / ".canopy-runner"
+    sup = _supervisor(dimagi, runners_box.bin)
+    try:
+        runners_box.stamp("0" * 40)
+        runners_box.expect(runners_box.seed_repo(GOOD_RUNNER))
+        _handoff_marker(dimagi / "in-flight", count=1, pinned=0)
+        out = _run_handoff(runners_box)
+        assert out.returncode == 0, out.stderr
+        # eva (idle) restarts; dimagi (busy) hands off; nobody is owed but root's setup.
+        assert _restarts(runners_box) == ["canopy-runner@agent-eva.service"]
+        assert (dimagi / "kill.log").read_text().split() == ["-HUP", str(sup.pid)]
+        assert (runners_box.home / "restart-owed").read_text().split() == []
+        assert not runners_box.systemctl_log.exists()
+        decision = json.loads((runners_box.home / "update-last.json").read_text())
+        assert "dimagi handed off" in decision["detail"]
+    finally:
+        sup.kill()

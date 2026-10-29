@@ -62,6 +62,10 @@ ALLOWED_EVENT_KINDS = {
     # A caller's turn's `For <Agent>'s owner:` line, lifted into result_note
     # (owner_ask.py, canopy-web#1416).
     "owner_ask",
+    # A runner's record of what it did with the turn — claimed, started, adopted
+    # after a restart, lease renewal failing, exited, reported, lost — one per
+    # transition (cloud_runner.py `_lifecycle`), so the turn's page says it.
+    "lifecycle",
 }
 
 # A runner is expected to flush the raw transcript periodically (never holding

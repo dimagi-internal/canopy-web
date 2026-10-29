@@ -26,7 +26,7 @@ wire.
 - `_lib.sh` — what the three lifecycle scripts must agree on: the runner-name → stack mapping and the seed's secret names.
 - `seed.py` — builds the first-boot seed (manifest + ≤60 KB parts, sha256-checked on the box).
 - `prune_caches.py` — bootstrap step 4b: drops plugin-cache versions nothing has installed, and npm/uv download caches.
-- `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind and idle. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
+- `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind — at once, handing running turns to the new daemon (see "Turns survive an update"), or at the box's next idle moment for a daemon that cannot hand off. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
 - `bootstrap_agents.sh` — idempotent bootstrap of the BOX (tooling, gog's keyring, the canopy plugin + CLI, Claude Code itself, caches); each agent is prepared by canopy's `canopy agent prepare --runner`. Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH; invites a new box to pair (prints the approve link) and waits for it.
@@ -778,9 +778,10 @@ Root's parts, all written by `cloud_runner.py --install-runners`: `canopy-runner
 every uid but root's), `canopy-kms-broker.service` (the only thing that uses a runner's
 KMS key, for that runner's uid only), `canopy-pair.service` (pairs every runner in ONE
 `pair-by-role` call), and the auto-updater (root: one install; each idle runner
-restarts onto it at once, a busy one on the first tick it is idle, and root's setup
-plus the broker on a tick that finds the whole box idle — see `restart_runners` in
-`update_runner.sh`).
+restarts onto it at once, a busy one hands its turns off to the new daemon at once
+(or, if a turn of it cannot be handed off, restarts on the first tick it is idle),
+and root's setup plus the broker on a tick that finds the whole box idle — see
+`restart_runners` in `update_runner.sh`).
 `/etc/canopy-runner/box.env` holds the stack's parameters and no secret.
 
 **Pairing takes one passkey touch for the whole box.** `up.sh --runners …` makes one
@@ -864,10 +865,12 @@ minutes as the service user. It asks the control plane for **its own row's
 `expected_code_sha`** — the sha of `runner/ec2/{cloud_runner.py,bootstrap_agents.sh}`
 in the DEPLOYED image, so already through CI, the merge queue and a deploy — and
 compares it to `/opt/canopy-runner/build-info.json`, the stamp left by whoever
-installed the running bytes. If they differ and no turn is in flight
-(`/opt/canopy-runner/in-flight`, rewritten by the daemon every heartbeat), it
-installs `git show <that sha>:runner/ec2/cloud_runner.py` from the `/opt/canopy-web`
-clone, re-stamps, and restarts the service.
+installed the running bytes. If they differ it installs `git show <that
+sha>:runner/ec2/cloud_runner.py` from the `/opt/canopy-web` clone, re-stamps, and
+then either HANDS OFF (a busy daemon run by its supervisor: SIGHUP to the
+supervisor, the turns keep running — next section) or restarts the service (an
+idle box, or a daemon that cannot hand off — which the updater waits for, as it
+always has: `/opt/canopy-runner/in-flight`, rewritten by the daemon every heartbeat).
 
 Four things worth knowing:
 
@@ -882,8 +885,73 @@ Four things worth knowing:
 - **It is a separate systemd unit**, because a runner that crash-loops could never
   update itself.
 
-Watch it: `journalctl -u canopy-runner-update -f`. Ask without changing anything:
-`canopy-runner-update --check` → `current|stale|busy|unknown`.
+Watch it: `journalctl -u canopy-runner-update -f` — every tick ends in one
+`decision: <verdict> — <detail>` line (current; installed `from -> to` and how each
+runner took it: restarted / handed off / owed; deferred and why; unknown; failed),
+also written to `/opt/canopy-runner/update-last.json`, which the daemon reports as
+the runner's `update` health check (the updater itself never calls canopy-web).
+Ask without changing anything: `canopy-runner-update --check` →
+`current|stale|busy|unknown`.
+
+### Turns survive an update (handoff and adoption)
+An update no longer waits for an idle box, and no longer costs the turns running on it.
+
+- **The unit's main process is a supervisor** (`cloud_runner.py` with no argument →
+  `supervise_main`). It runs the daemon as its child (`cloud_runner.py --daemon`) and
+  never restarts on an update. **Each turn's agent CLI runs under a relay**
+  (`cloud_runner.py --turn-host <dir>`, its own session, in the unit's cgroup): the
+  relay owns the CLI's stdio — stdout to `wire.log`, stdin from a 0600 unix socket,
+  stderr to `stderr.log` — and writes the exit status to `exit.json`. The CLI never
+  talks to the daemon's pipes, so the daemon can go away under it.
+- **Per-turn state** lives in `<state dir>/turns/<turn id>/` (0700; the state dir is
+  beside the in-flight marker: `/opt/canopy-runner` on a box of one runner,
+  `~cu-<id>/.canopy-runner` on a box of several): `turn.json` (the claimed turn minus
+  any credential, phase, cwd, agent, CLI session, which attempt is current) and one
+  `attempt-<n>/` per CLI process (`spawn.json` argv/cwd, `host.json` relay and CLI
+  pids, `wire.log`, `progress.json` — how far the stream was emitted and shipped —
+  and `exit.json`). The turn's environment (its secrets) is inherited, never written.
+- **Handoff:** the updater installs, then `kill -HUP <supervisor pid>`
+  (`supervisor.json`). The supervisor sends the daemon SIGUSR1: it stops claiming and
+  exits without waiting on its turns (a finish already being posted gets 20s). The
+  supervisor starts the new bytes at once.
+- **Adoption:** the new daemon's first act after pairing (`adopt_turns`, before any
+  sweep and before the bootstrap) is to take over every turn left in the state dir:
+  a live relay, or a CLI that exited while no daemon was there, is ADOPTED — its
+  lease rides this daemon's heartbeats again, its stream is re-read from the start
+  for its state but nothing already emitted or shipped is sent twice, and its finish
+  is reported exactly as the old daemon would have (`claude -p` and ACP alike: an
+  ACP adapter's `session/prompt` reply is awaited on the replayed log, and an agent
+  request the old daemon already answered is not answered again). A turn whose
+  process is gone with no exit status is reported **failed** with that reason (and its
+  session, so it is never re-run blind); one cut off during its setup is reported
+  failed without a session (canopy-web runs it again). The start sweeps
+  (`sweep_turn_envs`, agent worktrees) skip adopted turns. One journal line says what
+  was adopted, reported and swept.
+- **Pinned turns still wait.** A caller's confined turn and every turn on a
+  sensitive-data box are not adopted (their environment is built for one process and
+  is never written down); the in-flight marker counts them as `pinned`, and the
+  updater defers while any is in flight, saying so in its decision.
+- **What still stops turns, as before:** a stop of the UNIT — the box shutting down,
+  `systemctl stop|restart`, the idle restart — signals the supervisor SIGTERM; it
+  passes it on, the daemon drains for `STOP_DRAIN_SECONDS` as always, and systemd's
+  cgroup kill ends the relays. A daemon that crashes is restarted by the supervisor in
+  10 s with its turns adopted; five exits in five minutes and the supervisor exits,
+  leaving it to systemd. A daemon that exits 0 stops the unit, as before.
+- **Opt back into idle-only:** `touch /opt/canopy-runner/update-idle-only` (or
+  `UPDATE_IDLE_ONLY=1` in the updater's environment). `RUNNER_ADOPT_TURNS=0` in a
+  runner's environment runs turns as the daemon's children again (every turn pinned);
+  `RUNNER_SUPERVISOR=0` runs the daemon as the unit's main process (no handoff at all).
+- **Every turn transition is one structured line** in the journal
+  (`turn-lifecycle {"turn": …, "event": claimed|started|adopted|lease_renew_failed|
+  lease_renewed|exited|reported|lost|swept|handed_off|left_for_requeue, …}`) and,
+  except `swept`/`handed_off`, a `lifecycle` event on the turn itself. A turn whose
+  lease lapses anyway is closed LOST with a note naming the runner, its last
+  heartbeat and whether it was still beating (`claim.lease_lapse_note`).
+- **Moving a live box onto it needs nothing by hand.** No unit file changes. The
+  first install on a box still running a pre-supervisor daemon waits for idle and
+  restarts the unit as it always has (that daemon cannot hand off; its marker has no
+  `handoff`); from then on the unit's main process is the supervisor and every later
+  update hands off.
 
 ### Secrets Manager is now a first-boot seed
 `canopy-fetch-env` installs the seed only when there is no

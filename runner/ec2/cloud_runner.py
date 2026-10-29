@@ -526,7 +526,17 @@ def _mark_in_flight(count: int) -> None:
     """
     try:
         IN_FLIGHT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        IN_FLIGHT_FILE.write_text(json.dumps({"count": int(count), "at": time.time()}))
+        body = {"count": int(count), "at": time.time()}
+        try:
+            # `pinned`: turns a handoff could not carry (a caller's confined turn, a
+            # relay that failed to start). Present only from a daemon that can hand
+            # off, so the updater reads its absence as "every turn is pinned".
+            if _supervised() and ADOPT_TURNS:
+                body["pinned"] = int(_adoptable_in_flight()[1])
+                body["handoff"] = 1
+        except Exception:  # noqa: BLE001 — the count alone is still the truth
+            pass
+        IN_FLIGHT_FILE.write_text(json.dumps(body))
     except OSError:
         pass
 
@@ -1116,6 +1126,7 @@ def health_report() -> dict:
         _egress_check()
         _data_mode_check()
         _claim_check()
+        _update_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -1385,8 +1396,18 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
     stop = threading.Event()
 
     def _loop() -> None:
+        failing = 0
         while not stop.wait(LEASE_HEARTBEAT_SECONDS):
-            _, reply = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
+            status, reply = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
+            if status != 200:
+                failing += 1
+                # Every failure in the journal; the turn's ledger hears of the first of
+                # a streak (it may not be reachable either) and of the recovery.
+                _lifecycle(turn_id, "lease_renew_failed", post=failing == 1, http=status,
+                           streak=failing, lease_heartbeat_s=LEASE_HEARTBEAT_SECONDS)
+            elif failing:
+                _lifecycle(turn_id, "lease_renewed", after_failures=failing)
+                failing = 0
             # The reply names this turn if a person asked to stop it — the
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
@@ -3469,12 +3490,14 @@ def remove_turn_env(turn_id: str) -> None:
 
 def sweep_turn_envs() -> int:
     """At start: remove every per-turn env a previous process left (a crash, a
-    kill -9). No turn is running yet, so nothing here is anyone's."""
+    kill -9). Only the turns this process adopted are running yet, and theirs stay."""
     root = _turn_env_root(create=False)
     if root is None:
         return 0
     n = 0
     for child in list(root.iterdir()) if root.is_dir() else []:
+        if child.name in _ADOPTED:
+            continue  # an adopted turn's: still in use (`adopt_turns`)
         try:
             if child.is_dir() and not child.is_symlink():
                 shutil.rmtree(child, ignore_errors=True)
@@ -4808,6 +4831,11 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     def on_session(session_id: str) -> None:
         _announce_session(turn_id, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
+        agent = _acp_agent_for(turn_id)
+        _lifecycle(turn_id, "started", pid=getattr(getattr(agent, "proc", None), "pid", 0),
+                   agent=agent_slug or "", executor="acp", session=session_id,
+                   resume=resume or "", cwd=str(workdir),
+                   relayed=isinstance(getattr(agent, "proc", None), RelayProc))
 
     started = time.time()
 
@@ -4817,12 +4845,22 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         # Hooks: reachable by the WS thread (`stop_turn`) while it runs, and
         # Unregister BEFORE close: a stop/cancel that arrives in the gap would
         # otherwise reach a closed connection and raise inside the WS thread.
-        make_agent = core.AcpAgent
         ask_human = _ask_human_for_turn(_RUNNER_ID, turn_id,
                                         getattr(_TURN_ENV, "chat_session", "") or "")
-        if ask_human is not None:
+        # An adoptable turn's adapter runs under a relay (`RelayProc`), so a new daemon
+        # can finish it; `position`/`on_flushed` record what has been emitted.
+        # Only with a canopy_acp that can take one (`AcpAgent.attach`): the clone it
+        # imports from can lag this file by a start.
+        relay_spawn = _acp_spawn_for(turn_id) if hasattr(core.AcpAgent, "attach") else None
+        if relay_spawn is None and _relay_turn_id() == turn_id:
+            _update_turn_state(turn_id, adoptable=False)
+            _TURN_ENV.relay_turn = ""
+        position, on_flushed = _acp_progress_hooks(turn_id) if relay_spawn else (None, None)
+        extra = {k: v for k, v in (("ask_human", ask_human), ("spawn", relay_spawn)) if v is not None}
+        make_agent = core.AcpAgent
+        if extra:
             def make_agent(**kwargs):
-                return core.AcpAgent(ask_human=ask_human, **kwargs)
+                return core.AcpAgent(**extra, **kwargs)
         reducer = core.UpdateReducer()
         res = drive_turn(
             prompt, make_agent=make_agent, reducer=reducer, emit=emit,
@@ -4834,15 +4872,20 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             cancelled=lambda: stop_requested(turn_id),
             mode=ACP_PERMISSION_MODE,
             session_start_timeout=ACP_SESSION_START_TIMEOUT_SECONDS,
-            flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log)
+            flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log,
+            **({"position": position, "on_flushed": on_flushed} if position else {}))
     except TurnError as exc:
         _log(f"turn {turn_id[:8]}: ACP executor failed: {exc.detail}")
+        _lifecycle(turn_id, "exited", ok=False, executor="acp", session=exc.session_id,
+                   detail=exc.detail[:300])
         # The adapter's bare `auth_required` cannot say a dead token from a capped
         # one; what Claude Code wrote into the session's transcript can.
         if fault := _transcript_fault(workdir, exc.session_id, started):
             _CREDENTIAL_FAULT[turn_id] = fault
         return False, f"runner error (acp): {exc.detail}", exc.session_id
     final_text = res.text
+    _lifecycle(turn_id, "exited", ok=res.ok, executor="acp", session=res.session_id,
+               stop_reason=res.stop_reason)
     # The adapter can end a turn the API refused with a clean stop and the error as
     # plain text. Claude Code's own record of the refusal (`isApiErrorMessage`, with
     # its `error` category) says what happened to the credential — read it, so a
@@ -5280,68 +5323,18 @@ def _probe_says_capped(label: str, resets: list[float], turn_id: str) -> bool:
     return True
 
 
-def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
-               agent_slug: str | None = None, resume_session_id: str | None = None,
-               _resume_retried: bool = False) -> tuple[bool, str, str]:
-    """Run `claude -p` on the prompt, streaming stream-json events via `emit`
-    (a callable taking a list of event dicts — WS or REST). Returns
-    (ok, final_text, cli_session_id).
-
-    `cwd` lets the caller run this IN an agent's real clone (see `_turn_cwd`)
-    instead of a throwaway scratch dir; None keeps the original scratch-dir
-    behavior (project/session turns, or an agent with no bootstrapped clone).
-    `agent_slug` layers that agent's provisioned env on top (see `_agent_env`).
-
-    Every raw stream-json line the CLI emits — regardless of whether it parses —
-    is ALSO forwarded verbatim to POST /turns/{id}/transcript, batched by bytes
-    (never held entirely in memory) and flushed periodically and at the end; see
-    `_post_transcript_batch` / TRANSCRIPT_FLUSH_*. This is IN ADDITION to the
-    reduced TurnEvents `emit` carries for the live UI — the transcript is the
-    durable, re-derivable artifact (cost/structure), the ledger stays the live
-    stream (docs/superpowers/specs/2026-07-26-run-execution-convergence-design.md).
-
-    `cli_session_id` is the CLI's own session id, captured from the first event
-    that carries one (normally `system`/`init`, fired before any other output) —
-    the caller round-trips it through record-session so a LATER turn on the same
-    canopy Session can pass it back as `resume_session_id` here.
-
-    `resume_session_id`, if given, is verified FIRST against the local
-    filesystem (`_resume_target_exists` — Claude Code resolves `--resume` by
-    cwd-derived project dir, so a session captured under a different cwd is
-    invisible here regardless of the id) and dropped to a fresh spawn
-    immediately if that fails, rather than ever invoking a doomed `--resume`.
-    As a second-layer safety net — if the file existed but the CLI still
-    yields NOTHING (exits non-zero having emitted no stream-json lines at
-    all) — this retries ONCE as a fresh spawn (`_resume_retried` guards
-    against looping), mirroring the reuse-then-fall-back-to-create pattern
-    runner/canopy_runner/execute.py already uses for emdash sessions: never
-    assume continuity works, always have a cold-start fallback.
-    """
-    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
-    workdir.mkdir(parents=True, exist_ok=True)
-    if resume_session_id and not _resume_target_exists(workdir, resume_session_id):
-        _log(f"resume target {resume_session_id!r} not found under {workdir} "
-             f"(turn {turn_id[:8]}); treating as a fresh spawn")
-        resume_session_id = None
-        _starting_fresh()
-    cmd = _claude_cmd(prompt, resume_session_id)
-    _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}"
-         + (f" --resume {resume_session_id}" if resume_session_id else ""))
-    # stderr goes to a file, not PIPE: a chatty claude can fill the 64KB pipe buffer
-    # while we're only reading stdout, deadlocking the process. A file has no such
-    # limit; we tail it for the failure path below.
-    # A resume-fallback retry (_resume_retried=True) writes to a DIFFERENT file
-    # than the original attempt, so a failed --resume's stderr — the only
-    # evidence of why it failed — survives the fresh-spawn retry instead of
-    # being truncated by its `.open("w")` (review finding M2).
-    stderr_path = workdir / ("stderr.resume-retry.log" if _resume_retried else "stderr.log")
-    stderr_file = stderr_path.open("w")
-    proc = subprocess.Popen(
-        cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file, text=True,
-        env=_agent_env(agent_slug),
-    )
-    # Reachable by a stop from here on (`request_stop`).
-    _register_cli_proc(turn_id, proc)
+def _stream_claude(proc, turn_id: str, emit, stderr_path: pathlib.Path, stderr_file=None, *,
+                   progress: dict | None = None):
+    """Read one `claude -p` attempt's stream-json to its end: emit the live events,
+    ship the raw lines, and return (ok, final_text, cli_session_id, lines_seen,
+    loop_error). `proc` is a Popen or a `RelayProc` (a turn that outlives this
+    daemon); for a relay the progress through the stream is recorded as it goes,
+    and an ADOPTED attempt passes it back as `progress` so it re-reads the stream
+    from the start for its state but emits and ships nothing twice."""
+    progress = dict(progress or {})
+    skip_emit = int(progress.get("emitted") or 0)
+    skip_post = int(progress.get("posted") or 0)
+    record = getattr(proc, "record_progress", None)
     final_text = ""
     cli_session_id = ""
     ok = True
@@ -5350,10 +5343,21 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     # the first fault seen, and the reset a rejected rate limit names.
     fault, fault_reset = None, None
     batch: list[dict] = []
-    attempt_id = uuid.uuid4().hex[:8]
+    # An adopted attempt keeps its predecessor's batch ids: the server dedups a
+    # repeated last batch, so the one in flight at the restart is not stored twice.
+    attempt_id = str(progress.get("attempt_id") or uuid.uuid4().hex[:8])
     transcript_buf: list[str] = []
     transcript_bytes = 0
-    transcript_seq = 0
+    transcript_seq = int(progress.get("seq") or 0)
+    # Lines appended to the transcript buffer, and the count through which the
+    # transcript is posted / the events are emitted (what an adopter skips).
+    appended = 0
+    marks = {"posted": skip_post, "emitted": skip_emit}
+
+    def _record() -> None:
+        if record is not None:
+            record({"attempt_id": attempt_id, "seq": transcript_seq,
+                    "posted": marks["posted"], "emitted": marks["emitted"]})
     transcript_stopped = False  # latched True once the server reports `truncated`
     # Guards transcript_buf/transcript_bytes/transcript_seq/transcript_stopped —
     # held only for FAST, non-blocking mutations (list swap, int increment).
@@ -5402,7 +5406,10 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             return
         pending = batch
         batch = []
+        through = lines_seen
         emit(pending)
+        marks["emitted"] = max(marks["emitted"], through)
+        _record()
 
     def flush_transcript():
         # transcript_post_lock is held for the WHOLE call (swap through the
@@ -5411,7 +5418,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         # append also needs) is only ever held for the swap itself and for
         # each seq allocation, never across `_post_transcript_batch`'s network
         # call (review N2 — see the lock declarations above for why).
-        nonlocal transcript_buf, transcript_bytes, transcript_seq, transcript_stopped
+        nonlocal transcript_buf, transcript_bytes, transcript_seq, transcript_stopped, appended
         with transcript_post_lock:
             with transcript_lock:
                 if not transcript_buf or transcript_stopped:
@@ -5421,6 +5428,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 pending = transcript_buf
                 transcript_buf = []
                 transcript_bytes = 0
+                through = appended
             for chunk in _chunk_transcript_lines(pending):
                 with transcript_lock:
                     if transcript_stopped:
@@ -5431,6 +5439,8 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                     with transcript_lock:
                         transcript_stopped = True
                     return
+            marks["posted"] = max(marks["posted"], through)
+            _record()
 
     def _periodic_flush() -> None:
         # The byte-size flush trigger below only runs when a NEW line arrives,
@@ -5456,10 +5466,12 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 continue
             lines_seen += 1
             should_flush = False
-            with transcript_lock:
-                transcript_buf.append(line)
-                transcript_bytes += len(line.encode("utf-8"))
-                should_flush = transcript_bytes >= TRANSCRIPT_FLUSH_BYTES
+            if lines_seen > skip_post:
+                with transcript_lock:
+                    transcript_buf.append(line)
+                    appended = lines_seen
+                    transcript_bytes += len(line.encode("utf-8"))
+                    should_flush = transcript_bytes >= TRANSCRIPT_FLUSH_BYTES
             # `flush_transcript()` is called AFTER the `with` block exits, on
             # purpose: this is the one line the whole deadlock-freedom
             # argument rests on. flush_transcript() itself acquires
@@ -5522,7 +5534,9 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             elif etype == "result":
                 final_text = evt.get("result", "") or ""
                 ok = not evt.get("is_error", False)
-            if len(batch) >= 10:
+            if lines_seen <= skip_emit:
+                batch.clear()  # emitted before the restart; parsed only for its state
+            elif len(batch) >= 10:
                 flush()
     except Exception as exc:  # noqa: BLE001 — must not lose buffered events/transcript
         loop_error = exc
@@ -5575,7 +5589,8 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 _log(f"warn: turn {turn_id[:8]}: could not reap the claude "
                      "subprocess (pid may be leaked) — continuing rather than "
                      "blocking the runner")
-        stderr_file.close()
+        if stderr_file is not None:
+            stderr_file.close()
         try:
             flush()  # calls the caller-supplied `emit` — can itself raise (e.g. a dead WS)
         except Exception as exc:  # noqa: BLE001 — cleanup must not lose flush_transcript below
@@ -5592,11 +5607,85 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         except OSError:
             tail = ""
         final_text = tail[-500:]
+    if getattr(proc, "lost", ""):
+        # The process went away without an exit status (`RelayProc.poll`): say so,
+        # never only an empty stderr tail.
+        ok = False
+        final_text = (f"{final_text}\n\n" if final_text else "") + proc.lost
     if fault and not ok:
         # For `execute_prompt`'s cascade, which reads this before any text.
         _CREDENTIAL_FAULT[turn_id] = fault
         if fault == "capped" and fault_reset:
             _CAP_RESET_HINT[turn_id] = fault_reset
+    _lifecycle(turn_id, "exited", pid=getattr(proc, "pid", 0), code=getattr(proc, "returncode", None),
+               ok=ok, session=cli_session_id, lines=lines_seen)
+    return ok, final_text, cli_session_id, lines_seen, loop_error
+
+
+def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
+               agent_slug: str | None = None, resume_session_id: str | None = None,
+               _resume_retried: bool = False) -> tuple[bool, str, str]:
+    """Run `claude -p` on the prompt, streaming stream-json events via `emit`
+    (a callable taking a list of event dicts — WS or REST). Returns
+    (ok, final_text, cli_session_id).
+
+    `cwd` lets the caller run this IN an agent's real clone (see `_turn_cwd`)
+    instead of a throwaway scratch dir; None keeps the original scratch-dir
+    behavior (project/session turns, or an agent with no bootstrapped clone).
+    `agent_slug` layers that agent's provisioned env on top (see `_agent_env`).
+
+    Every raw stream-json line the CLI emits — regardless of whether it parses —
+    is ALSO forwarded verbatim to POST /turns/{id}/transcript, batched by bytes
+    (never held entirely in memory) and flushed periodically and at the end; see
+    `_post_transcript_batch` / TRANSCRIPT_FLUSH_*. This is IN ADDITION to the
+    reduced TurnEvents `emit` carries for the live UI — the transcript is the
+    durable, re-derivable artifact (cost/structure), the ledger stays the live
+    stream (docs/superpowers/specs/2026-07-26-run-execution-convergence-design.md).
+
+    `cli_session_id` is the CLI's own session id, captured from the first event
+    that carries one (normally `system`/`init`, fired before any other output) —
+    the caller round-trips it through record-session so a LATER turn on the same
+    canopy Session can pass it back as `resume_session_id` here.
+
+    `resume_session_id`, if given, is verified FIRST against the local
+    filesystem (`_resume_target_exists` — Claude Code resolves `--resume` by
+    cwd-derived project dir, so a session captured under a different cwd is
+    invisible here regardless of the id) and dropped to a fresh spawn
+    immediately if that fails, rather than ever invoking a doomed `--resume`.
+    As a second-layer safety net — if the file existed but the CLI still
+    yields NOTHING (exits non-zero having emitted no stream-json lines at
+    all) — this retries ONCE as a fresh spawn (`_resume_retried` guards
+    against looping), mirroring the reuse-then-fall-back-to-create pattern
+    runner/canopy_runner/execute.py already uses for emdash sessions: never
+    assume continuity works, always have a cold-start fallback.
+    """
+    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
+    workdir.mkdir(parents=True, exist_ok=True)
+    if resume_session_id and not _resume_target_exists(workdir, resume_session_id):
+        _log(f"resume target {resume_session_id!r} not found under {workdir} "
+             f"(turn {turn_id[:8]}); treating as a fresh spawn")
+        resume_session_id = None
+        _starting_fresh()
+    cmd = _claude_cmd(prompt, resume_session_id)
+    _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}"
+         + (f" --resume {resume_session_id}" if resume_session_id else ""))
+    # stderr goes to a file, not PIPE: a chatty claude can fill the 64KB pipe buffer
+    # while we're only reading stdout, deadlocking the process. A file has no such
+    # limit; we tail it for the failure path below.
+    # A resume-fallback retry (_resume_retried=True) writes to a DIFFERENT file
+    # than the original attempt, so a failed --resume's stderr — the only
+    # evidence of why it failed — survives the fresh-spawn retry instead of
+    # being truncated by its `.open("w")` (review finding M2).
+    stderr_path = workdir / ("stderr.resume-retry.log" if _resume_retried else "stderr.log")
+    proc, stderr_file = _spawn_cli(turn_id, cmd, workdir, _agent_env(agent_slug), stderr_path)
+    # The relay writes the CLI's stderr itself, beside its output.
+    stderr_path = getattr(proc, "stderr_path", None) or stderr_path
+    # Reachable by a stop from here on (`request_stop`).
+    _register_cli_proc(turn_id, proc)
+    _lifecycle(turn_id, "started", pid=getattr(proc, "pid", 0), agent=agent_slug or "", executor="cli",
+               resume=resume_session_id or "", cwd=str(workdir))
+    ok, final_text, cli_session_id, lines_seen, loop_error = _stream_claude(
+        proc, turn_id, emit, stderr_path, stderr_file)
     if (resume_session_id and not _resume_retried and lines_seen == 0
             and loop_error is None and proc.returncode != 0
             and not stop_requested(turn_id)):  # a stopped turn is not a failed resume
@@ -6736,8 +6825,11 @@ def _sweep_agent_worktrees(slug: str, clone: pathlib.Path) -> None:
     if not root.is_dir():
         return
     cutoff = time.time() - AGENT_WORKTREE_MAX_AGE
+    busy = _adopted_cwds()
     for child in root.iterdir():
         try:
+            if str(child) in busy:
+                continue  # an adopted turn is still working in it
             if child.is_dir() and child.stat().st_mtime < cutoff:
                 _release_agent_worktree(child)
         except OSError:
@@ -11382,6 +11474,1026 @@ def _cli_refusal(turn: dict) -> str | None:
             f"({_executor().name}) runs {have}")
 
 
+# ── turns that outlive the daemon ───────────────────────────────────────────
+#
+# An update used to cost every running turn: the updater could install only on an
+# idle box (a busy one never updated — cloud-ec2-live sat a day behind back-to-back
+# turns), and a restart killed the unit's whole cgroup, so a turn's `claude` died,
+# its lease lapsed and canopy-web swept it LOST with no note.
+#
+# Now the unit's main process is a small SUPERVISOR (`supervise_main`) that runs the
+# daemon as its child and never restarts on an update. Each turn's agent CLI runs
+# under a RELAY (`turn_host_main`): a process of its own session that owns the CLI's
+# stdio, writes everything it says to a file, and records its exit status — so the
+# CLI talks to a file and a socket, never to the daemon's pipes, and the daemon can
+# go away under it. An update HANDS OFF: the updater signals the supervisor (SIGHUP),
+# the supervisor asks the daemon to leave (SIGUSR1: it stops claiming and exits
+# without waiting on its turns), and starts the new bytes, which ADOPT every live
+# turn from its state file (`adopt_turns`): leases renewed again, the stream read
+# from where it was, and the finish reported exactly as the old daemon would have.
+#
+# What still stops turns, as before: a stop of the UNIT (the box shutting down, an
+# operator's `systemctl stop|restart`), which signals the supervisor SIGTERM; it
+# passes that on, the daemon drains as it always did, and systemd's cgroup kill does
+# the rest. Turns that cannot be adopted (a caller's confined turn, every turn on a
+# sensitive-data box: their environment is built for one process and never written
+# down) are counted as `pinned` in the in-flight marker, and the updater waits for them.
+
+TURN_STATE_ROOT = pathlib.Path(os.environ.get("TURN_STATE_ROOT", str(IN_FLIGHT_FILE.parent / "turns")))
+SUPERVISOR_FILE = pathlib.Path(os.environ.get("SUPERVISOR_FILE",
+                                              str(IN_FLIGHT_FILE.parent / "supervisor.json")))
+#: The updater's last decision, for the `update` check (update_runner.sh writes it).
+UPDATE_DECISION_FILE = pathlib.Path(os.environ.get("UPDATE_DECISION_FILE",
+                                                   str(RUNNER_HOME / "update-last.json")))
+RUNNER_FILE = os.path.abspath(__file__)
+#: Turns run under a relay and are adopted across a daemon restart. Off: every turn
+#: is the daemon's own child again, and an update waits for an idle box.
+ADOPT_TURNS = _bool_env("RUNNER_ADOPT_TURNS", True)
+#: How long a relay gets to start its CLI and say so.
+RELAY_START_TIMEOUT = float(os.environ.get("RELAY_START_TIMEOUT", "20"))
+#: How often a stream reader looks for more of a relay's output.
+RELAY_POLL_SECONDS = 0.1
+#: A handing-off daemon waits this long for a turn that is already reporting its
+#: finish, so the finish is never half-posted.
+HANDOFF_FINISH_WAIT_SECONDS = 20.0
+_HANDOFF = False
+#: Turn ids whose finish is being reported right now (`_finish_stop` on a handoff).
+_FINISHING: set = set()
+_TURN_STATE_LOCK = threading.Lock()
+#: Keys never written to a turn's state file: what a claim hands over that only
+#: the process it was built for may hold.
+_SECRET_KEY_PARTS = ("token", "secret", "password", "chat_key", "credential")
+
+
+def _supervised() -> bool:
+    """Is this daemon a child of the supervisor, so that a turn's relay outlives it?"""
+    return os.environ.get("CANOPY_RUNNER_SUPERVISED", "") == "1"
+
+
+def adoptable_turn(turn: dict) -> bool:
+    """Will this turn run under a relay, so a new daemon can adopt it?"""
+    return (ADOPT_TURNS and _supervised() and not SENSITIVE_DATA_MODE
+            and _capability(turn) is None)
+
+
+def _lifecycle(turn_id: str, event: str, *, post: bool = True, **fields) -> None:
+    """One structured line per transition of a turn — claimed, started, adopted,
+    lease_renew_failed, exited, reported, lost, swept, handed_off — to the journal
+    and, as a `lifecycle` event, to the turn's own ledger, so the turn's page says
+    what the runner did with it. Never raises: a record must never cost a turn."""
+    record = {"turn": str(turn_id), "event": event,
+              **{k: v for k, v in fields.items() if v not in (None, "")}}
+    try:
+        _log("turn-lifecycle " + json.dumps(record, sort_keys=True, default=str))
+    except Exception:  # noqa: BLE001
+        pass
+    if not post or not turn_id:
+        return
+    try:
+        payload = {k: v for k, v in record.items() if k != "turn"}
+        # Its own call: a server that does not know the kind yet refuses only this.
+        _api("POST", f"/turns/{turn_id}/events",
+             {"events": [{"kind": "lifecycle", "payload": json.loads(json.dumps(payload, default=str))}]})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _write_json_atomic(path: pathlib.Path, data, mode: int = 0o600) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(data, fh, default=str)
+    os.replace(tmp, path)
+
+
+def _without_secrets(value):
+    """A turn, as its state file may hold it: every key that names a credential gone."""
+    if isinstance(value, dict):
+        return {k: _without_secrets(v) for k, v in value.items()
+                if not any(p in str(k).lower() for p in _SECRET_KEY_PARTS)}
+    if isinstance(value, list):
+        return [_without_secrets(v) for v in value]
+    return value
+
+
+def _turn_dir(turn_id: str) -> pathlib.Path | None:
+    if not _CHAT_ID.match(str(turn_id or "")):
+        return None
+    return TURN_STATE_ROOT / str(turn_id)
+
+
+def _update_turn_state(turn_id: str, **fields) -> None:
+    """Merge into a turn's state file (`turn.json`). Best effort."""
+    d = _turn_dir(turn_id)
+    if d is None:
+        return
+    try:
+        with _TURN_STATE_LOCK:
+            TURN_STATE_ROOT.mkdir(parents=True, exist_ok=True)
+            os.chmod(TURN_STATE_ROOT, 0o700)
+            d.mkdir(mode=0o700, exist_ok=True)
+            state = _read_json(d / "turn.json") or {}
+            state.update(fields)
+            _write_json_atomic(d / "turn.json", state)
+    except OSError as exc:
+        _log(f"warn: could not write turn {str(turn_id)[:8]}'s state: {exc}")
+
+
+def _drop_turn_state(turn_id: str) -> None:
+    d = _turn_dir(turn_id)
+    if d is not None:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        pid = int(pid or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # A zombie is not alive: its exit is all that is left of it.
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            return fh.read().rsplit(")", 1)[-1].split()[0] != "Z"
+    except OSError:
+        return True
+
+
+def _is_relay(pid, attempt: pathlib.Path) -> bool:
+    """Is `pid` still the relay for this attempt (not a recycled pid)?"""
+    if not _pid_alive(pid):
+        return False
+    try:
+        cmdline = pathlib.Path(f"/proc/{int(pid)}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return True  # no /proc (a laptop, a test): the pid check above is all there is
+    return b"--turn-host" in cmdline and str(attempt).encode() in cmdline
+
+
+class _WireReader:
+    """Lines of one direction of a relay's wire log, followed as it grows, until
+    the relay says its CLI has exited. `last_offset` is where the line just
+    yielded starts — the position `canopy_acp`'s stream records."""
+
+    def __init__(self, proc: RelayProc, tag: bytes, *, start: int = 0):
+        self._proc = proc
+        self._tag = tag
+        self.offset = start
+        self.last_offset = start
+        self._closed = False
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __iter__(self):
+        path = self._proc.dir / "wire.log"
+        fh = None
+        partial = b""
+        try:
+            while not self._closed:
+                if fh is None:
+                    try:
+                        fh = open(path, "rb")
+                        fh.seek(self.offset)
+                    except OSError:
+                        fh = None
+                        if self._proc.poll() is not None:
+                            return
+                        time.sleep(RELAY_POLL_SECONDS)
+                        continue
+                chunk = fh.readline()
+                if chunk.endswith(b"\n"):
+                    line_start = self.offset
+                    self.offset += len(chunk)
+                    line = partial + chunk
+                    partial = b""
+                    tag, _, data = line.partition(b"\t")
+                    if tag == self._tag:
+                        self.last_offset = line_start
+                        yield data.decode("utf-8", errors="replace")
+                    continue
+                if chunk:
+                    # A line still being written: keep what there is, read the rest later.
+                    partial += chunk
+                    self.offset += len(chunk)
+                    continue
+                if self._proc.poll() is not None:
+                    # Exited: whatever it wrote before its exit status is in the file.
+                    rest = fh.read()
+                    if not rest:
+                        return
+                    fh.seek(self.offset)
+                    continue
+                time.sleep(RELAY_POLL_SECONDS)
+        finally:
+            if fh is not None:
+                fh.close()
+
+
+class _FileFollower:
+    """A relay's stderr file, followed until its CLI has exited (ACP's stderr drain)."""
+
+    def __init__(self, proc: RelayProc, path: pathlib.Path):
+        self._proc = proc
+        self._path = path
+
+    def __iter__(self):
+        offset = 0
+        while True:
+            try:
+                with open(self._path, "rb") as fh:
+                    fh.seek(offset)
+                    data = fh.read()
+            except OSError:
+                data = b""
+            if data:
+                complete, _, _rest = data.rpartition(b"\n")
+                if complete:
+                    offset += len(complete) + 1
+                    for line in complete.split(b"\n"):
+                        yield line.decode("utf-8", errors="replace") + "\n"
+                    continue
+            if self._proc.poll() is not None:
+                return
+            time.sleep(0.5)
+
+    def close(self) -> None:
+        pass
+
+
+class _RelayStdin:
+    """The write end of a relayed CLI's stdin: its relay's socket. `close()` asks
+    the relay to close the CLI's stdin (how ACP ends an adapter); a daemon that
+    simply goes away leaves it open, so the CLI keeps running for the next one."""
+
+    def __init__(self, proc: RelayProc):
+        self._proc = proc
+        self._sock = None
+        self._lock = threading.Lock()
+
+    def _connect(self):
+        if self._sock is not None:
+            return self._sock
+        import socket as _socket  # noqa: PLC0415
+        deadline = time.monotonic() + RELAY_START_TIMEOUT
+        path = str(self._proc.dir / "in.sock")
+        dir_fd = None
+        if len(path) > 100 and os.path.isdir("/proc/self/fd"):
+            # A unix socket's path is capped near 108 bytes: reach it through a
+            # descriptor of its directory instead.
+            dir_fd = os.open(self._proc.dir, os.O_RDONLY)
+            path = f"/proc/self/fd/{dir_fd}/in.sock"
+        while True:
+            s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            try:
+                s.connect(path)
+                self._sock = s
+                return s
+            except OSError:
+                s.close()
+                if time.monotonic() > deadline or self._proc.poll() is not None:
+                    raise BrokenPipeError("the turn's relay is not listening")
+                time.sleep(RELAY_POLL_SECONDS)
+            finally:
+                if dir_fd is not None and self._sock is not None:
+                    os.close(dir_fd)
+                    dir_fd = None
+
+    def write(self, text: str) -> int:
+        data = text.encode("utf-8")
+        with self._lock:
+            self._connect().sendall(data)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._connect().sendall(b"\x00close\n")
+            except OSError:
+                pass
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+
+
+class RelayProc:
+    """A turn's CLI run under a relay (`turn_host_main`), shaped like a Popen so
+    run_claude and canopy_acp drive it as they drive a child: `pid` (the CLI's),
+    `poll`, `wait`, `send_signal`/`terminate`/`kill`, `stdout`, `stdin`, `stderr`.
+
+    The CLI is the RELAY's child, not this process's: its exit status comes from
+    the relay's `exit.json`, and a relay that is gone without one is `lost`, with
+    the words that say so. Made by `spawn` (a new attempt) or `attach` (adopted)."""
+
+    def __init__(self, dir_: pathlib.Path, info: dict, *, host=None, stdin: bool = False,
+                 start: int = 0):
+        self.dir = dir_
+        self.pid = int(info.get("child_pid") or 0)
+        self.host_pid = int(info.get("host_pid") or 0)
+        self._host = host
+        self.returncode = None
+        self.lost = ""
+        self.stderr_path = dir_ / "stderr.log"
+        self.stdout = _WireReader(self, b"o", start=start)
+        self.stdin = _RelayStdin(self) if stdin else None
+        self.stderr = _FileFollower(self, self.stderr_path)
+
+    # -- lifecycle -----------------------------------------------------------------
+
+    @classmethod
+    def spawn(cls, turn_id: str, argv: list[str], *, cwd, env: dict, stdin: bool,
+              executor: str) -> RelayProc:
+        base = _turn_dir(turn_id)
+        if base is None:
+            raise OSError(f"no state directory for turn {turn_id!r}")
+        TURN_STATE_ROOT.mkdir(parents=True, exist_ok=True)
+        os.chmod(TURN_STATE_ROOT, 0o700)
+        base.mkdir(mode=0o700, exist_ok=True)
+        n = 1
+        while (base / f"attempt-{n}").exists():
+            n += 1
+        attempt = base / f"attempt-{n}"
+        attempt.mkdir(mode=0o700)
+        # The argv carries the prompt, as /proc/<pid>/cmdline already does; the
+        # environment (every secret the turn holds) is inherited, never written.
+        _write_json_atomic(attempt / "spawn.json", {"argv": argv, "cwd": str(cwd), "stdin": bool(stdin)})
+        log = open(attempt / "host.log", "ab")
+        try:
+            host = subprocess.Popen(
+                [sys.executable, RUNNER_FILE, "--turn-host", str(attempt)],
+                cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                start_new_session=True, close_fds=True)
+        finally:
+            log.close()
+        deadline = time.monotonic() + RELAY_START_TIMEOUT
+        while True:
+            info = _read_json(attempt / "host.json")
+            if info and info.get("child_pid"):
+                break
+            if host.poll() is not None or time.monotonic() > deadline:
+                why = (attempt / "host.log").read_text(errors="replace")[-500:] if (attempt / "host.log").exists() else ""
+                try:
+                    host.kill()
+                except OSError:
+                    pass
+                raise OSError(f"the turn's relay did not start its CLI ({why.strip() or 'no output'})")
+            time.sleep(0.05)
+        _update_turn_state(turn_id, attempt=attempt.name, executor=executor)
+        return cls(attempt, info, host=host, stdin=stdin)
+
+    @classmethod
+    def attach(cls, attempt: pathlib.Path) -> RelayProc:
+        info = _read_json(attempt / "host.json") or {}
+        spec = _read_json(attempt / "spawn.json") or {}
+        return cls(attempt, info, stdin=bool(spec.get("stdin")))
+
+    def poll(self):
+        if self.returncode is not None:
+            return self.returncode
+        if self._host is not None:
+            self._host.poll()  # reap our own relay once it is done
+        done = _read_json(self.dir / "exit.json")
+        if done is not None and "code" in done:
+            self.returncode = int(done["code"])
+            return self.returncode
+        if not _is_relay(self.host_pid, self.dir):
+            # One more look: the relay writes its exit status just before it exits.
+            done = _read_json(self.dir / "exit.json")
+            if done is not None and "code" in done:
+                self.returncode = int(done["code"])
+                return self.returncode
+            alive = _pid_alive(self.pid)
+            self.lost = (f"[runner] the turn's process (pid {self.pid}) "
+                         + ("is running without its relay" if alive else "is gone")
+                         + f" and its relay (pid {self.host_pid}) left no exit status — "
+                         "killed with the runner (an OOM kill, a reboot, or a stop of "
+                         "the runner unit)")
+            if alive:
+                try:
+                    os.kill(self.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            self.returncode = 255
+        return self.returncode
+
+    def wait(self, timeout: float | None = None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() > deadline:
+                raise subprocess.TimeoutExpired("relayed turn", timeout)
+            time.sleep(RELAY_POLL_SECONDS)
+        return self.returncode
+
+    def send_signal(self, sig) -> None:
+        if self.poll() is None and self.pid:
+            try:
+                os.kill(self.pid, sig)
+            except ProcessLookupError:
+                pass
+
+    def terminate(self) -> None:
+        self.send_signal(signal.SIGTERM)
+
+    def kill(self) -> None:
+        self.send_signal(signal.SIGKILL)
+
+    def record_progress(self, progress: dict) -> None:
+        """How far through this attempt's stream the turn has emitted and shipped."""
+        try:
+            _write_json_atomic(self.dir / "progress.json", progress)
+        except OSError:
+            pass
+
+
+def _relay_turn_id() -> str:
+    """The turn this worker thread is running under a relay, or ""."""
+    return getattr(_TURN_ENV, "relay_turn", "") or ""
+
+
+def _spawn_cli(turn_id: str, cmd: list[str], workdir: pathlib.Path, env: dict,
+               stderr_path: pathlib.Path):
+    """Start one `claude -p` attempt: under a relay when this turn is adoptable,
+    else as this process's child. Returns (proc, stderr file to close or None)."""
+    if _relay_turn_id() == turn_id:
+        try:
+            return RelayProc.spawn(turn_id, cmd, cwd=workdir, env=env, stdin=False,
+                                   executor="cli"), None
+        except OSError as exc:
+            _log(f"turn {turn_id[:8]}: {exc}; running it as the daemon's child (it will not "
+                 "survive a restart)")
+            _update_turn_state(turn_id, adoptable=False)
+            _TURN_ENV.relay_turn = ""
+    stderr_file = stderr_path.open("w")
+    proc = subprocess.Popen(cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file,
+                            text=True, env=env)
+    return proc, stderr_file
+
+
+def _acp_spawn_for(turn_id: str):
+    """canopy_acp's `spawn` hook for an adoptable turn, or None."""
+    if _relay_turn_id() != turn_id:
+        return None
+
+    def spawn(argv, *, cwd, env):
+        try:
+            return RelayProc.spawn(turn_id, list(argv), cwd=cwd, env=env, stdin=True, executor="acp")
+        except OSError as exc:
+            _log(f"turn {turn_id[:8]}: {exc}; running the adapter as the daemon's child")
+            _update_turn_state(turn_id, adoptable=False)
+            _TURN_ENV.relay_turn = ""
+            return subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                    encoding="utf-8", errors="replace", bufsize=1)
+    return spawn
+
+
+def _acp_progress_hooks(turn_id: str):
+    """(position, on_flushed) for drive_turn: what a later adopter must not emit again."""
+    holder: dict = {}
+
+    def position():
+        proc = holder.get("proc")
+        if proc is None:
+            agent = _acp_agent_for(turn_id)
+            proc = getattr(agent, "proc", None)
+            if not isinstance(proc, RelayProc):
+                return None
+            holder["proc"] = proc
+        return proc.stdout.last_offset
+
+    def on_flushed(marker):
+        proc = holder.get("proc")
+        if proc is not None:
+            proc.record_progress({"emitted_offset": marker})
+    return position, on_flushed
+
+
+# -- the relay ---------------------------------------------------------------------
+
+def turn_host_main(attempt_dir: str) -> int:
+    """`cloud_runner.py --turn-host <dir>`: run one CLI for a turn and outlive the
+    daemon that asked for it. Its stdout goes to `wire.log` (`o\\t<line>`), what the
+    daemon writes to its stdin arrives on `in.sock` and is logged (`i\\t<line>`)
+    before it is passed on, its stderr to `stderr.log`; its exit status to
+    `exit.json`, which is what a daemon — this one's or the next — reads."""
+    attempt = pathlib.Path(attempt_dir)
+    spec = _read_json(attempt / "spawn.json") or {}
+    argv = spec.get("argv") or []
+    if not argv:
+        print("turn-host: no argv in spawn.json", file=sys.stderr)
+        return 2
+    # A stop reaches the CLI by its own pid; the relay ends only when the CLI does.
+    # SIGTERM (the box going down) is passed on, and the relay still records the exit.
+    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGUSR1):
+        signal.signal(sig, signal.SIG_IGN)
+    child_box: dict = {}
+
+    def _forward(signum, _frame):
+        child = child_box.get("child")
+        if child is not None and child.poll() is None:
+            try:
+                child.send_signal(signum)
+            except OSError:
+                pass
+    signal.signal(signal.SIGTERM, _forward)
+    wire = open(attempt / "wire.log", "ab", buffering=0)
+    wire_lock = threading.Lock()
+
+    def wire_write(tag: bytes, data: bytes) -> None:
+        with wire_lock:
+            wire.write(tag + b"\t" + data.rstrip(b"\r\n") + b"\n")
+
+    stderr = open(attempt / "stderr.log", "ab")
+    want_stdin = bool(spec.get("stdin"))
+    # The CLI gets its cwd from the spec; the relay itself sits in the attempt's dir.
+    os.chdir(attempt)
+    child = subprocess.Popen(argv, cwd=spec.get("cwd") or None,
+                             stdin=subprocess.PIPE if want_stdin else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=stderr, bufsize=0)
+    child_box["child"] = child
+    _write_json_atomic(attempt / "host.json",
+                       {"host_pid": os.getpid(), "child_pid": child.pid, "started_at": time.time()})
+    if want_stdin:
+        threading.Thread(target=_turn_host_inbox, args=(attempt, child, wire_write),
+                         daemon=True, name="relay-inbox").start()
+    try:
+        for line in iter(child.stdout.readline, b""):
+            wire_write(b"o", line)
+    except Exception as exc:  # noqa: BLE001 — still record the exit below
+        print(f"turn-host: reading the CLI failed: {exc}", file=sys.stderr)
+    code = child.wait()
+    _write_json_atomic(attempt / "exit.json", {"code": code, "at": time.time()})
+    try:
+        (attempt / "in.sock").unlink(missing_ok=True)
+    except OSError:
+        pass
+    return 0
+
+
+def _turn_host_inbox(attempt: pathlib.Path, child, wire_write) -> None:
+    """The relay's stdin side: one daemon at a time connects to `in.sock`; its lines
+    go to the CLI. A daemon that disconnects (it was restarted) leaves the CLI's
+    stdin open for the next one; `\\x00close` closes it."""
+    import socket as _socket  # noqa: PLC0415
+    path = attempt / "in.sock"
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    # Bound by its name inside the attempt's directory (the relay's own cwd, set in
+    # turn_host_main): a unix socket's full path is capped near 108 bytes.
+    srv.bind("in.sock")
+    os.chmod(path, 0o600)
+    srv.listen(2)
+    while child.poll() is None:
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        with conn, conn.makefile("rb") as fh:
+            for line in fh:
+                if line == b"\x00close\n":
+                    try:
+                        child.stdin.close()
+                    except OSError:
+                        pass
+                    continue
+                wire_write(b"i", line)
+                try:
+                    child.stdin.write(line if line.endswith(b"\n") else line + b"\n")
+                    child.stdin.flush()
+                except (OSError, ValueError):
+                    pass
+
+
+# -- the supervisor ----------------------------------------------------------------
+
+#: A daemon that exits this many times inside SUPERVISOR_CRASH_WINDOW hands the
+#: problem to systemd (the supervisor exits; the unit restarts as it always has).
+SUPERVISOR_CRASH_LIMIT = 5
+SUPERVISOR_CRASH_WINDOW = 300.0
+SUPERVISOR_RESTART_DELAY = 10.0
+#: How long a handing-off daemon gets to leave before it is killed (its turns are not).
+HANDOFF_EXIT_TIMEOUT = 60.0
+
+
+def supervise_main(*, popen=subprocess.Popen, sleep=time.sleep, clock=time.monotonic) -> int:
+    """The unit's main process: run the daemon as a child, and on SIGHUP replace it
+    with the bytes now on disk WITHOUT stopping the unit — every turn's relay is in
+    the unit's cgroup and keeps running. SIGTERM (a stop of the unit) is passed to
+    the daemon, which drains as it always did. Deliberately small: this code runs
+    from the unit's start until its stop, through every update."""
+    state = {"child": None, "stopping": False, "handoff": False, "started": 0.0}
+
+    def _log_s(msg: str) -> None:
+        _log(f"supervisor: {msg}")
+
+    def _on_term(signum, _frame):
+        state["stopping"] = True
+        child = state["child"]
+        if child is not None and child.poll() is None:
+            try:
+                child.send_signal(signal.SIGTERM)
+            except OSError:
+                pass
+
+    def _on_hup(_signum, _frame):
+        state["handoff"] = True
+        child = state["child"]
+        if child is not None and child.poll() is None:
+            try:
+                child.send_signal(signal.SIGUSR1)
+            except OSError:
+                pass
+
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
+    signal.signal(signal.SIGHUP, _on_hup)
+    exits: list[float] = []
+    env = {**os.environ, "CANOPY_RUNNER_SUPERVISED": "1"}
+    last_code = 0
+    while True:
+        state["handoff"] = False
+        child = popen([sys.executable, RUNNER_FILE, "--daemon"], env=env)
+        state["child"] = child
+        state["started"] = time.time()
+        try:
+            SUPERVISOR_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _write_json_atomic(SUPERVISOR_FILE, {"pid": os.getpid(), "daemon_pid": child.pid,
+                                                 "daemon_started_at": state["started"],
+                                                 "handoff": 1}, mode=0o644)
+        except OSError as exc:
+            _log_s(f"could not write {SUPERVISOR_FILE}: {exc}")
+        _log_s(f"daemon started (pid {child.pid})")
+        handoff_at = None
+        while True:
+            code = child.poll()
+            if code is not None:
+                break
+            if state["handoff"] and handoff_at is None:
+                handoff_at = clock()
+            if handoff_at is not None and clock() - handoff_at > HANDOFF_EXIT_TIMEOUT:
+                _log_s(f"daemon {child.pid} did not leave within {HANDOFF_EXIT_TIMEOUT:.0f}s "
+                       "of a handoff; killing it (its turns keep running)")
+                try:
+                    child.kill()
+                except OSError:
+                    pass
+                handoff_at = clock() + 3600
+            sleep(0.5)
+        last_code = code
+        if state["stopping"]:
+            _log_s(f"daemon exited {code}; the unit is stopping")
+            try:
+                SUPERVISOR_FILE.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return code if code and code > 0 else 0
+        if state["handoff"]:
+            _log_s(f"daemon {child.pid} handed off (exit {code}); starting the installed bytes")
+            continue
+        if code == REFRESH_EXIT_CODE:
+            # A self-refresh (`_exit_for_refresh`): a new daemon re-runs the bootstrap.
+            _log_s(f"daemon {child.pid} exited to refresh; starting it again")
+            continue
+        if code == 0:
+            # A daemon that chose to stop (nothing to pair yet, …): so does the unit,
+            # exactly as when the daemon was the unit's main process.
+            _log_s("daemon exited 0; stopping")
+            return 0
+        now = clock()
+        exits = [t for t in exits if now - t < SUPERVISOR_CRASH_WINDOW] + [now]
+        if len(exits) >= SUPERVISOR_CRASH_LIMIT:
+            _log_s(f"daemon exited {len(exits)} times in {SUPERVISOR_CRASH_WINDOW:.0f}s "
+                   f"(last {code}); leaving it to systemd")
+            return last_code if last_code and last_code > 0 else 1
+        _log_s(f"daemon exited {code} unexpectedly; restarting it in "
+               f"{SUPERVISOR_RESTART_DELAY:.0f}s (its turns keep running)")
+        waited = 0.0
+        while waited < SUPERVISOR_RESTART_DELAY and not state["stopping"] and not state["handoff"]:
+            sleep(0.5)
+            waited += 0.5
+        if state["stopping"]:
+            return last_code if last_code and last_code > 0 else 0
+
+
+def _handle_handoff(*_a):
+    """SIGUSR1 from the supervisor: an update. Stop claiming and leave WITHOUT
+    waiting on the turns — the next daemon adopts them. Flags only (see _handle_stop)."""
+    global _stop, _HANDOFF
+    _stop = True
+    _HANDOFF = True
+
+
+# -- adoption ----------------------------------------------------------------------
+
+def _wire_scan(attempt: pathlib.Path) -> dict:
+    """What an ACP attempt's wire log says the adopter needs: the `session/prompt`
+    in flight (its id, session and offset), the first id not yet used, and the agent
+    requests already answered."""
+    out = {"prompt_id": None, "prompt_offset": None, "session_id": "", "next_id": 1,
+           "answered": set(), "size": 0}
+    try:
+        data = (attempt / "wire.log").read_bytes()
+    except OSError:
+        return out
+    offset = 0
+    for raw in data.splitlines(keepends=True):
+        here = offset
+        offset += len(raw)
+        if not raw.endswith(b"\n"):
+            break
+        tag, _, body = raw.rstrip(b"\n").partition(b"\t")
+        if tag != b"i":
+            continue
+        try:
+            msg = json.loads(body)
+        except ValueError:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        mid = msg.get("id")
+        if msg.get("method"):
+            if isinstance(mid, int):
+                out["next_id"] = max(out["next_id"], mid + 1)
+            if msg["method"] == "session/prompt" and mid is not None:
+                out["prompt_id"], out["prompt_offset"] = mid, here
+                out["session_id"] = ((msg.get("params") or {}).get("sessionId") or "")
+        elif mid is not None:
+            out["answered"].add(mid)  # our reply to an agent request
+    out["size"] = offset
+    return out
+
+
+def adopt_turns(runner_id: str) -> dict:
+    """At start, before any sweep: take over every turn a previous daemon left.
+
+    A turn whose relay is alive, or whose CLI exited while no daemon was there, is
+    ADOPTED (`_adopt_turn`, on its own worker). One whose process is gone with no
+    exit status is reported failed with the reason; one still being set up when the
+    daemon went is reported failed without a session (canopy-web runs it again).
+    Never touches what an adopted turn holds. Returns {adopted, reported, swept}."""
+    summary = {"adopted": [], "reported": [], "swept": []}
+    if not TURN_STATE_ROOT.is_dir():
+        return summary
+    for d in sorted(TURN_STATE_ROOT.iterdir()):
+        turn_id = d.name
+        if not d.is_dir() or not _CHAT_ID.match(turn_id):
+            continue
+        state = _read_json(d / "turn.json") or {}
+        turn = state.get("turn") or {}
+        if not turn or state.get("runner_id") not in (None, runner_id):
+            shutil.rmtree(d, ignore_errors=True)
+            summary["swept"].append(f"{turn_id[:8]} (no usable state)")
+            continue
+        turn["_resume_id"] = turn.get("_resume_id") or ""
+        if state.get("reported"):
+            # Its finish was posted; only the cleanup was cut short.
+            _adopted_cleanup(turn_id, state)
+            summary["swept"].append(f"{turn_id[:8]} (already reported)")
+            _lifecycle(turn_id, "swept", post=False, why="finish already reported")
+            continue
+        attempt = d / state["attempt"] if state.get("attempt") else None
+        if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
+            note = ("[runner] the runner restarted while this turn was being set up; "
+                    "its agent never started, so canopy-web may run it again")
+            _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+            _lifecycle(turn_id, "lost", reason="restarted during setup", agent=state.get("slug"))
+            _adopted_cleanup(turn_id, state)
+            summary["reported"].append(f"{turn_id[:8]} (setup)")
+            continue
+        info = _read_json(attempt / "host.json") or {}
+        exited = (attempt / "exit.json").exists()
+        if not exited and not _is_relay(info.get("host_pid"), attempt):
+            proc = RelayProc.attach(attempt)
+            proc.poll()
+            note = proc.lost or "[runner] the turn's process was gone when the runner restarted"
+            body = {"status": "failed", "result_note": _result_note(note, turn)}
+            if state.get("cli_session_id"):
+                body["session_key"] = state["cli_session_id"]
+            fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+            _lifecycle(turn_id, "lost", reason="process gone at adoption", pid=info.get("child_pid"),
+                       agent=state.get("slug"), session=state.get("cli_session_id"), http=fstatus)
+            _adopted_cleanup(turn_id, state)
+            summary["reported"].append(f"{turn_id[:8]} (process gone)")
+            continue
+        with _TURNS_LOCK:
+            _IN_FLIGHT[turn_id] = None
+        thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
+                                  daemon=True, name=f"adopted-{turn_id[:8]}")
+        with _TURNS_LOCK:
+            _IN_FLIGHT[turn_id] = thread
+        _ADOPTED.add(turn_id)
+        thread.start()
+        summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
+                                  f"{', exited' if exited else ''})")
+    _log(f"adopt: {len(summary['adopted'])} turn(s) adopted [{', '.join(summary['adopted'])}]; "
+         f"{len(summary['reported'])} reported failed [{', '.join(summary['reported'])}]; "
+         f"{len(summary['swept'])} swept [{', '.join(summary['swept'])}]")
+    return summary
+
+
+#: Turn ids this daemon adopted: the start sweeps leave what they hold alone.
+_ADOPTED: set = set()
+
+
+def _adopted_cwds() -> set[str]:
+    """The worktrees adopted turns are working in."""
+    out = set()
+    for tid in list(_ADOPTED):
+        state = _read_json(TURN_STATE_ROOT / tid / "turn.json") or {}
+        if state.get("cwd"):
+            out.add(str(state["cwd"]))
+    return out
+
+
+def _adopted_cleanup(turn_id: str, state: dict) -> None:
+    """What `_run_turn`'s `finally` does for a turn, for one this daemon did not run."""
+    remove_turn_env(str(turn_id))
+    _remove_agent_token(str(turn_id))
+    _remove_scoped_token(str(turn_id))
+    _drop_turn_state(turn_id)
+
+
+def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
+    """Finish a turn a previous daemon started: renew its lease, read its CLI's
+    output from where that daemon was, and report it exactly as `_run_turn` would."""
+    turn = state.get("turn") or {}
+    cwd = pathlib.Path(state["cwd"]) if state.get("cwd") else None
+    slug = state.get("slug") or ""
+    attempt = TURN_STATE_ROOT / turn_id / state["attempt"]
+    proc = RelayProc.attach(attempt)
+    executor = state.get("executor") or "cli"
+    _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
+               session=state.get("cli_session_id"), attempt=attempt.name,
+               exited=proc.poll() is not None)
+    lease_stop = _start_lease_renewal(runner_id, turn_id)
+
+    def emit(events, _tid=turn_id):
+        _api("POST", f"/turns/{_tid}/events", {"events": events})
+
+    _TURN_ENV.relay_turn = turn_id
+    try:
+        try:
+            if executor == "acp":
+                ok, text, cli_session_id = _adopt_acp(turn_id, proc, emit, cwd, state)
+            else:
+                _register_cli_proc(turn_id, proc)
+                ok, text, cli_session_id, _n, _err = _stream_claude(
+                    proc, turn_id, emit, proc.stderr_path,
+                    progress=_read_json(attempt / "progress.json") or {})
+        except Exception as exc:  # noqa: BLE001
+            ok, text, cli_session_id = False, f"runner error while adopting the turn: {exc}", ""
+        finally:
+            lease_stop.set()
+        cli_session_id = cli_session_id or state.get("cli_session_id") or ""
+        fault = _CREDENTIAL_FAULT.pop(turn_id, None)
+        _CAP_RESET_HINT.pop(turn_id, None)
+        if not ok and fault:
+            # The old daemon would have run it again on the next credential; an
+            # adopted turn ends on the attempt it was in, and says why.
+            text = (f"{text}\n\n[runner] this credential was {fault}; the turn was adopted "
+                    "after a runner restart, so it was not retried on the next credential")
+        _conclude_adopted(runner_id, turn_id, turn, state, ok, text, cli_session_id, cwd, slug)
+    except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down
+        _log(f"adopted turn {turn_id[:8]} worker crashed: {exc}")
+    finally:
+        _TURN_ENV.relay_turn = ""
+        _ADOPTED.discard(turn_id)
+        _adopted_cleanup(turn_id, state)
+        with _TURNS_LOCK:
+            _IN_FLIGHT.pop(turn_id, None)
+        _clear_stop(turn_id)
+
+
+def _adopt_acp(turn_id: str, proc: RelayProc, emit, cwd, state) -> tuple[bool, str, str]:
+    core = _acp_core()
+    if core is None:
+        raise RuntimeError("canopy_acp did not import, so the ACP turn cannot be read")
+    from canopy_acp.turn import TurnError, adopt_turn  # noqa: PLC0415
+    scan = _wire_scan(proc.dir)
+    if scan["prompt_id"] is None:
+        raise RuntimeError("the adapter was never prompted (no session/prompt in its log)")
+    progress = _read_json(proc.dir / "progress.json") or {}
+    session_id = scan["session_id"] or state.get("cli_session_id") or ""
+    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
+    started = float(state.get("started_at") or time.time())
+    position = lambda: proc.stdout.last_offset  # noqa: E731
+
+    def attach(on_update):
+        return core.AcpAgent.attach(
+            proc, cwd=workdir, session_id=session_id, prompt_id=scan["prompt_id"],
+            next_id=scan["next_id"], answered=scan["answered"], on_update=on_update,
+            ask_human=_ask_human_for_turn(_RUNNER_ID, turn_id, _chat_session_id(state.get("turn") or {})))
+
+    reducer = core.UpdateReducer()
+    try:
+        res = adopt_turn(
+            attach=attach, reducer=reducer, emit=emit,
+            session_id=session_id, live_from=scan["prompt_offset"],
+            emitted_through=progress.get("emitted_offset"), position=position,
+            on_flushed=lambda m: proc.record_progress({"emitted_offset": m}),
+            on_start=lambda agent: _acp_register(turn_id, agent),
+            on_end=lambda agent: _acp_unregister(turn_id),
+            cancelled=lambda: stop_requested(turn_id),
+            flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log)
+    except TurnError as exc:
+        if fault := _transcript_fault(workdir, exc.session_id, started):
+            _CREDENTIAL_FAULT[turn_id] = fault
+        return False, f"runner error (acp, adopted): {exc.detail}", exc.session_id or session_id
+    text = res.text
+    if fault := _transcript_fault(workdir, res.session_id, started):
+        _CREDENTIAL_FAULT[turn_id] = fault
+        return False, text, res.session_id
+    return res.ok, text, res.session_id
+
+
+def _conclude_adopted(runner_id, turn_id, turn, state, ok, text, cli_session_id, cwd, slug) -> None:
+    """`_run_turn`'s ending, for an adopted turn (never confined, never a sensitive
+    conversation: those are not adopted)."""
+    _FINISHING.add(turn_id)
+    try:
+        if cli_session_id and cwd is not None:
+            _record_session_cwd(cli_session_id, cwd)
+        if cli_session_id:
+            for step, fn in (("record session resume", _record_session_resume),
+                             ("ship transcript rows", None)):
+                if fn is _record_session_resume and state.get("cli_session_id") == cli_session_id:
+                    continue  # recorded when the session started
+                try:
+                    if fn is None:
+                        _ship_transcript_rows(runner_id, turn, cwd, cli_session_id, 0)
+                    else:
+                        fn(runner_id, turn, cli_session_id)
+                except Exception as exc:  # noqa: BLE001
+                    _log(f"warn: could not {step} for {turn_id[:8]}: {exc}")
+        finish = "done" if ok else "failed"
+        if not ok and stop_requested(turn_id):
+            finish = "cancelled"
+            text = f"stopped on request — {text}" if text else "stopped on request"
+        body = {"status": finish, "result_note": _result_note(text, turn)}
+        if cli_session_id:
+            body["session_key"] = cli_session_id
+        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+        _update_turn_state(turn_id, reported=True)
+        _lifecycle(turn_id, "reported", status=finish, http=fstatus, agent=slug,
+                   session=cli_session_id, adopted=True)
+        if ok and state.get("off_disk_env") and slug:
+            note_off_disk_success(slug)
+        if cwd is not None:
+            try:
+                _release_agent_worktree(cwd)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"warn: could not release {cwd}: {exc}")
+    finally:
+        _FINISHING.discard(turn_id)
+
+
+def _adoptable_in_flight() -> tuple[int, int]:
+    """(turns in flight, how many of them could NOT be adopted by a new daemon)."""
+    with _TURNS_LOCK:
+        ids = list(_IN_FLIGHT)
+    pinned = 0
+    for tid in ids:
+        if tid in _ADOPTED:
+            continue
+        state = _read_json(TURN_STATE_ROOT / str(tid) / "turn.json") if _CHAT_ID.match(str(tid)) else None
+        if not state or not state.get("adoptable"):
+            pinned += 1
+    return len(ids), pinned
+
+
+def _update_check() -> None:
+    """The `update` check: the auto-updater's last decision, which it leaves on disk
+    because it never calls canopy-web itself (update_runner.sh)."""
+    d = _read_json(UPDATE_DECISION_FILE)
+    if not isinstance(d, dict) or not d.get("verdict"):
+        return
+    at = d.get("at") or 0
+    when = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(float(at))) if at else "?"
+    verdict = str(d["verdict"])
+    detail = f"{verdict}: {d.get('detail') or ''}".strip().rstrip(":") + f" · checked {when}"
+    status = "ok" if verdict in ("current", "installed") else (
+        "fail" if verdict in ("failed",) else "warn")
+    if verdict == "deferred" and time.time() - float(at or 0) < 3 * 3600:
+        status = "ok"  # waiting on a pinned turn is the updater working, not a fault
+    _set_check("update", status, detail)
+
+
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
@@ -11394,6 +12506,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     _TURN_ENV.mcp_config = None
     _TURN_ENV.fresh_start = None
     _TURN_ENV.model = _turn_model(turn)
+    _TURN_ENV.relay_turn = turn_id if adoptable_turn(turn) else ""
     # A turn claimed for an agent CLI this box's executor does not drive is never
     # run on another: canopy-web picked that CLI (`apps/harness/clis.py`), and its
     # conversation's history lives there. Refused before anything is built.
@@ -11607,6 +12720,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _record_session_cwd(sid, _cwd)
                 _record_session_resume(runner_id, _turn, sid)
                 recorded["sid"] = sid
+                if _relay_turn_id() == turn_id:
+                    _update_turn_state(turn_id, cli_session_id=sid)
 
         # A confined chat turn is never a binding, so `/streams` never lists it: it
         # tails its own transcript while it runs (`_TurnTail`), through the same
@@ -11625,6 +12740,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _SESSION_HOOKS[turn_id] = _on_session
             elif tail is not None:
                 _SESSION_HOOKS[turn_id] = tail.follow
+        if _relay_turn_id() == turn_id:
+            # Everything a new daemon needs to finish this turn if this one goes.
+            _update_turn_state(turn_id, phase="running", cwd=str(cwd) if cwd is not None else "",
+                               slug=slug or "", off_disk_env=off_disk_env, started_at=time.time(),
+                               resume_id=resume_id or "")
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
@@ -11691,6 +12811,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # failure investigation 13) was reported failed with "turn ended:
             # cancelled" as its fleet member terminated.
             _log(f"stopping: the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
+            _lifecycle(turn_id, "left_for_requeue", reason="the box is shutting down",
+                       session=cli_session_id)
             return
         finish = "done" if ok else "failed"
         if not ok and stop_requested(turn_id):
@@ -11708,7 +12830,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # what tells the server a FAILED turn did reach an agent, so it is
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
+        _FINISHING.add(turn_id)
         fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", finish_body)
+        if _relay_turn_id() == turn_id:
+            _update_turn_state(turn_id, reported=True)
+        _lifecycle(turn_id, "reported", status=finish, http=fstatus, agent=slug or "",
+                   session=cli_session_id)
+        _FINISHING.discard(turn_id)
         if ok and off_disk_env:
             # Proven: this agent works off disk, so its legacy files can go.
             note_off_disk_success(slug)
@@ -11765,6 +12893,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         remove_turn_env(str(turn_id))
         _remove_agent_token(str(turn_id))
         _remove_scoped_token(str(turn_id))
+        _FINISHING.discard(turn_id)
+        _drop_turn_state(turn_id)
+        _TURN_ENV.relay_turn = ""
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _clear_stop(turn_id)
@@ -11777,6 +12908,14 @@ def _start_turn(runner_id: str, turn: dict) -> bool:
         if len(_IN_FLIGHT) >= MAX_CONCURRENT_TURNS:
             return False
         _IN_FLIGHT[turn_id] = None
+    adoptable = adoptable_turn(turn)
+    if adoptable:
+        # Before anything is built: a restart during the setup is then reported
+        # (`adopt_turns`), never left to the lease sweep.
+        _update_turn_state(turn_id, turn=_without_secrets(turn), runner_id=_RUNNER_ID,
+                           phase="setup", adoptable=True, claimed_at=time.time())
+    _lifecycle(turn_id, "claimed", agent=_turn_agent_slug(turn) or "", target=turn.get("target"),
+               adoptable=adoptable)
     thread = threading.Thread(
         target=_run_turn, args=(runner_id, turn), daemon=True,
         name=f"turn-{turn_id[:8]}",
@@ -12112,7 +13251,16 @@ def main() -> None:
     runner_id = pair_or_load()
     global _RUNNER_ID
     _RUNNER_ID = runner_id
-    # No turn runs yet: any per-turn env a previous process left is nobody's.
+    # Turns a previous daemon left running, FIRST: their leases are renewing again
+    # before anything slow (the bootstrap) runs, and every sweep below skips them.
+    # The clone's packages go on sys.path for them (canopy_acp, canopy_transcript).
+    if (pathlib.Path(RUNNER_SRC_DIR) / ".git").is_dir():
+        _expose_repo_packages(pathlib.Path(RUNNER_SRC_DIR))
+    try:
+        adopt_turns(runner_id)
+    except Exception as exc:  # noqa: BLE001 — never cost the start; the lease sweep still notes them
+        _log(f"adopt: could not take over the previous daemon's turns: {exc}")
+    # Any per-turn env a previous process left is nobody's, but an adopted turn's.
     sweep_turn_envs()
     # Nor, on a sensitive-data box, anything a turn the last process ran left, but a
     # sensitive conversation's session that is neither idle past its deadline nor closed.
@@ -12131,11 +13279,10 @@ def main() -> None:
         # (background, fail-open; logs the approve URL while pending). canopy-web#1549.
         enrollment = start_aws_device_key_enrollment(runner_id)
     _retire_shared_github_credentials()
-    # The clone's packages on sys.path BEFORE the startup credential probes: a
-    # probe that reads like a cap parses its reset with canopy_transcript. The
-    # clone is synced later, in bootstrap; a stale one is fine for a path.
-    if (pathlib.Path(RUNNER_SRC_DIR) / ".git").is_dir():
-        _expose_repo_packages(pathlib.Path(RUNNER_SRC_DIR))
+    # (The clone's packages went on sys.path above, before the adoption — and so
+    # before the startup credential probes: a probe that reads like a cap parses its
+    # reset with canopy_transcript. The clone is synced later, in bootstrap; a stale
+    # one is fine for a path.)
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned
     # Registering the key can change what canopy-web will accept from this box (a
@@ -12182,6 +13329,19 @@ def _finish_stop(*, drain_seconds: float | None = None) -> None:
     restart (an update) keeps them, and the next start sweeps them as usual. A
     turn still running past the drain keeps nothing (`keep_conversation`), and
     what it leaves is swept at the next start, if there is one."""
+    if _HANDOFF:
+        # An update: the turns keep running under their relays, and the next daemon
+        # adopts them. Only a finish already being posted is waited for.
+        ids = _in_flight_ids()
+        _, pinned = _adoptable_in_flight()
+        _log(f"handoff: leaving {len(ids)} turn(s) to the next daemon "
+             f"[{', '.join(i[:8] for i in ids)}]" + (f"; {pinned} cannot be adopted" if pinned else ""))
+        for tid in ids:
+            _lifecycle(tid, "handed_off", post=False)
+        deadline = time.monotonic() + HANDOFF_FINISH_WAIT_SECONDS
+        while _FINISHING and time.monotonic() < deadline:
+            time.sleep(0.2)
+        return
     _log("stopping: waiting for the turns in flight" if _in_flight_ids() else "stopping")
     deadline = time.monotonic() + (STOP_DRAIN_SECONDS if drain_seconds is None else drain_seconds)
     with _TURNS_LOCK:
@@ -12248,8 +13408,14 @@ if __name__ == "__main__":
         sys.exit(fleet_ready_main())
     if sys.argv[1:2] in (["--install-runners"], ["--setup-runners"], ["--pair-runners"]):
         sys.exit(_runners_cli(sys.argv[1:]))
+    if sys.argv[1:2] == ["--turn-host"]:
+        sys.exit(turn_host_main(sys.argv[2]))
+    if sys.argv[1:2] != ["--daemon"] and os.environ.get("RUNNER_SUPERVISOR", "1") != "0":
+        # The unit's main process (see "turns that outlive the daemon").
+        sys.exit(supervise_main())
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
+    signal.signal(signal.SIGUSR1, _handle_handoff)
     try:
         main()
     finally:

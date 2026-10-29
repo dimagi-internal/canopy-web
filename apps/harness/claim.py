@@ -67,13 +67,48 @@ from .turn_agent_tokens import revoke_stale
 DEFAULT_LEASE_SECONDS = 900
 
 
+def _ago(when, now) -> str:
+    seconds = int((now - when).total_seconds())
+    if seconds < 120:
+        return f"{seconds}s ago"
+    if seconds < 7200:
+        return f"{seconds // 60} min ago"
+    return f"{seconds // 3600} h ago"
+
+
+def lease_lapse_note(turn: Turn, now) -> str:
+    """Why an expired lease ended this turn, in words a person can act on: which
+    runner held it, when that runner last heartbeat and when the lease ran out.
+
+    A runner that is still heartbeating but stopped renewing THIS turn lost track
+    of it (a restarted daemon that could not adopt it, a wedged worker); one whose
+    heartbeats stopped too went away (stopped, crashed, powered off)."""
+    runner = turn.claimed_by
+    lapsed = turn.lease_expires_at
+    lapsed_txt = f"{lapsed:%Y-%m-%d %H:%M:%S}Z ({_ago(lapsed, now)})" if lapsed else "unknown"
+    if runner is None:
+        return f"[canopy] lease expired at {lapsed_txt}; no runner held the turn"
+    beat = runner.last_heartbeat_at
+    if beat is None:
+        beat_txt = "has never heartbeat"
+        why = "the runner went away"
+    else:
+        beat_txt = f"last heartbeat {beat:%Y-%m-%d %H:%M:%S}Z ({_ago(beat, now)})"
+        why = ("the runner is still heartbeating but stopped renewing this turn — it "
+               "lost track of it (a restart that could not adopt it, or a wedged worker)"
+               if lapsed is not None and beat > lapsed
+               else "the runner stopped heartbeating (stopped, crashed or powered off)")
+    return (f"[canopy] lost: runner {runner.name} ({runner.pk}) held this turn and its lease "
+            f"expired at {lapsed_txt}; {beat_txt}. {why}.")[:2000]
+
+
 def sweep_expired_leases() -> int:
     now = timezone.now()
     expired = list(
         Turn.objects.filter(
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
             lease_expires_at__lt=now,
-        )
+        ).select_related("claimed_by")
     )
     count = 0
     for turn in expired:
@@ -88,9 +123,11 @@ def sweep_expired_leases() -> int:
             if status == Turn.CANCELLED
             else "runner lost the turn (lease expired mid-drill)"
         )
-        # The result note is left as it was: nothing reported one. Riders are
-        # not ended with it — each holds its own lease and is swept on its own.
-        if close_turn(turn, status, from_states=Turn.NON_TERMINAL,
+        # A note the runner already left stands; otherwise the lapse is explained,
+        # so a LOST turn never ends with an empty note (`lease_lapse_note`). Riders
+        # are not ended with it — each holds its own lease and is swept on its own.
+        note = None if (turn.result_note or "").strip() else lease_lapse_note(turn, now)
+        if close_turn(turn, status, note, from_states=Turn.NON_TERMINAL,
                       where={"lease_expires_at__lt": now}, now=now,
                       event={"reason": "lease_expired"}, riders=False,
                       drill_summary=summary):
