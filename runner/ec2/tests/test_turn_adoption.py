@@ -406,10 +406,10 @@ def conns(cr, tmp_path, monkeypatch):
     def run(argv, **kw):
         if "connection-token" not in argv:
             return real_run(argv, **kw)
-        seen["cli"].append(argv)
         f = home / ".canopy" / "connections" / argv[argv.index("--agent") + 1] / f"{argv[3]}.json"
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps({"access_token": "NEW", "expires_at": time.time() + 3600}))
+        seen["cli"].append(argv)              # after the write: a waiter sees both
         return subprocess.CompletedProcess(argv, 0, "", "")
     monkeypatch.setattr(cr, "_api", api)
     monkeypatch.setattr(cr.subprocess, "run", run)
@@ -438,7 +438,8 @@ def test_an_adopted_agent_turn_keeps_restages_and_unstages_its_connections(cr, t
     assert mine.exists()
     assert not other_provider.exists() and not leftover.exists()
     # Staged as a new turn's start: the same listing, the same CLI, for this turn.
-    assert _wait(lambda: seen["cli"])
+    assert _wait(lambda: mine.exists() and json.loads(mine.read_text())["access_token"] == "NEW")
+    assert _wait(lambda: TURN in cr._CONN_HOLDS)
     assert seen["listed"] == [f"/runners/rid/turns/{TURN}/connections"]
     assert seen["cli"][0][-6:] == ["--runner-id", "rid", "--turn", TURN, "--min-life", "900"]
     assert json.loads(mine.read_text())["access_token"] == "NEW"
@@ -452,17 +453,21 @@ def test_an_adopted_agent_turn_keeps_restages_and_unstages_its_connections(cr, t
     assert not mine.exists() and cr._CONN_HOLDS == {}
 
 
-def test_an_adopted_confined_turn_stages_nothing(cr, tmp_path, monkeypatch, conns):
+@pytest.mark.parametrize("how", ["caller_context", "recorded"])
+def test_an_adopted_confined_turn_stages_nothing(cr, tmp_path, monkeypatch, conns, how):
     seen, staged = conns
     _quiet_conclusion(cr, monkeypatch)
     f = staged()
     gate = tmp_path / "gate"
     cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
                        env=dict(os.environ), stdin=False, executor="cli")
-    d = _state(cr, tmp_path, connections=["salesforce"])
-    state = json.loads((d / "turn.json").read_text())
-    state["turn"]["caller_context"] = {"profile": "confined"}
-    (d / "turn.json").write_text(json.dumps(state))
+    if how == "recorded":       # its daemon recorded it confined; the turn carries no caller_context
+        _state(cr, tmp_path, connections=["salesforce"], confined=True)
+    else:                       # a state file from before `confined`: the turn says so
+        d = _state(cr, tmp_path, connections=["salesforce"])
+        state = json.loads((d / "turn.json").read_text())
+        state["turn"]["caller_context"] = {"profile": "confined"}
+        (d / "turn.json").write_text(json.dumps(state))
 
     cr.adopt_turns("rid")
     cr._clear_stale_connection_tokens()
@@ -472,9 +477,17 @@ def test_an_adopted_confined_turn_stages_nothing(cr, tmp_path, monkeypatch, conn
     assert seen == {"listed": [], "cli": []} and cr._CONN_HOLDS == {}
 
 
-def test_a_running_turn_records_its_providers_without_a_token(cr):
-    assert cr._without_secrets({"connections": ["salesforce"], "confined": False}) == \
-        {"connections": ["salesforce"], "confined": False}
+def test_an_adopted_turn_whose_cli_already_exited_stages_nothing(cr, tmp_path, monkeypatch, conns):
+    seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    f = staged()
+    proc = cr.RelayProc.spawn(TURN, _fake_cli(tmp_path), cwd=tmp_path,
+                              env=dict(os.environ), stdin=False, executor="cli")
+    assert proc.wait(timeout=15) == 0
+    _state(cr, tmp_path, connections=["salesforce"], confined=False)
+    cr.adopt_turns("rid")
+    assert _wait(lambda: TURN not in cr._in_flight_ids())
+    assert seen == {"listed": [], "cli": []} and cr._CONN_HOLDS == {} and not f.exists()
 
 
 def test_an_adopted_turn_whose_attach_fails_lets_go_of_its_connections(cr, tmp_path, monkeypatch, conns):
@@ -489,7 +502,6 @@ def test_an_adopted_turn_whose_attach_fails_lets_go_of_its_connections(cr, tmp_p
         raise OSError("attempt dir unreadable")
     monkeypatch.setattr(cr.RelayProc, "attach", staticmethod(boom))
     state = {"turn": {"id": TURN}, "attempt": "attempt-1", "slug": "echo", "cwd": str(tmp_path)}
-    with pytest.raises(OSError):
-        cr._adopt_turn("rid", TURN, state)
+    cr._adopt_turn("rid", TURN, state)        # a worker never raises: it logs and cleans up
     assert TURN not in cr._CONN_HOLDS and not mine.exists()
     assert sibling.exists() and "other-turn" in cr._CONN_HOLDS

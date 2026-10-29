@@ -12586,14 +12586,22 @@ def adopt_turns(runner_id: str) -> dict:
             # Before the start clear, which spares what an adopted turn holds.
             _reserve_adopted_connections(runner_id, turn_id, state.get("slug") or "",
                                          state.get("connections"))
-        with _TURNS_LOCK:
-            _IN_FLIGHT[turn_id] = None
-        thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
-                                  daemon=True, name=f"adopted-{turn_id[:8]}")
-        with _TURNS_LOCK:
-            _IN_FLIGHT[turn_id] = thread
-        _ADOPTED.add(turn_id)
-        thread.start()
+        try:
+            with _TURNS_LOCK:
+                _IN_FLIGHT[turn_id] = None
+            thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
+                                      daemon=True, name=f"adopted-{turn_id[:8]}")
+            with _TURNS_LOCK:
+                _IN_FLIGHT[turn_id] = thread
+            _ADOPTED.add(turn_id)
+            thread.start()
+        except BaseException:
+            # No worker will run to release what was reserved for it.
+            _unstage_connections(turn_id)
+            _ADOPTED.discard(turn_id)
+            with _TURNS_LOCK:
+                _IN_FLIGHT.pop(turn_id, None)
+            raise
         summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
                                   f"{', exited' if exited else ''})")
     _log(f"adopt: {len(summary['adopted'])} turn(s) adopted [{', '.join(summary['adopted'])}]; "
@@ -12637,26 +12645,26 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
     cwd = pathlib.Path(state["cwd"]) if state.get("cwd") else None
     slug = state.get("slug") or ""
     attempt = TURN_STATE_ROOT / turn_id / state["attempt"]
-    try:
-        proc = RelayProc.attach(attempt)
-    except BaseException:
-        # Before the try whose finally unstages: let go of what adoption reserved.
-        _unstage_connections(turn_id)
-        raise
     executor = state.get("executor") or "cli"
-    _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
-               session=state.get("cli_session_id"), attempt=attempt.name,
-               exited=proc.poll() is not None)
-    lease_stop = _start_lease_renewal(runner_id, turn_id)
 
     def emit(events, _tid=turn_id):
         _api("POST", f"/turns/{_tid}/events", {"events": events})
 
     _TURN_ENV.relay_turn = turn_id
+    # Everything inside the try whose finally unstages: any raise lets go of what
+    # adoption reserved (`_reserve_adopted_connections`).
     try:
+        proc = RelayProc.attach(attempt)
+        exited = proc.poll() is not None
+        _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
+                   session=state.get("cli_session_id"), attempt=attempt.name, exited=exited)
+        lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
-            if not _adopted_confined(state):
-                # As a new turn's start: inside the try whose finally unstages.
+            if exited or _adopted_confined(state):
+                # A CLI that already exited needs no token; a confined turn holds none.
+                _unstage_connections(turn_id)
+            else:
+                # As a new turn's start.
                 _adopt_connections(runner_id, turn_id, slug)
                 _update_turn_state(turn_id, connections=_held_connections(turn_id))
             if executor == "acp":
