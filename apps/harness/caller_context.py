@@ -527,6 +527,9 @@ def _trigger(turn, ref: dict) -> dict:
         "from": ref.get("from"),
         "message_id": ref.get("message_id"),
         "message_count": count,
+        # Mail on this thread folded into this one turn (apps/harness/mail_coalesce.py):
+        # read the thread since `message_count` minus this many, not just the newest.
+        "coalesced_messages": int(ref.get("coalesced_messages") or 0),
         "runner": runner.name if runner is not None else None,
         # A LOCAL turn runs on the person's own private runner, never a runner
         # (apps/harness/local.py). Additive: null for every other origin.

@@ -29444,6 +29444,11 @@ export interface components {
              * @default
              */
             readonly turn_mode: string;
+            /**
+             * Mail Quiet Minutes
+             * @default 30
+             */
+            readonly mail_quiet_minutes: number;
             /** Stopped */
             readonly stopped?: string | null;
             /** Updated By Email */
@@ -29494,6 +29499,11 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "" | "manual" | "auto";
+            /**
+             * Mail Quiet Minutes
+             * @default 30
+             */
+            readonly mail_quiet_minutes: number;
             /**
              * Enabled
              * @default true
@@ -29564,6 +29574,8 @@ export interface components {
             readonly subject_pattern?: string | null;
             /** Turn Mode */
             readonly turn_mode?: ("" | "manual" | "auto") | null;
+            /** Mail Quiet Minutes */
+            readonly mail_quiet_minutes?: number | null;
         };
         /** ContributorBriefOut */
         readonly ContributorBriefOut: {

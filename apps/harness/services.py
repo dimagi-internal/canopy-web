@@ -25,7 +25,7 @@ from django.utils import timezone
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
 from . import clis as cli_vocab
-from . import runner_refresh, sensitivity
+from . import mail_coalesce, runner_refresh, sensitivity
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
 from .ledger import append_events
@@ -143,6 +143,7 @@ def enqueue_turn(
     provenance_extra: dict | None = None,
     authserv_id: str | None = None,
     requested_cli: str = "",
+    coalesce: bool = True,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -160,6 +161,11 @@ def enqueue_turn(
     canopy's own (a transfer, a re-ask, a dispatch). It overrides the request's
     X-Canopy-Parent-* headers key by key. `provenance_extra` adds keys to the
     turn's provenance record (`clicked_by`). See apps/harness/provenance.py.
+
+    Mail that fires an `inbound_mail` trigger is coalesced per thread
+    (apps/harness/mail_coalesce.py): folded into the thread's queued turn, or held
+    for the trigger's quiet window, and then the answer is that turn and `False`.
+    `coalesce=False` is the held batch's own release.
     """
     # One chokepoint for the retired spellings, because not every producer comes
     # through a request schema: TurnSpec.from_dict parses origin as a free string
@@ -197,6 +203,12 @@ def enqueue_turn(
     # surfaces `chat_session.agent.slug`, so the runner drives the same agent in
     # the same clone; and every runner in the fleet declares sessions=true, so
     # nothing is stranded on one box.
+    # What a held mail replays with (`mail_coalesce.release_due`): the caller's own
+    # arguments, before the trigger's prompt and any session binding are applied.
+    mail_replay = {"idempotency_key": idempotency_key, "prompt": prompt,
+                   "origin_ref": dict(origin_ref or {}), "routing": routing,
+                   "authserv_id": authserv_id}
+    mail_trigger = None
     if origin == Turn.ORIGIN_EMAIL and agent is not None:
         # Mail names its own asker and conversation (apps/harness/channels/email.py):
         # who wrote in, refused at the door when blocked, bound to its thread's session.
@@ -209,7 +221,7 @@ def enqueue_turn(
         if arrival.trigger is not None:
             # The agent's inbound_mail trigger fired (apps/harness/triggers.py): the
             # turn names it, and its own prompt, when it has one, leads the mail's.
-            t = arrival.trigger
+            t = mail_trigger = arrival.trigger
             origin_ref = {**(origin_ref or {}), "trigger_id": t.pk, "trigger_name": t.name}
             if t.prompt.strip():
                 prompt = f"{t.prompt.strip()}\n\n{prompt}" if prompt else t.prompt.strip()
@@ -262,6 +274,16 @@ def enqueue_turn(
                 from . import mail_anchor  # noqa: PLC0415 — cycle: mail_anchor -> session_sync -> harness services
 
                 mail_anchor.revive_for_mail(session)
+            if mail_trigger is not None and session is not None and coalesce:
+                # One turn per mail thread at a time (mail_coalesce): under the
+                # thread session's row lock, so two messages cannot both start one.
+                answer, carry = mail_coalesce.fold(
+                    mail_trigger, session, idempotency_key=idempotency_key,
+                    origin_ref=origin_ref or {}, replay=mail_replay)
+                if answer is not None:
+                    return answer, False
+                if carry:
+                    origin_ref = {**(origin_ref or {}), **carry}
             turn = Turn.objects.create(
                 **initiator.fields(),
                 **provenance.turn_fields(parent=parent, **(provenance_extra or {})),

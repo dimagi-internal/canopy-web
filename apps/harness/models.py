@@ -1211,6 +1211,28 @@ def _default_notify() -> list:
     return ["inbox"]
 
 
+class PendingMail(models.Model):
+    """Mail on a thread held for its trigger's quiet window (`AgentSchedule.
+    mail_quiet_minutes`, apps/harness/mail_coalesce.py): the newest message's
+    enqueue, kept until `due_at`, when ONE turn starts carrying all `count` of them.
+    One per thread session; deleted when its turn is enqueued."""
+
+    session = models.OneToOneField("canopy_sessions.Session", on_delete=models.CASCADE,
+                                   related_name="pending_mail")
+    trigger = models.ForeignKey("harness.AgentSchedule", null=True, on_delete=models.SET_NULL,
+                                related_name="+")
+    # The newest message's enqueue_turn arguments, replayed at due_at.
+    payload = models.JSONField(default=dict)
+    # How many messages are held, and their idempotency keys (a re-post is no new message).
+    count = models.PositiveIntegerField(default=1)
+    keys = models.JSONField(default=list)
+    due_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"pending-mail:{str(self.session_id)[:8]}:{self.count}@{self.due_at:%H:%M}"
+
+
 class AgentSchedule(models.Model):
     """An agent's TRIGGER: something that starts a turn on this agent, with the
     authority of the person who set it up. Two kinds (`kind`):
@@ -1282,6 +1304,14 @@ class AgentSchedule(models.Model):
     # "" = the agent's routing decides (bounded by the creator); manual | auto. Auto
     # holds only while the creator is an agent admin (turn_mode.trigger_posture).
     turn_mode = models.CharField(max_length=8, blank=True, default="", db_default="")
+    # inbound_mail only: after a turn on a mail thread finishes, a further message on
+    # it waits this long before it starts another turn, and that turn carries every
+    # message since (apps/harness/mail_coalesce.py). 0 = no wait. CloudWatch re-fires
+    # every evaluation period; without it one incident was six full turns.
+    mail_quiet_minutes = models.PositiveIntegerField(
+        default=30, db_default=30,
+        help_text="inbound_mail: minutes a thread stays quiet after a turn on it finishes "
+        "before further mail on it starts another turn (0 = immediately).")
     # A ONE-OFF: set, and the schedule fires exactly once, at this instant, then
     # disables itself. `cron` is still stored — derived from this in `timezone`
     # (schedule_services.one_off_cron) — so a runner that predates the field keeps

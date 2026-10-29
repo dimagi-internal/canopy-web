@@ -121,6 +121,17 @@ def retire_mail_anchors() -> None:
         logger.info("retired %d mail anchor session(s)", len(retired))
 
 
+def release_held_mail() -> None:
+    """Start the one turn each mail thread held for its quiet window is owed
+    (apps/harness/mail_coalesce.py). Not while the fleet is held: it waits, like
+    any turn would."""
+    if FleetHold.is_held():
+        return
+    from . import mail_coalesce  # noqa: PLC0415 — cycle: mail_coalesce -> services
+
+    mail_coalesce.release_due()
+
+
 def register() -> None:
     from apps.common import ticks
 
@@ -128,3 +139,4 @@ def register() -> None:
     ticks.register("harness.wake_due_runners", wake_due_runners, queue_sweeps_every_s)
     ticks.register("harness.sensitive_turn_deadline", expire_unrun_sensitive_turns, 60)
     ticks.register("harness.retire_mail_anchors", retire_mail_anchors, mail_anchor_sweep_every_s)
+    ticks.register("harness.release_held_mail", release_held_mail, 60)
