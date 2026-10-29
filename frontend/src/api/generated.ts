@@ -380,6 +380,75 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/connections/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My connections
+         * @description The services canopy can connect to, and the accounts I have connected.
+         *
+         *     Never calls the provider, so it is cheap to read on every visit to Settings.
+         *     Whether a grant still works shows as `needs_reconnect`, which the next real
+         *     use of it keeps up to date.
+         */
+        readonly get: operations["my_connections"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/connections/{connection_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect one of my connections
+         * @description Stop canopy holding this connection, and ask the provider to revoke it.
+         *
+         *     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed.
+         */
+        readonly delete: operations["disconnect_mine"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/connections/{provider}/token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A fresh access token for my own connection (CLI)
+         * @description Mint a short-lived access token for the account I connected, for my own
+         *     command line. Needs a personal access token: a browser session is refused,
+         *     so a stolen cookie cannot pull a Salesforce token. 409 when I have not
+         *     connected, or must reconnect (`connect_url` says where).
+         */
+        readonly post: operations["my_connection_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/feedback/": {
         readonly parameters: {
             readonly query?: never;
@@ -6212,6 +6281,74 @@ export interface paths {
          */
         readonly post: operations["rotate_own_pat"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's connections, its own and shared with it
+         * @description What this agent can act as: connections it owns, and ones another agent
+         *     shares with it (`granted_from` names the owner). Only the agent's admins can see them.
+         */
+        readonly get: operations["agent_connections"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/connections/{connection_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect an agent's connection
+         * @description Stop canopy holding this agent's connection and ask the provider to
+         *     revoke it. From a browser this needs a fresh passkey check; agents sharing
+         *     it lose access too.
+         */
+        readonly delete: operations["disconnect_agent_connection"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/connections/{connection_id}/grants/{other_slug}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Share an agent's connection with another agent
+         * @description Let another agent act through this agent's connection. You must
+         *     administer both agents. Sharing again is harmless.
+         */
+        readonly put: operations["grant_connection"];
+        readonly post?: never;
+        /**
+         * Stop sharing an agent's connection with another agent
+         * @description Take the other agent's access away. An admin of either agent may.
+         */
+        readonly delete: operations["revoke_connection_grant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17572,6 +17709,86 @@ export interface components {
              */
             readonly repository_count: number;
         };
+        /** ConnectionOut */
+        readonly ConnectionOut: {
+            /** Id */
+            readonly id: number;
+            /** Provider */
+            readonly provider: string;
+            /**
+             * Title
+             * @description The provider's display name.
+             */
+            readonly title: string;
+            /**
+             * Account Label
+             * @description Which account this is (e.g. a Salesforce username).
+             */
+            readonly account_label: string;
+            /** Instance Url */
+            readonly instance_url: string;
+            /**
+             * Needs Reconnect
+             * @description The stored grant can no longer mint a token; connect again.
+             */
+            readonly needs_reconnect: boolean;
+            /**
+             * Connected At
+             * Format: date-time
+             */
+            readonly connected_at: string;
+            /** Last Used At */
+            readonly last_used_at?: string | null;
+            /**
+             * Connected By Email
+             * @description Who completed the sign-in.
+             */
+            readonly connected_by_email: string;
+            /**
+             * Granted From
+             * @description For an agent's list: the slug of the agent that owns this connection, when it is shared with this agent rather than its own.
+             */
+            readonly granted_from?: string | null;
+        };
+        /** ConnectionsOut */
+        readonly ConnectionsOut: {
+            /** Providers */
+            readonly providers: readonly components["schemas"]["ProviderOut"][];
+            /** Connections */
+            readonly connections: readonly components["schemas"]["ConnectionOut"][];
+        };
+        /** ProviderOut */
+        readonly ProviderOut: {
+            /**
+             * Name
+             * @description The provider's stable key, e.g. `salesforce`.
+             */
+            readonly name: string;
+            /**
+             * Title
+             * @description What to call it in the UI.
+             */
+            readonly title: string;
+            /**
+             * Configured
+             * @description Whether this deployment has credentials for the provider. False is a real state, not an error: the UI says 'not set up' instead of offering a button that cannot work.
+             */
+            readonly configured: boolean;
+        };
+        /** AccessTokenOut */
+        readonly AccessTokenOut: {
+            /** Access Token */
+            readonly access_token: string;
+            /** Instance Url */
+            readonly instance_url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Account Label */
+            readonly account_label: string;
+        };
         /** FeedbackIngestOut */
         readonly FeedbackIngestOut: {
             /** Created */
@@ -28282,6 +28499,13 @@ export interface components {
              * @description What happened: where the token went, or why you think it is exposed.
              */
             readonly reason: string;
+        };
+        /** AgentConnectionsOut */
+        readonly AgentConnectionsOut: {
+            /** Providers */
+            readonly providers: readonly components["schemas"]["ProviderOut"][];
+            /** Connections */
+            readonly connections: readonly components["schemas"]["ConnectionOut"][];
         };
         /** BootstrapReportOut */
         readonly BootstrapReportOut: {
@@ -43934,6 +44158,68 @@ export interface operations {
             };
         };
     };
+    readonly my_connections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionsOut"];
+                };
+            };
+        };
+    };
+    readonly disconnect_mine: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly my_connection_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessTokenOut"];
+                };
+            };
+        };
+    };
     readonly list_feedback: {
         readonly parameters: {
             readonly query?: {
@@ -52085,6 +52371,93 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["OwnPatRotateOut"];
                 };
+            };
+        };
+    };
+    readonly agent_connections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentConnectionsOut"];
+                };
+            };
+        };
+    };
+    readonly disconnect_agent_connection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly connection_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly grant_connection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly connection_id: number;
+                readonly other_slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly revoke_connection_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly connection_id: number;
+                readonly other_slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

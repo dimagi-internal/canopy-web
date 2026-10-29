@@ -255,6 +255,9 @@ from apps.capabilities.api import agents_router as agent_capabilities_router  # 
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
 from apps.capabilities.api import runner_router as capability_keeper_router  # noqa: E402
 from apps.common.api import common_router, public_router  # noqa: E402
+from apps.connections.api import agents_router as connections_agents_router  # noqa: E402
+from apps.connections.api import me_router as connections_me_router  # noqa: E402
+from apps.connections.api import router as connections_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
@@ -329,6 +332,8 @@ api.add_router("/tokens", oauth_connected_router)
 # A person's GitHub connection: its own app, still under /api/tokens/github (and
 # the `tokens` tag) where its routes and MCP tool names were published.
 api.add_router("/tokens", github_router)
+api.add_router("/connections", connections_router)  # server-held OAuth connections (Salesforce first)
+api.add_router("/me/connections", connections_me_router)  # /api/me/connections/{provider}/token — before "/me"
 api.add_router("/feedback", feedback_router)
 api.add_router("/events", events_router)
 api.add_router("/inbound", inbound_router)
@@ -368,6 +373,7 @@ api.add_router("/agents", agent_turns_router)
 api.add_router("/agents", agent_skills_router)
 api.add_router("/agents", agent_board_router)
 api.add_router("/agents", agent_credentials_router)
+api.add_router("/agents", connections_agents_router)  # an agent's connections + grants
 api.add_router("/agents", agent_readiness_router)
 # A2A Agent Card discovery — public in the login middleware; each route
 # self-enforces (apps/agents/a2a_api.py).
