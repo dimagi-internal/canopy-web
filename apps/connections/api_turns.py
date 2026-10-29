@@ -69,8 +69,8 @@ def _turn_agent(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
 
 @router.get("/runners/{runner_id}/turns/{turn_id}/connections", response=TurnConnectionsOut,
             summary="Which connections one claimed turn's agent can use")
-# turn must be claimed by this box
-@gate("runner", "runner-holds-agent", kind="runner-protocol", step_up="runner protocol")
+# turn must be claimed by this box; a read that hands out no credential
+@gate("runner", "runner-holds-agent")
 def turn_connections(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID) -> TurnConnectionsOut:
     """The providers the turn's AGENT has a connection for — its own, or one
     granted to it — so the runner fetches a token for each of those and calls
