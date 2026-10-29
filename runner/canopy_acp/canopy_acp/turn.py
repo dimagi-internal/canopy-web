@@ -124,13 +124,181 @@ def stop_origin(stop: str, canopy_cancelled: bool, init) -> str:
     return adapter
 
 
+class _Stream:
+    """A turn's `session/update`s turned into ledger events: fragments joined,
+    tool starts held for their arguments, flushed in batches.
+
+    Position hooks, for a turn whose adapter outlives its runner (an adopted turn):
+    `position()` names the line being dispatched (any comparable marker); an update
+    at or before `live_from` is history and is ignored; one at or before
+    `emitted_through` is applied (it is part of this turn's text) but not emitted
+    again; `on_flushed(marker)` is told the last update a successful emit carried."""
+
+    def __init__(self, reducer, emit, *, log, clock, position=None, on_flushed=None,
+                 live_from=None, emitted_through=None):
+        self.reducer = reducer
+        self._emit = emit
+        self._log = log
+        self._clock = clock
+        self._position = position
+        self._on_flushed = on_flushed
+        self._live_from = live_from
+        self._emitted_through = emitted_through
+        self.lock = threading.Lock()
+        self.batch: list = []
+        self.message: list = []
+        self.started: set = set()
+        self.complete: set = set()
+        self.replaying = False
+        self.at = clock()
+        self._last_pos = None
+
+    def _close_message(self, quiet: bool = False):
+        text = "".join(self.message)
+        self.message.clear()
+        if text.strip() and not quiet:
+            self.batch.append({"kind": "assistant", "payload": {"text": text}})
+
+    def on_update(self, _session_id, update):
+        if self.replaying:
+            return
+        pos = self._position() if self._position is not None else None
+        if pos is not None and self._live_from is not None and pos <= self._live_from:
+            return
+        quiet = (pos is not None and self._emitted_through is not None
+                 and pos <= self._emitted_through)
+        self.at = self._clock()
+        kind = self.reducer.apply(update)
+        if kind is None:
+            return
+        with self.lock:
+            if kind == "agent_message_chunk":
+                text = content_text(update)
+                if text:
+                    self.message.append(text)
+            elif kind in ("tool_call", "tool_call_update"):
+                # A message that ended before the restart was emitted then.
+                self._close_message(quiet=quiet)
+                call_id = update.get("toolCallId") or ""
+                call = self.reducer.tool_call(call_id)
+                if call is None:
+                    return
+                if call_id not in self.started and (call.raw_input or call.is_complete):
+                    self.started.add(call_id)
+                    if not quiet:
+                        self.batch.append({"kind": "tool_start", "payload": {
+                            "id": call_id, "name": call.tool_name or call.kind,
+                            "input": call.raw_input}})
+                if call.is_complete and call_id not in self.complete:
+                    self.complete.add(call_id)
+                    if not quiet:
+                        self.batch.append({"kind": "tool_end", "payload": {
+                            "tool_use_id": call_id, "is_error": call.is_error,
+                            "content": call.result_text}})
+            if pos is not None:
+                self._last_pos = pos
+
+    def flush(self, final=False):
+        with self.lock:
+            if final:
+                self._close_message()
+            marker = self._last_pos
+            if not self.batch:
+                return
+            pending, self.batch[:] = list(self.batch), []
+        try:
+            self._emit(pending)
+        except Exception as exc:  # noqa: BLE001 — the live stream may never cost a turn
+            self._log(f"warn: could not emit ACP events: {exc}")
+            return
+        if self._on_flushed is not None and marker is not None:
+            try:
+                self._on_flushed(marker)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _await_reply(agent, pending, stream: _Stream, *, cancelled, was_cancelled: bool,
+                 flush_seconds: float, idle_timeout, timeout, clock):
+    """Wait for the prompt's reply, flushing and honouring a stop meanwhile.
+    Returns (result, was_cancelled)."""
+    deadline = None if timeout is None else clock() + timeout
+    stream.at = clock()
+    while True:
+        try:
+            result = pending.result(timeout=flush_seconds)
+            return result, was_cancelled
+        except TimeoutError:
+            stream.flush()
+            if not was_cancelled and cancelled():
+                was_cancelled = True
+                agent.cancel()
+            now = clock()
+            if idle_timeout is not None and now - stream.at > idle_timeout:
+                agent.cancel()
+                raise TurnError(f"ACP turn silent for {idle_timeout}s") from None
+            if deadline is not None and now > deadline:
+                agent.cancel()
+                raise TurnError(f"ACP turn exceeded {timeout}s") from None
+
+
+def _result_of(agent, result, stream: _Stream, session_id: str, was_cancelled: bool, init,
+               log) -> TurnResult:
+    stream.flush(final=True)
+    reducer = stream.reducer
+    stop = (result or {}).get("stopReason", "")
+    rate_limit = dict(reducer.rate_limit or {})
+    ok = stop in ("end_turn", "max_tokens") and rate_limit.get("status") != "rejected"
+    text = reducer.assistant_text.strip()
+    if stop not in ("end_turn", "max_tokens"):
+        # A turn failed on its stop reason must say which one. On 2026-10-26 turn
+        # cfab21f5 (demo runner, failure investigation 12) failed with only the
+        # agent's last words — "Standalone sleep is blocked, so I'll run it in the
+        # background." — and nothing recorded why it was graded failed.
+        reason = f"turn ended: {stop or 'unknown'} ({stop_origin(stop, was_cancelled, init)})"
+        text = f"{text}\n\n{reason}" if text else reason
+        tail = getattr(agent, "stderr_tail", lambda: "")()
+        if tail:
+            log(f"ACP turn ended {stop or 'unknown'}; adapter stderr: {tail}")
+    return TurnResult(ok=ok, text=text, session_id=session_id, stop_reason=stop,
+                      cancelled=was_cancelled or stop == "cancelled", rate_limit=rate_limit)
+
+
+def _turn_error(exc, agent, stream: _Stream, session_id: str) -> TurnError:
+    stream.flush(final=True)
+    detail = exc.detail if isinstance(exc, TurnError) else str(exc)
+    why = ""
+    try:
+        why = agent.exit_report() if agent is not None else ""
+    except Exception:  # noqa: BLE001 — older or fake agents have none
+        pass
+    return TurnError(f"{detail} ({why})" if why else detail,
+                     session_id or getattr(agent, "session_id", "") or "")
+
+
+def _release(agent, on_end, session_id, release_wait, processes):
+    if on_end is not None and agent is not None:
+        try:
+            on_end(agent)
+        except Exception:  # noqa: BLE001
+            pass
+    if agent is not None:
+        try:
+            agent.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if session_id and release_wait > 0:
+        wait_released(session_id, release_wait, processes)
+
+
 def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None = None,
                resume: str | None = None, on_start=None, on_session=None, on_end=None,
                cancelled=lambda: False, session_start_timeout: float = 300,
                flush_seconds: float = 10, idle_timeout: float | None = None,
                timeout: float | None = None, clock=time.time, log=logger.info,
                release_wait: float = RELEASE_WAIT_SECONDS,
-               processes=session_processes, mode: str | None = None) -> TurnResult:
+               processes=session_processes, mode: str | None = None,
+               position=None, on_flushed=None) -> TurnResult:
     """Run one prompt as one turn and close the adapter.
 
     `make_agent(cwd=, env=, on_update=)` builds the agent (canopy_acp.AcpAgent,
@@ -143,78 +311,29 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
     fresh adapter, which starts in `default`); a refusal is logged and the turn runs
     in the mode it has. `cancelled()` is polled; true sends
     the Escape equivalent once. A resume whose `session/load` fails starts a
-    fresh session — `on_session` then names the new id.
+    fresh session — `on_session` then names the new id. `position`/`on_flushed`:
+    see `_Stream` — how a runner records what it has emitted, so a turn it
+    adopts after a restart (`adopt_turn`) emits nothing twice.
 
     Raises TurnError when the turn could not run to an end."""
-    lock = threading.Lock()
-    batch: list = []
-    message: list = []
-    started: set = set()
-    complete: set = set()
-    state = {"replaying": False, "at": clock()}
-
-    def close_message():
-        text = "".join(message)
-        message.clear()
-        if text.strip():
-            batch.append({"kind": "assistant", "payload": {"text": text}})
-
-    def on_update(_session_id, update):
-        if state["replaying"]:
-            return
-        state["at"] = clock()
-        kind = reducer.apply(update)
-        if kind is None:
-            return
-        with lock:
-            if kind == "agent_message_chunk":
-                text = content_text(update)
-                if text:
-                    message.append(text)
-            elif kind in ("tool_call", "tool_call_update"):
-                close_message()
-                call_id = update.get("toolCallId") or ""
-                call = reducer.tool_call(call_id)
-                if call is None:
-                    return
-                if call_id not in started and (call.raw_input or call.is_complete):
-                    started.add(call_id)
-                    batch.append({"kind": "tool_start", "payload": {
-                        "id": call_id, "name": call.tool_name or call.kind, "input": call.raw_input}})
-                if call.is_complete and call_id not in complete:
-                    complete.add(call_id)
-                    batch.append({"kind": "tool_end", "payload": {
-                        "tool_use_id": call_id, "is_error": call.is_error,
-                        "content": call.result_text}})
-
-    def flush(final=False):
-        with lock:
-            if final:
-                close_message()
-            if not batch:
-                return
-            pending, batch[:] = list(batch), []
-        try:
-            emit(pending)
-        except Exception as exc:  # noqa: BLE001 — the live stream may never cost a turn
-            log(f"warn: could not emit ACP events: {exc}")
-
+    stream = _Stream(reducer, emit, log=log, clock=clock, position=position,
+                     on_flushed=on_flushed)
     agent = None
     session_id = ""
     try:
-        agent = make_agent(cwd=cwd, env=env, on_update=on_update)
+        agent = make_agent(cwd=cwd, env=env, on_update=stream.on_update)
         init = agent.start()
         if on_start is not None:
             on_start(agent)
         if resume:
-            state["replaying"] = True
+            stream.replaying = True
             try:
                 agent.load_session(resume, timeout=session_start_timeout)
                 session_id = resume
             except Exception as exc:  # noqa: BLE001
                 log(f"session/load of {resume[:8]} failed ({exc}); starting fresh")
             finally:
-                state["replaying"] = False
+                stream.replaying = False
                 # A replay update that lands just after the load reply would
                 # otherwise seed this turn's reply with the last one's.
                 reducer.reset_stream_state()
@@ -234,62 +353,42 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
             # Arrived while the session was starting, when there was no prompt yet.
             was_cancelled = True
             agent.cancel()
-        deadline = None if timeout is None else clock() + timeout
-        state["at"] = clock()
-        while True:
-            try:
-                result = pending.result(timeout=flush_seconds)
-                break
-            except TimeoutError:
-                flush()
-                if not was_cancelled and cancelled():
-                    was_cancelled = True
-                    agent.cancel()
-                now = clock()
-                if idle_timeout is not None and now - state["at"] > idle_timeout:
-                    agent.cancel()
-                    raise TurnError(f"ACP turn silent for {idle_timeout}s") from None
-                if deadline is not None and now > deadline:
-                    agent.cancel()
-                    raise TurnError(f"ACP turn exceeded {timeout}s") from None
-        flush(final=True)
-
-        stop = (result or {}).get("stopReason", "")
-        rate_limit = dict(reducer.rate_limit or {})
-        ok = stop in ("end_turn", "max_tokens") and rate_limit.get("status") != "rejected"
-        text = reducer.assistant_text.strip()
-        if stop not in ("end_turn", "max_tokens"):
-            # A turn failed on its stop reason must say which one. On 2026-10-26 turn
-            # cfab21f5 (demo runner, failure investigation 12) failed with only the
-            # agent's last words — "Standalone sleep is blocked, so I'll run it in the
-            # background." — and nothing recorded why it was graded failed.
-            reason = f"turn ended: {stop or 'unknown'} ({stop_origin(stop, was_cancelled, init)})"
-            text = f"{text}\n\n{reason}" if text else reason
-            tail = getattr(agent, "stderr_tail", lambda: "")()
-            if tail:
-                log(f"ACP turn ended {stop or 'unknown'}; adapter stderr: {tail}")
-        return TurnResult(ok=ok, text=text, session_id=session_id, stop_reason=stop,
-                          cancelled=was_cancelled or stop == "cancelled", rate_limit=rate_limit)
+        result, was_cancelled = _await_reply(
+            agent, pending, stream, cancelled=cancelled, was_cancelled=was_cancelled,
+            flush_seconds=flush_seconds, idle_timeout=idle_timeout, timeout=timeout, clock=clock)
+        return _result_of(agent, result, stream, session_id, was_cancelled, init, log)
     except Exception as exc:  # noqa: BLE001 — named, with how the adapter went
-        flush(final=True)
-        detail = exc.detail if isinstance(exc, TurnError) else str(exc)
-        why = ""
-        try:
-            why = agent.exit_report() if agent is not None else ""
-        except Exception:  # noqa: BLE001 — older or fake agents have none
-            pass
-        raise TurnError(f"{detail} ({why})" if why else detail,
-                         session_id or getattr(agent, "session_id", "") or "") from exc
+        raise _turn_error(exc, agent, stream, session_id) from exc
     finally:
-        if on_end is not None and agent is not None:
-            try:
-                on_end(agent)
-            except Exception:  # noqa: BLE001
-                pass
-        if agent is not None:
-            try:
-                agent.close()
-            except Exception:  # noqa: BLE001
-                pass
-        if session_id and release_wait > 0:
-            wait_released(session_id, release_wait, processes)
+        _release(agent, on_end, session_id, release_wait, processes)
+
+
+def adopt_turn(*, attach, reducer, emit, session_id: str, live_from, emitted_through=None,
+               position=None, on_flushed=None, on_start=None, on_end=None,
+               cancelled=lambda: False, flush_seconds: float = 10, clock=time.time,
+               log=logger.info, release_wait: float = RELEASE_WAIT_SECONDS,
+               processes=session_processes) -> TurnResult:
+    """Finish a turn another process started: its adapter is still running (or has
+    just ended) and its whole output is replayed from the start.
+
+    `attach(on_update)` returns `(agent, pending)` — `AcpAgent.attach` over the
+    replayed stream, and the waiter for the `session/prompt` in flight. Updates
+    at or before `live_from` (the prompt) are an earlier turn's or a `session/load`
+    replay and are ignored; ones at or before `emitted_through` rebuild this turn's
+    text without being emitted twice. Same result and errors as `drive_turn`."""
+    stream = _Stream(reducer, emit, log=log, clock=clock, position=position,
+                     on_flushed=on_flushed, live_from=live_from,
+                     emitted_through=emitted_through)
+    agent = None
+    try:
+        agent, pending = attach(stream.on_update)
+        if on_start is not None:
+            on_start(agent)
+        result, was_cancelled = _await_reply(
+            agent, pending, stream, cancelled=cancelled, was_cancelled=False,
+            flush_seconds=flush_seconds, idle_timeout=None, timeout=None, clock=clock)
+        return _result_of(agent, result, stream, session_id, was_cancelled, None, log)
+    except Exception as exc:  # noqa: BLE001
+        raise _turn_error(exc, agent, stream, session_id) from exc
+    finally:
+        _release(agent, on_end, session_id, release_wait, processes)

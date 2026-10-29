@@ -131,10 +131,14 @@ class AcpConnection:
     def __init__(self, *, write_to, read_from, permission_policy=None,
                  on_update: Callable[[str, dict], None] | None = None,
                  fs_root: pathlib.Path | None = None,
-                 ask_human: Callable[[str, dict], dict] | None = None):
+                 ask_human: Callable[[str, dict], dict] | None = None,
+                 answered=(), next_id: int = 1):
         self._out = write_to
         self._in = read_from
-        self._next_id = 1
+        self._next_id = max(int(next_id or 1), 1)
+        # Agent->client requests a previous holder of this connection already
+        # answered (an adopted turn's replayed log): never answered twice.
+        self._answered = set(answered or ())
         self._pending: dict[int, Pending] = {}
         self._lock = threading.Lock()
         self._closed = threading.Event()
@@ -215,6 +219,15 @@ class AcpConnection:
             with self._lock:
                 self._pending.pop(request_id, None)
             waiter._fail(f"could not send {method}: {exc}")
+        return waiter
+
+    def expect(self, request_id) -> Pending:
+        """A waiter for a request a PREVIOUS holder of this stream sent — an adopted
+        turn's `session/prompt`, whose reply may already be in the replayed log.
+        Register before `start()` so a reply the reader meets first is settled."""
+        waiter = Pending()
+        with self._lock:
+            self._pending[request_id] = waiter
         return waiter
 
     def notify(self, method: str, params: dict | None = None) -> None:
@@ -302,6 +315,8 @@ class AcpConnection:
             logger.debug("update handler raised (non-fatal)", exc_info=True)
 
     def _handle_agent_request(self, message_id, method: str, params: dict) -> None:
+        if message_id in self._answered:
+            return  # answered before this connection took the stream over
         if self.ask_human is not None and method in HUMAN_METHODS:
             # Off the reader thread: a person can take minutes, and meanwhile the
             # agent's updates — and the reply to a stop's cancel — must keep flowing.
@@ -450,8 +465,12 @@ class AcpAgent:
 
     def __init__(self, *, cwd, argv: list[str] | None = None, env: dict | None = None,
                  on_update=None, permission_policy=None, confine_fs: bool = True,
-                 ask_human=None):
+                 ask_human=None, spawn=None):
         self.cwd = pathlib.Path(cwd)
+        # `spawn(argv, cwd=, env=)` -> a Popen-like with text stdin/stdout/stderr, for a
+        # caller whose adapter must outlive it (the cloud runner's turn relay). None
+        # spawns the adapter as this process's own child.
+        self._spawn = spawn
         self._ask_human = ask_human
         self._argv = argv or find_adapter(os.environ.get("ACP_ADAPTER_PATH"))
         if not self._argv:
@@ -479,6 +498,9 @@ class AcpAgent:
         # one and the turn read "ACP connection closed before a reply arrived"
         # (2026-10-26, a fizzy email turn b50c9a50 on shayoni-win-cdp; failure
         # investigation 11).
+        if self._spawn is not None:
+            self.proc = self._spawn(self._argv, cwd=str(self.cwd), env=self._env)
+            return self._connect()
         self.proc = subprocess.Popen(
             self._argv, cwd=str(self.cwd), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -488,6 +510,9 @@ class AcpAgent:
             # not import the runner).
             creationflags=0x08000000 if os.name == "nt" else 0,
         )
+        return self._connect()
+
+    def _connect(self) -> dict:
         threading.Thread(target=self._drain_stderr, daemon=True, name="acp-stderr").start()
         self.conn = AcpConnection(
             write_to=self.proc.stdin, read_from=self.proc.stdout,
@@ -496,6 +521,39 @@ class AcpAgent:
         )
         self.conn.start()
         return self.conn.request("initialize", self.initialize_params()).result(timeout=60)
+
+    @classmethod
+    def attach(cls, proc, *, cwd, session_id: str, prompt_id, next_id: int, answered=(),
+               on_update=None, permission_policy=None, confine_fs: bool = True,
+               ask_human=None) -> tuple[AcpAgent, Pending]:
+        """Take over an adapter another process started and already prompted — a
+        turn adopted after the runner restarted. `proc` is Popen-like and its
+        stdout replays the adapter's output from the start; `prompt_id` is the id
+        of the `session/prompt` in flight, `next_id` the first id not yet used,
+        `answered` the agent requests that already have a reply. Returns the
+        agent and the waiter for that prompt's reply."""
+        agent = cls.__new__(cls)
+        agent.cwd = pathlib.Path(cwd)
+        agent._ask_human = ask_human
+        agent._argv = []
+        agent._env = {}
+        agent._spawn = None
+        agent.proc = proc
+        agent._on_update = on_update
+        agent._permission_policy = permission_policy
+        agent._confine_fs = confine_fs
+        agent.session_id = session_id
+        agent._stderr_tail = collections.deque(maxlen=STDERR_TAIL_LINES)
+        if getattr(proc, "stderr", None) is not None:
+            threading.Thread(target=agent._drain_stderr, daemon=True, name="acp-stderr").start()
+        agent.conn = AcpConnection(
+            write_to=proc.stdin, read_from=proc.stdout, on_update=on_update,
+            permission_policy=permission_policy,
+            fs_root=agent.cwd if confine_fs else None, ask_human=ask_human,
+            answered=answered, next_id=next_id)
+        waiter = agent.conn.expect(prompt_id)
+        agent.conn.start()
+        return agent, waiter
 
     def initialize_params(self) -> dict:
         """What this client says it can do. Form elicitation only when someone can

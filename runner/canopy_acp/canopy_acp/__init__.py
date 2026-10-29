@@ -25,13 +25,13 @@ from .menus import (
     menu_from_permission_request,
     option_id_for,
 )
-from .turn import TurnError, TurnResult, drive_turn
+from .turn import TurnError, TurnResult, adopt_turn, drive_turn
 from .updates import TERMINAL_STATUSES, ToolCall, UpdateReducer
 
 __all__ = [
     "AcpAgent", "AcpConnection", "Pending", "PermissionDecision",
     "TERMINAL_STATUSES", "ToolCall", "UpdateReducer",
-    "TurnError", "TurnResult", "drive_turn",
+    "TurnError", "TurnResult", "adopt_turn", "drive_turn",
     "ADAPTER_PACKAGE", "allow_first_option", "find_adapter", "install_adapter",
     "elicitation_answer", "menu_from_elicitation", "menu_from_permission_request",
     "option_id_for",
