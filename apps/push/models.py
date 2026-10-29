@@ -69,6 +69,16 @@ class NotificationPreference(models.Model):
     # fires. Waiting (rather than pushing on every turn end) is what keeps an
     # agent's back-to-back turns from buzzing once each.
     session_idle_minutes = models.PositiveIntegerField(default=DEFAULT_SESSION_IDLE_MINUTES)
+    # Which alert mail reaches this person. ALL: everything their roles make them a
+    # recipient of — every blocking alert they could close, every access request
+    # to a workspace they run. ASSIGNED: only what is handed to them by name. For
+    # someone who holds the keys (an owner, a superuser) without wanting the owner's
+    # inbox. Never leaves an alert with nobody: when everyone who would be told has
+    # chosen ASSIGNED, they are all told anyway (`alert_mail_recipients`).
+    ALERT_MAIL_ALL = "all"
+    ALERT_MAIL_ASSIGNED = "assigned"
+    ALERT_MAIL_CHOICES = [(ALERT_MAIL_ALL, "All"), (ALERT_MAIL_ASSIGNED, "Only what is handed to me")]
+    alert_mail = models.CharField(max_length=10, choices=ALERT_MAIL_CHOICES, default=ALERT_MAIL_ALL)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:  # pragma: no cover
@@ -78,3 +88,17 @@ class NotificationPreference(models.Model):
 def session_idle_minutes_for(user) -> int:
     pref = NotificationPreference.objects.filter(user=user).first()
     return pref.session_idle_minutes if pref else NotificationPreference.DEFAULT_SESSION_IDLE_MINUTES
+
+
+def alert_mail_for(user) -> str:
+    pref = NotificationPreference.objects.filter(user=user).first()
+    return pref.alert_mail if pref else NotificationPreference.ALERT_MAIL_ALL
+
+
+def set_notification_preferences(user, *, session_idle_minutes: int | None = None,
+                                 alert_mail: str | None = None) -> None:
+    """Change the given knobs for `user`, leaving the rest as they are."""
+    changes = {k: v for k, v in (("session_idle_minutes", session_idle_minutes),
+                                 ("alert_mail", alert_mail)) if v is not None}
+    if changes:
+        NotificationPreference.objects.update_or_create(user=user, defaults=changes)

@@ -9845,6 +9845,58 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/system/operators": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List superusers (superuser only)
+         * @description Everyone who holds the fleet-wide switches, with which alert mail reaches each.
+         */
+        readonly get: operations["list_operators"];
+        readonly put?: never;
+        /**
+         * Make someone a superuser (superuser only)
+         * @description Grant superuser to the account at `email`. They must have signed in to Canopy
+         *     once (404 otherwise). Superuser holds the fleet switches only — no workspace
+         *     access, which is still a membership. Needs a fresh passkey.
+         */
+        readonly post: operations["add_operator"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/system/operators/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a superuser (superuser only)
+         * @description Revoke superuser. Refused (409) for the last one — someone must be able to
+         *     release a fleet hold. Needs a fresh passkey.
+         */
+        readonly delete: operations["remove_operator"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a superuser's alert mail
+         * @description `alert_mail`: `all` (every alert their roles make them a recipient of) or
+         *     `assigned` (only alerts handed to them by name).
+         */
+        readonly patch: operations["update_operator"];
+        readonly trace?: never;
+    };
     readonly "/api/system/{kind}/{name}": {
         readonly parameters: {
             readonly query?: never;
@@ -12359,13 +12411,35 @@ export interface paths {
          * @description Stop EVERY runner from starting anything — the fleet-wide sibling of
          *     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
          *     their trigger, so `list turns?status=queued` shows what tried to start while
-         *     held. Running turns finish normally unless `stop_running` is set: then every
-         *     session working right now is stopped and every executing turn cancelled — the
-         *     kill switch (superuser only). A superuser or a named holder
-         *     (`CANOPY_FLEET_HOLDERS`, i.e. Ada) may hold — it spans every tenant, but only stops work.
-         *     Idempotent — holding again refreshes the note.
+         *     held. Running turns finish normally — stopping them is /fleet-stop. A superuser
+         *     or a named holder (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant,
+         *     but only stops work. Idempotent — holding again refreshes the note.
          */
         readonly post: operations["hold_fleet"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/fleet-stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop Fleet
+         * @description Stop EVERYTHING running, in every workspace, now: every session working
+         *     right now is stopped and every executing turn cancelled
+         *     (`control.stop_everything`). A one-shot action, separate from the hold: it does
+         *     not keep new work from starting — hold the fleet for that. Queued turns are
+         *     left alone, and nothing is archived. Superuser only.
+         */
+        readonly post: operations["stop_fleet"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -14315,7 +14389,9 @@ export interface paths {
         /**
          * Your notification settings
          * @description `session_idle_minutes`: how long a chat must stay quiet after its agent
-         *     finishes before you are notified that it is done (0 = never).
+         *     finishes before you are notified that it is done (0 = never). `alert_mail`:
+         *     `all` (every alert your roles make you a recipient of) or `assigned` (only
+         *     alerts handed to you by name).
          */
         readonly get: operations["get_preferences"];
         readonly put?: never;
@@ -14325,7 +14401,8 @@ export interface paths {
         readonly head?: never;
         /**
          * Change your notification settings
-         * @description Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you.
+         * @description Change any of: quiet minutes (0–1440, 0 = never) before a finished chat
+         *     notifies you; which alert mail reaches you (`all` | `assigned`).
          */
         readonly patch: operations["set_preferences"];
         readonly trace?: never;
@@ -34564,6 +34641,38 @@ export interface components {
             readonly demos_published: number;
         };
         /**
+         * OperatorOut
+         * @description One superuser — a person who holds the fleet-wide switches.
+         */
+        readonly OperatorOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Alert Mail
+             * @enum {string}
+             */
+            readonly alert_mail: "all" | "assigned";
+            /** Is You */
+            readonly is_you: boolean;
+        };
+        /** OperatorAddIn */
+        readonly OperatorAddIn: {
+            /** Email */
+            readonly email: string;
+        };
+        /** OperatorUpdateIn */
+        readonly OperatorUpdateIn: {
+            /**
+             * Alert Mail
+             * @enum {string}
+             */
+            readonly alert_mail: "all" | "assigned";
+        };
+        /**
          * CapabilityDetailOut
          * @description Single capability — adds the full markdown body.
          */
@@ -37404,16 +37513,6 @@ export interface components {
              * @default false
              */
             readonly can_stop_running: boolean;
-            /**
-             * Stopped Sessions
-             * @default 0
-             */
-            readonly stopped_sessions: number;
-            /**
-             * Stopped Turns
-             * @default 0
-             */
-            readonly stopped_turns: number;
         };
         /** FleetHoldIn */
         readonly FleetHoldIn: {
@@ -37422,11 +37521,13 @@ export interface components {
              * @default
              */
             readonly note: string;
-            /**
-             * Stop Running
-             * @default false
-             */
-            readonly stop_running: boolean;
+        };
+        /** FleetStopOut */
+        readonly FleetStopOut: {
+            /** Stopped Sessions */
+            readonly stopped_sessions: number;
+            /** Stopped Turns */
+            readonly stopped_turns: number;
         };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
@@ -40075,11 +40176,19 @@ export interface components {
         readonly NotificationPreferenceOut: {
             /** Session Idle Minutes */
             readonly session_idle_minutes: number;
+            /**
+             * Alert Mail
+             * @default all
+             * @enum {string}
+             */
+            readonly alert_mail: "all" | "assigned";
         };
         /** NotificationPreferenceIn */
         readonly NotificationPreferenceIn: {
             /** Session Idle Minutes */
-            readonly session_idle_minutes: number;
+            readonly session_idle_minutes?: number | null;
+            /** Alert Mail */
+            readonly alert_mail?: ("all" | "assigned") | null;
         };
         /** SlackShareOut */
         readonly SlackShareOut: {
@@ -57220,6 +57329,96 @@ export interface operations {
             };
         };
     };
+    readonly list_operators: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["OperatorOut"][];
+                };
+            };
+        };
+    };
+    readonly add_operator: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OperatorAddIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OperatorOut"];
+                };
+            };
+        };
+    };
+    readonly remove_operator: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_operator: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OperatorUpdateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OperatorOut"];
+                };
+            };
+        };
+    };
     readonly detail: {
         readonly parameters: {
             readonly query?: never;
@@ -60047,6 +60246,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["FleetHoldOut"];
+                };
+            };
+        };
+    };
+    readonly stop_fleet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FleetStopOut"];
                 };
             };
         };

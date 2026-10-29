@@ -213,7 +213,10 @@ def notify_admins(req: WorkspaceAccessRequest) -> dict:
                 + _button(link, label)
                 + f'<p style="color:#78716c;font-size:13px">{escape(link)}<br>You are getting this '
                   f"because you are an admin or owner of {escape(ws.display_name)} on Canopy.</p>")
-        recipients = access_request_recipients(ws)
+        from apps.push.services import alert_mail_recipients, send_to_user
+
+        # Minus those who asked for only what is handed to them — never down to nobody.
+        recipients = alert_mail_recipients(access_request_recipients(ws))
         for admin in recipients:
             if not admin.email:
                 continue
@@ -225,8 +228,6 @@ def notify_admins(req: WorkspaceAccessRequest) -> dict:
             else:
                 result["failed"].append(admin.email)
             try:
-                from apps.push.services import send_to_user
-
                 result["pushed"] += send_to_user(admin, f"Access request · {ws.display_name}",
                                                  f"{who} — {outcome}", access_request_path(req))
             except Exception:  # noqa: BLE001

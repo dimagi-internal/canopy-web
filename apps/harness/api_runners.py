@@ -71,6 +71,7 @@ from .schemas import (
     ClaimedTurnOut,
     FleetHoldIn,
     FleetHoldOut,
+    FleetStopOut,
     HeartbeatIn,
     OpenSignInRequestOut,
     PauseIn,
@@ -1643,15 +1644,11 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
     """Stop EVERY runner from starting anything — the fleet-wide sibling of
     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
     their trigger, so `list turns?status=queued` shows what tried to start while
-    held. Running turns finish normally unless `stop_running` is set: then every
-    session working right now is stopped and every executing turn cancelled — the
-    kill switch (superuser only). A superuser or a named holder
-    (`CANOPY_FLEET_HOLDERS`, i.e. Ada) may hold — it spans every tenant, but only stops work.
-    Idempotent — holding again refreshes the note."""
+    held. Running turns finish normally — stopping them is /fleet-stop. A superuser
+    or a named holder (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant,
+    but only stops work. Idempotent — holding again refreshes the note."""
     if not _may_hold_fleet(request.user):
         raise HttpError(403, "holding the whole fleet requires a superuser or a named fleet holder")
-    if payload.stop_running and not _may_release_fleet_hold(request.user):
-        raise HttpError(403, "stopping running work across the fleet requires a superuser")
     hold = FleetHold.current()
     if not hold.held:
         hold.held_at = timezone.now()
@@ -1659,12 +1656,21 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
     hold.held = True
     hold.note = (payload.note or "")[:500]
     hold.save()
-    out = _fleet_hold_out(hold, request.user)
-    if payload.stop_running:
-        # After the hold is saved, so nothing stopped here can be re-claimed in between.
-        stopped = control.stop_everything(by=control.person_name(request.user))
-        out["stopped_sessions"], out["stopped_turns"] = stopped["sessions"], stopped["turns"]
-    return out
+    return _fleet_hold_out(hold, request.user)
+
+
+@router.post("/fleet-stop", response=FleetStopOut)
+@gate("superuser", setting=True)
+def stop_fleet(request: HttpRequest):
+    """Stop EVERYTHING running, in every workspace, now: every session working
+    right now is stopped and every executing turn cancelled
+    (`control.stop_everything`). A one-shot action, separate from the hold: it does
+    not keep new work from starting — hold the fleet for that. Queued turns are
+    left alone, and nothing is archived. Superuser only."""
+    if not _may_release_fleet_hold(request.user):
+        raise HttpError(403, "stopping everything running across the fleet requires a superuser")
+    stopped = control.stop_everything(by=control.person_name(request.user))
+    return {"stopped_sessions": stopped["sessions"], "stopped_turns": stopped["turns"]}
 
 
 @router.post("/fleet-hold/release", response=FleetHoldOut)

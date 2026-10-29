@@ -12,7 +12,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
 
-from .models import NotificationPreference, PushSubscription, session_idle_minutes_for
+from .models import PushSubscription, alert_mail_for, session_idle_minutes_for, set_notification_preferences
 from .schemas import (
     NotificationPreferenceIn,
     NotificationPreferenceOut,
@@ -100,15 +100,22 @@ def unsubscribe(request: HttpRequest, payload: PushUnsubscribeIn):
 @gate("self")
 def get_preferences(request: HttpRequest) -> NotificationPreferenceOut:
     """`session_idle_minutes`: how long a chat must stay quiet after its agent
-    finishes before you are notified that it is done (0 = never)."""
-    return NotificationPreferenceOut(session_idle_minutes=session_idle_minutes_for(request.user))
+    finishes before you are notified that it is done (0 = never). `alert_mail`:
+    `all` (every alert your roles make you a recipient of) or `assigned` (only
+    alerts handed to you by name)."""
+    return _preferences_out(request.user)
 
 
 @router.patch("/preferences", response=NotificationPreferenceOut, summary="Change your notification settings")
 @gate("self", setting=True)
 def set_preferences(request: HttpRequest, payload: NotificationPreferenceIn) -> NotificationPreferenceOut:
-    """Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you."""
-    NotificationPreference.objects.update_or_create(
-        user=request.user, defaults={"session_idle_minutes": payload.session_idle_minutes}
-    )
-    return NotificationPreferenceOut(session_idle_minutes=payload.session_idle_minutes)
+    """Change any of: quiet minutes (0–1440, 0 = never) before a finished chat
+    notifies you; which alert mail reaches you (`all` | `assigned`)."""
+    set_notification_preferences(request.user, session_idle_minutes=payload.session_idle_minutes,
+                                 alert_mail=payload.alert_mail)
+    return _preferences_out(request.user)
+
+
+def _preferences_out(user) -> NotificationPreferenceOut:
+    return NotificationPreferenceOut(session_idle_minutes=session_idle_minutes_for(user),
+                                     alert_mail=alert_mail_for(user))
