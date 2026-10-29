@@ -813,13 +813,22 @@ for 30 minutes, and does so only once you approve with your passkey
   by a verified, active human who is not an agent (or a chain on their behalf). Nothing it
   sends names the person, so it can never ask to act as anyone else. A stored token, a
   confined turn, a contact's, canopy's own or an unverified asker's turn asks no one (403
-  saying why); so does a person with no passkey. On a laptop, where emdash finishes the
-  turn as soon as its session exists, the agent asks with its **session-scoped** turn
-  login, and the permission lives while that session is active and bound to the login's
-  runner and its newest turn is still yours (`act_as.held`).
+  saying why); so does a person with no passkey.
+- **It belongs to the conversation, not the one turn.** In a chat the reply carrying the
+  approve link reaches the person only when the asking turn ends, and each message after is
+  a new turn with a new login. So a request waits 30 minutes, and both the request and the
+  permission live while the turn runs **or**, when it was asked in a conversation (a chat
+  session, or a laptop's session-scoped turn login), while that conversation is active and
+  its newest turn is still the person's (`act_as.held`). Any turn login of the same agent
+  in that conversation working for the same person reads the status, collects the token
+  (still once) and stops it (`act_as.agent_may`); with a turn login,
+  `GET /api/me/act-as-requests/` lists that agent's waiting and live requests there. A
+  colleague's message, or the conversation closing, ends it. A push goes to the person's
+  devices at once (how many it reached is kept: `push_sent`, and `pushed` in the event).
 - **Approved with a fresh passkey touch, for that request, in your browser.** A push, a
   card on your supervisor feed and a row in Settings → Act-as-you permissions lead to
-  `/act-as/<id>`: the agent, its reason verbatim, the conversation, what it asked for.
+  `/act-as/<id>`: the agent, its reason verbatim, the conversation, what it asked for and
+  the deadline — or, once it is not waiting, what happened and when.
   "Allow read-only" / "Allow read + write" each run a WebAuthn assertion begun for this
   request (`…/approve/begin` + `/finish`); a session cookie, a step-up window or any token
   is not enough, and approve/decline refuse every token.
@@ -829,8 +838,8 @@ for 30 minutes, and does so only once you approve with your passkey
   tokens and PATs, the person's memory switches and grants, passkeys, vaults, keys and
   secrets, connected sites' signing keys, act-as and host-grant approvals, agent-login
   acceptance, workspace invites and the runner protocol. 30 minutes from the touch, never extended; a new approval needs a
-  new request. Every request re-checks it: stopped, run out, or its turn (or laptop
-  session) over, and the token signs in as no one.
+  new request. Every request re-checks it: stopped, run out, or its turn and
+  conversation over, and the token signs in as no one.
 - **The token is returned once.** The agent's first status read after the approval
   carries it (`cact_…`); only its hash is kept. It signs in as you on REST
   (`tokens.middleware._authenticate_act_as_token`) and MCP (`mcp.act_as_scope`, and

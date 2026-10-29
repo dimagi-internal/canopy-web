@@ -6,23 +6,10 @@ import {
   declineActAsRequest,
   getActAsRequest,
   offeredScopes,
+  statusLine,
   stopActAsRequest,
   type ActAsRequest,
 } from '@/api/actAs'
-
-const STATUS_TEXT: Record<string, string> = {
-  pending: 'Waiting for you.',
-  approved: 'Approved.',
-  declined: 'Declined.',
-  expired: 'Over: it ran out, or the turn it was asked from ended.',
-  stopped: 'Stopped.',
-}
-
-function when(iso?: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-}
 
 /**
  * Approve an agent acting as you on canopy (`/act-as/:requestId`) — the link the push
@@ -99,16 +86,14 @@ export function ActAsApprovalPage(): JSX.Element | null {
           </dd>
           <dt className="font-medium text-foreground">Status</dt>
           <dd className="m-0" data-testid="act-as-status">
-            {STATUS_TEXT[req.status] ?? req.status}
-            {req.status === 'approved' &&
-              ` ${req.scope === 'write' ? 'Read + write' : 'Read-only'} until ${when(req.expires_at)}.`}
+            {statusLine(req, agent)}
           </dd>
         </dl>
-        <p className="mt-3 text-[12px] text-muted-foreground">
+        {(req.status === 'pending' || req.status === 'approved') && <p className="mt-3 text-[12px] text-muted-foreground">
           Approving lets {agent} use canopy as you — within your own access, for 30 minutes from your passkey
           touch, and only while this turn runs. It can never touch your tokens, passkeys, vaults, memory
           settings or these permissions. You can stop it any time.
-        </p>
+        </p>}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
         {req.status === 'pending' && (
           <div className="mt-4 flex flex-wrap gap-2">

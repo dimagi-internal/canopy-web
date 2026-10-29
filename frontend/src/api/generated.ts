@@ -13568,8 +13568,11 @@ export interface paths {
         };
         /**
          * Agents asking to act as me on canopy-web, and those that may
-         * @description Your requests still waiting for you, and the permissions still live: which agent,
-         *     why, in which turn, what it may do, and until when.
+         * @description In your browser: your requests still waiting for you, and the permissions still live
+         *     — which agent, why, in which turn, what it may do, and until when. With an agent's turn
+         *     login: that agent's waiting and live requests for this conversation's person, in this
+         *     conversation (or this turn, outside one), so it can recover one it lost track of; never
+         *     a token (read one with `GET …/{id}`).
          */
         readonly get: operations["list_my_act_as_requests"];
         readonly put?: never;
@@ -13580,7 +13583,9 @@ export interface paths {
          *     feed and Settings — to let you act as them for 30 minutes, read-only or read + write,
          *     with their passkey. 403 says why when there is no one to ask (a confined turn, one
          *     canopy or an agent started, an unverified asker, a stored token). Poll
-         *     `GET /api/me/act-as-requests/{id}`; the request lapses after 10 minutes.
+         *     `GET /api/me/act-as-requests/{id}` — from this turn or any later one of yours in the
+         *     same conversation; the request waits 30 minutes, past the end of this turn while the
+         *     conversation is still the person's.
          */
         readonly post: operations["create_act_as_request"];
         readonly delete?: never;
@@ -13598,9 +13603,10 @@ export interface paths {
         };
         /**
          * An act-as-you request's status (and, once, its token)
-         * @description For the agent (the same turn login that asked): the status, and — in the first read
-         *     after the person approves — the token, which signs in as them until `expires_at` or
-         *     until the turn ends. For the person: the request, to decide on.
+         * @description For the agent (the login that asked, or any later turn login of the same agent in the
+         *     same conversation for the same person): the status, and — in the first such read after
+         *     the person approves — the token, which signs in as them until `expires_at`, while the
+         *     turn runs or the conversation is still theirs. For the person: the request.
          */
         readonly get: operations["get_act_as_request"];
         readonly put?: never;

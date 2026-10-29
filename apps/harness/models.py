@@ -2655,10 +2655,10 @@ class ActAsGrant(models.Model):
     #: The turn login (`TurnAgentToken.token`) that asked: only it reads the status and
     #: collects the token.
     login_token_id = models.BigIntegerField()
-    #: For a SESSION-scoped turn login (a laptop, where the turn finishes as soon as its
-    #: session exists): the session and runner it was issued for. The permission then lives
-    #: while that session is held on that runner and its newest turn is still the
-    #: person's — not only while `turn` executes.
+    #: The conversation it was asked in (the turn's chat session, or a laptop's
+    #: session-scoped login's session), if any. The request and the permission then live
+    #: while that session is active and its newest turn is still the person's — not only
+    #: while `turn` executes — and any later turn login of the agent there may collect it.
     login_session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE,
                                       null=True, blank=True, related_name="+")
     login_runner = models.ForeignKey(Runner, on_delete=models.CASCADE, null=True, blank=True,
@@ -2684,6 +2684,9 @@ class ActAsGrant(models.Model):
     token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
     token_issued_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
+    #: Devices the push service accepted the request's notification for; 0 none, -1 failed,
+    #: null not tried.
+    push_sent = models.IntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

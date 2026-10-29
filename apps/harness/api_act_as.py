@@ -24,7 +24,6 @@ from apps.api.route_gates import gate
 from apps.passkeys import services as passkeys
 from apps.passkeys import stepup
 from apps.passkeys.schemas import PasskeyAssertIn, PasskeyOptionsOut
-from apps.tokens import kinds
 from apps.workspaces import links
 
 from . import act_as, acting_person
@@ -45,7 +44,7 @@ class ActAsCreatedOut(Schema):
     status: str
     #: Where the person approves, with their passkey. Pushed to their devices too.
     approve_url: str
-    #: When the request lapses if nobody acts on it (10 minutes).
+    #: When the request lapses if nobody acts on it (30 minutes).
     expires_at: datetime
 
 
@@ -94,10 +93,9 @@ def _row(request_id) -> ActAsGrant | None:
 
 
 def _is_asking_login(request: HttpRequest, grant: ActAsGrant) -> bool:
-    """The same turn login that asked — the agent, never the person."""
-    cred = getattr(request, "auth_credential", None) or {}
-    return (kinds.kind_of(cred) is kinds.KINDS[kinds.PAT] and cred.get("id") is not None
-            and int(cred["id"]) == grant.login_token_id and request.user.pk == grant.agent.user_id)
+    """The agent: the login that asked, or any later turn login of the same agent in the
+    same conversation for the same person (`act_as.agent_may`) — never the person."""
+    return act_as.agent_may(request.user, getattr(request, "auth_credential", None), grant)
 
 
 def _is_the_person(request: HttpRequest, grant: ActAsGrant) -> bool:
@@ -134,7 +132,9 @@ def create_act_as_request(request: HttpRequest, payload: ActAsRequestIn):
     feed and Settings — to let you act as them for 30 minutes, read-only or read + write,
     with their passkey. 403 says why when there is no one to ask (a confined turn, one
     canopy or an agent started, an unverified asker, a stored token). Poll
-    `GET /api/me/act-as-requests/{id}`; the request lapses after 10 minutes."""
+    `GET /api/me/act-as-requests/{id}` — from this turn or any later one of yours in the
+    same conversation; the request waits 30 minutes, past the end of this turn while the
+    conversation is still the person's."""
     try:
         grant = act_as.ask(request.user, getattr(request, "auth_credential", None),
                            reason=payload.reason, scope=payload.scope)
@@ -153,9 +153,10 @@ def create_act_as_request(request: HttpRequest, payload: ActAsRequestIn):
       step_up="the token goes only to the turn login that asked, once, after the person approved "
               "with a passkey; the person's own read never carries it")
 def get_act_as_request(request: HttpRequest, request_id: uuid.UUID) -> ActAsStatusOut:
-    """For the agent (the same turn login that asked): the status, and — in the first read
-    after the person approves — the token, which signs in as them until `expires_at` or
-    until the turn ends. For the person: the request, to decide on."""
+    """For the agent (the login that asked, or any later turn login of the same agent in the
+    same conversation for the same person): the status, and — in the first such read after
+    the person approves — the token, which signs in as them until `expires_at`, while the
+    turn runs or the conversation is still theirs. For the person: the request."""
     grant = _row(request_id)
     if grant is None:
         raise ProblemError(404, "Not found", type_=TYPE_NOT_FOUND)
@@ -192,13 +193,24 @@ def stop_act_as_request(request: HttpRequest, request_id: uuid.UUID) -> ActAsReq
 
 @router.get("/", response=list[ActAsRequestOut],
             summary="Agents asking to act as me on canopy-web, and those that may")
-@gate("self")
+@gate("self", "agent-login")  # the person's own; or, for a turn login, its agent's in this conversation
 def list_my_act_as_requests(request: HttpRequest) -> list[ActAsRequestOut]:
-    """Your requests still waiting for you, and the permissions still live: which agent,
-    why, in which turn, what it may do, and until when."""
-    rows = (ActAsGrant.objects.select_related("person", "agent", "agent__workspace", "turn")
-            .filter(person=request.user, status__in=(ActAsGrant.PENDING, ActAsGrant.APPROVED))
-            .order_by("-created_at")[:50])
+    """In your browser: your requests still waiting for you, and the permissions still live
+    — which agent, why, in which turn, what it may do, and until when. With an agent's turn
+    login: that agent's waiting and live requests for this conversation's person, in this
+    conversation (or this turn, outside one), so it can recover one it lost track of; never
+    a token (read one with `GET …/{id}`)."""
+    qs = ActAsGrant.objects.select_related("person", "agent", "agent__workspace", "turn") \
+        .filter(status__in=(ActAsGrant.PENDING, ActAsGrant.APPROVED))
+    ob = act_as.agent_turn(request.user, getattr(request, "auth_credential", None))
+    if ob is not None:
+        sid = act_as.session_of(ob.turn, ob.login)
+        qs = qs.filter(agent=ob.agent, person=ob.user, **({"login_session_id": sid} if sid else {"turn": ob.turn}))
+    elif acting_person.is_person(request):
+        qs = qs.filter(person=request.user)
+    else:
+        return []
+    rows = qs.order_by("-created_at")[:50]
     out = []
     for grant in rows:
         if act_as.settle(grant).status in (ActAsGrant.PENDING, ActAsGrant.APPROVED):
