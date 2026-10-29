@@ -172,13 +172,24 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
     # A KEY-PATH lookup, not `metadata__contains`: `contains` on a JSONField is
     # PostgreSQL-only and raises NotSupportedError on SQLite, so the production
     # path would have worked while every test errored — found by running them.
-    existing = (
-        Session.objects.filter(agent=agent, **{f"metadata__{EMAIL_THREAD_KEY}": key})
+    found = Session.objects.filter(agent=agent, **{f"metadata__{EMAIL_THREAD_KEY}": key}) \
         .order_by("created_at")
-        .first()
-    )
+    existing = found.first()
     if existing is not None:
         return existing
+    # Find-or-create under the agent's row lock. The same message arrives twice at
+    # once — Gmail push and the runner's poll both discover it — and without the
+    # lock each made a session in the same second, leaving one with no turns
+    # beside its sibling (3ee01ce9 / afe51b3c, 2026-10-29).
+    with transaction.atomic():
+        Agent.objects.select_for_update().filter(pk=agent.pk).first()
+        existing = found.first()
+        if existing is not None:
+            return existing
+        return _create_email_thread_session(agent, key, subject)
+
+
+def _create_email_thread_session(agent, key: str, subject: str):
     workspace = agent.workspace  # NOT NULL: an agent always has its one home
     return Session.objects.create(
         agent=agent,

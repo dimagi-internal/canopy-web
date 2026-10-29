@@ -184,3 +184,16 @@ def _creation_fact(instance) -> None:
                       actor=instance.created_by, agent=instance.agent, surface=instance.origin,
                       ref=str(instance.pk), at=instance.created_at,
                       project=activity.repo_of(session=instance))
+
+
+# -- a mail thread's anchor session retires when its work session closes -------
+#
+# The work session a mail turn ran in closes on its runner long after the turn
+# finished; that close is the last thing the anchor waits on
+# (apps/harness/mail_anchor.py).
+
+@receiver(sessions_closed, dispatch_uid="harness_mail_anchor_retire")
+def _retire_mail_anchors(sender, session_ids=(), **kwargs) -> None:
+    from . import mail_anchor  # noqa: PLC0415 — cycle: signals load in ready(), before session_sync
+
+    mail_anchor.on_sessions_closed(session_ids)

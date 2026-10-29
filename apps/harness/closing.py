@@ -97,6 +97,13 @@ def close_turn(
     if riders:
         close_riders(turn, now=now)
 
+    if turn.chat_session_id:
+        # A mail thread's anchor session retires once nothing on it is live
+        # (apps/harness/mail_anchor.py); a no-op for any other session.
+        from . import mail_anchor  # noqa: PLC0415 — cycle: mail_anchor -> session_sync -> harness services
+
+        mail_anchor.retire_later(turn.chat_session_id)
+
     if chat_hooks and turn.chat_session_id:
         from .session_sync import end_turns_ask, logger
 
