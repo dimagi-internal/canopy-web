@@ -441,3 +441,42 @@ def test_adoption_whose_stage_fails_leaves_no_file(cr, monkeypatch, tmp_path):
     _cli(cr, monkeypatch, tmp_path, code=1, stderr="boom")
     cr._adopt_connections("r1", "t1", "eva")
     assert cr._CONN_HOLDS == {} and not _path(tmp_path).exists()
+
+
+def test_a_failed_first_stage_removes_a_file_its_sibling_left_to_it(cr, monkeypatch, tmp_path):
+    """A holds; B registers; A ends and keeps the file for B; B's CLI then fails. The
+    file must not outlive every holder."""
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "A", "eva", "salesforce", now=0)
+
+    def run(argv, **kw):                      # B's CLI: A ends while it runs, then it fails
+        cr._unstage_connections("A")
+        assert _path(tmp_path).exists()       # A saw B's hold and left the file
+        return subprocess.CompletedProcess(argv, 1, "", "boom")
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    cr._stage_connection_token("r1", "B", "eva", "salesforce", now=0)
+    assert cr._CONN_HOLDS == {} and not _path(tmp_path).exists()
+
+
+def test_a_failed_first_stage_keeps_a_file_a_sibling_still_holds(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "A", "eva", "salesforce", now=0)
+    _cli(cr, monkeypatch, tmp_path, code=1, stderr="boom")
+    cr._stage_connection_token("r1", "B", "eva", "salesforce", now=0)
+    assert _path(tmp_path).exists() and "A" in cr._CONN_HOLDS and "B" not in cr._CONN_HOLDS
+
+
+def test_an_adoptable_turn_records_its_providers_and_no_token(wired, monkeypatch, tmp_path):
+    mod, sf, seen, _ = wired
+    monkeypatch.setattr(mod, "TURN_STATE_ROOT", tmp_path / "turns")
+    monkeypatch.setattr(mod, "adoptable_turn", lambda turn: True)
+    inner = mod.execute_prompt
+
+    def execute(prompt, turn_id, *a, **k):
+        seen["state"] = (tmp_path / "turns" / turn_id / "turn.json").read_text()
+        return inner(prompt, turn_id, *a, **k)
+    monkeypatch.setattr(mod, "execute_prompt", execute)
+    mod._run_turn("r-1", _turn(caller_context={"profile": "full", "capability": None}))
+    state = json.loads(seen["state"])
+    assert state["connections"] == ["salesforce"] and state["confined"] is False
+    assert len(sf) == 1 and "SECRET" not in seen["state"] and "cct_x" not in seen["state"]

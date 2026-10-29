@@ -1907,10 +1907,15 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
 
 
 def _stage_failed(turn_id: str, provider: str, refresh: bool) -> None:
-    """A first stage that staged nothing lets go of its hold; a heartbeat keeps it."""
+    """A first stage that staged nothing lets go of its hold, and of the file unless
+    another turn of the agent holds it (a sibling that ended while this stage ran saw
+    this turn's hold and left the file to it); a heartbeat keeps both."""
     if not refresh:
         with _CONN_LOCK:
+            held = _CONN_HOLDS.get(turn_id)
             _release(turn_id, provider)
+            if held and not _held_elsewhere(held[0], provider, turn_id):
+                _unlink_quietly(_connection_token_path(held[0], provider))
 
 
 def _drop_holds(turn_id: str) -> None:
