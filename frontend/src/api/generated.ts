@@ -17759,6 +17759,11 @@ export interface components {
             /** Instance Url */
             readonly instance_url: string;
             /**
+             * Scopes
+             * @description What the grant allows at the provider (Salesforce: `api`, `refresh_token`).
+             */
+            readonly scopes?: readonly string[];
+            /**
              * Needs Reconnect
              * @description The stored grant can no longer mint a token; connect again.
              */
@@ -17772,7 +17777,7 @@ export interface components {
             readonly last_used_at?: string | null;
             /**
              * Connected By Email
-             * @description Who completed the sign-in.
+             * @description Who completed the sign-in; empty when that person's account no longer exists.
              */
             readonly connected_by_email: string;
             /**

@@ -49,6 +49,12 @@ describe('ConnectionsPanel', () => {
     await waitFor(() => expect(disconnectMine).toHaveBeenCalledWith(7))
   })
 
+  it('shows what the grant allows', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ scopes: ['api', 'refresh_token'] })] })
+    at('/settings')
+    expect(await screen.findByText('Scopes: api, refresh_token')).toBeTruthy()
+  })
+
   it('offers Reconnect when the grant needs it', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ needs_reconnect: true })] })
     at('/settings')

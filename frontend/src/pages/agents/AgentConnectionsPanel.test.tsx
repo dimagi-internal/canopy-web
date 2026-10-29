@@ -50,6 +50,16 @@ describe('AgentConnectionsPanel', () => {
     expect(screen.queryByRole('link', { name: 'Connect Salesforce' })).toBeNull()
   })
 
+  it('shows what the grant allows, own and shared', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ scopes: ['api', 'refresh_token'] }), conn({ id: 9, granted_from: 'hal', scopes: ['api'] })],
+    })
+    show()
+    expect(await screen.findByText('Scopes: api, refresh_token')).toBeTruthy()
+    expect(screen.getByText('Scopes: api')).toBeTruthy()
+  })
+
   it('disconnects an own connection', async () => {
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
     show()

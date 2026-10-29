@@ -11,7 +11,7 @@ import {
 } from '@/api/connections'
 import { listAgents } from '@/api/agents'
 import { getCsrfToken } from '@/api/base'
-import { ConnectOutcome, lastUsed } from '@/components/settings/ConnectionsPanel'
+import { ConnectOutcome, Scopes, lastUsed } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
 
 /**
@@ -157,6 +157,7 @@ function Row({
             {c.instance_url} · {lastUsed(c)}
             {shared && <> · shared by {c.granted_from}</>}
           </p>
+          <Scopes c={c} />
           {c.needs_reconnect && (
             <p className="text-[12px] text-warning">
               {shared ? 'This connection needs reconnecting by its owner.' : 'This connection expired or was revoked. Reconnect it.'}

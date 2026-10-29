@@ -534,3 +534,14 @@ def test_deleting_the_person_who_connected_keeps_the_agents_connection(client, u
     assert conn.connected_by_id is None and grant.granted_by_id is None
     rows = client.get("/api/agents/eva/connections").json()["connections"]
     assert [(r["id"], r["connected_by_email"], r["shared_with"]) for r in rows] == [(conn.pk, "", ["echo"])]
+
+
+def test_rows_carry_their_scopes(client, user, eva):
+    """M3: what the grant allows is visible, on both lists."""
+    for kw in ({"user": user}, {"agent": eva}):
+        c = _stored(kw, user)
+        c.scopes = "api refresh_token"
+        c.save()
+    mine = client.get("/api/connections/").json()["connections"]
+    agents = client.get("/api/agents/eva/connections").json()["connections"]
+    assert mine[0]["scopes"] == ["api", "refresh_token"] == agents[0]["scopes"]

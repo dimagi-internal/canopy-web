@@ -39,7 +39,7 @@ def _provider_rows() -> list[ProviderOut]:
 def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=providers.get(conn.provider).title,
-        account_label=conn.account_label, instance_url=conn.instance_url,
+        account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())

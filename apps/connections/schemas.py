@@ -27,6 +27,10 @@ class ConnectionOut(StrictModel):
     title: str = Field(description="The provider's display name.")
     account_label: str = Field(description="Which account this is (e.g. a Salesforce username).")
     instance_url: str
+    scopes: list[str] = Field(
+        default_factory=list,
+        description="What the grant allows at the provider (Salesforce: `api`, `refresh_token`).",
+    )
     needs_reconnect: bool = Field(description="The stored grant can no longer mint a token; connect again.")
     connected_at: datetime
     last_used_at: datetime | None = None

@@ -73,7 +73,7 @@ export function ConnectionsPanel() {
   )
 }
 
-/** The `?connection=…&status=…&reason=…` result banner, shared with the agent panel. */
+/** What a callback `reason` code says, as a fixed sentence (never the query text). */
 const REASONS: Record<string, string> = {
   not_configured: 'is not set up on this deployment.',
   access_denied: 'was not approved on the provider’s consent screen.',
@@ -130,6 +130,13 @@ export function ConnectLink({ label, href }: { label: string; href: string }) {
   )
 }
 
+/** What the grant allows at the provider, shared with the agent panel. */
+export function Scopes({ c }: { c: ConnectionOut }) {
+  const scopes = c.scopes ?? []
+  if (scopes.length === 0) return null
+  return <p className="text-[12px] text-muted-foreground">Scopes: {scopes.join(', ')}</p>
+}
+
 export function lastUsed(c: ConnectionOut): string {
   return c.last_used_at ? `Last used ${new Date(c.last_used_at).toLocaleDateString()}` : 'Not used yet'
 }
@@ -157,6 +164,7 @@ function ProviderRow({
             <p className="text-[12px] text-muted-foreground">
               {c.instance_url} · {lastUsed(c)}
             </p>
+            <Scopes c={c} />
             {c.needs_reconnect && (
               <p className="text-[12px] text-warning">This connection expired or was revoked. Reconnect it.</p>
             )}
