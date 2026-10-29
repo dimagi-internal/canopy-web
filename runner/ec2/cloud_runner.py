@@ -12542,72 +12542,84 @@ def adopt_turns(runner_id: str) -> dict:
     if not TURN_STATE_ROOT.is_dir():
         return summary
     for d in sorted(TURN_STATE_ROOT.iterdir()):
-        turn_id = d.name
-        if not d.is_dir() or not _CHAT_ID.match(turn_id):
-            continue
-        state = _read_json(d / "turn.json") or {}
-        turn = state.get("turn") or {}
-        if not turn or state.get("runner_id") not in (None, runner_id):
-            shutil.rmtree(d, ignore_errors=True)
-            summary["swept"].append(f"{turn_id[:8]} (no usable state)")
-            continue
-        turn["_resume_id"] = turn.get("_resume_id") or ""
-        if state.get("reported"):
-            # Its finish was posted; only the cleanup was cut short.
-            _adopted_cleanup(turn_id, state)
-            summary["swept"].append(f"{turn_id[:8]} (already reported)")
-            _lifecycle(turn_id, "swept", post=False, why="finish already reported")
-            continue
-        attempt = d / state["attempt"] if state.get("attempt") else None
-        if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
-            note = ("[runner] the runner restarted while this turn was being set up; "
-                    "its agent never started, so canopy-web may run it again")
-            _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
-            _lifecycle(turn_id, "lost", reason="restarted during setup", agent=state.get("slug"))
-            _adopted_cleanup(turn_id, state)
-            summary["reported"].append(f"{turn_id[:8]} (setup)")
-            continue
-        info = _read_json(attempt / "host.json") or {}
-        exited = (attempt / "exit.json").exists()
-        if not exited and not _is_relay(info.get("host_pid"), attempt):
-            proc = RelayProc.attach(attempt)
-            proc.poll()
-            note = proc.lost or "[runner] the turn's process was gone when the runner restarted"
-            body = {"status": "failed", "result_note": _result_note(note, turn)}
-            if state.get("cli_session_id"):
-                body["session_key"] = state["cli_session_id"]
-            fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
-            _lifecycle(turn_id, "lost", reason="process gone at adoption", pid=info.get("child_pid"),
-                       agent=state.get("slug"), session=state.get("cli_session_id"), http=fstatus)
-            _adopted_cleanup(turn_id, state)
-            summary["reported"].append(f"{turn_id[:8]} (process gone)")
-            continue
-        if not _adopted_confined(state):
-            # Before the start clear, which spares what an adopted turn holds.
-            _reserve_adopted_connections(runner_id, turn_id, state.get("slug") or "",
-                                         state.get("connections"))
         try:
-            with _TURNS_LOCK:
-                _IN_FLIGHT[turn_id] = None
-            thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
-                                      daemon=True, name=f"adopted-{turn_id[:8]}")
-            with _TURNS_LOCK:
-                _IN_FLIGHT[turn_id] = thread
-            _ADOPTED.add(turn_id)
-            thread.start()
-        except BaseException:
-            # No worker will run to release what was reserved for it.
-            _unstage_connections(turn_id)
-            _ADOPTED.discard(turn_id)
-            with _TURNS_LOCK:
-                _IN_FLIGHT.pop(turn_id, None)
-            raise
-        summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
-                                  f"{', exited' if exited else ''})")
+            _adopt_one(runner_id, d, summary)
+        except Exception as exc:  # noqa: BLE001 — one turn never costs the others theirs
+            _unstage_connections(d.name)  # nothing reserved for it outlives the failure
+            _log(f"adopt: could not take over {d.name[:8]}: {exc}")
     _log(f"adopt: {len(summary['adopted'])} turn(s) adopted [{', '.join(summary['adopted'])}]; "
          f"{len(summary['reported'])} reported failed [{', '.join(summary['reported'])}]; "
          f"{len(summary['swept'])} swept [{', '.join(summary['swept'])}]")
     return summary
+
+
+def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
+    """`adopt_turns`, for one turn's state directory."""
+    turn_id = d.name
+    if not d.is_dir() or not _CHAT_ID.match(turn_id):
+        return
+    state = _read_json(d / "turn.json") or {}
+    turn = state.get("turn") or {}
+    if not turn or state.get("runner_id") not in (None, runner_id):
+        shutil.rmtree(d, ignore_errors=True)
+        summary["swept"].append(f"{turn_id[:8]} (no usable state)")
+        return
+    turn["_resume_id"] = turn.get("_resume_id") or ""
+    if state.get("reported"):
+        # Its finish was posted; only the cleanup was cut short.
+        _adopted_cleanup(turn_id, state)
+        summary["swept"].append(f"{turn_id[:8]} (already reported)")
+        _lifecycle(turn_id, "swept", post=False, why="finish already reported")
+        return
+    attempt = d / state["attempt"] if state.get("attempt") else None
+    if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
+        note = ("[runner] the runner restarted while this turn was being set up; "
+                "its agent never started, so canopy-web may run it again")
+        _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+        _lifecycle(turn_id, "lost", reason="restarted during setup", agent=state.get("slug"))
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (setup)")
+        return
+    info = _read_json(attempt / "host.json") or {}
+    exited = (attempt / "exit.json").exists()
+    if not exited and not _is_relay(info.get("host_pid"), attempt):
+        proc = RelayProc.attach(attempt)
+        proc.poll()
+        note = proc.lost or "[runner] the turn's process was gone when the runner restarted"
+        body = {"status": "failed", "result_note": _result_note(note, turn)}
+        if state.get("cli_session_id"):
+            body["session_key"] = state["cli_session_id"]
+        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+        _lifecycle(turn_id, "lost", reason="process gone at adoption", pid=info.get("child_pid"),
+                   agent=state.get("slug"), session=state.get("cli_session_id"), http=fstatus)
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (process gone)")
+        return
+    if not _adopted_confined(state):
+        # Before the start clear, which spares what an adopted turn holds.
+        _reserve_adopted_connections(runner_id, turn_id, state.get("slug") or "",
+                                     state.get("connections"))
+    try:
+        with _TURNS_LOCK:
+            _IN_FLIGHT[turn_id] = None
+        thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
+                                  daemon=True, name=f"adopted-{turn_id[:8]}")
+        with _TURNS_LOCK:
+            _IN_FLIGHT[turn_id] = thread
+        _ADOPTED.add(turn_id)
+        thread.start()
+    except Exception as exc:  # noqa: BLE001 — one turn never costs the others theirs
+        # No worker will run to release what was reserved for it. Its state stays:
+        # the lease sweep notes it, and the next daemon tries again.
+        _unstage_connections(turn_id)
+        _ADOPTED.discard(turn_id)
+        with _TURNS_LOCK:
+            _IN_FLIGHT.pop(turn_id, None)
+        _log(f"adopt: could not start a worker for {turn_id[:8]}: {exc}")
+        summary["swept"].append(f"{turn_id[:8]} (worker did not start)")
+        return
+    summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
+                              f"{', exited' if exited else ''})")
 
 
 #: Turn ids this daemon adopted: the start sweeps leave what they hold alone.
@@ -12630,12 +12642,33 @@ def _adopted_cwds() -> set[str]:
     return out
 
 
-def _adopted_cleanup(turn_id: str, state: dict) -> None:
-    """What `_run_turn`'s `finally` does for a turn, for one this daemon did not run."""
+def _adopted_cleanup(turn_id: str, state: dict, *, keep_state: bool = False) -> None:
+    """What `_run_turn`'s `finally` does for a turn, for one this daemon did not run.
+    `keep_state` keeps its (secret-free) state file: a turn that failed to be adopted,
+    kept for diagnosis; the next daemon sweeps it as already reported."""
     remove_turn_env(str(turn_id))
     _remove_agent_token(str(turn_id))
     _remove_scoped_token(str(turn_id))
-    _drop_turn_state(turn_id)
+    if not keep_state:
+        _drop_turn_state(turn_id)
+
+
+def _stop_adopted_cli(proc) -> None:
+    """A turn concluded failed while its CLI may still run: stop it, then wait for the
+    relay to record its exit (SIGKILL after a grace). Never raises."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not stop an adopted turn's CLI (pid {getattr(proc, 'pid', '?')}): {exc}")
 
 
 def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
@@ -12651,14 +12684,27 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
         _api("POST", f"/turns/{_tid}/events", {"events": events})
 
     _TURN_ENV.relay_turn = turn_id
+    keep_state = False
     # Everything inside the try whose finally unstages: any raise lets go of what
     # adoption reserved (`_reserve_adopted_connections`).
     try:
-        proc = RelayProc.attach(attempt)
-        exited = proc.poll() is not None
-        _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
-                   session=state.get("cli_session_id"), attempt=attempt.name, exited=exited)
-        lease_stop = _start_lease_renewal(runner_id, turn_id)
+        proc = None
+        try:
+            proc = RelayProc.attach(attempt)
+            exited = proc.poll() is not None
+            _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
+                       session=state.get("cli_session_id"), attempt=attempt.name, exited=exited)
+            lease_stop = _start_lease_renewal(runner_id, turn_id)
+        except Exception as exc:  # noqa: BLE001
+            # The turn cannot be followed: it ends failed as the read below would, its
+            # CLI is stopped, and its state stays (marked reported) for diagnosis.
+            keep_state = True
+            _unstage_connections(turn_id)
+            _stop_adopted_cli(proc)
+            _conclude_adopted(runner_id, turn_id, turn, state, False,
+                              f"runner error while adopting the turn: {exc}",
+                              state.get("cli_session_id") or "", cwd, slug)
+            return
         try:
             if exited or _adopted_confined(state):
                 # A CLI that already exited needs no token; a confined turn holds none.
@@ -12694,7 +12740,10 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
         _TURN_ENV.relay_turn = ""
         _ADOPTED.discard(turn_id)
         _unstage_connections(turn_id)   # idempotent: whatever exit skipped the one above
-        _adopted_cleanup(turn_id, state)
+        if keep_state:
+            _adopted_cleanup(turn_id, state, keep_state=True)
+        else:
+            _adopted_cleanup(turn_id, state)
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _clear_stop(turn_id)

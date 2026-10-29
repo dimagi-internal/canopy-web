@@ -438,8 +438,7 @@ def test_an_adopted_agent_turn_keeps_restages_and_unstages_its_connections(cr, t
     assert mine.exists()
     assert not other_provider.exists() and not leftover.exists()
     # Staged as a new turn's start: the same listing, the same CLI, for this turn.
-    assert _wait(lambda: mine.exists() and json.loads(mine.read_text())["access_token"] == "NEW")
-    assert _wait(lambda: TURN in cr._CONN_HOLDS)
+    assert _wait(lambda: seen["cli"])                    # recorded after the CLI's write
     assert seen["listed"] == [f"/runners/rid/turns/{TURN}/connections"]
     assert seen["cli"][0][-6:] == ["--runner-id", "rid", "--turn", TURN, "--min-life", "900"]
     assert json.loads(mine.read_text())["access_token"] == "NEW"
@@ -490,18 +489,79 @@ def test_an_adopted_turn_whose_cli_already_exited_stages_nothing(cr, tmp_path, m
     assert seen == {"listed": [], "cli": []} and cr._CONN_HOLDS == {} and not f.exists()
 
 
-def test_an_adopted_turn_whose_attach_fails_lets_go_of_its_connections(cr, tmp_path, monkeypatch, conns):
+def _finishes(cr):
+    return [b for (_m, p, b) in cr._calls if p == f"/turns/{TURN}/finish"]
+
+
+def test_an_adopted_turn_whose_attach_fails_is_reported_and_kept(cr, tmp_path, monkeypatch, conns):
     _seen, staged = conns
     _quiet_conclusion(cr, monkeypatch)
     mine = staged()
     sibling = staged(slug="ace")
+    d = _state(cr, tmp_path, cli_session_id="sess-1")
     cr._reserve_adopted_connections("rid", TURN, "echo", ["salesforce"])
     cr._reserve_adopted_connections("rid", "other-turn", "ace", ["salesforce"])
 
     def boom(_attempt):
         raise OSError("attempt dir unreadable")
     monkeypatch.setattr(cr.RelayProc, "attach", staticmethod(boom))
-    state = {"turn": {"id": TURN}, "attempt": "attempt-1", "slug": "echo", "cwd": str(tmp_path)}
-    cr._adopt_turn("rid", TURN, state)        # a worker never raises: it logs and cleans up
+    cr._adopt_turn("rid", TURN, json.loads((d / "turn.json").read_text()))
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and finish["session_key"] == "sess-1"
+    assert "runner error while adopting the turn: attempt dir unreadable" in finish["result_note"]
+    assert json.loads((d / "turn.json").read_text())["reported"] is True   # kept for diagnosis
     assert TURN not in cr._CONN_HOLDS and not mine.exists()
     assert sibling.exists() and "other-turn" in cr._CONN_HOLDS
+
+
+def test_an_adopted_turn_whose_lease_fails_to_start_stops_its_cli(cr, tmp_path, monkeypatch, conns):
+    _seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()
+    gate = tmp_path / "gate"                  # never opened: the CLI would run forever
+    proc = cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
+                              env=dict(os.environ), stdin=False, executor="cli")
+    d = _state(cr, tmp_path, connections=["salesforce"], confined=False)
+    cr._reserve_adopted_connections("rid", TURN, "echo", ["salesforce"])
+
+    def no_lease(rid, tid):
+        raise RuntimeError("lease thread")
+    monkeypatch.setattr(cr, "_start_lease_renewal", no_lease)
+    cr._adopt_turn("rid", TURN, json.loads((d / "turn.json").read_text()))
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and "lease thread" in finish["result_note"]
+    assert cr.RelayProc.attach(proc.dir).poll() is not None             # the CLI was stopped
+    assert (d / "turn.json").exists() and cr._CONN_HOLDS == {} and not mine.exists()
+
+
+def test_a_worker_that_does_not_start_releases_and_the_next_turn_is_adopted(cr, tmp_path, monkeypatch, conns):
+    _seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()
+    # TURN: its CLI exited; its worker will fail to start.
+    d = _state(cr, tmp_path, connections=["salesforce"], confined=False)
+    (d / "attempt-1").mkdir()
+    (d / "attempt-1" / "exit.json").write_text(json.dumps({"code": 0}))
+    # A second turn, adopted normally.
+    other = "1f3c2a1e-1111-4222-8333-444455556667"
+    proc = cr.RelayProc.spawn(other, _fake_cli(tmp_path), cwd=tmp_path,
+                              env=dict(os.environ), stdin=False, executor="cli")
+    assert proc.wait(timeout=15) == 0
+    od = cr.TURN_STATE_ROOT / other
+    state = json.loads((d / "turn.json").read_text())
+    state["turn"] = {"id": other, "target": "agent:echo"}
+    (od / "turn.json").write_text(json.dumps(state))
+    real_thread = cr.threading.Thread
+
+    class Thread(real_thread):
+        def start(self):
+            if self.name == f"adopted-{TURN[:8]}":
+                raise RuntimeError("can't start new thread")
+            super().start()
+    monkeypatch.setattr(cr.threading, "Thread", Thread)
+
+    summary = cr.adopt_turns("rid")
+    assert [a.split()[0] for a in summary["adopted"]] == [other[:8]]
+    assert TURN not in cr._ADOPTED and TURN not in cr._in_flight_ids()
+    assert TURN not in cr._CONN_HOLDS and not mine.exists()
+    assert _wait(lambda: other not in cr._in_flight_ids())
