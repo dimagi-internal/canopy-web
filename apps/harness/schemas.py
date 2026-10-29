@@ -1344,9 +1344,7 @@ class ClaimedTurnOut(TurnOut):
 
     @staticmethod
     def resolve_page_site(obj) -> dict | None:
-        from apps.agents.interface import (
-            page_turn,  # noqa: PLC0415 — as resolve_caller_context: the interface reads models, loaded with a call
-        )
+        from apps.agents.interface import page_turn  # noqa: PLC0415 — as resolve_caller_context: the interface reads models, loaded with a call
 
         return page_turn(obj)
 
