@@ -27,6 +27,7 @@ from apps.agents.models import (
     AgentCredential,
     AgentCredentialAlert,
     AgentCredentialRead,
+    AgentLicense,
     AgentPatRotation,
     AgentVaultWrap,
     Vault,
@@ -1671,8 +1672,6 @@ def test_a_browser_rotates_a_workspace_vault_only_after_a_passkey_step_up(fleet)
 def _members_own_laptop(fleet, name):
     """A vault member who does NOT manage it registers and approves their own computer,
     which reads the agent through their license (as egeoffroy's DIM-W154 reads ACE)."""
-    from apps.agents.models import AgentLicense
-
     ed, priv = _editor_with_a_key(fleet, name=name)
     AgentLicense.objects.create(agent=fleet.agent, user=ed, status=AgentLicense.ACTIVE, basis="test")
     laptop = Runner.objects.create(name=f"{name}-laptop", kind=Runner.COMPUTER, owner=ed, private=True,

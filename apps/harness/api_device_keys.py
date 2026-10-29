@@ -34,6 +34,7 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.passkeys import stepup
+from apps.passkeys.models import UserVaultKeyset
 
 from . import device_key_notify, device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey, RunnerFleet
@@ -355,8 +356,7 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
     manager grants directly."""
     if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
         return []
-    from apps.agents.credentials import vault_members, zk
-    from apps.passkeys.models import UserVaultKeyset
+    from apps.agents.credentials import vault_members, zk  # noqa: PLC0415 — cycle via apps.agents.credentials
 
     # Whose machine it is: the runner's owner, else whoever approves it — the caller,
     # for a key they are about to approve.
