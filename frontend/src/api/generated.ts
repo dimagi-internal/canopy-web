@@ -441,10 +441,10 @@ export interface paths {
          *     command line. Needs a personal access token sent as a bearer: a browser
          *     session, an MCP call, an OAuth connector's token and a conversation's caller
          *     token are all refused (403 `token_route_needs_pat`), so neither a stolen
-         *     cookie nor a model holding my token can pull a Salesforce token. 409 when I
+         *     cookie nor a model holding my token can pull a provider token. 409 when I
          *     have not connected, or must reconnect (`connect_url`, an absolute URL, says
          *     where). `?refresh=true` forces a new token even when the cached one looks
-         *     fresh (for a CLI whose token Salesforce already rejected).
+         *     fresh (for a CLI whose token the provider already rejected).
          */
         readonly post: operations["my_connection_token"];
         readonly delete?: never;
@@ -10963,6 +10963,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which connections one claimed turn's agent can use
+         * @description The providers the turn's AGENT has a connection for — its own, or one
+         *     granted to it — so the runner fetches a token for each of those and calls
+         *     nothing for an agent with none. No token here. 404 unless this runner holds
+         *     the turn (always for a caller's turn); 409 `no_agent` for a turn that runs
+         *     as no agent.
+         */
+        readonly get: operations["turn_connections"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token": {
         readonly parameters: {
             readonly query?: never;
@@ -10973,12 +10997,13 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * One claimed turn's agent connection token (Salesforce)
-         * @description A short-lived access token for the connection the turn's AGENT uses: its
-         *     own, else one granted to it — never the person who started the turn. 404 unless
-         *     this runner holds the turn, and always for a caller's turn (one confined to a
-         *     capability). 409 with `error` set to `no_agent`, `not_connected`, `ambiguous`,
-         *     `reconnect_required` or `not_configured`; 502/503 when the provider fails.
+         * One claimed turn's agent connection token
+         * @description A short-lived access token for the connection the turn's AGENT uses for
+         *     `provider`: its own, else one granted to it — never the person who started
+         *     the turn. 404 for an unknown provider, unless this runner holds the turn, and
+         *     always for a caller's turn (one confined to a capability). 409 with `error`
+         *     set to `no_agent`, `not_connected`, `ambiguous`, `reconnect_required` or
+         *     `not_configured`; 502 `provider_error`, 503 `provider_unavailable`.
          *     `min_life_seconds` (default 300) is how long the token must still live;
          *     `refresh` forces a new one.
          */
@@ -17756,11 +17781,14 @@ export interface components {
              * @description Which account this is (e.g. a Salesforce username).
              */
             readonly account_label: string;
-            /** Instance Url */
+            /**
+             * Instance Url
+             * @description The account's own API base URL, for a provider that has one per account (Salesforce); empty for a provider whose API host is fixed.
+             */
             readonly instance_url: string;
             /**
              * Scopes
-             * @description What the grant allows at the provider (Salesforce: `api`, `refresh_token`).
+             * @description What the grant allows at the provider (e.g. `api`, `refresh_token`).
              */
             readonly scopes?: readonly string[];
             /**
@@ -17802,12 +17830,12 @@ export interface components {
         readonly ProviderOut: {
             /**
              * Name
-             * @description The provider's stable key, e.g. `salesforce`.
+             * @description The provider's stable key, e.g. `salesforce`: the `{provider}` in every connection URL.
              */
             readonly name: string;
             /**
              * Title
-             * @description What to call it in the UI.
+             * @description What to call it in the UI, e.g. `Salesforce`.
              */
             readonly title: string;
             /**
@@ -17820,7 +17848,10 @@ export interface components {
         readonly AccessTokenOut: {
             /** Access Token */
             readonly access_token: string;
-            /** Instance Url */
+            /**
+             * Instance Url
+             * @description The account's API base URL; empty when the provider's is fixed.
+             */
             readonly instance_url: string;
             /**
              * Expires At
@@ -35915,6 +35946,14 @@ export interface components {
             /** Expect */
             readonly expect: string;
         };
+        /** TurnConnectionsOut */
+        readonly TurnConnectionsOut: {
+            /**
+             * Providers
+             * @description Provider keys the turn's agent has a connection for (its own or one shared with it), sorted. Empty for most agents.
+             */
+            readonly providers: readonly string[];
+        };
         /** TurnConnectionTokenIn */
         readonly TurnConnectionTokenIn: {
             /** Provider */
@@ -35927,7 +35966,7 @@ export interface components {
             readonly min_life_seconds: number;
             /**
              * Refresh
-             * @description Refresh even if the cached token looks fresh (Salesforce already rejected it).
+             * @description Refresh even if the cached token looks fresh (the provider already rejected it).
              * @default false
              */
             readonly refresh: boolean;
@@ -58421,6 +58460,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlotSecretResealOut"];
+                };
+            };
+        };
+    };
+    readonly turn_connections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnConnectionsOut"];
                 };
             };
         };
