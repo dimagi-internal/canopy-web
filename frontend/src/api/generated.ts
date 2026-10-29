@@ -20300,6 +20300,11 @@ export interface components {
              * @default false
              */
             readonly confirmed: boolean;
+            /**
+             * Requested
+             * @default false
+             */
+            readonly requested: boolean;
         };
         /** PanelGrantOut */
         readonly PanelGrantOut: {

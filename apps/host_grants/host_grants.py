@@ -242,9 +242,22 @@ def _inherit(grant) -> None:
     held = (confirmed(unexpired(same_page(grant)))
             .order_by("-confirmed_at", "-pk").first())
     if held is None:
+        # Still waiting: an agent's ask (`ask`) carries over too, or a renewal
+        # mid-turn would close the prompt the person is about to answer.
+        asked = pending(same_page(grant)).filter(requested_at__isnull=False).order_by("requested_at").first()
+        if asked is not None:
+            grant.requested_at = asked.requested_at
         return
     grant.confirmed_at = held.confirmed_at
     grant.expires_at = min(grant.expires_at, held.confirmed_at + timedelta(seconds=CONFIRM_SECONDS))
+
+
+def ask(grant) -> int:
+    """An agent needs `grant`, still waiting for the passkey: mark its page's waiting
+    rows requested, so the panel (which polls them) asks the person now. A send alone
+    never asks — the turn may never act as them. Returns how many rows it marked."""
+    return pending(same_page(grant)).filter(requested_at__isnull=True).update(
+        requested_at=timezone.now())
 
 
 def confirm(grant, *, now=None) -> None:
@@ -263,12 +276,14 @@ NONE, EXPIRED, REVOKED, UNCONFIRMED = "none", "expired", "revoked", "unconfirmed
 
 class Lookup:
     """`lookup`'s answer: the grant, or why there is none (`NONE`/`EXPIRED`/`REVOKED`/
-    `UNCONFIRMED`)."""
+    `UNCONFIRMED`). For `UNCONFIRMED`, `waiting` is the grant that waits for the
+    passkey, so the caller can `ask` the person for it."""
 
-    __slots__ = ("grant", "reason")
+    __slots__ = ("grant", "reason", "waiting")
 
-    def __init__(self, grant=None, reason: str = ""):
+    def __init__(self, grant=None, reason: str = "", waiting=None):
         self.grant, self.reason = grant, ("" if grant is not None else (reason or NONE))
+        self.waiting = waiting
 
 
 def unexpired(rows):
@@ -349,7 +364,7 @@ def lookup(app, *, agent, contact=None, user=None, session=None) -> Lookup:
         if grant.expires_at <= timezone.now():
             return Lookup(reason=EXPIRED)
         if grant.confirmed_at is None:
-            return Lookup(reason=UNCONFIRMED)
+            return Lookup(reason=UNCONFIRMED, waiting=grant)
         return Lookup(grant)
     # Bound before unbound (NULLs last), then the latest arrival — live rows only,
     # so an expired bound grant can never sort ahead of a live unbound one.

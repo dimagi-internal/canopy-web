@@ -92,6 +92,16 @@ def page_grant_unconfirmed(agent_name: str) -> str:
             "passkey — send again and confirm when the panel asks.")
 
 
+#: An agent's turn needed the page's permission, still waiting for the passkey, and
+#: canopy has just asked the person in the panel (`host_grants.ask`). Said to the
+#: agent, which can wait and retry: the person may be confirming right now.
+def page_grant_asked(agent_name: str) -> str:
+    return (f"I have asked the person to confirm with their passkey, in the panel, that "
+            f"{agent_name} may act as them on this page. Wait about 20 seconds and try this "
+            "call again; if it is still not confirmed after a few tries, tell them what you "
+            "need it for and carry on without it.")
+
+
 def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> str:
     """What to tell the person when `host_grants.lookup` found no grant, by its reason."""
     from .host_grants import EXPIRED, REVOKED, UNCONFIRMED  # noqa: PLC0415 — as `resolve`: host_grants reads models, loaded with a call
@@ -246,12 +256,17 @@ def resolve(turn_id: str) -> SiteContext:
     # WHICH agent: a grant a page bound to another agent is not this one's. And
     # from WHICH page: the one that last acted in this conversation as them, while
     # it lives — never another page's, never their latest.
-    from .host_grants import EXPIRED, REVOKED, UNCONFIRMED, lookup  # noqa: PLC0415 — host_grants reads models, loaded with a call
+    from .host_grants import EXPIRED, REVOKED, UNCONFIRMED, ask, lookup  # noqa: PLC0415 — host_grants reads models, loaded with a call
 
     found = lookup(app, agent=agent, contact=turn.initiator_contact,
                    user=turn.initiator_user if not turn.initiator_contact_id else None,
                    session=session)
     grant = found.grant
+    if grant is None and found.waiting is not None:
+        # The page holds a permission the person has not confirmed: the panel asks
+        # for their passkey only now, when this turn actually needs it.
+        ask(found.waiting)
+        raise GatewayRefusal("unconfirmed", page_grant_asked(agent.name or agent.slug))
     if grant is None:
         code = {EXPIRED: "expired", REVOKED: "revoked",
                 UNCONFIRMED: "unconfirmed"}.get(found.reason, "no_grant")

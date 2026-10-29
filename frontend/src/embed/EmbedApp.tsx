@@ -407,9 +407,10 @@ export function EmbedApp({ link, app }: Props) {
       // act-as-you permission, and the conversation is created (and so stamped)
       // with the token that carries it.
       await pageGrant.ensure()
-      // The permission the host just granted is usable only once the person
-      // confirms it with their passkey (or declines): the turn waits for that.
-      await pageGrant.settled()
+      // The permission is usable only once the person confirms it with their
+      // passkey, and the panel asks for that only if the turn needs it: the send
+      // never waits, and the tab watches for the turn's ask.
+      pageGrant.watch()
       const declared = link.pageState()
       const context = declared ? null : pendingContext.current
       const body = context ? `${text}\n\n${context}` : text
@@ -1130,15 +1131,23 @@ function EmbedChat({
   /** The person acted in this conversation: make sure this tab holds a grant, and
    *  when this is what asked for one, tell canopy the page acted here (a page
    *  declaration stamps the conversation with the new token's grant) — before the
-   *  turn this send starts, so the turn reads through it. */
+   *  turn this send starts, so the turn reads through it. A send never waits for
+   *  the passkey: the tab watches, and asks only if the turn needs it. */
   const withGrant = useCallback(async () => {
     if (!pageGrant) return
     if (await pageGrant.ensure()) {
       await declarePage(client, link, sessionBase(isContact, sessionId))
     }
-    // Usable only once confirmed with the passkey (or declined): wait for it.
-    await pageGrant.settled()
+    pageGrant.watch()
   }, [pageGrant, client, link, isContact, sessionId])
+  /** A live card needs the grant now: ask for the passkey and wait for the
+   *  person's answer (confirmed or declined) before it tries again. */
+  const grantForCard = useCallback(async () => {
+    if (!pageGrant) return
+    await withGrant()
+    pageGrant.need()
+    await pageGrant.settled()
+  }, [pageGrant, withGrant])
   // No tool calls ever arrive here: canopy withholds them from every widget
   // connection, decided by the token rather than asked for (consumers.py).
   // A one-time ticket per connection rather than the token on the URL: URLs are
@@ -1369,9 +1378,9 @@ function EmbedChat({
     [sealedFiles, sealed.key, sealed.unlock, sealedFilesApi])
   const appHost = useMemo(
     () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates,
-                                     pageGrant ? withGrant : undefined),
+                                     pageGrant ? { forCard: grantForCard, forSend: withGrant } : undefined),
                         () => keyRef.current, keyOpen),
-    [client, sessionId, isContact, expanded, keyRef, appUpdates, keyOpen, pageGrant, withGrant])
+    [client, sessionId, isContact, expanded, keyRef, appUpdates, keyOpen, pageGrant, withGrant, grantForCard])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -1622,7 +1631,9 @@ function EmbedChat({
  *  under `/api/contact/` for a contact (their whole surface) — through the
  *  panel's own client, so the visitor's token is what authorises every click. */
 function embedAppHost(client: CanopyClient, sessionPath: string, expanded = false,
-                      updates?: AppResourceUpdates, withGrant?: () => Promise<void>): AppHost {
+                      updates?: AppResourceUpdates,
+                      grant?: { forCard: () => Promise<void>, forSend: () => Promise<void> }): AppHost {
+  const withGrant = grant?.forCard
   const at = (callId: string) => `${sessionPath}/apps/${encodeURIComponent(callId)}`
   // A View reading the site as the person needs this tab's act-as-you permission.
   // Opening their own conversation is the person's act, so a card that finds none
@@ -1654,7 +1665,7 @@ function embedAppHost(client: CanopyClient, sessionPath: string, expanded = fals
       send<void>(`${at(callId)}/context`, 'PUT', params).then(() => undefined),
     // A View's ui/message is the person sending: the grant first, as for a typed send.
     sendMessage: (callId, text) =>
-      (withGrant ? withGrant() : Promise.resolve())
+      (grant ? grant.forSend() : Promise.resolve())
         .then(() => send<void>(`${at(callId)}/message`, 'POST', { text, client_id: newClientId() }))
         .then(() => undefined),
     subscribe: (callId, uri) => send<void>(`${at(callId)}/subscribe`, 'POST', { uri }).then(() => undefined),
@@ -1746,21 +1757,28 @@ function ConversationFacts({ pageName, audience, sensitive, pageGrant, agentName
 }
 
 
-/** The passkey prompt for an act-as-you permission the page is waiting on. Nothing
- *  the host granted is usable until the person confirms here, in canopy's frame;
- *  "Not now" stops it and the message goes without. Its own button, because
+/** The passkey prompt for an act-as-you permission the page is waiting on, shown only
+ *  once something needs it: the agent's turn tried to act as the person, or a live
+ *  card did (`pageGrant.asking`). Nothing the host granted is usable until the
+ *  person confirms here, in canopy's frame; "Not now" stops it, and the agent is
+ *  told so when it tries again. Its own button, because
  *  Safari runs WebAuthn only inside a click. Where the frame cannot use a passkey
  *  (the Canopy Runner app), or the passkey failed here, the person confirms the same
  *  grant on canopy's page in their browser, and this prompt closes when it sees that
  *  (`passkeyHere.ts`). */
 function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGrant; agentName: string }) {
   const [grant, setGrant] = useState(() => pageGrant.current())
+  const [asking, setAsking] = useState(() => pageGrant.asking())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [inBrowser, setInBrowser] = useState(false)
-  useEffect(() => pageGrant.subscribe(() => setGrant(pageGrant.current())), [pageGrant])
-  useWhileAway(() => pageGrant.refresh(), inBrowser && !!grant && !grant.confirmed)
-  if (!grant || grant.confirmed) return null
+  useEffect(() => pageGrant.subscribe(() => {
+    setGrant(pageGrant.current())
+    setAsking(pageGrant.asking())
+  }), [pageGrant])
+  useWhileAway(() => pageGrant.refresh(), inBrowser && asking)
+  // Only once something needs it (the turn or a card): a send alone never asks.
+  if (!grant || !asking) return null
   const who = grant.agent_name || agentName
   const here = passkeysWorkHere()
   const confirmInBrowser = () => {
