@@ -40,6 +40,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
+from apps.events import services as events
 from apps.passkeys import stepup
 
 from .gates import agent_for_work
@@ -72,7 +73,7 @@ class AwsCredentialsOut(Schema):
 
 def sts_client():
     """The one seam tests replace. canopy-web's task role is the caller."""
-    import boto3
+    import boto3  # noqa: PLC0415 — boto3 is heavy; tests replace this seam and never import it
 
     return boto3.client("sts", region_name=getattr(settings, "CANOPY_AWS_STS_REGION", "us-east-1"))
 
@@ -123,8 +124,6 @@ def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentia
     if isinstance(expiration, dt.datetime):
         expiration = expiration.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        from apps.events import services as events
-
         events.record(
             [{
                 "source": "agents.aws",

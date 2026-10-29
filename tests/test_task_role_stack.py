@@ -43,7 +43,11 @@ def test_the_role_is_named_and_only_ecs_tasks_in_this_account_assume_it():
 def test_the_role_carries_ecs_exec_attachments_and_embedding_models_only():
     t = _load("canopy-web-task-role.cfn.yaml")
     st = _statements(t["Resources"]["TaskRole"]["Properties"])
-    assert set(st) == {"EcsExec", "AttachmentsObjects", "EmbeddingModels", "EmbeddingRetentionCheck"}
+    assert set(st) == {"EcsExec", "AttachmentsObjects", "EmbeddingModels", "EmbeddingRetentionCheck",
+                       "VendLabsObserve"}
+    # apps/agents/api_aws.py: one named read-only role, never sts:AssumeRole on '*'.
+    assert st["VendLabsObserve"]["Resource"] == {
+        "Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-observe-readonly"}
     assert st["EmbeddingRetentionCheck"]["Action"] == "bedrock:GetModelInvocationLoggingConfiguration"
     assert all(a.startswith("ssmmessages:") for a in st["EcsExec"]["Action"])
     assert set(st["AttachmentsObjects"]["Action"]) == {"s3:PutObject", "s3:GetObject", "s3:DeleteObject"}
