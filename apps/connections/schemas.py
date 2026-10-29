@@ -36,6 +36,11 @@ class ConnectionOut(StrictModel):
         description="For an agent's list: the slug of the agent that owns this connection, "
                     "when it is shared with this agent rather than its own.",
     )
+    shared_with: list[str] = Field(
+        default_factory=list,
+        description="For an agent's own connection: slugs of the agents it is shared with, sorted. "
+                    "Empty for a person's connection and for one shared with this agent.",
+    )
 
 
 class ConnectionsOut(StrictModel):

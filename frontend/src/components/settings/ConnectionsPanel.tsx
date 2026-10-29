@@ -24,7 +24,7 @@ export function ConnectionsPanel() {
   const outcome = params.get('connection') ? params : null
 
   const load = useCallback(() => {
-    listMyConnections().then(setData).catch(() => setError('Could not read your connections.'))
+    listMyConnections().then((d) => { setData(d); setError('') }).catch(() => setError('Could not read your connections.'))
   }, [])
   useEffect(load, [load, outcome?.get('status')])
 
@@ -57,7 +57,7 @@ export function ConnectionsPanel() {
           Accounts canopy holds for you, so your tools can act as you without a token on your laptop.
         </p>
       </div>
-      <ConnectOutcome params={outcome} onDismiss={dismiss} />
+      <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
       {error && <p className="text-[13px] text-destructive">{error}</p>}
       {data.providers.map((p) => (
         <ProviderRow
@@ -74,22 +74,36 @@ export function ConnectionsPanel() {
 }
 
 /** The `?connection=…&status=…&reason=…` result banner, shared with the agent panel. */
+const REASONS: Record<string, string> = {
+  not_configured: 'is not set up on this deployment.',
+  access_denied: 'was not approved on the provider’s consent screen.',
+  bad_state: 'took too long or was started elsewhere. Try again.',
+  forbidden: 'needs an administrator of the agent.',
+}
+
+/** The `?connection=…&status=…&reason=…` result banner, shared with the agent panel.
+ *  The query string is attacker-controllable, so nothing from it is shown
+ *  verbatim: the provider only if it is a known one, the reason only as a fixed string. */
 export function ConnectOutcome({
   params,
   onDismiss,
+  knownProviders,
 }: {
   params: URLSearchParams | null
   onDismiss: () => void
+  knownProviders: readonly { name: string; title: string }[]
 }) {
-  const provider = params?.get('connection')
-  if (!params || !provider) return null
+  const key = params?.get('connection')
+  if (!params || !key) return null
+  const known = knownProviders.find((p) => p.name === key)
+  const who = known ? known.title : 'The connection'
   const ok = params.get('status') === 'connected'
-  const reason = params.get('reason')
+  const reason = REASONS[params.get('reason') ?? '']
   const text = ok
-    ? `${provider} connected.`
-    : reason === 'not_configured'
-      ? `${provider} is not set up on this deployment.`
-      : `Connecting ${provider} failed${reason ? ` (${reason})` : ''}. Try again.`
+    ? `${who} connected.`
+    : reason
+      ? `${who} ${reason}`
+      : `Connecting ${known ? known.title : 'the service'} failed. Try again.`
   return (
     <div
       role="status"

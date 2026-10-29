@@ -17774,6 +17774,11 @@ export interface components {
              * @description For an agent's list: the slug of the agent that owns this connection, when it is shared with this agent rather than its own.
              */
             readonly granted_from?: string | null;
+            /**
+             * Shared With
+             * @description For an agent's own connection: slugs of the agents it is shared with, sorted. Empty for a person's connection and for one shared with this agent.
+             */
+            readonly shared_with?: readonly string[];
         };
         /** ConnectionsOut */
         readonly ConnectionsOut: {

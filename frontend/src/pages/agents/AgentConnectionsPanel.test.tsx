@@ -21,7 +21,7 @@ function conn(over: Record<string, unknown> = {}) {
     id: 3, provider: 'salesforce', title: 'Salesforce', account_label: 'eva@dimagi-ai.com',
     instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false,
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
-    granted_from: null, ...over,
+    granted_from: null, shared_with: [], ...over,
   }
 }
 const show = () =>
@@ -60,16 +60,29 @@ describe('AgentConnectionsPanel', () => {
     expect((screen.getByRole('button', { name: 'Connect Other' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('shares an own connection with another agent, and stops sharing', async () => {
-    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
+  it('shares with another agent (chip appears, picker clears), then stops sharing (chip goes)', async () => {
+    let sharedWith: string[] = []
+    m.listAgentConnections.mockImplementation(async () => ({
+      providers: [PROVIDER], connections: [conn({ shared_with: sharedWith })],
+    }))
+    m.grantConnection.mockImplementation(async (_s: string, _i: number, to: string) => { sharedWith = [to] })
+    m.revokeConnectionGrant.mockImplementation(async () => { sharedWith = [] })
     show()
-    const sel = await screen.findByLabelText('Share with')
+    const sel = (await screen.findByLabelText('Share with')) as HTMLSelectElement
     await screen.findByRole('option', { name: 'echo' })
+    // The agent itself is never offered.
+    expect(screen.queryByRole('option', { name: 'eva' })).toBeNull()
     fireEvent.change(sel, { target: { value: 'echo' } })
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(m.grantConnection).toHaveBeenCalledWith('eva', 3, 'echo'))
-    fireEvent.click(screen.getByRole('button', { name: 'Stop sharing' }))
+    const stop = await screen.findByRole('button', { name: 'Stop sharing with echo' })
+    expect(screen.getByText('Shared with echo.')).toBeTruthy()
+    // Already shared: not offered again, so the picker has nothing left.
+    expect(screen.queryByLabelText('Share with')).toBeNull()
+    fireEvent.click(stop)
     await waitFor(() => expect(m.revokeConnectionGrant).toHaveBeenCalledWith('eva', 3, 'echo'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop sharing with echo' })).toBeNull())
+    expect(((await screen.findByLabelText('Share with')) as HTMLSelectElement).value).toBe('')
   })
 
   it('shows a connection shared by another agent and lets the admin stop using it', async () => {
@@ -81,5 +94,16 @@ describe('AgentConnectionsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Stop using' }))
     await waitFor(() => expect(m.revokeConnectionGrant).toHaveBeenCalledWith('hal', 9, 'eva'))
+  })
+
+  it('never prints query-string text it does not know', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    render(
+      <MemoryRouter initialEntries={['/x?connection=%3Cb%3Eevil&status=error&reason=Send%20money']}>
+        <AgentConnectionsPanel agent={{ slug: 'eva' }} />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('Connecting the service failed. Try again.')).toBeTruthy()
+    expect(screen.queryByText(/evil|money/)).toBeNull()
   })
 })

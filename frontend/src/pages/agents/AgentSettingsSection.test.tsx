@@ -189,4 +189,17 @@ describe('AgentSettingsSection', () => {
       agentOverride = {}
     }
   })
+
+  it('shows the connections panel to an admin only', () => {
+    at(`${BASE}/accounts`)
+    expect(screen.queryByText('connections-panel')).toBeNull()
+    cleanup()
+    agentOverride = { is_admin: true }
+    try {
+      at(`${BASE}/accounts`)
+      expect(screen.getByText('connections-panel')).toBeTruthy()
+    } finally {
+      agentOverride = {}
+    }
+  })
 })

@@ -136,6 +136,19 @@ def test_agent_list_has_own_and_granted(client, user, eva, echo):
     assert [(r["id"], r["granted_from"]) for r in eva_rows] == [(shared.pk, None)]
 
 
+def test_owned_row_lists_its_grantees_until_revoked(client, user, eva, echo):
+    conn = _stored({"agent": eva}, user)
+    url = f"/api/agents/eva/connections/{conn.pk}/grants/echo"
+    assert client.get("/api/agents/eva/connections").json()["connections"][0]["shared_with"] == []
+    assert client.put(url).status_code == 204
+    row = client.get("/api/agents/eva/connections").json()["connections"][0]
+    assert row["shared_with"] == ["echo"]
+    # The grantee's own view of it is a shared row: no list of grantees there.
+    assert client.get("/api/agents/echo/connections").json()["connections"][0]["shared_with"] == []
+    assert client.delete(url).status_code == 204
+    assert client.get("/api/agents/eva/connections").json()["connections"][0]["shared_with"] == []
+
+
 def test_agent_routes_need_admin(user, other, ws, eva):
     WorkspaceMembership.objects.create(workspace=ws, user=other, role=WorkspaceMembership.EDITOR)
     conn = _stored({"agent": eva}, user)

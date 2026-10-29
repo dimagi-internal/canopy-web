@@ -43,6 +43,9 @@ def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
         last_used_at=conn.last_used_at,
         connected_by_email=conn.connected_by.email or conn.connected_by.get_username(),
         granted_from=granted_from,
+        # Agent-owned, not itself a shared row. Callers prefetch `grants__agent`.
+        shared_with=(sorted(g.agent.slug for g in conn.grants.all())
+                     if conn.agent_id and granted_from is None else []),
     )
 
 
@@ -91,7 +94,7 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     """What this agent can act as: connections it owns, and ones another agent
     shares with it (`granted_from` names the owner). Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
-    own = services.connections_for(("agent", agent.pk)).select_related("connected_by")
+    own = services.connections_for(("agent", agent.pk)).select_related("connected_by").prefetch_related("grants__agent")
     granted = (Connection.objects.filter(grants__agent=agent).select_related("connected_by", "agent")
                .order_by("provider", "account_label", "pk").distinct())
     return ConnectionsOut(

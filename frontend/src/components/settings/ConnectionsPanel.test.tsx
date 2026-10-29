@@ -66,6 +66,6 @@ describe('ConnectionsPanel', () => {
   it('reports the callback result', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     at('/settings?connection=salesforce&status=error&reason=access_denied')
-    expect(await screen.findByText(/Connecting salesforce failed \(access_denied\)/)).toBeTruthy()
+    expect(await screen.findByText(/Salesforce was not approved/)).toBeTruthy()
   })
 })

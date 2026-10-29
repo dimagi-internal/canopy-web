@@ -26,12 +26,13 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<number | null>(null)
   const [pick, setPick] = useState<Record<number, string>>({})
+  const [notice, setNotice] = useState('')
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
 
   const load = useCallback(() => {
-    listAgentConnections(agent.slug).then(setData).catch(() => setError('Could not read the agent’s connections.'))
+    listAgentConnections(agent.slug).then((d) => { setData(d); setError('') }).catch(() => setError('Could not read the agent’s connections.'))
   }, [agent.slug])
   useEffect(load, [load, outcome?.get('status')])
   useEffect(() => {
@@ -46,11 +47,14 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
     setParams(next, { replace: true })
   }
 
-  async function run(id: number, what: () => Promise<void>) {
+  async function run(id: number, what: () => Promise<void>, done: string) {
     setBusy(id)
     setError('')
+    setNotice('')
     try {
       await what()
+      setNotice(done)
+      setPick((s) => ({ ...s, [id]: '' }))
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That did not work.')
@@ -63,8 +67,9 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
 
   return (
     <div className="space-y-4" data-testid="agent-connections">
-      <ConnectOutcome params={outcome} onDismiss={dismiss} />
+      <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
       {error && <p className="text-[13px] text-destructive">{error}</p>}
+      {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
       {data.providers.map((p) => {
         const rows = data.connections.filter((c) => c.provider === p.name)
         const own = rows.filter((c) => !c.granted_from)
@@ -81,9 +86,9 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 others={others}
                 picked={pick[c.id] ?? ''}
                 onPick={(v) => setPick((s) => ({ ...s, [c.id]: v }))}
-                onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id))}
-                onGrant={(to) => run(c.id, () => grantConnection(agent.slug, c.id, to))}
-                onRevoke={(to, owned) => run(c.id, () => revokeConnectionGrant(owned ? agent.slug : (c.granted_from ?? agent.slug), c.id, to))}
+                onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id), 'Disconnected.')}
+                onGrant={(to) => run(c.id, () => grantConnection(agent.slug, c.id, to), `Shared with ${to}.`)}
+                onRevoke={(to) => run(c.id, () => revokeConnectionGrant(c.granted_from ?? agent.slug, c.id, to), c.granted_from ? 'Stopped using it.' : `Stopped sharing with ${to}.`)}
                 self={agent.slug}
               />
             ))}
@@ -113,10 +118,12 @@ function Row({
   onPick: (v: string) => void
   onDisconnect: () => void
   onGrant: (to: string) => void
-  onRevoke: (to: string, owned?: boolean) => void
+  onRevoke: (to: string) => void
   self: string
 }) {
   const shared = !!c.granted_from
+  const sharedWith = c.shared_with ?? []
+  const candidates = others.filter((s) => s !== self && !sharedWith.includes(s))
   return (
     <div className="space-y-2 rounded border border-border bg-muted/40 p-2.5" data-testid={`agent-connection-${c.id}`}>
       <div className="flex items-center justify-between gap-4">
@@ -147,7 +154,25 @@ function Row({
           )}
         </div>
       </div>
-      {!shared && others.length > 0 && (
+      {!shared && sharedWith.length > 0 && (
+        <ul className="flex flex-wrap items-center gap-2 text-[12px]" aria-label="Shared with">
+          {sharedWith.map((to) => (
+            <li key={to} className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5">
+              <span>{to}</span>
+              <button
+                type="button"
+                disabled={busy}
+                aria-label={`Stop sharing with ${to}`}
+                onClick={() => onRevoke(to)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                Stop sharing
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!shared && candidates.length > 0 && (
         <div className="flex items-center gap-2 text-[12px]">
           <label htmlFor={`share-${c.id}`} className="text-muted-foreground">Share with</label>
           <select
@@ -157,13 +182,10 @@ function Row({
             className="rounded border border-border bg-background px-2 py-1"
           >
             <option value="">Choose an agent…</option>
-            {others.map((s) => <option key={s} value={s}>{s}</option>)}
+            {candidates.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <Button size="sm" variant="outline" disabled={busy || !picked} onClick={() => onGrant(picked)}>
             Share
-          </Button>
-          <Button size="sm" variant="outline" disabled={busy || !picked} onClick={() => onRevoke(picked, true)}>
-            Stop sharing
           </Button>
         </div>
       )}
