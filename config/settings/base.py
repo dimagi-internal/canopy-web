@@ -865,14 +865,21 @@ else:
 # status codes and a repeated query param.
 #
 # `disable_existing_loggers: False` is load-bearing: uvicorn configures its own
-# loggers (including the access log this deployment is read through), and Django
-# applies this dictConfig at settings load. Setting it True would silence them.
+# loggers (its startup and error lines), and Django applies this dictConfig at
+# settings load. Setting it True would silence them.
+#
+# No log line carries a client address, a concrete path or a query string — a
+# path can be a bearer link (`/share/<token>`) and a query a live ticket.
+# uvicorn's access log is off (`--no-access-log` in the Dockerfile, and silenced
+# below), and `redact` (apps/common/log_redact.py) folds what remains to the
+# route template. tests/test_logs_carry_no_request_detail.py pins it.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "filters": {
         # The X-Request-Id of the request in flight (apps/common/request_context).
         "request_id": {"()": "apps.common.request_context.RequestIdFilter"},
+        "redact": {"()": "apps.common.log_redact.RedactRequestDetail"},
     },
     "formatters": {
         "verbose": {
@@ -884,10 +891,15 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
-            "filters": ["request_id"],
+            "filters": ["request_id", "redact"],
         },
     },
     "loggers": {
+        # uvicorn's access log: client address + full path and query per request.
+        "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
+        # uvicorn's own handler prints its WebSocket handshake lines (client
+        # address, path with query); the filter on the logger folds them.
+        "uvicorn.error": {"filters": ["redact"]},
         # One TURN_CREATED / SESSION_CREATED line per creation, saying who, from
         # what, and under which parent (apps/harness/provenance.py). INFO always:
         # it is the audit trail for "what created this turn?".

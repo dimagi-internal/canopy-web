@@ -8,15 +8,16 @@ from django.http import HttpResponse
 from django.test import RequestFactory
 
 from apps.common import request_timing
-from apps.common.request_timing import SlowRequestLogMiddleware, route_shape
+from apps.common.log_redact import path_template
+from apps.common.request_timing import SlowRequestLogMiddleware
 
 pytestmark = pytest.mark.django_db
 
 
-def test_route_shape_folds_ids():
-    assert route_shape("/canopy/api/harness/runners/117ee3fb-979c-41d3-988f-58420bc422f3/claim") == \
-        "/canopy/api/harness/runners/<id>/claim"
-    assert route_shape("/api/agents/eva/actions/42/applied") == "/api/agents/eva/actions/<n>/applied"
+def test_an_unresolved_path_is_folded_to_words():
+    assert path_template("/canopy/api/harness/runners/117ee3fb-979c-41d3-988f-58420bc422f3/claim") == \
+        "/canopy/api/harness/runners/<x>/claim"
+    assert path_template("/api/agents/eva/actions/42/applied") == "/api/agents/eva/actions/<x>/applied"
 
 
 def test_logs_a_slow_request_and_not_a_fast_one(monkeypatch, caplog):

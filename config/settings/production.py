@@ -64,6 +64,9 @@ LOGGING = {
     "disable_existing_loggers": False,
     "filters": {
         "request_id": {"()": "apps.common.request_context.RequestIdFilter"},
+        # No client address, concrete path or query string in any line
+        # (apps/common/log_redact.py; see the note on LOGGING in base.py).
+        "redact": {"()": "apps.common.log_redact.RedactRequestDetail"},
     },
     "formatters": {
         "json": {"()": "apps.common.log_format.JsonFormatter"},
@@ -72,10 +75,12 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json",
-            "filters": ["request_id"],
+            "filters": ["request_id", "redact"],
         },
     },
     "loggers": {
+        "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
+        "uvicorn.error": {"filters": ["redact"]},
         "canopy.provenance": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
     "root": {

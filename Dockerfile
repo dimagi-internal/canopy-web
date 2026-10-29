@@ -131,5 +131,8 @@ EXPOSE 8000
 # killing the consumer; fixed by moving the single-task channel layer to InMemory.
 # See config/settings/connectlabs.py.) --ws-ping-timeout 20 closes a peer that
 # stops ponging.
+# --no-access-log: uvicorn's access line carries the client address and the full
+# path and query — a `/share/<token>` link, a `?ticket=` — into CloudWatch. No
+# log line may (apps/common/log_redact.py); SLOW_REQUEST and the ALB cover timing.
 CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", \
-     "--ws-ping-interval", "5", "--ws-ping-timeout", "20"]
+     "--ws-ping-interval", "5", "--ws-ping-timeout", "20", "--no-access-log"]

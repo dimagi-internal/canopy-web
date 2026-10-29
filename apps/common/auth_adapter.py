@@ -11,6 +11,7 @@ from django.shortcuts import render
 from apps.workspaces.login_gate import email_admitted_outside_domain
 
 from .auth_domains import allowed_email_domains, email_in_allowlist
+from .log_redact import path_template
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             exception,
             bool(request.GET.get("state")),
             bool(request.session.session_key),
-            request.path,
+            path_template(request.path, request),
             request.META.get("HTTP_USER_AGENT", "")[:200],
         )
         return super().on_authentication_error(
