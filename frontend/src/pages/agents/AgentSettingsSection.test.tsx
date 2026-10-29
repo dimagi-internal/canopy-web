@@ -26,6 +26,7 @@ const { getAgentSetup } = vi.hoisted(() => ({ getAgentSetup: vi.fn() }))
 vi.mock('@/api/agentCreation', () => ({ getAgentSetup }))
 vi.mock('@/pages/agents/AgentSecurityPanel', () => ({ AgentSecurityPanel: () => <div>security-panel</div> }))
 vi.mock('@/pages/agents/AgentAccountsPanel', () => ({ AgentAccountsPanel: () => <div id="cred-github">accounts-panel</div> }))
+vi.mock('@/pages/agents/AgentConnectionsPanel', () => ({ AgentConnectionsPanel: () => <div>connections-panel</div> }))
 vi.mock('@/components/agents/AgentHowItRuns', () => ({ AgentHowItRuns: () => <div>how-it-runs</div> }))
 let agentOverride: Record<string, unknown> = {}
 vi.mock('react-router-dom', async (orig) => ({
@@ -184,6 +185,19 @@ describe('AgentSettingsSection', () => {
       // one line per setting
       expect(screen.getByText('Runs Hal. GitHub features use their GitHub connection.')).toBeTruthy()
       expect(screen.getByText('The canopy account Hal signs in as.')).toBeTruthy()
+    } finally {
+      agentOverride = {}
+    }
+  })
+
+  it('shows the connections panel to an admin only', () => {
+    at(`${BASE}/accounts`)
+    expect(screen.queryByText('connections-panel')).toBeNull()
+    cleanup()
+    agentOverride = { is_admin: true }
+    try {
+      at(`${BASE}/accounts`)
+      expect(screen.getByText('connections-panel')).toBeTruthy()
     } finally {
       agentOverride = {}
     }

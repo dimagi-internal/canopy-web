@@ -380,3 +380,195 @@ def test_the_updaters_decision_is_the_update_check(cr, tmp_path, monkeypatch):
     f.write_text(json.dumps({"verdict": "failed", "detail": "could not install", "at": time.time()}))
     cr._update_check()
     assert cr._HEALTH["update"]["status"] == "fail"
+
+
+# ---- connections: an adopted turn keeps and refreshes its staged tokens ---------------
+
+@pytest.fixture
+def conns(cr, tmp_path, monkeypatch):
+    """The adopting daemon's connection plumbing: canopy-web lists `salesforce`; the CLI
+    writes the file. Everything else (the relay among it) runs for real."""
+    home = tmp_path / "home"
+    monkeypatch.setattr(cr.pathlib.Path, "home", lambda: home)
+    monkeypatch.setattr(cr, "_bearer", lambda min_life=0: "runner-bearer")
+    monkeypatch.setattr(cr, "_canopy_cli", lambda: "/bin/canopy")
+    monkeypatch.setattr(cr, "_CONN_HOLDS", {})
+    monkeypatch.setattr(cr, "_ADOPTED", set())
+    real_api, real_run = cr._api, cr.subprocess.run
+    seen = {"listed": [], "cli": []}
+
+    def api(method, path, body=None, **kw):
+        if method == "GET" and path.endswith("/connections"):
+            seen["listed"].append(path)
+            return 200, {"providers": ["salesforce"]}
+        return real_api(method, path, body, **kw)
+
+    def run(argv, **kw):
+        if "connection-token" not in argv:
+            return real_run(argv, **kw)
+        f = home / ".canopy" / "connections" / argv[argv.index("--agent") + 1] / f"{argv[3]}.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"access_token": "NEW", "expires_at": time.time() + 3600}))
+        seen["cli"].append(argv)              # after the write: a waiter sees both
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    monkeypatch.setattr(cr, "_api", api)
+    monkeypatch.setattr(cr.subprocess, "run", run)
+
+    def staged(slug="echo", provider="salesforce", token="OLD"):
+        f = home / ".canopy" / "connections" / slug / f"{provider}.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"access_token": token, "expires_at": time.time() + 3600}))
+        return f
+    return seen, staged
+
+
+def test_an_adopted_agent_turn_keeps_restages_and_unstages_its_connections(cr, tmp_path, monkeypatch, conns):
+    seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()                                       # the previous daemon staged it
+    other_provider = staged(provider="gmail")             # held by no adopted turn
+    leftover = staged(slug="nobody")
+    gate = tmp_path / "gate"
+    cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
+                       env=dict(os.environ), stdin=False, executor="cli")
+    _state(cr, tmp_path, cli_session_id="sess-1", connections=["salesforce"], confined=False)
+
+    cr.adopt_turns("rid")
+    cr._clear_stale_connection_tokens()                   # main()'s order: adopt, then clear
+    assert mine.exists()
+    assert not other_provider.exists() and not leftover.exists()
+    # Staged as a new turn's start: the same listing, the same CLI, for this turn.
+    assert _wait(lambda: seen["cli"])                    # recorded after the CLI's write
+    assert seen["listed"] == [f"/runners/rid/turns/{TURN}/connections"]
+    assert seen["cli"][0][-6:] == ["--runner-id", "rid", "--turn", TURN, "--min-life", "900"]
+    assert json.loads(mine.read_text())["access_token"] == "NEW"
+    assert cr._CONN_HOLDS[TURN][:1] == ("echo",) and cr._CONN_HOLDS[TURN][2] == {"salesforce"}
+    # The heartbeat re-stages it near expiry, as any turn's.
+    cr._restage_connections(TURN, now=time.time() + 3500)
+    assert len(seen["cli"]) == 2 and "--turn" in seen["cli"][1]
+    # Its end unstages like any turn's.
+    gate.write_text("go")
+    assert _wait(lambda: TURN not in cr._in_flight_ids())
+    assert not mine.exists() and cr._CONN_HOLDS == {}
+
+
+@pytest.mark.parametrize("how", ["caller_context", "recorded"])
+def test_an_adopted_confined_turn_stages_nothing(cr, tmp_path, monkeypatch, conns, how):
+    seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    f = staged()
+    gate = tmp_path / "gate"
+    cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
+                       env=dict(os.environ), stdin=False, executor="cli")
+    if how == "recorded":       # its daemon recorded it confined; the turn carries no caller_context
+        _state(cr, tmp_path, connections=["salesforce"], confined=True)
+    else:                       # a state file from before `confined`: the turn says so
+        d = _state(cr, tmp_path, connections=["salesforce"])
+        state = json.loads((d / "turn.json").read_text())
+        state["turn"]["caller_context"] = {"profile": "confined"}
+        (d / "turn.json").write_text(json.dumps(state))
+
+    cr.adopt_turns("rid")
+    cr._clear_stale_connection_tokens()
+    assert not f.exists() and cr._CONN_HOLDS == {}
+    gate.write_text("go")
+    assert _wait(lambda: TURN not in cr._in_flight_ids())
+    assert seen == {"listed": [], "cli": []} and cr._CONN_HOLDS == {}
+
+
+def test_an_adopted_turn_whose_cli_already_exited_stages_nothing(cr, tmp_path, monkeypatch, conns):
+    seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    f = staged()
+    proc = cr.RelayProc.spawn(TURN, _fake_cli(tmp_path), cwd=tmp_path,
+                              env=dict(os.environ), stdin=False, executor="cli")
+    assert proc.wait(timeout=15) == 0
+    _state(cr, tmp_path, connections=["salesforce"], confined=False)
+    cr.adopt_turns("rid")
+    assert _wait(lambda: TURN not in cr._in_flight_ids())
+    assert seen == {"listed": [], "cli": []} and cr._CONN_HOLDS == {} and not f.exists()
+
+
+def _finishes(cr):
+    return [b for (_m, p, b) in cr._calls if p == f"/turns/{TURN}/finish"]
+
+
+def test_an_adopted_turn_whose_attach_fails_is_reported_and_kept(cr, tmp_path, monkeypatch, conns):
+    _seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()
+    sibling = staged(slug="ace")
+    d = _state(cr, tmp_path, cli_session_id="sess-1")
+    cr._reserve_adopted_connections("rid", TURN, "echo", ["salesforce"])
+    cr._reserve_adopted_connections("rid", "other-turn", "ace", ["salesforce"])
+
+    def boom(_attempt):
+        raise OSError("attempt dir unreadable")
+    monkeypatch.setattr(cr.RelayProc, "attach", staticmethod(boom))
+    cr._adopt_turn("rid", TURN, json.loads((d / "turn.json").read_text()))
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and finish["session_key"] == "sess-1"
+    assert "runner error while adopting the turn: attempt dir unreadable" in finish["result_note"]
+    assert json.loads((d / "turn.json").read_text())["reported"] is True   # kept for diagnosis
+    assert TURN not in cr._CONN_HOLDS and not mine.exists()
+    assert sibling.exists() and "other-turn" in cr._CONN_HOLDS
+
+
+def test_an_adopted_turn_whose_lease_fails_to_start_stops_its_cli(cr, tmp_path, monkeypatch, conns):
+    _seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()
+    gate = tmp_path / "gate"                  # never opened: the CLI would run forever
+    proc = cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=gate), cwd=tmp_path,
+                              env=dict(os.environ), stdin=False, executor="cli")
+    d = _state(cr, tmp_path, connections=["salesforce"], confined=False)
+    cr._reserve_adopted_connections("rid", TURN, "echo", ["salesforce"])
+
+    def no_lease(rid, tid):
+        raise RuntimeError("lease thread")
+    monkeypatch.setattr(cr, "_start_lease_renewal", no_lease)
+    cr._adopt_turn("rid", TURN, json.loads((d / "turn.json").read_text()))
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and "lease thread" in finish["result_note"]
+    assert cr.RelayProc.attach(proc.dir).poll() is not None             # the CLI was stopped
+    assert (d / "turn.json").exists() and cr._CONN_HOLDS == {} and not mine.exists()
+
+
+def test_a_worker_that_does_not_start_is_reported_stopped_and_the_next_turn_adopted(
+        cr, tmp_path, monkeypatch, conns):
+    _seen, staged = conns
+    _quiet_conclusion(cr, monkeypatch)
+    mine = staged()
+    # TURN: a live CLI (gated, so it would run forever) whose worker fails to start.
+    stuck = cr.RelayProc.spawn(TURN, _fake_cli(tmp_path, gate=tmp_path / "never"), cwd=tmp_path,
+                               env=dict(os.environ), stdin=False, executor="cli")
+    d = _state(cr, tmp_path, connections=["salesforce"], confined=False, cli_session_id="sess-1")
+    # A second turn, adopted normally.
+    other = "1f3c2a1e-1111-4222-8333-444455556667"
+    proc = cr.RelayProc.spawn(other, _fake_cli(tmp_path), cwd=tmp_path,
+                              env=dict(os.environ), stdin=False, executor="cli")
+    assert proc.wait(timeout=15) == 0
+    od = cr.TURN_STATE_ROOT / other
+    state = json.loads((d / "turn.json").read_text())
+    state["turn"] = {"id": other, "target": "agent:echo"}
+    (od / "turn.json").write_text(json.dumps(state))
+    real_thread = cr.threading.Thread
+
+    class Thread(real_thread):
+        def start(self):
+            if self.name == f"adopted-{TURN[:8]}":
+                raise RuntimeError("can't start new thread")
+            super().start()
+    monkeypatch.setattr(cr.threading, "Thread", Thread)
+
+    summary = cr.adopt_turns("rid")
+    assert [a.split()[0] for a in summary["adopted"]] == [other[:8]]
+    assert [r.split()[0] for r in summary["reported"]] == [TURN[:8]]
+    assert TURN not in cr._ADOPTED and TURN not in cr._in_flight_ids()
+    assert TURN not in cr._CONN_HOLDS and not mine.exists()
+    [finish] = _finishes(cr)
+    assert finish["status"] == "failed" and finish["session_key"] == "sess-1"
+    assert "runner error while adopting the turn: can't start new thread" in finish["result_note"]
+    assert cr.RelayProc.attach(stuck.dir).poll() is not None             # its CLI was stopped
+    assert json.loads((d / "turn.json").read_text())["reported"] is True  # kept for diagnosis
+    assert _wait(lambda: other not in cr._in_flight_ids())

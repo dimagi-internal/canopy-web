@@ -412,9 +412,12 @@ def _drop_runner_token() -> bool:
 
 def _api(method: str, path: str, body: dict | None = None, *,
          prefix: str = "/api/harness",
-         headers: dict | None = None, _retried: bool = False) -> tuple[int, dict | None]:
+         headers: dict | None = None, quiet: bool = False,
+         _retried: bool = False) -> tuple[int, dict | None]:
     """Call canopy-web. `prefix` defaults to the harness router this runner lives
-    on; pass another (e.g. `/api/events`) for the few cross-router calls."""
+    on; pass another (e.g. `/api/events`) for the few cross-router calls. `quiet`
+    leaves the failure lines (an HTTP error, an unreachable canopy-web) to a
+    caller that logs its own, once; a refused token is still announced."""
     url = f"{BASE_URL}{prefix}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -436,16 +439,18 @@ def _api(method: str, path: str, body: dict | None = None, *,
             return resp.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as exc:
         raw = exc.read()
-        _log(f"{method} {path} -> {exc.code}: {raw[:300]!r}")
+        if not quiet:
+            _log(f"{method} {path} -> {exc.code}: {raw[:300]!r}")
         if exc.code == 401:
             if bearer.startswith("crt_") and not _retried and _drop_runner_token():
                 # A runner token can die mid-hour (its device key revoked): get
                 # a fresh one — or fall back — and try this call once more.
-                return _api(method, path, body, prefix=prefix, headers=headers, _retried=True)
+                return _api(method, path, body, prefix=prefix, headers=headers, quiet=quiet, _retried=True)
             _note_token_refused()
         return exc.code, None
     except urllib.error.URLError as exc:
-        _log(f"{method} {path} -> URLError {exc.reason}")
+        if not quiet:
+            _log(f"{method} {path} -> URLError {exc.reason}")
         return 0, None
 
 
@@ -1412,6 +1417,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
             _restage_delegated_google()
+            _restage_connections(turn_id)
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1743,6 +1749,258 @@ def _restage_delegated_google() -> None:
             _stage_delegated_google(slug)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
             _log(f"warn: {slug}: re-staging delegated Google tokens failed ({exc})")
+
+
+# ── Connections: the agent's provider tokens (Salesforce, …), staged per TURN ──
+#
+# canopy-web holds each connection (the agent's own, or one another agent shares with
+# it); the refresh token never reaches the box. At turn start the runner asks canopy-web
+# which providers the turn's agent can use (`GET …/turns/{tid}/connections` — for most
+# agents none, and nothing else runs), and for each one the canopy CLI
+# (`cred connection-token <provider> --runner`, this box's bearer + the turn id) writes a
+# short-lived ACCESS token 0600 to ~/.canopy/connections/<slug>/<provider>.json. Each file
+# is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+#
+# Log lines use the connections vocabulary: `warn: connections.stage_failed agent=
+# provider= turn= reason="…"` when a token could not be staged (the turn still runs;
+# `provider=*` when the listing itself failed). An agent with no connection is silent,
+# and so is a canopy-web too old to have the listing route (404).
+#: Seconds a staged token must still live; also sent to canopy-web (`--min-life`), so the
+#: server refreshes rather than hand back a cached token that lapses before the next re-stage.
+CONNECTION_TOKEN_MIN_LIFE = 900
+#: CLI exit code for "this agent has no connection for that provider" (409 not_connected).
+CONNECTION_NOT_CONNECTED_EXIT = 3
+#: A provider key canopy-web may name; anything else never becomes a path or an argv.
+_PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+#: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
+_CONN_HOLDS: dict = {}
+_CONN_LOCK = threading.Lock()
+
+
+def _connection_token_path(slug: str, provider: str) -> pathlib.Path:
+    return pathlib.Path.home() / ".canopy" / "connections" / slug / f"{provider}.json"
+
+
+def _held_elsewhere(slug: str, provider: str, turn_id: str) -> bool:
+    """Whether another turn holds `slug`'s `provider` file. Call with _CONN_LOCK held."""
+    return any(s == slug and provider in ps for t, (s, _, ps) in _CONN_HOLDS.items() if t != turn_id)
+
+
+def _release(turn_id: str, provider: str) -> None:
+    """Drop one provider from this turn's hold (the turn's entry goes with its last).
+    Call with _CONN_LOCK held."""
+    held = _CONN_HOLDS.get(turn_id)
+    if held is None:
+        return
+    rest = held[2] - {provider}
+    if rest:
+        _CONN_HOLDS[turn_id] = (held[0], held[1], rest)
+    else:
+        _CONN_HOLDS.pop(turn_id, None)
+
+
+def _unlink_quietly(path: pathlib.Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _stage_failed_line(slug: str, provider: str, turn_id: str, reason: str) -> None:
+    _log(f"warn: connections.stage_failed agent={slug} provider={provider or '*'} turn={turn_id} "
+         f"reason={json.dumps(' '.join(str(reason).split())[-300:], ensure_ascii=False)}")
+
+
+def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
+    """Turn start: stage a token for each provider the turn's agent can use. One
+    canopy-web call for an agent with none; a failure to list is a warn line and the
+    turn runs without. A 404 is a canopy-web without the listing route: silent.
+    Returns the providers canopy-web listed (none when the listing failed)."""
+    if not slug:
+        return frozenset()
+    try:
+        # Quiet: the stage_failed line below is the one line for a failure, and a
+        # 404 (a canopy-web without this route) writes nothing at all.
+        status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections", quiet=True)
+    except Exception as exc:  # noqa: BLE001 — never cost the turn its start
+        status, body = -1, None
+        _stage_failed_line(slug, "", turn_id, f"listing failed: {exc}")
+    if status == 200 and isinstance(body, dict):
+        listed = set()
+        for provider in body.get("providers") or []:
+            if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
+                listed.add(provider)
+                _stage_connection_token(runner_id, turn_id, slug, provider)
+            else:
+                _stage_failed_line(slug, "", turn_id, "unusable provider key")
+        return frozenset(listed)
+    if status == 0:
+        _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
+    elif status not in (-1, 404):
+        _stage_failed_line(slug, "", turn_id, f"listing -> {status}")
+    return frozenset()
+
+
+def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: str, *,
+                            now: float | None = None, refresh: bool = False) -> None:
+    """Stage `slug`'s `provider` access token for this turn.
+    The turn registers as a holder BEFORE the CLI runs (so a sibling turn ending cannot
+    delete the file out from under it) and drops out again when nothing was staged.
+    `refresh` (the heartbeat) never ADDS a holder: it only refreshes for a turn still
+    holding that file, and discards its work if the turn ended meanwhile. Only `refresh`
+    may keep a file that is still fresh: a turn's FIRST stage always asks canopy-web, so
+    the turn is checked (runner holds it, agent still connected) and its token issue
+    recorded, never inherited from a file another turn left. Exit 3 from the CLI is
+    silent (and clears a stale file); any other failure is a warn line and the turn still
+    runs. No token is ever logged."""
+    if not slug:
+        return
+    now = time.time() if now is None else now
+    target = _connection_token_path(slug, provider)
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        if refresh and (held is None or provider not in held[2]):
+            return
+        _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | {provider})
+    try:
+        if refresh:
+            try:
+                if float(json.loads(target.read_text()).get("expires_at") or 0) - now > CONNECTION_TOKEN_MIN_LIFE:
+                    return
+            except (OSError, ValueError, AttributeError):
+                pass
+        env = _child_safe_env()
+        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+        res = subprocess.run([_canopy_cli(), "cred", "connection-token", provider, "--runner", "--agent", slug,
+                              "--runner-id", runner_id, "--turn", turn_id,
+                              "--min-life", str(CONNECTION_TOKEN_MIN_LIFE)],
+                             env=env, capture_output=True, text=True, timeout=120)
+    except BaseException as exc:
+        if isinstance(exc, Exception):
+            _stage_failed_line(slug, provider, turn_id, str(exc))
+            _stage_failed(turn_id, provider, refresh)
+            return
+        _drop_holds(turn_id)   # an interrupt: nothing may stay held
+        raise
+    if res.returncode == CONNECTION_NOT_CONNECTED_EXIT:
+        # One lock section: a first stage lets go of its hold; a heartbeat keeps the
+        # turn's (it is still running, just without a connection). Either way the
+        # stale file goes unless ANOTHER turn of the agent holds it. Never a moment
+        # where this turn's hold is dropped and re-added, which a sibling's unstage
+        # could fall into.
+        with _CONN_LOCK:
+            if not refresh:
+                _release(turn_id, provider)
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
+        return
+    if res.returncode != 0:
+        _stage_failed_line(slug, provider, turn_id, (res.stderr or "").strip() or f"exit {res.returncode}")
+        _stage_failed(turn_id, provider, refresh)
+        return
+    if refresh:
+        with _CONN_LOCK:
+            # The turn ended while the CLI ran: the file it wrote is nobody's.
+            if provider not in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2] \
+                    and not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
+
+
+def _stage_failed(turn_id: str, provider: str, refresh: bool) -> None:
+    """A first stage that staged nothing lets go of its hold, and of the file unless
+    another turn of the agent holds it (a sibling that ended while this stage ran saw
+    this turn's hold and left the file to it); a heartbeat keeps both."""
+    if not refresh:
+        with _CONN_LOCK:
+            held = _CONN_HOLDS.get(turn_id)
+            _release(turn_id, provider)
+            if held and not _held_elsewhere(held[0], provider, turn_id):
+                _unlink_quietly(_connection_token_path(held[0], provider))
+
+
+def _drop_holds(turn_id: str) -> None:
+    """Release every hold of this turn, deleting (inside the lock) each file no other
+    running turn of the same agent holds."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.pop(turn_id, None)
+        if not held:
+            return
+        slug, _, staged = held
+        for provider in staged:
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(_connection_token_path(slug, provider))
+
+
+def _restage_connections(turn_id: str, *, now: float | None = None) -> None:
+    """The lease heartbeat's half: refresh each of this turn's staged tokens near expiry."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+    if not held:
+        return
+    slug, runner_id, staged = held
+    for provider in sorted(staged):
+        try:
+            _stage_connection_token(runner_id, turn_id, slug, provider, now=now, refresh=True)
+        except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
+            _stage_failed_line(slug, provider, turn_id, f"re-stage: {exc}")
+
+
+def _unstage_connections(turn_id: str) -> None:
+    """Turn end: delete this turn's files unless another running turn of the same agent holds them."""
+    _drop_holds(turn_id)
+
+
+def _held_connections(turn_id: str) -> list[str]:
+    """The providers this turn holds a staged file of: what its state file records
+    (`connections`), so a new daemon that adopts the turn knows them. Names only."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+    return sorted(held[2]) if held else []
+
+
+def _reserve_adopted_connections(runner_id: str, turn_id: str, slug: str, providers) -> None:
+    """Adoption, before the start clear: the adopted turn holds the files its state
+    file names, so the clear spares them and no sibling's end deletes them. No call is
+    made here; `_adopt_connections` (on the turn's worker) stages them as a turn's start."""
+    keep = frozenset(p for p in providers or () if isinstance(p, str) and _PROVIDER_KEY.fullmatch(p))
+    if not slug or not keep:
+        return
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | keep)
+
+
+def _adopt_connections(runner_id: str, turn_id: str, slug: str) -> None:
+    """An adopted turn's start: stage exactly as a new turn's (`_stage_connections`:
+    the same listing, the same CLI, a first stage that always asks canopy-web), then
+    let go of every file reserved at adoption that was not staged again: a provider
+    canopy-web no longer lists, or one whose stage failed."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        reserved = held[2] if held else frozenset()
+    listed = _stage_connections(runner_id, turn_id, slug) if slug else frozenset()
+    with _CONN_LOCK:
+        for provider in reserved - listed:
+            _release(turn_id, provider)
+        now_held = (_CONN_HOLDS.get(turn_id) or ("", "", frozenset()))[2]
+        for provider in reserved - now_held:
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(_connection_token_path(slug, provider))
+
+
+def _clear_stale_connection_tokens() -> None:
+    """Runner start: a leftover file of a previous process is nobody's, but one an
+    adopted turn holds (`_reserve_adopted_connections`, which runs first)."""
+    root = pathlib.Path.home() / ".canopy" / "connections"
+    try:
+        with _CONN_LOCK:
+            held = {(s, p) for s, _, ps in _CONN_HOLDS.values() for p in ps}
+            for f in root.glob("*/*.json"):
+                if (f.parent.name, f.stem) in held:
+                    continue  # an adopted turn's: still in use (`adopt_turns`)
+                _unlink_quietly(f)
+    except OSError:
+        pass
 
 
 # ── Canopy Vault device proof: this box's IAM role (canopy-web#1549, Phase 1b) ──
@@ -12284,46 +12542,64 @@ def adopt_turns(runner_id: str) -> dict:
     if not TURN_STATE_ROOT.is_dir():
         return summary
     for d in sorted(TURN_STATE_ROOT.iterdir()):
-        turn_id = d.name
-        if not d.is_dir() or not _CHAT_ID.match(turn_id):
-            continue
-        state = _read_json(d / "turn.json") or {}
-        turn = state.get("turn") or {}
-        if not turn or state.get("runner_id") not in (None, runner_id):
-            shutil.rmtree(d, ignore_errors=True)
-            summary["swept"].append(f"{turn_id[:8]} (no usable state)")
-            continue
-        turn["_resume_id"] = turn.get("_resume_id") or ""
-        if state.get("reported"):
-            # Its finish was posted; only the cleanup was cut short.
-            _adopted_cleanup(turn_id, state)
-            summary["swept"].append(f"{turn_id[:8]} (already reported)")
-            _lifecycle(turn_id, "swept", post=False, why="finish already reported")
-            continue
-        attempt = d / state["attempt"] if state.get("attempt") else None
-        if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
-            note = ("[runner] the runner restarted while this turn was being set up; "
-                    "its agent never started, so canopy-web may run it again")
-            _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
-            _lifecycle(turn_id, "lost", reason="restarted during setup", agent=state.get("slug"))
-            _adopted_cleanup(turn_id, state)
-            summary["reported"].append(f"{turn_id[:8]} (setup)")
-            continue
-        info = _read_json(attempt / "host.json") or {}
-        exited = (attempt / "exit.json").exists()
-        if not exited and not _is_relay(info.get("host_pid"), attempt):
-            proc = RelayProc.attach(attempt)
-            proc.poll()
-            note = proc.lost or "[runner] the turn's process was gone when the runner restarted"
-            body = {"status": "failed", "result_note": _result_note(note, turn)}
-            if state.get("cli_session_id"):
-                body["session_key"] = state["cli_session_id"]
-            fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
-            _lifecycle(turn_id, "lost", reason="process gone at adoption", pid=info.get("child_pid"),
-                       agent=state.get("slug"), session=state.get("cli_session_id"), http=fstatus)
-            _adopted_cleanup(turn_id, state)
-            summary["reported"].append(f"{turn_id[:8]} (process gone)")
-            continue
+        try:
+            _adopt_one(runner_id, d, summary)
+        except Exception as exc:  # noqa: BLE001 — one turn never costs the others theirs
+            _unstage_connections(d.name)  # nothing reserved for it outlives the failure
+            _log(f"adopt: could not take over {d.name[:8]}: {exc}")
+    _log(f"adopt: {len(summary['adopted'])} turn(s) adopted [{', '.join(summary['adopted'])}]; "
+         f"{len(summary['reported'])} reported failed [{', '.join(summary['reported'])}]; "
+         f"{len(summary['swept'])} swept [{', '.join(summary['swept'])}]")
+    return summary
+
+
+def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
+    """`adopt_turns`, for one turn's state directory."""
+    turn_id = d.name
+    if not d.is_dir() or not _CHAT_ID.match(turn_id):
+        return
+    state = _read_json(d / "turn.json") or {}
+    turn = state.get("turn") or {}
+    if not turn or state.get("runner_id") not in (None, runner_id):
+        shutil.rmtree(d, ignore_errors=True)
+        summary["swept"].append(f"{turn_id[:8]} (no usable state)")
+        return
+    turn["_resume_id"] = turn.get("_resume_id") or ""
+    if state.get("reported"):
+        # Its finish was posted; only the cleanup was cut short.
+        _adopted_cleanup(turn_id, state)
+        summary["swept"].append(f"{turn_id[:8]} (already reported)")
+        _lifecycle(turn_id, "swept", post=False, why="finish already reported")
+        return
+    attempt = d / state["attempt"] if state.get("attempt") else None
+    if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
+        note = ("[runner] the runner restarted while this turn was being set up; "
+                "its agent never started, so canopy-web may run it again")
+        _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+        _lifecycle(turn_id, "lost", reason="restarted during setup", agent=state.get("slug"))
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (setup)")
+        return
+    info = _read_json(attempt / "host.json") or {}
+    exited = (attempt / "exit.json").exists()
+    if not exited and not _is_relay(info.get("host_pid"), attempt):
+        proc = RelayProc.attach(attempt)
+        proc.poll()
+        note = proc.lost or "[runner] the turn's process was gone when the runner restarted"
+        body = {"status": "failed", "result_note": _result_note(note, turn)}
+        if state.get("cli_session_id"):
+            body["session_key"] = state["cli_session_id"]
+        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+        _lifecycle(turn_id, "lost", reason="process gone at adoption", pid=info.get("child_pid"),
+                   agent=state.get("slug"), session=state.get("cli_session_id"), http=fstatus)
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (process gone)")
+        return
+    if not _adopted_confined(state):
+        # Before the start clear, which spares what an adopted turn holds.
+        _reserve_adopted_connections(runner_id, turn_id, state.get("slug") or "",
+                                     state.get("connections"))
+    try:
         with _TURNS_LOCK:
             _IN_FLIGHT[turn_id] = None
         thread = threading.Thread(target=_adopt_turn, args=(runner_id, turn_id, state),
@@ -12332,16 +12608,39 @@ def adopt_turns(runner_id: str) -> dict:
             _IN_FLIGHT[turn_id] = thread
         _ADOPTED.add(turn_id)
         thread.start()
-        summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
-                                  f"{', exited' if exited else ''})")
-    _log(f"adopt: {len(summary['adopted'])} turn(s) adopted [{', '.join(summary['adopted'])}]; "
-         f"{len(summary['reported'])} reported failed [{', '.join(summary['reported'])}]; "
-         f"{len(summary['swept'])} swept [{', '.join(summary['swept'])}]")
-    return summary
+    except Exception as exc:  # noqa: BLE001 — one turn never costs the others theirs
+        # No worker will follow it: it ends as `_adopt_turn` ends a turn it cannot
+        # follow — connections released, CLI stopped, reported failed, state kept.
+        _ADOPTED.discard(turn_id)
+        with _TURNS_LOCK:
+            _IN_FLIGHT.pop(turn_id, None)
+        _log(f"adopt: could not start a worker for {turn_id[:8]}: {exc}")
+        _unstage_connections(turn_id)
+        proc = None
+        try:
+            proc = RelayProc.attach(attempt)
+        except Exception:  # noqa: BLE001 — nothing to stop, still reported
+            pass
+        _stop_adopted_cli(proc)
+        _conclude_adopted(runner_id, turn_id, turn, state, False,
+                          f"runner error while adopting the turn: {exc}",
+                          state.get("cli_session_id") or "", pathlib.Path(state["cwd"]) if state.get("cwd") else None,
+                          state.get("slug") or "")
+        _adopted_cleanup(turn_id, state, keep_state=True)
+        summary["reported"].append(f"{turn_id[:8]} (worker did not start)")
+        return
+    summary["adopted"].append(f"{turn_id[:8]} ({state.get('executor') or '?'}"
+                              f"{', exited' if exited else ''})")
 
 
 #: Turn ids this daemon adopted: the start sweeps leave what they hold alone.
 _ADOPTED: set = set()
+
+
+def _adopted_confined(state: dict) -> bool:
+    """Whether an adopted turn is a confined (caller's) one, which holds no credential:
+    as its daemon recorded it, or as its turn says (a state file from before `confined`)."""
+    return bool(state.get("confined")) or _capability(state.get("turn") or {}) is not None
 
 
 def _adopted_cwds() -> set[str]:
@@ -12354,12 +12653,33 @@ def _adopted_cwds() -> set[str]:
     return out
 
 
-def _adopted_cleanup(turn_id: str, state: dict) -> None:
-    """What `_run_turn`'s `finally` does for a turn, for one this daemon did not run."""
+def _adopted_cleanup(turn_id: str, state: dict, *, keep_state: bool = False) -> None:
+    """What `_run_turn`'s `finally` does for a turn, for one this daemon did not run.
+    `keep_state` keeps its (secret-free) state file: a turn that failed to be adopted,
+    kept for diagnosis; the next daemon sweeps it as already reported."""
     remove_turn_env(str(turn_id))
     _remove_agent_token(str(turn_id))
     _remove_scoped_token(str(turn_id))
-    _drop_turn_state(turn_id)
+    if not keep_state:
+        _drop_turn_state(turn_id)
+
+
+def _stop_adopted_cli(proc) -> None:
+    """A turn concluded failed while its CLI may still run: stop it, then wait for the
+    relay to record its exit (SIGKILL after a grace). Never raises."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not stop an adopted turn's CLI (pid {getattr(proc, 'pid', '?')}): {exc}")
 
 
 def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
@@ -12369,19 +12689,41 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
     cwd = pathlib.Path(state["cwd"]) if state.get("cwd") else None
     slug = state.get("slug") or ""
     attempt = TURN_STATE_ROOT / turn_id / state["attempt"]
-    proc = RelayProc.attach(attempt)
     executor = state.get("executor") or "cli"
-    _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
-               session=state.get("cli_session_id"), attempt=attempt.name,
-               exited=proc.poll() is not None)
-    lease_stop = _start_lease_renewal(runner_id, turn_id)
 
     def emit(events, _tid=turn_id):
         _api("POST", f"/turns/{_tid}/events", {"events": events})
 
     _TURN_ENV.relay_turn = turn_id
+    keep_state = False
+    # Everything inside the try whose finally unstages: any raise lets go of what
+    # adoption reserved (`_reserve_adopted_connections`).
     try:
+        proc = None
         try:
+            proc = RelayProc.attach(attempt)
+            exited = proc.poll() is not None
+            _lifecycle(turn_id, "adopted", pid=proc.pid, agent=slug, executor=executor,
+                       session=state.get("cli_session_id"), attempt=attempt.name, exited=exited)
+            lease_stop = _start_lease_renewal(runner_id, turn_id)
+        except Exception as exc:  # noqa: BLE001
+            # The turn cannot be followed: it ends failed as the read below would, its
+            # CLI is stopped, and its state stays (marked reported) for diagnosis.
+            keep_state = True
+            _unstage_connections(turn_id)
+            _stop_adopted_cli(proc)
+            _conclude_adopted(runner_id, turn_id, turn, state, False,
+                              f"runner error while adopting the turn: {exc}",
+                              state.get("cli_session_id") or "", cwd, slug)
+            return
+        try:
+            if exited or _adopted_confined(state):
+                # A CLI that already exited needs no token; a confined turn holds none.
+                _unstage_connections(turn_id)
+            else:
+                # As a new turn's start.
+                _adopt_connections(runner_id, turn_id, slug)
+                _update_turn_state(turn_id, connections=_held_connections(turn_id))
             if executor == "acp":
                 ok, text, cli_session_id = _adopt_acp(turn_id, proc, emit, cwd, state)
             else:
@@ -12393,6 +12735,7 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
             ok, text, cli_session_id = False, f"runner error while adopting the turn: {exc}", ""
         finally:
             lease_stop.set()
+            _unstage_connections(turn_id)
         cli_session_id = cli_session_id or state.get("cli_session_id") or ""
         fault = _CREDENTIAL_FAULT.pop(turn_id, None)
         _CAP_RESET_HINT.pop(turn_id, None)
@@ -12407,7 +12750,11 @@ def _adopt_turn(runner_id: str, turn_id: str, state: dict) -> None:
     finally:
         _TURN_ENV.relay_turn = ""
         _ADOPTED.discard(turn_id)
-        _adopted_cleanup(turn_id, state)
+        _unstage_connections(turn_id)   # idempotent: whatever exit skipped the one above
+        if keep_state:
+            _adopted_cleanup(turn_id, state, keep_state=True)
+        else:
+            _adopted_cleanup(turn_id, state)
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _clear_stop(turn_id)
@@ -12461,7 +12808,10 @@ def _conclude_adopted(runner_id, turn_id, turn, state, ok, text, cli_session_id,
     _FINISHING.add(turn_id)
     try:
         if cli_session_id and cwd is not None:
-            _record_session_cwd(cli_session_id, cwd)
+            try:
+                _record_session_cwd(cli_session_id, cwd)
+            except Exception as exc:  # noqa: BLE001 — never cost the turn its finish
+                _log(f"warn: could not record session cwd for {turn_id[:8]}: {exc}")
         if cli_session_id:
             for step, fn in (("record session resume", _record_session_resume),
                              ("ship transcript rows", None)):
@@ -12777,9 +13127,17 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # Everything a new daemon needs to finish this turn if this one goes.
             _update_turn_state(turn_id, phase="running", cwd=str(cwd) if cwd is not None else "",
                                slug=slug or "", off_disk_env=off_disk_env, started_at=time.time(),
-                               resume_id=resume_id or "")
+                               resume_id=resume_id or "", confined=confined)
+        # An agent's ordinary (non-confined) turn only: a confined turn holds no
+        # credentials. Staged immediately inside the try whose finally unstages it, so no
+        # exit leaves a file behind.
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
+            if not confined:
+                _stage_connections(runner_id, turn_id, slug or "")
+                if _relay_turn_id() == turn_id:
+                    # Provider names only (never a token): what an adopting daemon keeps.
+                    _update_turn_state(turn_id, connections=_held_connections(turn_id))
             try:
                 if tail is not None:
                     tail.start()
@@ -12791,6 +13149,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()
+            _unstage_connections(turn_id)
             if tail is not None:
                 # Before the turn-end ship below, which is the final flush: two
                 # posts of one transcript must never race.
@@ -13295,6 +13654,7 @@ def main() -> None:
         _log(f"adopt: could not take over the previous daemon's turns: {exc}")
     # Any per-turn env a previous process left is nobody's, but an adopted turn's.
     sweep_turn_envs()
+    _clear_stale_connection_tokens()
     # Nor, on a sensitive-data box, anything a turn the last process ran left, but a
     # sensitive conversation's session that is neither idle past its deadline nor closed.
     try:

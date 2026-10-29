@@ -495,13 +495,15 @@ reinstall_cli_from_marketplace_clone() {
   # reinstall drops every `--with`, and `canopy kb build` then fails on this box
   # (2026-10-23, the GiveWell republish). uv's receipt lists them; cli_extras.py spells them.
   local extras_py with=() value
-  extras_py="$(dirname "${BASH_SOURCE[0]}")/../canopy_runner/canopy_runner/cli_extras.py"
+  # `:-$0` and `${with[@]+…}` keep this working under `set -u` on bash 3.2 (macOS),
+  # where BASH_SOURCE is empty under `bash -c` and an empty array counts as unset.
+  extras_py="$(dirname "${BASH_SOURCE[0]:-$0}")/../canopy_runner/canopy_runner/cli_extras.py"
   if [[ -f "$extras_py" ]]; then
     while IFS= read -r value; do
       [[ -n "$value" ]] && with+=(--with "$value")
     done < <(python3 "$extras_py" 2>/dev/null)
   fi
-  if uv tool install --force --reinstall "${with[@]}" "$clone" >/dev/null 2>&1; then
+  if uv tool install --force --reinstall ${with[@]+"${with[@]}"} "$clone" >/dev/null 2>&1; then
     ok "canopy CLI re-pointed at the marketplace clone ($clone)${with:+, keeping ${#with[@]} --with args}"
   else
     warn "could not re-point the canopy CLI at $clone — doctor will flag its provenance"

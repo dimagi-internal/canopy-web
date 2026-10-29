@@ -21,6 +21,14 @@ The old address `https://labs.connect.dimagi.com/canopy/` (now `https://canopy.d
 - **Browser pages** (GET/HEAD outside machine prefixes) are 302'd to `canopy.dimagi.com`.
 - Docs must not send a reader to the old address: `tests/test_old_address_in_docs.py` fails on a markdown line naming `labs.connect.dimagi.com/canopy` that does not also name `canopy.dimagi.com`.
 
+### Connection provider settings
+
+Each provider `apps/connections` can connect to reads its settings under one prefix (`apps/connections/providers/`; a new provider adds its own the same way): `<PREFIX>_CLIENT_ID` (public — it is in every authorize URL — plain env), `<PREFIX>_CLIENT_SECRET` (a secret: Secrets Manager, wired in `deploy/aws/canopy-web.cfn.yaml` the way `GITHUB_APP_CLIENT_SECRET` is, an `AWS::SecretsManager::Secret` plus a `Secrets` entry on the container), `<PREFIX>_ACCESS_TOKEN_SECONDS` (plain env: how long a fresh access token lives when the provider's token response does not say), and any of the provider's own. Each is read with `env(...)` in `config/settings/base.py` and listed in `.env.example`. Unset, that provider's Connect reports "not set up" and nothing else changes. The provider's app registration takes the callback `https://canopy.dimagi.com/auth/connections/<name>/callback/`.
+
+**Salesforce** (`SALESFORCE_*`): also `SALESFORCE_LOGIN_URL` (default `https://login.salesforce.com`; `https://test.salesforce.com` for a sandbox), plain env. The Connected App's callback is `https://canopy.dimagi.com/auth/connections/salesforce/callback/`, scopes `api refresh_token`, PKCE required, refresh-token rotation on.
+
+`SALESFORCE_ACCESS_TOKEN_SECONDS` (plain env, default `1800`) is how long canopy assumes an access token lives — Salesforce's token response says nothing. **Set it to the Connected App's session timeout** (its Session Policies; the spec recommends a short one), never longer: a value above the real timeout hands out cached tokens Salesforce has already killed. **Keep it above 900 s**, the life the cloud runner asks a staged token to have left: canopy-web caps that ask at half a fresh token's lifetime, so a shorter setting still works, but the runner then re-stages on every heartbeat. Clients that still meet a 401 ask again with `refresh` (`canopy cred connection-token salesforce --refresh`).
+
 ### Protocol identity is pinned by connected sites
 
 canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every connected site. `CANOPY_FORMER_BASE_URLS` names the old address so the Slack sync can recognise and move the commands and webhooks it registered there.

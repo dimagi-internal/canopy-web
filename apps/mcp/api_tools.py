@@ -176,6 +176,15 @@ EXCLUDED: dict[str, str] = {
     # A connected site telling canopy its resources changed: signed by the site's own
     # key, a host's door, never a person's or an agent's.
     "resources_updated": _HOST,
+    # Connection tokens (apps/connections): a live provider access token is the
+    # answer, so a tool would put it in a model's context. The route refuses an
+    # MCP call too; leaving it out also keeps a caller token off it over REST.
+    "turn_connection_token": _RUNNER,
+    "turn_connections": _RUNNER,
+    "my_connection_token": "a person's own token, for their CLI — never into a model's context",
+    # A login as a turn's agent: only the box's own runner token is accepted (a
+    # person's token, and so any MCP call, is refused), so as a tool it could only fail.
+    "turn_agent_token": _RUNNER,
 }
 
 def excluded_reason(path: str, method: str, operation: dict) -> str | None:

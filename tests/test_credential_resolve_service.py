@@ -17,6 +17,7 @@ from django.utils import timezone
 from apps.agents.credentials import credential_resolve as cr
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
+from apps.tokens import kinds
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -60,9 +61,12 @@ def alerts(monkeypatch):
 
 
 def _request(user, *, bearer=True, **meta):
+    """`bearer`: a token authenticated the request, as the bearer door records it."""
     req = RequestFactory().get("/api/agents/eva/credentials/resolve",
                                **({"HTTP_AUTHORIZATION": "Bearer t"} if bearer else {}), **meta)
     req.user = user
+    if bearer:
+        req.auth_method = kinds.PAT
     return req
 
 
@@ -79,6 +83,24 @@ def test_a_browser_session_is_refused_before_anything_else(owner, agent):
     out = cr.resolve(_request(owner, bearer=False), agent, None)
     assert out == cr.Refusal(cr.BEARER_REQUIRED,
                              "resolve requires a bearer token; a browser session is never given values")
+
+
+def test_a_bearer_header_that_authenticated_nothing_is_still_a_browser(owner, agent):
+    """A cookie plus `Authorization: Bearer junk`: the header is there, but no
+    token authenticated the request (`auth_method` unset), so it is a browser."""
+    req = RequestFactory().get("/api/agents/eva/credentials/resolve", HTTP_AUTHORIZATION="Bearer junk")
+    req.user = owner
+    assert cr.resolve(req, agent, None).code == cr.BEARER_REQUIRED
+
+
+def test_cookie_plus_junk_bearer_is_refused_over_http(owner, agent):
+    from django.test import Client
+
+    c = Client()
+    c.force_login(owner)
+    resp = c.get("/api/agents/eva/credentials/resolve", HTTP_AUTHORIZATION="Bearer junk")
+    assert resp.status_code == 403
+    assert "never given values" in resp.content.decode()
 
 
 def test_a_member_who_is_no_principal_is_refused_and_told_what_to_ask(ws, agent):

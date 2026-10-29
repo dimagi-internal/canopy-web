@@ -229,7 +229,10 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     already reach (`gates.agent_for_read`). See the route for the contract."""
     # Bearer only: a session cookie is refused even for the owner, so "the
     # browser never sees plaintext" is a property of the system, not of the UI.
-    if not request.META.get("HTTP_AUTHORIZATION", "").startswith("Bearer "):
+    # A bearer that AUTHENTICATED the request (the middleware stamps
+    # `auth_method`), not merely a header: a cookie plus `Authorization: Bearer
+    # junk` is still a browser.
+    if not getattr(request, "auth_method", None):
         return Refusal(BEARER_REQUIRED,
                        "resolve requires a bearer token; a browser session is never given values")
 

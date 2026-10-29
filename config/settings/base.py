@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     "apps.walkthroughs",
     "apps.tokens",
     "apps.github_connect",
+    "apps.connections",
     "apps.oauth_server",
     "apps.mcp_apps_host",
     "apps.host_grants",
@@ -645,6 +646,20 @@ GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
 # The app's slug, used only to build the "install it somewhere else" link
 # (https://github.com/apps/<slug>/installations/new). Public.
 GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
+
+# Connection providers (apps/connections/providers/): each reads <PREFIX>_CLIENT_ID,
+# <PREFIX>_CLIENT_SECRET, <PREFIX>_ACCESS_TOKEN_SECONDS and its own settings, declared
+# here as a block (docs/architecture/deploy.md § Connection provider settings).
+# Salesforce: a Connected App with scopes `api refresh_token`. The login URL is
+# https://test.salesforce.com for a sandbox.
+SALESFORCE_CLIENT_ID = env("SALESFORCE_CLIENT_ID", default="")
+SALESFORCE_CLIENT_SECRET = env("SALESFORCE_CLIENT_SECRET", default="")
+SALESFORCE_LOGIN_URL = env("SALESFORCE_LOGIN_URL", default="https://login.salesforce.com")
+# How long canopy assumes a Salesforce access token lives: the token response carries
+# no `expires_in`, so this must not exceed the Connected App's session timeout, or a
+# cached token is handed out after Salesforce has already killed it. Set it to that
+# timeout. 30 minutes by default, the short session the spec recommends.
+SALESFORCE_ACCESS_TOKEN_SECONDS = env.int("SALESFORCE_ACCESS_TOKEN_SECONDS", default=1800)
 
 # Slack front door (apps/slack). The client id is public (it is in every
 # install URL); the client + signing secrets are Secrets Manager entries. Any of

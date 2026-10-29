@@ -124,7 +124,7 @@ SENSITIVE_PATHS = (
     "~/.canopy/profiles/**", "~/.canopy/caller/pending/**", "~/.canopy/runner.json",
     "~/.claude/projects/**/*.jsonl", "~/.claude/history.jsonl", "~/.claude/.credentials.json",
     "~/.canopy/kept-conversations/**", "~/.canopy/chat/**", "~/.canopy/scoped/**",
-    "~/.canopy/agent-token/**", "~/.canopy/delegated/**", "~/.canopy/device-key/**",
+    "~/.canopy/agent-token/**", "~/.canopy/delegated/**", "~/.canopy/connections/**", "~/.canopy/device-key/**",
     "/proc/**",
     # Browser profiles (cookies, saved logins, sessions): gstack's headless browser,
     # and Chrome, Chromium and the other common browsers, on macOS, Linux and Windows.

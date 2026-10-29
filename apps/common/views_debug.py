@@ -9,7 +9,8 @@ It used to be a Settings button for handing a cookie to an AI assistant. That
 button is gone (2026-09-25): an assistant working the API uses a short-lived PAT.
 
 A MINTED SESSION IS STILL A MACHINE. The few "canopy web app only" decisions
-(transfer an agent's owner, change its admins) refuse any Authorization header,
+(transfer an agent's owner, change its admins) refuse a bearer token that authenticated the request
+(`request.auth_method` set),
 so a leaked token cannot take over an agent — and before this, any PAT could
 walk straight past that by minting a cookie first. Every minted session carries
 `DEBUG_SESSION_MARKER`, and `is_machine(request)` treats it exactly like a
@@ -30,9 +31,14 @@ DEBUG_SESSION_MARKER = "_canopy_debug_session"
 
 def is_machine(request) -> bool:
     """True when a token, not a person signed in through the browser, is behind
-    this request: any Authorization header, an MCP tool call (dispatched
+    this request: a bearer token that authenticated it, an MCP tool call (dispatched
     in-process, so it carries no header), or a session minted from a token."""
-    if request.META.get("HTTP_AUTHORIZATION") or getattr(request, "via_mcp", False):
+    # An Authorization header counts only when a token actually authenticated
+    # the request: every bearer door in apps/tokens/middleware.py stamps
+    # `auth_method`. A signed-in cookie user skips the PAT lookup, so a junk
+    # `Authorization: Bearer x` sent with a stolen cookie leaves it unset and
+    # must not read as "a token" (it would skip every passkey step-up).
+    if getattr(request, "auth_method", None) or getattr(request, "via_mcp", False):
         return True
     session = getattr(request, "session", None)
     try:
