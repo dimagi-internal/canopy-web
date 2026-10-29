@@ -444,6 +444,11 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
         # line that changes.
         return [_custom("page.invalidate", {"uri": data.get("uri") or ""})]
 
+    if event == "host_grant.requested":
+        # canopy's own: the agent needs the person's passkey for the page's act-as-you
+        # permission. No AG-UI spelling; the grant id only.
+        return [_custom(event, {"grant_id": data.get("grant_id")})]
+
     if event == "app.resource_updated":
         # A host resource a View subscribed to changed: which View (its tool call id)
         # and which URI, never data — the View re-reads as its viewer. MCP's

@@ -101,6 +101,7 @@ ROUND_TRIP_FRAMES = [
     {"event": "draft.committed", "data": {"draft_id": "d1", "user_message_id": "u2"}},
     {"event": "draft.discarded", "data": {"draft_id": "d1"}},
     {"event": "page.invalidate", "data": {"uri": "task://"}},
+    {"event": "host_grant.requested", "data": {"grant_id": 7}},
     {"event": "app.resource_updated", "data": {"tool_call_id": "toolu_01RESULTS",
                                                "uri": "labs-result://Zk3aQ"}},
 ]

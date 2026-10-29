@@ -69,6 +69,8 @@ class HostGrantOut(Schema):
     #: Whether an agent's turn needs it while it still waits for the passkey: the
     #: panel asks the person only then, never merely because they sent.
     requested: bool = False
+    #: What the agent said it needs it for, in its own words ("" = it gave none).
+    requested_reason: str = ""
 
 
 class PanelGrantOut(Schema):
@@ -84,7 +86,8 @@ def _out(grant) -> HostGrantOut:
         agent_name=(grant.agent.name or grant.agent.slug) if grant.agent_id else "",
         scope=grant.scope, granted_at=grant.created_at, expires_at=grant.expires_at,
         confirmed=grant.confirmed_at is not None,
-        requested=grant.requested_at is not None)
+        requested=grant.requested_at is not None,
+        requested_reason=grant.requested_reason or "")
 
 
 def _stop(grant) -> int:

@@ -1,8 +1,22 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EmbedApp } from './EmbedApp'
+
+/** The real socket hook, with its options kept so a test can deliver a canopy frame
+ *  (`onUnknownEvent`) as the conversation's socket would. */
+let socketOpts: { onUnknownEvent?: (f: { event: string; data?: unknown }) => void } = {}
+vi.mock('canopy-ui/chat', async (orig) => {
+  const real = await orig<typeof import('canopy-ui/chat')>()
+  return {
+    ...real,
+    useSessionSocket: (opts: Parameters<typeof real.useSessionSocket>[0]) => {
+      socketOpts = opts as typeof socketOpts
+      return real.useSessionSocket(opts)
+    },
+  }
+})
 import type { ActionSpec, HostInit, HostLink } from './hostLink'
 
 /**
@@ -1198,7 +1212,8 @@ describe('the act-as-you permission', () => {
     let requested = false
     const grantBody = () => ({
       id: 7, site: 'connect-labs', agent: '', agent_name: '', scope: 'marketplace:read',
-      granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z', confirmed, requested })
+      granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z', confirmed, requested,
+      requested_reason: requested ? 'close the 3 sessions you picked' : '' })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
@@ -1231,7 +1246,11 @@ describe('the act-as-you permission', () => {
     Object.defineProperty(navigator, 'credentials', { value: { get }, configurable: true })
     return { asked, requestToken, get, confirmElsewhere: () => { confirmed = true },
              // The agent's turn tried to act as the person (canopy's `host_grants.ask`).
-             agentAsks: () => { requested = true } }
+             // and canopy pushed it down the conversation's socket.
+             agentAsks: () => {
+               requested = true
+               act(() => socketOpts.onUnknownEvent?.({ event: 'host_grant.requested', data: { grant_id: 7 } }))
+             } }
   }
 
   function renderGranting(requestToken: ReturnType<typeof grantingWorld>['requestToken']) {
@@ -1259,8 +1278,11 @@ describe('the act-as-you permission', () => {
     expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
 
     agentAsks()
-    const prompt = await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
-    expect(prompt.textContent).toMatch(/Let Hal act as you on this page for 30 minutes\?/)
+    // Pushed, not polled: the prompt opens on the socket's frame, with the agent's reason.
+    const prompt = await screen.findByTestId('page-grant-confirm')
+    expect(prompt.textContent).toMatch(/Hal wants to act as you on connect-labs/)
+    expect(screen.getByTestId('page-grant-reason').textContent).toBe('To close the 3 sessions you picked')
+    expect(prompt.textContent).toMatch(/For 30 minutes/)
     expect(screen.queryByTestId('page-grant-line')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with passkey' }))
@@ -1282,7 +1304,7 @@ describe('the act-as-you permission', () => {
     await say('what am I looking at?')
     await waitFor(() => expect(created()).toBeDefined())
     agentAsks()
-    await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
+    await screen.findByTestId('page-grant-confirm')
 
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant')
@@ -1304,7 +1326,7 @@ describe('the act-as-you permission', () => {
       await say('what am I looking at?')
       await waitFor(() => expect(created()).toBeDefined())
       agentAsks()
-      await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
+      await screen.findByTestId('page-grant-confirm')
 
       fireEvent.click(screen.getByRole('button', { name: 'Confirm in your browser' }))
       expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/confirm/page-permission/7`, '_blank', 'noopener')
@@ -1331,7 +1353,7 @@ describe('the act-as-you permission', () => {
     await say('what am I looking at?')
     await waitFor(() => expect(created()).toBeDefined())
     agentAsks()
-    await screen.findByTestId('page-grant-confirm', {}, { timeout: 5000 })
+    await screen.findByTestId('page-grant-confirm')
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with passkey' }))
     fireEvent.click(await screen.findByTestId('page-grant-try-browser'))
     expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/confirm/page-permission/7`, '_blank', 'noopener')

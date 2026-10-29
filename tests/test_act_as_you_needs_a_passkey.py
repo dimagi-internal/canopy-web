@@ -54,27 +54,71 @@ def test_an_unconfirmed_grant_is_refused_by_the_gateway_and_the_host_is_never_ca
     assert host.calls == [] and host.seen == []
 
 
-def test_a_send_alone_never_asks_only_a_turn_that_needs_the_grant_does(w, host):
+def test_a_send_alone_never_asks_only_a_turn_that_needs_the_grant_does(w, host, monkeypatch):
     """The panel asks for the passkey only once the agent's turn needs to act as the
     person: the grant reads `requested: false` until the gateway is refused for it,
-    and `true` after — the agent is told it was asked, and to retry."""
+    then `true` with the agent's reason — pushed to the person's panel at once, not
+    polled — and the agent is told it was asked, and to retry."""
+    from apps.realtime import groups
+
+    pushed = []
+    monkeypatch.setattr(groups, "publish", lambda group, message: pushed.append((group, message)))
     waiting = sg.grant(w, confirmed_at=None)
     panel = passkey_confirm.panel(_panel_token(w, waiting))
     assert panel.get("/api/embed/host-grant").json()["grant"]["requested"] is False
     with sg.visitor(w), pytest.raises(Exception, match="I have asked the person"):
-        sg.call(host, "site_call", {"tool": "marketplace_orgs_get"})
-    assert panel.get("/api/embed/host-grant").json()["grant"]["requested"] is True
+        sg.call(host, "site_call", {"tool": "marketplace_orgs_get",
+                                    "reason": "look up the  orgs\nyou shortlisted"})
+    seen = panel.get("/api/embed/host-grant").json()["grant"]
+    assert seen["requested"] is True and seen["requested_reason"] == "look up the orgs you shortlisted"
+    assert pushed == [(groups.session_group(w["session"].id),
+                       {"type": "host_grant.requested", "grant_id": waiting.pk,
+                        "user_id": w["visitor"].pk})]
     assert host.calls == []
+
+
+def test_a_call_without_a_reason_still_says_what_it_would_do(w, host):
+    waiting = sg.grant(w, confirmed_at=None)
+    with sg.visitor(w), pytest.raises(Exception, match="I have asked the person"):
+        sg.call(host, "site_call", {"tool": "marketplace_orgs_get"})
+    waiting.refresh_from_db()
+    assert waiting.requested_reason == "use marketplace_orgs_get"
 
 
 def test_a_renewal_while_asked_keeps_the_ask(w):
     """The panel re-mints every few minutes; a renewal mid-ask must not close the
     prompt the person is about to answer."""
-    asked = sg.grant(w, confirmed_at=None, requested_at=timezone.now())
+    asked = sg.grant(w, confirmed_at=None, requested_at=timezone.now(), requested_reason="close 3 sessions")
     renewal = HostGrant(app=w["app"], subject=asked.subject, user=asked.user, scope=asked.scope,
                         expires_at=timezone.now() + timedelta(minutes=10))
     host_grants._inherit(renewal)
     assert renewal.requested_at == asked.requested_at and renewal.confirmed_at is None
+    assert renewal.requested_reason == "close 3 sessions"
+
+
+def test_the_pushed_ask_reaches_only_the_grants_own_person():
+    """Everyone in the conversation shares its socket group; only the person whose
+    permission it is gets the prompt."""
+    from asgiref.sync import async_to_sync
+
+    from apps.canopy_sessions.consumers import SessionConsumer
+
+    sent = []
+
+    class Probe(SessionConsumer):
+        async def send_json(self, content, close=False):
+            sent.append(content)
+
+    def deliver(user_id):
+        probe = Probe()
+        probe.user = type("U", (), {"id": user_id})()
+        async_to_sync(probe.host_grant_requested)({"type": "host_grant.requested", "grant_id": 9,
+                                                   "user_id": 1})
+
+    deliver(2)
+    assert sent == []
+    deliver(1)
+    assert sent == [{"event": "host_grant.requested", "data": {"grant_id": 9}}]
 
 
 def test_lookup_says_unconfirmed_and_views_get_the_passkey_message(w):

@@ -836,6 +836,9 @@ class HostGrant(models.Model):
     #: The panel asks the person for their passkey only then, never merely because
     #: they sent: most turns never act as them.
     requested_at = models.DateTimeField(null=True, blank=True)
+    #: What the agent said it needs it for, in its own words — shown in the prompt,
+    #: so the person decides knowing what they are agreeing to.
+    requested_reason = models.CharField(max_length=300, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
