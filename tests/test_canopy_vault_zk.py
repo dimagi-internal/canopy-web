@@ -507,6 +507,8 @@ def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
         "error": "zk_wrap_missing", "kv": 1, "device_key": str(fleet.device.pk)}
     alert = AgentCredentialAlert.objects.get()
     assert alert.kind == "zk-wrap-missing" and alert.runner_id == fleet.runner.pk
+    # Says whose machine, what is missing and that it was never given the key.
+    assert alert.user.email in alert.detail and "never given" in alert.detail
     assert not AgentCredentialRead.objects.exists()
 
 

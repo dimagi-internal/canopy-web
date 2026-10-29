@@ -385,10 +385,18 @@ _WHY = {
                      "nobody approved means a machine to approve, if it is yours. If you do "
                      "not recognise either, revoke the token. (A known box that simply does "
                      "not run the agent is refused without this alert.)"),
-    "zk-wrap-missing": ("Canopy refused this read because the device has not been granted "
-                        "this agent's vault key. Grant the device if it should run the "
-                        "agent."),
+    "zk-wrap-missing": ("Nothing is wrong or unsafe. Approving a machine lets it identify itself; "
+                        "it does not hand it the agent's secrets. An admin of the agent does "
+                        "that separately, once per machine. Open the link, find the machine "
+                        "under the agent's approved machines, choose Grant, and confirm with "
+                        "your passkey. Until then, every turn that machine runs for this "
+                        "agent fails on its first secret read. The person named above "
+                        "has no way to fix this themselves."),
 }
+
+
+#: Subject wording for kinds whose model label reads as internals.
+_SUBJECT = {"zk-wrap-missing": "a newly approved machine needs access granted"}
 
 
 def _notify(agent, alert) -> dict:
@@ -400,6 +408,7 @@ def _notify(agent, alert) -> dict:
         link = _link(agent, alert.kind)
         act = _link_label(agent, alert.kind)
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
+        label = _SUBJECT.get(alert.kind, label)
         subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
         why = _WHY.get(alert.kind, "")
         who = context_lines(alert.context or {})

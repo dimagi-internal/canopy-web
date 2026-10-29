@@ -373,6 +373,11 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
     return values, (w.wrap if w is not None else None)
 
 
+def _who(request) -> str:
+    user = getattr(request, "user", None)
+    return (getattr(user, "email", "") or "someone") if getattr(user, "is_authenticated", False) else "someone"
+
+
 def device_wrap_missing(agent, request, device_key) -> None:
     """Tell the owner a box that should read this agent holds no wrap (409)."""
     import logging
@@ -382,10 +387,12 @@ def device_wrap_missing(agent, request, device_key) -> None:
             agent, "zk-wrap-missing", user=request.user, runner=device_key.runner,
             request=request,
             turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
-            detail=(f"{device_key.runner.name} ({device_key.label or device_key.kind}) proved itself "
-                    f"but holds no vault-key wrap at kv {agent.zk_kv}"
-                    + ("" if device_key.ecdh_jkt else " — it has no ECDH key; re-enroll it")
-                    + ". Grant it from the agent's Credentials page.")[:500])
+            detail=(f"{_who(request)}'s machine {device_key.runner.name} "
+                    f"({device_key.label or device_key.kind}) is approved, but it was never given "
+                    f"{agent.slug}'s vault key (kv {agent.zk_kv}), so it cannot read {agent.slug}'s "
+                    "secrets and that turn failed"
+                    + ("" if device_key.ecdh_jkt else "; it has no ECDH key, so it must be re-enrolled first")
+                    + ". An admin of the agent grants it from the link below.")[:500])
     except Exception:  # noqa: BLE001 - an alert hiccup must not turn a 409 into a 500
         logging.getLogger(__name__).exception("zk wrap-missing alert failed for %s", agent.slug)
 
