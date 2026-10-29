@@ -59,7 +59,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     flat: 'personal/global: the public getting-started guide (personalised when signed in)',
     title: 'Get started',
     audience: 'Anyone starting with canopy agents, including people with no account yet',
-    what: "The three steps to use a canopy agent: install canopy, install an agent, set up the agent. Agents run in your own Claude Code, not through canopy-web's connector; setting one up needs the 1Password CLI with access to the agent's vault. Signed in, it lists every agent in your workspaces, each with its install and setup command.",
+    what: "The three steps to use a canopy agent: install canopy, install an agent, set up the agent. Agents run in your own Claude Code, not through canopy-web's connector. Signed in, it lists every agent in your workspaces, each with its install and setup command.",
     actions: ['Copy the install commands', "See your workspaces' agents", "Copy each agent's setup command"],
   },
   {
@@ -336,8 +336,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/secrets',
     title: 'Secrets',
     audience: 'Workspace owner',
-    what: "Where this workspace's secrets live, stated whole. Workspace vaults: any number of zero-knowledge vaults this workspace shares with its agents, each read under an agent's own secrets, with its own members (the owners manage it; everyone with full access to an agent it serves can use it) and why each is one. The 1Password shared vault every agent here still reads (the Google OAuth clients, the GitHub token) until it moves into a workspace vault. An agent's own vault is on that agent, under Settings → Credentials, and a box's own login is on the runner.",
-    actions: ['Make a workspace vault', 'Choose which agents or workspaces a vault serves', 'Add or remove a person from a vault', "Name the workspace's 1Password shared vault", "Jump to an agent's own vault"],
+    what: "Where this workspace's secrets live, stated whole. Workspace vaults: any number of zero-knowledge vaults this workspace shares with its agents, each read under an agent's own secrets, with its own members (the owners manage it; everyone with full access to an agent it serves can use it) and why each is one. An agent's own vault is on that agent, under Settings → Credentials, and a box's own login is on the runner.",
+    actions: ['Make a workspace vault', 'Choose which agents or workspaces a vault serves', 'Add or remove a person from a vault', "Jump to an agent's own vault"],
   },
   {
     path: '/w/:workspace/settings/retention',
@@ -378,8 +378,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/health',
     title: 'Health',
     audience: 'Workspace admin or owner',
-    what: "What is not set up right, across this workspace and every one below it — agents, workspace vaults and the runners they run on (each runner's status, whether it runs current code, its own failing checks, how many agents it serves, and how many of its local Claude Code sessions in known repos canopy has no record of — a runner's admins open that list, check again, and send the sessions they choose up). Every agent in the tree with its owner, its setup checklist (the same steps its own Settings page shows: repository, GitHub identity, mailbox, vault, runner, first skill, first turn), where its secrets live — the canopy-web vault, moving (some still only in 1Password or stored nowhere), or 1Password — and its properties: last turn, turns in 30 days, active projects, open tasks and how many wait on a person (each opens the agent's page), skills, schedules, who can use it (only its admins, or the capabilities its interface publishes to others) and its turn mode (manual: a person approves before it acts or sends; auto: it runs through). Every workspace with its shared 1Password vault and where it inherits it from. Open an agent for its steps and each declared secret's state; a step you may fix links to the control that does it, and one only its owner or an admin may fix offers an email to the owner with what is left and the links.",
-    actions: ['See which agents have setup steps left', 'See which agents still read secrets from 1Password', "Open an agent's steps and fix one", 'Email an owner what is left on their agent', 'Filter by name, owner or workspace'],
+    what: "What is not set up right, across this workspace and every one below it — agents, workspace vaults and the runners they run on (each runner's status, whether it runs current code, its own failing checks, how many agents it serves, and how many of its local Claude Code sessions in known repos canopy has no record of — a runner's admins open that list, check again, and send the sessions they choose up). Every agent in the tree with its owner, its setup checklist (the same steps its own Settings page shows: repository, GitHub identity, mailbox, vault, runner, first skill, first turn), where its secrets live — the canopy-web vault, or moving (some stored nowhere yet) — and its properties: last turn, turns in 30 days, active projects, open tasks and how many wait on a person (each opens the agent's page), skills, schedules, who can use it (only its admins, or the capabilities its interface publishes to others) and its turn mode (manual: a person approves before it acts or sends; auto: it runs through). Open an agent for its steps and each declared secret's state; a step you may fix links to the control that does it, and one only its owner or an admin may fix offers an email to the owner with what is left and the links.",
+    actions: ['See which agents have setup steps left', 'See which agents have secrets still to move into the vault', "Open an agent's steps and fix one", 'Email an owner what is left on their agent', 'Filter by name, owner or workspace'],
   },
   {
     path: '/w/:workspace/analytics',

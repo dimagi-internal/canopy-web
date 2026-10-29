@@ -2,7 +2,7 @@
 //
 // The tenant half of the credential model: where every secret an agent uses lives.
 // All of it is canopy vaults now — a workspace vault for what agents share, each
-// agent's own vault, a runner's own login — and no 1Password key anywhere.
+// agent's own vault, a runner's own login.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -30,13 +30,12 @@ afterEach(() => {
 })
 
 describe('WorkspaceSecretsPage', () => {
-  it('states the model: canopy vaults at every level, and no 1Password key', async () => {
+  it('states the model: canopy vaults at every level', async () => {
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 0 })
     show()
     await waitFor(() => expect(screen.getByTestId('workspace-secrets')).toBeTruthy())
     const text = screen.getByTestId('workspace-secrets').textContent ?? ''
     expect(text).toContain('canopy vault')
-    expect(text).not.toContain('1Password')
     expect(screen.getByTestId('workspace-vaults')).toBeTruthy()
     expect(text).toContain('Each agent’s own vault')
     expect(text).toContain('What a runner itself holds')

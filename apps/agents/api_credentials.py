@@ -64,8 +64,6 @@ from .schemas import (
     AgentCredentialStatusOut,
     AgentGitHubIn,
     AgentGitHubOut,
-    AgentVaultIn,
-    AgentVaultOut,
     DeviceProofRequiredOut,
     OwnPatRotateIn,
     OwnPatRotateOut,
@@ -155,7 +153,7 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
     agent = agent_for_read(request, slug)
     via, reason = credential_resolve.credential_access(request, agent)
     return AgentCredentialAccessOut(
-        agent=agent.slug, credential_source=agent.credential_source,
+        agent=agent.slug,
         may_resolve=via is not None, via=via, reason=reason,
         delegated_withheld=accounts.withheld_payload(agent),
     )
@@ -171,10 +169,8 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
     always was. With `refs`, `values` holds only the named refs that the
-    agent also declares (`runtime_secrets`), and the secret extra
-    `op_sa_token` is included
-    only when named in `refs` too. `op_vault` and `mailbox`
-    are not secrets and are always returned.
+    agent also declares (`runtime_secrets`). `mailbox` is not a secret and is always
+    returned.
 
     **Delegated credentials** (a token a person gave the agent from their own
     account, such as its GitHub token) never ride `values`. They come only in
@@ -182,11 +178,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     box that runs it reading with its own device proof — never to an admin or a
     license holder.
 
-    **`credential_source == "canopy-web"`** leaves out the agent's 1Password
-    service-account token (`op_sa_token` is ""): its values come from here, so
-    the box has no reason to hold a key to its vault.
-
-    **Device proof.** With `credential_source` `canopy-web` and either
+    **Device proof.** With either
     `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
@@ -200,7 +192,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     STS endpoint and accepts the returned role if an ACTIVE `aws-iam` device key
     for it sits on a runner this agent routes to.
 
-    **Alerts.** With `credential_source` `canopy-web`, the agent's owner is told
+    **Alerts.** The agent's owner is told
     (email + push, at most once per kind per hour) of a box read (`via`
     runner) with no `X-Canopy-Turn-Id`, a read of an undeclared ref, a burst of
     reads, or a refusal for a bad or missing device proof.
@@ -255,37 +247,6 @@ def _credential_refusal(refusal: credential_resolve.Refusal) -> Exception:
                             members={"error": "not_a_vault_member"})
     # BEARER_REQUIRED, NO_ACCESS, FOREIGN_DEVICE_PROOF
     return HttpError(403, refusal.detail)
-
-
-@router.get("/{slug}/vault", response=AgentVaultOut,
-            summary="This agent's 1Password vault (masked — never the key)")
-@gate("member")
-def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
-    agent = agent_for_read(request, slug)
-    return services.agent_vault_status(agent)
-
-
-@router.put("/{slug}/vault", response=AgentVaultOut,
-            summary="Set the vault + its service-account token (write-only)")
-@gate("agent-admin", setting=True, step_up=True)
-def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
-    """The key is scoped to ONE agent's vault by design. Refused (422) for an agent whose
-    secrets live in the canopy vault: canopy-web holds no 1Password key for it.
-
-    A single fleet-wide token would be simpler to operate and would make
-    canopy-web worth attacking for every agent's secrets at once; this bounds a
-    compromise to the one agent whose key was taken (Jonathan, 2026-09-06)."""
-    agent = agent_for_admin(request, slug)
-    # A service-account key is a secret: a browser needs a fresh passkey step-up,
-    # as `set_agent_credentials` does; a token write has no browser to ask.
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    try:
-        return services.set_agent_vault(
-            agent, vault=payload.vault, service_key=payload.service_key,
-        )
-    except ValueError as exc:   # its secrets are in the canopy vault: no 1Password key
-        raise HttpError(422, str(exc)) from exc
 
 
 # ---- zero-knowledge vault (Canopy Vault Phase 2, canopy-web#1550) ------------------
@@ -874,7 +835,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
     it; on a private runner, its owner alone)."""
 
     agent = agent_for_admin(request, slug)
-    vault = [agent] if agent.zk_enabled and agent.credential_source == "canopy-web" else []
+    vault = [agent] if agent.zk_enabled else []
     out = []
     for k in device_keys.keys_for_agent(agent):
         row = key_out(k, can_manage=may_trust_device_keys(request.user, k.runner))

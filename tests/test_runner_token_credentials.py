@@ -46,7 +46,6 @@ def test_the_token_stages_an_agent_its_box_serves(fleet, sts):  # noqa: F811 —
     acc = _get("/api/agents/eva/credentials/access", raw)
     assert acc.status_code == 200, acc.content
     assert acc.json()["via"] == "runner"
-    assert acc.json()["credential_source"] == Agent.CANOPY_WEB
     assert _get("/api/agents/eva/runtime", raw).status_code == 200
 
     res = _get(RESOLVE, raw, HTTP_X_CANOPY_AWS_PROOF=_proof(HTU), HTTP_X_CANOPY_TURN_ID="t-1")
@@ -60,7 +59,7 @@ def test_the_token_reads_nothing_its_box_does_not_serve(fleet, sts):  # noqa: F8
     """The owner administers Ada too, but this box does not run her."""
     _active_role(fleet, sts)
     Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["user"],
-                         runtime_secrets=["CANOPY_WEB_PAT"], credential_source=Agent.CANOPY_WEB)
+                         runtime_secrets=["CANOPY_WEB_PAT"])
     raw = _runner_token(fleet)
 
     acc = _get("/api/agents/ada/credentials/access", raw)

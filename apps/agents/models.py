@@ -139,51 +139,18 @@ class Agent(models.Model):
     # the one-time bridge in harness.routing that turns it into RunnerAssignment
     # rows; dropped with its own migration once nothing reads it.
     runner_preference = models.JSONField(default=list, blank=True)
-    # WHERE each declared secret's value comes from:
-    # {"<ref-name>": {"op": "op://..."} | {"value": "..."}}.
-    #
-    # runtime_secrets says an agent NEEDS `gog-token`; this says that value lives
-    # at op://Agent-Ace/gog-token/credential. Without it an importer can only
-    # GUESS a convention, and a guess here is not safe: deriving
-    # op://Agent-Ace/<name>/credential for ACE's gog-oauth-client resolves
-    # cleanly to a DIFFERENT OAuth app in a different GCP project than the one it
-    # uses. A convention that silently returns the wrong credential is worse than
-    # one that fails (ace#2060).
+    # WHERE each declared secret's value comes from: {"<ref-name>": {"value": "..."}}
+    # for a plain literal (a base URL), or {"<ref-name>": {"local_only": true}} for one
+    # minted per machine. A real secret is never declared here: it is stored in the vault.
     runtime_sources = models.JSONField(
         default=dict, blank=True,
-        help_text='Per-ref value source: {"name": {"op": "op://..."}} '
-                  'or {"name": {"value": "literal"}}. Never holds a secret VALUE for an '
-                  "op-backed ref — only where to find it.",
+        help_text='Per-ref value source: {"name": {"value": "literal"}}.',
     )
-    # The agent's own 1Password vault + a service-account token scoped to it.
-    # Per-agent rather than fleet-wide on purpose: a single key that can read
-    # every vault makes canopy-web worth attacking for all of them at once,
-    # where this bounds a compromise to one agent (Jonathan, 2026-09-06).
-    op_vault = models.CharField(
-        max_length=200, blank=True, default="",
-        help_text="1Password vault holding this agent's secrets, e.g. Agent-Ace.",
-    )
-    op_sa_token_enc = models.TextField(blank=True, default="")
-    # Which backend `canopy cred` resolves this agent's secrets from (canopy#850).
-    # `canopy-web` (canopy vault, zero-knowledge) is where every agent's secrets
-    # live (Jonathan, 2026-10-21); `1password` is LEGACY, kept only for an agent
-    # still holding a 1Password vault until an admin runs `canopy vault import
-    # --zk --switch` — the runner/human then resolves through `op` with the
-    # vault's key. Set only by the agent's owner or an admin
-    # (PATCH /credential-source) — never by the repo's self-publish upsert. The
-    # field default is only the bare model's: every created agent is born on canopy
-    # vault (`services.born_zk_fields`).
-    ONEPASSWORD, CANOPY_WEB = "1password", "canopy-web"
-    CREDENTIAL_SOURCE_CHOICES = [(ONEPASSWORD, "1Password (legacy: op, via the agent's vault key)"),
-                                 (CANOPY_WEB, "canopy vault (canopy-web)")]
-    credential_source = models.CharField(
-        max_length=16, choices=CREDENTIAL_SOURCE_CHOICES, default=ONEPASSWORD,
-    )
-    # Canopy Vault device binding (canopy-web#1538 Phase 1a). When on AND the
-    # source is `canopy-web`, `/credentials/resolve` also demands a DPoP proof
+    # Canopy Vault device binding (canopy-web#1538 Phase 1a). When on,
+    # `/credentials/resolve` also demands a DPoP proof
     # signed by an ACTIVE RunnerDeviceKey on a runner this agent routes to (or
     # one its owner owns) — a PAT alone no longer reads the values. Owner/admin
-    # only (PATCH /device-binding); absent from AgentIn like credential_source.
+    # only (PATCH /device-binding); absent from AgentIn.
     require_device_binding = models.BooleanField(default=False)
     # Canopy Vault Phase 1b (canopy-web#1549): rotate the agent's own
     # `canopy-pat` every `pat_rotation_days` (apps/agents/credentials/pat_rotation.py).
@@ -205,10 +172,10 @@ class Agent(models.Model):
     # docs/vault/zk-v1/zk_v1_reference.py (apps/agents/credentials/zk.py).
     #
     # `zk_enabled` is NOT a choice of storage: there is no other. It is False only
-    # for a legacy 1Password agent that has never held a value here, so its
+    # for an agent that has never held a value here, so its
     # resolve skips the vault-member and wrap checks it has nothing behind. Every
     # created agent is born True (`services.born_zk_fields`), and the first value
-    # stored for one that is not, or its move to the canopy vault, turns it on.
+    # stored for one that is not turns it on.
     zk_enabled = models.BooleanField(default=False)
     zk_kv = models.PositiveIntegerField(default=0)
 
@@ -456,7 +423,7 @@ class AgentBootstrapReport(models.Model):
     #: actually resolve to (canopy `reconcile_client`). Distinct from `gog_client`
     #: above: that one is whichever client the box's token was minted under.
     turn_client = models.CharField(max_length=120, blank=True, default="")
-    #: Did the agent's secrets materialize (`op inject` of its `.env.tpl`)?
+    #: Did the agent's secrets materialize (`canopy cred sync` writing its `.env`)?
     #: Null = the box did not say. False means the box kept whatever `.env` it
     #: already had, so the agent still runs — on secrets that may be stale, and
     #: without any key added to the template since. Observed on cloud-ec2-1
@@ -570,10 +537,8 @@ class AgentCredential(VaultEntryAccount):
 
     Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
-    canopy-web is the agent secret store so that standing up an agent does not
-    require a 1Password vault someone must be granted. 1Password remains an
-    import source and a per-secret FALLBACK, which is what makes the migration
-    reversible: an agent with nothing here keeps working.
+    canopy-web is the agent secret store, so standing up an agent does not
+    require a vault someone must be granted elsewhere.
 
     Zero-knowledge only: canopy-web stores `value_zk` and holds no key that opens
     it. A machine that runs the agent opens it with its own device key, a person
@@ -1198,7 +1163,7 @@ class AgentPatRotation(models.Model):
 class AgentDelegation(models.Model):
     """A PERSON lending their own identity on some service to ONE agent.
 
-    The third kind of credential, beside the agent's own (its 1Password vault —
+    The third kind of credential, beside the agent's own (its Canopy vault —
     things that ARE the agent: its mailbox, an account of its own) and the
     tenant's (the workspace's shared vault). `docs/superpowers/specs/
     2026-09-05-agent-credentials-design.md` named this case and left it out of
@@ -1219,8 +1184,7 @@ class AgentDelegation(models.Model):
       per-repository scoping GitHub enforces on a credential that acts as a
       person. Whether two agents hold the same token is the owner's business;
       canopy stores one row each and never compares them.
-    - **canopy-web is its only home.** The "canopy-web holds only what it
-      mints" rule is about agent secrets that already live in 1Password. A
+    - **canopy-web is its only home.** A
       delegation has nowhere else to live, so it is held here — encrypted,
       write-only, never returned to a browser — and handed to a runner one TURN
       at a time (`POST /api/harness/runners/{id}/turns/{id}/github-token`).

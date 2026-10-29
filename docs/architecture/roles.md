@@ -276,9 +276,7 @@ Deliberately off the ladder:
   resolving for a local Claude Code session. The audit event records which (`via: runner |
   admin`). A browser session only ever sees the masked status.
 - **`GET /{slug}/credentials/access`** (member, session or bearer) answers the same gate for
-  the caller without returning values: `{agent, credential_source, may_resolve, via, reason}`.
-- **`PATCH /{slug}/credential-source`** (`1password` | `canopy-web`) is agent-admin, like the
-  credentials and vault pointer it governs.
+  the caller without returning values: `{agent, may_resolve, via, reason, delegated_withheld}`.
 
 ### A view that judges many pairs reads once
 

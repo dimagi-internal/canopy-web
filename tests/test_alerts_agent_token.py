@@ -1,5 +1,5 @@
 """`agent_token_expiring`: an agent's own canopy token near expiry with nothing to
-rotate it (a 1Password-held token) is raised to the agent's admins."""
+rotate it is raised to the agent's admins."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -44,7 +44,7 @@ def test_a_token_about_to_expire_with_no_rotation_is_raised_to_admins(w):
     _token(w["bot"], 10)
     alerts.tick(timezone.now())
     alert = Alert.objects.get(kind=src.KIND)
-    assert "canopy agent vault --slug eva" in alert.body
+    assert "automatic rotation under Settings" in alert.body and "1Password" not in alert.body
     assert [a.id for a in src.actions(alert, w["jj"])] == ["remint", "dismiss"]
     assert src.actions(alert, w["ed"]) == []  # not an admin: cannot mint it
 

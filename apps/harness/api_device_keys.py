@@ -377,7 +377,7 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
 def vault_agents_of(user) -> list:
     """The agents whose secrets live in the canopy-web vault that `user`
     administers — what a key's `can_open` is drawn from."""
-    return [a for a in Agent.objects.filter(zk_enabled=True, credential_source="canopy-web")
+    return [a for a in Agent.objects.filter(zk_enabled=True)
             .select_related("workspace", "owner").order_by("name", "slug") if a.is_admin(user)]
 
 

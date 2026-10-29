@@ -96,8 +96,7 @@ def fleet(client):
     f.ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=f.user)
     WorkspaceMembership.objects.create(workspace=f.ws, user=f.user, role=WorkspaceMembership.OWNER)
     f.agent = Agent.objects.create(slug="eva", name="Eva", workspace=f.ws, owner=f.user,
-                                   runtime_secrets=["CANOPY_WEB_PAT", "kindora"],
-                                   credential_source=Agent.CANOPY_WEB)
+                                   runtime_secrets=["CANOPY_WEB_PAT", "kindora"])
     f.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=f.user, status=Runner.ONLINE, workspace=f.ws,
                                      last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=f.agent, runner=f.runner, rank=0)
@@ -140,10 +139,10 @@ def _aid(f) -> str:
 
 
 def _legacy(f) -> None:
-    """Make eva a legacy 1Password agent that never stored a value here: the one kind
-    that is not zero-knowledge."""
+    """Make eva a legacy agent that never stored a value here: the one kind that is not
+    zero-knowledge."""
     AgentCredential.objects.filter(agent=f.agent).delete()
-    Agent.objects.filter(pk=f.agent.pk).update(zk_enabled=False, zk_kv=0, credential_source=Agent.ONEPASSWORD)
+    Agent.objects.filter(pk=f.agent.pk).update(zk_enabled=False, zk_kv=0)
 
 
 def device_wrap(f, kv=1, vk=None, key=None, ecdh=None) -> dict:
@@ -706,7 +705,6 @@ def test_the_key_list_says_which_machine_what_it_can_open_and_where_its_key_live
     _legacy(fleet)
     assert row()["can_open"] == []  # not zero-knowledge: nothing to open
     assert row()["runner_kind"] == "cloud" and row()["runner_host"] == ""
-    Agent.objects.filter(pk=fleet.agent.pk).update(credential_source=Agent.CANOPY_WEB)
     assert _enable(fleet).status_code == 200
     assert row()["can_open"] == [{"slug": "eva", "name": "Eva"}]
 
@@ -1144,8 +1142,7 @@ def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
     f = fleet
     family = Workspace.objects.create(slug="family", display_name="Family", created_by=f.user)
     WorkspaceMembership.objects.create(workspace=family, user=f.user, role=WorkspaceMembership.OWNER)
-    helper = Agent.objects.create(slug="helper", name="Helper", workspace=family, owner=f.user,
-                                  credential_source=Agent.CANOPY_WEB)
+    helper = Agent.objects.create(slug="helper", name="Helper", workspace=family, owner=f.user)
     # Not enrolled there yet: the box is no recipient, whatever the order says.
     assert zk.eligible_device_keys(helper) == []
 

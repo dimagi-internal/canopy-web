@@ -11,9 +11,6 @@ from django.db.models import Count, F, Q
 from django.utils import timezone
 from django.utils.text import slugify
 
-from apps.agents.credentials import vault_import
-from apps.agents.schemas import AgentVaultOut
-from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.contacts import people
 from apps.contacts.models import Person
 from apps.harness.dispatch import dispatch, enqueue_task_turn
@@ -58,6 +55,13 @@ DEFINITION_FIELDS = ("repo_url", "repo_ref", "runtime_secrets",
                      "runtime_sources", "clis", "cli_models")
 
 
+def _without_op_refs(sources: dict) -> dict:
+    """`runtime_sources` as stored: an older plugin still publishes `{"op": "op://..."}`
+    per ref; that pointer leads nowhere now, so only the rest of the entry is kept."""
+    return {name: ({k: v for k, v in src.items() if k != "op"} if isinstance(src, dict) else src)
+            for name, src in sources.items()}
+
+
 def upsert_agent(data, *, workspace, owner=None) -> Agent:
     """Create or update an agent by slug.
 
@@ -87,7 +91,7 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
                   "runtime_sources", "runner_preference", "clis", "cli_models"):
         value = getattr(data, field, None)
         if value is not None:
-            defaults[field] = value
+            defaults[field] = _without_op_refs(value) if field == "runtime_sources" else value
     # Same rule for the Google account: the plugin's re-upserts omit it.
     google_account = getattr(data, "google_account", None)
     if google_account is not None:
@@ -115,14 +119,12 @@ def born_zk_fields(owner) -> dict:
     the agent (its owner's vault key, its approved machines) until a holder
     creates the vault key.
 
-    And on the canopy-web vault itself: a new agent's secrets live here unless
-    its owner explicitly chooses 1Password (PATCH /credential-source). A person
-    with no 1Password — a family workspace — must never be routed to `op`."""
-    return {"zk_enabled": True, "zk_kv": 0, "credential_source": Agent.CANOPY_WEB}
+    A new agent's secrets live in the canopy-web vault, the only store there is."""
+    return {"zk_enabled": True, "zk_kv": 0}
 
 
 def start_zero_knowledge(agent) -> None:
-    """Turn the vault on for a legacy 1Password agent that has never held a value
+    """Turn the vault on for an agent that has never held a value
     here: zero-knowledge at kv 0, as a new agent is born. Callers hold the agent's
     row lock. A no-op on an agent already zero-knowledge. There is nothing to
     convert: canopy-web never stores an agent's value any other way."""
@@ -250,8 +252,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
 
     It expires like any PAT (`settings.PAT_DEFAULT_TTL_DAYS`): a login that signs in as
     an account must not outlive everyone's attention. Automatic rotation
-    (`credentials/pat_rotation.py`) replaces it well before then; an agent that keeps
-    its token in 1Password is re-minted by hand (`canopy agent vault`)."""
+    (`credentials/pat_rotation.py`) replaces it well before then."""
 
     from .agent_login import (  # cycle: agents.agent_login -> agents.services  # noqa: PLC0415
         AgentLoginRefused,
@@ -281,7 +282,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
 
 
 def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
-    """The agent's canopy login in one step, for an agent on the canopy-web vault: mint
+    """The agent's canopy login in one step: mint
     its token (`mint_agent_canopy_token`), store it as its login (`pat_rotation.CANOPY_PAT_REF`) sealed to whoever
     may read the agent (`minted=True` → zks1), and turn on automatic rotation. The raw
     token never leaves this function — the browser button that calls it has no use for
@@ -297,10 +298,6 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
         zk_seal,
     )
 
-    if agent.credential_source != Agent.CANOPY_WEB:
-        raise AgentTokenRefused(
-            f"{agent.slug} reads its secrets from 1Password; switch it to the Canopy vault "
-            "first, or put its token in 1Password with `canopy agent vault`", 409)
     if not zk_seal.recipients_for(agent):
         raise AgentTokenRefused(
             "nobody can open this agent's secrets yet — set up your key under Settings → "
@@ -341,9 +338,7 @@ def agent_detail(agent: Agent) -> dict:
         "cli_models": dict(agent.cli_models or {}),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
-        "credential_source": agent.credential_source,
         "require_device_binding": agent.require_device_binding,
-        "op_vault": agent.op_vault or "",
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),
@@ -1857,67 +1852,6 @@ def runner_may_hold_agent(runner, agent, *, standings=None) -> bool:
 
 
 
-# ---- 1Password vault + import (spec 2026-09-06) -------------------------------
-
-def set_agent_vault(agent, *, vault=None, service_key=None):
-    """Set the agent's vault name and/or its service-account token.
-
-    A change re-asks the agent's cloud boxes to bootstrap it (see below).
-
-    Non-clobbering on the KEY specifically: renaming a vault must not silently
-    wipe the credential that reads it, which is the shape of every other
-    credential write here."""
-
-    fields = []
-    if service_key and service_key.strip() and agent.credential_source == agent.CANOPY_WEB:
-        # Its secrets live in the canopy vault: nothing of it may hold a 1Password key,
-        # which would open the whole vault, its canopy login included.
-        raise ValueError(f"{agent.slug}'s secrets live in the canopy vault; canopy-web stores no "
-                         "1Password key for it")
-    if vault is not None:
-        agent.op_vault = vault.strip()
-        fields.append("op_vault")
-    if service_key and service_key.strip():
-        agent.op_sa_token_enc = encrypt_secret(service_key.strip())
-        fields.append("op_sa_token_enc")
-    if fields:
-        agent.save(update_fields=[*fields, "updated_at"])
-        # What a box said about the OLD vault/key no longer describes this one: drop the
-        # verdict to "not reported" rather than leave a stale False (or True) on the
-        # checklist, and ask the cloud boxes that take its turns to re-run bootstrap,
-        # which is what produces a fresh one.
-        from .setup import request_setup  # cycle: agents.setup -> agents.oauth_api -> agents.services  # noqa: PLC0415
-
-        AgentBootstrapReport.objects.filter(agent=agent).update(env_ok=None)
-        request_setup(agent)
-    return agent_vault_status(agent)
-
-
-def agent_vault_status(agent):
-    """Vault config plus how much of the agent is actually locatable.
-
-    `locatable` is the number of declared refs that carry a source. It is the
-    difference between "the import found nothing" and "this deployment was never
-    told where anything lives" — the same failure with two completely different
-    fixes."""
-
-    declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
-    plan = vault_import.plan_import(declared, agent.runtime_sources or {})
-    return AgentVaultOut(
-        vault=agent.op_vault,
-        key_set=bool(agent.op_sa_token_enc),
-        declared=len(declared),
-        locatable=sum(1 for i in plan if i.kind in ("op", "value")),
-    )
-
-
-def resolve_agent_vault(agent) -> tuple[str, str]:
-    """PLAINTEXT vault config, for a runner. Empty token when none is set."""
-
-    token = decrypt_secret(agent.op_sa_token_enc) if agent.op_sa_token_enc else ""
-    return agent.op_vault, token
-
-
 # ---- what the BOX observed (spec 2026-09-07) ---------------------------------
 
 def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
@@ -1940,7 +1874,7 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
     #
     # They were written as None instead, which erased the last real answer: the
     # updater's credentials-only pass (every 30 minutes) does not run
-    # `op inject`, so minutes after a full bootstrap recorded `env_ok` for all
+    # `canopy cred sync`, so minutes after a full bootstrap recorded `env_ok` for all
     # five agents, every one of them read "not checked" (labs, 2026-09-24).
     if turn_ready is not None:
         fields["turn_ready"] = bool(turn_ready)

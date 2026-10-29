@@ -12,10 +12,10 @@ def _capture(cloud_runner, monkeypatch):
 
     def api(method, path, body=None, *, prefix="/api/harness", headers=None):
         seen.append((path, dict(headers or {})))
-        return 200, {"op_sa_token": "ops_agent", "op_vault": "Agent-Eva"}
+        return 200, {"zk": True}
 
     monkeypatch.setattr(cloud_runner, "_api", api)
-    cloud_runner._AGENT_OP.clear()
+    cloud_runner._VAULT_PROBE_AT.clear()
     return seen
 
 
@@ -23,7 +23,7 @@ def test_a_turns_resolve_carries_its_turn_id(cloud_runner, monkeypatch):
     seen = _capture(cloud_runner, monkeypatch)
     cloud_runner._TURN_ENV.extra = {"CANOPY_TURN_ID": "t-946"}
     try:
-        assert cloud_runner._agent_op_token("eva") == "ops_agent"
+        cloud_runner._probe_agent_vault("eva")
     finally:
         cloud_runner._TURN_ENV.extra = {}
     (path, headers), = seen
@@ -32,7 +32,7 @@ def test_a_turns_resolve_carries_its_turn_id(cloud_runner, monkeypatch):
 
 def test_outside_a_turn_no_turn_header_is_sent(cloud_runner, monkeypatch):
     seen = _capture(cloud_runner, monkeypatch)
-    cloud_runner._agent_op_token("eva")
+    cloud_runner._probe_agent_vault("eva")
     assert seen[0][1].get("X-Canopy-Turn-Id", "") == ""
 
 

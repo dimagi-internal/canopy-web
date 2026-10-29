@@ -19,6 +19,7 @@ from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
 from apps.tokens import kinds
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 
@@ -45,8 +46,7 @@ def ws(owner):
 @pytest.fixture
 def agent(ws, owner):
     return Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=owner,
-                                runtime_secrets=["canopy-pat", "api-key"],
-                                credential_source=Agent.CANOPY_WEB)
+                                runtime_secrets=["canopy-pat", "api-key"])
 
 
 @pytest.fixture
@@ -142,17 +142,6 @@ def test_a_missing_proof_is_refused_and_the_owner_alerted(monkeypatch, owner, ag
     assert alerts == [("refused", "no device proof")]
 
 
-def test_no_proof_is_needed_while_the_secrets_live_in_1password(monkeypatch, owner, agent, alerts):
-    agent.require_device_binding = True
-    agent.credential_source = Agent.ONEPASSWORD
-    agent.save()
-    _proof(monkeypatch, refused="no device proof")
-    monkeypatch.setattr(cr.services, "resolve_agent_vault", lambda a: ("Agent-Eva", "ops-key"))
-    out = cr.resolve(_request(owner), agent, None)
-    assert isinstance(out, cr.Resolved)
-    assert out.op_sa_token == "ops-key" and alerts == []
-
-
 def test_a_zk_agent_without_this_devices_wrap_is_refused(monkeypatch, owner, ws, agent):
     agent.zk_enabled, agent.zk_kv = True, 3
     agent.save()
@@ -171,11 +160,12 @@ def test_a_zk_agent_without_this_devices_wrap_is_refused(monkeypatch, owner, ws,
 
 
 def _values(monkeypatch, agent, values):
-    """The agent's (zero-knowledge) values, as `zk.resolve_payload` hands them out. On
-    1Password, so an unproven read is not refused first: what is under test is how a
-    read is classified and what it withholds, not the device proof."""
-    agent.zk_enabled, agent.zk_kv, agent.credential_source = True, 0, Agent.ONEPASSWORD
+    """The agent's (zero-knowledge) values, as `zk.resolve_payload` hands them out, read
+    with a device proof (stubbed): what is under test is how a read is classified and
+    what it withholds, not the proof."""
+    agent.zk_enabled, agent.zk_kv = True, 0
     agent.save()
+    accept_device_proof(monkeypatch)
     monkeypatch.setattr(cr.zk, "resolve_payload", lambda agent, key, wanted: (dict(values), None))
     monkeypatch.setattr(cr.zk, "needs_wrap", lambda values: False)
 
@@ -191,15 +181,14 @@ def test_an_owner_without_a_named_box_reads_as_admin(monkeypatch, owner, ws, age
     assert out.via == "admin" and out.values == {"api-key": "v"}
 
 
-def test_a_license_read_never_gets_the_agents_login_or_the_extras(monkeypatch, owner, agent):
+def test_a_license_read_never_gets_the_agents_login(monkeypatch, owner, agent):
     monkeypatch.setattr(cr, "credential_access", lambda request, agent: ("license", ""))
     monkeypatch.setattr(cr, "license_for_read", lambda request, agent: None)
     _values(monkeypatch, agent, {"api-key": "v", "canopy-pat": "pat"})
-    monkeypatch.setattr(cr.services, "resolve_agent_vault", lambda a: ("Agent-Eva", "ops-key"))
     out = cr.resolve(_request(owner), agent, None)
     assert out.via == "license"
     assert out.values == {"api-key": "v"}
-    assert out.op_sa_token == ""
+    assert not hasattr(out, "op_sa_token")
     assert not hasattr(out, "github_token")
 
 

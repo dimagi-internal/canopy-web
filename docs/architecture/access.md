@@ -81,9 +81,9 @@ or as you only under an act-as-you permission you granted.** Three kinds, one me
     account", `POST /api/me/agent-login-requests/{id}/accept`; a token is refused). A new
     `Agent.email` unlinks the old account and derives the link again; an agent with no
     email has no login.
-  - **An agent's 1Password-held token is watched.** canopy cannot rotate a token it does
-    not store, so within 14 days of its expiry (with no automatic rotation) the agent's
-    admins get an alert naming how to re-mint it (`alerts_agent_token.py`).
+  - **An agent's token is watched.** With automatic rotation off nothing replaces it, so
+    within 14 days of its expiry the agent's admins get an alert naming how to turn
+    rotation on or give the agent a fresh login (`alerts_agent_token.py`).
   - **A runner never hands a turn its owner's token.** The cloud runner strips the
     box's `CANOPY_TOKEN` from every turn, agentless repo turns included
     (`cloud_runner._agent_env`).
@@ -471,9 +471,7 @@ skills, and canopy keeps the record (`apps/harness/local.py`):
   `X-Canopy-Turn-Id`: their running local turn, or — on their private runner's
   token — a turn of theirs that runner claimed. No turn, no secrets. A license read
   never gets the agent's canopy login, the owner's GitHub delegation, lent or shared
-  credentials, or the agent's 1Password service-account key (`op_sa_token`), which
-  reads the whole vault, canopy login included (`LICENSE_WITHHELD_EXTRAS`) — so a
-  non-admin using a 1Password-backed agent locally gets no secrets from it. Each read is logged with `via=license`,
+  credentials. Each read is logged with `via=license`,
   the turn and the license. Secrets read this way reach the person's machine;
   nothing brokers each call through canopy-web.
 * **Reporting.** Only its initiator may renew, finish or append its transcript —
@@ -709,7 +707,7 @@ tool; and beside every delivered prompt — the runner leaves
   the GitHub token delegated to the agent (`agents.credentials.delegations.github_token_for_turn` → 409).
   The cloud runner builds its env from an allowlist (`_confined_env` in
   `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
-  turn) — no `CANOPY_TOKEN`, no agent `.env`, no 1Password key (it never calls
+  turn) — no `CANOPY_TOKEN`, no agent `.env`, no vault key (it never calls
   `credentials/resolve`), no chat key; gog's keyring password only when the
   capability's own bash rules run the mail path (`canopy email …` /
   `bin/<slug>-email`).

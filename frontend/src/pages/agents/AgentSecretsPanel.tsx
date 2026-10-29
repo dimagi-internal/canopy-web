@@ -19,7 +19,6 @@ import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAler
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
 import { AgentSecretsHomeSection } from '@/pages/agents/AgentSecretsHomeSection'
 import { AgentVaultMembersSection } from '@/pages/agents/AgentVaultMembersSection'
-import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { AgentZkSection } from '@/pages/agents/AgentZkSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
 import { OpenSecretRequests } from '@/pages/agents/OpenSecretRequests'
@@ -41,9 +40,6 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 // Save seals in the browser once the agent has a vault key; before that it
 // hands the value to the server, which seals it to the agent's readers and
 // keeps no copy.
-//
-// 1Password is the legacy home: its vault form shows only for an agent still
-// set to read from it.
 
 /** The server's own reason (`detail`) when there is one, not the wrapper text. */
 function reason(e: unknown, fallback: string): string {
@@ -57,26 +53,19 @@ export function AgentSecretsPanel({
   agent,
   canEdit = true,
   reloadKey = 0,
-  onSourceChange,
 }: {
   agent: {
     slug: string
     name?: string
-    workspace?: string | null
     email?: string | null
-    credential_source?: string | null
     require_device_binding?: boolean | null
   }
   canEdit?: boolean
   /** Bumped by the page when something outside changed a secret (a new canopy login). */
   reloadKey?: number
-  /** Told when the person moves the agent between the Canopy vault and 1Password. */
-  onSourceChange?: (source: string) => void
 }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [source, setSource] = useState<string>(agent.credential_source ?? '1password')
-  useEffect(() => setSource(agent.credential_source ?? '1password'), [agent.credential_source])
   const [zk, setZk] = useState<ZkStateOut | null>(null)
   const [alerts, setAlerts] = useState<AgentCredentialAlertOut[] | null>(null)
   const [members, setMembers] = useState<VaultMembersOut | null>(null)
@@ -121,7 +110,6 @@ export function AgentSecretsPanel({
 
   if (rows === null) return <WorkbenchSkeleton />
 
-  const onCanopy = source === 'canopy-web'
   const implied = agent.email?.trim() && !hosted ? [GOG_TOKEN_REF] : []
   const sec = sections(rows, implied)
   const orphan = new Set(sec.orphans.map((r) => r.name))
@@ -139,11 +127,9 @@ export function AgentSecretsPanel({
       ? { label: 'not declared', tone: 'destructive' }
       : r.set
         ? undefined
-        : onCanopy
-          ? { label: 'no value', tone: 'warning' }
-          : { label: 'from 1Password', tone: 'neutral' },
+        : { label: 'no value', tone: 'warning' },
   }))
-  const missing = onCanopy ? sec.fromVault.length : 0
+  const missing = sec.notSet.length
   const byName = new Map(rows.map((r) => [r.name, r]))
 
   const save = async (name: string, value: string) => {
@@ -162,7 +148,7 @@ export function AgentSecretsPanel({
   const rotate = Boolean(zk?.rotation_recommended)
   const secretsAttention = sec.orphans.length > 0 || missing > 0
   const activeMachines = machines?.filter((k) => k.status === 'active').length
-  const where = onCanopy ? 'Canopy vault' : '1Password'
+  const where = 'Canopy vault'
   const attention = [
     secretsAttention && [
       sec.orphans.length > 0 && `${sec.orphans.length} stored secret${sec.orphans.length === 1 ? '' : 's'} nothing declares`,
@@ -178,7 +164,7 @@ export function AgentSecretsPanel({
       <VaultView
         facts={{
           where,
-          encrypted: onCanopy,
+          encrypted: true,
           secrets: stored,
           people: canEdit ? members?.members.length : undefined,
           machines: canEdit ? activeMachines : undefined,
@@ -243,7 +229,6 @@ export function AgentSecretsPanel({
               <AgentVaultMembersSection slug={agent.slug} onLoaded={setMembers} />
               <AgentDeviceKeysSection
                 slug={agent.slug}
-                credentialSource={source}
                 requireDeviceBinding={agent.require_device_binding}
                 canEdit={canEdit}
                 onLoaded={setMachines}
@@ -260,22 +245,16 @@ export function AgentSecretsPanel({
           summary: [where, zk?.enabled && zk.kv > 0 ? `key version ${zk.kv}` : null].filter(Boolean).join(' · '),
           tone: canEdit && (waiting > 0 || rotate) ? 'attention' : 'quiet',
           anchors: ['cred-zk', 'cred-vault', 'secrets-home'],
-          defaultOpen: !onCanopy,
+          defaultOpen: false,
           body: (
             <>
               <AgentSecretsHomeSection
                 slug={agent.slug}
-                credentialSource={source}
                 storedNames={rows.filter((r) => r.set).map((r) => r.name)}
                 canEdit={canEdit}
                 onChanged={reload}
-                onSource={(next) => {
-                  setSource(next)
-                  onSourceChange?.(next)
-                }}
                 show="source"
               />
-              {!onCanopy && <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />}
               <AgentZkSection slug={agent.slug} canEdit={canEdit} onState={setZk} onChanged={reload} />
             </>
           ),

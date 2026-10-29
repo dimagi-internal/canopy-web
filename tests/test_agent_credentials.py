@@ -4,9 +4,8 @@ canopy-web cannot open (the agent vault is zero-knowledge; tests/test_canopy_vau
 Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
 The goal this serves, stated by Jonathan on 2026-09-05: *someone could plausibly
-create a completely new agent without direct access to the cloud box or 1Password.*
-1Password is the remaining barrier — a vault you must be granted — so canopy-web
-becomes the store and 1Password becomes an import source and a per-secret fallback.
+create a completely new agent without direct access to the cloud box.* A vault you
+must be granted was the barrier, so canopy-web is the store.
 
 The failure that motivated it is not hypothetical: a from-scratch cloud rebuild the
 same day found ACE's mailbox dead since 2026-05-01, under an OAuth client its own
@@ -25,6 +24,7 @@ from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 
@@ -216,8 +216,9 @@ def test_delete_removes_the_slot(fleet):
 
 # --- resolve: ciphertext only ----------------------------------------------------
 
-def test_resolve_hands_out_ciphertext_never_the_value(fleet):
+def test_resolve_hands_out_ciphertext_never_the_value(fleet, monkeypatch):
     _put(fleet["client"], {"canopy-pat": SECRET})
+    accept_device_proof(monkeypatch, fleet["runner"])
     # A FRESH client: a runner carries a bearer and no session cookie. Reusing
     # the logged-in client would let session auth answer and prove nothing about
     # the bearer path.

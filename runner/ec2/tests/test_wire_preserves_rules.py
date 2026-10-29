@@ -127,9 +127,6 @@ def _run_wire(tmp: pathlib.Path) -> subprocess.CompletedProcess:
     aws = tmp / "bin" / "aws"
     aws.write_text("#!/bin/sh\necho fake-token\n")
     aws.chmod(0o755)
-    op = tmp / "bin" / "op"
-    op.write_text("#!/bin/sh\nexit 1\n")
-    op.chmod(0o755)
     return subprocess.run(
         ["bash", str(SCRIPT), "--probe-minutes", "0", "--runner-id", NEW],
         capture_output=True, text=True, timeout=120,

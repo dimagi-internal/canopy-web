@@ -896,14 +896,14 @@ esac
 # Code is not the only thing that goes stale. bootstrap_agents.sh runs on service
 # START, and the only thing that starts the service is this script installing new
 # code — so a CONFIG change (a credential set in canopy-web, a vault rotation, a
-# 1Password grant that was missing) had no path to the box at all. It would sit
+# vault grant that was missing) had no path to the box at all. It would sit
 # unread until someone happened to ship unrelated code, which is not a mechanism.
 #
 # That is the second half of the 2026-09-07 outage: the fix landed, the operator
 # set the credential, and nothing would have picked it up.
 #
 # `--credentials-only` skips the expensive, disruptive half of a bootstrap (clone,
-# op inject, plugin installs) and re-runs the cheap idempotent half — client creds
+# env fill, plugin installs) and re-runs the cheap idempotent half — client creds
 # and the gmail token — both of which short-circuit when already satisfied. It
 # also re-reports readiness, so the control plane's answer refreshes on its own
 # rather than dating from the last deploy.

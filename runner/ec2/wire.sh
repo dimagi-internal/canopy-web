@@ -8,7 +8,7 @@
 #      and print where its owner makes the key and signs it in; wire.sh never holds
 #      a token. Nothing else: a box holds no GitHub
 #      credential — each agent's turns get its owner's, one turn at a time
-#      (AgentDelegation) — and no 1Password key (each agent's comes with it).
+#      (AgentDelegation) — and no per-agent key (the canopy CLI on the box opens each agent's vault).
 #   3. retire every OTHER non-retired cloud runner with the same name (the
 #      predecessor this box replaces)
 #   4. for every agent that already has an assignment list: replace the
@@ -53,7 +53,7 @@ STANDBY=0
 TEST=0
 VAULT_ID=""   # a vault to share (one isolation boundary); default: the box's own (see step 2)
 INSTANCE=""   # one runner of the machine --name names (up.sh --runners)
-DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
+DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh) takes 4-6 min before the first pair
 BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
 PROBE_MINUTES=15      # how long to wait for a credential on the box to answer (a person signs it in)
 POLL_SECONDS="${WIRE_POLL_SECONDS:-10}"
@@ -186,7 +186,6 @@ echo ">> $BASE_URL"
 # ── Preflight: what each named agent needs before a box can run it ──────────────
 # All of these are ONE-TIME human steps, so they are checked here, before the box
 # is touched, with the fix named — not discovered as a failed drill ten minutes in.
-#   - the agent's own 1Password vault + service-account key (Settings → Credentials)
 #   - its GitHub delegation (the owner's token lent to it; Settings → Credentials → GitHub)
 #   - its workspace's shared vault (/w/<ws>/settings/secrets)
 # In --standby mode an agent that FOLLOWS its workspace's runner order is refused:
@@ -196,7 +195,6 @@ echo ">> $BASE_URL"
 preflight_agent() {  # <slug> -> 0 ok, 1 refused (message printed)
   local slug="$1"
   api GET "/api/agents/${slug}/" > "$TMP/agent-${slug}.json"
-  api GET "/api/agents/${slug}/vault" > "$TMP/vault-${slug}.json"
   api GET "/api/agents/${slug}/github" > "$TMP/github-${slug}.json"
   api GET "/api/agents/${slug}/default-order" > "$TMP/order-of-${slug}.json"
   local ws
@@ -214,12 +212,6 @@ agent = load("agent")
 if not isinstance(agent, dict) or not agent.get("slug"):
     print(f"   {slug}: !! no such agent visible to this token")
     sys.exit(1)
-vault = load("vault")
-# Only an agent still on 1Password needs a key here; one on the canopy vault has none.
-on_1password = agent.get("credential_source") == "1password"
-if on_1password and (not vault.get("vault") or not vault.get("key_set")):
-    problems.append(f"no agent vault/key registered — {base}/w/{ws}/agents/{slug}/settings (Credentials), "
-                    f"or run `canopy agent vault --slug {slug} --workspace {ws}` (needs 1Password rights)")
 gh = load("github")
 if not gh.get("set"):
     problems.append(f"no GitHub delegation — the owner sets it at {base}/w/{ws}/agents/{slug}/settings (Credentials → GitHub)")
@@ -230,8 +222,7 @@ if os.environ["STANDBY"] == "1" and order.get("own") is False:
 for p in problems:
     print(f"   {slug}: !! {p}")
 if not problems:
-    print(f"   {slug}: ok ({'vault ' + str(vault.get('vault')) if on_1password else 'canopy vault'}, "
-          f"GitHub as {gh.get('login')}, "
+    print(f"   {slug}: ok (GitHub as {gh.get('login')}, "
           f"{'own runner order' if order.get('own') else 'follows ' + str(order.get('workspace'))})")
 sys.exit(1 if problems else 0)
 PY

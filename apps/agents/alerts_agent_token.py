@@ -3,9 +3,8 @@ and nothing will replace it.
 
 An agent's own canopy token expires like any PAT (`services.agent_token_ttl_days`).
 Automatic rotation (`credentials/pat_rotation.py`) replaces one canopy-web stores in
-the agent's Canopy vault well before then. A token kept in 1Password (`canopy agent
-vault`) is one canopy-web cannot write, so nothing rotates it, and once it lapses every
-call the agent makes with it fails. So within `WARN_WITHIN` of the expiry of the agent's
+the agent's Canopy vault well before then. With rotation off nothing replaces it, and once
+it lapses every call the agent makes with it fails. So within `WARN_WITHIN` of the expiry of the agent's
 newest stored login token, with rotation off, its admins are told how to re-mint it.
 
 Resolves when a token that lives past the window exists (re-minted), or rotation is
@@ -64,9 +63,8 @@ def reconcile(now) -> list[Raise]:
             title=f"{agent.name or agent.slug}'s canopy login expires {when:%Y-%m-%d}",
             url=settings_path(agent.workspace_id, agent.slug),
             scopes=(f"agent:{agent.slug}", f"workspace:{agent.workspace_id}"),
-            body=(f"Nothing rotates it. Re-mint it with `canopy agent vault --slug {agent.slug}` "
-                  "(it writes a new token to the agent's 1Password vault), or move the agent to "
-                  "the Canopy vault and turn on automatic rotation under Settings → Credentials."),
+            body=("Nothing rotates it. Turn on automatic rotation under Settings → Credentials, "
+                  "or give the agent a fresh login there."),
             fingerprint=f"{when:%Y-%m-%d}",
         ))
     return out

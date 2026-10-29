@@ -49,7 +49,7 @@ def box(org):
     approval; eva routed to B only; its secret stored in canopy-web and bound to an
     approved device."""
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=org["ws"], owner=org["user"],
-                               runtime_secrets=["canopy-pat"], credential_source=Agent.CANOPY_WEB,
+                               runtime_secrets=["canopy-pat"],
                                require_device_binding=True, zk_enabled=True)
     # What canopy-web stores is ciphertext (the agent vault is zero-knowledge); its
     # shape does not matter here, only who is handed it.

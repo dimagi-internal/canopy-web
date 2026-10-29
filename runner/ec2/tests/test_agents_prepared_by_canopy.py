@@ -77,7 +77,7 @@ main
 def test_no_per_agent_preparation_is_left_in_the_bash():
     text = (HERE / "bootstrap_agents.sh").read_text()
     for gone in ("bootstrap_one_agent", "ensure_client_creds", "refresh_gmail_token",
-                 "inject_agent_env", "op inject", "gog auth tokens import", "PREPARE_ENGINE"):
+                 "inject_agent_env", "gog auth tokens import", "PREPARE_ENGINE"):
         assert gone not in text, gone
     assert "canopy agent prepare --runner" in text
 

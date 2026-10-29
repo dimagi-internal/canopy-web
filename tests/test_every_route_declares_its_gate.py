@@ -123,8 +123,8 @@ def test_every_write_says_whether_it_is_a_setting(operations, gates):
 #: these says whether it steps up. Names only a NAME of a secret (`secret_name`,
 #: `runtime_secrets`), a share link (`share_token`) or a page cursor are not here.
 SECRET_FIELDS = frozenset({
-    "token", "secret", "service_key", "refresh_token", "api_key", "password", "owner_token",
-    "access_token", "mcp_token", "github_token", "op_sa_token", "shared_op_sa_token",
+    "token", "secret", "refresh_token", "api_key", "password", "owner_token",
+    "access_token", "mcp_token", "github_token",
     "webhook_secret", "value_zk", "values",
 })
 

@@ -90,7 +90,7 @@ export interface Unlocked {
 // ---- the person's vault key -----------------------------------------------------------
 //
 // A keyset holds one or more SEALS of the private key: a passkey's PRF output
-// (`prf`), or a passphrase + Secret Key (`2skd`, 1Password-style). The Secret
+// (`prf`), or a passphrase + Secret Key (`2skd`). The Secret
 // Key is remembered in this browser (localStorage, per user) so unlocking here
 // needs only the passphrase; on a new device the person types both.
 //
@@ -98,7 +98,7 @@ export interface Unlocked {
 // Secret Key alone opens nothing — it is one of TWO factors, mixed with the
 // passphrase (which is never stored) in 2SKD. Its job is to make a stolen
 // copy of canopy-web's database un-guessable, not to resist this browser's own
-// storage; 1Password keeps it on the device the same way.
+// storage.
 
 const SK_STORE = (userId: string) => `canopy-vault-secret-key:${userId}`
 
@@ -190,7 +190,7 @@ export async function unlockVaultKey(prompt: UnlockPrompt, ks?: VaultKeysetOut):
 
 /** Whether a passkey can plausibly hold the vault key here: the browser does
  *  not rule PRF out and some passkey did not report it missing at
- *  registration. Many passkey apps (1Password's extension among them) give no
+ *  registration. Many passkey apps give no
  *  PRF, and for those a passphrase is the way — so a page offers the passkey
  *  route only when this is true, and still falls back if the touch says no. */
 export function passkeyCanHoldVaultKey(passkeys: readonly { prf_enabled?: boolean | null }[], browser: boolean | null): boolean {
@@ -200,7 +200,7 @@ export function passkeyCanHoldVaultKey(passkeys: readonly { prf_enabled?: boolea
 /** How a person without a vault key should get one:
  *  - `passkey`: a passkey of theirs reported PRF — one touch makes the key;
  *  - `upgrade`: none did, but a new passkey may (one registered before PRF was
- *    asked for reports `null`, and a password manager such as 1Password then
+ *    asked for reports `null`, and a password manager then
  *    made it without PRF) — register a replacement, then use it;
  *  - `passphrase`: this browser has no PRF, or every passkey said no. */
 export type VaultKeyRoute = 'passkey' | 'upgrade' | 'passphrase'

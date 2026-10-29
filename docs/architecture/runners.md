@@ -757,9 +757,8 @@ the person on a connected site), so:
   the agent's MCP headers helper (found from `EMDASH_TASK_NAME`). The agent's own
   `.env` stays on that disk: on a laptop the helper and the caller envelope's `site`
   block are the boundary, not the environment.
-- An agent whose secrets come from 1Password still gets its own
-  `OP_SERVICE_ACCOUNT_TOKEN` in a full turn, which can read the withheld value from
-  its vault; keep the site login in canopy-web's vault for the withholding to bind.
+- Keep the site login in the agent's Canopy vault for the withholding to bind: a value
+  kept anywhere else is outside it.
 
 ## Scheduled turns
 

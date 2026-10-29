@@ -2,7 +2,7 @@
 
 profile_guard used to be the only thing between a prompt-injected caller session
 and everything the box held: the runner owner's canopy PAT (CANOPY_TOKEN), the
-agent's 1Password key, its whole ~/.<slug>/.env (CANOPY_WEB_PAT among it), the
+agent's whole ~/.<slug>/.env (CANOPY_WEB_PAT among it), the
 owner's GitHub token and the chat's key. A confined turn's env is now an
 allowlist — Claude's own login, locale/paths/TLS, which agent and turn this is —
 plus gog's keyring password only for a capability whose bash allowlist runs the
@@ -26,10 +26,9 @@ BOX_ENV = {
     "CANOPY_TOKEN": "cpat_runner_owner",                 # the runner owner's PAT
     "CLAUDE_CODE_OAUTH_TOKEN": "claude-login",           # Claude itself must run
     "GOG_KEYRING_PASSWORD": "gog-pw",
-    "OP_SERVICE_ACCOUNT_TOKEN": "ops_box",
     "GH_TOKEN": "box-gh", "AWS_SECRET_ACCESS_KEY": "aws",
 }
-SECRETS = ("CANOPY_TOKEN", "CANOPY_WEB_PAT", "OP_SERVICE_ACCOUNT_TOKEN", "GH_TOKEN", "CHROME_SALES_HOME",
+SECRETS = ("CANOPY_TOKEN", "CANOPY_WEB_PAT", "GH_TOKEN", "CHROME_SALES_HOME",
            "GITHUB_TOKEN", "GIT_CONFIG_VALUE_1", "CANOPY_CHAT_KEY", "AWS_SECRET_ACCESS_KEY",
            "AGENT_SECRET")
 
@@ -58,7 +57,7 @@ def cr(cloud_runner, monkeypatch, tmp_path):
         if path.endswith("/github-token"):
             return 200, {"token": "owner-gh", "github_login": "olive"}
         if path.endswith("/credentials/resolve"):
-            return 200, {"op_sa_token": "ops_agent"}
+            return 200, {}
         return 200, {}
 
     monkeypatch.setattr(mod, "_api", api)
@@ -134,7 +133,6 @@ def test_a_full_profile_turn_is_unchanged(cr):
     mod._run_turn("r-1", full)
     env = calls["env"]
     assert env["GH_TOKEN"] == "owner-gh"                      # the owner's, per turn
-    assert env["OP_SERVICE_ACCOUNT_TOKEN"] == "ops_agent"     # the agent's own key
     assert env["CANOPY_WEB_PAT"] == "cpat_agent"              # the agent's .env
     # The box's own credential is never an agent's fallback identity.
     assert "CANOPY_TOKEN" not in env

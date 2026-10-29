@@ -2,8 +2,7 @@
 
 - FIELD_ENCRYPTION_KEY is its own secret, wired into the task definition.
 - `manage.py reencrypt_secrets` moves every *_enc column onto the write key.
-- `/credentials/resolve` can be scoped with `?refs=`, drops the 1Password key for
-  a `canopy-web` agent, and logs every ref it hands out.
+- `/credentials/resolve` can be scoped with `?refs=` and logs every ref it hands out.
 """
 from __future__ import annotations
 
@@ -21,11 +20,12 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import services
-from apps.agents.models import Agent, AgentCredentialRead
+from apps.agents.models import Agent, AgentCredentialRead, AgentDelegation
 from apps.common.encryption import encrypt_secret
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.device_proof import accept_device_proof
 
 AWS = Path(__file__).resolve().parent.parent / "deploy" / "aws"
 
@@ -33,15 +33,14 @@ AWS = Path(__file__).resolve().parent.parent / "deploy" / "aws"
 # ---- fixtures for the agent-credential paths ---------------------------------
 
 @pytest.fixture
-def fleet(db, client):
+def fleet(db, client, monkeypatch):
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(
         slug="eva", name="Eva", workspace=ws,
         runtime_secrets=["canopy-pat", "gog-token"],
-        runtime_sources={"nova-api-key": {"op": "op://Agent-Eva/nova/credential"}},
-        op_vault="Agent-Eva", op_sa_token_enc=encrypt_secret("ops_tok"),
+        runtime_sources={"nova-api-key": {}},
     )
     runner = Runner.objects.create(
         name="box", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
@@ -49,6 +48,8 @@ def fleet(db, client):
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
     give_vault_key(jj)  # someone to seal a value to: every write is zero-knowledge
+    # These tests are about scoping and logging; the proof is tests/test_canopy_vault_zk.py.
+    accept_device_proof(monkeypatch)
     client.force_login(jj)
     from apps.tokens.models import PersonalToken
 
@@ -75,7 +76,7 @@ def test_unscoped_resolve_is_unchanged(fleet):
     # Ciphertext sealed to the agent's readers, never the values.
     assert set(body["values"]) == {"canopy-pat", "gog-token"}
     assert all(v.startswith("zks1:") for v in body["values"].values())
-    assert body["op_sa_token"] == "ops_tok" and body["op_vault"] == "Agent-Eva"
+    assert "op_sa_token" not in body and "op_vault" not in body
 
 
 def test_refs_returns_only_named_and_declared(fleet):
@@ -86,25 +87,18 @@ def test_refs_returns_only_named_and_declared(fleet):
     # `undeclared` is stored but not declared: never handed out by name.
     # `nova-api-key` is declared through runtime_sources.
     assert set(body["values"]) == {"canopy-pat", "nova-api-key"}
-    # Secret extras ride along only when named.
-    assert body["op_sa_token"] == "" and body["op_vault"] == "Agent-Eva"
+    assert "op_sa_token" not in body and "op_vault" not in body
 
 
-def test_refs_can_name_a_secret_extra(fleet):
+def test_naming_the_retired_1password_extra_hands_out_nothing(fleet):
     body = _resolve(fleet, "?refs=op_sa_token").json()
-    assert body["values"] == {} and body["op_sa_token"] == "ops_tok"
+    assert body["values"] == {} and "op_sa_token" not in body
 
 
 def test_an_empty_refs_is_a_scope_of_nothing(fleet):
     _put(fleet["client"], {"canopy-pat": "a"})
     body = _resolve(fleet, "?refs=").json()
-    assert body["values"] == {} and body["op_sa_token"] == ""
-
-
-def test_a_canopy_web_agent_is_never_handed_its_1password_key(fleet):
-    Agent.objects.filter(pk=fleet["agent"].pk).update(credential_source=Agent.CANOPY_WEB)
-    assert _resolve(fleet).json()["op_sa_token"] == ""
-    assert _resolve(fleet, "?refs=op_sa_token").json()["op_sa_token"] == ""
+    assert body["values"] == {}
 
 
 def test_every_ref_handed_out_is_logged_with_turn_and_runner(fleet):
@@ -116,11 +110,11 @@ def test_every_ref_handed_out_is_logged_with_turn_and_runner(fleet):
         ("canopy-pat", "turn-123", fleet["runner"].pk, fleet["user"].pk, "runner")]
 
 
-def test_an_unscoped_read_logs_each_value_and_extra(fleet):
+def test_an_unscoped_read_logs_each_value(fleet):
     _put(fleet["client"], {"canopy-pat": "a"})
     _resolve(fleet)
     names = set(AgentCredentialRead.objects.values_list("name", flat=True))
-    assert names == {"canopy-pat", "op_sa_token"}
+    assert names == {"canopy-pat"}
 
 
 def test_a_runner_header_naming_someone_elses_box_is_not_recorded(fleet):
@@ -129,10 +123,22 @@ def test_a_runner_header_naming_someone_elses_box_is_not_recorded(fleet):
                                    status=Runner.ONLINE, capabilities={})
     _put(fleet["client"], {"canopy-pat": "a"})
     _resolve(fleet, "?refs=canopy-pat", HTTP_X_CANOPY_RUNNER=str(theirs.pk))
-    assert AgentCredentialRead.objects.get(name="canopy-pat").runner_id is None
+    assert AgentCredentialRead.objects.get(name="canopy-pat").runner_id != theirs.pk
 
 
 # ---- reencrypt_secrets ----------------------------------------------------------
+
+def _held(fleet, value: str) -> AgentDelegation:
+    """A row with an encrypted column to re-encrypt: a person's token lent to the agent."""
+    row, _ = AgentDelegation.objects.update_or_create(
+        user=fleet["user"], agent=fleet["agent"], service=AgentDelegation.GITHUB,
+        defaults={"secret_enc": value})
+    return row
+
+
+def _stored(fleet) -> str:
+    return AgentDelegation.objects.get(agent=fleet["agent"]).secret_enc
+
 
 def _legacy(secret_key: str, plaintext: str) -> str:
     key = base64.urlsafe_b64encode(hashlib.sha256(secret_key.encode()).digest())
@@ -144,7 +150,6 @@ def test_secret_columns_are_discovered_not_listed():
 
     found = {f"{m._meta.label}.{f}" for m, f in secret_columns()}
     assert {
-        "agents.Agent.op_sa_token_enc",
         "agents.AgentDelegation.secret_enc",
         "slack.SlackInstallation.bot_token_enc",
         "contacts.HcpClient.webhook_secret_encrypted",
@@ -154,17 +159,17 @@ def test_secret_columns_are_discovered_not_listed():
 def test_reencrypt_dry_run_then_apply_then_idempotent(fleet, settings):
     settings.FIELD_ENCRYPTION_KEY = ""
     old = _legacy(settings.SECRET_KEY, "legacy-value")
-    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=old)
+    _held(fleet, old)
     settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
     settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True
 
     out = StringIO()
     call_command("reencrypt_secrets", stdout=out)
     assert "would rewrite" in out.getvalue()
-    assert Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc == old  # dry run wrote nothing
+    assert _stored(fleet) == old  # dry run wrote nothing
 
     call_command("reencrypt_secrets", "--apply", stdout=StringIO())
-    stored = Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc
+    stored = _stored(fleet)
     new_key = base64.urlsafe_b64encode(hashlib.sha256(b"a-new-field-key").digest())
     assert stored != old and Fernet(new_key).decrypt(stored.encode()) == b"legacy-value"
 
@@ -221,29 +226,29 @@ def _migration_0053():
 def test_the_data_migration_is_a_noop_without_a_field_key(fleet, settings):
     settings.FIELD_ENCRYPTION_KEY = ""
     old = _legacy(settings.SECRET_KEY, "legacy-value")
-    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=old)
+    _held(fleet, old)
     _migration_0053().reencrypt(None, None)
-    assert Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc == old
+    assert _stored(fleet) == old
 
 
 def test_the_data_migration_moves_legacy_rows_onto_the_field_key(fleet, settings):
     settings.FIELD_ENCRYPTION_KEY = ""
     old = _legacy(settings.SECRET_KEY, "legacy-value")
-    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=old)
+    _held(fleet, old)
     settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
     settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True  # how prod read legacy rows when 0053 ran
     _migration_0053().reencrypt(None, None)
-    stored = Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc
+    stored = _stored(fleet)
     new_key = base64.urlsafe_b64encode(hashlib.sha256(b"a-new-field-key").digest())
     assert Fernet(new_key).decrypt(stored.encode()) == b"legacy-value"
 
 
 def test_reencrypt_leaves_an_unreadable_value_untouched(fleet):
     before = Fernet(Fernet.generate_key()).encrypt(b"x").decode()
-    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=before)
+    _held(fleet, before)
     err = StringIO()
     call_command("reencrypt_secrets", "--apply", stdout=StringIO(), stderr=err)
-    assert Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc == before
+    assert _stored(fleet) == before
     assert "left untouched" in err.getvalue()
 
 

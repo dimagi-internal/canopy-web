@@ -83,20 +83,6 @@ def test_a_non_admin_is_refused_before_any_step_up_question(fleet):
     assert r.json().get("error") != "step_up_required"
 
 
-def test_setting_the_vault_key_from_a_browser_needs_a_step_up(fleet):
-    """The 1Password service-account key is a secret like any credential value."""
-    body = {"vault": "Agent-Eva", "service_key": SECRET}
-    r = fleet["browser"].put("/api/agents/eva/vault", data=body, content_type="application/json")
-    assert r.status_code == 403 and r.json()["error"] == "step_up_required"
-    fleet["agent"].refresh_from_db()
-    assert fleet["agent"].op_vault == ""
-    grant_step_up(fleet["browser"])
-    r = fleet["browser"].put("/api/agents/eva/vault", data=body, content_type="application/json")
-    assert r.status_code == 200
-    r = Client().put("/api/agents/eva/vault", data=body, content_type="application/json",
-                     HTTP_AUTHORIZATION=f"Bearer {_pat(fleet['jj'])}")
-    assert r.status_code == 200
-
 
 def test_the_reveal_route_is_gone(fleet):
     grant_step_up(fleet["browser"])
