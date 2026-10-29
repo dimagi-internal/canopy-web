@@ -1412,7 +1412,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
             _restage_delegated_google()
-            _restage_sf_token(turn_id)
+            _restage_connections(turn_id)
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1746,145 +1746,194 @@ def _restage_delegated_google() -> None:
             _log(f"warn: {slug}: re-staging delegated Google tokens failed ({exc})")
 
 
-# ── Salesforce: the agent's own connection, staged per TURN ──
+# ── Connections: the agent's provider tokens (Salesforce, …), staged per TURN ──
 #
-# canopy-web holds the agent's Salesforce connection (or one a person granted it). Like
-# GitHub, the identity is per turn: the canopy CLI (`cred salesforce-token --runner`, this
-# box's bearer + the turn id) fetches a short-lived ACCESS token and writes it 0600 to
-# ~/.canopy/connections/<slug>/salesforce.json; the refresh token never reaches the box.
-# The file is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+# canopy-web holds each connection (the agent's own, or one another agent shares with
+# it); the refresh token never reaches the box. At turn start the runner asks canopy-web
+# which providers the turn's agent can use (`GET …/turns/{tid}/connections` — for most
+# agents none, and nothing else runs), and for each one the canopy CLI
+# (`cred connection-token <provider> --runner`, this box's bearer + the turn id) writes a
+# short-lived ACCESS token 0600 to ~/.canopy/connections/<slug>/<provider>.json. Each file
+# is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+#
+# Log lines use the connections vocabulary: `connections.stage_failed agent= provider=
+# turn=` at warn when a token could not be staged (the turn still runs). An agent with no
+# connection is silent.
 #: Seconds a staged token must still live; also sent to canopy-web (`--min-life`), so the
 #: server refreshes rather than hand back a cached token that lapses before the next re-stage.
-SALESFORCE_TOKEN_MIN_LIFE = 900
-#: CLI exit code for "this agent has no Salesforce connection" (409 not_connected).
-SALESFORCE_NOT_CONNECTED_EXIT = 3
-#: Turns holding a staged file: {turn_id: (slug, runner_id)}.
-_SF_STAGED: dict = {}
-_SF_LOCK = threading.Lock()
+CONNECTION_TOKEN_MIN_LIFE = 900
+#: CLI exit code for "this agent has no connection for that provider" (409 not_connected).
+CONNECTION_NOT_CONNECTED_EXIT = 3
+#: A provider key canopy-web may name; anything else never becomes a path or an argv.
+_PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+#: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
+_CONN_HOLDS: dict = {}
+_CONN_LOCK = threading.Lock()
 
 
-def _salesforce_token_path(slug: str) -> pathlib.Path:
-    return pathlib.Path.home() / ".canopy" / "connections" / slug / "salesforce.json"
+def _connection_token_path(slug: str, provider: str) -> pathlib.Path:
+    return pathlib.Path.home() / ".canopy" / "connections" / slug / f"{provider}.json"
 
 
-def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | None = None,
-                    refresh: bool = False) -> None:
-    """Stage `slug`'s Salesforce access token for this turn, if it has a connection.
+def _held_elsewhere(slug: str, provider: str, turn_id: str) -> bool:
+    """Whether another turn holds `slug`'s `provider` file. Call with _CONN_LOCK held."""
+    return any(s == slug and provider in ps for t, (s, _, ps) in _CONN_HOLDS.items() if t != turn_id)
+
+
+def _release(turn_id: str, provider: str) -> None:
+    """Drop one provider from this turn's hold (the turn's entry goes with its last).
+    Call with _CONN_LOCK held."""
+    held = _CONN_HOLDS.get(turn_id)
+    if held is None:
+        return
+    rest = held[2] - {provider}
+    if rest:
+        _CONN_HOLDS[turn_id] = (held[0], held[1], rest)
+    else:
+        _CONN_HOLDS.pop(turn_id, None)
+
+
+def _unlink_quietly(path: pathlib.Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _stage_connections(runner_id: str, turn_id: str, slug: str) -> None:
+    """Turn start: stage a token for each provider the turn's agent can use. One
+    canopy-web call for an agent with none; a failure to list is a warn line and the
+    turn runs without."""
+    if not slug:
+        return
+    try:
+        status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections")
+    except Exception as exc:  # noqa: BLE001 — never cost the turn its start
+        status, body = 0, None
+        _log(f"warn: connections.stage_failed agent={slug} turn={turn_id} (listing failed: {exc})")
+    if status != 200 or not isinstance(body, dict):
+        if status:   # _api has already logged the refusal itself
+            _log(f"warn: connections.stage_failed agent={slug} turn={turn_id} (listing -> {status})")
+        return
+    for provider in body.get("providers") or []:
+        if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
+            _stage_connection_token(runner_id, turn_id, slug, provider)
+        else:
+            _log(f"warn: connections.stage_failed agent={slug} turn={turn_id} (unusable provider key)")
+
+
+def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: str, *,
+                            now: float | None = None, refresh: bool = False) -> None:
+    """Stage `slug`'s `provider` access token for this turn.
     The turn registers as a holder BEFORE the CLI runs (so a sibling turn ending cannot
     delete the file out from under it) and drops out again when nothing was staged.
     `refresh` (the heartbeat) never ADDS a holder: it only refreshes for a turn still
-    held, and discards its work if the turn ended meanwhile. Only `refresh` may keep a
-    file that is still fresh: a turn's FIRST stage always asks canopy-web, so the turn is
-    checked (runner holds it, agent still connected) and its token issue recorded, never
-    inherited from a file another turn left. Exit 3 from the CLI is silent (and clears a
-    stale file); any other failure is a warn line and the turn still runs. No token is
-    ever logged."""
+    holding that file, and discards its work if the turn ended meanwhile. Only `refresh`
+    may keep a file that is still fresh: a turn's FIRST stage always asks canopy-web, so
+    the turn is checked (runner holds it, agent still connected) and its token issue
+    recorded, never inherited from a file another turn left. Exit 3 from the CLI is
+    silent (and clears a stale file); any other failure is a warn line and the turn still
+    runs. No token is ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
-    target = _salesforce_token_path(slug)
-    with _SF_LOCK:
-        if refresh and turn_id not in _SF_STAGED:
+    target = _connection_token_path(slug, provider)
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        if refresh and (held is None or provider not in held[2]):
             return
-        _SF_STAGED[turn_id] = (slug, runner_id)
+        _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | {provider})
     try:
         if refresh:
             try:
-                if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
+                if float(json.loads(target.read_text()).get("expires_at") or 0) - now > CONNECTION_TOKEN_MIN_LIFE:
                     return
             except (OSError, ValueError, AttributeError):
                 pass
         env = _child_safe_env()
         env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
-        res = subprocess.run([_canopy_cli(), "cred", "salesforce-token", "--runner", "--agent", slug,
+        res = subprocess.run([_canopy_cli(), "cred", "connection-token", provider, "--runner", "--agent", slug,
                               "--runner-id", runner_id, "--turn", turn_id,
-                              "--min-life", str(SALESFORCE_TOKEN_MIN_LIFE)],
+                              "--min-life", str(CONNECTION_TOKEN_MIN_LIFE)],
                              env=env, capture_output=True, text=True, timeout=120)
     except BaseException as exc:
         if isinstance(exc, Exception):
-            _log(f"warn: {slug}: could not stage its Salesforce token ({exc})")
-            _stage_failed(turn_id, refresh)
+            _log(f"warn: connections.stage_failed agent={slug} provider={provider} turn={turn_id} ({exc})")
+            _stage_failed(turn_id, provider, refresh)
             return
-        _drop_sf_holder(turn_id, remove_file=True)   # an interrupt: nothing may stay held
+        _drop_holds(turn_id)   # an interrupt: nothing may stay held
         raise
-    if res.returncode == SALESFORCE_NOT_CONNECTED_EXIT:
+    if res.returncode == CONNECTION_NOT_CONNECTED_EXIT:
         # One lock section: a first stage lets go of its hold; a heartbeat keeps the
         # turn's (it is still running, just without a connection). Either way the
         # stale file goes unless ANOTHER turn of the agent holds it. Never a moment
         # where this turn's hold is dropped and re-added, which a sibling's unstage
         # could fall into.
-        with _SF_LOCK:
+        with _CONN_LOCK:
             if not refresh:
-                _SF_STAGED.pop(turn_id, None)
-            if not any(v[0] == slug for k, v in _SF_STAGED.items() if k != turn_id):
-                try:
-                    target.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                _release(turn_id, provider)
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
         return
     if res.returncode != 0:
-        _log(f"warn: {slug}: could not stage its Salesforce token "
-             f"({' '.join((res.stderr or '').split())[-300:] or f'exit {res.returncode}'})")
-        _stage_failed(turn_id, refresh)
+        detail = " ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}"
+        _log(f"warn: connections.stage_failed agent={slug} provider={provider} turn={turn_id} ({detail})")
+        _stage_failed(turn_id, provider, refresh)
         return
     if refresh:
-        with _SF_LOCK:
-            ended = turn_id not in _SF_STAGED
-        if ended:    # the turn ended while the CLI ran: the file it wrote is nobody's
-            _discard_if_unheld(slug)
+        with _CONN_LOCK:
+            # The turn ended while the CLI ran: the file it wrote is nobody's.
+            if provider not in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2] \
+                    and not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
 
 
-def _stage_failed(turn_id: str, refresh: bool) -> None:
+def _stage_failed(turn_id: str, provider: str, refresh: bool) -> None:
+    """A first stage that staged nothing lets go of its hold; a heartbeat keeps it."""
     if not refresh:
-        _drop_sf_holder(turn_id, remove_file=False)
+        with _CONN_LOCK:
+            _release(turn_id, provider)
 
 
-def _discard_if_unheld(slug: str) -> None:
-    with _SF_LOCK:
-        if any(v[0] == slug for v in _SF_STAGED.values()):
+def _drop_holds(turn_id: str) -> None:
+    """Release every hold of this turn, deleting (inside the lock) each file no other
+    running turn of the same agent holds."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.pop(turn_id, None)
+        if not held:
             return
+        slug, _, staged = held
+        for provider in staged:
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(_connection_token_path(slug, provider))
+
+
+def _restage_connections(turn_id: str, *, now: float | None = None) -> None:
+    """The lease heartbeat's half: refresh each of this turn's staged tokens near expiry."""
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+    if not held:
+        return
+    slug, runner_id, staged = held
+    for provider in sorted(staged):
         try:
-            _salesforce_token_path(slug).unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def _drop_sf_holder(turn_id: str, *, remove_file: bool) -> None:
-    """Release this turn's hold; delete the file (inside the lock) when it was the last
-    holder of its agent and `remove_file`."""
-    with _SF_LOCK:
-        held = _SF_STAGED.pop(turn_id, None)
-        if not held or any(v[0] == held[0] for v in _SF_STAGED.values()):
-            return
-        if remove_file:
-            try:
-                _salesforce_token_path(held[0]).unlink(missing_ok=True)
-            except OSError:
-                pass
-
-
-def _restage_sf_token(turn_id: str, *, now: float | None = None) -> None:
-    """The lease heartbeat's half: refresh this turn's staged token when near expiry."""
-    with _SF_LOCK:
-        held = _SF_STAGED.get(turn_id)
-    if held:
-        try:
-            _stage_sf_token(held[1], turn_id, held[0], now=now, refresh=True)
+            _stage_connection_token(runner_id, turn_id, slug, provider, now=now, refresh=True)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
-            _log(f"warn: {held[0]}: re-staging its Salesforce token failed ({exc})")
+            _log(f"warn: connections.stage_failed agent={slug} provider={provider} turn={turn_id} "
+                 f"(re-stage: {exc})")
 
 
-def _unstage_sf_token(turn_id: str) -> None:
-    """Turn end: delete the staged file unless another running turn of the same agent holds it."""
-    _drop_sf_holder(turn_id, remove_file=True)
+def _unstage_connections(turn_id: str) -> None:
+    """Turn end: delete this turn's files unless another running turn of the same agent holds them."""
+    _drop_holds(turn_id)
 
 
-def _clear_stale_sf_tokens() -> None:
+def _clear_stale_connection_tokens() -> None:
     """Runner start: no turn of this process holds a leftover file of a previous one."""
     root = pathlib.Path.home() / ".canopy" / "connections"
     try:
-        for f in root.glob("*/salesforce.json"):
-            f.unlink(missing_ok=True)
+        for f in root.glob("*/*.json"):
+            _unlink_quietly(f)
     except OSError:
         pass
 
@@ -12923,12 +12972,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                                slug=slug or "", off_disk_env=off_disk_env, started_at=time.time(),
                                resume_id=resume_id or "")
         # An agent's ordinary (non-confined) turn only: a confined turn holds no
-        # credentials. Staged immediately before the try whose finally unstages it, so no
-        # exit leaves the file behind.
+        # credentials. Staged immediately inside the try whose finally unstages it, so no
+        # exit leaves a file behind.
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             if not confined:
-                _stage_sf_token(runner_id, turn_id, slug or "")
+                _stage_connections(runner_id, turn_id, slug or "")
             try:
                 if tail is not None:
                     tail.start()
@@ -12940,7 +12989,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()
-            _unstage_sf_token(turn_id)
+            _unstage_connections(turn_id)
             if tail is not None:
                 # Before the turn-end ship below, which is the final flush: two
                 # posts of one transcript must never race.
@@ -13445,7 +13494,7 @@ def main() -> None:
         _log(f"adopt: could not take over the previous daemon's turns: {exc}")
     # Any per-turn env a previous process left is nobody's, but an adopted turn's.
     sweep_turn_envs()
-    _clear_stale_sf_tokens()
+    _clear_stale_connection_tokens()
     # Nor, on a sensitive-data box, anything a turn the last process ran left, but a
     # sensitive conversation's session that is neither idle past its deadline nor closed.
     try:
