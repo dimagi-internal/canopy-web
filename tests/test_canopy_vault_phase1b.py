@@ -325,6 +325,71 @@ def test_a_refused_device_proof_names_the_box_the_request_names(fleet, sts):
     assert f"on {fleet['runner'].name} refused" in mail.outbox[0].body
 
 
+def _resolve_described(fleet, turn, **extra):
+    headers = {"HTTP_AUTHORIZATION": f"Bearer {fleet['pat']}",
+               "HTTP_X_CANOPY_RUNNER": str(fleet["runner"].pk),
+               "HTTP_X_CANOPY_TURN_ID": turn,
+               "HTTP_USER_AGENT": "canopy-cli/0.2.820 (agent op-token)",
+               "HTTP_X_CANOPY_CLAUDE_SESSION": "claude-123",
+               "HTTP_X_CANOPY_PROOF_MISSING": "no device key enrolled for user cu-dimagi",
+               **extra}
+    return Client().get(RESOLVE, **headers)
+
+
+def test_a_refused_device_proof_says_who_asked_and_what_the_turn_is(fleet, sts):
+    """An admin must be able to name the process from the alert alone: the turn's
+    agent, origin and who started it, the client, and why no proof came."""
+    from apps.harness.models import Turn
+
+    _bind(fleet)
+    turn = Turn.objects.create(agent=fleet["agent"], origin=Turn.ORIGIN_CANOPY_SCHEDULER,
+                               prompt="/eva:turn", initiator_user=fleet["user"])
+    assert _resolve_described(fleet, str(turn.pk)).status_code == 401
+    [alert] = _alerts("device-proof")
+    ctx = alert.context
+    assert ctx["turn"]["found"] and ctx["turn"]["agent"] == "eva"
+    assert ctx["turn"]["origin"] == Turn.ORIGIN_CANOPY_SCHEDULER
+    assert ctx["turn"]["started_by"] == fleet["user"].email
+    assert ctx["proof_missing"] == "no device key enrolled for user cu-dimagi"
+    assert ctx["user_agent"].startswith("canopy-cli/") and ctx["claude_session"] == "claude-123"
+    assert "/eva:turn" not in str(ctx)  # never the prompt
+    body = mail.outbox[0].body
+    assert f"Turn {turn.pk}: eva's {Turn.ORIGIN_CANOPY_SCHEDULER} turn" in body
+    assert "Why the caller sent no proof: no device key enrolled for user cu-dimagi" in body
+    assert "Client: canopy-cli/0.2.820 (agent op-token)" in body
+
+
+def test_a_debounced_repeat_keeps_who_asked(fleet, sts):
+    _bind(fleet)
+    first, second = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+    _resolve_described(fleet, first)
+    _resolve_described(fleet, second, HTTP_X_CANOPY_PROOF_MISSING="device key status: pending")
+    [alert] = _alerts("device-proof")
+    assert alert.occurrences == 2 and len(mail.outbox) == 1
+    assert alert.context["turn"] == {"id": first, "found": False}
+    [repeat] = alert.repeats
+    assert repeat["turn"] == {"id": second, "found": False}
+    assert repeat["proof_missing"] == "device key status: pending" and repeat["at"]
+
+
+def test_a_turn_id_that_names_no_turn_is_said_plainly(fleet, sts):
+    _bind(fleet)
+    _resolve_described(fleet, "not-a-uuid")
+    [alert] = _alerts("device-proof")
+    assert alert.context["turn"] == {"id": "not-a-uuid", "found": False}
+    assert "Turn not-a-uuid: no such turn on canopy-web" in mail.outbox[0].body
+
+
+def test_the_alert_list_returns_the_context(fleet, sts):
+    from apps.agents.credentials import vault_alerts
+
+    _bind(fleet)
+    _resolve_described(fleet, "not-a-uuid")
+    _resolve_described(fleet, "not-a-uuid")
+    [row] = vault_alerts.alerts_for(fleet["agent"])
+    assert row["context"]["proof_missing"] and len(row["repeats"]) == 1
+
+
 def test_other_alerts_link_to_the_alert_list_on_the_security_tab(no_proof, fleet):
     assert _resolve_as_box(fleet).status_code == 200  # a no-turn alert
     assert "/w/connect/agents/eva/settings/security#cred-alerts" in mail.outbox[0].body
