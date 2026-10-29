@@ -46,7 +46,6 @@ import json
 import os
 import pathlib
 import re
-import socket
 import socketserver
 import subprocess
 import sys
