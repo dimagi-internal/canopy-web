@@ -133,10 +133,6 @@ class AccessToken:
     refreshed: bool = False  # minted by a refresh just now, rather than the cached one
 
 
-def owner_of(conn: Connection) -> Owner:
-    return ("agent", conn.agent_id) if conn.agent_id is not None else ("user", conn.user_id)
-
-
 def _owner_filter(owner: Owner) -> dict:
     kind, pk = owner
     if kind == "agent":

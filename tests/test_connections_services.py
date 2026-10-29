@@ -236,7 +236,6 @@ def test_complete_upserts_same_account(user):
 def test_complete_for_agent_owner(user, eva):
     conn = _connect({}, ("agent", eva.pk), user)
     assert conn.agent_id == eva.pk and conn.user_id is None
-    assert services.owner_of(conn) == ("agent", eva.pk)
     assert list(services.connections_for(("agent", eva.pk))) == [conn]
     assert list(services.connections_for(("user", user.pk))) == []
 
