@@ -334,7 +334,7 @@ echo ">> runner key slots: ${RUNNER_SLOTS}"
 # paths (tests/test_seed_roundtrip.py pins the lists equal). update_runner.sh was
 # missing here until 2026-10-04, so a seed published after an updater-only change
 # was stamped with an older sha than the deploy expected.
-SHA_PATHS=(cloud_runner.py bootstrap_agents.sh update_runner.sh kms_broker.py ../../packages/canopy_transcript ../canopy_acp)
+SHA_PATHS=(cloud_runner.py bootstrap_agents.sh update_runner.sh kms_broker.py aws_broker.py ../../packages/canopy_transcript ../canopy_acp)
 CODE_SHA="$(git log -1 --format=%H -- "${SHA_PATHS[@]}" 2>/dev/null || true)"
 CODE_AT="$(git log -1 --format=%ct -- "${SHA_PATHS[@]}" 2>/dev/null || true)"
 [[ -n "$CODE_SHA" ]] || die "cannot resolve the runner source sha (shallow clone?). A box seeded without it reports unknown provenance and NEVER auto-updates — fetch full history first."

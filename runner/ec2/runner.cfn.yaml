@@ -193,6 +193,16 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
+        # canopy-aws-broker (runner/ec2/aws_broker.py, root): one hour of connect-labs'
+        # read-only, non-sensitive observability role for a runner's turn. That role's
+        # trust policy names these instance roles too (infra/labs-observe-readonly.yml).
+        - PolicyName: assume-labs-observe
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
+                Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-observe-readonly'
         - PolicyName: read-runner-secrets
           PolicyDocument:
             Version: '2012-10-17'

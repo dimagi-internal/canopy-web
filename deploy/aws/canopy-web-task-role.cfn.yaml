@@ -29,6 +29,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 #   ECS Exec (EnableExecuteCommand)    ssmmessages -> EcsExec here
 #   apps/contacts/embeddings.py        bedrock InvokeModel on embedding models
 #                                      -> memory-embeddings here
+#   apps/agents/api_aws.py             sts AssumeRole on labs-jj-observe-readonly
+#                                      -> assume-labs-observe here
 #   apps/common/kms_envelope.py        kms GenerateDataKey/Decrypt on the Canopy
 #                                      Vault key -> that key's KEY POLICY in
 #                                      canopy-web.cfn.yaml (EnableVaultKms only)
@@ -112,6 +114,18 @@ Resources:
                 Effect: Allow
                 Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
                 Resource: !Sub arn:${AWS::Partition}:s3:::${AttachmentsBucketName}/*
+        # AWS keys vended to agents (apps/agents/api_aws.py, settings.CANOPY_AWS_ROLES):
+        # one hour of connect-labs' read-only, non-sensitive observability role,
+        # stamped with the agent. That role's trust names this role too
+        # (connect-labs infra/labs-observe-readonly.yml, BrokerRoleName).
+        - PolicyName: assume-labs-observe
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: VendLabsObserve
+                Effect: Allow
+                Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-observe-readonly
         # Memory search by meaning (apps/contacts/embeddings.py): embedding
         # models only, never a generating model. Inert until
         # HCP_EMBEDDINGS_MODEL is set in canopy-web.cfn.yaml.

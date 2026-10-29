@@ -108,6 +108,8 @@ EXCLUDED: dict[str, str] = {
     "submit_beta_request": _ANON,
     "google_callback": "OAuth redirect target; Google's browser redirect calls it",
     "create_token": "minting credentials from a credential; mint a PAT in the web app",
+    "agent_aws_credentials": "returns AWS keys for a credential_process cache; a tool result "
+                             "would put the keys in a model's context",
     # Runner protocol.
     "pair_runner": _RUNNER,
     "get_runner_credential": _RUNNER,

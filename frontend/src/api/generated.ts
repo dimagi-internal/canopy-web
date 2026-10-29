@@ -6592,6 +6592,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/aws-credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * One hour of a named read-only AWS role, as this agent
+         * @description Short-lived AWS keys for ONE role named in canopy-web's settings
+         *     (`labs-observe` = the read-only, non-sensitive labs observability role), with the
+         *     agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). 404 for a role
+         *     name canopy-web does not vend; 403 for a browser session; 502 when AWS refused.
+         */
+        readonly post: operations["agent_aws_credentials"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/oauth/google/callback": {
         readonly parameters: {
             readonly query?: never;
@@ -29212,6 +29235,32 @@ export interface components {
              * @default 0
              */
             readonly session_minutes: number;
+        };
+        /**
+         * AwsCredentialsOut
+         * @description The AWS CLI's `credential_process` output, version 1.
+         */
+        readonly AwsCredentialsOut: {
+            /**
+             * Version
+             * @default 1
+             */
+            readonly Version: number;
+            /** Accesskeyid */
+            readonly AccessKeyId: string;
+            /** Secretaccesskey */
+            readonly SecretAccessKey: string;
+            /** Sessiontoken */
+            readonly SessionToken: string;
+            /** Expiration */
+            readonly Expiration: string;
+            /** Rolearn */
+            readonly RoleArn: string;
+        };
+        /** AwsCredentialsIn */
+        readonly AwsCredentialsIn: {
+            /** Role */
+            readonly role: string;
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -52539,6 +52588,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GoogleMintOut"];
+                };
+            };
+        };
+    };
+    readonly agent_aws_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AwsCredentialsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AwsCredentialsOut"];
                 };
             };
         };
