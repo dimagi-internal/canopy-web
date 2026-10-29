@@ -37,6 +37,11 @@ export function subagentForRow(
   };
 }
 
+/** Is a subagent started by one of these `Agent` calls still running? */
+export function startedRunningAgent(uses: Message[], all: SubagentSummary[]): boolean {
+  return uses.some((use) => subagentForRow(use, all)?.summary.state === "running");
+}
+
 function descendants(agentId: string, all: SubagentSummary[]): SubagentSummary[] {
   const out: SubagentSummary[] = [];
   const queue = [agentId];

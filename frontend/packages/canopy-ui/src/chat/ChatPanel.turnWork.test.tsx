@@ -125,6 +125,30 @@ describe("a running turn", () => {
     panel(state({ activity: "blocked", turn_status: status({ state: "blocked", menu_pending: true, stuck: true }) }));
     expect(screen.queryByTestId("turn-fold")).toBeNull();
   });
+
+  it("is not folded while an agent it started is still running, though the main loop has stopped", () => {
+    const messages = finishedTurn();
+    const agent = call("Agent", { description: "fix the tests" });
+    messages.splice(-1, 0, ...agent);
+    const sub = {
+      agent_id: "a1", tool_use_id: (agent[0].content as { id: string }).id, parent_agent_id: "",
+      description: "fix the tests", agent_type: "general-purpose", background: true,
+      state: "running" as const, steps: 3, last: "Bash · make test",
+      started_at: "2026-10-24T10:00:00Z", updated_at: "2026-10-24T10:01:00Z",
+    };
+    const settled = status({ state: "done", settled: true });
+    const { rerender } = panel(state({ messages, subagents: [sub], turn_status: settled }));
+    expect(screen.queryByTestId("turn-fold")).toBeNull();
+    // Once it is done, the turn folds as any finished turn does.
+    rerender(
+      <ChatPanel
+        state={state({ messages, subagents: [{ ...sub, state: "done" }], turn_status: settled })}
+        connected currentUserId={ME}
+        onSend={vi.fn()} onStop={vi.fn()} onUpdateDraft={vi.fn()} onDiscard={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("turn-fold")).not.toBeNull();
+  });
 });
 
 describe("jump to latest", () => {
