@@ -3,6 +3,7 @@ import { bootstrapCsrf } from '@/api/csrf'
 import { isLoginBounceInFlight, noteAuthSucceeded } from '@/api/client.v2'
 import { getMe, type MeOut as MeResponse } from '@/api/me'
 import { currentNext, loginHref } from './loginHref'
+import { setSessionPasskeys } from './passkeyHere'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { isScopedViewerPath } from '@/lib/scopedLinks'
 import { VaultSetupGate } from '@/vault/VaultSetupGate'
@@ -59,6 +60,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Reset the login-loop guard: this session took, so a genuine later
           // expiry gets its own clean single bounce (see client.v2 redirectToLogin).
           noteAuthSucceeded()
+          // A token-minted session (the Runner app's) can never use a passkey:
+          // every passkey moment on it is handed to the browser (passkeyHere.ts).
+          setSessionPasskeys(me.passkeys_here !== false)
           setState({ status: 'authenticated', user: me })
         } else setState({ status: 'anonymous', user: null })
       } catch {

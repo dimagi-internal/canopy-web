@@ -38,7 +38,7 @@ function renderWithEmptyWorkspaces(node: React.ReactElement) {
             avatar_url: '',
             can_create_workspace: true,
             memory_enabled: false,
-            memory_paused: false,
+            memory_paused: false, passkeys_here: true,
           },
         }}
       >

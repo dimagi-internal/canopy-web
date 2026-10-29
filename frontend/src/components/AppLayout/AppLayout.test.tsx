@@ -30,7 +30,7 @@ function renderAs(status: 'authenticated' | 'anonymous') {
                     name: 'Jonathan Jackson',
                     email: 'jj@dimagi.com',
                     avatar_url: '',
-                    can_create_workspace: true, memory_enabled: false, memory_paused: false,
+                    can_create_workspace: true, memory_enabled: false, memory_paused: false, passkeys_here: true,
                   },
                 }
               : { status, user: null }

@@ -7,6 +7,7 @@
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
 import { ensureOk, unwrap } from './problem'
+import { requirePasskeysHere } from '../auth/passkeyHere'
 import { credentialToJSON, toCreationOptions, toRequestOptions } from '../auth/webauthn'
 
 type Schemas = components['schemas']
@@ -34,6 +35,8 @@ export async function getStepUpStatus(): Promise<StepUpStatusOut> {
 
 /** Register a passkey on THIS device (Touch ID, Windows Hello, a phone…). */
 export async function registerThisDevice(label: string, opts: { upgrade?: boolean } = {}): Promise<PasskeyOut> {
+  // A passkey made here would belong to the Runner app's web view, not the person's browser.
+  requirePasskeysHere()
   // `upgrade`: replace a passkey that cannot hold a vault key (no PRF) — the
   // server leaves it out of excludeCredentials so the passkey app makes the
   // new one for the same account.

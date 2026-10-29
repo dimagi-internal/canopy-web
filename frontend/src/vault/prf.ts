@@ -10,6 +10,7 @@
  */
 import { apiV2 } from '@/api/client.v2'
 import { problemMessage } from '@/api/problem'
+import { requirePasskeysHere } from '@/auth/passkeyHere'
 import { credentialToJSON, toRequestOptions } from '@/auth/webauthn'
 import { unb64u } from './zk'
 
@@ -87,6 +88,7 @@ export async function assertWithPrf(prfInputB64u: string, opts: { allow?: string
     ...options,
     extensions: { ...(options.extensions ?? {}), prf: { eval: { first: unb64u(prfInputB64u) } } } as AuthenticationExtensionsClientInputs,
   }
+  requirePasskeysHere()
   const asserted = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null
   if (!asserted) throw new Error('No passkey was used')
   const ext = asserted.getClientExtensionResults() as { prf?: { results?: { first?: BufferSource } } }

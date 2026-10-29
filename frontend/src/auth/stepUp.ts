@@ -18,12 +18,17 @@
 import type { Middleware } from 'openapi-fetch'
 
 export const STEP_UP_REQUIRED = 'step_up_required'
+/** A token-minted session (the Runner app's) asked for a step-up it can never
+ *  hold: the dialog hands the passkey to the person's browser (passkeyHere.ts). */
+export const BROWSER_SESSION_REQUIRED = 'browser_session_required'
 
 export interface StepUpRequest {
   /** False when the person has no passkey yet — the dialog offers to register one. */
   hasPasskey: boolean
   /** The server's explanation, shown in the dialog. */
   detail?: string
+  /** No passkey can be used on this session: finish in the browser instead. */
+  inBrowser?: boolean
 }
 
 /** Resolves once a step-up succeeded; rejects if the person cancelled or it failed. */
@@ -51,8 +56,10 @@ export function requestStepUp(req: StepUpRequest): Promise<void> {
 export function stepUpFromBody(status: number, body: unknown): StepUpRequest | null {
   if (status !== 403 || !body || typeof body !== 'object') return null
   const b = body as { error?: unknown; has_passkey?: unknown; detail?: unknown }
+  const detail = typeof b.detail === 'string' ? b.detail : undefined
+  if (b.error === BROWSER_SESSION_REQUIRED) return { hasPasskey: true, detail, inBrowser: true }
   if (b.error !== STEP_UP_REQUIRED) return null
-  return { hasPasskey: b.has_passkey === true, detail: typeof b.detail === 'string' ? b.detail : undefined }
+  return { hasPasskey: b.has_passkey === true, detail }
 }
 
 async function stepUpFromResponse(response: Response): Promise<StepUpRequest | null> {

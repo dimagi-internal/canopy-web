@@ -1845,7 +1845,12 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * One page's act-as-you permission, confirmed or waiting for my passkey
+         * @description One of your unexpired act-as-you permissions — which site, which agent, what it
+         *     may do — confirmed, or still waiting for your passkey (`confirmed: false`).
+         */
+        readonly get: operations["get_my_host_grant"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -1854,6 +1859,49 @@ export interface paths {
          *     can no longer read that site as you until you send from its page again.
          */
         readonly delete: operations["revoke_my_host_grant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/{grant_id}/confirm/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start confirming a page's act-as-you permission with my passkey, in my browser
+         * @description Options for navigator.credentials.get(), to confirm a permission a page is
+         *     waiting on — the same confirmation as the page's own panel, made in your browser
+         *     when the panel cannot use a passkey.
+         */
+        readonly post: operations["begin_confirm_my_host_grant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/{grant_id}/confirm/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Confirm a page's act-as-you permission with my passkey, in my browser
+         * @description Verify the passkey assertion and confirm the permission: from now, for 30
+         *     minutes, the agent may act as you on that page. The page's panel sees it at once.
+         */
+        readonly post: operations["finish_confirm_my_host_grant"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17012,6 +17060,12 @@ export interface components {
              * @default false
              */
             readonly memory_paused: boolean;
+            /**
+             * Passkeys Here
+             * @description Can a passkey be used on this session? False for a session minted from a token (the Canopy Runner desktop app signs in that way): a step-up or an approval is refused on one, so the app hands the passkey to the person's browser instead of asking for it.
+             * @default true
+             */
+            readonly passkeys_here: boolean;
         };
         /**
          * PresencePreferenceOut
@@ -45797,6 +45851,28 @@ export interface operations {
             };
         };
     };
+    readonly get_my_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HostGrantOut"];
+                };
+            };
+        };
+    };
     readonly revoke_my_host_grant: {
         readonly parameters: {
             readonly query?: never;
@@ -45814,6 +45890,54 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly begin_confirm_my_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_confirm_my_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PasskeyAssertIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HostGrantOut"];
+                };
             };
         };
     };

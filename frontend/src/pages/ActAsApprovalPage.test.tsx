@@ -16,6 +16,7 @@ vi.mock('@/api/actAs', async (orig) => ({
 
 import { ActAsApprovalPage } from './ActAsApprovalPage'
 import { offeredScopes, statusLine } from '@/api/actAs'
+import { setSessionPasskeys } from '@/auth/passkeyHere'
 
 afterEach(() => {
   cleanup()
@@ -39,6 +40,25 @@ function open() {
 }
 
 describe('ActAsApprovalPage', () => {
+  it('in the Runner app, sends the decision to the browser and follows it here', async () => {
+    setSessionPasskeys(false)
+    const winOpen = vi.fn()
+    vi.stubGlobal('open', winOpen)
+    try {
+      get.mockResolvedValueOnce(REQ).mockResolvedValue({ ...REQ, status: 'approved', scope: 'read' })
+      open()
+      fireEvent.click(await screen.findByText('Decide in your browser'))
+      expect(winOpen).toHaveBeenCalledWith(`${window.location.origin}/act-as/r1`, '_blank', 'noopener')
+      expect(screen.queryByTestId('act-as-allow-read')).toBeNull()
+      window.dispatchEvent(new Event('focus'))
+      await waitFor(() => expect(screen.getByTestId('act-as-status').textContent).toMatch(/Approved/))
+      expect(approve).not.toHaveBeenCalled()
+    } finally {
+      setSessionPasskeys(true)
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('offers what was asked, read-only first', () => {
     expect(offeredScopes('either')).toEqual(['read', 'write'])
     expect(offeredScopes('read')).toEqual(['read'])

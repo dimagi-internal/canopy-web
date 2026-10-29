@@ -14,6 +14,7 @@ import { rememberSelf } from './trust'
 import type { Unlocked, UnlockChoice, UnlockPrompt } from './operations'
 import { rememberedSecretKey } from './operations'
 import { PrfUnsupportedError } from './prf'
+import { requirePasskeysHere } from '@/auth/passkeyHere'
 import {
   importPrivateScalar,
   openUserKey,
@@ -36,6 +37,7 @@ export interface KeysetInHand {
 type Jwk = { x?: string; y?: string }
 
 async function prfLocally(ks: KeysetInHand, seals: UserKeySeal[]): Promise<{ cred: string; prf: Uint8Array }> {
+  requirePasskeysHere()
   const asserted = (await navigator.credentials.get({
     publicKey: {
       challenge: randomBytes(32),

@@ -548,7 +548,21 @@ Every browser-facing address canopy-web serves. The SPA route table is
   "Allow read + write (30 min)" (as asked) and Decline; approving runs a passkey
   assertion made for this request. Approved, it shows until when, with Stop. Only the
   person it is for can open it; root because it is about you, not a workspace
-  (`apps/harness/api_act_as.py`).
+  (`apps/harness/api_act_as.py`). In the Canopy Runner app the buttons are one
+  "Decide in your browser", and the page follows the decision made there.
+- **`/confirm/page-permission/:grantId`** — a page's panel asking "let this agent act
+  as you on this page for 30 minutes?", answered in your browser: the Runner app's
+  panel opens it here because its frame cannot use a passkey, and any panel offers it
+  after a passkey fails. Confirm with passkey confirms the panel's own waiting grant
+  (it closes its prompt on its next read); Not now stops it. Yours only; root, as
+  `/act-as`.
+- **Passkeys in the Canopy Runner app.** Its web view can use none (WebKit gives an
+  app without Apple's associated-domains entitlement no WebAuthn, and its session is
+  minted from a token, which canopy never steps up), so every passkey moment there
+  opens in the browser instead (`frontend/src/auth/passkeyHere.ts`): the step-up
+  dialog opens the same page there, `/act-as` and the panel's prompt above follow the
+  decision made there, and registering a passkey or a vault's passkey unlock says to
+  open the page in the browser.
 - **`/home`** — what is waiting on you across every workspace you are in.
   At the top, in their own section, **Alerts** (`GET /api/me/alerts/`): system
   problems you have an action on, one line each (severity dot, source chip,

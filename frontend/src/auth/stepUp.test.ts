@@ -20,9 +20,13 @@ afterEach(() => {
 describe('stepUpFromBody', () => {
   it('recognises only a 403 carrying the step_up_required member', () => {
     expect(stepUpFromBody(403, { error: 'step_up_required', has_passkey: false })).toEqual({ hasPasskey: false, detail: undefined })
-    expect(stepUpFromBody(403, { error: 'browser_session_required' })).toBeNull()
     expect(stepUpFromBody(401, { error: 'step_up_required' })).toBeNull()
     expect(stepUpFromBody(403, 'nope')).toBeNull()
+  })
+
+  it('hands a token-minted session’s refusal (the Runner app’s) to the browser', () => {
+    expect(stepUpFromBody(403, { error: 'browser_session_required', detail: 'x' }))
+      .toEqual({ hasPasskey: true, detail: 'x', inBrowser: true })
   })
 })
 

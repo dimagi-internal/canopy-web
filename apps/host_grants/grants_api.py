@@ -20,7 +20,10 @@ sees and stops them in two places, reading the same rows (`host_grants.live_for`
 made in canopy's frame. The panel's token is held by the site that framed it, so
 the token alone proves nothing about the person; the assertion does — it is signed
 over canopy's origin, which no other page can produce. A confirmed grant lasts
-`host_grants.CONFIRM_SECONDS` from the touch.
+`host_grants.CONFIRM_SECONDS` from the touch. A panel whose frame cannot use a
+passkey (the Canopy Runner app) has the person confirm the same grant in their
+browser instead: `/api/me/host-grants/{id}/confirm/begin|finish`, on their own
+browser session (the section at the end).
 
 Stopping a grant stops the page's whole permission (`host_grants.same_page`: the
 panel re-mints while its tab is open, so one page's permission is several rows),
@@ -177,15 +180,7 @@ def begin_confirm_host_grant(request: HttpRequest) -> PasskeyOptionsOut:
     """Options for navigator.credentials.get(), to confirm the permission this
     panel's page is waiting on with one of your passkeys."""
     stepup.require_a_person(request, "confirming an act-as-you permission")
-    grant = _waiting_grant(request)
-    options = passkeys.begin_assertion(request, slot=_slot(grant))
-    if options is None:
-        raise ProblemError(
-            409, "No passkey registered", type_=TYPE_CONFLICT,
-            detail="Register a passkey (canopy Settings → Passkeys), then send again.",
-            members={"error": "no_passkey", "register_url": stepup.REGISTER_PATH},
-        )
-    return PasskeyOptionsOut(options=options)
+    return _begin_confirm(request, _waiting_grant(request))
 
 
 @embed_grant_router.post("/host-grant/confirm/finish", response=PanelGrantOut,
@@ -196,8 +191,26 @@ def finish_confirm_host_grant(request: HttpRequest, payload: PasskeyAssertIn) ->
     minutes, the agent may act as you on this page."""
     stepup.require_a_person(request, "confirming an act-as-you permission")
     grant = _waiting_grant(request)
+    _confirm(request, grant, payload.credential)
+    return PanelGrantOut(grant=_out(grant))
+
+
+def _begin_confirm(request: HttpRequest, grant) -> PasskeyOptionsOut:
+    options = passkeys.begin_assertion(request, slot=_slot(grant))
+    if options is None:
+        raise ProblemError(
+            409, "No passkey registered", type_=TYPE_CONFLICT,
+            detail="Register a passkey (canopy Settings → Passkeys), then send again.",
+            members={"error": "no_passkey", "register_url": stepup.REGISTER_PATH},
+        )
+    return PasskeyOptionsOut(options=options)
+
+
+def _confirm(request: HttpRequest, grant, credential: dict) -> None:
+    """Verify the assertion begun for `grant` and confirm it — the one confirm both
+    the panel and the browser page run."""
     try:
-        passkeys.finish_assertion(request, payload.credential, slot=_slot(grant))
+        passkeys.finish_assertion(request, credential, slot=_slot(grant))
     except passkeys.CeremonyError as exc:
         raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION,
                            detail=str(exc)) from exc
@@ -214,4 +227,59 @@ def finish_confirm_host_grant(request: HttpRequest, payload: PasskeyAssertIn) ->
         from apps.mcp_apps_host import mcp_apps_views  # noqa: PLC0415 — as contact_api's: loads at the confirm only
 
         mcp_apps_views.refresh_index_soon(grant.app, grant)
-    return PanelGrantOut(grant=_out(grant))
+
+
+# --- in the person's browser ------------------------------------------------------------
+# The panel's own confirm needs WebAuthn in its frame, and some frames have none: the
+# Canopy Runner desktop app hosts canopy in a web view with no passkey access. There the
+# panel opens `/confirm/page-permission/<id>` in the person's browser, which confirms
+# the same waiting grant through these routes with THEIR signed-in browser session and
+# their passkey, and the panel sees it confirmed on its next read. The grant id alone
+# confirms nothing: the session must be the grant's own person, at a browser (a
+# token-minted session is refused), and the assertion is theirs over canopy's origin.
+
+
+def _my_grant(request: HttpRequest, grant_id: int):
+    rows = HostGrant.objects.filter(pk=grant_id, user=request.user, contact__isnull=True)
+    grant = host_grants.unexpired(rows).select_related("app", "agent").first()
+    if grant is None:
+        raise ProblemError(404, "No such permission", type_=TYPE_NOT_FOUND,
+                           detail="It was stopped, or it ran out. Send from the page again to ask for one.")
+    return grant
+
+
+def _my_waiting_grant(request: HttpRequest, grant_id: int):
+    stepup.require_browser(request, "confirming an act-as-you permission")
+    stepup.require_a_person(request, "confirming an act-as-you permission")
+    return _my_grant(request, grant_id)
+
+
+@me_router.get("/me/host-grants/{int:grant_id}", response=HostGrantOut,
+               summary="One page's act-as-you permission, confirmed or waiting for my passkey")
+@gate("self")
+def get_my_host_grant(request: HttpRequest, grant_id: int) -> HostGrantOut:
+    """One of your unexpired act-as-you permissions — which site, which agent, what it
+    may do — confirmed, or still waiting for your passkey (`confirmed: false`)."""
+    return _out(_my_grant(request, grant_id))
+
+
+@me_router.post("/me/host-grants/{int:grant_id}/confirm/begin", response=PasskeyOptionsOut,
+                summary="Start confirming a page's act-as-you permission with my passkey, in my browser")
+@gate("self", kind="ephemeral-credential")  # a ceremony's challenge, for the person's own grant
+def begin_confirm_my_host_grant(request: HttpRequest, grant_id: int) -> PasskeyOptionsOut:
+    """Options for navigator.credentials.get(), to confirm a permission a page is
+    waiting on — the same confirmation as the page's own panel, made in your browser
+    when the panel cannot use a passkey."""
+    return _begin_confirm(request, _my_waiting_grant(request, grant_id))
+
+
+@me_router.post("/me/host-grants/{int:grant_id}/confirm/finish", response=HostGrantOut,
+                summary="Confirm a page's act-as-you permission with my passkey, in my browser")
+@gate("self", setting=True)
+def finish_confirm_my_host_grant(request: HttpRequest, grant_id: int,
+                                 payload: PasskeyAssertIn) -> HostGrantOut:
+    """Verify the passkey assertion and confirm the permission: from now, for 30
+    minutes, the agent may act as you on that page. The page's panel sees it at once."""
+    grant = _my_waiting_grant(request, grant_id)
+    _confirm(request, grant, payload.credential)
+    return _out(grant)
