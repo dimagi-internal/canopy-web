@@ -371,3 +371,38 @@ def test_a_failure_logs_the_connections_vocabulary_without_the_token(cr, monkeyp
     cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
     assert cr.logs == ['warn: connections.stage_failed agent=eva provider=salesforce turn=t1 '
                        'reason="Salesforce refused the request."']
+
+
+# ---- through the real `_api`: one line per failure, none for a 404 ---------------------
+
+@pytest.mark.parametrize("failure,lines", [
+    (404, []),
+    (503, ['warn: connections.stage_failed agent=eva provider=* turn=t1 reason="listing -> 503"']),
+    ("down", ['warn: connections.stage_failed agent=eva provider=* turn=t1 '
+              'reason="listing: canopy-web unreachable"']),
+])
+def test_the_listing_logs_once_through_the_real_api(cr, monkeypatch, tmp_path, failure, lines):
+    import io
+    import urllib.error
+
+    def urlopen(req, timeout=None):
+        if failure == "down":
+            raise urllib.error.URLError("connection refused")
+        raise urllib.error.HTTPError(req.full_url, failure, "x", {}, io.BytesIO(b'{"detail": "x"}'))
+    monkeypatch.setattr(cr, "BASE_URL", "https://canopy.test")
+    monkeypatch.setattr(cr.urllib.request, "urlopen", urlopen)
+    _cli(cr, monkeypatch, tmp_path)
+    cr._stage_connections("r1", "t1", "eva")
+    assert cr.calls == [] and cr.logs == lines
+
+
+def test_other_calls_through_the_real_api_still_log_their_failures(cr, monkeypatch):
+    import io
+    import urllib.error
+
+    def urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 503, "x", {}, io.BytesIO(b"busy"))
+    monkeypatch.setattr(cr, "BASE_URL", "https://canopy.test")
+    monkeypatch.setattr(cr.urllib.request, "urlopen", urlopen)
+    assert cr._api("GET", "/x")[0] == 503
+    assert cr.logs == ["GET /x -> 503: b'busy'"]

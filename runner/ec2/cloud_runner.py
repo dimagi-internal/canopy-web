@@ -412,9 +412,12 @@ def _drop_runner_token() -> bool:
 
 def _api(method: str, path: str, body: dict | None = None, *,
          prefix: str = "/api/harness",
-         headers: dict | None = None, _retried: bool = False) -> tuple[int, dict | None]:
+         headers: dict | None = None, quiet: bool = False,
+         _retried: bool = False) -> tuple[int, dict | None]:
     """Call canopy-web. `prefix` defaults to the harness router this runner lives
-    on; pass another (e.g. `/api/events`) for the few cross-router calls."""
+    on; pass another (e.g. `/api/events`) for the few cross-router calls. `quiet`
+    leaves the failure lines (an HTTP error, an unreachable canopy-web) to a
+    caller that logs its own, once; a refused token is still announced."""
     url = f"{BASE_URL}{prefix}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -436,16 +439,18 @@ def _api(method: str, path: str, body: dict | None = None, *,
             return resp.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as exc:
         raw = exc.read()
-        _log(f"{method} {path} -> {exc.code}: {raw[:300]!r}")
+        if not quiet:
+            _log(f"{method} {path} -> {exc.code}: {raw[:300]!r}")
         if exc.code == 401:
             if bearer.startswith("crt_") and not _retried and _drop_runner_token():
                 # A runner token can die mid-hour (its device key revoked): get
                 # a fresh one — or fall back — and try this call once more.
-                return _api(method, path, body, prefix=prefix, headers=headers, _retried=True)
+                return _api(method, path, body, prefix=prefix, headers=headers, quiet=quiet, _retried=True)
             _note_token_refused()
         return exc.code, None
     except urllib.error.URLError as exc:
-        _log(f"{method} {path} -> URLError {exc.reason}")
+        if not quiet:
+            _log(f"{method} {path} -> URLError {exc.reason}")
         return 0, None
 
 
@@ -1813,7 +1818,9 @@ def _stage_connections(runner_id: str, turn_id: str, slug: str) -> None:
     if not slug:
         return
     try:
-        status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections")
+        # Quiet: the stage_failed line below is the one line for a failure, and a
+        # 404 (a canopy-web without this route) writes nothing at all.
+        status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections", quiet=True)
     except Exception as exc:  # noqa: BLE001 — never cost the turn its start
         status, body = -1, None
         _stage_failed_line(slug, "", turn_id, f"listing failed: {exc}")
