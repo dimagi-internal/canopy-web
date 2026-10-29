@@ -23,7 +23,7 @@ The old address `https://labs.connect.dimagi.com/canopy/` (now `https://canopy.d
 
 ### Salesforce connection settings
 
-`apps/connections` reads `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` and `SALESFORCE_LOGIN_URL` (default `https://login.salesforce.com`; `https://test.salesforce.com` for a sandbox) from the container environment. The client id is public (it is in every authorize URL) and can be plain env; the client secret belongs in Secrets Manager like `GITHUB_APP_CLIENT_SECRET`, wired in `deploy/aws/canopy-web.cfn.yaml`. Unset, Connect reports "not set up" and nothing else changes. The Salesforce Connected App's callback is `https://canopy.dimagi.com/auth/connections/salesforce/callback/`, scopes `api refresh_token`, PKCE required, refresh-token rotation on.
+`apps/connections` reads `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` and `SALESFORCE_LOGIN_URL` (default `https://login.salesforce.com`; `https://test.salesforce.com` for a sandbox) from the container environment. The client id is public (it is in every authorize URL) and can be plain env; the client secret belongs in Secrets Manager: wire it in `deploy/aws/canopy-web.cfn.yaml` the way `GITHUB_APP_CLIENT_SECRET` is (a `AWS::SecretsManager::Secret` plus a `Secrets` entry on the container), and the id and login URL as plain env. Unset, Connect reports "not set up" and nothing else changes. The Salesforce Connected App's callback is `https://canopy.dimagi.com/auth/connections/salesforce/callback/`, scopes `api refresh_token`, PKCE required, refresh-token rotation on.
 
 ### Protocol identity is pinned by connected sites
 
