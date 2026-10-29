@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useContext, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2 } from "lucide-react";
 
 import type { Message } from "./protocol";
@@ -12,6 +12,7 @@ import { TurnFold } from "./TurnFold";
 import { AppView } from "./mcpApps/AppView";
 import { LatestAppViewContext } from "./mcpApps/context";
 import { useSecretRequestHost } from "./secretRequest";
+import { SubagentsContext, startedRunningAgent } from "./subagents";
 import { pairToolMessages, type ChatRow } from "./pairToolMessages";
 import {
   groupToolRuns,
@@ -116,6 +117,7 @@ export function MessageList({
   onCancelQueued,
 }: Props) {
   const secretHost = useSecretRequestHost();
+  const subagents = useContext(SubagentsContext);
   const paired = useMemo(() => pairToolMessages(messages), [messages]);
   // One person's message and what followed it — the unit a finished turn
   // folds by. Within a turn, back-to-back tool calls still collapse into one
@@ -275,9 +277,17 @@ export function MessageList({
       <div className="flex flex-col gap-2 p-4">
         {turns.map((turn, i) => {
           // Running = the caller says so (the server's turn status), or one of
-          // its rows is still on its way.
+          // its rows is still on its way, or an agent it started still runs. A
+          // turn that hands work to background agents stops and wakes again
+          // each time one reports back; folding at every stop collapsed and
+          // re-expanded its work under a person reading it.
           const live =
-            i === turns.length - 1 && (liveTurn ?? turn.body.some(rowIsInFlight));
+            i === turns.length - 1 &&
+            ((liveTurn ?? turn.body.some(rowIsInFlight)) ||
+              startedRunningAgent(
+                turn.body.flatMap((r) => (r.kind === "tool_pair" ? [r.use] : [])),
+                subagents,
+              ));
           const fold = planFold(turn, { live });
           const todos = latestTodos(turn.body);
           return (
