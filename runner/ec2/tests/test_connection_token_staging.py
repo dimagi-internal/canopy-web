@@ -128,11 +128,13 @@ def test_startup_clears_leftovers(cr, tmp_path):
 
 # ---- the wiring: which turns get a token --------------------------------------------
 
-from test_confined_turns import _turn, cr as turn_cr  # noqa: E402,F401
+# The turn harness is test_confined_turns' (as tests/test_chat_attachments.py borrows it).
+from test_confined_turns import _turn  # noqa: E402
+from test_confined_turns import cr as turn_cr  # noqa: E402,F401
 
 
 @pytest.fixture()
-def wired(turn_cr, monkeypatch, tmp_path):
+def wired(turn_cr, monkeypatch, tmp_path):  # noqa: F811 - the fixture imported above
     mod, calls = turn_cr
     monkeypatch.setattr(mod.pathlib.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "b")
@@ -229,7 +231,7 @@ def test_an_interrupt_during_staging_releases_the_hold(cr, monkeypatch, tmp_path
 def test_main_clears_leftovers_at_startup(cr, monkeypatch):
     order = []
 
-    class Stop(Exception):
+    class StopMainError(Exception):
         pass
     monkeypatch.setattr(cr, "BASE_URL", "https://x")
     monkeypatch.setattr(cr, "pair_or_load", lambda: "r1")
@@ -237,9 +239,9 @@ def test_main_clears_leftovers_at_startup(cr, monkeypatch):
 
     def clear():
         order.append("clear")
-        raise Stop
+        raise StopMainError
     monkeypatch.setattr(cr, "_clear_stale_connection_tokens", clear)
-    with pytest.raises(Stop):
+    with pytest.raises(StopMainError):
         cr.main()
     assert order == ["sweep", "clear"]
 
