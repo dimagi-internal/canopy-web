@@ -45,7 +45,7 @@ def test_stages_through_the_cli_with_the_runner_bearer(cr, monkeypatch, tmp_path
     cr._stage_sf_token("r1", "t1", "eva", now=0)
     argv, kw = cr.calls[0]
     assert argv == ["/bin/canopy", "cred", "salesforce-token", "--runner", "--agent", "eva",
-                    "--runner-id", "r1", "--turn", "t1"]
+                    "--runner-id", "r1", "--turn", "t1", "--min-life", "900"]
     assert kw["env"]["CANOPY_TOKEN"] == "runner-bearer" and kw["timeout"] == 120
     assert _path(tmp_path).exists() and "SECRET" not in " ".join(cr.logs)
 
@@ -161,7 +161,8 @@ def test_a_confined_turn_is_never_staged(wired):
 def test_an_ordinary_agent_turn_is_staged_and_cleaned_up(wired):
     mod, sf, seen, tmp_path = wired
     mod._run_turn("r-1", _turn(caller_context={"profile": "full", "capability": None}))
-    assert len(sf) == 1 and sf[0][-4:] == ["--runner-id", "r-1", "--turn", sf[0][-1]]
+    assert len(sf) == 1 and sf[0][-6:-2] == ["--runner-id", "r-1", "--turn", sf[0][-3]]
+    assert sf[0][-2:] == ["--min-life", "900"]
     assert seen["file_during_turn"] is True
     assert not _path(tmp_path, "ace").exists()
 
@@ -227,3 +228,59 @@ def test_main_clears_leftovers_at_startup(cr, monkeypatch):
     with pytest.raises(Stop):
         cr.main()
     assert order == ["sweep", "clear"]
+
+
+# ---- M1: a turn's first stage always asks canopy-web ----------------------------------
+
+def test_a_first_stage_ignores_a_fresh_file_another_turn_left(cr, monkeypatch, tmp_path):
+    """A fresh-looking file is reused only by a heartbeat re-stage: a new turn's first
+    stage calls the CLI, so canopy-web checks THIS turn and records its token issue."""
+    _path(tmp_path).parent.mkdir(parents=True)
+    _path(tmp_path).write_text(json.dumps({"access_token": "OLD", "expires_at": 10_000}))
+    _cli(cr, monkeypatch, tmp_path, expires=20_000)
+    cr._stage_sf_token("r1", "t1", "eva", now=0)
+    assert len(cr.calls) == 1
+    cr._stage_sf_token("r1", "t1", "eva", now=0, refresh=True)     # heartbeat: fresh, kept
+    assert len(cr.calls) == 1
+
+
+# ---- T7b: exit 3 on a heartbeat re-stage, in one lock section -------------------------
+
+class _CountingLock:
+    def __init__(self):
+        import threading
+        self._l = threading.Lock()
+        self.n = 0
+
+    def __enter__(self):
+        self._l.acquire()
+        self.n += 1
+        return self
+
+    def __exit__(self, *exc):
+        self._l.release()
+
+
+def test_exit_3_on_a_restage_keeps_the_hold_in_one_lock_section(cr, monkeypatch, tmp_path):
+    lock = _CountingLock()
+    monkeypatch.setattr(cr, "_SF_LOCK", lock)
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_sf_token("r1", "t1", "eva", now=0)
+
+    def run(argv, **kw):                       # the connection went away mid-turn
+        lock.n = 0
+        return subprocess.CompletedProcess(argv, 3, "", "not_connected")
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    cr._restage_sf_token("t1", now=9_900)
+    assert lock.n == 1                          # handled in ONE section, no drop/re-add gap
+    assert cr._SF_STAGED == {"t1": ("eva", "r1")} and not _path(tmp_path).exists()
+
+
+def test_exit_3_on_a_restage_keeps_a_siblings_file(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_sf_token("r1", "A", "eva", now=0)
+    cr._stage_sf_token("r1", "B", "eva", now=0)
+    monkeypatch.setattr(cr.subprocess, "run",
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, 3, "", ""))
+    cr._restage_sf_token("A", now=9_900)
+    assert set(cr._SF_STAGED) == {"A", "B"} and _path(tmp_path).exists()

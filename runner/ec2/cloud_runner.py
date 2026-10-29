@@ -1753,6 +1753,8 @@ def _restage_delegated_google() -> None:
 # box's bearer + the turn id) fetches a short-lived ACCESS token and writes it 0600 to
 # ~/.canopy/connections/<slug>/salesforce.json; the refresh token never reaches the box.
 # The file is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+#: Seconds a staged token must still live; also sent to canopy-web (`--min-life`), so the
+#: server refreshes rather than hand back a cached token that lapses before the next re-stage.
 SALESFORCE_TOKEN_MIN_LIFE = 900
 #: CLI exit code for "this agent has no Salesforce connection" (409 not_connected).
 SALESFORCE_NOT_CONNECTED_EXIT = 3
@@ -1771,9 +1773,12 @@ def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | Non
     The turn registers as a holder BEFORE the CLI runs (so a sibling turn ending cannot
     delete the file out from under it) and drops out again when nothing was staged.
     `refresh` (the heartbeat) never ADDS a holder: it only refreshes for a turn still
-    held, and discards its work if the turn ended meanwhile. Exit 3 from the CLI is
-    silent (and clears a stale file); any other failure is a warn line and the turn
-    still runs. No token is ever logged."""
+    held, and discards its work if the turn ended meanwhile. Only `refresh` may keep a
+    file that is still fresh: a turn's FIRST stage always asks canopy-web, so the turn is
+    checked (runner holds it, agent still connected) and its token issue recorded, never
+    inherited from a file another turn left. Exit 3 from the CLI is silent (and clears a
+    stale file); any other failure is a warn line and the turn still runs. No token is
+    ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
@@ -1783,15 +1788,17 @@ def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | Non
             return
         _SF_STAGED[turn_id] = (slug, runner_id)
     try:
-        try:
-            if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
-                return
-        except (OSError, ValueError, AttributeError):
-            pass
+        if refresh:
+            try:
+                if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
+                    return
+            except (OSError, ValueError, AttributeError):
+                pass
         env = _child_safe_env()
         env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
         res = subprocess.run([_canopy_cli(), "cred", "salesforce-token", "--runner", "--agent", slug,
-                              "--runner-id", runner_id, "--turn", turn_id],
+                              "--runner-id", runner_id, "--turn", turn_id,
+                              "--min-life", str(SALESFORCE_TOKEN_MIN_LIFE)],
                              env=env, capture_output=True, text=True, timeout=120)
     except BaseException as exc:
         if isinstance(exc, Exception):
@@ -1801,15 +1808,19 @@ def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | Non
         _drop_sf_holder(turn_id, remove_file=True)   # an interrupt: nothing may stay held
         raise
     if res.returncode == SALESFORCE_NOT_CONNECTED_EXIT:
+        # One lock section: a first stage lets go of its hold; a heartbeat keeps the
+        # turn's (it is still running, just without a connection). Either way the
+        # stale file goes unless ANOTHER turn of the agent holds it. Never a moment
+        # where this turn's hold is dropped and re-added, which a sibling's unstage
+        # could fall into.
         with _SF_LOCK:
-            held = turn_id in _SF_STAGED
-        if held or not refresh:
-            _drop_sf_holder(turn_id, remove_file=True)
-            if refresh:      # the turn is still running, just without a connection
-                with _SF_LOCK:
-                    _SF_STAGED[turn_id] = (slug, runner_id)
-        else:
-            _discard_if_unheld(slug)
+            if not refresh:
+                _SF_STAGED.pop(turn_id, None)
+            if not any(v[0] == slug for k, v in _SF_STAGED.items() if k != turn_id):
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
         return
     if res.returncode != 0:
         _log(f"warn: {slug}: could not stage its Salesforce token "
