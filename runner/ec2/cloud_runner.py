@@ -1765,45 +1765,82 @@ def _salesforce_token_path(slug: str) -> pathlib.Path:
     return pathlib.Path.home() / ".canopy" / "connections" / slug / "salesforce.json"
 
 
-def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | None = None) -> None:
+def _stage_sf_token(runner_id: str, turn_id: str, slug: str, *, now: float | None = None,
+                    refresh: bool = False) -> None:
     """Stage `slug`'s Salesforce access token for this turn, if it has a connection.
     The turn registers as a holder BEFORE the CLI runs (so a sibling turn ending cannot
     delete the file out from under it) and drops out again when nothing was staged.
-    Exit 3 from the CLI is silent (and clears a stale file); any other failure is a warn
-    line and the turn still runs. No token is ever logged."""
+    `refresh` (the heartbeat) never ADDS a holder: it only refreshes for a turn still
+    held, and discards its work if the turn ended meanwhile. Exit 3 from the CLI is
+    silent (and clears a stale file); any other failure is a warn line and the turn
+    still runs. No token is ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
     target = _salesforce_token_path(slug)
     with _SF_LOCK:
+        if refresh and turn_id not in _SF_STAGED:
+            return
         _SF_STAGED[turn_id] = (slug, runner_id)
     try:
-        if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
-            return
-    except (OSError, ValueError, AttributeError):
-        pass
-    try:
+        try:
+            if float(json.loads(target.read_text()).get("expires_at") or 0) - now > SALESFORCE_TOKEN_MIN_LIFE:
+                return
+        except (OSError, ValueError, AttributeError):
+            pass
         env = _child_safe_env()
         env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
         res = subprocess.run([_canopy_cli(), "cred", "salesforce-token", "--runner", "--agent", slug,
                               "--runner-id", runner_id, "--turn", turn_id],
                              env=env, capture_output=True, text=True, timeout=120)
-    except Exception as exc:  # noqa: BLE001 — the turn runs
-        _log(f"warn: {slug}: could not stage its Salesforce token ({exc})")
-        _drop_sf_holder(turn_id, remove_file=False)
-        return
+    except BaseException as exc:
+        if isinstance(exc, Exception):
+            _log(f"warn: {slug}: could not stage its Salesforce token ({exc})")
+            _stage_failed(turn_id, refresh)
+            return
+        _drop_sf_holder(turn_id, remove_file=True)   # an interrupt: nothing may stay held
+        raise
     if res.returncode == SALESFORCE_NOT_CONNECTED_EXIT:
-        _drop_sf_holder(turn_id, remove_file=True)
+        with _SF_LOCK:
+            held = turn_id in _SF_STAGED
+        if held or not refresh:
+            _drop_sf_holder(turn_id, remove_file=True)
+            if refresh:      # the turn is still running, just without a connection
+                with _SF_LOCK:
+                    _SF_STAGED[turn_id] = (slug, runner_id)
+        else:
+            _discard_if_unheld(slug)
         return
     if res.returncode != 0:
         _log(f"warn: {slug}: could not stage its Salesforce token "
              f"({' '.join((res.stderr or '').split())[-300:] or f'exit {res.returncode}'})")
+        _stage_failed(turn_id, refresh)
+        return
+    if refresh:
+        with _SF_LOCK:
+            ended = turn_id not in _SF_STAGED
+        if ended:    # the turn ended while the CLI ran: the file it wrote is nobody's
+            _discard_if_unheld(slug)
+
+
+def _stage_failed(turn_id: str, refresh: bool) -> None:
+    if not refresh:
         _drop_sf_holder(turn_id, remove_file=False)
+
+
+def _discard_if_unheld(slug: str) -> None:
+    with _SF_LOCK:
+        if any(v[0] == slug for v in _SF_STAGED.values()):
+            return
+        try:
+            _salesforce_token_path(slug).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _drop_sf_holder(turn_id: str, *, remove_file: bool) -> None:
     """Release this turn's hold; delete the file (inside the lock) when it was the last
-    holder of its agent, or when `remove_file` and no other turn of the agent holds it."""
+    holder of its agent and `remove_file`."""
     with _SF_LOCK:
         held = _SF_STAGED.pop(turn_id, None)
         if not held or any(v[0] == held[0] for v in _SF_STAGED.values()):
@@ -1821,11 +1858,9 @@ def _restage_sf_token(turn_id: str, *, now: float | None = None) -> None:
         held = _SF_STAGED.get(turn_id)
     if held:
         try:
-            _stage_sf_token(held[1], turn_id, held[0], now=now)
+            _stage_sf_token(held[1], turn_id, held[0], now=now, refresh=True)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
             _log(f"warn: {held[0]}: re-staging its Salesforce token failed ({exc})")
-        with _SF_LOCK:  # a failed re-stage keeps the turn a holder, so its end still cleans up
-            _SF_STAGED[turn_id] = held
 
 
 def _unstage_sf_token(turn_id: str) -> None:
@@ -12880,9 +12915,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # credentials. Staged immediately before the try whose finally unstages it, so no
         # exit leaves the file behind.
         lease_stop = _start_lease_renewal(runner_id, turn_id)
-        if not confined:
-            _stage_sf_token(runner_id, turn_id, slug or "")  # never raises
         try:
+            if not confined:
+                _stage_sf_token(runner_id, turn_id, slug or "")
             try:
                 if tail is not None:
                     tail.start()
@@ -13399,6 +13434,7 @@ def main() -> None:
         _log(f"adopt: could not take over the previous daemon's turns: {exc}")
     # Any per-turn env a previous process left is nobody's, but an adopted turn's.
     sweep_turn_envs()
+    _clear_stale_sf_tokens()
     # Nor, on a sensitive-data box, anything a turn the last process ran left, but a
     # sensitive conversation's session that is neither idle past its deadline nor closed.
     try:

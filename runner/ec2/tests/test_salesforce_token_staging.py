@@ -175,3 +175,55 @@ def test_an_abrupt_exit_after_staging_still_unstages(wired, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         mod._run_turn("r-1", _turn(caller_context={"profile": "full", "capability": None}))
     assert len(sf) == 1 and not _path(tmp_path, "ace").exists() and mod._SF_STAGED == {}
+
+
+def test_a_restage_in_flight_when_the_turn_ends_adds_no_holder(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_sf_token("r1", "t1", "eva", now=0)
+    real = cr.subprocess.run
+
+    def run(argv, **kw):                      # the turn ends while the CLI runs
+        out = real(argv, **kw)
+        cr._unstage_sf_token("t1")
+        _path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+        _path(tmp_path).write_text("{}")      # the CLI's write lands after the unstage
+        return out
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    cr._restage_sf_token("t1", now=9_900)
+    assert "t1" not in cr._SF_STAGED and not _path(tmp_path).exists()
+
+
+def test_a_restage_after_the_turn_ended_does_nothing(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_sf_token("r1", "t1", "eva", now=0)
+    cr._unstage_sf_token("t1")
+    n = len(cr.calls)
+    cr._stage_sf_token("r1", "t1", "eva", now=9_900, refresh=True)
+    assert len(cr.calls) == n and cr._SF_STAGED == {}
+
+
+def test_an_interrupt_during_staging_releases_the_hold(cr, monkeypatch, tmp_path):
+    def run(argv, **kw):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    with pytest.raises(KeyboardInterrupt):
+        cr._stage_sf_token("r1", "t1", "eva", now=0)
+    assert cr._SF_STAGED == {}
+
+
+def test_main_clears_leftovers_at_startup(cr, monkeypatch):
+    order = []
+
+    class Stop(Exception):
+        pass
+    monkeypatch.setattr(cr, "BASE_URL", "https://x")
+    monkeypatch.setattr(cr, "pair_or_load", lambda: "r1")
+    monkeypatch.setattr(cr, "sweep_turn_envs", lambda: order.append("sweep") or 0)
+
+    def clear():
+        order.append("clear")
+        raise Stop
+    monkeypatch.setattr(cr, "_clear_stale_sf_tokens", clear)
+    with pytest.raises(Stop):
+        cr.main()
+    assert order == ["sweep", "clear"]
