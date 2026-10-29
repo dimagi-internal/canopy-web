@@ -361,8 +361,7 @@ def test_a_real_pat_is_a_machine(user):
 # ---- revoking from the grantee's side ------------------------------------------------
 
 def test_grantee_admin_may_revoke_but_a_stranger_may_not(user, other, ws, eva):
-    for u in (other,):
-        WorkspaceMembership.objects.create(workspace=ws, user=u, role=WorkspaceMembership.EDITOR)
+    WorkspaceMembership.objects.create(workspace=ws, user=other, role=WorkspaceMembership.EDITOR)
     stranger = _mk("stranger")
     WorkspaceMembership.objects.create(workspace=ws, user=stranger, role=WorkspaceMembership.EDITOR)
     theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=other)
@@ -373,7 +372,7 @@ def test_grantee_admin_may_revoke_but_a_stranger_may_not(user, other, ws, eva):
     s = Client()
     s.force_login(stranger)
     grant_step_up(s)
-    assert s.delete(url).status_code in (403, 404)
+    assert s.delete(url).status_code == 403
     assert ConnectionGrant.objects.exists()
 
     o = Client()

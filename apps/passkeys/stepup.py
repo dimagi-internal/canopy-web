@@ -11,7 +11,8 @@ on a token: a step-up is a property of one signed-in browser, and lasts
 survive a session changing hands.
 
 A TOKEN can never hold a step-up — there is no browser behind it to ask. So a
-machine caller (any Authorization header, an MCP call, a session minted from a
+machine caller (a bearer token that authenticated the request, i.e.
+`request.auth_method` set; an MCP call, a session minted from a
 token; `apps.common.views_debug.is_machine`) is refused outright by
 `require_recent_step_up`, with a message that says why rather than one that
 invites a passkey prompt nothing can answer. Routes that let tokens through

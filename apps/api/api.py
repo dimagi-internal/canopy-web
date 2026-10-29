@@ -258,6 +258,7 @@ from apps.common.api import common_router, public_router  # noqa: E402
 from apps.connections.api import agents_router as connections_agents_router  # noqa: E402
 from apps.connections.api import me_router as connections_me_router  # noqa: E402
 from apps.connections.api import router as connections_router  # noqa: E402
+from apps.connections.api_turns import router as connections_turns_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
@@ -435,6 +436,7 @@ api.add_router("/private-runners", private_runners_router)
 api.add_router("", workspace_vaults_router)  # workspace vaults: /workspaces/{slug}/vaults, /vaults/{id}
 api.add_router("/harness", vault_keeper_router)  # the keeper's calls, under the runner's own path
 api.add_router("/harness", capability_keeper_router)  # … and its slot-secret calls
+api.add_router("/harness", connections_turns_router)  # a turn's agent connection token (apps/connections)
 api.add_router("/harness", harness_router)
 api.add_router("/me/canopy-projects", project_opt_in_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).

@@ -10959,6 +10959,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * One claimed turn's agent connection token (Salesforce)
+         * @description A short-lived access token for the connection the turn's AGENT uses: its
+         *     own, else one granted to it — never the person who started the turn. 404 unless
+         *     this runner holds the turn, and always for a caller's turn (one confined to a
+         *     capability). 409 with `error` set to `no_agent`, `not_connected`, `ambiguous`,
+         *     `reconnect_required` or `not_configured`; 502/503 when the provider fails.
+         */
+        readonly post: operations["turn_connection_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/projects": {
         readonly parameters: {
             readonly query?: never;
@@ -35875,6 +35899,11 @@ export interface components {
             /** Expect */
             readonly expect: string;
         };
+        /** TurnConnectionTokenIn */
+        readonly TurnConnectionTokenIn: {
+            /** Provider */
+            readonly provider: string;
+        };
         /**
          * RunnerProjectRequestOut
          * @description An ask to add a repo to a laptop runner, and how it went: `pending` until
@@ -58362,6 +58391,33 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlotSecretResealOut"];
+                };
+            };
+        };
+    };
+    readonly turn_connection_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TurnConnectionTokenIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessTokenOut"];
                 };
             };
         };
