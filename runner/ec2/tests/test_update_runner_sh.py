@@ -622,10 +622,10 @@ def test_runners_one_install_restarts_every_runner_and_the_broker(runners_box):
     assert "Bearer crt_dimagi" in runners_box.curl_log.read_text()
 
 
-def test_runners_any_runner_in_flight_defers_the_install(runners_box):
+def test_runners_every_runner_in_flight_defers_the_install(runners_box):
     runners_box.stamp("0" * 40)
     runners_box.expect(runners_box.seed_repo(GOOD_RUNNER))
-    runners_box.busy_runner("dimagi", 0)
+    runners_box.busy_runner("dimagi", 2)
     runners_box.busy_runner("agent-eva", 1)
     assert runners_box.run("--check").stdout.startswith("busy")
     assert runners_box.run().returncode == 0
@@ -633,6 +633,60 @@ def test_runners_any_runner_in_flight_defers_the_install(runners_box):
     # A runner whose marker went stale is not busy (it is the one to rescue).
     runners_box.busy_runner("agent-eva", 3, age_seconds=600)
     assert runners_box.run("--check").stdout.startswith("stale")
+
+
+def _restarts(box) -> list[str]:
+    return box.restart_log.read_text().splitlines() if box.restarted else []
+
+
+def test_runners_one_busy_runner_does_not_hold_back_an_idle_one(runners_box):
+    # cloud-ec2-2-marshellis, 2026-10-28: idle for hours on a stale canopy because its
+    # neighbour on the machine always had a turn in flight.
+    runners_box.stamp("0" * 40)
+    sha = runners_box.seed_repo(GOOD_RUNNER)
+    runners_box.expect(sha)
+    runners_box.busy_runner("dimagi", 1)
+    assert runners_box.run("--check").stdout.startswith("stale")
+    out = runners_box.run()
+    assert out.returncode == 0, out.stderr
+    assert runners_box.installed == GOOD_RUNNER
+    # Only the idle runner; never root's setup (every runner Requires it) or the broker.
+    assert _restarts(runners_box) == ["canopy-runner@agent-eva.service"]
+    assert not runners_box.systemctl_log.exists()
+    assert (runners_box.home / "restart-owed").read_text().split() == ["dimagi"]
+    # The busy runner's credentials are left alone; the idle one's are refreshed.
+    assert not (runners_box.home_of("dimagi") / "refreshed-with").exists()
+    assert (runners_box.home_of("agent-eva") / "refreshed-with").exists()
+
+
+def test_runners_an_owed_runner_restarts_on_the_first_tick_it_is_idle(runners_box):
+    runners_box.stamp("0" * 40)
+    runners_box.expect(runners_box.seed_repo(GOOD_RUNNER))
+    runners_box.busy_runner("dimagi", 1)
+    runners_box.run()
+    runners_box.restart_log.unlink()
+    # Still busy: nothing.
+    runners_box.run()
+    assert not runners_box.restarted
+    # dimagi idle, eva (already on the new code) now busy: only dimagi restarts,
+    # and root's setup stays owed with no runner left on the old bytes.
+    runners_box.busy_runner("dimagi", 0)
+    runners_box.busy_runner("agent-eva", 1)
+    assert runners_box.run("--check").stdout.startswith("current")
+    runners_box.run()
+    assert _restarts(runners_box) == ["canopy-runner@dimagi.service"]
+    assert not runners_box.systemctl_log.exists()
+    assert (runners_box.home / "restart-owed").read_text().split() == []
+    # The whole box idle: root's setup, every runner and the broker, once.
+    runners_box.restart_log.unlink()
+    runners_box.busy_runner("agent-eva", 0)
+    runners_box.run()
+    assert "canopy-runner@*.service" in runners_box.restart_log.read_text()
+    assert runners_box.systemctl_log.read_text().splitlines() == ["restart canopy-runners.service"]
+    assert not (runners_box.home / "restart-owed").exists()
+    runners_box.restart_log.unlink()
+    runners_box.run()
+    assert not runners_box.restarted
 
 
 def test_runners_each_refreshes_its_credentials_as_itself(runners_box):
