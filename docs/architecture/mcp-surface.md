@@ -63,12 +63,13 @@ tool names). The implementation lives in `apps/mcp/`.
 
 | File | Responsibility |
 |---|---|
-| `auth.py` | `CanopyPATVerifier` — the server's one FastMCP `TokenVerifier`: resolves a bearer (PAT, OAuth access token, caller token, or a DPoP-proved host-grant token) to a Django user through `apps.tokens.principal.resolve_bearer`, the one resolver REST and the WebSocket handshake use too. |
+| `auth.py` | `CanopyPATVerifier` — the server's one FastMCP `TokenVerifier`: resolves a bearer (PAT, OAuth access token, caller token, act-as-you token, or a DPoP-proved host-grant token) to a Django user through `apps.tokens.principal.resolve_bearer`, the one resolver REST and the WebSocket handshake use too. |
 | `server.py` | The `FastMCP("canopy-web", auth=CanopyPATVerifier(...))` instance, its middleware (`TurnScopeMiddleware`, `DelegatedScopeMiddleware`) and providers (page actions, generated API tools), and `build_http_app()` for the ASGI mount. Importing `apps.mcp.tools` registers the static tools. |
 | `api_tools.py` | The generated API tools: `CanopyAPIProvider` (one tool per REST route), the in-process transport, `EXCLUDED` / `EXCLUDED_PREFIXES`. |
 | `tools/` | Hand-written static tools: `caller.py`, `site.py`, `page.py`, `close_review.py` — each declares its gate in `apps/api/route_gates.py::HAND_TOOL_GATES` (`tests/test_every_route_declares_its_gate.py` fails one that does not). |
 | `page_tools.py` | `PageActionProvider` — each open page's declared actions as per-caller tools. |
 | `turn_scope.py` | `TurnScopeMiddleware` — a caller token sees only its capability's canopy tools. |
+| `act_as_scope.py` | `ActAsScopeMiddleware` — an act-as-you token (`cact_…`, an agent acting as its turn's person after their passkey approval) lists and calls only the routes `harness.act_as.route_refusal` allows for its scope (read: GET only; never `act_as.EXCLUDED_*`), plus read-only hand-written tools other than the site gateway; the in-process request re-checks the route. Calls are logged with `acting_agent` + `act_as_grant` ([access.md § Acting as the person on canopy-web](access.md#acting-as-the-person-on-canopy-web-act-as-you-in-your-own-turn)). |
 | `chat_scope.py` | `current_chat_session()` — the chat an `X-Canopy-Chat-Key` header names, which narrows page tools to that one chat. |
 | `delegation.py` | canopy-web as a host of its own MCP: `gate()` (the SDK's `DPoPGate`, mounted in `config/asgi.py`), `access_token_for()` (a host-grant token → the visitor's `AccessToken`), and `DelegatedScopeMiddleware` (only the grant's scopes' tools). |
 | `rate_limit.py` | Per-user write rate limit (mutating tools). |

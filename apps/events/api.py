@@ -167,6 +167,8 @@ def list_mcp_calls(
         "args_summary": r.args_summary,
         "ok": r.ok,
         "error": r.error,
+        "acting_agent": r.acting_agent,
+        "act_as_grant": r.act_as_grant,
     } for r in rows]}
 
 

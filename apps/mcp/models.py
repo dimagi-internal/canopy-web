@@ -30,6 +30,11 @@ class MCPAuditLog(models.Model):
     args_summary = models.CharField(max_length=500, blank=True, default="")
     ok = models.BooleanField(default=True)
     error = models.CharField(max_length=500, blank=True, default="")
+    # A call made with an act-as-you token (`apps/harness/act_as.py`): `user` is the
+    # PERSON it acted as, and these name the agent that acted and the grant it held —
+    # "<agent> as <person>". Blank for every other call.
+    acting_agent = models.CharField(max_length=64, blank=True, default="")
+    act_as_grant = models.CharField(max_length=36, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:

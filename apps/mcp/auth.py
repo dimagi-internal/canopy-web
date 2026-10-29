@@ -53,6 +53,19 @@ def _user_agent() -> str:
 TURN_SCOPES = ["canopy:turn"]
 
 
+#: Scope for an act-as-you token: the person, within `harness.act_as`'s bounds.
+ACT_AS_SCOPES = ["canopy:act-as"]
+
+
+def _lookup_act_as(raw: str):
+    from apps.harness import act_as  # noqa: PLC0415 — only an act-as token pays for it
+
+    grant, _why = act_as.resolve(raw)
+    if grant is not None:
+        act_as.touch(grant)
+    return grant
+
+
 def _lookup_turn_grant(raw: str):
     from apps.harness.caller_tokens import resolve
 
@@ -78,6 +91,25 @@ class CanopyPATVerifier(TokenVerifier):
             from .delegation import access_token_for
 
             return await access_token_for(token)
+        if token.startswith("cact_"):
+            # An act-as-you token (`apps/harness/act_as.py`): the PERSON who approved it
+            # with their passkey, re-checked on every request. What it may call is
+            # `act_as_scope.ActAsScopeMiddleware`'s, and again the in-process route's.
+            grant = await sync_to_async(_lookup_act_as, thread_sensitive=True)(token)
+            if grant is None:
+                return None
+            from apps.harness import act_as  # noqa: PLC0415 — only an act-as token pays for it
+
+            cred = act_as.credential(grant)
+            return AccessToken(
+                token=token, client_id=f"act-as:{grant.pk}", scopes=ACT_AS_SCOPES,
+                claims={"sub": str(grant.person_id), "user_id": grant.person_id,
+                        "email": grant.person.email, "auth_method": cred["type"],
+                        "credential_type": cred["type"], "token_id": cred["id"],
+                        "token_label": cred["label"], "turn_id": cred["turn_id"],
+                        "act_as_grant": cred["act_as_grant"], "acting_agent": cred["acting_agent"],
+                        "act_as_scope": cred["act_as_scope"]},
+            )
         if token.startswith("cct_"):
             grant = await sync_to_async(_lookup_turn_grant, thread_sensitive=True)(token)
             if grant is None:
