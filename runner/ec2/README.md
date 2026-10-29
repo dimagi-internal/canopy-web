@@ -777,8 +777,10 @@ Root's parts, all written by `cloud_runner.py --install-runners`: `canopy-runner
 (every boot: users, env files, secrets, and the iptables rule that rejects IMDS for
 every uid but root's), `canopy-kms-broker.service` (the only thing that uses a runner's
 KMS key, for that runner's uid only), `canopy-pair.service` (pairs every runner in ONE
-`pair-by-role` call), and the auto-updater (root: one install, every
-`canopy-runner@*` restarted, deferred while any runner has a turn in flight).
+`pair-by-role` call), and the auto-updater (root: one install; each idle runner
+restarts onto it at once, a busy one on the first tick it is idle, and root's setup
+plus the broker on a tick that finds the whole box idle — see `restart_runners` in
+`update_runner.sh`).
 `/etc/canopy-runner/box.env` holds the stack's parameters and no secret.
 
 **Pairing takes one passkey touch for the whole box.** `up.sh --runners …` makes one

@@ -174,7 +174,9 @@ in_flight() {  # echoes a count, or "" when no marker can be trusted
     in_flight_of "$BUSY"
     return
   fi
-  # A box of several runners is busy while ANY of them is: the restart reaches them all.
+  # A box of several runners is busy only while EVERY runner is: an idle runner
+  # takes the new code at once (`restart_runners`), and a busy one when it is idle.
+  [ -n "$(idle_runners)" ] && { printf '0'; return; }
   local total="" id user home n
   while read -r id user home; do
     [ -n "$home" ] || continue
@@ -182,6 +184,24 @@ in_flight() {  # echoes a count, or "" when no marker can be trusted
     [ -n "$n" ] && total=$(( ${total:-0} + n ))
   done <<<"$(runner_rows)"
   printf '%s' "$total"
+}
+# The ids of a box's runners with / without a turn in flight, one per line. A marker
+# that cannot be trusted is idle, as above: unknown must not block.
+busy_runners() {
+  local id user home n
+  while read -r id user home; do
+    [ -n "$home" ] || continue
+    n="$(in_flight_of "$home/.canopy-runner/in-flight")"
+    [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null && echo "$id"
+  done <<<"$(runner_rows)"
+}
+idle_runners() {
+  local id user home busy
+  busy="$(busy_runners)"
+  while read -r id user home; do
+    [ -n "$id" ] || continue
+    grep -qxF "$id" <<<"$busy" || echo "$id"
+  done <<<"$(runner_rows)"
 }
 
 # The moved-to address, or nothing. https only, like the runner's own reader.
@@ -356,18 +376,73 @@ with open(path, "w") as fh:
     json.dump({"sha": sha, "committed_at": int(committed_at or 0),
                "installed_at": int(time.time()), "ref": ref}, fh)
 PY
+  if [ "$RUNNERS_MODE" = "1" ]; then
+    log "installed ${sha:-<unknown>} ($ref) -> $TARGET"
+    restart_runners "$(idle_runners)" "$(runner_rows | cut -d' ' -f1)"
+    return
+  fi
   log "installed ${sha:-<unknown>} ($ref) -> $TARGET; restarting $SERVICE"
   # The only privileged step, and the only reason this box grants the service user
-  # any sudo at all — scoped to this exact command by a sudoers drop-in. On a box of
-  # several runners this runs as root and restarts every runner (and the broker) at once.
-  # Such a box re-runs root's setup first (users, env files, the IMDS rule, the
-  # egress lock and its sync timer), so what the new code sets up is in place before
-  # its runners start. Its runners Require it, so they restart with it.
-  if [ "$RUNNERS_MODE" = "1" ]; then
-    $SYSTEMCTL restart canopy-runners.service || log "canopy-runners.service did not restart cleanly"
-  fi
+  # any sudo at all — scoped to this exact command by a sudoers drop-in.
   # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
   $RESTART_CMD $SERVICE
+}
+
+# --- restarting a box of several runners ------------------------------------
+#
+# A runner's bytes in $TARGET are read once, at its start, so they can be replaced
+# while every runner keeps running. What cannot happen under a running turn is
+# root's setup: canopy-runners.service is Required by every runner, so restarting
+# it restarts them all, and the egress lock it re-applies can cut a turn off. So:
+#
+# * the whole box idle: one restart of everything — root's setup first (users, env
+#   files, the IMDS rule, the egress lock and its sync timer), its runners with it,
+#   and the broker — exactly as a box of one runner restarts.
+# * some runner busy: only the IDLE runners restart, each onto the new code (and
+#   through its own start, a fresh bootstrap and canopy CLI). The busy ones are
+#   written to $OWED and restarted, one by one, on the first tick that finds each
+#   idle; root's setup and the broker wait for a tick that finds the whole box idle.
+#   One busy runner used to hold every runner on the machine back
+#   (cloud-ec2-2-marshellis idle on canopy 0.2.813 behind cloud-ec2-live's turns).
+#
+# $OWED existing means root's setup is owed; its lines are the runners still
+# running the old bytes.
+OWED="${OWED_FILE:-$RUNNER_HOME/restart-owed}"
+restart_runners() {  # <idle ids to restart> <ids still on the old bytes>, one per line each
+  local idle="$1" old="$2" id busy
+  busy="$(busy_runners)"
+  if [ -z "$busy" ]; then
+    log "restarting every runner, root's setup and the broker"
+    $SYSTEMCTL restart canopy-runners.service || log "canopy-runners.service did not restart cleanly"
+    # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
+    $RESTART_CMD $SERVICE
+    rm -f "$OWED"
+    return
+  fi
+  while read -r id; do
+    [ -n "$id" ] || continue
+    log "runner $id: idle — restarting it onto the new code"
+    $RESTART_CMD "canopy-runner@$id.service" || log "runner $id: did not restart cleanly"
+  done <<<"$idle"
+  : > "$OWED"
+  while read -r id; do
+    [ -n "$id" ] && grep -qxF "$id" <<<"$busy" && echo "$id" >> "$OWED"
+  done <<<"$old"
+  log "still owed a restart (a turn in flight): $(tr '\n' ' ' < "$OWED")— root's setup waits for the whole box to be idle"
+}
+# A tick with no new code: finish what an earlier install could not.
+settle_owed() {
+  [ "$RUNNERS_MODE" = "1" ] && [ -f "$OWED" ] || return 0
+  local now_idle owed_idle id
+  now_idle="$(idle_runners)"
+  owed_idle=""
+  while read -r id; do
+    [ -n "$id" ] || continue
+    grep -qxF "$id" <<<"$now_idle" && owed_idle="$owed_idle$id"$'\n'
+  done < "$OWED"
+  if [ -z "$(busy_runners)" ] || [ -n "$owed_idle" ]; then
+    restart_runners "$owed_idle" "$(cat "$OWED")"
+  fi
 }
 
 install_broker_from_git() {  # <ref> — the runners' KMS broker, beside the runner it serves
@@ -615,6 +690,10 @@ case "$V" in
     log "behind — installing ${EXPECTED:0:12} (running ${INSTALLED_SHA:0:12})"
     install_from_git "$EXPECTED"
     ;;
+  current)
+    log "current — no code change."
+    settle_owed
+    ;;
   *)
     # current | busy | unknown all mean "no new CODE", and all exit 0. This runs on
     # a timer: a non-zero exit for the ordinary case fills the journal with false
@@ -675,8 +754,10 @@ if [ "$RUNNERS_MODE" = "1" ]; then
   if [ "$V" = "busy" ]; then
     log "busy — skipping the credentials refresh too."
   else
+    busy="$(busy_runners)"
     while read -r id user home; do
       [ -n "$home" ] || continue
+      grep -qxF "$id" <<<"$busy" && { log "runner $id: busy — skipping its credentials refresh"; continue; }
       script="$home/.canopy-runner/src/runner/ec2/bootstrap_agents.sh"
       [ -x "$script" ] || { log "runner $id: no runner clone yet; skipping its credentials refresh"; continue; }
       log "runner $id: refreshing credentials"
