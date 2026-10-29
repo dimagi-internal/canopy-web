@@ -26,6 +26,7 @@ const { getAgentSetup } = vi.hoisted(() => ({ getAgentSetup: vi.fn() }))
 vi.mock('@/api/agentCreation', () => ({ getAgentSetup }))
 vi.mock('@/pages/agents/AgentSecurityPanel', () => ({ AgentSecurityPanel: () => <div>security-panel</div> }))
 vi.mock('@/pages/agents/AgentAccountsPanel', () => ({ AgentAccountsPanel: () => <div id="cred-github">accounts-panel</div> }))
+vi.mock('@/pages/agents/AgentConnectionsPanel', () => ({ AgentConnectionsPanel: () => <div>connections-panel</div> }))
 vi.mock('@/components/agents/AgentHowItRuns', () => ({ AgentHowItRuns: () => <div>how-it-runs</div> }))
 let agentOverride: Record<string, unknown> = {}
 vi.mock('react-router-dom', async (orig) => ({

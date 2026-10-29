@@ -9,6 +9,7 @@ import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { SecurityCard } from '@/components/settings/SecurityCard'
 import { ContactDetailsPanel } from '@/components/settings/ContactDetailsPanel'
+import { ConnectionsPanel } from '@/components/settings/ConnectionsPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { ActAsYouPanel } from '@/components/settings/ActAsYouPanel'
@@ -115,6 +116,7 @@ export function SettingsPage() {
         {current === 'connections' && (
           <>
             <GitHubPanel />
+            <ConnectionsPanel />
             <ConnectedAppsPanel />
             <TokensPanel />
           </>

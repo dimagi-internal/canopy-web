@@ -16,6 +16,7 @@ import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
+import { AgentConnectionsPanel } from '@/pages/agents/AgentConnectionsPanel'
 import { AgentAccountsPanel } from '@/pages/agents/AgentAccountsPanel'
 import { AgentSecretsPanel } from '@/pages/agents/AgentSecretsPanel'
 import { AgentSecurityPanel } from '@/pages/agents/AgentSecurityPanel'
@@ -307,6 +308,7 @@ export function AgentSettingsSection() {
       {current === 'accounts' && (
         <Section id="accounts" title="External accounts">
           <AgentAccountsPanel agent={agent} />
+          {isAdmin && <AgentConnectionsPanel agent={agent} />}
         </Section>
       )}
 
