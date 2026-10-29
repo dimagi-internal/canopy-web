@@ -11,7 +11,7 @@ import {
 } from '@/api/connections'
 import { listAgents } from '@/api/agents'
 import { getCsrfToken } from '@/api/base'
-import { ConnectOutcome, Scopes, lastUsed } from '@/components/settings/ConnectionsPanel'
+import { ConnectOutcome, Scopes, detailLine } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
 
 /**
@@ -21,10 +21,12 @@ import { Button } from 'canopy-ui/ui'
  * Disconnecting asks for a fresh passkey; the API client's step-up middleware
  * prompts and retries, so this just calls DELETE.
  *
+ * One section per provider the API lists; nothing provider-specific here.
+ *
  * Connecting is a form POST (CSRF-checked), never a link: the server refuses a
- * GET that names an agent, and makes Salesforce ask for a login, so the account
- * attached is the one the admin types in — the agent's — not whichever
- * Salesforce session their browser happens to hold.
+ * GET that names an agent, and asks the provider for a fresh login where it
+ * supports one, so the account attached is the one the admin types in — the
+ * agent's — not whichever session their browser happens to hold.
  */
 export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string } }) {
   const [data, setData] = useState<ConnectionsView | null>(null)
@@ -154,7 +156,7 @@ function Row({
         <div className="text-[13px]">
           <p className="font-medium text-foreground">{c.account_label}</p>
           <p className="text-[12px] text-muted-foreground">
-            {c.instance_url} · {lastUsed(c)}
+            {detailLine(c)}
             {shared && <> · shared by {c.granted_from}</>}
           </p>
           <Scopes c={c} />

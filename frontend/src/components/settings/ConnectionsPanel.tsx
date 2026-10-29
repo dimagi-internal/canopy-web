@@ -11,9 +11,10 @@ import {
 import { Button } from 'canopy-ui/ui'
 
 /**
- * Connect the services canopy acts on for you — Salesforce first. Same shape as
- * the GitHub panel: a per-user grant canopy holds, started by a full-page
- * navigation to the provider and reported back through the query string.
+ * Connect the services canopy acts on for you: one section per provider the API
+ * lists (`providers`), nothing hard-coded here. Same shape as the GitHub panel:
+ * a per-user grant canopy holds, started by a full-page navigation to the
+ * provider and reported back through the query string.
  */
 export function ConnectionsPanel() {
   const [data, setData] = useState<ConnectionsView | null>(null)
@@ -141,6 +142,12 @@ export function lastUsed(c: ConnectionOut): string {
   return c.last_used_at ? `Last used ${new Date(c.last_used_at).toLocaleDateString()}` : 'Not used yet'
 }
 
+/** The row's second line: the account's API host when the provider has one per
+ *  account (Salesforce's instance URL; a fixed-host provider sends none), then use. */
+export function detailLine(c: ConnectionOut): string {
+  return [c.instance_url, lastUsed(c)].filter(Boolean).join(' · ')
+}
+
 function ProviderRow({
   provider,
   rows,
@@ -161,9 +168,7 @@ function ProviderRow({
         <div key={c.id} className="flex items-center justify-between gap-4 rounded border border-border bg-muted/40 p-2.5">
           <div className="text-[13px]">
             <p className="font-medium text-foreground">{c.account_label}</p>
-            <p className="text-[12px] text-muted-foreground">
-              {c.instance_url} · {lastUsed(c)}
-            </p>
+            <p className="text-[12px] text-muted-foreground">{detailLine(c)}</p>
             <Scopes c={c} />
             {c.needs_reconnect && (
               <p className="text-[12px] text-warning">This connection expired or was revoked. Reconnect it.</p>

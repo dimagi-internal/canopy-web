@@ -1,4 +1,5 @@
-// Server-held OAuth connections (Salesforce first): `apps/connections/api.py`.
+// Server-held OAuth connections: `apps/connections/api.py`. Which providers exist
+// (and what to call them) comes from the API's `providers`, never from here.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
 // `/auth/connections/<provider>/start/` (a link for a person, a form POST for an
@@ -67,7 +68,7 @@ export async function revokeConnectionGrant(slug: string, id: number, other: str
 
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an
  *  AGENT's is a form POST to this, CSRF-checked — the server refuses a GET that
- *  names an agent, so a link cannot attach an admin's Salesforce login to it. */
+ *  names an agent, so a link cannot attach an admin's own provider login to it. */
 export function connectionStartAction(provider: string): string {
   const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   return `${base}/auth/connections/${encodeURIComponent(provider)}/start/`

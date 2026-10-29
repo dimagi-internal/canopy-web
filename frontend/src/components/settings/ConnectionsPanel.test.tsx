@@ -74,4 +74,18 @@ describe('ConnectionsPanel', () => {
     at('/settings?connection=salesforce&status=error&reason=access_denied')
     expect(await screen.findByText(/Salesforce was not approved/)).toBeTruthy()
   })
+
+  it('renders whatever providers the API lists, with no API host for a fixed-host one', async () => {
+    const gmail = { name: 'gmail', title: 'Gmail', configured: true }
+    listMyConnections.mockResolvedValue({
+      providers: [gmail, PROVIDER],
+      connections: [conn({ id: 9, provider: 'gmail', title: 'Gmail', instance_url: '', account_label: 'jj@gmail.test' })],
+    })
+    at('/settings')
+    expect(await screen.findByTestId('connection-provider-gmail')).toBeTruthy()
+    expect(screen.getByText('jj@gmail.test')).toBeTruthy()
+    expect(screen.getByText('Not used yet').textContent).toBe('Not used yet')   // no leading " · "
+    const a = screen.getByRole('link', { name: 'Connect Salesforce' }) as HTMLAnchorElement
+    expect(a.getAttribute('href')).toContain('/auth/connections/salesforce/start/')
+  })
 })
