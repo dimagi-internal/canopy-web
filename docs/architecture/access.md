@@ -20,6 +20,38 @@ door that makes an agent do work asks it (see "Where it is asked" below);
 `tests/test_access_matrix.py` asks it through every door. Don't write a second
 predicate for "may this person make this agent do X" — ask `decide`.
 
+## Agent roles and the access list (the model being moved to)
+
+Spec: `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`. The words
+below are the ones to use; the older ones in the rest of this page (`member`, `contact`,
+`full:`, `callers`, `editors:`) are read for agents not yet moved and removed when the last
+one has.
+
+* **Role** — what a person may do with ONE agent, one ladder: **owner** > **admin** >
+  **editor** > **user** > **viewer** (`apps/agents/roles.py`, the only place that names them).
+  viewer asks; user also uses what the agent publishes (including doors that act); editor also
+  runs the whole agent and changes its skills; admin also configures it in canopy-web; owner
+  also transfers or deletes it. Never say bare "admin": agent admin, workspace admin, runner
+  admin, vault key holder.
+* **Access list** — one list per agent of `(who, role)` lines (`AgentGrant`,
+  `apps/agents/grants.py`). `who` is a person, everyone in a workspace (optionally at least a
+  role there, optionally at a domain), anyone at a domain, or a known visitor or sender.
+  A person's role is the strongest line that names them. Lines can also sit on a workspace and
+  are inherited by every agent in it and below, unless an agent opts out
+  (`inherit_workspace_defaults`). Change them at `/api/agents/{slug}/access-list` and
+  `/api/workspaces/{slug}/agent-defaults`.
+* **Door** — a named profile an agent publishes for viewers and users (`ask`, ACE's `connect`).
+  It says only the lowest role that may open it; who has a role is the list's business.
+* **Source** — why someone has a role (`Decision.source`, the envelope's `role` and `source`).
+  A role is what you can do; a source is why. They are never the same word.
+* An agent moves from the older rules to its list with the preview-and-move in its Access
+  setting (`apps/agents/convert_access.py`), which refuses unless `decide` answers the same
+  for everyone who could plausibly ask. `Agent.uses_access_list` marks one that has moved.
+
+Old word → new: owner → owner · admin → admin · "workspace editor, whole agent, every turn
+manual" → editor whose line is `manual_only` · `member` → user (or viewer, by the door) ·
+`contact` → viewer · `full: [x]` → an editor line for x.
+
 ## Whose authority an agent acts with
 
 **An agent acts as itself — with its own credentials or ones a person delegated to it —
