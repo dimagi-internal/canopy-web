@@ -154,6 +154,13 @@ def _offered(classes: set[str], iface: dict) -> list[str]:
                   if classes & set(c.get("callers") or []))
 
 
+def _list_refusal(agent) -> str:
+    owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
+    return (f"{agent.slug} does not list you on its access list; ask {owner} or an admin of "
+            f"{agent.slug} to add you (a viewer can ask it questions, a user can use what it "
+            "publishes, an editor can run all of it)")
+
+
 def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> str:
     """Why `none`, and what the asker CAN do."""
     owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
@@ -293,7 +300,7 @@ def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.As
     elif isinstance(who, Contact):
         contact = who
     email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
-    return grants.Asker(user=user, email=email, verified=bool(verified),
+    return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
                         workspace_roles=getattr(standing, "roles", None))
 
 
@@ -388,6 +395,10 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
         role = iface_mod.session_writer(turn, agent)
         if role:
             return _full(f"session:{role}")
+    if agent.uses_access_list:
+        # The access list is the only way in beyond the owner and admins (and the session
+        # writer above): it is merged in by `_with_access_list`, so nothing is granted here.
+        return Decision(rel, NONE, None, False, False, False, "refused", _list_refusal(agent))
     editor = rel == MEMBER and _is_editor(user, st.role if st else None)
     if iface_mod.published(iface):
         rule = iface_mod.full_rule(classes, iface)

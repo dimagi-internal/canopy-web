@@ -63,6 +63,11 @@ class Agent(models.Model):
     #: agent gets its audience from one place. An agent holding credentials people should
     #: be named for (Hal, Eva) turns it off and lists its own. See `apps/agents/grants.py`.
     inherit_workspace_defaults = models.BooleanField(default=True)
+    #: Is this agent's "who may use it" the access list ALONE? Off, the interface's `full:`
+    #: rules, its doors' `callers` and the implicit "a workspace editor is an editor" rule
+    #: still apply beside the list. Switched on by `convert_access` once the list says the
+    #: same thing; the last step deletes the old rules and this flag with them.
+    uses_access_list = models.BooleanField(default=False)
     interface_published_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
@@ -341,9 +346,10 @@ class AgentGrant(models.Model):
     domain. The highest role among a person's matching lines wins.
     """
 
-    PERSON, WORKSPACE, DOMAIN = "person", "workspace", "domain"
+    PERSON, WORKSPACE, DOMAIN, CONTACT = "person", "workspace", "domain", "contact"
     KIND_CHOICES = [(PERSON, "A person"), (WORKSPACE, "Everyone in a workspace"),
-                    (DOMAIN, "Anyone at an email domain")]
+                    (DOMAIN, "Anyone at an email domain"),
+                    (CONTACT, "A visitor or sender canopy knows, who is not a member")]
 
     agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.CASCADE,
                               related_name="grants")
@@ -354,13 +360,17 @@ class AgentGrant(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                              on_delete=models.CASCADE, related_name="+")
     #: `kind=workspace`: the workspace whose people this names, and the lowest role there
-    #: that counts ("" = any member).
+    #: that counts ("" = any member); `domain` below, when set, narrows it to those whose
+    #: address is at that domain.
     subject_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
                                           on_delete=models.CASCADE, related_name="+")
     at_least = models.CharField(max_length=12, blank=True, default="")
-    #: `kind=domain`: the exact domain ("" = any address), and whether THIS message must
-    #: prove the sender's address (mail that is DMARC-aligned or DKIM-signed by its own
-    #: From: domain; a signed-in request always does).
+    #: `kind=domain`: anyone whose address is at the exact domain ("" = any address), member
+    #: or not. `kind=contact`: a person canopy knows as a contact (an emailer, a Slack member
+    #: outside the workspace, a widget visitor — who may have no address at all), optionally
+    #: at a domain. `verified`: THIS message must prove the sender's address (mail that is
+    #: DMARC-aligned or DKIM-signed by its own From: domain; Slack full-member); a signed-in
+    #: request always does.
     domain = models.CharField(max_length=253, blank=True, default="")
     verified = models.BooleanField(default=True)
     role = models.CharField(max_length=12)
@@ -397,9 +407,12 @@ class AgentGrant(models.Model):
     def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="") -> str:
         if kind == AgentGrant.PERSON:
             return f"person:{user_id}"
+        d = (domain or "").lower()
         if kind == AgentGrant.WORKSPACE:
-            return f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}"
-        return f"domain:{(domain or '').lower()}"
+            return f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}:{d}"
+        if kind == AgentGrant.CONTACT:
+            return f"contact:{d}"
+        return f"domain:{d}"
 
     def save(self, *args, **kwargs):
         self.subject_key = self.key_of(

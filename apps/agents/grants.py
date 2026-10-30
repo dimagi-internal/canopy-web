@@ -35,6 +35,7 @@ class Asker:
     user: object | None = None          # a canopy User, or None for someone only known by address
     email: str = ""                     # the address they arrive from, any case
     verified: bool = False              # THIS message proves `email` (a signed-in request always does)
+    contact: bool = False               # canopy knows them as a contact (not a member): an emailer, a visitor
     #: Their effective workspace roles by slug, when the caller read them in bulk
     #: (`wsvc.member_roles_of`). None = read them here, one workspace at a time.
     workspace_roles: Mapping[str, str] | None = field(default=None, compare=False)
@@ -99,11 +100,16 @@ def matches(line: AgentGrant, asker: Asker) -> bool:
     if line.kind == AgentGrant.PERSON:
         return asker.user is not None and getattr(asker.user, "pk", None) == line.user_id
     if line.kind == AgentGrant.WORKSPACE:
-        return perms.role_meets(asker.role_in(line.subject_workspace_id), line.at_least)
+        return (perms.role_meets(asker.role_in(line.subject_workspace_id), line.at_least)
+                and (not line.domain or asker.domain == line.domain))
     if line.kind == AgentGrant.DOMAIN:
         if line.verified and not asker.verified:
             return False
         return bool(asker.domain) and (not line.domain or asker.domain == line.domain)
+    if line.kind == AgentGrant.CONTACT:
+        if not asker.contact or (line.verified and not asker.verified):
+            return False
+        return not line.domain or asker.domain == line.domain
     return False
 
 
