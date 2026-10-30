@@ -8,8 +8,11 @@ never got one and its turns ran on a person's token.
 This is the one place that makes such a member, and it is listed among the doors in
 `docs/architecture/roles.md` ("How you get into a workspace") and in
 `tests/test_no_implicit_enrolment.py`'s allow-list. It stays narrow on purpose:
-  - the caller must be able to INVITE (`perms.MEMBERS_MANAGE`) — a new member is what an
-    invite makes, so no one gets a way in they did not already have;
+  - the caller can INVITE (`perms.MEMBERS_MANAGE`) — a new member is what an invite makes — OR
+    is the agent's own admin and the address is one only an agent has (`is_agent_address`: a
+    domain that exists for agents, so the new account can never be a person's way into the
+    workspace). That second leg is what lets an agent's owner, who is not a workspace admin,
+    finish setting their own agent up;
   - the login is brand new (an existing account is never adopted — that would be minting a
     token for a person), has no password, is an editor, and is linked to exactly one agent.
 """
@@ -17,10 +20,12 @@ from __future__ import annotations
 
 import datetime as dt
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from apps.mail.models import MailDomain
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -34,13 +39,27 @@ class AgentLoginRefused(Exception):
         self.status = status
 
 
+def is_agent_address(address: str) -> bool:
+    """Is `address` at a domain that exists for agents — one nobody signs in to as themselves?
+    The platform's agent domains (`AGENT_LOGIN_DOMAINS`) and any verified mail domain canopy
+    hosts agent addresses on."""
+    domain = address.rpartition("@")[2].strip().lower()
+    if not domain:
+        return False
+    return domain in {d.lower() for d in settings.AGENT_LOGIN_DOMAINS} or MailDomain.objects.filter(
+        name=domain, agent_addresses=True, status=MailDomain.VERIFIED).exists()
+
+
 def create_agent_login(agent, actor, address: str):
     """The new user, linked to `agent`. Raises AgentLoginRefused with the HTTP status."""
 
-    if not perms.can(actor, agent.workspace, perms.MEMBERS_MANAGE):
+    may_invite = perms.can(actor, agent.workspace, perms.MEMBERS_MANAGE)
+    if not may_invite and not (agent.is_admin(actor) and is_agent_address(address)):
         raise AgentLoginRefused(
             f"{agent.slug} has no canopy login yet, and creating one adds a member to the "
-            "workspace — which takes a workspace admin or owner (the people who can invite)", 403)
+            "workspace — which takes a workspace admin or owner (the people who can invite), or "
+            f"{agent.slug}'s own admin when its address is an agent address (at one of "
+            f"{', '.join('@' + d for d in settings.AGENT_LOGIN_DOMAINS)}); {address} is not", 403)
     if get_user_model().objects.filter(email__iexact=address).exists():
         raise AgentLoginRefused(
             f"{address} is already a canopy user. This only CREATES an agent's login; to use "
