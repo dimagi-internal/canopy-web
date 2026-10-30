@@ -169,7 +169,7 @@ fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
   `canopy agent vault`, creates the login an agent signs in to canopy as when it has none:
   a brand-new, password-less **editor** from the agent's mailbox address, linked to that
   one agent. An agent admin may when the address is one only an agent has (a domain in
-  `AGENT_LOGIN_DOMAINS`, or a verified mail domain canopy hosts agent addresses on) — the
+  `AGENT_LOGIN_DOMAINS`: dimagi-ai.com and dimagi.ai) — the
   account can then never be a person's way into the workspace; for any other address it takes
   an agent admin who is also a workspace **admin** or **owner** (who could have invited it) —
   and an address that is already a canopy user is refused, never adopted
