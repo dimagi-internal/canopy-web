@@ -69,9 +69,9 @@ export function useIdePrefs() {
   const [railHidden, setRailHidden] = useState(initial.railHidden)
 
   useEffect(() => {
-    const { hiddenRunners, states, modes, archived } = filters
+    const { hiddenRunners, states, modes, archived, mineOnly } = filters
     savePrefs({
-      filters: { hiddenRunners, states, modes, archived },
+      filters: { hiddenRunners, states, modes, archived, mineOnly },
       collapsed: [...collapsed],
       collapsedLinks: [...collapsedLinks],
       railWidth,

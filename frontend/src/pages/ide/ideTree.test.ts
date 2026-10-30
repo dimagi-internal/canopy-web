@@ -64,6 +64,12 @@ describe('matches', () => {
     expect(matches(s({ turn_mode: 'manual' }), with_({ modes }))).toBe(true)
   })
 
+  it('shows only your own sessions when asked', () => {
+    expect(matches(s({ started_by_you: false }), DEFAULT_FILTERS)).toBe(true)
+    expect(matches(s({ started_by_you: false }), with_({ mineOnly: true }))).toBe(false)
+    expect(matches(s({ started_by_you: true }), with_({ mineOnly: true }))).toBe(true)
+  })
+
   it('hides archived sessions unless asked for', () => {
     expect(matches(s({ status: 'archived' }), DEFAULT_FILTERS)).toBe(false)
     expect(matches(s({ status: 'archived' }), with_({ archived: true }))).toBe(true)

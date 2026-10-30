@@ -51,6 +51,24 @@ function FilterToggle({
   )
 }
 
+// "Started by me" outlives the page: it is how a busy person keeps the list
+// readable, so it should not reset on every visit.
+const MINE_ONLY_KEY = 'canopy.sessions.mineOnly'
+function readMineOnly(): boolean {
+  try {
+    return window.localStorage.getItem(MINE_ONLY_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function saveMineOnly(on: boolean) {
+  try {
+    window.localStorage.setItem(MINE_ONLY_KEY, on ? '1' : '0')
+  } catch {
+    // storage disabled — the choice lasts for this tab only
+  }
+}
+
 // What this tab last listed, per workspace and filter. Opening a chat and coming back
 // remounts the panel; it paints these rows at once and refreshes underneath,
 // instead of "Loading sessions…" every time.
@@ -109,6 +127,14 @@ export function ChatSessionsPanel({
   // Held back, not dropped — a pause is temporary by construction, and the
   // conversation is still there. This toggle is how you get to it.
   const [showOffline, setShowOffline] = useState(false)
+  // Only the sessions you started (or that run on your own box) — others' chats
+  // with your agents, and the agents' own runs, are left out.
+  const [mineOnly, setMineOnly] = useState(readMineOnly)
+  const toggleMineOnly = () =>
+    setMineOnly((v) => {
+      saveMineOnly(!v)
+      return !v
+    })
   const [error, setError] = useState<string | null>(null)
   const [closingId, setClosingId] = useState<string | null>(null)
   // Closes relayed to a runner and not yet confirmed: session id -> when.
@@ -272,11 +298,15 @@ export function ChatSessionsPanel({
 
   // Split before sorting so the hidden count is honest about the whole list,
   // not about whatever survived the current sort.
-  const { live: liveSessions, parked } = useMemo(
-    () => partitionByRunnerReachability(sessions),
-    [sessions],
+  const scoped = useMemo(
+    () => (mineOnly ? sessions.filter((s) => s.started_by_you) : sessions),
+    [sessions, mineOnly],
   )
-  const visible = showOffline ? sessions : liveSessions
+  const { live: liveSessions, parked } = useMemo(
+    () => partitionByRunnerReachability(scoped),
+    [scoped],
+  )
+  const visible = showOffline ? scoped : liveSessions
   // Counted over the WHOLE list, not `visible`: a session waiting on a human is
   // the one thing you want to know is there even when the current filter is
   // hiding it. Sits beside the heading so it reads from a collapsed tab.
@@ -302,7 +332,7 @@ export function ChatSessionsPanel({
       {/* `parked.length` opens the toolbar too: with one session, and that one
           held back, the sort row would never render and its own reveal toggle
           would be unreachable — a chat you cannot get back to. */}
-      {(sessions.length > 1 || showArchived || parked.length > 0 || showOffline) && (
+      {(sessions.length > 1 || showArchived || parked.length > 0 || showOffline || mineOnly) && (
         // Four identical pills in a row, but the first two are a choose-ONE sort
         // and the last two are independent switches — a difference carried only
         // by the word "Sort" at the far left, which governs half the row. The
@@ -330,6 +360,9 @@ export function ChatSessionsPanel({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <FilterToggle checked={mineOnly} onChange={toggleMineOnly} testId="toggle-mine-only">
+              Started by me
+            </FilterToggle>
             <FilterToggle checked={showArchived} onChange={() => setShowArchived((v) => !v)}>
               Show archived
             </FilterToggle>
@@ -356,7 +389,14 @@ export function ChatSessionsPanel({
       {loading ? (
         <div className="py-6 text-sm text-muted-foreground">Loading sessions…</div>
       ) : visible.length === 0 ? (
-        parked.length > 0 ? (
+        mineOnly && scoped.length === 0 && sessions.length > 0 ? (
+          <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
+            <div className="text-sm text-foreground">None of these chats were started by you</div>
+            <button type="button" onClick={toggleMineOnly} className="text-xs text-primary hover:underline">
+              Show all {sessions.length}
+            </button>
+          </div>
+        ) : parked.length > 0 ? (
           <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
             <div className="text-sm text-foreground">No chats on a live runner</div>
             <div className="text-xs text-muted-foreground">{parkedSummary(parked)}</div>
