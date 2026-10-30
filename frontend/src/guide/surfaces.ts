@@ -594,6 +594,15 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Change any property', 'Decide what it asks', 'Reply or answer', 'Add a subtask', 'Relate it to another task'],
   },
   {
+    path: '/w/:workspace/approvals/:taskKey',
+    home: '/w/:workspace/tasks',
+    title: 'Approval card',
+    audience: 'Whoever an agent\'s proposal is waiting on (a push, a Slack message or an email links here)',
+    what: "One proposal waiting on your yes or no, with everything needed to decide it above the buttons: who is asking, what, the person's own words behind it, the plan, what approving starts and what declining does. Approve or Decline here, or from the Slack message or notification that brought you; whichever is first wins, and every copy then says who decided and how. An email's Approve / Decline buttons open this page with the choice made for you to confirm.",
+    needsFirst: 'A proposal an agent sent you (it also appears under Waiting on me)',
+    actions: ['Approve', 'Decline', 'Leave a note for the agent', 'Open where it came from'],
+  },
+  {
     path: '/w/:workspace/triage',
     title: 'Triage',
     audience: 'Anyone in the workspace',

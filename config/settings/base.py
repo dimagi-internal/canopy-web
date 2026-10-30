@@ -101,6 +101,7 @@ INSTALLED_APPS = [
     "apps.mcp",
     "apps.session_sharing",
     "apps.push",
+    "apps.approvals",
     "apps.agents",
     "apps.agent_runs",
     "apps.workspaces",
