@@ -265,17 +265,23 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
             Q(runner__owner=request.user) | Q(runner_id__in=admin_of),
         ).exclude(runner__status=Runner.RETIRED)
     qs = qs.select_related("runner", "approved_by").order_by("-created_at")
-    agents = vault_agents_of(request.user)
+    # Read once for every key in the list: the agents, and the fleet's facts about which
+    # box serves which (each helper below used to rebuild them per key and agent).
+    everyone = list(Agent.objects.select_related("workspace", "owner"))
+    facts = device_keys.serving_facts(everyone)
+    agents = [a for a in sorted(everyone, key=lambda a: (a.name, a.slug)) if a.is_admin(request.user)]
     out = []
     for k in qs:
         row = key_out(k, can_manage=may_trust_device_keys(request.user, k.runner))
-        row.can_open = agents_key_opens(k, agents)
+        row.can_open = agents_key_opens(k, agents, facts=facts)
         # What it waits on a vault-key wrap for: for a key not yet approved, what
         # approving it will leave waiting, so the browser approves AND wraps in one
         # passkey touch (canopy-web#1550); for an approved key, what it came to
         # serve since (a runner made private, a new license) — "Give access".
-        row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready)
-        row.zk_vouch_agents = zk_agents_to_vouch_for(request.user, k, assume_active=not k.ecdh_ready)
+        row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready,
+                                                     agents=everyone, facts=facts)
+        row.zk_vouch_agents = zk_agents_to_vouch_for(request.user, k, assume_active=not k.ecdh_ready,
+                                                     agents=everyone, facts=facts)
         out.append(row)
     return out
 
@@ -322,7 +328,7 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     return out
 
 
-def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = False) -> list[str]:
+def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = False, agents=None, facts=None) -> list[str]:
     """Zero-knowledge agents `user` administers that this (now active) key
     should be granted the vault key of — the "Grant" offer after approving.
     `assume_active`: as if it were approved (the list, for a pending key).
@@ -337,14 +343,17 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
         return []
     from apps.agents.credentials import zk
 
+    if agents is None:
+        agents = Agent.objects.select_related("workspace", "owner")
     return sorted(
-        agent.slug for agent in Agent.objects.select_related("workspace", "owner")
-        if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
+        agent.slug for agent in agents
+        if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent, facts)
         and zk.device_waits(agent, key)
     )
 
 
-def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = False) -> list[DeviceKeyVouchOut]:
+def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = False, agents=None,
+                           facts=None) -> list[DeviceKeyVouchOut]:
     """Zero-knowledge agents whose vault `user` is a member of WITHOUT managing it, that
     this key — `user`'s own machine — waits on a copy of the vault key for.
 
@@ -364,24 +373,19 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
     if person != user.pk or not UserVaultKeyset.objects.filter(user=user).exists():
         return []
     out = []
-    for agent in Agent.objects.filter(zk_kv__gt=0).select_related("workspace", "owner"):
+    if agents is None:
+        agents = Agent.objects.select_related("workspace", "owner")
+    for agent in (a for a in agents if a.zk_kv > 0):
         vault = vault_members.vault_for_agent(agent)
         role = vault_members.role_of(vault, user)
         if role is None or (agent.is_admin(user) and vault_members.is_admin(role)):
             continue
-        if device_keys.runner_serves_agent(key.runner, agent) and zk.device_waits(agent, key):
+        if device_keys.runner_serves_agent(key.runner, agent, facts) and zk.device_waits(agent, key):
             out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
     return sorted(out, key=lambda a: a.slug)
 
 
-def vault_agents_of(user) -> list:
-    """The agents whose secrets live in the canopy-web vault that `user`
-    administers — what a key's `can_open` is drawn from."""
-    return [a for a in Agent.objects.all()
-            .select_related("workspace", "owner").order_by("name", "slug") if a.is_admin(user)]
-
-
-def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentOut]:
+def agents_key_opens(key: RunnerDeviceKey, agents: list, facts=None) -> list[DeviceKeyAgentOut]:
     """Of `agents`, the ones this key can open right now: its decryption key is
     approved, the box serves the agent, and nothing of the agent's is still
     waiting on it (`zk.device_waits`) — "can open Hal, Eva" on Settings."""
@@ -390,7 +394,7 @@ def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentO
     from apps.agents.credentials import zk
 
     return [DeviceKeyAgentOut(slug=a.slug, name=a.name or a.slug) for a in agents
-            if device_keys.runner_serves_agent(key.runner, a) and not zk.device_waits(a, key)]
+            if device_keys.runner_serves_agent(key.runner, a, facts) and not zk.device_waits(a, key)]
 
 
 @router.delete("/{key_id}", response=RunnerDeviceKeyOut, summary="Revoke a device key")

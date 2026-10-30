@@ -206,6 +206,11 @@ def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: V
     runner = _administered_runner(request, payload.runner) if payload.runner else None
     if (payload.agent and agent is None) or (payload.workspace and ws is None):
         raise ProblemError(404, "Not found", detail="no such agent or workspace", type_=TYPE_NOT_FOUND)
+    # An attached agent reads the vault's secrets in its turns, layered under its own, and everyone
+    # with full access to it joins the vault. A vault's manager may share the vault with an agent
+    # only if they administer that agent; to anyone else it is as if the agent did not exist.
+    if agent is not None and not agent.is_admin(request.user):
+        raise ProblemError(404, "Not found", detail="no such agent or workspace", type_=TYPE_NOT_FOUND)
     try:
         workspace_vaults.attach(v, agent=agent, workspace=ws, runner=runner, by=request.user)
     except ZkError as exc:

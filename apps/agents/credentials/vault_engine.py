@@ -272,9 +272,35 @@ def set_values(store: Store, *, kv: int, values: list, user) -> list[str]:
             raise _zk.ZkError(409, "zk_no_vault_key",
                           f"{store.label} has no vault key yet: seal values to its recipients (zks1), "
                           "or create the vault key first")
+        _require_readable_seals(store, vals)
         check_expected(store, values)
         write_values(store, vals, kv, user)
     return sorted(vals)
+
+
+def _require_readable_seals(store: Store, vals: dict[str, str]) -> None:
+    """A `zks1` value is sealed by whoever writes it, so the server checks what the writer
+    cannot be trusted to: it names the vault's current key version, and every recipient is
+    someone who may read this vault now. Without this a non-admin who answers a secret request
+    could store a value only keys of their choosing can open, and the secret would show as set
+    while nobody the vault trusts could use it."""
+    from .zk_seal import SEALED_PREFIX, sealed_kv, sealed_targets  # cycle: zk_seal -> zk  # noqa: PLC0415
+
+    sealed = {n: v for n, v in vals.items() if v.startswith(SEALED_PREFIX)}
+    if not sealed:
+        return
+    allowed = ({("device", k.ecdh_jkt) for k in store.eligible_devices()}
+               | {("member", str(ks.user_id)) for ks in store.eligible_members()})
+    for name, value in sealed.items():
+        if sealed_kv(value) != store.kv:
+            raise _zk.ZkError(422, "zk_kv_mismatch",
+                              f"{name}: sealed at key version {sealed_kv(value)}, but {store.label} is at "
+                              f"{store.kv} — reload and try again")
+        stranger = sealed_targets(value) - allowed
+        if stranger:
+            raise _zk.ZkError(422, "zk_unknown_recipient",
+                              f"{name}: sealed to someone who may not read {store.label} (or who was removed "
+                              "since the page loaded) — reload and try again")
 
 
 def add_wraps(store: Store, *, kv: int, wraps: list, user, only_new: bool = False) -> int:

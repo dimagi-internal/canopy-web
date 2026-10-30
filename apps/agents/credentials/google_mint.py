@@ -223,8 +223,14 @@ def claim(runner) -> tuple[AgentGoogleMint | None, str]:
         return None, ""
     code = ""
     if mint.status == AgentGoogleMint.COMPLETING:
+        # Taken in ONE statement: two polls of the same runner racing each read the row's code
+        # before either cleared it, and the code was handed out twice. Only the poll whose
+        # update changed the row gets it.
+        taken = (AgentGoogleMint.objects.filter(pk=mint.pk, status=AgentGoogleMint.COMPLETING)
+                 .exclude(code="").update(code="", updated_at=timezone.now()))
+        if not taken:
+            return None, ""
         code, mint.code = mint.code, ""
-        mint.save(update_fields=["code", "updated_at"])
     return mint, code
 
 
