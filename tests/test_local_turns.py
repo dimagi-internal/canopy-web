@@ -73,11 +73,11 @@ def test_a_private_runner_is_its_owners_alone(world):
     ws_id = _register(_client(world["editor"]))
     other = _client(world["admin"])
     assert other.get("/api/private-runners/").json() == []
-    # Someone else's private runner cannot carry your local turn.
+    # Someone else's private runner cannot carry your direct turn.
     assert _open(other, ws_id).status_code == 404
 
 
-# --- opening a local turn --------------------------------------------------------
+# --- opening a direct turn --------------------------------------------------------
 
 def test_an_editor_opens_a_running_manual_local_turn_with_an_envelope(world):
     c = _client(world["editor"])
@@ -88,7 +88,7 @@ def test_an_editor_opens_a_running_manual_local_turn_with_an_envelope(world):
     assert turn.origin == Turn.ORIGIN_LOCAL and turn.status == Turn.RUNNING
     assert turn.claimed_by_id is None and turn.private_runner.name == "aath-mbp"
     assert turn.initiator_user == world["editor"]
-    # The agent's own switch is auto; an editor's local turn is manual anyway.
+    # The agent's own switch is auto; an editor's direct turn is manual anyway.
     assert body["turn_mode"] == "manual"
     env = body["envelope"]
     assert env["turn_mode"]["mode"] == "manual"
@@ -177,7 +177,7 @@ def test_renew_pushes_the_lease_out(world):
     assert Turn.objects.get(pk=tid).lease_expires_at > timezone.now() + timezone.timedelta(hours=7)
 
 
-# --- a local turn never holds the agent ------------------------------------------
+# --- a direct turn never holds the agent ------------------------------------------
 
 def test_local_turns_do_not_serialize_the_agent(world):
     """Two people using ACE directly at once, while ACE's runner works a turn."""
@@ -202,7 +202,7 @@ def test_a_local_turn_alone_leaves_the_agent_free(world):
 
 
 def test_two_runner_turns_still_cannot_execute_at_once(world):
-    """The exclusion is for local turns only — the agent's own lane is unchanged."""
+    """The exclusion is for direct turns only — the agent's own lane is unchanged."""
     Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r1", status=Turn.RUNNING)
     with pytest.raises(IntegrityError), transaction.atomic():
         Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r2",

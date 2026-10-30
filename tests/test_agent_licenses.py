@@ -3,7 +3,7 @@
 The caller list decides who MAY; the license records who DOES. It is issued on
 first local use when `access.decide` gives the person the whole agent, revoked per
 person without editing the rule, and it is the third principal of
-`/credentials/resolve` — only during the holder's own open local turn.
+`/credentials/resolve` — only during the holder's own open direct turn.
 """
 from __future__ import annotations
 

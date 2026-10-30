@@ -157,7 +157,7 @@ def test_a_local_turn_acts_as_its_person_never_as_the_agent(agent, runner):
     turn = _turn(agent, runner=runner, origin=Turn.ORIGIN_LOCAL)
     r = _ask(runner, turn, _runner_token(runner))
     assert r.status_code == 409
-    assert "local turn" in r.content.decode()
+    assert "direct turn" in r.content.decode()
 
 
 def test_an_agent_without_a_login_is_refused_with_the_reason(agent, runner):

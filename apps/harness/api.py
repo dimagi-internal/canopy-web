@@ -325,7 +325,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     rtok = getattr(request, "runner_token", None)
     if rtok is not None and rtok.runner.kind == Runner.COMPUTER:
         # A computer (no runner app) claims nothing: its token reports only on the
-        # local turns opened on it — never on a turn its owner's other boxes hold.
+        # direct turns opened on it — never on a turn its owner's other boxes hold.
         turn = Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL).select_related(
             "private_runner").first()
         from . import local
@@ -340,7 +340,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
             return mine
     turn = turn_or_404(request, turn_id)
     if turn.origin == Turn.ORIGIN_LOCAL:
-        # A local turn has no box: the person whose session it is reports on it
+        # A direct turn has no box: the person whose session it is reports on it
         # (apps/harness/local.py), and nobody else — not even an editor, nor their
         # shared runner's token.
         from . import local

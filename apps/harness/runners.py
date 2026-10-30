@@ -507,7 +507,7 @@ def may_trust_device_keys(user, runner) -> bool:
 
     On a shared box, whoever administers it. On a PRIVATE runner, its owner alone:
     that box's token signs its owner's own sessions in AS the owner, opens their
-    local turns and reads secrets under their license, so a runner admin who could
+    direct turns and reads secrets under their license, so a runner admin who could
     trust a key there could act as the owner. Admins still see the keys, and may
     revoke one — taking trust away is never the risk."""
     if runner.private:

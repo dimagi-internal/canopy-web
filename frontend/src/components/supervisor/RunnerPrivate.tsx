@@ -4,7 +4,7 @@ import { SettingRow, Switch } from '@/components/supervisor/SettingRow'
 
 // A runner as its owner's PRIVATE runner (canopy-web#1705). Shared: the box takes
 // fleet work as routed. Private: only what its owner pins or binds to it, plus the
-// Claude Code sessions opened on that machine (recorded as the owner's local turns —
+// Claude Code sessions opened on that machine (recorded as the owner's direct turns —
 // the runner writes the registration itself, no CLI). Owner only.
 //
 // Running as a lower role is not here on purpose: it is a property of one turn

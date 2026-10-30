@@ -92,7 +92,7 @@ def test_a_key_waiting_for_approval_reaches_the_menu_bar(monkeypatch, status_fil
 
 
 def test_whether_the_box_is_private_reaches_the_menu_bar(monkeypatch, status_file):
-    """It decides whose sign-in a local session here uses (canopy-web#1761)."""
+    """It decides whose sign-in a direct session here uses (canopy-web#1761)."""
     _client(monkeypatch, {"private": True}).heartbeat("r1", [])
     assert json.loads(status_file.read_text())["private"] is True
     _client(monkeypatch, {"private": False}).heartbeat("r1", [])

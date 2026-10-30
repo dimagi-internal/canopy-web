@@ -61,7 +61,7 @@ def turn_agent(turn: Turn):
 def refusal(turn: Turn) -> str:
     """Why this turn may not have an agent login, or "" when it may."""
     if turn.origin == Turn.ORIGIN_LOCAL:
-        return ("a local turn is a person's own session, which acts as that person — "
+        return ("a direct turn is a person's own session, which acts as that person — "
                 "it is never given its agent's login")
     if turn.capability:
         return (f"this turn is confined to the caller capability '{turn.capability}', and a "
@@ -103,7 +103,7 @@ def live_session(turn: Turn, runner):
     session (`chat_session`, or the chat a chat turn names in `origin_ref.chat_session_id`;
     a laptop chat turn records no session key), else by the binding its session key names
     (an agent turn: mail, a schedule, a dispatch). None otherwise."""
-    # emdash only: a `computer` runner runs a person's own local sessions (they act as the
+    # emdash only: a `computer` runner runs a person's own direct sessions (they act as the
     # person), and a cloud turn ends with its process.
     if runner.kind != runner.EMDASH or turn.claimed_by_id != runner.pk:
         return None

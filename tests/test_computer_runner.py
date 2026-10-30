@@ -4,7 +4,7 @@ Registering a computer for local use (`POST /api/private-runners/`) gives it a
 `computer` runner (`Runner.COMPUTER`, `local.ensure_computer_runner`) so it can enrol
 a device key, be wrapped an agent's vault key and read a zero-knowledge agent's
 secrets under its owner's license. It is no fleet runner: it claims nothing, its
-token reaches only its owner's local turns and license reads, and no fleet list,
+token reaches only its owner's direct turns and license reads, and no fleet list,
 picker or report shows it. docs/architecture/access.md → "Direct use of an agent".
 """
 from __future__ import annotations
@@ -184,7 +184,7 @@ def test_an_admins_computer_key_is_eligible_for_the_agents_they_administer(world
     assert key in zk.eligible_device_keys(world["hal"]) and key in zk.eligible_device_keys(world["eva"])
 
 
-# --- its token: local turns and license reads, never the runner protocol ----------
+# --- its token: direct turns and license reads, never the runner protocol ----------
 
 def test_a_computer_token_reaches_local_turns_and_license_reads_only(world):
     pr_id, box, key = _computer(world)

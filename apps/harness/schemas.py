@@ -473,7 +473,7 @@ class RunnerOut(Schema):
     # Its owner's own machine: no fleet work, only what its owner puts on it.
     private: bool = False
     # The private-runner registration linked to this box (canopy-web#1705): the runner
-    # writes it to ~/.canopy/private-runner.json, so local sessions there need no CLI.
+    # writes it to ~/.canopy/private-runner.json, so direct sessions there need no CLI.
     private_runner_id: uuid.UUID | None = None
     # The agents a person dedicated this box to (`Runner.only_agents`): it runs only
     # their turns and chats. [] = no restriction.
@@ -3113,7 +3113,7 @@ class RunnerDownloadsOut(Schema):
     sha: str
     downloads: list[RunnerDownloadOut]
 
-# --- direct use: private runners + local turns (apps/harness/local.py, canopy-web#1704)
+# --- direct use: private runners + direct turns (apps/harness/local.py, canopy-web#1704)
 
 
 class PrivateRunnerIn(Schema):
@@ -3136,7 +3136,7 @@ class PrivateRunnerOut(Schema):
 
 
 class LocalTurnIn(Schema):
-    """Open (or re-open) the local turn for one Claude Code session."""
+    """Open (or re-open) the direct turn for one Claude Code session."""
 
     agent: str = Field(min_length=1, max_length=100)
     private_runner: uuid.UUID

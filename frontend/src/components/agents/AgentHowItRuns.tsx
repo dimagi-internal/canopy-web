@@ -19,7 +19,7 @@ import { CopyCommand } from './CopyCommand'
 // "Two ways an agent runs"):
 //
 //   1. Use it yourself in Claude Code — no runner. `canopy agent use <slug>` once
-//      on your computer; your sessions are recorded as local turns.
+//      on your computer; your sessions are recorded as direct turns.
 //   2. Let it run on its own — a runner (your own Mac set Private, or a fleet
 //      cloud box) takes the turns schedules, mail and dispatches start.
 //
@@ -195,7 +195,7 @@ export function AgentHowItRuns({
         <CopyCommand command={`canopy agent use ${slug}`} testId="agent-use-command" />
         <p className="text-[12px] text-muted-foreground">
           It installs {name}&rsquo;s plugin, lets this computer read its secrets, and records your sessions as
-          local turns here. Who may: its owner and admins, anyone a full: rule names, and workspace editors.
+          direct turns here. Who may: its owner and admins, anyone a full: rule names, and workspace editors.
         </p>
         {readiness && (
           <p className="flex items-center gap-2 text-[12px] text-foreground" data-testid="viewer-readiness"

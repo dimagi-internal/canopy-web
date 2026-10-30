@@ -4638,7 +4638,7 @@ export interface paths {
          * Who uses this agent directly: its license holders
          * @description Every license to use the agent in someone's own Claude Code — active,
          *     requested (the caller list did not allow it yet) or revoked — with the
-         *     private_runners it ran on, its local turns and credential reads, and when it was
+         *     private_runners it ran on, its direct turns and credential reads, and when it was
          *     last used. Readable by any member, like the admin list.
          */
         readonly get: operations["list_agent_licenses"];
@@ -4661,7 +4661,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Revoke a person's license to use this agent directly
-         * @description Per person, without editing the caller list: they may not open a local turn
+         * @description Per person, without editing the caller list: they may not open a direct turn
          *     or read the agent's credentials again until an admin approves them. A revoked
          *     license is never re-issued automatically.
          */
@@ -5604,9 +5604,9 @@ export interface paths {
          *          in substance: an admin can already write every value, swap the vault
          *          key, and put their own box on the agent to read them back.
          *        - `license`: holds an ACTIVE license to use the agent directly and names
-         *          their OWN open local turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
+         *          their OWN open direct turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
          *          The read is logged against that turn and license.
-         *        Anyone else — a member, an editor with no local turn — is refused, and
+         *        Anyone else — a member, an editor with no direct turn — is refused, and
          *        told which access to ask for. Tighter than workspace membership on purpose.
          *
          *     Every read is recorded, so a credential fetch is visible in the fleet log
@@ -10422,7 +10422,7 @@ export interface paths {
          *     session is not live here), for a client that outlives the turn.
          *     Only with this runner's own runner token — a personal or OAuth token is
          *     refused, its owner's included. 404 unless this runner holds the turn and may
-         *     hold its agent; 409 with the reason for a local turn, a caller's (confined)
+         *     hold its agent; 409 with the reason for a direct turn, a caller's (confined)
          *     turn, or an agent with no active login. Each issue is logged with the
          *     agent's credential reads.
          */
@@ -10443,7 +10443,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Open the local turn for a Claude Code session on your private runner
+         * Open the direct turn for a Claude Code session on your private runner
          * @description A session on your private runner is using `agent`: record it as a turn.
          *
          *     Allowed when `access.decide` gives you the WHOLE agent (its owner or an admin,
@@ -10469,7 +10469,7 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Keep your local turn's lease alive */
+        /** Keep your direct turn's lease alive */
         readonly post: operations["renew_local_turn"];
         readonly delete?: never;
         readonly options?: never;
@@ -10513,8 +10513,8 @@ export interface paths {
         };
         /**
          * Private runners people use this workspace's agents from
-         * @description Every private runner a local turn on one of `workspace`'s agents ran on: whose
-         *     it is, which agents, how many local turns, and when it was last seen. Shown
+         * @description Every private runner a direct turn on one of `workspace`'s agents ran on: whose
+         *     it is, which agents, how many direct turns, and when it was last seen. Shown
          *     beside the runners ("aath-mbp — private runner, Aathithya"); a private runner never
          *     claims work, so it has no status. Members of the workspace (else 404).
          */
@@ -10538,7 +10538,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Retire one of your private runners
-         * @description Its local sessions stop opening, a runner app linked to it goes back to
+         * @description Its direct sessions stop opening, a runner app linked to it goes back to
          *     being shared, and the runner that held its keys when it has no runner app
          *     retires with it.
          */
@@ -12050,7 +12050,7 @@ export interface paths {
         /**
          * Make this runner its owner's private runner
          * @description A private runner takes no fleet work: nothing routed, no workspace order, no
-         *     source rule — only what its owner pins or binds to it, and the local sessions
+         *     source rule — only what its owner pins or binds to it, and the direct sessions
          *     opened on it. Owner only. (To run as a lower role, start the TURN with
          *     `acts_as` — it is a property of one turn, not of a machine.)
          */
@@ -27532,7 +27532,7 @@ export interface components {
          *     caller): `via` is `runner` when the caller pairs a live runner this agent
          *     routes to, `admin` when they are the agent's owner or an admin, `license`
          *     when they hold an active license to use it directly and name their own open
-         *     local turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+         *     direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
          *     names the access to ask for.
          */
         readonly AgentCredentialAccessOut: {
@@ -35892,7 +35892,7 @@ export interface components {
         };
         /**
          * LocalTurnIn
-         * @description Open (or re-open) the local turn for one Claude Code session.
+         * @description Open (or re-open) the direct turn for one Claude Code session.
          */
         readonly LocalTurnIn: {
             /** Agent */

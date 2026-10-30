@@ -197,13 +197,13 @@ struct ServerStatus {
     }
 
     // Whose sign-in a Claude Code session started on this Mac uses (canopy-web#1705).
-    // On a private runner it is recorded as the owner's local turn; on a shared one
+    // On a private runner it is recorded as the owner's direct turn; on a shared one
     // each person signs in with their own canopy login, so their own license applies.
     var localSessions: String? {
         guard ok, let isPrivate else { return nil }
         return isPrivate
-            ? "Local sessions here run as your private runner"
-            : "Local sessions here sign in as each person (their own canopy login)"
+            ? "Direct sessions here run as your private runner"
+            : "Direct sessions here sign in as each person (their own canopy login)"
     }
 
     // Accepted, but canopy says the box cannot take work.

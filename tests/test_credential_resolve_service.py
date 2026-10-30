@@ -200,7 +200,7 @@ def test_parse_refs():
 
 def test_an_owner_in_their_own_local_turn_reads_like_anyone_else(monkeypatch, owner, ws, agent):
     """Being an admin, or pairing a runner the agent routes to, changes nothing in a direct
-    session: a request naming the person's own open local turn is a `license` read, so the
+    session: a request naming the person's own open direct turn is a `license` read, so the
     agent's login stays withheld and they step up like anyone (`authority`)."""
     RunnerAssignment.objects.create(agent=agent, runner=_box(owner, ws), rank=0)
     assert cr.credential_access(_request(owner), agent) == ("runner", "")  # no turn named

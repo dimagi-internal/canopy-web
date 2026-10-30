@@ -15,7 +15,7 @@ they cannot disagree).
 1. **Use it yourself in Claude Code — no runner needed.** A person with the canopy
    plugin runs `canopy agent use <slug>` once on their computer: it installs the
    agent's plugin, enrols this computer's key so it can read the agent's secrets
-   from canopy vault, and records their sessions as **local turns** on the agent's
+   from canopy vault, and records their sessions as **direct turns** on the agent's
    page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
    whom `access.decide` gives the whole agent (`apps/agents/credentials/licenses.py`). The people
    doing it are listed under the agent's Settings → How it runs and → People → Local
@@ -36,7 +36,7 @@ says so (`apps/agents/setup.py`, the `runner` step).
 **Private** is a setting on a runner app (`PUT /api/harness/runners/{id}/private`,
 owner only): the box takes no fleet work — no routed turn, no workspace order, no
 source rule (`Runner.directed_only`) — only what its owner pins or binds to it, plus
-the owner's own Claude Code sessions on that computer (local turns). Those sessions
+the owner's own Claude Code sessions on that computer (direct turns). Those sessions
 prove themselves with the box's device key, which may read an agent's secrets while
 its owner holds an active licence. Internally the computer is a `PrivateRunner`
 registration linked to the `Runner` (`PrivateRunner.runner`); the UI calls these
@@ -271,7 +271,7 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
   `canopy_projects_off` alert (`apps/harness/alerts_project_opt_in.py`, setup,
   owner only) tells them so on Home and on the runner's page.
 - **The canopy plugin needs no gate.** Its Claude Code hooks act only inside a
-  canopy turn, an agent session or a local turn (an envelope, `$CANOPY_AGENT`, a
+  canopy turn, an agent session or a direct turn (an envelope, `$CANOPY_AGENT`, a
   `cx-` profile, a local-turn file). In any other session they write local files
   only and send nothing to canopy-web.
 
@@ -462,7 +462,7 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
   last-fallback refusal is per CLI. Codex has no setup-token (an OpenAI API key, vault secret
   `openai-api-key:<key>`, or a login). A box's credential bundle carries another CLI's
   entries only once the box reports that CLI — older code reads every entry as Claude's.
-- **A local session** (`POST /api/harness/local-turns/`) is a person's own Claude Code
+- **A direct session** (`POST /api/harness/local-turns/`) is a person's own Claude Code
   session: its turn records `cli="claude-code"`.
 - **A prompt's plugin command is parsed once** (`apps/harness/invocations.py`): a first
   line `/<plugin>:<skill> <args>` is the canonical text canopy-web stores, shows and
@@ -891,7 +891,7 @@ back to the stored PAT; phase 2 removes the PAT).
 - `POST /api/harness/runners/{rid}/turns/{tid}/agent-token`
   (`apps/harness/api_turn_agent_token.py`, `turn_agent_tokens.py`): only with runner
   `rid`'s own runner token (a PAT is 403), for a turn it is executing, re-checking
-  `runner_may_hold_agent`; 409 for a local turn, a confined (caller) turn, or an
+  `runner_may_hold_agent`; 409 for a direct turn, a confined (caller) turn, or an
   agent with no active `Agent.user`. Mints a `PersonalToken` for `Agent.user` (12 h),
   recorded as a `TurnAgentToken`; logged as an `AgentCredentialRead`
   (`turn-agent-token`, `via=turn`) and an `agent.canopy_token.issued` event.
