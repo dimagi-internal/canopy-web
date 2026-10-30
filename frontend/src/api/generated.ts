@@ -5193,6 +5193,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/access-list-conversion": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Preview moving this agent onto its access list: the lines it would get, and whether anyone's access would change (an agent admin)
+         * @description Translates the rules the agent was published with (`full:`, each door's `callers`,
+         *     `editors:`, and the implicit workspace-editor rule) into lines, then asks the access
+         *     rule the old way and the new way about everyone who could plausibly ask. Writes nothing.
+         */
+        readonly get: operations["preview_access_conversion"];
+        readonly put?: never;
+        /** Move this agent onto its access list; refused unless nobody's access would change (an agent admin) */
+        readonly post: operations["apply_access_conversion"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/agent-defaults": {
         readonly parameters: {
             readonly query?: never;
@@ -26005,6 +26028,36 @@ export interface components {
         readonly AccessInheritIn: {
             /** Inherit */
             readonly inherit: boolean;
+        };
+        /** AccessConversionLineOut */
+        readonly AccessConversionLineOut: {
+            /** Who */
+            readonly who: string;
+            /** Role */
+            readonly role: string;
+            /**
+             * Manual Only
+             * @default false
+             */
+            readonly manual_only: boolean;
+        };
+        /**
+         * AccessConversionOut
+         * @description What moving an agent onto its access list would do, and whether it changes anyone's access.
+         */
+        readonly AccessConversionOut: {
+            /** Already */
+            readonly already: boolean;
+            /** Ok */
+            readonly ok: boolean;
+            /** Probed */
+            readonly probed: number;
+            /** Lines */
+            readonly lines: readonly components["schemas"]["AccessConversionLineOut"][];
+            /** Unsupported */
+            readonly unsupported: readonly string[];
+            /** Differences */
+            readonly differences: readonly string[];
         };
         /**
          * AgentDefaultsOut
@@ -51700,6 +51753,50 @@ export interface operations {
                 readonly "application/json": components["schemas"]["AccessInheritIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessListOut"];
+                };
+            };
+        };
+    };
+    readonly preview_access_conversion: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessConversionOut"];
+                };
+            };
+        };
+    };
+    readonly apply_access_conversion: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

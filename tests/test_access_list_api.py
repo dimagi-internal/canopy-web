@@ -190,3 +190,47 @@ def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):
     assert [ln["scope"] for ln in listed] == ["workspace"]
     assert _c(w["boss"]).delete(f"/api/workspaces/dimagi/agent-defaults/{r.json()['id']}").status_code == 204
     assert _c(w["owner"]).get("/api/agents/hal/access-list").json()["lines"] == []
+
+
+# --- moving an agent onto its list -------------------------------------------------------
+
+def test_previewing_the_move_writes_nothing_and_says_whether_anyone_changes(w):
+    from apps.agents.interface import parse
+
+    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(
+        {"capabilities": {"ask": {"callers": ["member", "contact@dimagi.com:verified"], "tools": ["Read"]}}}))
+    r = _c(w["owner"]).get("/api/agents/hal/access-list-conversion")
+    assert r.status_code == 200
+    body = r.json()
+    assert (body["already"], body["ok"], body["differences"], body["unsupported"]) == (False, True, [], [])
+    assert body["probed"] > 5
+    assert {(ln["who"], ln["role"]) for ln in body["lines"]} >= {
+        ("a known contact at @dimagi.com (verified)", "viewer"), ("everyone in connect", "viewer")}
+    assert not AgentGrant.objects.filter(agent=w["agent"]).exists()
+    assert _c(w["ed"]).get("/api/agents/hal/access-list-conversion").status_code == 403
+
+
+def test_applying_the_move_switches_the_agent_and_lists_the_lines(w):
+    from apps.agents.interface import parse
+
+    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(
+        {"capabilities": {"ask": {"callers": ["member"], "tools": ["Read"]}}}))
+    assert _c(w["ed"]).post("/api/agents/hal/access-list-conversion").status_code == 403
+    r = _c(w["owner"]).post("/api/agents/hal/access-list-conversion")
+    assert r.status_code == 200, r.content
+    assert r.json()["uses_access_list"] is True
+    assert {(ln["who"], ln["role"]) for ln in r.json()["lines"]} == {
+        ("Everyone in connect", "user"), ("Everyone in connect, editor or above", "editor")}
+    again = _c(w["owner"]).get("/api/agents/hal/access-list-conversion").json()
+    assert (again["already"], again["ok"]) == (True, True)
+
+
+def test_a_move_that_cannot_be_done_cleanly_is_refused(w):
+    from apps.agents.interface import parse
+
+    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(
+        {"capabilities": {"ask": {"callers": ["unknown"], "tools": ["Read"]}}}))
+    r = _c(w["owner"]).post("/api/agents/hal/access-list-conversion")
+    assert r.status_code == 409 and "unknown" in r.json()["detail"]
+    w["agent"].refresh_from_db()
+    assert w["agent"].uses_access_list is False
