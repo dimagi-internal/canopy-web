@@ -272,10 +272,23 @@ def test_ecdh_key_comes_from_the_canopy_cli(cloud_runner, monkeypatch, _no_canop
 def test_a_zk_agent_without_a_wrap_is_a_named_health_failure(cloud_runner, monkeypatch):
     monkeypatch.setattr(cloud_runner, "_api",
                         lambda *a, **k: (409, {"error": "zk_wrap_missing"}))
-    monkeypatch.setattr(cloud_runner, "_aws_proof_headers", lambda url: {})
+    monkeypatch.setattr(cloud_runner, "_aws_proof_headers",
+                        lambda url: {cloud_runner.AWS_PROOF_HEADER: "p"})
     logs = []
     monkeypatch.setattr(cloud_runner, "_log", logs.append)
     cloud_runner._VAULT_PROBE_AT.pop("eva", None)
     cloud_runner._probe_agent_vault("eva")
     assert any("grant" in line for line in logs)
     assert cloud_runner._HEALTH["zk.eva"]["status"] == "fail"
+
+
+def test_a_probe_with_no_proof_to_attach_is_not_sent(cloud_runner, monkeypatch):
+    # A runner sharing its machine cannot sign as the box. Unsigned, the probe learns
+    # nothing and, for a device-bound agent, emails its owner a "no device proof"
+    # alert in their name (trellis on cloud-ec2-live, 2026-10-30).
+    calls = []
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: calls.append(a) or (200, {}))
+    monkeypatch.setattr(cloud_runner, "_aws_proof_headers", lambda url: {})
+    cloud_runner._VAULT_PROBE_AT.pop("trellis", None)
+    cloud_runner._probe_agent_vault("trellis")
+    assert calls == []

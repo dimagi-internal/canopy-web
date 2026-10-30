@@ -15,6 +15,8 @@ def _capture(cloud_runner, monkeypatch):
         return 200, {"zk": True}
 
     monkeypatch.setattr(cloud_runner, "_api", api)
+    monkeypatch.setattr(cloud_runner, "_aws_proof_headers",
+                        lambda url: {cloud_runner.AWS_PROOF_HEADER: "p"})
     cloud_runner._VAULT_PROBE_AT.clear()
     return seen
 

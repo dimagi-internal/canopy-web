@@ -322,8 +322,9 @@ def test_a_refused_device_proof_names_the_box_the_request_names(fleet, sts):
     assert _resolve_as_box(fleet, turn="turn-1").status_code == 401
     [alert] = _alerts("device-proof")
     assert alert.runner_id == fleet["runner"].pk
-    assert f"on {fleet['runner'].name} refused" in alert.detail
-    assert f"on {fleet['runner'].name} refused" in mail.outbox[0].body
+    assert f"login on {fleet['runner'].name} asked for eva\u2019s secrets" in alert.detail
+    assert f"login on {fleet['runner'].name} asked for eva\u2019s secrets" in mail.outbox[0].body
+    assert "resolve by" not in alert.detail
 
 
 def _resolve_described(fleet, turn, **extra):
@@ -355,9 +356,41 @@ def test_a_refused_device_proof_says_who_asked_and_what_the_turn_is(fleet, sts):
     assert ctx["user_agent"].startswith("canopy-cli/") and ctx["claude_session"] == "claude-123"
     assert "/eva:turn" not in str(ctx)  # never the prompt
     body = mail.outbox[0].body
-    assert f"Turn {turn.pk}: eva's {Turn.ORIGIN_CANOPY_SCHEDULER} turn" in body
+    assert f"When: during eva\u2019s scheduled turn, started by {fleet['user'].email}" in body
+    assert f"(turn {turn.pk})" in body
     assert "Why the caller sent no proof: no device key enrolled for user cu-dimagi" in body
     assert "Client: canopy-cli/0.2.820 (agent op-token)" in body
+
+
+def test_a_refusal_on_a_runners_own_token_says_the_runner_asked_not_its_owner(fleet, sts):
+    """A runner token signs in as the runner's owner. The alert must not read as
+    something the owner did ("resolve by jj@…" read as "resolved by"; Jonathan,
+    2026-10-30), and must link the conversation and the full alert log."""
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import RunnerAccessToken, RunnerDeviceKey, Turn
+
+    _bind(fleet)
+    box = fleet["runner"]
+    key = RunnerDeviceKey.objects.create(runner=box, kind=RunnerDeviceKey.SOFTWARE,
+                                         jkt=f"jkt-{box.pk}", status=RunnerDeviceKey.ACTIVE)
+    raw, _ = RunnerAccessToken.mint(key)
+    chat = Session.objects.create(workspace=fleet["agent"].workspace, agent=fleet["agent"])
+    turn = Turn.objects.create(origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="hi",
+                               initiator_user=fleet["user"], chat_session=chat)
+    res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {raw}",
+                       HTTP_X_CANOPY_TURN_ID=str(turn.pk))
+    assert res.status_code == 401
+    [alert] = _alerts("device-proof")
+    assert alert.context["via"] == "runner-token"
+    assert alert.context["turn"]["agent"] == "eva"  # the conversation's agent
+    assert alert.detail.startswith(f"The runner {box.name} asked for eva\u2019s secrets")
+    assert "not something jj@dimagi.com did" in alert.detail
+    msg = mail.outbox[0]
+    assert "no machine proof" in msg.subject
+    assert "you did not do anything" in msg.body
+    assert "When: during eva\u2019s Canopy chat turn" in msg.body
+    assert f"/sessions/{chat.pk}" in msg.body
+    assert "#cred-alerts" in msg.body and "#cred-device-keys" in msg.body
 
 
 def test_a_debounced_repeat_keeps_who_asked(fleet, sts):

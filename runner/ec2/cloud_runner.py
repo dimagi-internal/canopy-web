@@ -3814,6 +3814,15 @@ def _probe_agent_vault(slug: str) -> None:
     # And this box's IAM-role device proof (canopy-web#1549) — required only for an
     # agent with require_device_binding; ignored by canopy-web otherwise.
     proof = _aws_proof_headers(f"{BASE_URL}/api/agents/{slug}/credentials/resolve")
+    if not proof:
+        # No proof to attach — a runner sharing its machine (the instance role is
+        # root's) or a box with no role. The probe then learns nothing: a zero-knowledge
+        # vault always needs a proof. And for a device-bound agent it is refused and
+        # emails the agent's owner a "no device proof" vault alert naming them, since a
+        # runner token signs in as its owner (trellis on cloud-ec2-live, 2026-10-30:
+        # two alerts per chat turn). The canopy CLI's own resolve signs with the
+        # runner's key and reports a vault it cannot open (`env.<slug>`).
+        return
     try:
         status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents",
                                headers={"X-Canopy-Turn-Id": turn_id, **proof})
