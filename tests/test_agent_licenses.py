@@ -52,7 +52,6 @@ def world(monkeypatch):
         WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
     agent = Agent.objects.create(
         slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["nova-api-key"],
-        zk_enabled=True,
         interface={"version": 1, "full": ["member@dimagi.com"], "capabilities": {
             "ask": {"callers": ["member", "contact"], "tools": ["Read"]}}},
     )

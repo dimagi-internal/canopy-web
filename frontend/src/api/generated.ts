@@ -33173,8 +33173,6 @@ export interface components {
             readonly stored: readonly string[];
             /** Missing */
             readonly missing: readonly string[];
-            /** Zero Knowledge */
-            readonly zero_knowledge: boolean;
             /** Machines Waiting */
             readonly machines_waiting: readonly string[];
         };

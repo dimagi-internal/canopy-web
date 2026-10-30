@@ -1,7 +1,6 @@
 """Tests about WHO may resolve an agent's credentials are not about the device proof.
 
-A stored value turns an agent zero-knowledge (`services.start_zero_knowledge`), and every
-resolve of a zero-knowledge agent carries a device proof from an approved key whose person
+Every agent is zero-knowledge, so every resolve carries a device proof from an approved key whose person
 is a member of the agent's vault (tests/test_canopy_vault_device_binding.py and
 tests/test_canopy_vault_zk.py pin both). `accept_device_proof` stands in for that proof, so
 a test can say what it is actually about.

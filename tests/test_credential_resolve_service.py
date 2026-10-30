@@ -124,8 +124,6 @@ def test_a_runner_token_with_another_boxs_proof_is_refused(monkeypatch, owner, w
 
 
 def test_an_approved_box_that_does_not_run_the_agent_is_not_routed(monkeypatch, owner, ws, agent, alerts):
-    agent.zk_enabled = True
-    agent.save()
     other = _box(owner, ws, "other")
     _proof(monkeypatch, refused="other does not run eva", unrouted=other)
     out = cr.resolve(_request(owner), agent, None)
@@ -134,8 +132,6 @@ def test_an_approved_box_that_does_not_run_the_agent_is_not_routed(monkeypatch, 
 
 
 def test_a_missing_proof_is_refused_and_the_owner_alerted(monkeypatch, owner, agent, alerts):
-    agent.zk_enabled = True
-    agent.save()
     _proof(monkeypatch, refused="no device proof")
     out = cr.resolve(_request(owner), agent, None)
     assert out == cr.Refusal(cr.DEVICE_PROOF_REQUIRED, "no device proof", reason="no_valid_proof")
@@ -143,7 +139,7 @@ def test_a_missing_proof_is_refused_and_the_owner_alerted(monkeypatch, owner, ag
 
 
 def test_a_zk_agent_without_this_devices_wrap_is_refused(monkeypatch, owner, ws, agent):
-    agent.zk_enabled, agent.zk_kv = True, 3
+    agent.zk_kv = 3
     agent.save()
     box = _box(owner, ws)
     key = type("Key", (), {"runner": box, "runner_id": box.pk, "pk": "k-1"})()
@@ -163,7 +159,7 @@ def _values(monkeypatch, agent, values):
     """The agent's (zero-knowledge) values, as `zk.resolve_payload` hands them out, read
     with a device proof (stubbed): what is under test is how a read is classified and
     what it withholds, not the proof."""
-    agent.zk_enabled, agent.zk_kv = True, 0
+    agent.zk_kv = 0
     agent.save()
     accept_device_proof(monkeypatch)
     monkeypatch.setattr(cr.zk, "resolve_payload", lambda agent, key, wanted: (dict(values), None))

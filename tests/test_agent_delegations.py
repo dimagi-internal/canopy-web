@@ -43,6 +43,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.fixtures.device_proof import accept_device_proof
 from tests.fixtures.machines import a_machine
 from tests.fixtures.vault_zk import ref
 
@@ -415,7 +416,7 @@ def _resolve(agent, user, sign=None, path=""):
     return Client().get(url + path, **headers)
 
 
-def test_only_a_machine_that_runs_the_agent_gets_it_from_resolve(agent, owner, github, machine, runner):
+def test_only_a_machine_that_runs_the_agent_gets_it_from_resolve(agent, owner, github, machine, runner, monkeypatch):
     key, sign, ecdh = machine
     _lend(agent, owner, github)
     r = _resolve(agent, runner.owner, sign)
@@ -429,6 +430,7 @@ def test_only_a_machine_that_runs_the_agent_gets_it_from_resolve(agent, owner, g
     assert r.json()["delegated_withheld"] == []
     # An admin's read — the owner by hand, a box's owner without its proof — never; they
     # are told it is someone's own, so they use their own account on their machine.
+    accept_device_proof(monkeypatch)
     for who, proof in ((owner, None), (runner.owner, None)):
         r = _resolve(agent, who, proof)
         assert r.status_code == 200, r.content
@@ -439,7 +441,8 @@ def test_only_a_machine_that_runs_the_agent_gets_it_from_resolve(agent, owner, g
         assert w["label"].startswith("GitHub · delegated by Olive")
 
 
-def test_resolve_never_hands_out_a_github_token_in_the_clear(agent, owner, github, machine, runner):
+def test_resolve_never_hands_out_a_github_token_in_the_clear(agent, owner, github, machine, runner, monkeypatch):
+    accept_device_proof(monkeypatch)
     _lend(agent, owner, github)
     for who in (runner.owner, owner):
         for path in ("", "?refs=github_token"):
@@ -742,11 +745,12 @@ def test_the_drill_probes_pull_request_permission_on_the_agents_repo(agent, runn
     assert "422 = PASS" in prompt and "403 = FAIL" in prompt
 
 
-def test_bootstrap_resolve_carries_this_instances_mailbox(agent, runner):
+def test_bootstrap_resolve_carries_this_instances_mailbox(agent, runner, monkeypatch):
     """canopy-web#984: the box sets Gmail up for the INSTANCE's mailbox, never an
     address derived from the slug or read from the shared repo."""
     from apps.tokens.models import PersonalToken
 
+    accept_device_proof(monkeypatch, runner)
     agent.email = "echo@dimagi-ai.com"
     agent.save(update_fields=["email"])
     raw, _ = PersonalToken.create_for_user(user=runner.owner, label="runner")

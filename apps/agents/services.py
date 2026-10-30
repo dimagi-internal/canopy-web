@@ -97,8 +97,7 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
     if google_account is not None:
         defaults["google_account"] = google_account.strip().lower()
     agent, _ = Agent.objects.update_or_create(
-        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner,
-                                                            **born_zk_fields(owner)}
+        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner}
     )
     new_email = (agent.email or "").strip().lower()
     if agent.user_id is not None and new_email and (agent.user.email or "").lower() != new_email:
@@ -111,26 +110,6 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
         unlink(agent)
     return agent
 
-
-def born_zk_fields(owner) -> dict:
-    """Every new agent starts zero-knowledge (canopy-web#1550; the ONLY mode of
-    the canopy-web vault, Jonathan 2026-10-17): `zk_enabled` at kv 0 — no vault
-    key yet, so every value that arrives is sealed (`zks1`) to whoever may read
-    the agent (its owner's vault key, its approved machines) until a holder
-    creates the vault key.
-
-    A new agent's secrets live in the canopy-web vault, the only store there is."""
-    return {"zk_enabled": True, "zk_kv": 0}
-
-
-def start_zero_knowledge(agent) -> None:
-    """Turn the vault on for an agent that has never held a value
-    here: zero-knowledge at kv 0, as a new agent is born. Callers hold the agent's
-    row lock. A no-op on an agent already zero-knowledge. There is nothing to
-    convert: canopy-web never stores an agent's value any other way."""
-    if not agent.zk_enabled:
-        agent.zk_enabled, agent.zk_kv = True, 0
-        agent.save(update_fields=["zk_enabled", "zk_kv", "updated_at"])
 
 
 def list_agents() -> list[Agent]:
@@ -1652,7 +1631,6 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     # compare-and-swap (`expect`) must see this write or come after it.
     with transaction.atomic():
         agent = zk._locked(agent)
-        start_zero_knowledge(agent)
         sealed = {name.strip(): zk_seal.seal_for_agent(agent, name.strip(), value.strip())
                   for name, value in values.items()}
         for name, value_zk in sealed.items():

@@ -46,8 +46,8 @@ def world():
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     aath = User.objects.create_user("aath", "aath@dimagi.com")
     WorkspaceMembership.objects.create(workspace=ws, user=aath, role=WorkspaceMembership.EDITOR)
-    hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, zk_enabled=True)
-    eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj, zk_enabled=True)
+    hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj)
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj)
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                 capabilities={"agents": ["hal", "eva"], "sessions": True})

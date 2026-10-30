@@ -338,7 +338,7 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
     from apps.agents.credentials import zk
 
     return sorted(
-        agent.slug for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner")
+        agent.slug for agent in Agent.objects.select_related("workspace", "owner")
         if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
         and zk.device_waits(agent, key)
     )
@@ -364,7 +364,7 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
     if person != user.pk or not UserVaultKeyset.objects.filter(user=user).exists():
         return []
     out = []
-    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gt=0).select_related("workspace", "owner"):
+    for agent in Agent.objects.filter(zk_kv__gt=0).select_related("workspace", "owner"):
         vault = vault_members.vault_for_agent(agent)
         role = vault_members.role_of(vault, user)
         if role is None or (agent.is_admin(user) and vault_members.is_admin(role)):
@@ -377,7 +377,7 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
 def vault_agents_of(user) -> list:
     """The agents whose secrets live in the canopy-web vault that `user`
     administers — what a key's `can_open` is drawn from."""
-    return [a for a in Agent.objects.filter(zk_enabled=True)
+    return [a for a in Agent.objects.all()
             .select_related("workspace", "owner").order_by("name", "slug") if a.is_admin(user)]
 
 

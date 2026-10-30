@@ -43,7 +43,7 @@ from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.device_proof import accept_device_proof
-from tests.fixtures.aws_proof import ASSUMED, BODY, ENROLL, ENROLL_HTU, HTU, RESOLVE, ROLE, _active_role, _bind, _enroll, _proof
+from tests.fixtures.aws_proof import ASSUMED, BODY, ENROLL, ENROLL_HTU, HTU, RESOLVE, ROLE, _active_role, _enroll, _proof
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("fresh_cache")]
 
@@ -173,7 +173,6 @@ def test_an_aws_iam_key_is_approved_with_step_up_like_any_other(fleet, sts):
 # ---- the proof on resolve -------------------------------------------------------------
 
 def test_a_valid_aws_proof_resolves_and_names_the_runner(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     res = _resolve(fleet, _proof())
     assert res.status_code == 200, res.content
@@ -186,7 +185,6 @@ def test_a_valid_aws_proof_resolves_and_names_the_runner(fleet, sts):
 def test_the_runner_halfs_exact_shape_is_accepted(fleet, sts):
     """canopy-web#1551's runner (runner/ec2/cloud_runner.py::aws_proof): an explicit
     `Host` header, single-string values, compact JSON, standard base64."""
-    _bind(fleet)
     _active_role(fleet, sts)
     headers = {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
                "Host": "sts.amazonaws.com", "X-Canopy-Proof-Htu": HTU,
@@ -201,14 +199,12 @@ def test_the_runner_halfs_exact_shape_is_accepted(fleet, sts):
 
 
 def test_the_htu_may_carry_the_refs_query(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     res = _resolve(fleet, _proof(HTU + "?refs=CANOPY_WEB_PAT"), path=RESOLVE + "?refs=CANOPY_WEB_PAT")
     assert res.status_code == 200
 
 
 def test_a_client_chosen_sts_url_is_refused_and_never_called(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     n = len(sts.calls)
     assert _resolve(fleet, _proof(url="https://evil.example/")).status_code == 401
@@ -217,7 +213,6 @@ def test_a_client_chosen_sts_url_is_refused_and_never_called(fleet, sts):
 
 
 def test_a_replayed_aws_proof_is_refused(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     proof = _proof()
     assert _resolve(fleet, proof).status_code == 200
@@ -227,14 +222,12 @@ def test_a_replayed_aws_proof_is_refused(fleet, sts):
 
 
 def test_a_stale_aws_proof_is_refused_and_120s_is_allowed(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     assert _resolve(fleet, _proof(iat=time.time() - 200)).status_code == 401
     assert _resolve(fleet, _proof(iat=time.time() - 100)).status_code == 200
 
 
 def test_htu_and_iat_must_be_inside_the_signature(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     assert _resolve(fleet, _proof(signed_extra=False)).status_code == 401
 
@@ -244,13 +237,11 @@ def test_htu_and_iat_must_be_inside_the_signature(fleet, sts):
     "http://evil.example/api/agents/eva/credentials/resolve",
 ])
 def test_an_aws_proof_for_another_url_is_refused(fleet, sts, htu):
-    _bind(fleet)
     _active_role(fleet, sts)
     assert _resolve(fleet, _proof(htu)).status_code == 401
 
 
 def test_an_aws_proof_for_another_action_is_refused(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
 
     def other_action(obj):
@@ -260,14 +251,12 @@ def test_an_aws_proof_for_another_action_is_refused(fleet, sts):
 
 
 def test_sts_refusing_the_signature_is_a_401(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     sts.status = 403
     assert _resolve(fleet, _proof()).status_code == 401
 
 
 def test_a_role_that_is_not_an_active_key_for_this_agent_is_refused(fleet, sts):
-    _bind(fleet)
     _enroll(fleet)  # pending only
     assert _resolve(fleet, _proof()).status_code == 401
     sts.arn = "arn:aws:sts::123456789012:assumed-role/other-role/i-9"
@@ -277,7 +266,6 @@ def test_a_role_that_is_not_an_active_key_for_this_agent_is_refused(fleet, sts):
 
 
 def test_an_aws_key_on_a_runner_the_agent_does_not_route_to_is_refused(fleet, sts):
-    _bind(fleet)
     _active_role(fleet, sts)
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
     RunnerDeviceKey.objects.update(runner=Runner.objects.create(
@@ -293,7 +281,6 @@ def _alerts(kind=None):
 
 
 def test_a_refused_device_proof_alerts_the_owner_once_an_hour(fleet, sts):
-    _bind(fleet)
     assert _resolve(fleet).status_code == 401
     [alert] = _alerts("device-proof")
     assert alert.occurrences == 1 and alert.notified["emailed"] == ["jj@dimagi.com"]
@@ -350,7 +337,6 @@ def _resolve_as_box(fleet, turn=""):
 
 
 def test_a_refused_device_proof_names_the_box_the_request_names(fleet, sts):
-    _bind(fleet)
     assert _resolve_as_box(fleet, turn="turn-1").status_code == 401
     [alert] = _alerts("device-proof")
     assert alert.runner_id == fleet["runner"].pk
@@ -375,7 +361,6 @@ def test_a_refused_device_proof_says_who_asked_and_what_the_turn_is(fleet, sts):
     agent, origin and who started it, the client, and why no proof came."""
     from apps.harness.models import Turn
 
-    _bind(fleet)
     turn = Turn.objects.create(agent=fleet["agent"], origin=Turn.ORIGIN_CANOPY_SCHEDULER,
                                prompt="/eva:turn", initiator_user=fleet["user"])
     assert _resolve_described(fleet, str(turn.pk)).status_code == 401
@@ -401,7 +386,6 @@ def test_a_refusal_on_a_runners_own_token_says_the_runner_asked_not_its_owner(fl
     from apps.canopy_sessions.models import Session
     from apps.harness.models import RunnerAccessToken, RunnerDeviceKey, Turn
 
-    _bind(fleet)
     box = fleet["runner"]
     key = RunnerDeviceKey.objects.create(runner=box, kind=RunnerDeviceKey.SOFTWARE,
                                          jkt=f"jkt-{box.pk}", status=RunnerDeviceKey.ACTIVE)
@@ -426,7 +410,6 @@ def test_a_refusal_on_a_runners_own_token_says_the_runner_asked_not_its_owner(fl
 
 
 def test_a_debounced_repeat_keeps_who_asked(fleet, sts):
-    _bind(fleet)
     first, second = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
     _resolve_described(fleet, first)
     _resolve_described(fleet, second, HTTP_X_CANOPY_PROOF_MISSING="device key status: pending")
@@ -439,7 +422,6 @@ def test_a_debounced_repeat_keeps_who_asked(fleet, sts):
 
 
 def test_a_turn_id_that_names_no_turn_is_said_plainly(fleet, sts):
-    _bind(fleet)
     _resolve_described(fleet, "not-a-uuid")
     [alert] = _alerts("device-proof")
     assert alert.context["turn"] == {"id": "not-a-uuid", "found": False}
@@ -449,7 +431,6 @@ def test_a_turn_id_that_names_no_turn_is_said_plainly(fleet, sts):
 def test_the_alert_list_returns_the_context(fleet, sts):
     from apps.agents.credentials import vault_alerts
 
-    _bind(fleet)
     _resolve_described(fleet, "not-a-uuid")
     _resolve_described(fleet, "not-a-uuid")
     [row] = vault_alerts.alerts_for(fleet["agent"])

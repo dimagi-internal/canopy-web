@@ -97,8 +97,9 @@ describe('born zero-knowledge (kv 0)', () => {
     api.getZkState.mockResolvedValue(baseState({ kv: 0, values: { kindora: stored }, sealed: ['kindora'],
       pending: [{ kind: 'member', target: USER, public_jwk: me.publicJwk }] }))
     api.enableZk.mockResolvedValue(baseState())
-    let code = ''
-    await ops.turnOnZk('eva', ['kindora'], async (c) => void (code = c), unlocked(me))
+    const ready = await ops.prepareTurnOnZk('eva', ['kindora'], unlocked(me))
+    const code = ready.code
+    await ready.commit()
     const body = api.enableZk.mock.calls[0][1]
     const rec = body.wraps.find((w: { kind: string }) => w.kind === 'recovery').wrap
     const vk = await zk.unwrapRecovery(rec, AGENT_ID, 1, zk.parseRecoveryCode(code))

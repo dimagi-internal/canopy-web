@@ -175,12 +175,8 @@ class Agent(models.Model):
     # current vault-key version (0 = no vault key yet). Formats:
     # docs/vault/zk-v1/zk_v1_reference.py (apps/agents/credentials/zk.py).
     #
-    # `zk_enabled` is NOT a choice of storage: there is no other. It is False only
-    # for an agent that has never held a value here, so its
-    # resolve skips the vault-member and wrap checks it has nothing behind. Every
-    # created agent is born True (`services.born_zk_fields`), and the first value
-    # stored for one that is not turns it on.
-    zk_enabled = models.BooleanField(default=False)
+    # Every agent is zero-knowledge — there is no other mode: a new one starts at kv 0
+    # and its values are sealed (`zks1`) to its readers until a holder makes the key.
     zk_kv = models.PositiveIntegerField(default=0)
 
     # Runtime autonomy posture, read by the fleet-canonical turn procedure at

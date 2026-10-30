@@ -71,7 +71,7 @@ def f(client):
     for u in (x.sam, x.carol, x.bot):
         WorkspaceMembership.objects.create(workspace=x.ws, user=u, role=WorkspaceMembership.EDITOR)
     x.agent = Agent.objects.create(slug="bailey", name="Bailey", workspace=x.ws, owner=x.jj, user=x.bot,
-                                   runtime_secrets=["GITHUB_TOKEN", "kindora"], zk_enabled=True, zk_kv=0)
+                                   runtime_secrets=["GITHUB_TOKEN", "kindora"])
     x.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=x.jj, status=Runner.ONLINE,
                                      workspace=x.ws, last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=x.agent, runner=x.runner, rank=0)

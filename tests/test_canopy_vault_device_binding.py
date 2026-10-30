@@ -97,11 +97,6 @@ def _resolve(fleet, proof=None, path=RESOLVE):
     return Client().get(path, **headers)
 
 
-def _bind(fleet, on=True):
-    """A zero-knowledge agent: its read always needs a device proof."""
-    Agent.objects.filter(pk=fleet["agent"].pk).update(zk_enabled=on)
-
-
 # ---- registration ----------------------------------------------------------------
 
 def test_register_returns_the_contract_shape_and_is_idempotent(fleet):
@@ -209,16 +204,7 @@ def test_revoke_is_immediate_and_a_revoked_key_cannot_be_revived(fleet):
 
 # ---- the device proof on resolve -----------------------------------------------------
 
-def test_without_binding_resolve_needs_no_proof(fleet):
-    """Only an agent whose vault is not in use (a legacy agent that stores nothing
-    here): a zero-knowledge agent always needs a proof, binding or not."""
-    fleet["agent"].credentials.all().delete()
-    Agent.objects.filter(pk=fleet["agent"].pk).update(zk_enabled=False)
-    assert _resolve(fleet).status_code == 200
-
-
-def test_binding_on_and_no_proof_is_the_contract_401(fleet):
-    _bind(fleet)
+def test_no_proof_is_the_contract_401(fleet):
     res = _resolve(fleet)
     assert res.status_code == 401
     body = res.json()
@@ -230,7 +216,6 @@ def test_binding_on_and_no_proof_is_the_contract_401(fleet):
 
 
 def test_a_valid_proof_from_an_active_key_resolves_and_names_the_runner(fleet):
-    _bind(fleet)
     _active_key(fleet)
     res = _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU))
     assert res.status_code == 200 and res.json()["values"]["canopy-pat"].startswith("zks1:")
@@ -241,7 +226,6 @@ def test_a_valid_proof_from_an_active_key_resolves_and_names_the_runner(fleet):
 
 
 def test_a_pending_or_revoked_key_does_not_count(fleet):
-    _bind(fleet)
     body = _register(fleet).json()
     assert _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU)).status_code == 401
     _approve(fleet, body["id"])
@@ -251,7 +235,6 @@ def test_a_pending_or_revoked_key_does_not_count(fleet):
 
 
 def test_a_replayed_proof_is_refused(fleet):
-    _bind(fleet)
     _active_key(fleet)
     proof = make_dpop_proof(fleet["key"], "GET", HTU)
     assert _resolve(fleet, proof).status_code == 200
@@ -259,7 +242,6 @@ def test_a_replayed_proof_is_refused(fleet):
 
 
 def test_a_stale_proof_is_refused_and_120s_skew_is_allowed(fleet):
-    _bind(fleet)
     _active_key(fleet)
     assert _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU,
                                            now=time.time() - 200)).status_code == 401
@@ -274,13 +256,11 @@ def test_a_stale_proof_is_refused_and_120s_skew_is_allowed(fleet):
     ("GET", "http://evil.example/api/agents/eva/credentials/resolve"),
 ])
 def test_a_proof_for_another_request_is_refused(fleet, htm, htu):
-    _bind(fleet)
     _active_key(fleet)
     assert _resolve(fleet, make_dpop_proof(fleet["key"], htm, htu)).status_code == 401
 
 
 def test_htu_tolerates_the_old_address_prefix_and_the_tenant_url(fleet):
-    _bind(fleet)
     _active_key(fleet)
     legacy = "http://testserver/canopy/api/agents/eva/credentials/resolve"
     assert _resolve(fleet, make_dpop_proof(fleet["key"], "GET", legacy)).status_code == 200
@@ -290,7 +270,6 @@ def test_htu_tolerates_the_old_address_prefix_and_the_tenant_url(fleet):
 
 
 def test_an_es256_proof_from_an_unregistered_key_is_refused(fleet):
-    _bind(fleet)
     _active_key(fleet)
     rogue = ec.generate_private_key(ec.SECP256R1())
     assert _resolve(fleet, make_dpop_proof(rogue, "GET", HTU)).status_code == 401
@@ -299,7 +278,6 @@ def test_an_es256_proof_from_an_unregistered_key_is_refused(fleet):
 def test_an_eddsa_proof_is_refused(fleet):
     from cryptography.hazmat.primitives.asymmetric import ed25519
 
-    _bind(fleet)
     _active_key(fleet)
     assert _resolve(fleet, make_dpop_proof(ed25519.Ed25519PrivateKey.generate(), "GET",
                                            HTU)).status_code == 401
@@ -311,7 +289,6 @@ def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
     routing said no, not the key (fizzy, canopy-web#1563)."""
     from apps.agents.models import AgentCredentialAlert
 
-    _bind(fleet)
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
     WorkspaceMembership.objects.create(workspace=fleet["ws"], user=other,
                                        role=WorkspaceMembership.OWNER)
@@ -336,7 +313,6 @@ def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
 
 
 def test_the_owners_own_laptop_counts_without_a_route(fleet):
-    _bind(fleet)
     laptop = Runner.objects.create(name="jj-laptop", kind=Runner.EMDASH, owner=fleet["user"],
                                    status=Runner.ONLINE, capabilities={})
     key = ec.generate_private_key(ec.SECP256R1())
@@ -359,7 +335,6 @@ def test_the_owner_opening_a_session_on_their_own_laptop_raises_no_alert(fleet):
     each time. Their own token from their own approved laptop is them."""
     from apps.agents.models import AgentCredentialAlert
 
-    _bind(fleet)
     laptop, key = _laptop(fleet, fleet["user"])
     _approve(fleet, _register(fleet, key=key, runner=laptop).json()["id"])
     assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 200
@@ -371,7 +346,6 @@ def test_the_owner_opening_a_session_on_their_own_laptop_raises_no_alert(fleet):
 def test_someone_elses_laptop_reading_outside_a_turn_still_alerts(fleet):
     from apps.agents.models import AgentCredentialAlert
 
-    _bind(fleet)
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
     WorkspaceMembership.objects.create(workspace=fleet["ws"], user=other,
                                        role=WorkspaceMembership.OWNER)

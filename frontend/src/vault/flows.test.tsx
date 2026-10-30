@@ -167,7 +167,7 @@ describe('Grant pending, unlocking with a passphrase', () => {
       pending: [{ kind: 'device', target: 'dk1', public_jwk: device.publicJwk, ecdh_jkt: deviceJkt, runner_name: 'box' }] }
     api.getZkState.mockResolvedValue(state)
     api.addZkWraps.mockResolvedValue({ ...state, pending: [] })
-    render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
+    render(<AgentZkSection slug="eva" canEdit />)
     fireEvent.click(await screen.findByTestId('zk-grant'))
     await screen.findByTestId('vault-unlock')
     expect(screen.queryByLabelText('Secret Key')).toBeNull()  // remembered in this browser

@@ -233,7 +233,7 @@ def test_retiring_a_linked_registration_makes_its_runner_shared(world):
 
 def test_a_zero_knowledge_agent_resolves_only_with_a_device_proof(world):
     hal = world["hal"]
-    Agent.objects.filter(pk=hal.pk).update(zk_enabled=True, zk_kv=0)
+    Agent.objects.filter(pk=hal.pk).update(zk_kv=0)
     res = _pat(world["jj"]).get("/api/agents/hal/credentials/resolve")
     assert res.status_code == 401 and res.json()["error"] == "device_proof_required"
 

@@ -238,7 +238,7 @@ def work(mint: AgentGoogleMint, code: str) -> dict:
         out.update(code=code, redirect_uri=google_oauth.callback_url(), client_id=client_id,
                    client=google_oauth.MINTING_CLIENT,
                    expected_account=expected_for(mint),
-                   agent_id=str(agent.pk), kv=agent.zk_kv if agent.zk_enabled else 0,
+                   agent_id=str(agent.pk), kv=agent.zk_kv,
                    recipients=[{"kind": kind, "target": target, "public_jwk": jwk}
                                for kind, target, jwk in zk_seal.recipients_for(agent)])
         if mint.delegated_by_id:
@@ -316,7 +316,6 @@ def finish(runner, mint_id, *, kv: int, value_zk: str, account: str, name: str =
         refuse_delegated_names(agent, [GOG_TOKEN_REF])
         with transaction.atomic():
             locked = zk._locked(agent)
-            services.start_zero_knowledge(locked)
             zk.set_values(locked, kv=kv, values=[SimpleNamespace(name=GOG_TOKEN_REF, value_zk=value_zk)],
                           user=mint.requested_by)
     except zk.ZkError as exc:

@@ -76,7 +76,7 @@ def _post(user, *, step_up=True):
 
 
 def test_a_new_agent_is_born_private(agent):
-    assert (agent.zk_enabled, agent.zk_kv) == (True, 0)
+    assert agent.zk_kv == 0
 
 
 def test_one_click_stores_the_login_sealed_and_never_returns_it(owner, agent):

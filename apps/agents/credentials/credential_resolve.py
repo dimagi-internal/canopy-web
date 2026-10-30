@@ -239,11 +239,11 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     if rtok is not None and device_key is not None and device_key.runner_id != rtok.runner_id:
         return Refusal(FOREIGN_DEVICE_PROOF, f"the device proof is {device_key.runner.name}'s, not this "
                                              f"runner token's ({rtok.runner.name})")
-    # A zero-knowledge agent ALWAYS needs one (canopy-web#1550): the wrap handed
+    # Every agent is zero-knowledge, so a read ALWAYS needs one (canopy-web#1550): the wrap handed
     # out is the proving device's, so there is nothing to give without it. Any
     # ciphertext it does hold is useless without a device's own key, and a `zk1`
     # value with no wrap is still the refusal below.
-    if device_key is None and agent.zk_enabled:
+    if device_key is None:
         if unrouted is not None:
             # An APPROVED box that does not run this agent: a routing fact, not a
             # misused token, so the owner is not emailed (fizzy, canopy-web#1563).
@@ -258,28 +258,23 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
 
     wanted = parse_refs(refs)
     zk_wrap = None
-    if agent.zk_enabled and device_key is not None and not vault_members.device_works_for_a_member(agent, device_key):
+    if device_key is not None and not vault_members.device_works_for_a_member(agent, device_key):
         # The machine layer never reads on its own: the person this box works for
         # must be a member of the agent's vault (spec 2026-10-22-vault-access-
         # follows-canopy-access-design.md), whatever copies it still holds.
         return Refusal(NOT_A_VAULT_MEMBER,
                        f"{device_key.runner.name} works for someone who is not a member of "
                        f"{agent.slug}'s vault; a manager of the vault must add them")
-    if agent.zk_enabled:
-        values, zk_wrap = zk.resolve_payload(agent, device_key, wanted)
-        # `zks1` values (server-minted, sealed to each device) open with the
-        # device's own key; only `zk1` values need its vault-key wrap.
-        if zk_wrap is None and zk.needs_wrap(values):
-            if device_key is not None:
-                zk.device_wrap_missing(agent, request, device_key)
-            return Refusal(ZK_WRAP_MISSING,
-                           f"this device holds no vault-key wrap at kv {agent.zk_kv}; "
-                           "an admin must grant it",
-                           kv=agent.zk_kv, device_key=str(device_key.pk) if device_key else "")
-    else:
-        # An agent that has never stored a value here: there is nothing to hand out
-        # (a first stored value turns its vault on).
-        values = {}
+    values, zk_wrap = zk.resolve_payload(agent, device_key, wanted)
+    # `zks1` values (server-minted, sealed to each device) open with the
+    # device's own key; only `zk1` values need its vault-key wrap.
+    if zk_wrap is None and zk.needs_wrap(values):
+        if device_key is not None:
+            zk.device_wrap_missing(agent, request, device_key)
+        return Refusal(ZK_WRAP_MISSING,
+                       f"this device holds no vault-key wrap at kv {agent.zk_kv}; "
+                       "an admin must grant it",
+                       kv=agent.zk_kv, device_key=str(device_key.pk) if device_key else "")
     placement = authority.placement_of(via)
 
     # A box that runs the agent, by its own proof: never an admin reading by hand (the
@@ -310,8 +305,8 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         google_account=agent.google_identity(),
         delegated=delegated,
         delegated_withheld=withheld,
-        zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
-        agent_id=str(agent.pk) if agent.zk_enabled else "",
+        zk=True, kv=agent.zk_kv, wrap=zk_wrap,
+        agent_id=str(agent.pk),
         vaults=layers,
     )
     read = (list(values) + list(delegated)

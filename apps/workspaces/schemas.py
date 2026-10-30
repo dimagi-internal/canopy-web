@@ -527,7 +527,6 @@ class AgentVaultHealthOut(StrictModel):
     refs: list[VaultRefOut]
     stored: list[str]
     missing: list[str]
-    zero_knowledge: bool
     machines_waiting: list[str]
 
 

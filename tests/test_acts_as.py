@@ -38,8 +38,7 @@ def world(monkeypatch):
     WorkspaceMembership.objects.create(workspace=ws, user=other, role=WorkspaceMembership.EDITOR)
     # No published interface: an editor gets the whole agent (manual), a viewer nothing.
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, turn_mode=Agent.AUTO,
-                               runtime_secrets=["hal-key"],
-                               zk_enabled=True)
+                               runtime_secrets=["hal-key"])
     AgentCredential.objects.create(agent=hal, name="hal-key", value_zk=SECRET, kv=0)
     box = Runner.objects.create(name="jj-mbp-cdp", kind=Runner.EMDASH, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),

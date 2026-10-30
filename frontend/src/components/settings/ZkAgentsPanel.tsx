@@ -26,11 +26,10 @@ interface AgentRow {
  *  each secret to everyone allowed as it arrives, so nobody waits on it; a
  *  machine approved later gets it in its approval. */
 function waitingOn(zk: ZkStateOut) {
-  return zk.enabled && zk.kv > 0 ? zk.pending : []
+  return zk.kv > 0 ? zk.pending : []
 }
 
 function statusText(r: AgentRow): string {
-  if (!r.zk.enabled) return 'Not private yet'
   const pending = waitingOn(r.zk)
   const machines = pending.filter((p) => p.kind === 'device').map((p) => p.runner_name || 'a machine')
   const people = pending.filter((p) => p.kind === 'member').map((p) => p.email || 'someone')
@@ -52,7 +51,7 @@ function machinesHref(pending: ZkStateOut['pending']): string {
  *  key of its own yet (kv 0) seals each secret to its owner and approved
  *  machines as it arrives, so it is said that way. */
 function openedBy(zk: ZkStateOut, me: string, keys: RunnerDeviceKeyOut[]): string {
-  if (!zk.enabled || zk.kv === 0) return 'you and the runners you approve'
+  if (zk.kv === 0) return 'you and the runners you approve'
   const byId = new Map(keys.map((k) => [k.id, k]))
   const current = (zk.wraps ?? []).filter((w) => w.kv === zk.kv && w.current !== false)
   const people = current.filter((w) => w.kind === 'member')
@@ -101,7 +100,7 @@ export function ZkAgentsPanel() {
       <ul className="divide-y divide-border text-sm">
         {rows.map((r) => {
           const pending = waitingOn(r.zk)
-          const ok = r.zk.enabled && pending.length === 0
+          const ok = pending.length === 0
           return (
             <li key={r.slug} className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                 data-testid={`zk-agent-${r.slug}`}>

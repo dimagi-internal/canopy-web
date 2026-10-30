@@ -44,8 +44,6 @@ class Store:
     lock: Callable[[], "Store"]
     #: Record the new key version.
     save_kv: Callable[[int], None]
-    #: Refuse when this vault cannot take zero-knowledge writes at all.
-    require_enabled: Callable[[], None] = lambda: None
     #: A `zks1` value (sealed to recipients before a key exists) is accepted.
     accepts_sealed: bool = False
     #: Message tails.
@@ -265,7 +263,6 @@ def set_values(store: Store, *, kv: int, values: list, user) -> list[str]:
     """Upsert ciphertext values at the current kv (non-clobbering)."""
     with transaction.atomic():
         store = store.lock()
-        store.require_enabled()
         if store.kv == 0 and not store.accepts_sealed:
             raise _zk.ZkError(409, "zk_no_vault_key", f"{store.label} has no vault key yet")
         _require_kv(store, kv)
@@ -285,7 +282,6 @@ def add_wraps(store: Store, *, kv: int, wraps: list, user, only_new: bool = Fals
     lock so two keepers racing make exactly one grant."""
     with transaction.atomic():
         store = store.lock()
-        store.require_enabled()
         _require_kv(store, kv)
         if kv == 0:
             raise _zk.ZkError(409, "zk_no_vault_key", f"{store.label} has no vault key yet to grant")
@@ -307,7 +303,6 @@ def rotate(store: Store, *, new_kv: int, wraps: list, values: list, user) -> Non
     machine removed since is left out, and the copy they kept opens nothing new."""
     with transaction.atomic():
         store = store.lock()
-        store.require_enabled()
         if store.kv == 0:
             raise _zk.ZkError(409, "zk_no_vault_key", f"{store.label} has no vault key yet: create it (enable)")
         if new_kv != store.kv + 1:
