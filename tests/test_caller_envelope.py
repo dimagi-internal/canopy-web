@@ -853,3 +853,17 @@ def test_the_rest_routes_are_admin_gated_and_need_a_member_address(ctx, editor):
     assert row["email"] == "fatima@llo-foo.org" and row["created_by"] == owner.email
     assert c.delete(url).status_code == 204
     assert c.get(f"/api/agents/{agent.slug}/sender-trust").json() == []
+
+
+def test_the_envelope_says_which_identity_the_session_acts_under(fleet):
+    owner, _ws, ace, _ada = fleet
+    turn = _dispatch(ace, owner, key="a-1", assurance=who.SESSION)
+    env = caller_context.build(turn)["authority"]
+    assert (env["placement"], env["acting_as"], env["delegated_accounts"]) == ("runner", "ace", "the agent's")
+    assert env["to_act_as_the_person"]["person"] == owner.email
+    assert env["to_act_as_the_person"]["scopes"] == ["read", "write"] or env["oversight"] == "auto"
+    # A direct session: a lent account is the person's own. Unreviewed: read only.
+    turn.origin, turn.turn_mode = Turn.ORIGIN_LOCAL, "auto"
+    env = caller_context.build(turn)["authority"]
+    assert (env["placement"], env["oversight"], env["delegated_accounts"]) == ("direct", "auto", "yours")
+    assert env["to_act_as_the_person"]["scopes"] == ["read"]

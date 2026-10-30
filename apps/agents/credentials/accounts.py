@@ -36,7 +36,7 @@ from apps.passkeys.models import UserVaultKeyset
 
 from ..models import Agent, AgentCredential, VaultEntryAccount
 from ..services import runner_may_hold_agent
-from . import vault_engine, zk, zk_endorse, zk_seal
+from . import authority, vault_engine, zk, zk_endorse, zk_seal
 from .zk import ZkError
 
 GITHUB_ENTRY = "github-token"
@@ -227,7 +227,8 @@ def withheld_payload(agent) -> list[dict]:
     whose it is and which provider — never a value — so someone using the agent on their
     own machine knows to use their own account for it (`canopy agent use` says so)."""
     return [{"name": e.name, "provider": e.provider, "label": label(e, agent),
-             "delegated_by_email": e.delegated_by.email if e.delegated_by_id else ""}
+             "delegated_by_email": e.delegated_by.email if e.delegated_by_id else "",
+             "use": f"{e.provider or e.name}: {authority.stance(authority.DIRECT, authority.DELEGATED).why}"}
             for e in delegated_entries(agent) if serves(e, agent)]
 
 

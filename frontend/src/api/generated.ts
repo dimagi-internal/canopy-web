@@ -27477,6 +27477,11 @@ export interface components {
              * @default
              */
             readonly delegated_by_email: string;
+            /**
+             * Use
+             * @default
+             */
+            readonly use: string;
         };
         /**
          * AgentCredentialsResolveOut

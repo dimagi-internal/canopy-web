@@ -2216,6 +2216,8 @@ class DelegatedWithheldOut(StrictModel):
     provider: str = ""
     label: str = ""
     delegated_by_email: str = ""
+    #: What to do instead, in a sentence: in a direct session the account is the reader's own.
+    use: str = ""
 
 
 class DelegatedEntryOut(StrictModel):

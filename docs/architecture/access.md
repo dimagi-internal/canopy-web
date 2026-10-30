@@ -23,7 +23,23 @@ predicate for "may this person make this agent do X" — ask `decide`.
 ## Whose authority an agent acts with
 
 **An agent acts as itself — with its own credentials or ones a person delegated to it —
-or as you only under an act-as-you permission you granted.** Three kinds, one meaning each:
+or as you only under an act-as-you permission you granted.** Two things decide what a
+session carries, and the person chose both: **where it runs** (a runner box, or *direct*:
+their own Claude Code) and **whether it is reviewed** (`manual` or `auto`). Three kinds of
+credential follow from them, in ONE table (`credentials/authority.py`, asked by
+`credential_resolve`; the caller envelope's `authority` block tells the session):
+
+| Kind | On a runner | Direct |
+|---|---|---|
+| **Agent-only** (its canopy login, its 1Password key) | the agent's | never handed out |
+| **The agent's vault secrets** | the agent's | the agent's, as far as the person's role reads the vault |
+| **Delegated** (a person's lent account) | the agent's, sealed to the box | the person's own; the lent copy never travels |
+
+A person's own open local turn is a direct read whoever they are: an agent admin or a
+runner owner is read like anyone and steps up like anyone. The one step-up is crossing
+from the agent's identity to the person's (below); nothing else in a direct session asks
+for a touch. An `auto` turn may ask to act as the person to read only
+(`act_as.unreviewed_write_refusal`). The kinds, one meaning each:
 
 * **Its own credential** — the agent's own login (`Agent.user`, e.g.
   `ace@dimagi-ai.com`) and the secrets in its own vault (`account: "agent"`). A runner
@@ -469,11 +485,13 @@ skills, and canopy keeps the record (`apps/harness/local.py`):
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
   read) AND one of the caller's OWN live turns on that agent named in
   `X-Canopy-Turn-Id`: their running local turn, or — on their private runner's
-  token — a turn of theirs that runner claimed. No turn, no secrets. A license read
-  never gets the agent's canopy login, the owner's GitHub delegation, lent or shared
-  credentials, or the agent's 1Password service-account key (`op_sa_token`), which
-  reads the whole vault, canopy login included (`LICENSE_WITHHELD_EXTRAS`) — so a
-  non-admin using a 1Password-backed agent locally gets no secrets from it. Each read is logged with `via=license`,
+  token — a turn of theirs that runner claimed. No turn, no secrets. A request naming
+  that turn is a `license` read even from an agent admin or a runner owner. What it is
+  handed is `authority`'s direct column: never the agent's canopy login (graded `system`,
+  past the editor tier's manual cap), the owner's GitHub delegation, lent or shared
+  credentials, or the agent's 1Password service-account key (`op_sa_token`), which reads
+  the whole vault, canopy login included — so a non-admin using a 1Password-backed
+  agent locally gets no secrets from it. Each read is logged with `via=license`,
   the turn and the license. Secrets read this way reach the person's machine;
   nothing brokers each call through canopy-web.
 * **Reporting.** Only its initiator may renew, finish or append its transcript —
