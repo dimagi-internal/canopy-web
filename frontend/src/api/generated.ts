@@ -5126,6 +5126,108 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/access-list": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who has which role on this agent: its own lines, the workspace defaults it inherits, and the roles that come with it
+         * @description The agent's access list (`(who, role)` lines), the workspace-wide lines it inherits
+         *     (`scope: workspace`, changed on the workspace), and the owner and admins who hold their
+         *     role without a line. A line's role is the strongest of the lines that name a person.
+         */
+        readonly get: operations["get_access_list"];
+        readonly put?: never;
+        /**
+         * Add a line to this agent's access list (an agent admin)
+         * @description A line says who has which role: a person, everyone in a workspace, anyone at an email
+         *     domain, or a known visitor or sender. Roles you can add are viewer, user and editor; a
+         *     line that names people only by address (domain, contact) can give viewer or user.
+         */
+        readonly post: operations["add_access_line"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/access-list/{line_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Take a line off this agent's access list (an agent admin) */
+        readonly delete: operations["remove_access_line"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change a line's role, its manual-only flag or its note (an agent admin) */
+        readonly patch: operations["change_access_line"];
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/inherit-workspace-defaults": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Say whether this agent also takes its workspace's default lines (an agent admin)
+         * @description On by default: a workspace-wide line reaches every agent in it and below. An agent
+         *     holding credentials people should be named for turns it off and lists its own.
+         */
+        readonly put: operations["set_inherit_workspace_defaults"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/agent-defaults": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The default access-list lines every agent in this workspace and below inherits */
+        readonly get: operations["list_agent_defaults"];
+        readonly put?: never;
+        /** Add a default line: every agent here and below inherits it unless it opts out */
+        readonly post: operations["add_agent_default"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/agent-defaults/{line_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Take a default line away */
+        readonly delete: operations["remove_agent_default"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/syncs/": {
         readonly parameters: {
             readonly query?: never;
@@ -25734,6 +25836,163 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "" | "manual" | "auto";
+        };
+        /**
+         * AccessImplicitOut
+         * @description A role nobody wrote on the list: it comes with the agent or the workspace.
+         */
+        readonly AccessImplicitOut: {
+            /** Who */
+            readonly who: string;
+            /** Role */
+            readonly role: string;
+            /** Why */
+            readonly why: string;
+        };
+        /** AccessLineOut */
+        readonly AccessLineOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            readonly scope: "agent" | "workspace";
+            /** Scope Workspace */
+            readonly scope_workspace?: string | null;
+            /** Kind */
+            readonly kind: string;
+            /** Who */
+            readonly who: string;
+            /** Role */
+            readonly role: string;
+            /** User Id */
+            readonly user_id?: number | null;
+            /** Subject Workspace */
+            readonly subject_workspace?: string | null;
+            /**
+             * At Least
+             * @default
+             */
+            readonly at_least: string;
+            /**
+             * Domain
+             * @default
+             */
+            readonly domain: string;
+            /**
+             * Verified
+             * @default true
+             */
+            readonly verified: boolean;
+            /**
+             * Manual Only
+             * @default false
+             */
+            readonly manual_only: boolean;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /** Granted By Email */
+            readonly granted_by_email?: string | null;
+            /** Granted At */
+            readonly granted_at?: string | null;
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+        };
+        /** AccessListOut */
+        readonly AccessListOut: {
+            /** Uses Access List */
+            readonly uses_access_list: boolean;
+            /** Inherit Workspace Defaults */
+            readonly inherit_workspace_defaults: boolean;
+            /** Lines */
+            readonly lines: readonly components["schemas"]["AccessLineOut"][];
+            /** Implicit */
+            readonly implicit: readonly components["schemas"]["AccessImplicitOut"][];
+            /** Roles */
+            readonly roles: readonly components["schemas"]["AccessRoleOut"][];
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+        };
+        /** AccessRoleOut */
+        readonly AccessRoleOut: {
+            /** Role */
+            readonly role: string;
+            /** Can */
+            readonly can: readonly string[];
+        };
+        /**
+         * AccessLineIn
+         * @description One line to add: who, and what role they get.
+         */
+        readonly AccessLineIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "person" | "workspace" | "domain" | "contact";
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "viewer" | "user" | "editor";
+            /** User Id */
+            readonly user_id?: number | null;
+            /** Email */
+            readonly email?: string | null;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /**
+             * At Least
+             * @default
+             */
+            readonly at_least: string;
+            /**
+             * Domain
+             * @default
+             */
+            readonly domain: string;
+            /**
+             * Verified
+             * @default true
+             */
+            readonly verified: boolean;
+            /**
+             * Manual Only
+             * @default false
+             */
+            readonly manual_only: boolean;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /** AccessLinePatch */
+        readonly AccessLinePatch: {
+            /** Role */
+            readonly role?: ("viewer" | "user" | "editor") | null;
+            /** Manual Only */
+            readonly manual_only?: boolean | null;
+            /** Note */
+            readonly note?: string | null;
+        };
+        /** AccessInheritIn */
+        readonly AccessInheritIn: {
+            /** Inherit */
+            readonly inherit: boolean;
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
@@ -51285,6 +51544,197 @@ export interface operations {
             readonly path: {
                 readonly slug: string;
                 readonly actor: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly get_access_list: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessListOut"];
+                };
+            };
+        };
+    };
+    readonly add_access_line: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessLineIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLineOut"];
+                };
+            };
+        };
+    };
+    readonly remove_access_line: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly line_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly change_access_line: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly line_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessLinePatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLineOut"];
+                };
+            };
+        };
+    };
+    readonly set_inherit_workspace_defaults: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessInheritIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessListOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_defaults: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AccessLineOut"][];
+                };
+            };
+        };
+    };
+    readonly add_agent_default: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessLineIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLineOut"];
+                };
+            };
+        };
+    };
+    readonly remove_agent_default: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly line_id: number;
             };
             readonly cookie?: never;
         };
