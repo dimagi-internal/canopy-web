@@ -32,6 +32,7 @@ from .models import (
     Runner,
     RunnerAssignment,
     Turn,
+    TurnEvent,
     WorkspaceRunnerOrder,
 )
 from .routing import (
@@ -761,8 +762,6 @@ def _note_skips(runner: Runner, skips: dict) -> None:
     if not skips:
         return
     try:
-        from .models import TurnEvent
-
         now = timezone.now()
         for turn_id, why in list(skips.items())[:SKIP_NOTES_PER_CLAIM]:
             recent = TurnEvent.objects.filter(turn_id=turn_id, kind="waiting",
