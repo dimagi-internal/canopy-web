@@ -23,7 +23,7 @@ The old address `https://labs.connect.dimagi.com/canopy/` (now `https://canopy.d
 
 ### Connection providers
 
-Nothing to deploy: providers (Salesforce, Google) need no environment or secret settings. A workspace admin sets one up in Settings → Connections and registers the callback shown there (`https://canopy.dimagi.com/auth/connections/<provider>/<workspace>/callback/`) with the provider; the client secret is stored encrypted in the database ([`vault.md`](vault.md) § OAuth connections are server-held).
+Nothing to deploy: providers (Salesforce, Google) need no environment or secret settings. A workspace admin sets one up in Settings → Connections and registers the callback shown there (`https://canopy.dimagi.com/auth/connections/<provider>/<workspace>/callback/`) with the provider; the client secret is stored encrypted in the database ([`vault.md`](vault.md) § OAuth connections are server-held). The token route's `ambiguous` answer tells people to pass `--workspace`, which the canopy CLI has from its `feat/connection-token-workspace` branch: release that CLI with, or before, the canopy-web deploy that ships per-workspace apps.
 
 ### Protocol identity is pinned by connected sites
 
