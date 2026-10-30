@@ -2021,8 +2021,12 @@ class AgentCredentialAlertOut(StrictModel):
     context: dict = {}
     #: The same, with `at` and `detail`, for each repeat inside the hour (capped).
     repeats: list[dict] = []
-    #: The owner was emailed or pushed (false: delivery is off, or it failed).
+    #: The owner was emailed or pushed (false: delivery is off, or it failed, or
+    #: `told_with` says another agent's alert already told them).
     notified: bool = False
+    #: Not emailed because the same fault on the same runner already emailed the
+    #: owner within the hour about this agent (its slug). One box fault, one email.
+    told_with: str = ""
     created_at: dt.datetime
     last_seen_at: dt.datetime
 

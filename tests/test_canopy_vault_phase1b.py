@@ -309,6 +309,38 @@ def test_a_refused_device_proof_alerts_the_owner_once_an_hour(fleet, sts):
     assert len(_alerts("device-proof")) == 2 and len(mail.outbox) == 2
 
 
+def test_one_runner_fault_emails_each_owner_once_not_once_per_agent(fleet):
+    """The same box fault reaches every agent the box runs. An owner already emailed
+    this hour about it (for one agent) is not emailed again for the next; the second
+    agent's alert is still recorded, and says whose alert told them (Jonathan,
+    2026-10-30: one cloud-ec2-live fault mailed him for Trellis, then for Ada)."""
+    from apps.agents.credentials import vault_alerts
+
+    eva = fleet["agent"]
+    ada = Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["user"])
+    box = fleet["runner"]
+    other_box = Runner.objects.create(name="other-box", kind=Runner.CLOUD, owner=fleet["user"],
+                                      workspace=fleet["ws"], status=Runner.ONLINE,
+                                      last_heartbeat_at=timezone.now(), capabilities={})
+    vault_alerts.raise_alert(eva, "device-proof", detail="eva refused", runner=box)
+    assert len(mail.outbox) == 1
+    assert "one per runner" in mail.outbox[0].body
+    second = vault_alerts.raise_alert(ada, "device-proof", detail="ada refused", runner=box)
+    assert second is not None and len(mail.outbox) == 1  # recorded, not emailed
+    assert second.notified["emailed"] == [] and second.notified["already_told"] == {"jj@dimagi.com": "eva"}
+    [listed] = vault_alerts.alerts_for(ada)
+    assert listed["told_with"] == "eva" and listed["notified"] is False
+    # Another runner, another kind, or the hour gone by: emailed as before.
+    vault_alerts.raise_alert(ada, "burst", detail="ada burst", runner=box)
+    assert len(mail.outbox) == 2
+    AgentCredentialAlert.objects.filter(kind="device-proof").delete()
+    vault_alerts.raise_alert(ada, "device-proof", detail="ada refused", runner=other_box)
+    assert len(mail.outbox) == 3
+    AgentCredentialAlert.objects.update(created_at=timezone.now() - dt.timedelta(hours=1, minutes=1))
+    vault_alerts.raise_alert(eva, "device-proof", detail="eva refused", runner=other_box)
+    assert len(mail.outbox) == 4
+
+
 def _resolve_as_box(fleet, turn=""):
     headers = {"HTTP_AUTHORIZATION": f"Bearer {fleet['pat']}",
                "HTTP_X_CANOPY_RUNNER": str(fleet["runner"].pk)}
