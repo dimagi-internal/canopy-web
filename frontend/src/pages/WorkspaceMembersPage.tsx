@@ -287,7 +287,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         </div>
       )}
 
-      <WorkspaceAgentDefaults workspace={slug} canManage={canManage} isOwner={roleAllows(myRole, 'own')} />
+      <WorkspaceAgentDefaults workspace={slug} />
 
       <div className="mb-8">
         <WorkbenchSubHeader title="Pending invites" count={outstandingInvites.length} />

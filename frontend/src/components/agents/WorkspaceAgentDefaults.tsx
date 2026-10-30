@@ -1,30 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { addAgentDefault, listAgentDefaults, removeAgentDefault, type AccessLineOut } from '@/api/agents'
+import { addAgentDefault, listAgentDefaults, removeAgentDefault, type AccessLineOut, type AgentDefaultsOut } from '@/api/agents'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { AccessLineForm } from './AccessLineForm'
-import { DEFAULT_ROLES, roleWord } from './accessWords'
+import { roleWord } from './accessWords'
 
 // DEFAULT ACCESS FOR AGENTS: lines every agent in this workspace and below inherits, unless
 // that agent opts out (its Access setting). Workspace admins change them; a default that
-// gives the whole agent (editor) is the workspace OWNER's call. The server decides both —
-// `canManage` / `isOwner` only decide what is offered, and a refusal is shown in its words.
-export function WorkspaceAgentDefaults({
-  workspace,
-  canManage,
-  isOwner,
-}: {
-  workspace: string
-  canManage: boolean
-  isOwner: boolean
-}) {
+// gives the whole agent (editor) is the workspace OWNER's call. The server says what the
+// caller may do (`can_edit`, `can_give_editor`) and refuses the rest in its own words.
+export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
   const { workspaces } = useWorkspace()
-  const [lines, setLines] = useState<AccessLineOut[] | null>(null)
+  const [data, setData] = useState<AgentDefaultsOut | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      setLines(await listAgentDefaults(workspace))
+      setData(await listAgentDefaults(workspace))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not load the default access')
     }
@@ -52,14 +44,14 @@ export function WorkspaceAgentDefaults({
         agent can add its own on top.
       </p>
 
-      {lines === null ? (
+      {data === null ? (
         error ? null : <div className="h-12 animate-pulse rounded-lg bg-muted" />
-      ) : lines.length === 0 ? (
+      ) : data.lines.length === 0 ? (
         <p className="m-0 mb-3 text-[12px] text-muted-foreground">No defaults yet.</p>
       ) : (
         <table className="mb-3 w-full text-[12px]">
           <tbody>
-            {lines.map((l) => (
+            {data.lines.map((l) => (
               <tr key={l.id} data-testid="agent-default" className="border-b border-border/50">
                 <td className="py-1 pr-3 text-foreground">{l.who}</td>
                 <td className="py-1 pr-3 text-foreground">{roleWord(l.role)}</td>
@@ -90,11 +82,11 @@ export function WorkspaceAgentDefaults({
         </p>
       )}
 
-      {canManage && (
+      {data?.can_edit && (
         <AccessLineForm
-          roles={DEFAULT_ROLES}
+          roles={data.roles}
           workspaces={workspaces.map((w) => [w.slug, w.display_name] as [string, string])}
-          canGiveEditor={isOwner}
+          canGiveEditor={data.can_give_editor}
           submitLabel="Add default"
           onAdd={async (line) => {
             await addAgentDefault(workspace, line)
@@ -103,7 +95,7 @@ export function WorkspaceAgentDefaults({
           }}
         />
       )}
-      {canManage && !isOwner && (
+      {data?.can_edit && !data.can_give_editor && (
         <p className="m-0 mt-2 text-[11px] text-muted-foreground">
           Only a workspace owner can give editor to everyone as a default.
         </p>

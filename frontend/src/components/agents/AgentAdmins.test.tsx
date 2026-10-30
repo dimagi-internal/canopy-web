@@ -18,7 +18,7 @@ type Row = AgentAccessOut['members'][number]
 const row = (o: Partial<Row>): Row => ({
   user_id: 1, email: 'x@dimagi.com', name: 'x@dimagi.com', workspace_role: 'editor', agent_role: 'member',
   basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: false,
-  may_request_auto: false, role: 'editor', source: 'workspace-editor', ...o,
+  may_request_auto: false, role: 'editor', source: 'workspace-editor', via: '', ...o,
 })
 
 const MEMBERS: Row[] = [

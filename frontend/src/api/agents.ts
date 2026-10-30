@@ -877,9 +877,11 @@ export async function setInheritWorkspaceDefaults(slug: string, inherit: boolean
 
 // A workspace's default lines: every agent in it and below inherits them unless it
 // opts out. Workspace admins change them; `editor` is the workspace owner's call.
-export async function listAgentDefaults(workspace: string): Promise<AccessLineOut[]> {
+export type AgentDefaultsOut = Schemas['AgentDefaultsOut']
+
+export async function listAgentDefaults(workspace: string): Promise<AgentDefaultsOut> {
   const res = await apiV2.GET('/api/workspaces/{slug}/agent-defaults', { params: { path: { slug: workspace } } })
-  return unwrap(res, 'listAgentDefaults') as unknown as AccessLineOut[]
+  return unwrap(res, 'listAgentDefaults') as unknown as AgentDefaultsOut
 }
 
 export async function addAgentDefault(workspace: string, line: AccessLineIn): Promise<AccessLineOut> {
