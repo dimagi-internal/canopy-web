@@ -25,6 +25,7 @@ const chat = vi.hoisted(() => ({
   listMessages: vi.fn(),
   moveSession: vi.fn(),
   placeTurn: vi.fn(),
+  transferSession: vi.fn(),
   requestBackfill: vi.fn(),
   resetSession: vi.fn(),
   setSessionNotify: vi.fn(),
@@ -229,6 +230,38 @@ describe('useRunnerPlacement', () => {
     await waitFor(() => expect(result.current.placeInfo).toMatch(/Placed/))
     expect(chat.placeTurn).toHaveBeenCalledWith('s1', 'r2')
     expect(result.current.placing).toBe(false)
+  })
+
+  it('moves the whole session when there is no queued message to place', async () => {
+    const { ChatApiError } = await import('@/api/chat')
+    chat.placeTurn.mockRejectedValue(new ChatApiError(404, 'no queued turn to place'))
+    chat.transferSession.mockResolvedValue({ status: 'moved', runner: 'other' })
+    chat.getSession.mockResolvedValue(meta({ runner_name: 'other', runner_online: true }))
+    const setMeta = vi.fn()
+    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), setMeta))
+    act(() => result.current.continueOn('r2'))
+    await waitFor(() => expect(result.current.placeInfo).toBe('Moved to other.'))
+    expect(chat.transferSession).toHaveBeenCalledWith('s1', 'r2')
+    await waitFor(() => expect(setMeta).toHaveBeenCalled())
+    expect(result.current.placing).toBe(false)
+  })
+
+  it('says who must approve a move onto someone else\'s runner', async () => {
+    const { ChatApiError } = await import('@/api/chat')
+    chat.placeTurn.mockRejectedValue(new ChatApiError(404, 'no queued turn to place'))
+    chat.transferSession.mockResolvedValue({ status: 'pending', approvers: ['a@x.org'] })
+    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn()))
+    act(() => result.current.continueOn('r2'))
+    await waitFor(() => expect(result.current.placeInfo).toMatch(/a@x\.org to approve/))
+  })
+
+  it('shows a refused move as an error', async () => {
+    const { ChatApiError } = await import('@/api/chat')
+    chat.placeTurn.mockRejectedValue(new ChatApiError(404, 'no queued turn to place'))
+    chat.transferSession.mockRejectedValue(new ChatApiError(409, 'a turn is running'))
+    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn()))
+    act(() => result.current.continueOn('r2'))
+    await waitFor(() => expect(result.current.placeError).toBe('a turn is running'))
   })
 
   it('shows the server refusal on a 422', async () => {
