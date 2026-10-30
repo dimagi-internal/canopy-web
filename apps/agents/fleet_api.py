@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
 from apps.api.route_gates import gate
+from apps.events import audit
 from apps.harness.api_turns import visible_turns_qs
 from apps.harness.models import Turn
 from apps.oauth_server.views import issuer
@@ -32,6 +33,7 @@ from .api_board import apply_project_patch, project_detail, require_workspace_ed
 from .gates import (
     agent_for_read,
     agent_for_work,
+    agent_in_project_tree,
     listed_agent_workspaces,
     project_ws_or_404,
     require_project_edit,
@@ -52,6 +54,9 @@ from .schemas import (
     KbPublishIn,
     KbUploadOut,
     McpServerOut,
+    ProjectShareIn,
+    ProjectShareOut,
+    ProjectShareRemovedOut,
     TaskCountOut,
     WorkspaceProjectIn,
 )
@@ -237,7 +242,7 @@ def _project_rows(qs, *, status: str) -> list[AgentProjectOut]:
         qs = qs.filter(status__in=AgentProject.OPEN_STATUSES)
     elif status:
         qs = qs.filter(status__in=[st.strip() for st in status.split(",") if st.strip()])
-    projects = list(qs.select_related("agent", "owner_user").order_by("workspace_id", "-updated_at"))
+    projects = list(qs.select_related("agent", "owner_user").prefetch_related("shares").order_by("workspace_id", "-updated_at"))
     work.annotate_projects(projects)
     return [AgentProjectOut.model_validate(p) for p in projects]
 
@@ -367,7 +372,7 @@ def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
         with transaction.atomic():
             project = services.create_project(steward, payload, workspace=workspace, by_user=request.user)
             if payload.member_agents:
-                services.set_member_agents(project, [agent_for_read(request, m.strip(), honor_pin=False)
+                services.set_member_agents(project, [agent_in_project_tree(project, m.strip())
                                                      for m in payload.member_agents if m.strip()])
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -395,6 +400,77 @@ def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump() for link in data["links"]]
     return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
+
+
+def _share_out(share, project) -> ProjectShareOut:
+    return ProjectShareOut(
+        workspace=share.workspace_id, added_by=share.added_by.email if share.added_by_id else None,
+        created_at=share.created_at,
+        member_agents=sorted(a.slug for a in services.members_through_share(project, share.workspace_id)))
+
+
+def _require_share_editor(request: HttpRequest, project) -> None:
+    # Sharing opens a project to other workspaces, so it takes an editor of the
+    # project's OWN workspace; its lead or a working agent's login is not enough.
+    if not perms.can(request.user, project.workspace_id, perms.AGENT_WORK):
+        raise HttpError(403, "sharing a project requires the editor role in its workspace")
+
+
+@router.get("/workspace-projects/{workspace}/{handle}/shares/", response=list[ProjectShareOut],
+            summary="List the workspaces a project is shared with, and the agents that joined through each")
+@gate("member")
+def list_project_shares(request: HttpRequest, workspace: str, handle: str) -> list[ProjectShareOut]:
+    """A share opens the project to a workspace of its own tree and the workspaces below it:
+    their members can read it (its page, tasks and the skills and knowledge it serves) and
+    their agents can join it as member agents and be assigned its tasks. Never across
+    organisations. Each row lists the project's member agents that are members only through it."""
+    project = _workspace_project_or_404(request, workspace, handle)
+    return [_share_out(sh, project) for sh in project.shares.select_related("workspace", "added_by")]
+
+
+@router.post("/workspace-projects/{workspace}/{handle}/shares/", response={201: ProjectShareOut},
+             summary="Share a project with another workspace of its tree (and the ones below it)")
+@gate("agent.work", setting=True)
+def add_project_share(request: HttpRequest, workspace: str, handle: str, payload: ProjectShareIn):
+    """Needs the editor role in the project's workspace. `workspace` must be in the project's own
+    organisation and neither the project's workspace nor one above it (422); sharing again
+    changes nothing. Sharing lets that side read the project and its agents join it; it does not
+    let them lead it."""
+    project = _workspace_project_or_404(request, workspace, handle)
+    _require_share_editor(request, project)
+    before = project.shared_with
+    try:
+        share = services.share_project(project, payload.workspace, by=request.user)
+    except services.ProjectScopeError as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    project.refresh_from_db()
+    audit.note_change(scope=f"project-shares:{project.address}", before=before, after=project.shared_with,
+                      workspace=project.workspace,
+                      summary=f"shared {project.address} with {share.workspace_id}")
+    return Status(201, _share_out(share, project))
+
+
+@router.delete("/workspace-projects/{workspace}/{handle}/shares/{share_workspace}/",
+               response=ProjectShareRemovedOut,
+               summary="Stop sharing a project with a workspace; agents that joined only through it are removed")
+@gate("agent.work", setting=True)
+def remove_project_share(request: HttpRequest, workspace: str, handle: str, share_workspace: str):
+    """Needs the editor role in the project's workspace. Member agents that no longer qualify
+    (they belonged to that workspace or below it, with no other share to cover them) are taken
+    off the project and listed in `removed_agents`; its lead agent is never removed."""
+    project = _workspace_project_or_404(request, workspace, handle)
+    _require_share_editor(request, project)
+    before = project.shared_with
+    try:
+        removed = services.unshare_project(project, share_workspace)
+    except services.ProjectScopeError as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    project.refresh_from_db()
+    audit.note_change(scope=f"project-shares:{project.address}", before=before, after=project.shared_with,
+                      workspace=project.workspace,
+                      summary=f"stopped sharing {project.address} with {share_workspace}"
+                              + (f"; removed {', '.join(removed)}" if removed else ""))
+    return ProjectShareRemovedOut(workspace=share_workspace, removed_agents=removed)
 
 
 # ---- its own MCP server: the steward publishes a knowledge base it serves ----

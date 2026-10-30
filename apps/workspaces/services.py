@@ -141,6 +141,18 @@ def descendant_map(slugs) -> dict[str, set[str]]:
     return out
 
 
+def with_ancestors(slugs) -> set[str]:
+    """`slugs` and every workspace ABOVE any of them: the workspaces whose
+    grant (a share) reaches one of `slugs`, since a grant to a workspace covers
+    the ones below it. One query per tree level for all of them."""
+    slugs = set(slugs)
+    parents = dict(Workspace.objects.filter(slug__in=slugs).values_list("slug", "parent_id"))
+    out = set(slugs)
+    for chain in ancestor_chains(parents).values():
+        out.update(chain)
+    return out
+
+
 def subtree(root: Workspace, visible=lambda _slug: True) -> list[tuple[Workspace, int]]:
     """`root` and the descendants `visible` admits, depth-first in tree order,
     each with its depth below `root` (0 = root). A workspace whose parent is

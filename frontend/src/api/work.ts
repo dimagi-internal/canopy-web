@@ -302,3 +302,35 @@ export async function removeProjectService(workspace: string, handle: string, id
     'removeProjectService',
   )
 }
+
+// ---- sharing a project with other workspaces of its tree -------------------------
+
+export type ProjectShare = Schemas['ProjectShareOut']
+export type ProjectShareRemoved = Schemas['ProjectShareRemovedOut']
+
+export async function listProjectShares(workspace: string, handle: string): Promise<ProjectShare[]> {
+  const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/shares/', {
+    params: { path: { workspace, handle } },
+  })
+  return typed(unwrap(res, 'listProjectShares'))
+}
+
+export async function addProjectShare(workspace: string, handle: string, shareWorkspace: string): Promise<ProjectShare> {
+  const res = await apiV2.POST('/api/workspace-projects/{workspace}/{handle}/shares/', {
+    params: { path: { workspace, handle } },
+    body: { workspace: shareWorkspace },
+  })
+  return typed(unwrap(res, 'addProjectShare'))
+}
+
+/** Stops sharing; the agents that joined only through it are removed and returned. */
+export async function removeProjectShare(
+  workspace: string,
+  handle: string,
+  shareWorkspace: string,
+): Promise<ProjectShareRemoved> {
+  const res = await apiV2.DELETE('/api/workspace-projects/{workspace}/{handle}/shares/{share_workspace}/', {
+    params: { path: { workspace, handle, share_workspace: shareWorkspace } },
+  })
+  return typed(unwrap(res, 'removeProjectShare'))
+}

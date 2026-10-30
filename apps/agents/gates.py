@@ -142,12 +142,40 @@ def project_or_404(agent: Agent, ref: str):
 # address outside it is the same 404 as one that does not exist.
 
 
+def agent_in_project_tree(project, slug: str) -> Agent:
+    """A member agent named for `project`, found by the PROJECT's tree rather
+    than the caller's reach (the caller is already its editor): any agent of the
+    project's organisation. Another organisation's agent is the same 404 as one
+    that does not exist; whether it may join is `services.set_member_agents`'s 422."""
+    agent = Agent.objects.filter(slug=slug).select_related("workspace").first()
+    if agent is not None:
+        roots = wsvc.tree_roots({agent.workspace_id, project.workspace_id})
+        if roots[agent.workspace_id] == roots[project.workspace_id]:
+            return agent
+    raise HttpError(404, f"agent '{slug}' not found")
+
+
+def shared_with_caller(request: HttpRequest, project) -> bool:
+    """Is `project` shared with a workspace the caller belongs to, or one above
+    it (a share covers the workspaces below it)?"""
+    shares = services.project_share_slugs(project)
+    return bool(shares and shares & wsvc.with_ancestors(visible_agent_workspaces(request)))
+
+
+def task_in_reach(request: HttpRequest, task) -> bool:
+    """May the caller see this task's workspace — or is it in a project shared
+    with a workspace they belong to?"""
+    if task.workspace_id in visible_agent_workspaces(request):
+        return True
+    return task.project_id is not None and shared_with_caller(request, task.project)
+
+
 def task_or_404(request: HttpRequest, key: str):
     """A task by key, if the caller may see its workspace; else 404."""
     from . import work  # noqa: PLC0415 — work imports models only
 
     task = work.task_by_key(key)
-    if task is None or task.workspace_id not in visible_agent_workspaces(request):
+    if task is None or not task_in_reach(request, task):
         raise HttpError(404, f"task {key} not found")
     return task
 
@@ -155,7 +183,7 @@ def task_or_404(request: HttpRequest, key: str):
 def check_task_visible(request: HttpRequest, task, ref: str = "") -> None:
     """404 unless the caller may see the task's workspace — for a task found by
     a global key through an agent's route."""
-    if task.workspace_id not in visible_agent_workspaces(request):
+    if not task_in_reach(request, task):
         raise HttpError(404, f"task {ref or task.key} not found")
 
 
@@ -184,7 +212,8 @@ def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
     if project is None or (workspace not in set(listed_agent_workspaces(request))
                            and workspace not in visible_agent_workspaces(request)
                            and (project.agent_id is None
-                                or project.agent.workspace_id not in visible_agent_workspaces(request))):
+                                or project.agent.workspace_id not in visible_agent_workspaces(request))
+                           and not shared_with_caller(request, project)):
         raise HttpError(404, f"project {workspace}/{handle} not found")
     return project
 

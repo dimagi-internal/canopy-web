@@ -1619,6 +1619,19 @@ class AgentProject(models.Model):
         return self.agent_slug
 
     @property
+    def shared_with(self) -> list[str]:
+        """The workspaces it is shared with (`ProjectShare`), sorted."""
+        if self.pk is None:
+            return []
+        return sorted(sh.workspace_id for sh in self.shares.all())
+
+    @property
+    def shared_in(self) -> bool:
+        """True on a row a list shows only because it is shared with the
+        reader (`services.mark_shared_in`); never stored."""
+        return getattr(self, "_shared_in", False)
+
+    @property
     def category(self) -> str:
         return self.CATEGORY.get(self.status, "started")
 
@@ -1759,6 +1772,34 @@ class AgentProject(models.Model):
         from apps.agents.services import waiting_q  # cycle: agents.services -> agents.models  # noqa: PLC0415
 
         return self.tasks.filter(waiting_q()).count()
+
+
+class ProjectShare(models.Model):
+    """A project shared with a workspace of its own tree: the project is open to
+    that workspace's members and agents, and to those of the workspaces below it
+    (`services.may_join_workspace_project`, `services.project_reader_slugs`).
+
+    The shared workspace is in the project's own organisation (same tree root)
+    and neither the project's own workspace nor one above it, which already
+    reach it; nothing is ever shared across organisations
+    (`services.share_project`). A share makes the project readable there and
+    lets that side's agents join it as members; it does not let them lead it.
+    """
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="shares")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="shared_in_projects")
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                 on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["workspace_id"]
+        constraints = [models.UniqueConstraint(fields=["project", "workspace"],
+                                               name="project_share_unique")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id} shared with {self.workspace_id}"
 
 
 class ProjectService(models.Model):

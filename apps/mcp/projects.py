@@ -21,7 +21,8 @@ OAuth; and because the URL sits under `/api/mcp/`, the resource an OAuth client
 signs in for (`/api/mcp/`, RFC 9728) already covers it — MCP clients accept a
 protected resource that is a path prefix of the server URL.
 
-**Who may call it:** a member of the project's workspace or of its steward's —
+**Who may call it:** a member of the project's workspace, of its steward's, or of a
+workspace it is shared with (or one below that) —
 the same readers `GET /api/workspace-projects/<ws>/<handle>/` admits. Anyone else
 sees no tools and every call is refused, with the same answer as a project that
 does not exist.
@@ -77,8 +78,8 @@ def readable_project(user, workspace: str, handle: str):
     project = services.get_workspace_project(workspace, handle)
     if project is None or not project.mcp_path:
         return None
-    readers = {project.workspace_id} | ({project.agent.workspace_id} if project.agent_id else set())
-    if not (readers & wsvc.user_workspace_slugs(user)):
+    # its workspace, its lead agent's, and the ones it is shared with and below them
+    if not (services.project_reader_slugs(project) & wsvc.user_workspace_slugs(user)):
         return None
     return project
 
