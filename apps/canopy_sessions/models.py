@@ -277,40 +277,6 @@ class SessionReviewGrant(models.Model):
                                                name="session_review_grant_one_live")]
 
 
-class SessionChannelReview(models.Model):
-    """A workspace admin's standing permission for ONE agent to review the sessions
-    that live in ONE Slack channel (the eighth leg of `access.visible_session_q`).
-
-    Posting or sharing a session into a channel is already showing it to the
-    channel; this lets the channel's support agent (a coach) read what it was shown,
-    without each poster enrolling one by one. It covers sessions whose metadata names
-    this team and channel (`slack_team`, `slack_channel`) in the agent's own
-    workspace, read-only, never a sensitive one and never a contact's. It is not a
-    personal `SessionReviewGrant`: it reaches nothing outside the channel.
-
-    Made and ended by an owner or admin of the agent's workspace through the Slack
-    channel allow-list (`apps/slack/ingest.py`), each act on the workspace's event
-    log. Revoking sets `revoked_at`; the leg drops the agent's next read."""
-
-    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE,
-                              related_name="session_channel_reviews")
-    slack_team = models.CharField(max_length=32)
-    channel_id = models.CharField(max_length=32)
-    channel_name = models.CharField(max_length=255, blank=True, default="")
-    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
-                                   blank=True, related_name="+")
-    created_at = models.DateTimeField(auto_now_add=True)
-    revoked_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "canopy_sessions_channel_review"
-        ordering = ["-created_at", "-pk"]
-        indexes = [models.Index(fields=["agent", "revoked_at"])]
-        constraints = [models.UniqueConstraint(fields=["agent", "slack_team", "channel_id"],
-                                               condition=models.Q(revoked_at__isnull=True),
-                                               name="session_channel_review_one_live")]
-
-
 class ProjectSessionShare(models.Model):
     """A person's choice to share their LAPTOP sessions in one project's repo with
     that project's team — the explicit multiplayer switch for runner-discovered

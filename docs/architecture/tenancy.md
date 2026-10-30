@@ -231,7 +231,7 @@ failure again.
 
 One module decides who may see and act on a chat session: `apps/canopy_sessions/access.py`.
 
-- **Tenant first** (member of `Session.workspace`), then one of eight legs: creator ·
+- **Tenant first** (member of `Session.workspace`), then one of seven legs: creator ·
   explicit participant (`SessionParticipant`) · a runner-discovered session on a box you
   OWN (`Runner.owner`; never the whole tenant — a laptop session is single-player until
   its owner adds someone) · the own thread of an agent you administer (`Agent.is_admin`:
@@ -242,11 +242,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   `owner_user` or a `ProjectParticipant`; never an agent's own login, never a sensitive
   session; editor, may pull). Per person × project, opt-in, revocable, each change an
   audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
-  `/api/me/session-sharing/`, the Settings → Opted-in repos panel) · a **channel review**:
-  an owner or admin of the agent's workspace gave that agent the sessions living in one
-  Slack channel (`SessionChannelReview`, set from the channel allow-list on the Slack
-  settings page; the agent's own login only, read-only, never a sensitive session or a
-  contact's, nothing outside that channel). Who sees what per
+  `/api/me/session-sharing/`, the Settings → Opted-in repos panel). Who sees what per
   channel: `access.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
