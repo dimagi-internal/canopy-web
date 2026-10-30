@@ -137,14 +137,27 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
 
 
 def device_proof_refused(agent, request, *, reason: str, runner=None):
-    """A resolve answered 401 `device_proof_required`."""
+    """A resolve answered 401 `device_proof_required`.
+
+    The detail says WHO sent it in words an owner can act on. A runner token signs in
+    as the runner's owner, so "resolve by <owner>" read as something the owner had done
+    and "resolve" as "resolved" (Jonathan, 2026-10-30: "why is this saying resolved by
+    jjackson@dimagi.com, I don't think I took any actions")."""
     try:
+        who = _who(request.user)
+        if getattr(request, "runner_token", None) is not None and runner is not None:
+            detail = (f"The runner {runner.name} asked for {agent.slug}’s secrets "
+                      f"without proving which machine it is, and was refused ({reason}). "
+                      f"Runners sign in to Canopy as their owner, which is why {who} is "
+                      f"named; it was the runner’s software, not something {who} did.")
+        else:
+            detail = (f"A request using {who}’s login"
+                      + (f" on {runner.name}" if runner is not None else "")
+                      + f" asked for {agent.slug}’s secrets and was refused: {reason}.")
         return raise_alert(
             agent, "device-proof", user=request.user, runner=runner, request=request,
             turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
-            detail=(f"resolve by {_who(request.user)}"
-                    + (f" on {runner.name}" if runner is not None else "")
-                    + f" refused: {reason}")[:500])
+            detail=detail[:500])
     except Exception:  # noqa: BLE001
         logger.exception("vault device-proof alert failed for %s", agent.slug)
         return None
@@ -247,6 +260,11 @@ _CONTEXT_HEADERS = (
 )
 
 
+#: `context["via"]` when the request came on a runner's own token, which signs in as
+#: the runner's owner: the alert is the box's doing, not the person's.
+RUNNER_TOKEN = "runner-token"
+
+
 def request_context(request, turn_id: str = "") -> dict:
     """Who asked, as far as the request says and canopy-web can resolve: the headers
     above plus what the named turn IS (`turn_summary`). Best-effort, never raises."""
@@ -256,6 +274,8 @@ def request_context(request, turn_id: str = "") -> dict:
             value = " ".join(str(request.META.get(header, "")).split())[:200]
             if value:
                 out[key] = value
+        if getattr(request, "runner_token", None) is not None:
+            out["via"] = RUNNER_TOKEN
         turn = turn_summary(turn_id or request.META.get("HTTP_X_CANOPY_TURN_ID", ""))
         if turn:
             out["turn"] = turn
@@ -278,19 +298,31 @@ def turn_summary(turn_id: str) -> dict:
         tid = uuid.UUID(raw)
     except ValueError:
         return {"id": raw[:120], "found": False}
-    t = (Turn.objects.select_related("agent", "claimed_by", "initiator_user", "chat_session")
+    t = (Turn.objects.select_related("agent", "claimed_by", "initiator_user",
+                                     "chat_session__agent", "chat_session__workspace")
          .filter(pk=tid).first())
     if t is None:
         return {"id": raw, "found": False}
+    # A chat turn targets its conversation, not the agent (turn_targets_agent_xor_
+    # project_xor_session), so the agent is the conversation's — else the email said
+    # "a session's canopy_web_chat turn" (2026-10-30).
+    agent = t.agent if t.agent_id else (t.chat_session.agent if t.chat_session_id else None)
     out = {"id": raw, "found": True, "origin": t.origin, "status": t.status,
-           "agent": t.agent.slug if t.agent_id else "",
+           "agent": agent.slug if agent is not None else "",
            "project": getattr(t, "project", "") or "",
            "runner": t.claimed_by.name if t.claimed_by_id else "",
            "started_by": t.initiator_user.email if t.initiator_user_id else "",
            "created_at": t.created_at.isoformat() if t.created_at else ""}
     if t.chat_session_id:
         out["chat_session"] = str(t.chat_session_id)
+        out["chat_url"] = wslinks.scoped_url(t.chat_session.workspace,
+                                             f"/sessions/{t.chat_session_id}")
     return out
+
+
+#: A turn's origin in an owner's words, not the enum.
+_ORIGIN_WORDS = {"canopy_web_chat": "Canopy chat", "slack": "Slack", "email": "email",
+                 "canopy_scheduler": "scheduled", "api": "API"}
 
 
 def context_lines(context: dict) -> list[str]:
@@ -298,15 +330,19 @@ def context_lines(context: dict) -> list[str]:
     lines = []
     turn = context.get("turn") or {}
     if turn.get("found"):
-        what = turn.get("agent") or turn.get("project") or "a session"
-        bits = [f"{what}'s {turn.get('origin') or ''} turn".replace("  ", " ")]
+        origin = turn.get("origin") or ""
+        kind = " ".join(x for x in (_ORIGIN_WORDS.get(origin, origin), "turn") if x)
+        what = turn.get("agent") or turn.get("project")
+        bits = [f"during {what}’s {kind}" if what else f"during a {kind}"]
         if turn.get("started_by"):
             bits.append(f"started by {turn['started_by']}")
         if turn.get("runner"):
             bits.append(f"on {turn['runner']}")
-        if turn.get("chat_session"):
-            bits.append(f"chat session {turn['chat_session']}")
-        lines.append(f"Turn {turn['id']}: " + ", ".join(bits))
+        lines.append("When: " + ", ".join(bits) + f" (turn {turn['id']})")
+        if turn.get("chat_url"):
+            lines.append(f"The conversation: {turn['chat_url']}")
+        elif turn.get("chat_session"):
+            lines.append(f"Chat session: {turn['chat_session']}")
     elif turn.get("id"):
         lines.append(f"Turn {turn['id']}: no such turn on canopy-web")
     if context.get("proof_missing"):
@@ -375,6 +411,16 @@ _WHY = {
                      "nobody approved means a machine to approve, if it is yours. If you do "
                      "not recognise either, revoke the token. (A known box that simply does "
                      "not run the agent is refused without this alert.)"),
+    # The same refusal when the caller was a runner on its own token: the box's
+    # software, not the person it signs in as (trellis on cloud-ec2-live, 2026-10-30).
+    "device-proof:runner": ("What this means: this agent only hands its secrets to "
+                            "machines that prove which machine they are. A runner asked without that "
+                            "proof, so Canopy refused it. Nothing was handed out, and you did "
+                            "not do anything: every request a runner makes carries its "
+                            "owner’s name. Look into it only if you do not recognise "
+                            "the turn above or the runner is not yours. Every alert like "
+                            "this, with each repeat and the turn it came from, is at the "
+                            "second link below."),
     "zk-wrap-missing": ("Nothing is wrong or unsafe. Approving a machine lets it identify itself; "
                         "it does not hand it the agent's secrets. An admin of the agent does "
                         "that separately, once per machine. Open the link, find the machine "
@@ -385,8 +431,18 @@ _WHY = {
 }
 
 
+def _why(alert) -> str:
+    """The explanation for `alert`: its kind's, or the runner-token variant of it."""
+    if (alert.context or {}).get("via") == RUNNER_TOKEN:
+        runner_why = _WHY.get(f"{alert.kind}:runner")
+        if runner_why:
+            return runner_why
+    return _WHY.get(alert.kind, "")
+
+
 #: Subject wording for kinds whose model label reads as internals.
-_SUBJECT = {"zk-wrap-missing": "a newly approved machine needs access granted"}
+_SUBJECT = {"zk-wrap-missing": "a newly approved machine needs access granted",
+            "device-proof": "a request for its secrets was refused (no machine proof)"}
 
 
 def _notify(agent, alert) -> dict:
@@ -400,17 +456,22 @@ def _notify(agent, alert) -> dict:
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
         label = _SUBJECT.get(alert.kind, label)
         subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
-        why = _WHY.get(alert.kind, "")
+        why = _why(alert)
         who = context_lines(alert.context or {})
+        log = _link(agent)
+        log_label = _link_label(agent, "")
         text = (f"{alert.detail}\n\n" + ("".join(f"{line}\n" for line in who) + "\n" if who else "")
                 + (f"{why}\n\n" if why else "")
-                + f"{act}: {link}\n\n"
+                + f"{act}: {link}\n"
+                + (f"{log_label}: {log}\n" if log != link else "") + "\n"
                 f"At most one alert of this kind per agent per hour. You are getting this "
                 f"because you own {agent.slug} on Canopy.\n")
         html = (f"<p>{escape(alert.detail)}</p>"
                 + ("<p>" + "<br>".join(escape(line) for line in who) + "</p>" if who else "")
                 + (f"<p>{escape(why)}</p>" if why else "")
-                + f'<p><a href="{escape(link)}">{escape(act)}</a></p>'
+                + f'<p><a href="{escape(link)}">{escape(act)}</a>'
+                + (f'<br><a href="{escape(log)}">{escape(log_label)}</a>' if log != link else "")
+                + "</p>"
                 f"<p style=\"color:#78716c;font-size:13px\">At most one alert of "
                 f"this kind per agent per hour. You are getting this because you own "
                 f"{escape(agent.slug)} on Canopy.</p>")
