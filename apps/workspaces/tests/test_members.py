@@ -163,7 +163,7 @@ def test_set_member_role_is_idempotent():
 def test_set_member_role_rejects_unknown_role():
     a = _user("a@dimagi.com")
     _ws(a)
-    r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "superuser"})
+    r = _patch(_client(a), f"/api/workspaces/acme/members/{a.id}/", {"role": "emperor"})
     assert r.status_code == 422
 
 

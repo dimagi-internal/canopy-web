@@ -37,7 +37,7 @@ from django.utils.html import escape
 
 from apps.events import services as events
 from apps.events.models import Event
-from apps.push.services import alert_mail_recipients, send_to_user
+from apps.push.services import send_to_user
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import base_url
 from apps.workspaces.models import WorkspaceMembership
@@ -544,8 +544,9 @@ def notify_new_blocking(now) -> None:
         try:
             candidates = [users[uid] for uid in sorted(members[roots[alert.workspace_id]]) if uid in users]
             closers = [u for u in candidates if any(a.closes for a in visible_actions(alert, u))]
-            # Minus those who want only what is handed to them — never down to nobody.
-            closers = alert_mail_recipients(closers)
+            # Owners and admins, not the workspace's superusers (oversight, not
+            # told) — never down to nobody.
+            closers = wsvc.mail_recipients(closers, alert.workspace_id)
             if not closers:
                 logger.warning("alerts tick: no one holds a closing action on blocking alert %s (%s); not notifying",
                                alert.pk, alert.title)

@@ -246,28 +246,33 @@ def test_other_organisation_user_is_not_notified(source, ws, owner, pushes):
     assert pushes == [owner.pk]
 
 
-def _assigned_only(user):
-    from apps.push.models import NotificationPreference
 
-    NotificationPreference.objects.create(user=user, alert_mail=NotificationPreference.ALERT_MAIL_ASSIGNED)
-
-
-def test_a_closer_on_assigned_only_alert_mail_is_not_told(source, ws, owner, pushes):
-    """An owner who holds the keys without wanting the owner's inbox (a superuser
-    COO, say): the role fan-out skips them while someone else is told."""
-    quiet = User.objects.create_user("coo", "coo@dimagi.com", "pw")
-    WorkspaceMembership.objects.create(workspace=ws, user=quiet, role=WorkspaceMembership.OWNER)
-    _assigned_only(quiet)
-    source.offered = {owner.pk: [FIX], quiet.pk: [FIX]}
+def test_a_superuser_who_could_close_it_is_not_told(source, ws, owner, pushes):
+    """A workspace superuser holds an owner's keys as oversight: the blocking-alert
+    fan-out reaches the owner, never the superuser."""
+    coo = User.objects.create_user("coo", "coo@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(workspace=ws, user=coo, role=WorkspaceMembership.SUPERUSER)
+    source.offered = {owner.pk: [FIX], coo.pk: [FIX]}
     source.reconcile = lambda now: [_raise(ws)]
     alerts.tick()
     assert [m.to for m in mail.outbox] == [["owner@dimagi.com"]]
 
 
-def test_when_every_closer_chose_assigned_only_they_are_all_told(source, ws, owner, pushes):
+def test_an_inherited_superuser_is_not_told_either(source, ws, owner, pushes):
+    coo = User.objects.create_user("coo", "coo@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(workspace=ws, user=coo, role=WorkspaceMembership.SUPERUSER)
+    child = Workspace.objects.create(slug="kid", display_name="Kid", parent=ws, created_by=owner)
+    source.offered = {owner.pk: [FIX], coo.pk: [FIX]}
+    source.reconcile = lambda now: [_raise(child, workspace="kid")]
+    alerts.tick()
+    assert [m.to for m in mail.outbox] == [["owner@dimagi.com"]]
+
+
+def test_when_only_superusers_could_close_it_they_are_told(source, ws, owner, pushes):
     """Thinning out never reaches nobody."""
-    _assigned_only(owner)
-    source.offered = {owner.pk: [FIX]}
+    coo = User.objects.create_user("coo", "coo@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(workspace=ws, user=coo, role=WorkspaceMembership.SUPERUSER)
+    source.offered = {coo.pk: [FIX]}
     source.reconcile = lambda now: [_raise(ws)]
     alerts.tick()
-    assert [m.to for m in mail.outbox] == [["owner@dimagi.com"]]
+    assert [m.to for m in mail.outbox] == [["coo@dimagi.com"]]

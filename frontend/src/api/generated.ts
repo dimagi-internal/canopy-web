@@ -9854,7 +9854,7 @@ export interface paths {
         };
         /**
          * List superusers (superuser only)
-         * @description Everyone who holds the fleet-wide switches, with which alert mail reaches each.
+         * @description Everyone who holds the fleet-wide switches.
          */
         readonly get: operations["list_operators"];
         readonly put?: never;
@@ -9889,12 +9889,7 @@ export interface paths {
         readonly delete: operations["remove_operator"];
         readonly options?: never;
         readonly head?: never;
-        /**
-         * Change a superuser's alert mail
-         * @description `alert_mail`: `all` (every alert their roles make them a recipient of) or
-         *     `assigned` (only alerts handed to them by name).
-         */
-        readonly patch: operations["update_operator"];
+        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/system/{kind}/{name}": {
@@ -12446,6 +12441,79 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/workspaces/{slug}/hold": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Workspace Hold
+         * @description Is this workspace on hold — by its own hold or an ancestor's? Any member may
+         *     read it: a member whose turn sits queued should be able to see why.
+         */
+        readonly get: operations["get_workspace_hold"];
+        readonly put?: never;
+        /**
+         * Hold Workspace
+         * @description Stop every runner from starting anything in this workspace or any below it
+         *     (`Workspace.held`, enforced in the claim). Turns keep enqueuing and wait QUEUED;
+         *     running work finishes — stopping it is /stop. An owner or a superuser of the
+         *     workspace. Idempotent — holding again refreshes the note.
+         */
+        readonly post: operations["hold_workspace"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/workspaces/{slug}/hold/release": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Release Workspace Hold
+         * @description Release this workspace's own hold; its queued turns become claimable again
+         *     (unless an ancestor's hold still covers it — release that one there). An owner or
+         *     a superuser of the workspace.
+         */
+        readonly post: operations["release_workspace_hold"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/workspaces/{slug}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop Workspace
+         * @description Stop everything running in this workspace and every one below it, now: each
+         *     working session is stopped and each executing turn cancelled. A one-shot action,
+         *     separate from the hold. Queued turns are left alone; nothing is archived. An
+         *     owner or a superuser of the workspace.
+         */
+        readonly post: operations["stop_workspace"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/fleet-hold/release": {
         readonly parameters: {
             readonly query?: never;
@@ -14389,9 +14457,7 @@ export interface paths {
         /**
          * Your notification settings
          * @description `session_idle_minutes`: how long a chat must stay quiet after its agent
-         *     finishes before you are notified that it is done (0 = never). `alert_mail`:
-         *     `all` (every alert your roles make you a recipient of) or `assigned` (only
-         *     alerts handed to you by name).
+         *     finishes before you are notified that it is done (0 = never).
          */
         readonly get: operations["get_preferences"];
         readonly put?: never;
@@ -14401,8 +14467,7 @@ export interface paths {
         readonly head?: never;
         /**
          * Change your notification settings
-         * @description Change any of: quiet minutes (0–1440, 0 = never) before a finished chat
-         *     notifies you; which alert mail reaches you (`all` | `assigned`).
+         * @description Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you.
          */
         readonly patch: operations["set_preferences"];
         readonly trace?: never;
@@ -24988,7 +25053,7 @@ export interface components {
              * Workspace Role
              * @enum {string}
              */
-            readonly workspace_role: "owner" | "admin" | "editor" | "viewer";
+            readonly workspace_role: "superuser" | "owner" | "admin" | "editor" | "viewer";
             /**
              * Agent Role
              * @enum {string}
@@ -32693,7 +32758,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            readonly role: "owner" | "admin" | "editor" | "viewer";
+            readonly role: "superuser" | "owner" | "admin" | "editor" | "viewer";
         };
         /** MemberTreeCellOut */
         readonly MemberTreeCellOut: {
@@ -32748,7 +32813,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            readonly role: "owner" | "admin" | "editor" | "viewer";
+            readonly role: "superuser" | "owner" | "admin" | "editor" | "viewer";
         };
         /** InviteOut */
         readonly InviteOut: {
@@ -32790,7 +32855,7 @@ export interface components {
              * @default viewer
              * @enum {string}
              */
-            readonly role: "owner" | "admin" | "editor" | "viewer";
+            readonly role: "superuser" | "owner" | "admin" | "editor" | "viewer";
         };
         /**
          * InvitePreviewOut
@@ -34651,11 +34716,6 @@ export interface components {
             readonly email: string;
             /** Name */
             readonly name: string;
-            /**
-             * Alert Mail
-             * @enum {string}
-             */
-            readonly alert_mail: "all" | "assigned";
             /** Is You */
             readonly is_you: boolean;
         };
@@ -34663,14 +34723,6 @@ export interface components {
         readonly OperatorAddIn: {
             /** Email */
             readonly email: string;
-        };
-        /** OperatorUpdateIn */
-        readonly OperatorUpdateIn: {
-            /**
-             * Alert Mail
-             * @enum {string}
-             */
-            readonly alert_mail: "all" | "assigned";
         };
         /**
          * CapabilityDetailOut
@@ -37529,6 +37581,40 @@ export interface components {
             /** Stopped Turns */
             readonly stopped_turns: number;
         };
+        /** WorkspaceHoldOut */
+        readonly WorkspaceHoldOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Held */
+            readonly held: boolean;
+            /**
+             * Held By Workspace
+             * @default
+             */
+            readonly held_by_workspace: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /** Held At */
+            readonly held_at?: string | null;
+            /**
+             * Held By Email
+             * @default
+             */
+            readonly held_by_email: string;
+            /**
+             * Queued
+             * @default 0
+             */
+            readonly queued: number;
+            /**
+             * Can Control
+             * @default false
+             */
+            readonly can_control: boolean;
+        };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
             /**
@@ -40176,19 +40262,11 @@ export interface components {
         readonly NotificationPreferenceOut: {
             /** Session Idle Minutes */
             readonly session_idle_minutes: number;
-            /**
-             * Alert Mail
-             * @default all
-             * @enum {string}
-             */
-            readonly alert_mail: "all" | "assigned";
         };
         /** NotificationPreferenceIn */
         readonly NotificationPreferenceIn: {
             /** Session Idle Minutes */
-            readonly session_idle_minutes?: number | null;
-            /** Alert Mail */
-            readonly alert_mail?: ("all" | "assigned") | null;
+            readonly session_idle_minutes: number;
         };
         /** SlackShareOut */
         readonly SlackShareOut: {
@@ -57393,32 +57471,6 @@ export interface operations {
             };
         };
     };
-    readonly update_operator: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly user_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["OperatorUpdateIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["OperatorOut"];
-                };
-            };
-        };
-    };
     readonly detail: {
         readonly parameters: {
             readonly query?: never;
@@ -60255,6 +60307,98 @@ export interface operations {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FleetStopOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHoldOut"];
+                };
+            };
+        };
+    };
+    readonly hold_workspace: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["FleetHoldIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHoldOut"];
+                };
+            };
+        };
+    };
+    readonly release_workspace_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHoldOut"];
+                };
+            };
+        };
+    };
+    readonly stop_workspace: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
             readonly cookie?: never;
         };
         readonly requestBody?: never;

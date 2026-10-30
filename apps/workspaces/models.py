@@ -16,6 +16,7 @@ from __future__ import annotations
 import secrets
 
 from django.conf import settings
+from django.conf import settings as django_settings
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
@@ -117,6 +118,18 @@ class Workspace(models.Model):
     auto_approve_role = models.CharField(
         max_length=16, blank=True, default="", choices=AUTO_APPROVE_CHOICES,
     )
+    # The WORKSPACE hold: while `held`, no runner is handed a turn in this
+    # workspace or any below it — the workspace-level sibling of the fleet hold
+    # (harness.FleetHold) and the agent hold (agents.Agent.held), enforced in the
+    # same one place, `harness.claim.claim_next_turn`. Turns keep enqueuing and wait
+    # QUEUED; running work finishes (stopping it is a separate action). Set by
+    # anyone holding `permissions.CONTROL` here: an owner or a superuser.
+    held = models.BooleanField(default=False)
+    held_note = models.CharField(max_length=500, blank=True, default="")
+    held_at = models.DateTimeField(null=True, blank=True)
+    # `django_settings`: inside this class body `settings` is the JSONField above.
+    held_by = models.ForeignKey(django_settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -172,8 +185,9 @@ MAX_DEPTH = 8
 
 
 class WorkspaceMembership(models.Model):
-    OWNER, ADMIN, EDITOR, VIEWER = "owner", "admin", "editor", "viewer"
-    ROLE_CHOICES = [(OWNER, "Owner"), (ADMIN, "Admin"), (EDITOR, "Editor"), (VIEWER, "Viewer")]
+    SUPERUSER, OWNER, ADMIN, EDITOR, VIEWER = "superuser", "owner", "admin", "editor", "viewer"
+    ROLE_CHOICES = [(SUPERUSER, "Superuser"), (OWNER, "Owner"), (ADMIN, "Admin"), (EDITOR, "Editor"),
+                    (VIEWER, "Viewer")]
     # Total order — the single place role ORDERING lives. What each role may
     # DO is not here: that is `apps/workspaces/permissions.py`, which maps
     # every capability to the lowest role that holds it, and is the only thing
@@ -185,11 +199,19 @@ class WorkspaceMembership(models.Model):
     # and the integrations (mailboxes, connected sites, Slack sync) — without
     # the owner's keys: the shared vault, deleting or moving the workspace, the
     # Slack app itself, and agents' credentials.
-    ROLE_RANK = {VIEWER: 0, EDITOR: 1, ADMIN: 2, OWNER: 3}
+    #
+    # SUPERUSER (2026-10-30) sits above owner: everything an owner may do, in this
+    # workspace and every one below it, as OVERSIGHT — it is not told. The owner is
+    # the accountable person and gets the mail (blocking alerts, access requests,
+    # owner notices: `services.owner_user_ids`, `services.mail_recipients`); a
+    # superuser gets none of it, and can still hold or stop the workspace's work.
+    # The workspace-level sibling of the system superuser (`User.is_superuser`),
+    # which holds the same switches for the whole fleet.
+    ROLE_RANK = {VIEWER: 0, EDITOR: 1, ADMIN: 2, OWNER: 3, SUPERUSER: 4}
     #: The roles the workspace tree carries down to every descendant (see
     #: `Workspace.parent`). Never editor or viewer: those are what the org's
     #: domain-wide access requests grant.
-    INHERITS_DOWN = (OWNER, ADMIN)
+    INHERITS_DOWN = (SUPERUSER, OWNER, ADMIN)
 
     workspace = models.ForeignKey(
         Workspace, on_delete=models.CASCADE, related_name="memberships"

@@ -20,7 +20,7 @@ import {
 } from 'canopy-ui/ui'
 import { FleetHoldCard } from '@/components/supervisor/FleetHoldCard'
 import { OperatorsCard } from '@/components/supervisor/OperatorsCard'
-import { AlertMailSetting } from '@/pwa/AlertMailSetting'
+import { WorkspaceControlsCard } from '@/components/supervisor/WorkspaceControlsCard'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
 import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { ActAsRequests } from '@/components/supervisor/ActAsRequests'
@@ -185,7 +185,9 @@ export default function SupervisorPage(): JSX.Element {
     const hit = runnerParam ? runners?.find((r) => r.id === runnerParam) : undefined
     if (hit?.workspace) navigate(runnerHref(hit), { replace: true })
   }, [runnerParam, runners, navigate])
-  const { workspaces } = useWorkspace()
+  const { workspaces, active: activeWorkspace } = useWorkspace()
+  const activeWorkspaceName =
+    workspaces.find((w) => w.slug === activeWorkspace)?.display_name ?? activeWorkspace ?? ''
   // Changing a task's fields in place needs the editor role (`agent.work` in
   // its workspace); deciding it (in the peek) is the server's call per task.
   const canEditTask = (t: TaskOut): boolean =>
@@ -328,7 +330,6 @@ export default function SupervisorPage(): JSX.Element {
           )}
           <InstallPrompt />
           <PushToggle />
-          <AlertMailSetting />
         </div>
       )}
 
@@ -336,6 +337,8 @@ export default function SupervisorPage(): JSX.Element {
       {tab === 'runners' && (
         <div className="flex flex-col gap-4">
           {/* The fleet hold: a superuser's control, and everyone's banner while on. */}
+          {/* This workspace's controls (owners and workspace superusers), then the system's. */}
+          <WorkspaceControlsCard slug={activeWorkspace} name={activeWorkspaceName} />
           <FleetHoldCard hold={fleetHold} onChange={setFleetHold} />
           <OperatorsCard show={fleetHold?.can_stop_running ?? false} />
 
