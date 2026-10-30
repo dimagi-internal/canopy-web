@@ -347,6 +347,7 @@ def test_my_list_has_a_row_per_workspace_that_set_the_provider_up(admin, ws):
         {"name": "salesforce", "title": "Salesforce", "workspace": "b", "workspace_name": "Bravo", "configured": True},
         {"name": "salesforce", "title": "Salesforce", "workspace": "w", "workspace_name": "Dimagi",
          "configured": True},
+        {"name": "google", "title": "Google", "workspace": "", "workspace_name": "", "configured": False},
     ]
     (row,) = body["connections"]
     assert row["workspace"] == "b" and row["workspace_name"] == "Bravo"
@@ -357,7 +358,9 @@ def test_an_agents_list_names_its_workspace(admin, ws):
     _stored({"agent": agent}, admin)
     body = _browser(admin).get("/api/agents/eva/connections").json()
     assert body["providers"] == [{"name": "salesforce", "title": "Salesforce", "workspace": "w",
-                                  "workspace_name": "Dimagi", "configured": True}]
+                                  "workspace_name": "Dimagi", "configured": True},
+                                 {"name": "google", "title": "Google", "workspace": "w",
+                                  "workspace_name": "Dimagi", "configured": False}]
     assert body["connections"][0]["workspace"] == "w"
 
 

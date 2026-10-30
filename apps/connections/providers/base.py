@@ -46,7 +46,9 @@ What a provider declares, and where providers differ:
   what the tests pin.
 - `instance_url(body)`: the account's own API base, when the provider has one
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
-- `identity(token)`: who the account is — a stable `account_id` and a label.
+- `identity(token)`: who the account is — a stable `account_id`, a label, and
+  the verified `email` when the provider vouches for one (what `check_owner`
+  compares; the label is display only).
 - `pkce`: whether the provider takes a PKCE challenge (default yes).
 
 Revocation follows RFC 7009: the token, `token_type_hint=refresh_token`, and the
@@ -113,6 +115,9 @@ class TokenResponse:
 class Identity:
     account_id: str  # stable: the same account always has the same id
     label: str  # display only, never used for authorization
+    # The account's email when the provider vouches it is verified (Google), lowercased;
+    # "" otherwise. What `check_owner` may authorize on, unlike `label`.
+    email: str = ""
 
 
 @dataclass(frozen=True)

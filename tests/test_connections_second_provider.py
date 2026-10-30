@@ -1,6 +1,6 @@
 """A provider is one module: nothing else in canopy-web names one.
 
-`Acme` below is everything a new provider (Google, Sage Intacct) is: a
+`Acme` below is everything a new provider (Sage Intacct next) is: a
 `Provider` subclass with endpoints, its own authorize parameters and an
 identity lookup, used with a workspace's app (client id and secret). It is registered for these tests only, and
 then driven through every surface — the Settings list, the browser connect flow

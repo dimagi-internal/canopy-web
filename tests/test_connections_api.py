@@ -76,7 +76,9 @@ def test_list_shows_providers_and_only_my_connections(client, user, other):
     _stored({"user": other}, other)
     body = client.get("/api/connections/").json()
     assert body["providers"] == [{"name": "salesforce", "title": "Salesforce", "workspace": "jj-home",
-                                  "workspace_name": "jj", "configured": True}]
+                                  "workspace_name": "jj", "configured": True},
+                                 {"name": "google", "title": "Google", "workspace": "",
+                                  "workspace_name": "", "configured": False}]
     assert [c["id"] for c in body["connections"]] == [mine.pk]
     c = body["connections"][0]
     assert c["provider"] == "salesforce" and c["account_label"] == "jj@dimagi.com"
