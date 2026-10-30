@@ -228,7 +228,7 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
 # --- the allow-list ----------------------------------------------------------
 
 def allow(*, workspace, agent, channel: str, follow: bool, note: str, by,
-          review_sessions: bool = False) -> SlackChannelIngestAllow:
+          review_sessions: bool = False, first_read_hours: int | None = None) -> SlackChannelIngestAllow:
     """An owner or admin allow-lists one channel for one agent. Reads nothing by itself:
     the agent still asks (`request`), with a purpose, and the channel is told.
 
@@ -247,6 +247,7 @@ def allow(*, workspace, agent, channel: str, follow: bool, note: str, by,
         agent=agent, channel_id=channel_id,
         defaults={"workspace": workspace, "installation": link.installation, "channel_name": name,
                   "follow": bool(follow), "review_sessions": bool(review_sessions),
+                  "first_read_hours": first_read_hours or None,
                   "note": (note or "").strip()[:500], "added_by": by})
     audience.resync_channel(link.installation, channel_id)
     _event(workspace, "allowed", f"{_who(by)} allow-listed <#{channel_id}> for {agent.slug} to read whole"
@@ -255,7 +256,7 @@ def allow(*, workspace, agent, channel: str, follow: bool, note: str, by,
            + (f": {entry.note}" if entry.note else ""),
            allowance=str(entry.pk), team=link.installation.team_id, channel=channel_id, agent=agent.slug,
            user=getattr(by, "pk", None), follow=entry.follow, review_sessions=entry.review_sessions,
-           updated=not created)
+           first_read_hours=entry.first_read_hours, updated=not created)
     return entry
 
 
@@ -496,13 +497,15 @@ def due():
             .filter(next_attempt_at__isnull=False, next_attempt_at__lte=now))
 
 
-def _store(ingest: SlackChannelIngest, msgs: list[dict], *, thread_ts: str = "") -> int:
+def _store(ingest: SlackChannelIngest, msgs: list[dict], *, thread_ts: str = "", keep=()) -> int:
+    """Store `msgs` newer than the last pass. `keep` names thread openers older than it that have
+    NEW replies: stored anyway so the replies are read under their opener, not out of context."""
     rows = []
     for m in msgs:
         ts = str(m.get("ts") or "")
         if not ts:
             continue
-        if ingest.follow_since and float(ts) <= float(ingest.follow_since):
+        if ingest.follow_since and float(ts) <= float(ingest.follow_since) and ts not in keep:
             continue
         parent = str(m.get("thread_ts") or "")
         rows.append(SlackIngestMessage(
@@ -523,15 +526,17 @@ def _step(ingest: SlackChannelIngest, token: str) -> int:
     if ingest.phase == SlackChannelIngest.HISTORY:
         data = {"channel": ingest.channel_id, **({"oldest": ingest.history_oldest} if ingest.history_oldest else {})}
         msgs, ingest.history_cursor = client.page(token, "conversations.history", data, ingest.history_cursor)
+        reopened = set()
         for m in msgs:
             if not m.get("reply_count"):
                 continue
             if ingest.follow_since:
                 if float(m.get("latest_reply") or 0) > float(ingest.follow_since):
                     ingest.thread_queue.append([m["ts"], ingest.follow_since])
+                    reopened.add(str(m["ts"]))
             else:
                 ingest.thread_queue.append([m["ts"], ""])
-        new = _store(ingest, msgs)
+        new = _store(ingest, msgs, keep=reopened)
         if not ingest.history_cursor:
             ingest.phase = SlackChannelIngest.THREADS
         return new
@@ -725,6 +730,8 @@ def read_channel(*, installation, agent, inbound, user, ask: str) -> str:
     if row.read_mark and row.read_at:
         by = f" (asked by <@{row.last_read_by_slack}>)" if row.last_read_by_slack else ""
         since = f"everything posted since its last read here, {_slack_date(row.read_at.timestamp())}{by}"
+    elif (row.pending_ask or {}).get("first_read_hours"):
+        since = f"the last {row.pending_ask['first_read_hours']} hours, and newer replies to older threads — its first read here"
     else:
         since = "everything in it — its first read here"
     return f"`{agent.slug}` is reading this channel: {since}. It will answer in this thread."
@@ -748,11 +755,22 @@ def _begin_read(*, agent, installation, allowance, user, channel_name: str, purp
             raise IngestError(f"`{agent.slug}` is still reading this channel for an earlier `{READ_WORD}`. "
                               "Try again once it has answered.")
         if row is None:
+            hours = allowance.first_read_hours if not oldest else None
+            start = {}
+            if hours:
+                # The one-time bootstrap: begin as if an earlier read had ended `hours` ago, so the
+                # pass reads what was posted since and the newer replies to older threads.
+                end = now.timestamp() - hours * 3600
+                lookback = int(settings.SLACK_HISTORY_THREAD_LOOKBACK_HOURS) * 3600
+                start = {"follow_since": f"{end:.6f}", "latest_ts": f"{end:.6f}",
+                         "history_oldest": f"{max(0.0, end - lookback):.6f}"}
+                SlackChannelIngestAllow.objects.filter(pk=allowance.pk).update(first_read_hours=None)
+                pending = {**pending, "first_read_hours": hours}
             row = SlackChannelIngest.objects.create(
                 workspace_id=agent.workspace_id, installation=installation, agent=agent, channel_id=channel_id,
                 channel_name=allowance.channel_name or channel_name, follow=False, requested_by=user,
                 allowance=allowance, status=SlackChannelIngest.READING, decided_by=allowance.added_by,
-                decided_at=now, history_oldest=f"{oldest:.6f}" if oldest else "")
+                decided_at=now, **({"history_oldest": f"{oldest:.6f}"} if oldest and not start else {}), **start)
         elif row.phase == SlackChannelIngest.IDLE:
             _start_follow_pass(row)            # only what is new since the last pass
         row.purpose = purpose[:2000]
@@ -790,13 +808,15 @@ def _slack_date(epoch: float) -> str:
     return f"<!date^{int(epoch)}^{{date_short_pretty}} at {{time}}|{time.strftime('%Y-%m-%d %H:%M', t)} UTC>"
 
 
-def _what_was_read(agent_slug: str, t: dict, prev_at, *, as_confirmed: bool = False) -> str:
+def _what_was_read(agent_slug: str, t: dict, prev_at, *, as_confirmed: bool = False, first_hours: int = 0) -> str:
     """The public line in the thread: how much was read, spanning when, since when.
     `as_confirmed`: a check-in run, whose `prev_at` is the start the lead confirmed."""
     if as_confirmed and prev_at:
         since = f"everything posted since {_slack_date(prev_at.timestamp())}, as confirmed"
     elif prev_at:
         since = f"since its last read here, {_slack_date(prev_at.timestamp())}"
+    elif first_hours:
+        since = f"the last {first_hours} hours and newer replies to older threads, its first read here"
     else:
         since = "the whole channel, its first read here"
     if not t["messages"]:
@@ -837,7 +857,8 @@ def _deliver(ingest: SlackChannelIngest) -> None:
     if outcome.status == services.SENT:
         mark_read(row, t["mark"])
         SlackChannelIngest.objects.filter(pk=row.pk).update(last_read_by_slack=inbound.slack_user_id[:32])
-        _tell_thread(token, inbound, _what_was_read(row.agent.slug, t, prev_at))
+        _tell_thread(token, inbound, _what_was_read(row.agent.slug, t, prev_at,
+                                                    first_hours=int(pending.get("first_read_hours") or 0)))
     else:
         _tell_thread(token, inbound, outcome.message)
 
