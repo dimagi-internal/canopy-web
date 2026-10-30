@@ -230,7 +230,7 @@ describe('AgentAccessList', () => {
   it('says when the agent still runs on its older published rules', async () => {
     getAccessList.mockResolvedValue(LIST({ uses_access_list: false }))
     show()
-    expect((await screen.findByText(/has not moved onto this list yet/)).textContent).toContain('see Doors')
+    expect((await screen.findByText(/has not moved onto this list yet/)).textContent).toContain('see Capabilities')
     expect(screen.getByRole('button', { name: 'See what moving would do' })).toBeTruthy()
   })
 })

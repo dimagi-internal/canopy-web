@@ -48,7 +48,7 @@ def agent_for_read(request: HttpRequest, slug: str, *, honor_pin: bool = True) -
     The agent's own canopy login is a caller like any other here: it reaches
     the agent only as a member of the agent's workspace. Making the login, or
     moving the agent, makes it one (`agents.agent_login`); a workspace admin who
-    removes it means it, so there is no own-login door past membership.
+    removes it means it, so there is no own-login way in past membership.
 
     A non-member, a wrong-tenant pin and a missing slug all get the same 404. A
     workspace-less agent is unrepresentable (`Agent.workspace` is NOT NULL) and

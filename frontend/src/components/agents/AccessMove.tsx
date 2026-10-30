@@ -5,7 +5,7 @@ import { roleWord } from './accessWords'
 
 // MOVING AN AGENT ONTO ITS ACCESS LIST.
 //
-// Until an agent moves, the rules it was published with (see Doors) still let people in
+// Until an agent moves, the rules it was published with (see Capabilities) still let people in
 // beside this list. A preview translates them into lines and asks the access rule the old
 // way and the new way about everyone who could plausibly ask; the move is offered only when
 // nobody's access changes, and the server refuses it otherwise.
@@ -39,7 +39,7 @@ export function AccessMove({
   return (
     <div className="rounded-lg border border-border bg-muted/40 p-3 text-[12px]" data-testid="access-move">
       <p className="m-0 text-muted-foreground">
-        {agentName} has not moved onto this list yet: the rules it published before (see Doors) still let people in
+        {agentName} has not moved onto this list yet: the rules it published before (see Capabilities) still let people in
         too. A line here adds to them.
       </p>
       {canEdit && plan === null && (

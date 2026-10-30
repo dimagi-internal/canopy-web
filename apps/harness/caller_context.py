@@ -373,7 +373,7 @@ def build(turn, *, reader_user=None) -> dict:
         # what `canopy caller tier` reads instead of an allowlist in the repo.
         # `role`: WHERE the asker stands on the agent's role ladder (owner | admin | editor |
         # user | viewer | system; null when refused) and `source`: WHY (owner | admin | system |
-        # workspace-editor | rule:<full rule> | door:<name> | list:<access-list line>) —
+        # workspace-editor | rule:<full rule> | capability:<name> | list:<access-list line>) —
         # what an agent reads to say "you are a viewer here because ..." instead of
         # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
         **_grant(turn, agent),

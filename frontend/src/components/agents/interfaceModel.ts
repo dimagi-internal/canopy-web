@@ -96,8 +96,8 @@ export function renamedCapability(model: InterfaceModel, from: string, to: strin
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob', 'mcp__*canopy-web__who_is_asking']
 
-// The two doors most owners want, ready to adjust.
-export function askDoor(slug: string): Capability {
+// The two capabilities most owners want, ready to adjust.
+export function askCapability(slug: string): Capability {
   return {
     description: `Ask ${slug} a question.`,
     callers: ['member'],
@@ -131,7 +131,7 @@ export function siteDoor(site: string): Capability {
 
 export function uniqueName(model: InterfaceModel, wanted: string): string {
   const taken = new Set(Object.keys(model.capabilities ?? {}))
-  const base = wanted.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^[^a-z]+/, 'x') || 'door'
+  const base = wanted.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^[^a-z]+/, 'x') || 'capability'
   let name = base
   for (let i = 2; taken.has(name); i++) name = `${base}_${i}`
   return name

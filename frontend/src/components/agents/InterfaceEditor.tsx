@@ -7,7 +7,7 @@ import {
   type AgentInterfaceOut,
 } from '@/api/agents'
 import {
-  askDoor,
+  askCapability,
   CALLER_BASES,
   clone,
   formatCaller,
@@ -228,10 +228,10 @@ function CapabilityCard({
           <LinesField label={`${name} bash`} hint="shell commands it may run, one per line" value={cap.bash} onChange={(bash) => set({ bash })} errors={err('bash')} />
           <LinesField label={`${name} read paths`} value={cap.read_paths} onChange={(read_paths) => set({ read_paths })} errors={err('read_paths')} rows={2} />
           <LinesField label={`${name} write paths`} hint="none → it cannot write" value={cap.write_paths} onChange={(write_paths) => set({ write_paths })} errors={err('write_paths')} rows={2} />
-          <LinesField label={`${name} sites`} hint="Connected sites whose pages open this door" value={cap.sites} onChange={(sites) => set({ sites })} errors={err('sites')} rows={2} />
+          <LinesField label={`${name} sites`} hint="Connected sites whose pages use this capability" value={cap.sites} onChange={(sites) => set({ sites })} errors={err('sites')} rows={2} />
           <LinesField label={`${name} ceiling`} hint="optional: narrows a site's tools" value={cap.ceiling} onChange={(ceiling) => set({ ceiling })} errors={err('ceiling')} rows={2} />
           <div className="flex flex-col gap-1">
-            <div className="text-[11px] text-muted-foreground">Input — typed fields (declared and shown; no door passes them today)</div>
+            <div className="text-[11px] text-muted-foreground">Input — typed fields (declared and shown; no capability passes them today)</div>
             {inputs.map(([k, t]) => (
               <div key={k} className="flex items-center gap-2 text-[12px]">
                 <span className="font-mono">{k}</span>
@@ -450,8 +450,8 @@ export function InterfaceEditor({
             {names.length === 0 && <p className="m-0 text-[12px] text-muted-foreground">No capabilities: nobody outside the owner, admins and editors can use this agent.</p>}
             <div className="flex flex-wrap gap-2">
               {!caps.ask && (
-                <button type="button" onClick={() => edit(withCapability(model, 'ask', askDoor(agentSlug)))} className={smallButton}>
-                  Add an ask door for colleagues
+                <button type="button" onClick={() => edit(withCapability(model, 'ask', askCapability(agentSlug)))} className={smallButton}>
+                  Add an ask capability for colleagues
                 </button>
               )}
               {sites.map((s) => (
@@ -459,7 +459,7 @@ export function InterfaceEditor({
                   Add a {s} site capability
                 </button>
               ))}
-              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'door'), { ...askDoor(agentSlug), description: '', entry: null }))} className={smallButton}>
+              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), { ...askCapability(agentSlug), description: '', entry: null }))} className={smallButton}>
                 Add a blank capability
               </button>
             </div>

@@ -1,7 +1,7 @@
 """Translate an agent's published rules into its access list, and prove nothing changed.
 
 An agent's "who may use it" used to be spread over four things: the interface's `full:`
-rules, each door's `callers`, the interface's `editors:` setting, and the implicit rule
+rules, each capability's `callers`, the interface's `editors:` setting, and the implicit rule
 that a workspace editor is an agent editor. `docs/superpowers/specs/2026-10-30-agent-roles-
 and-access-list-design.md` replaces them with one list of `(who, role)` lines. This module
 does the translation for ONE agent without touching the database (`plan`), checks the
@@ -12,12 +12,12 @@ The translation, line by line:
 
     full: member[@d]               -> everyone in the agent's workspace [at d]        -> editor
     full: contact[@d][:verified]   -> a known contact [at d] [verified]               -> editor
-    a door's callers: the same     -> the same lines                                  -> viewer, or user
-                                      (the door's own role: contacts listed => viewer)
+    a capability's callers: the same     -> the same lines                                  -> viewer, or user
+                                      (the capability's own role: contacts listed => viewer)
     the implicit editor rule       -> everyone in the workspace at least editor      -> editor, manual_only
     (unless `editors: confined`)
 
-A class that is listed on several doors gets the highest of their roles; one in `full:` is
+A class that is listed on several capabilities gets the highest of their roles; one in `full:` is
 an editor. `unknown` classes (nobody established who) are not translated: they are reported
 and the agent is left on its old rules.
 """
@@ -121,11 +121,11 @@ def translate(agent) -> tuple[list[Line], dict, list[str]]:
         wanted[cls] = roles.EDITOR
     new_caps = {}
     for name, cap in (iface.get("capabilities") or {}).items():
-        door = iface_mod.door_role(cap)
+        capability = iface_mod.capability_role(cap)
         for cls in cap.get("callers") or []:
-            if roles.rank(door) > roles.rank(wanted.get(cls)):
-                wanted[cls] = door
-        new_caps[name] = {**copy.deepcopy(cap), "callers": [], "role": door}
+            if roles.rank(capability) > roles.rank(wanted.get(cls)):
+                wanted[cls] = capability
+        new_caps[name] = {**copy.deepcopy(cap), "callers": [], "role": capability}
     lines: dict[str, Line] = {}
     unsupported: list[str] = []
     for cls, role in wanted.items():
@@ -181,14 +181,14 @@ def plan(agent) -> Conversion:
     candidate.interface = iface
     candidate.uses_access_list = True
     rows = [ln.as_grant(candidate) for ln in lines]
-    door_names = [None, *sorted((agent.interface or {}).get("capabilities") or {})]
+    capability_names = [None, *sorted((agent.interface or {}).get("capabilities") or {})]
     for label, who, verified in _probes(agent, lines):
-        for door in door_names:
-            before = _answer(access.decide(agent, who, verified=verified, capability=door, lines=[]))
-            after = _answer(access.decide(candidate, who, verified=verified, capability=door, lines=rows))
+        for capability in capability_names:
+            before = _answer(access.decide(agent, who, verified=verified, capability=capability, lines=[]))
+            after = _answer(access.decide(candidate, who, verified=verified, capability=capability, lines=rows))
             conv.probed += 1
             if before != after:
-                conv.differences.append(Difference(label, door, before, after))
+                conv.differences.append(Difference(label, capability, before, after))
     return conv
 
 

@@ -46,7 +46,7 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 //
 //   Overview           — what is left to set up, what it is, where it runs, delete
 //   Roles              — owner, its canopy user, access (who has which role), who runs it directly
-//   Channels           — doors, Slack, email, Google account
+//   Channels           — capabilities, Slack, email, Google account
 //   External accounts  — GitHub, its Google mailbox
 //   Security           — its vault (secrets, who can open them, storage and key), then its canopy login
 export function AgentSettingsSection() {
@@ -272,10 +272,10 @@ export function AgentSettingsSection() {
         <Section id="reach" title="Channels">
           <div className="divide-y divide-border rounded-lg border border-border bg-card">
             <Setting
-              title="Doors"
+              title="Capabilities"
               who={admins}
               canEdit={isAdmin}
-              description={`The doors ${agent.name} opens: what a viewer or user may ask it for.`}
+              description={`What ${agent.name} offers: the capabilities a viewer or user may use.`}
             >
               <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
             </Setting>

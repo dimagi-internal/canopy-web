@@ -1,11 +1,11 @@
-"""Creating an agent's OWN canopy login — a deliberate door into a workspace.
+"""Creating an agent's OWN canopy login — a deliberate way into a workspace.
 
 An agent calls canopy-web as itself (`Agent.user`, signed in with its `canopy-pat`), and a
 login must be a workspace member to act there. Until 2026-10-15 such logins were made only
 by `manage.py create_token --create-user` on the server, so an agent created in the browser
 never got one and its turns ran on a person's token.
 
-This is the one place that makes such a member, and it is listed among the doors in
+This is the one place that makes such a member, and it is listed among the ways in in
 `docs/architecture/roles.md` ("How you get into a workspace") and in
 `tests/test_no_implicit_enrolment.py`'s allow-list. It stays narrow on purpose:
   - the caller can INVITE (`perms.MEMBERS_MANAGE`) — a new member is what an invite makes — OR

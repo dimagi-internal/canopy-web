@@ -60,6 +60,6 @@ export function sourceWords(r: Pick<AgentAccessRowOut, 'source' | 'role' | 'via'
   if (s.startsWith('list:')) return 'A line on the access list'
   if (s === 'workspace-editor') return 'A workspace editor: every turn needs approval'
   if (s.startsWith('rule:')) return `A published rule (${s.slice(5)})`
-  if (s.startsWith('door:')) return `Through the "${s.slice(5)}" door`
+  if (s.startsWith('capability:')) return `Through the "${s.slice(11)}" capability`
   return r.role ? 'Set on this agent' : 'No line names them'
 }

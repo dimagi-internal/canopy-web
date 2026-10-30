@@ -64,7 +64,7 @@ class Agent(models.Model):
     #: be named for (Hal, Eva) turns it off and lists its own. See `apps/agents/grants.py`.
     inherit_workspace_defaults = models.BooleanField(default=True)
     #: Is this agent's "who may use it" the access list ALONE? Off, the interface's `full:`
-    #: rules, its doors' `callers` and the implicit "a workspace editor is an editor" rule
+    #: rules, its capabilities' `callers` and the implicit "a workspace editor is an editor" rule
     #: still apply beside the list. Switched on by `convert_access` once the list says the
     #: same thing; the last step deletes the old rules and this flag with them.
     uses_access_list = models.BooleanField(default=False)
@@ -505,7 +505,7 @@ class AgentBootstrapReport(models.Model):
     mailbox_ok = models.BooleanField(default=False)
     #: Which gog client the box ended up using. A browser mint binds the token
     #: to `canopy-web`, a laptop `gog login` to `canopy`; either serves a fleet
-    #: agent's turns (2026-10-04), so this says which door the token came through.
+    #: agent's turns (2026-10-04), so this says which path the token came through.
     gog_client = models.CharField(max_length=120, blank=True, default="")
     #: The client the agent's TURNS will actually present — what
     #: `config/agent.json.gog_client` declares (`canopy` fleet-wide), or — when a
@@ -2518,7 +2518,7 @@ class TaskEvent(models.Model):
     """One entry in a task's history, append-only: it was created, a field
     changed, someone acted on it (the `AgentTaskAction` row, whose comment is
     the comment), or a relation was added or removed. Written by `work.record`
-    from every writer, so the stream is the same whichever door the change came
+    from every writer, so the stream is the same whichever path the change came
     through."""
 
     CREATED, FIELD, ACTION, RELATION = "created", "field", "action", "relation"

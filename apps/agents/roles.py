@@ -1,4 +1,4 @@
-"""The agent role ladder and what each role may do — the one table, and the only door to it.
+"""The agent role ladder and what each role may do — the one table, and the only way to it.
 
 Defined once in `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`.
 A **role** is what a person may do with ONE agent; a **permission** is what a role is made
@@ -23,15 +23,15 @@ GRANTABLE = (ADMIN, EDITOR, USER, VIEWER)
 
 # --- permissions ------------------------------------------------------------------
 
-#: Open a door published for viewers: `ask`.
+#: Open a capability published for viewers: `ask`.
 READ = "read"
-#: Open a door published for users, including one that acts.
+#: Open a capability published for users, including one that acts.
 WRITE = "write"
 #: Steer the whole agent, in its own authority — every skill it has.
 RUN = "run"
 #: Change the agent itself: its skills and capabilities.
 EDIT = "edit"
-#: Configure the agent in canopy-web: access list, doors, credentials, routing.
+#: Configure the agent in canopy-web: access list, capabilities, credentials, routing.
 ADMINISTER = "admin"
 #: Transfer or delete the agent, and name its admins.
 OWN = "own"

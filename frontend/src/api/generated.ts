@@ -5202,7 +5202,7 @@ export interface paths {
         };
         /**
          * Preview moving this agent onto its access list: the lines it would get, and whether anyone's access would change (an agent admin)
-         * @description Translates the rules the agent was published with (`full:`, each door's `callers`,
+         * @description Translates the rules the agent was published with (`full:`, each capability's `callers`,
          *     `editors:`, and the implicit workspace-editor rule) into lines, then asks the access
          *     rule the old way and the new way about everyone who could plausibly ask. Writes nothing.
          */
