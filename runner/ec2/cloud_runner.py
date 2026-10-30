@@ -1169,6 +1169,13 @@ def health_report() -> dict:
 # heartbeat reply — durable, so a dropped socket costs a beat, not the request),
 # and age, because without it a box's plugins only moved when its RUNNER code
 # changed, which is how hal's cloud drill came to fail on a stale canopy CLI.
+#
+# A supervised daemon whose turns can all be adopted refreshes MID-TURN: it asks
+# the supervisor for a handoff (SIGHUP), exactly as an update does, and the new
+# daemon re-runs bootstrap and adopts every running turn. Waiting for an idle box
+# meant a busy one never refreshed: cloud-ec2-live sat 45 hours "waiting on busy"
+# (2026-10-28 → 10-30) behind chats and two turns parked on unanswered questions.
+# Only a box with a pinned turn (one a handoff cannot carry) still waits for it.
 
 REFRESH_MAX_AGE_SECONDS = int(os.environ.get("REFRESH_MAX_AGE_SECONDS", str(24 * 3600)))
 #: Floor between self-restarts, persisted across them, so a bootstrap that
@@ -1221,7 +1228,10 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     claims. Returns True when a restart was started."""
     now = time.time() if now is None else now
     reason = _refresh_reason(pending, now)
-    if not reason or _in_flight_ids():
+    if not reason:
+        return False
+    handoff = _refresh_can_hand_off()
+    if _in_flight_ids() and not handoff:
         return False
     last = _last_self_refresh()
     if now - last < REFRESH_MIN_INTERVAL_SECONDS:
@@ -1232,6 +1242,14 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     except Exception as exc:  # noqa: BLE001
         return _refresh_blocked(f"cannot write {_refresh_marker()} ({exc}); "
                                 "not restarting without the loop guard")
+    if handoff:
+        _log(f"self-refresh: {reason}; handing off to a new daemon to re-run bootstrap "
+             f"({len(_in_flight_ids())} turn(s) carried over)")
+        try:
+            os.kill(os.getppid(), signal.SIGHUP)
+        except OSError as exc:
+            return _refresh_blocked(f"could not signal the supervisor ({exc})")
+        return True
     _log(f"self-refresh: {reason}; restarting to re-run bootstrap")
     if RUNNER_INSTANCE:
         _exit_for_refresh()
@@ -1242,6 +1260,17 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     except Exception as exc:  # noqa: BLE001
         return _refresh_blocked(f"restart failed ({exc})")
     return True
+
+
+def _refresh_can_hand_off() -> bool:
+    """Can a refresh carry every running turn to the next daemon (`supervise_main`'s
+    handoff), so it need not wait for an idle box?"""
+    if not (_supervised() and ADOPT_TURNS):
+        return False
+    try:
+        return _adoptable_in_flight()[1] == 0
+    except Exception:  # noqa: BLE001 — unknown: wait for idle, as before
+        return False
 
 
 def _refresh_blocked(why: str) -> bool:
