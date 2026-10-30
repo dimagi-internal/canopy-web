@@ -43,9 +43,6 @@ export function AgentTestVaultKeySection({ slug, canEdit }: { slug: string; canE
   const who = state.login_email || 'its canopy login'
   return (
     <section id="cred-test-vault-key" className="mb-6" data-testid="agent-test-vault-key">
-      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Test vault key
-      </h3>
       <label className="flex items-center gap-2 text-[12px] text-foreground">
         <input
           type="checkbox"

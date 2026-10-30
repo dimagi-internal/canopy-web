@@ -432,7 +432,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/settings/secrets',
     title: 'Vault',
     audience: "The vault's members (its owners and admins change it)",
-    what: "One workspace vault's page: its key, what it serves, who can open it and the names of its secrets, one tab each. Settings → Secrets lists the workspace's vaults and links here; a runner's credentials link to the vault that holds them.",
+    what: "One workspace vault's page, in the same shape as an agent's vault: a summary line (where it lives, how many secrets, people and machines, what needs you), then collapsible sections — Secrets (the names it holds), Who can open them (people, and the runners that read it) and Storage & key (its key, and the agents or workspaces it serves). Settings → Secrets lists the workspace's vaults and links here; a runner's credentials link to the vault that holds them.",
     actions: ['Make its key', 'Give a waiting member or machine its copy', 'Serve an agent, a workspace or a runner', 'Add or remove a person', 'Seal a secret in'],
   },
   {
@@ -440,7 +440,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/settings/secrets',
     title: 'Vault tab',
     audience: "The vault's members (its owners and admins change it)",
-    what: "Overview (its key — made in the browser with a passkey touch — copies for whoever waits, and what it serves: agents, a workspace and below, or a runner's own Claude credentials), Members (who can open it and why each is one) and Secrets (the names it holds; a value is sealed in the browser, never shown). The Overview tab carries a dot while it has no key.",
+    what: "The old tab addresses, kept so links still land: `overview` opens Storage & key (its key, made in the browser with a passkey touch, copies for whoever waits, and what it serves), `members` opens Who can open them and `secrets` opens Secrets (a value is sealed in the browser, never shown).",
     actions: ['Make its key', 'Seal a secret in', 'Delete a secret'],
   },
   {

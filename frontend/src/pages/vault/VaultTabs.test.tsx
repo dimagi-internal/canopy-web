@@ -17,7 +17,6 @@ const ops = vi.hoisted(() => ({
 vi.mock('@/vault/operations', () => ops)
 
 const { VaultMembersTab, VaultOverviewTab, VaultSecretsTab } = await import('./VaultTabs')
-const { vaultTabs } = await import('./VaultPage')
 
 const SHARED = {
   vault_id: 'v1', workspace: 'dimagi', name: 'Shared', kv: 1, secrets: ['gog-oauth-client'],
@@ -40,11 +39,6 @@ afterEach(() => {
 })
 
 describe('vault page', () => {
-  it('marks Overview while it has no key', () => {
-    expect(vaultTabs({ ...SHARED, kv: 0 } as never)[0].dot).toBe(true)
-    expect(vaultTabs(SHARED as never)[0].dot).toBe(false)
-  })
-
   it('says which agents it serves; its runners are on Members', () => {
     api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
     render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [

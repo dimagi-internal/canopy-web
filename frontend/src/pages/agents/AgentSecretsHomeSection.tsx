@@ -32,6 +32,7 @@ export function AgentSecretsHomeSection({
   canEdit,
   onChanged,
   onSource,
+  show = 'all',
 }: {
   slug: string
   credentialSource?: string | null
@@ -40,6 +41,8 @@ export function AgentSecretsHomeSection({
   onChanged?: () => void
   /** Told when the person moves the agent between the two, so the page can follow. */
   onSource?: (source: Source) => void
+  /** Which half: where the secrets live (the vault's), the canopy login (the agent's), or both. */
+  show?: 'source' | 'login' | 'all'
 }) {
   const [source, setSource] = useState<Source>(credentialSource === '1password' ? '1password' : 'canopy-web')
   const [rotation, setRotation] = useState<PatRotationOut | null>(null)
@@ -163,9 +166,9 @@ export function AgentSecretsHomeSection({
   )
 
   return (
-    <section id="canopy-login" className="mb-6 scroll-mt-6 space-y-3" data-testid="agent-secrets-home">
-      <div>
-        <h3 className="text-[13px] font-semibold text-foreground">Where its secrets live</h3>
+    <section id={show === 'source' ? 'secrets-home' : 'canopy-login'} className="mb-6 scroll-mt-6 space-y-3" data-testid="agent-secrets-home">
+      {show !== 'login' && <div>
+        <h4 className="text-[13px] font-semibold text-foreground">Where its secrets live</h4>
         <div className="mt-2 flex flex-wrap gap-2">
           {option('canopy-web', 'Canopy vault (recommended)')}
           {option('1password', '1Password')}
@@ -175,11 +178,11 @@ export function AgentSecretsHomeSection({
             ? 'Only you and the machines you approve can open them — canopy-web can’t.'
             : 'Its runners read them from 1Password, with a key stored below. Choose this only if your team keeps its secrets there.'}
         </p>
-      </div>
+      </div>}
 
-      {source === 'canopy-web' && (
+      {show !== 'source' && source === 'canopy-web' && (
         <div>
-          <h3 className="text-[13px] font-semibold text-foreground">Its canopy login</h3>
+          <h4 className="text-[13px] font-semibold text-foreground">Its canopy login</h4>
           {hasLogin ? (
             <p className="mt-1 text-[12px]" data-testid="canopy-login-ok">
               <span className="text-success">Stored ✓</span>

@@ -12,11 +12,14 @@ export function AgentDeviceKeysSection({
   credentialSource,
   requireDeviceBinding,
   canEdit,
+  onLoaded,
 }: {
   slug: string
   credentialSource?: string | null
   requireDeviceBinding?: boolean | null
   canEdit: boolean
+  /** Told the machines' keys once read, for the vault's summary. */
+  onLoaded?: (keys: RunnerDeviceKeyOut[]) => void
 }) {
   const [keys, setKeys] = useState<RunnerDeviceKeyOut[] | null>(null)
   const [required, setRequired] = useState(Boolean(requireDeviceBinding))
@@ -28,11 +31,12 @@ export function AgentDeviceKeysSection({
     let cancelled = false
     if (!canEdit) return
     getAgentDeviceKeys(slug)
-      .then((k) => !cancelled && setKeys(k))
-      .catch(() => !cancelled && setKeys([]))
+      .then((k) => { if (!cancelled) { setKeys(k); onLoaded?.(k) } })
+      .catch(() => { if (!cancelled) { setKeys([]); onLoaded?.([]) } })
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, canEdit])
 
   if (!canEdit) return null
@@ -49,9 +53,9 @@ export function AgentDeviceKeysSection({
   const active = (keys ?? []).filter((k) => k.status === 'active').length
   return (
     <section id="cred-device-keys" className="mb-6" data-testid="agent-device-keys">
-      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Machines
-      </h3>
+      </h4>
       <label className="mb-2 flex items-center gap-2 text-[12px] text-foreground">
         <input
           type="checkbox"

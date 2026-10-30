@@ -84,6 +84,7 @@ const inRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRoute
 beforeEach(() => {
   getCredentialAlerts.mockResolvedValue([])
   getPatRotation.mockResolvedValue(ROTATION)
+  getAgentCredentialStatus.mockResolvedValue([])
   getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
 })
 
@@ -247,7 +248,7 @@ describe('External accounts', () => {
   })
 })
 
-describe('Security — who can open them', () => {
+describe('Security — about the agent', () => {
   it('turns canopy-login renewal on with the chosen period', async () => {
     setPatRotation.mockResolvedValue({ ...ROTATION, enabled: true, period_days: 14,
                                        next_due_at: '2026-11-01T00:00:00Z', enabled_by_email: 'jj@dimagi.com' })
@@ -266,7 +267,8 @@ describe('Security — who can open them', () => {
         runner: '', runner_name: '', turn_id: '', occurrences: 4, notified: true,
         created_at: '2026-10-16T00:00:00Z', last_seen_at: '2026-10-16T00:10:00Z' },
     ])
-    inRouter(<AgentSecurityPanel agent={AGENT} canEdit />)
+    getAgentCredentialStatus.mockResolvedValue([])
+    inRouter(<AgentSecretsPanel agent={AGENT} />)
     const section = await screen.findByTestId('agent-credential-alerts')
     expect(within(section).getByText('Read outside a turn')).toBeTruthy()
     expect(within(section).getByText('4×')).toBeTruthy()

@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
-import { Link, Navigate, Outlet, useOutletContext, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import { getWorkspaceVault, type WorkspaceVaultOut } from '@/api/vault'
 import { ObjectPage } from '@/components/objectPage/ObjectPage'
-import type { ObjectTab } from '@/components/objectPage/ObjectTabs'
+import { VaultView } from '@/components/vault/VaultView'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { Unlocked } from '@/vault/operations'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { VaultMembersTab, VaultOverviewTab, VaultSecretsTab } from './VaultTabs'
 
-// A WORKSPACE VAULT'S ONE PAGE, `/w/:workspace/vaults/:vaultId` — its key, what it
-// serves, its members and its secrets, behind tabs (docs/architecture/pages.md § One
-// editor per object). Settings → Secrets lists a workspace's vaults and links here; a
-// runner's credentials link to the vault that holds them.
+// A WORKSPACE VAULT'S ONE PAGE, `/w/:workspace/vaults/:vaultId`, drawn by the same
+// `VaultView` an agent's vault uses (components/vault/VaultView.tsx): a summary
+// line, then Secrets, Who can open them and Storage & key as collapsible sections
+// (docs/architecture/pages.md § One editor per object). Settings → Secrets lists a
+// workspace's vaults and links here; a runner's credentials link to the vault that
+// holds them. This file is the workspace vault's ADAPTER: it reads the vault and
+// gives the frame each section's body and one-line summary.
 //
-//   Overview  — its key (make it, give copies to whoever waits) and what it serves
-//   Members   — who can open it, and why each person is one
-//   Secrets   — the names it holds; add or replace one, sealed in this browser
+// The old tab addresses (`/overview`, `/members`, `/secrets`) still work: each opens
+// the section that tab became.
 
 export interface VaultOutletContext {
   vault: WorkspaceVaultOut
@@ -27,18 +29,8 @@ export interface VaultOutletContext {
   unlock: () => Promise<Unlocked>
 }
 
-export type VaultTab = 'overview' | 'members' | 'secrets'
-
-export function vaultTabs(vault: WorkspaceVaultOut): ObjectTab[] {
-  return [
-    { to: 'overview', label: 'Overview', dot: vault.kv === 0, dotLabel: 'no key yet' },
-    { to: 'members', label: 'Members' },
-    { to: 'secrets', label: 'Secrets' },
-  ]
-}
-
 export function VaultPage(): JSX.Element {
-  const { workspace = '', vaultId = '' } = useParams()
+  const { workspace = '', vaultId = '', tab } = useParams()
   const [vault, setVault] = useState<WorkspaceVaultOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const unlocker = useVaultUnlock()
@@ -66,38 +58,52 @@ export function VaultPage(): JSX.Element {
   if (vault.workspace !== workspace) return <Navigate to={scopedPath(vault.workspace, `/vaults/${vault.vault_id}`)} replace />
 
   const ctx: VaultOutletContext = { vault, onChange: setVault, reload: load, unlock: unlocker.unlock }
+  const runners = vault.attachments.filter((a) => a.runner).length
+  const waiting = vault.members.filter((m) => m.has_vault_key && !m.has_copy).length
+  const noKey = vault.kv === 0
+  const attention = [
+    noKey && 'no key yet, so nothing can go in',
+    !noKey && waiting > 0 && `${waiting} ${waiting === 1 ? 'person is' : 'people are'} waiting for the key`,
+  ].filter((a): a is string => Boolean(a))
+  const people = `${vault.members.length} ${vault.members.length === 1 ? 'person' : 'people'}`
+
   return (
     <ObjectPage
       title={vault.name}
       context="Vault"
-      status={
-        <span className={`rounded px-1.5 py-0.5 text-[11px] ${vault.kv ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}
-          data-testid="vault-page-status">
-          {vault.kv ? `key version ${vault.kv}` : 'no key yet'}
-        </span>
-      }
-      subtitle={`A zero-knowledge vault in ${vault.workspace}: only its members, and the machines they work for, can open it — canopy-web never can.`}
+      subtitle={`A workspace vault in ${vault.workspace}: only its members, and the machines they work for, can open it — canopy-web never can.`}
       actions={back}
-      tabsLabel="Vault"
-      tabs={vaultTabs(vault)}
     >
-      <Outlet context={ctx} />
+      <VaultView
+        facts={{
+          where: 'Canopy vault',
+          encrypted: true,
+          keyVersion: vault.kv,
+          secrets: vault.secrets.length,
+          people: vault.members.length,
+          machines: runners,
+          attention,
+        }}
+        secrets={{
+          summary: `${vault.secrets.length} stored`,
+          tone: 'ok',
+          defaultOpen: !tab || tab === 'secrets',
+          body: <VaultSecretsTab {...ctx} />,
+        }}
+        access={{
+          summary: `${people} · ${runners} ${runners === 1 ? 'machine' : 'machines'}`,
+          tone: waiting > 0 ? 'attention' : 'quiet',
+          defaultOpen: tab === 'members',
+          body: <VaultMembersTab {...ctx} />,
+        }}
+        storage={{
+          summary: noKey ? 'no key yet' : `key version ${vault.kv}`,
+          tone: noKey ? 'attention' : 'quiet',
+          defaultOpen: tab === 'overview',
+          body: <VaultOverviewTab {...ctx} />,
+        }}
+      />
       {unlocker.element}
     </ObjectPage>
   )
-}
-
-const TAB_COMPONENTS: Record<VaultTab, (p: VaultOutletContext) => JSX.Element> = {
-  overview: VaultOverviewTab,
-  members: VaultMembersTab,
-  secrets: VaultSecretsTab,
-}
-
-/** Route element for `:tab`; an unknown tab opens Overview. */
-export function VaultTabRoute(): JSX.Element {
-  const ctx = useOutletContext<VaultOutletContext>()
-  const { tab = '' } = useParams()
-  const Tab = TAB_COMPONENTS[tab as VaultTab]
-  if (!Tab) return <Navigate to="../overview" relative="path" replace />
-  return <Tab {...ctx} />
 }

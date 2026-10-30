@@ -104,10 +104,13 @@ describe('AgentSettingsSection', () => {
     expect(control('Where it runs', 'Repository')).toBeTruthy()
     cleanup()
 
-    // Security opens on its secrets, then who can open them.
+    // Security opens on the vault (a summary, then its secrets, who can open
+    // them, its storage and key), then what is about the agent itself.
     at(`${BASE}/security`)
-    expect(await within(region('Secrets')).findByTestId('vault-row-CANOPY_PAT')).toBeTruthy()
-    expect(region('Who can open them')).toBeTruthy()
+    expect(await within(region('Vault')).findByTestId('vault-row-CANOPY_PAT')).toBeTruthy()
+    expect(within(region('Vault')).getByTestId('vault-summary').textContent).toContain('1 secret')
+    expect(within(region('Vault')).getByTestId('vault-section-access-to-secrets')).toBeTruthy()
+    expect(region('Agent security')).toBeTruthy()
   })
 
   it('forwards an old anchor to the tab that holds it, keeping query and anchor', async () => {
@@ -150,12 +153,12 @@ describe('AgentSettingsSection', () => {
   it('scrolls to a section that renders late, and again when its link is clicked twice', async () => {
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
-    const to = `${BASE}/security#canopy-login`
+    const to = `${BASE}/security#secrets`
     at(to, <Link to={to}>again</Link>)
-    // `#canopy-login` is inside the secrets panel, which waits on its own fetch.
-    const onTarget = () => scroll.mock.contexts.filter((el) => (el as Element).id === 'canopy-login').length
+    // `#secrets` is inside the vault panel, which waits on its own fetch.
+    const onTarget = () => scroll.mock.contexts.filter((el) => (el as Element).id === 'secrets').length
     await waitFor(() => expect(onTarget()).toBe(1))
-    // The address already ends in #canopy-login: the checklist's link must still move the page.
+    // The address already ends in #secrets: the checklist's link must still move the page.
     fireEvent.click(screen.getByRole('link', { name: 'again' }))
     await waitFor(() => expect(onTarget()).toBe(2))
   })
