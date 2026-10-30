@@ -34,7 +34,12 @@ request: an email and a Web Push, each linking to the agent's Credentials.
   (`unrouted_box_refused`, canopy-web#1563).
 
 Debounced to one alert per kind per agent per hour: a repeat inside the hour
-bumps the open alert's `occurrences` and tells no one again. Every alert is an
+bumps the open alert's `occurrences` and tells no one again. One RUNNER fault
+reaches every agent that box runs, so the email is debounced per runner too: a
+person already emailed this hour about this kind on this runner (for any agent)
+is not emailed again; the row is still recorded on its own agent's list
+(`_already_told`; Jonathan, 2026-10-30, after the same cloud-ec2-live fault mailed
+him once for Trellis and once for Ada, and each forward started its own session). Every alert is an
 `AgentCredentialAlert` row, shown beside the credential read history, and an
 `agent.credentials.alert` event.
 
@@ -445,12 +450,32 @@ _SUBJECT = {"zk-wrap-missing": "a newly approved machine needs access granted",
             "device-proof": "a request for its secrets was refused (no machine proof)"}
 
 
+def _already_told(agent, alert) -> dict[str, str]:
+    """Email -> agent slug, for each person another agent's alert of this kind on this
+    runner already emailed within the hour. One box fault, one email per person."""
+    if alert.runner_id is None:
+        return {}
+    told: dict[str, str] = {}
+    earlier = (AgentCredentialAlert.objects
+               .filter(kind=alert.kind, runner_id=alert.runner_id,
+                       created_at__gte=timezone.now() - DEBOUNCE)
+               .exclude(pk=alert.pk).exclude(agent=agent)
+               .select_related("agent").order_by("created_at"))
+    for other in earlier:
+        for email in (other.notified or {}).get("emailed") or []:
+            told.setdefault(email, other.agent.slug)
+    return told
+
+
 def _notify(agent, alert) -> dict:
-    """Email + Web Push to each recipient. Never raises."""
+    """Email + Web Push to each recipient, except anyone `_already_told` about this
+    runner's fault this hour. Never raises."""
     from django.core.mail import EmailMultiAlternatives
 
-    result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
+    result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0,
+                    "already_told": {}}
     try:
+        told = _already_told(agent, alert)
         link = _link(agent, alert.kind)
         act = _link_label(agent, alert.kind)
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
@@ -464,7 +489,9 @@ def _notify(agent, alert) -> dict:
                 + (f"{why}\n\n" if why else "")
                 + f"{act}: {link}\n"
                 + (f"{log_label}: {log}\n" if log != link else "") + "\n"
-                f"At most one alert of this kind per agent per hour. You are getting this "
+                f"At most one alert of this kind per agent per hour, and one per runner: "
+                f"other agents refused on the same runner within the hour are listed on "
+                f"their own alert pages, not emailed again. You are getting this "
                 f"because you own {agent.slug} on Canopy.\n")
         html = (f"<p>{escape(alert.detail)}</p>"
                 + ("<p>" + "<br>".join(escape(line) for line in who) + "</p>" if who else "")
@@ -473,11 +500,16 @@ def _notify(agent, alert) -> dict:
                 + (f'<br><a href="{escape(log)}">{escape(log_label)}</a>' if log != link else "")
                 + "</p>"
                 f"<p style=\"color:#78716c;font-size:13px\">At most one alert of "
-                f"this kind per agent per hour. You are getting this because you own "
+                f"this kind per agent per hour, and one per runner: other agents refused "
+                f"on the same runner within the hour are listed on their own alert pages, "
+                f"not emailed again. You are getting this because you own "
                 f"{escape(agent.slug)} on Canopy.</p>")
         rel = link.split("://", 1)[-1]
         rel = rel[rel.find("/"):] if "/" in rel else "/"
         for person in recipients(agent):
+            if person.email in told:
+                result["already_told"][person.email] = told[person.email]
+                continue
             if person.email:
                 message = EmailMultiAlternatives(subject=subject, body=text, to=[person.email])
                 message.attach_alternative(html, "text/html")
@@ -529,5 +561,6 @@ def alerts_for(agent, *, limit: int = 50) -> list[dict]:
         "turn_id": a.turn_id, "occurrences": a.occurrences,
         "context": a.context or {}, "repeats": list(a.repeats or []),
         "notified": bool((a.notified or {}).get("emailed") or (a.notified or {}).get("pushed")),
+        "told_with": next(iter(((a.notified or {}).get("already_told") or {}).values()), ""),
         "created_at": a.created_at, "last_seen_at": a.last_seen_at,
     } for a in qs]

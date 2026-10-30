@@ -28658,6 +28658,11 @@ export interface components {
              */
             readonly notified: boolean;
             /**
+             * Told With
+             * @default
+             */
+            readonly told_with: string;
+            /**
              * Created At
              * Format: date-time
              */
