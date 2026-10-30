@@ -14,6 +14,10 @@ by `tests/test_act_as_you_on_canopy.py`:
   assertion made for THIS request (`api_act_as`: begin/finish, slot `act-as:<id>`), in the
   person's own browser; a session cookie, a step-up window or any token is not enough.
   The person picks the scope: `read` (GET routes and read-only tools) or `write`.
+* **Never write for an unreviewed turn.** A turn in `auto` mode may ask only to read
+  (`unreviewed_write_refusal`): an unreviewed turn holding the person's write authority is
+  the one combination with no human anywhere in it. A reviewed (`manual`) turn is
+  unaffected, since each action is already the person's call.
 * **30 minutes from the touch, never extended** (`LIFETIME`; `expires_at` is written
   once). A new approval needs a new request and a new touch.
 * **Dies with its turn, or its conversation.** Every use re-checks `held`: the turn it was
@@ -58,6 +62,7 @@ from apps.tokens import kinds
 from . import turn_asker
 from .models import ActAsGrant
 from .routing import EXECUTING
+from .turn_mode import AUTO
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +296,14 @@ class Refused(Exception):
         self.status = status
 
 
+def unreviewed_write_refusal(turn, scope: str) -> str | None:
+    """Why `turn` may not hold `scope` as the person, or None: an `auto` turn is read-only."""
+    if scope in (ActAsGrant.WRITE, ActAsGrant.EITHER) and getattr(turn, "turn_mode", "") == AUTO:
+        return ("this turn runs unreviewed (auto), so it may act as you to read only; ask for read, "
+                "or have the person run it manual")
+    return None
+
+
 def ask(user, credential: dict | None, *, reason: str, scope: str) -> ActAsGrant:
     """The agent's turn login asks to act as the person who started its turn. Raises Refused."""
     from apps.passkeys.models import Passkey  # noqa: PLC0415 — passkeys sits beside harness; only an ask pays
@@ -306,6 +319,8 @@ def ask(user, credential: dict | None, *, reason: str, scope: str) -> ActAsGrant
         ob = turn_asker.check(user, credential, session_login_live=True)
     except turn_asker.Refused as exc:
         raise Refused(f"no one to act as: {exc}") from exc
+    if (why := unreviewed_write_refusal(ob.turn, scope)):
+        raise Refused(why)
     if not Passkey.objects.filter(user=ob.user).exists():
         raise Refused(f"{ob.user.email} has no passkey, so they cannot approve an act-as-you "
                       "permission; they register one in canopy Settings → Passkeys")
@@ -346,6 +361,8 @@ def approve(grant: ActAsGrant, person, scope: str) -> ActAsGrant:
         if status_of(row, now=now) != ActAsGrant.PENDING:
             raise Refused(f"this request is {status_of(row, now=now)}; the agent has to ask again",
                           status=409)
+        if (why := unreviewed_write_refusal(row.turn, scope)):
+            raise Refused(why, status=422)
         row.status, row.scope = ActAsGrant.APPROVED, scope
         row.approved_at = row.decided_at = now
         row.expires_at = now + LIFETIME

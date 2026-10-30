@@ -215,7 +215,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
          resolving for a local Claude Code session (canopy#850). Not a widening
          in substance: an admin can already write every value, swap the vault
          key, and put their own box on the agent to read them back.
-       - `license`: holds an ACTIVE license to use the agent locally and names
+       - `license`: holds an ACTIVE license to use the agent directly and names
          their OWN open local turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
          The read is logged against that turn and license.
        Anyone else — a member, an editor with no local turn — is refused, and

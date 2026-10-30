@@ -4635,7 +4635,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Who uses this agent locally: its license holders
+         * Who uses this agent directly: its license holders
          * @description Every license to use the agent in someone's own Claude Code — active,
          *     requested (the caller list did not allow it yet) or revoked — with the
          *     private_runners it ran on, its local turns and credential reads, and when it was
@@ -4660,7 +4660,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Revoke a person's license to use this agent locally
+         * Revoke a person's license to use this agent directly
          * @description Per person, without editing the caller list: they may not open a local turn
          *     or read the agent's credentials again until an admin approves them. A revoked
          *     license is never re-issued automatically.
@@ -4682,7 +4682,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Issue or reinstate a person's license to use this agent locally
+         * Issue or reinstate a person's license to use this agent directly
          * @description Re-asks the caller list: refused (409) unless it gives them the whole agent —
          *     make them an editor or add a `full:` rule first.
          */
@@ -5603,7 +5603,7 @@ export interface paths {
          *          resolving for a local Claude Code session (canopy#850). Not a widening
          *          in substance: an admin can already write every value, swap the vault
          *          key, and put their own box on the agent to read them back.
-         *        - `license`: holds an ACTIVE license to use the agent locally and names
+         *        - `license`: holds an ACTIVE license to use the agent directly and names
          *          their OWN open local turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
          *          The read is logged against that turn and license.
          *        Anyone else — a member, an editor with no local turn — is refused, and
@@ -10491,7 +10491,7 @@ export interface paths {
          * Register this machine as one of your private runners
          * @description Idempotent per (you, name): registering the same machine again returns it
          *     (and brings back a retired one). A private runner is yours, not an agent's or a
-         *     workspace's — one serves every agent you use locally. It never claims turns.
+         *     workspace's — one serves every agent you use directly. It never claims turns.
          *
          *     `runner_id` is the runner that holds this machine's device keys: the runner app
          *     you link (`runner`), else a `computer` runner made for it — enrol a key on it
@@ -25143,7 +25143,7 @@ export interface components {
         };
         /**
          * AgentLicenseOut
-         * @description One person's license to use the agent locally (`apps/agents/licenses.py`).
+         * @description One person's license to use the agent directly (`apps/agents/licenses.py`).
          */
         readonly AgentLicenseOut: {
             /** User Id */
@@ -27524,7 +27524,7 @@ export interface components {
          *     its bearer requirement (that is a property of the request, not of the
          *     caller): `via` is `runner` when the caller pairs a live runner this agent
          *     routes to, `admin` when they are the agent's owner or an admin, `license`
-         *     when they hold an active license to use it locally and name their own open
+         *     when they hold an active license to use it directly and name their own open
          *     local turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
          *     names the access to ask for.
          */
@@ -27565,6 +27565,11 @@ export interface components {
              * @default
              */
             readonly delegated_by_email: string;
+            /**
+             * Use
+             * @default
+             */
+            readonly use: string;
         };
         /**
          * AgentCredentialsResolveOut

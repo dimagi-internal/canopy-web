@@ -837,8 +837,8 @@ def _license_rows(agent) -> list[dict]:
 
 
 @router.get("/{slug}/licenses", response=list[AgentLicenseOut],
-            summary="Who uses this agent locally: its license holders")
-@gate("member")  # licenses to use the agent locally (apps/agents/credentials/licenses.py, canopy-web#1704)
+            summary="Who uses this agent directly: its license holders")
+@gate("member")  # licenses to use the agent directly (apps/agents/credentials/licenses.py, canopy-web#1704)
 def list_agent_licenses(request: HttpRequest, slug: str):
     """Every license to use the agent in someone's own Claude Code — active,
     requested (the caller list did not allow it yet) or revoked — with the
@@ -852,7 +852,7 @@ def _license_target(request: HttpRequest, slug: str, user_id: int):
 
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
-        raise HttpError(403, f"only an admin of {agent.slug} may change who uses it locally")
+        raise HttpError(403, f"only an admin of {agent.slug} may change who uses it directly")
     target = get_user_model().objects.filter(pk=user_id).first()
     if target is None:
         raise HttpError(404, "user not found")
@@ -860,7 +860,7 @@ def _license_target(request: HttpRequest, slug: str, user_id: int):
 
 
 @router.post("/{slug}/licenses/{user_id}/revoke", response=AgentLicenseOut,
-             summary="Revoke a person's license to use this agent locally")
+             summary="Revoke a person's license to use this agent directly")
 @gate("agent-admin", setting=True)
 def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
                          payload: AgentLicenseRevokeIn | None = None):
@@ -877,7 +877,7 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
 
 
 @router.post("/{slug}/licenses/{user_id}/approve", response=AgentLicenseOut,
-             summary="Issue or reinstate a person's license to use this agent locally")
+             summary="Issue or reinstate a person's license to use this agent directly")
 @gate("agent-admin", setting=True)  # + access.decide must give them the whole agent (409)
 def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     """Re-asks the caller list: refused (409) unless it gives them the whole agent —

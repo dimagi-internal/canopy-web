@@ -1,4 +1,4 @@
-"""Local use of an agent: a private runner, and the turn a session there opens.
+"""Direct use of an agent: a private runner, and the turn a session there opens.
 
 canopy-web#1704. A person runs an agent in their own Claude Code; canopy records
 it as a real turn (`origin=local`) on their private runner, with the same envelope
@@ -120,7 +120,7 @@ def test_a_viewer_is_refused_and_told_why(world):
     c = _client(world["viewer"])
     res = _open(c, _register(c))
     assert res.status_code == 403
-    assert "locally" in res.json()["detail"]
+    assert "directly" in res.json()["detail"]
     assert not Turn.objects.filter(origin=Turn.ORIGIN_LOCAL).exists()
 
 
@@ -180,7 +180,7 @@ def test_renew_pushes_the_lease_out(world):
 # --- a local turn never holds the agent ------------------------------------------
 
 def test_local_turns_do_not_serialize_the_agent(world):
-    """Two people using ACE locally at once, while ACE's runner works a turn."""
+    """Two people using ACE directly at once, while ACE's runner works a turn."""
     a, b = _client(world["editor"]), _client(world["admin"])
     assert _open(a, _register(a)).status_code == 201
     assert _open(b, _register(b, "sarvesh-mbp")).status_code == 201

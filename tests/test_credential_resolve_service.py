@@ -196,3 +196,37 @@ def test_parse_refs():
     assert cr.parse_refs(None) is None
     assert cr.parse_refs("") == set()
     assert cr.parse_refs(" a, b ,,") == {"a", "b"}
+
+
+def test_an_owner_in_their_own_local_turn_reads_like_anyone_else(monkeypatch, owner, ws, agent):
+    """Being an admin, or pairing a runner the agent routes to, changes nothing in a direct
+    session: a request naming the person's own open local turn is a `license` read, so the
+    agent's login stays withheld and they step up like anyone (`authority`)."""
+    RunnerAssignment.objects.create(agent=agent, runner=_box(owner, ws), rank=0)
+    assert cr.credential_access(_request(owner), agent) == ("runner", "")  # no turn named
+    from apps.agents.models import AgentLicense
+
+    lic = AgentLicense.objects.create(agent=agent, user=owner, status=AgentLicense.ACTIVE)
+    monkeypatch.setattr(cr, "license_for_read", lambda request, agent: lic)
+    assert cr.credential_access(_request(owner), agent) == ("license", "")
+    _values(monkeypatch, agent, {"api-key": "v", "canopy-pat": "pat"})
+    out = cr.resolve(_request(owner), agent, None)
+    assert out.via == "license" and out.values == {"api-key": "v"}
+
+
+def test_a_laptop_runner_is_a_runner_not_a_direct_session(monkeypatch, owner, ws, agent):
+    """Placement is who drives, not which machine: a laptop running the runner app claims
+    turns as a runner, even with the owner's own direct session open on the same machine."""
+    from types import SimpleNamespace
+
+    from apps.agents.models import AgentLicense
+    from apps.harness import device_keys
+
+    laptop = _box(owner, ws, name="jj-laptop", kind=Runner.EMDASH)
+    lic = AgentLicense.objects.create(agent=agent, user=owner, status=AgentLicense.ACTIVE)
+    monkeypatch.setattr(cr, "license_for_read", lambda request, agent: lic)
+    monkeypatch.setattr(device_keys, "runner_serves_agent", lambda runner, agent, facts=None: True)
+    req = _request(owner)
+    req.runner_token = SimpleNamespace(runner=laptop, runner_id=laptop.pk)
+    assert cr.credential_access(req, agent) == ("runner", "")
+    assert cr.authority.placement_of("runner") == cr.authority.RUNNER

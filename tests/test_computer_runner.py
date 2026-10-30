@@ -5,7 +5,7 @@ Registering a computer for local use (`POST /api/private-runners/`) gives it a
 a device key, be wrapped an agent's vault key and read a zero-knowledge agent's
 secrets under its owner's license. It is no fleet runner: it claims nothing, its
 token reaches only its owner's local turns and license reads, and no fleet list,
-picker or report shows it. docs/architecture/access.md → "Local use of an agent".
+picker or report shows it. docs/architecture/access.md → "Direct use of an agent".
 """
 from __future__ import annotations
 

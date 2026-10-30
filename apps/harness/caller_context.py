@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from apps.agents.credentials import authority
 from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
@@ -378,6 +379,11 @@ def build(turn, *, reader_user=None) -> dict:
         # procedure without the agent asking canopy a second question. null for a
         # turn with no agent.
         "turn_mode": _turn_mode(turn),
+        # WHICH IDENTITY the session's calls carry and how to change it: placement
+        # (runner | direct) and oversight (manual | auto) are the two things the person
+        # chose, and the rest follows (`credentials/authority.py`). null for a turn with
+        # no agent.
+        "authority": _authority(turn, agent),
         # The owner-approved REPO-INTERNAL SHIP GRANT (Jonathan, 2026-10-03): when
         # another agent's login that holds this agent's keys (an explicit admin, or
         # the owner) dispatches work AT this agent, the session may push, open PRs
@@ -631,6 +637,29 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
         "dispatched_by": {"email": user.email, "agent": dispatcher.slug},
         "basis": f"dispatched by {user.email} (agent {dispatcher.slug}), {rel} of {agent.slug}",
         "not_granted": list(SHIP_NOT_GRANTED),
+    }
+
+
+def _authority(turn, agent) -> dict | None:
+    """Whose identity this session acts under, and the one way to cross to the person's."""
+    if agent is None:
+        return None
+    placement = authority.DIRECT if turn.origin == Turn.ORIGIN_LOCAL else authority.RUNNER
+    resolved = _turn_mode(turn)
+    oversight = resolved["mode"] if resolved is not None else None
+    person = turn.initiator_user if turn.initiator_kind == who.USER else None
+    asked = None
+    if person is not None:
+        asked = {"person": person.email, "ask": "POST /api/me/act-as-requests/",
+                 "scopes": ["read"] if oversight == "auto" else ["read", "write"],
+                 "approved": "by the person, with their passkey, for 30 minutes"}
+    return {
+        "placement": placement,
+        "oversight": oversight,
+        "acting_as": agent.slug,
+        # A lent account is the agent's on a box and the person's own in a direct session.
+        "delegated_accounts": "yours" if placement == authority.DIRECT else "the agent's",
+        "to_act_as_the_person": asked,
     }
 
 

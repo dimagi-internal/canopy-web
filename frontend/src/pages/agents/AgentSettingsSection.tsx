@@ -45,7 +45,7 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 // (settingsTabs.ts), and the page scrolls to it there.
 //
 //   Overview           — what is left to set up, what it is, where it runs, delete
-//   Roles              — owner, its canopy user, roles, who runs it locally
+//   Roles              — owner, its canopy user, roles, who runs it directly
 //   Channels           — callers, Slack, email, Google account
 //   External accounts  — GitHub, its Google mailbox
 //   Security           — its vault (secrets, who can open them, storage and key), then its canopy login
@@ -257,10 +257,10 @@ export function AgentSettingsSection() {
               />
             </Setting>
             <Setting
-              title="Local use"
+              title="Direct use"
               who={admins}
               canEdit={isAdmin}
-              description={`Who runs ${agent.name} in their own Claude Code, on which computers, and when they last did.`}
+              description={`Who runs ${agent.name} in their own Claude Code, on which computers, and when they last did. There it uses its own tools and secrets, but never its own login; a GitHub or other account lent to it is the person's own there, and acting as them on canopy asks for their passkey.`}
             >
               <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
             </Setting>

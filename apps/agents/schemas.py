@@ -660,7 +660,7 @@ class AgentAdminOut(StrictModel):
 
 
 class AgentLicenseOut(StrictModel):
-    """One person's license to use the agent locally (`apps/agents/licenses.py`)."""
+    """One person's license to use the agent directly (`apps/agents/licenses.py`)."""
 
     user_id: int
     email: str
@@ -2083,7 +2083,7 @@ class AgentCredentialAccessOut(StrictModel):
     its bearer requirement (that is a property of the request, not of the
     caller): `via` is `runner` when the caller pairs a live runner this agent
     routes to, `admin` when they are the agent's owner or an admin, `license`
-    when they hold an active license to use it locally and name their own open
+    when they hold an active license to use it directly and name their own open
     local turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
     names the access to ask for."""
 
@@ -2172,6 +2172,8 @@ class DelegatedWithheldOut(StrictModel):
     provider: str = ""
     label: str = ""
     delegated_by_email: str = ""
+    #: What to do instead, in a sentence: in a direct session the account is the reader's own.
+    use: str = ""
 
 
 class DelegatedEntryOut(StrictModel):

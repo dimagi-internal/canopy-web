@@ -1,6 +1,6 @@
-"""Local use of an agent: a person's own Claude Code session, recorded as a turn.
+"""Direct use of an agent: a person's own Claude Code session, recorded as a turn.
 
-Three objects (canopy-web#1704, `docs/architecture/access.md` § Local use):
+Three objects (canopy-web#1704, `docs/architecture/access.md` § Direct use):
 
 * a **private runner** (`models.PrivateRunner`) — the person's machine, registered once
   with their own token; it never claims anything;
@@ -45,7 +45,7 @@ LOCAL_LEASE = dt.timedelta(hours=8)
 
 
 class LocalRefusedError(Exception):
-    """The person may not run this agent locally. `str()` says why and what to ask for."""
+    """The person may not run this agent directly. `str()` says why and what to ask for."""
 
     def __init__(self, reason: str, *, status: int = 403):
         super().__init__(reason)

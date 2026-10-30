@@ -1,4 +1,4 @@
-"""Licenses: who uses an agent LOCALLY, in their own Claude Code (canopy-web#1704).
+"""Licenses: who uses an agent DIRECTLY, in their own Claude Code (canopy-web#1704).
 
 The caller list decides who MAY — `access.decide`, asked as the person on a signed-in
 request. A license records who DOES, since when, from which private runner, and what
@@ -56,7 +56,7 @@ def request(agent, user) -> AgentLicense:
     if lic.status == AgentLicense.REVOKED:
         who = getattr(lic.revoked_by, "email", "") or "an admin"
         raise LicenseRefusedError(
-            f"your license to use {agent.slug} locally was revoked by {who}"
+            f"your license to use {agent.slug} directly was revoked by {who}"
             + (f" ({lic.note})" if lic.note else "")
             + f"; ask an admin of {agent.slug} to approve it again")
     decision = _decision(agent, user)
@@ -65,7 +65,7 @@ def request(agent, user) -> AgentLicense:
                                   f"{decision.capability or 'no'} access, not the whole agent")
         AgentLicense.objects.filter(pk=lic.pk, status=AgentLicense.REQUESTED).update(note=why[:300])
         raise LicenseRefusedError(
-            f"you may not use {agent.slug} locally: {why}. Your request is recorded for "
+            f"you may not use {agent.slug} directly: {why}. Your request is recorded for "
             f"{agent.slug}'s admins; they can make you an editor or add a `full:` rule for you.")
     if lic.status != AgentLicense.ACTIVE:
         lic.status, lic.basis, lic.issued_at, lic.note = (

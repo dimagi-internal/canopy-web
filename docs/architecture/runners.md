@@ -21,7 +21,7 @@ they cannot disagree).
    doing it are listed under the agent's Settings → How it runs and → People → Local
    use. A computer without the runner app gets its own key for reading the agent's
    vault (a `computer` runner made when it registers, which is no fleet runner).
-   Detail: [`access.md`](access.md) → "Local use of an agent".
+   Detail: [`access.md`](access.md) → "Direct use of an agent".
 2. **Let it run on its own — needs a runner.** Either your own Mac running the
    runner app (set **Private**, it does only your work), or a fleet cloud box.
    Schedules, mail and dispatches start these turns; the rest of this doc is how
@@ -43,7 +43,7 @@ registration linked to the `Runner` (`PrivateRunner.runner`); the UI calls these
 "your computers (used in Claude Code)", not a separate kind of runner. A computer
 with no runner app is linked instead to a `computer` runner made for it, which only
 holds its device keys: it never claims or heartbeats and is left out of every fleet
-list, routing picker and health report. See [`access.md`](access.md) → "Local use
+list, routing picker and health report. See [`access.md`](access.md) → "Direct use
 of an agent".
 
 ### Allowlisted agents, and directed-only by a person's word

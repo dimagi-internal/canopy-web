@@ -991,7 +991,7 @@ class Turn(models.Model):
             # A LOCAL turn is excluded: it is a person's own session on their own
             # machine, not the agent's one continuous session, so it neither waits
             # behind the agent's runner turns nor holds them up — and two people
-            # may use the agent locally at once (`routing.busy_agent_ids` agrees).
+            # may use the agent directly at once (`routing.busy_agent_ids` agrees).
             models.UniqueConstraint(
                 fields=["agent"],
                 condition=(models.Q(status__in=["claimed", "running", "needs_human"])

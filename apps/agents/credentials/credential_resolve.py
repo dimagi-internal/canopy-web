@@ -26,17 +26,15 @@ from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
 from .. import mailbox, services
-from . import accounts, licenses, vault_alerts, vault_members, workspace_vaults, zk
+from . import accounts, authority, licenses, vault_alerts, vault_members, workspace_vaults, zk
 from .pat_rotation import CANOPY_PAT_REF
 
 logger = logging.getLogger(__name__)
 
-#: What a `license` read (a person's local turn, canopy-web#1704) never gets (nor does
-#: any read: a credential a person delegated to the agent): the agent's own canopy login, which would
-#: let the holder act AS the agent (graded `system`, past the editor tier's manual cap).
-#: `CANOPY_PAT_REF` is the name the agent's login is actually stored under (minted, rotated);
-#: the two kebab names are older spellings some vaults still carry.
-LICENSE_WITHHELD_REFS = frozenset({CANOPY_PAT_REF, "canopy-pat", "canopy-web-pat"})
+#: Which of the agent-only kind (`authority`) live in the vault's `values`, by name:
+#: `CANOPY_PAT_REF` is the name the agent's login is actually stored under (minted,
+#: rotated); the two kebab names are older spellings some vaults still carry.
+AGENT_ONLY_REFS = frozenset({CANOPY_PAT_REF, "canopy-pat", "canopy-web-pat"})
 
 BEARER_REQUIRED = "bearer_required"
 NO_ACCESS = "no_access"
@@ -94,9 +92,12 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     `("runner", "")`, `("admin", "")`, `("license", "")`, or `(None, <what access to get>)`.
 
     The one decision both `/credentials/resolve` and `/credentials/access`
-    make, so the cheap check can never disagree with the real gate. `runner`
-    wins when both hold (`caller_runs_agent` already implies admin), because it
-    is the more specific claim and the audit trail should say a box read it.
+    make, so the cheap check can never disagree with the real gate. A request
+    naming the person's own open local turn is `license` whoever they are, an
+    admin or a runner owner included (`authority`: a direct session). Otherwise
+    `runner` wins over `admin` when both hold (`caller_runs_agent` already implies
+    admin), because it is the more specific claim and the audit trail should say a
+    box read it.
 
     A runner token (`RunnerAccessToken`, bought with a device key) signs in as
     the runner's owner, but it speaks for ONE box: it is a `runner` caller only
@@ -116,20 +117,23 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
             return "license", ""
         return None, (f"this runner token is {rtok.runner.name}'s, and {rtok.runner.name} "
                       f"does not run {agent.slug}")
+    # A person's OWN open local turn on this agent (named in X-Canopy-Turn-Id) is a
+    # direct session, whoever they are: an owner or admin using the agent in their own
+    # Claude Code is read like anyone else, and steps up like anyone else
+    # (`authority`). Asked first so being a runner owner or an admin changes nothing.
+    # apps/agents/credentials/licenses.py, canopy-web#1704. No turn, no secrets.
+    if license_for_read(request, agent) is not None:
+        return "license", ""
     if services.caller_runs_agent(request.user, agent):
         return "runner", ""
     if agent.is_admin(request.user):
         return "admin", ""
-    # A license holder, during their OWN open local turn on this agent (named in
-    # X-Canopy-Turn-Id) — apps/agents/credentials/licenses.py, canopy-web#1704. No turn, no secrets.
-    if license_for_read(request, agent) is not None:
-        return "license", ""
     owner = getattr(agent.owner, "email", "") if agent.owner_id else ""
     ask = f"ask its owner ({owner})" if owner else "ask its owner or a workspace owner"
     return None, (
         f"resolving {agent.slug}'s secrets needs a live runner you pair that "
         f"{agent.slug} routes to, being {agent.slug}'s owner or an agent admin, or an active "
-        f"license to use it locally, during your own local turn (canopy private-runner register, "
+        f"license to use it directly, during your own direct session (canopy private-runner register, "
         f"then open a session with CANOPY_AGENT={agent.slug}); "
         f"{ask} to make you an admin (PUT /api/agents/{agent.slug}/admins/<your user id>)"
     )
@@ -276,26 +280,29 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         # An agent that has never stored a value here: there is nothing to hand out
         # (a first stored value turns its vault on).
         values = {}
+    placement = authority.placement_of(via)
 
     # A box that runs the agent, by its own proof: never an admin reading by hand (the
     # owner at their own laptop is an `admin` read, `_classify_read`).
     runner_read = (via == "runner" and device_key is not None
                    and _classify_read(request, via, runner=device_key.runner, device_key=device_key,
                                       rtok=rtok) == "runner")
-    delegated = accounts.resolve_payload(agent, device_key) if runner_read else {}
+    delegated = (accounts.resolve_payload(agent, device_key)
+                 if runner_read and authority.hands_out(authority.RUNNER, authority.DELEGATED) else {})
     # Anyone else (an admin or license holder using the agent on their own machine) is
     # told which credentials are someone's own and not theirs to use.
     withheld = [] if runner_read else accounts.withheld_payload(agent)
 
-    if via == "license":
-        # A license holder runs the agent's TOOLS, not the agent: never its own canopy
-        # login (which grades as `system` — past the editor's manual cap) — canopy-web#1704.
-        values = {k: v for k, v in values.items() if k not in LICENSE_WITHHELD_REFS}
+    # A person in a direct session runs the agent's TOOLS, not the agent: never its own
+    # canopy login (which grades as `system` — past the editor's manual cap) — canopy-web#1704.
+    hold_back_login = not authority.hands_out(placement, authority.AGENT_ONLY)
+    if hold_back_login:
+        values = {k: v for k, v in values.items() if k not in AGENT_ONLY_REFS}
     # The workspace vaults layered under the agent's own (only a device can open them).
     layers = workspace_vaults.layers_payload(agent, device_key, wanted) if device_key is not None else []
-    if via == "license":
+    if hold_back_login:
         for layer in layers:
-            layer["values"] = {k: v for k, v in layer["values"].items() if k not in LICENSE_WITHHELD_REFS}
+            layer["values"] = {k: v for k, v in layer["values"].items() if k not in AGENT_ONLY_REFS}
     out = Resolved(
         values=values,
         mailbox=agent.email or "",

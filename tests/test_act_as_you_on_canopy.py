@@ -726,3 +726,16 @@ def test_the_push_is_recorded(w, monkeypatch):
     gid = _ask(_login(w, _turn(w))).json()["id"]
     assert ActAsGrant.objects.get(pk=gid).push_sent == 2
     assert Event.objects.get(kind="act_as.requested").payload["pushed"] == 2
+
+
+def test_an_unreviewed_turn_may_act_as_you_to_read_only(w):
+    # `auto` is a turn nobody reviews: write authority as the person would have no human in it.
+    login = _login(w, _turn(w, turn_mode="auto"))
+    for scope in ("write", "either"):
+        r = _ask(login, scope=scope)
+        assert r.status_code == 403 and "unreviewed" in r.json()["detail"], scope
+    assert _ask(login, scope="read").status_code in (200, 201)
+
+
+def test_a_reviewed_turn_may_still_ask_for_write(w):
+    assert _ask(_login(w, _turn(w, turn_mode="manual")), scope="write").status_code in (200, 201)
