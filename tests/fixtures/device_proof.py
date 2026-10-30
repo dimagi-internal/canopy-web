@@ -1,7 +1,7 @@
 """Tests about WHO may resolve an agent's credentials are not about the device proof.
 
 Every agent is zero-knowledge, so every resolve carries a device proof from an approved key whose person
-is a member of the agent's vault (tests/test_canopy_vault_device_binding.py and
+is a member of the agent's vault (tests/test_device_proof_resolve.py and
 tests/test_canopy_vault_zk.py pin both). `accept_device_proof` stands in for that proof, so
 a test can say what it is actually about.
 """

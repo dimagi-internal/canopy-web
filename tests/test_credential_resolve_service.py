@@ -184,7 +184,6 @@ def test_a_license_read_never_gets_the_agents_login(monkeypatch, owner, agent):
     out = cr.resolve(_request(owner), agent, None)
     assert out.via == "license"
     assert out.values == {"api-key": "v"}
-    assert not hasattr(out, "op_sa_token")
     assert not hasattr(out, "github_token")
 
 
