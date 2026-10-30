@@ -7,28 +7,50 @@ import {
   type ConnectionAppOut,
 } from '@/api/connections'
 import { ApiError } from '@/api/problem'
+import { roleAllows } from '@/lib/workspaceRoles'
+import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { Button, CopyButton, Input } from 'canopy-ui/ui'
 
 /**
  * The OAuth clients ("apps") people and agents in this workspace connect with,
- * one card per provider the API lists. Workspace admins only (the server gates
- * it on `integrations`).
+ * one card per provider the API lists. Workspace admins and owners only: the
+ * server gates it on `integrations`, and so does this panel (as the Inbound
+ * email page does), so anyone else reads one line instead of a 403.
  *
  * Save and Remove need a fresh passkey: the API client's step-up middleware
  * prompts and retries, so nothing here knows. The client secret is write-only —
  * the API never returns it (`has_secret` says whether one is saved), and the
  * field is cleared once a save lands.
  */
-export function ConnectionAppsPanel({ workspace }: { workspace: string }): JSX.Element {
+export function ConnectionAppsPanel({ workspace }: { workspace: string }): JSX.Element | null {
+  const { workspaces, loading } = useWorkspace()
+  const allowed = roleAllows(workspaces.find((w) => w.slug === workspace)?.role, 'integrations')
   const [apps, setApps] = useState<ConnectionAppOut[] | null>(null)
   const [error, setError] = useState('')
 
-  const load = useCallback(() => {
-    listConnectionApps(workspace)
-      .then((a) => { setApps(a); setError('') })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not read the connection apps.'))
+  /** Re-read every app; resolves to the list (empty when the read failed). */
+  const load = useCallback(async (): Promise<ConnectionAppOut[]> => {
+    try {
+      const a = await listConnectionApps(workspace)
+      setApps(a)
+      setError('')
+      return a
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read the connection apps.')
+      return []
+    }
   }, [workspace])
-  useEffect(load, [load])
+  useEffect(() => {
+    if (allowed) void load()
+  }, [allowed, load])
+
+  // One card's own save: swap in the row the PUT returned, without a reload.
+  const saved = (a: ConnectionAppOut) =>
+    setApps((list) => list?.map((x) => (x.provider === a.provider ? a : x)) ?? list)
+  // A removal disconnects connections elsewhere too, so re-read the lot.
+  const removed = async (provider: string) => (await load()).find((x) => x.provider === provider)
+
+  if (loading) return null
 
   return (
     <div className="flex max-w-3xl flex-col gap-5" data-testid="connection-apps">
@@ -38,15 +60,18 @@ export function ConnectionAppsPanel({ workspace }: { workspace: string }): JSX.E
           The OAuth apps people and agents in this workspace connect their accounts with.
         </p>
       </section>
-      {error && <p className="text-[13px] text-destructive">{error}</p>}
-      {apps?.map((a) => (
-        <AppCard
-          key={`${a.provider}:${a.updated_at ?? ''}`}
-          workspace={workspace}
-          app={a}
-          onChanged={load}
-        />
-      ))}
+      {!allowed ? (
+        <p className="text-[13px] text-muted-foreground">Only a workspace admin or owner can set up connections.</p>
+      ) : (
+        <>
+          {error && <p className="text-[13px] text-destructive">{error}</p>}
+          {apps?.map((a) => (
+            // Keyed by provider alone: a save must not remount the card, or its
+            // "Saved." note and any edits vanish with the old row.
+            <AppCard key={a.provider} workspace={workspace} app={a} onSaved={saved} onRemoved={removed} />
+          ))}
+        </>
+      )}
     </div>
   )
 }
@@ -57,16 +82,15 @@ export function WorkspaceConnectionAppsSection(): JSX.Element {
   return <ConnectionAppsPanel workspace={workspace} />
 }
 
-/** Where the callback URL is registered, per provider (plain words, one line). */
-const REGISTER_AT: Record<string, string> = {
-  salesforce: 'your Salesforce External Client App',
-  google: 'your Google OAuth client (Web application)',
-}
-
-/** One provider-specific caution, shown muted under the callback URL. */
-const HELP: Record<string, string> = {
-  google:
-    'Use an OAuth client whose consent screen is published (In production). An app left in Testing loses its connections after 7 days.',
+/** The only provider-specific copy: where the callback URL is registered, and
+ *  an optional caution shown muted under it. A provider not listed here gets
+ *  "your <Title> OAuth client" and no caution. */
+const PROVIDER_COPY: Record<string, { registerAt: string; help?: string }> = {
+  salesforce: { registerAt: 'your Salesforce External Client App' },
+  google: {
+    registerAt: 'your Google OAuth client (Web application)',
+    help: 'Use an OAuth client whose consent screen is published (In production). An app left in Testing loses its connections after 7 days.',
+  },
 }
 
 function plural(n: number, one: string): string {
@@ -86,16 +110,26 @@ function initialOptions(app: ConnectionAppOut): Record<string, string> {
 function AppCard({
   workspace,
   app,
-  onChanged,
+  onSaved,
+  onRemoved,
 }: {
   workspace: string
   app: ConnectionAppOut
-  onChanged: () => void
+  onSaved: (a: ConnectionAppOut) => void
+  /** Resolves to the provider's row as re-read after the removal. */
+  onRemoved: (provider: string) => Promise<ConnectionAppOut | undefined>
 }) {
   const [clientId, setClientId] = useState(app.client_id)
   const [secret, setSecret] = useState('')
   const [options, setOptions] = useState<Record<string, string>>(() => initialOptions(app))
   const [scopes, setScopes] = useState<string[]>(() => [...(app.scopes ?? [])])
+
+  /** The form, as the server now has it. */
+  function reseed(a: ConnectionAppOut) {
+    setClientId(a.client_id)
+    setOptions(initialOptions(a))
+    setScopes([...(a.scopes ?? [])])
+  }
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
@@ -103,6 +137,7 @@ function AppCard({
   const fields = app.option_fields ?? []
   const choices = app.scope_choices ?? []
   const hasLoginUrl = fields.some((f) => f.name === 'login_url')
+  const copy = PROVIDER_COPY[p]
   const id = (what: string) => `connection-app-${p}-${what}`
 
   function toggle(scope: string, on: boolean) {
@@ -114,7 +149,7 @@ function AppCard({
     setBusy(true)
     setNote(null)
     try {
-      await configureConnectionApp(workspace, p, {
+      const updated = await configureConnectionApp(workspace, p, {
         client_id: clientId.trim(),
         client_secret: secret,
         options,
@@ -122,8 +157,9 @@ function AppCard({
         scopes: choices.map((c) => c.scope).filter((s) => scopes.includes(s)),
       })
       setSecret('') // never keep a secret in component state once it has landed
+      reseed(updated)
+      onSaved(updated)
       setNote({ tone: 'ok', text: 'Saved.' })
-      onChanged()
     } catch (err) {
       const text = err instanceof ApiError && err.code === 'app_locked'
         ? `Disconnect its ${plural(app.connection_count, 'connection')} (Remove) before changing the client ID${hasLoginUrl ? ' or login URL' : ''}.`
@@ -141,7 +177,10 @@ function AppCard({
     setNote(null)
     try {
       await removeConnectionApp(workspace, p)
-      onChanged()
+      setSecret('')
+      const fresh = await onRemoved(p)
+      if (fresh) reseed(fresh)
+      setNote({ tone: 'ok', text: 'Removed.' })
     } catch (err) {
       setNote({ tone: 'error', text: err instanceof Error ? err.message : 'Could not remove the app.' })
     } finally {
@@ -170,9 +209,9 @@ function AppCard({
           <CopyButton text={app.callback_url} variant="outline" />
         </div>
         <p className="text-[12px] text-foreground-secondary">
-          Register this as the redirect URI in {REGISTER_AT[p] ?? `your ${app.title} OAuth client`}.
+          Register this as the redirect URI in {copy?.registerAt ?? `your ${app.title} OAuth client`}.
         </p>
-        {HELP[p] && <p className="text-[12px] text-muted-foreground">{HELP[p]}</p>}
+        {copy?.help && <p className="text-[12px] text-muted-foreground">{copy.help}</p>}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -192,17 +231,20 @@ function AppCard({
           />
         </label>
         {fields.map((f) => (
-          <label key={f.name} className="space-y-1 text-[12px] text-muted-foreground" htmlFor={id(f.name)}>
-            <span>{f.label}{f.required ? '' : ' (optional)'}</span>
-            <Input
-              id={id(f.name)}
-              type={f.kind === 'url' ? 'url' : f.kind === 'int' ? 'number' : 'text'}
-              value={options[f.name] ?? ''}
-              placeholder={f.default === undefined || f.default === null ? '' : String(f.default)}
-              onChange={(e) => setOptions((o) => ({ ...o, [f.name]: e.target.value }))}
-            />
-            {f.help && <span className="block text-[11px]">{f.help}</span>}
-          </label>
+          <div key={f.name} className="space-y-1 text-[12px] text-muted-foreground">
+            <label className="block space-y-1" htmlFor={id(f.name)}>
+              <span>{f.label}{f.required ? '' : ' (optional)'}</span>
+              <Input
+                id={id(f.name)}
+                type={f.kind === 'url' ? 'url' : f.kind === 'int' ? 'number' : 'text'}
+                value={options[f.name] ?? ''}
+                placeholder={f.default === undefined || f.default === null ? '' : String(f.default)}
+                aria-describedby={f.help ? id(`${f.name}-help`) : undefined}
+                onChange={(e) => setOptions((o) => ({ ...o, [f.name]: e.target.value }))}
+              />
+            </label>
+            {f.help && <p id={id(`${f.name}-help`)} className="text-[11px]">{f.help}</p>}
+          </div>
         ))}
       </div>
 
@@ -229,11 +271,18 @@ function AppCard({
       )}
 
       <div className="flex items-center gap-2">
-        <Button type="submit" size="sm" disabled={busy || !clientId.trim()}>
+        <Button type="submit" size="sm" aria-label={`Save ${app.title}`} disabled={busy || !clientId.trim()}>
           {busy ? 'Saving…' : 'Save'}
         </Button>
         {(app.configured || app.client_id) && (
-          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void remove()}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-label={`Remove ${app.title}`}
+            disabled={busy}
+            onClick={() => void remove()}
+          >
             Remove
           </Button>
         )}

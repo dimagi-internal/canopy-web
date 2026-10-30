@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-const createTrigger = vi.fn((..._args: unknown[]) => Promise.resolve({}))
+const createTrigger = vi.fn<(...args: unknown[]) => Promise<unknown>>(() => Promise.resolve({}))
 vi.mock('@/api/triggers', () => ({
   createTrigger,
   updateTrigger: vi.fn(),

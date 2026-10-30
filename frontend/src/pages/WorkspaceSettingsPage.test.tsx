@@ -3,9 +3,10 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const role = vi.hoisted(() => ({ current: 'owner' }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({
   useWorkspace: () => ({
-    workspaces: [{ slug: 'connect', display_name: 'Connect', role: 'owner' }],
+    workspaces: [{ slug: 'connect', display_name: 'Connect', role: role.current }],
     active: 'connect',
     loading: false,
     refresh: async () => {},
@@ -45,6 +46,18 @@ describe('WorkspaceSettingsPage', () => {
       )
     }
     expect(screen.getByText('slack section')).toBeTruthy()
+  })
+
+  it('shows the Connections tab only to an admin or owner', () => {
+    role.current = 'editor'
+    renderSettings('/w/connect/settings/members')
+    expect(screen.queryByRole('link', { name: 'Connections' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Members' })).toBeTruthy()
+    cleanup()
+    role.current = 'admin'
+    renderSettings('/w/connect/settings/members')
+    expect(screen.getByRole('link', { name: 'Connections' }).getAttribute('href')).toBe('/w/connect/settings/connections')
+    role.current = 'owner'
   })
 
   it('points at the personal settings page too — two settings, so say which is which', () => {

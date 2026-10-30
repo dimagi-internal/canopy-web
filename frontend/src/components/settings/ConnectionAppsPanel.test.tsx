@@ -7,8 +7,17 @@ const m = vi.hoisted(() => ({
   listConnectionApps: vi.fn(),
   configureConnectionApp: vi.fn(),
   removeConnectionApp: vi.fn(),
+  role: { current: 'admin' as string | undefined },
 }))
-vi.mock('@/api/connections', async (orig) => ({ ...(await orig<typeof import('@/api/connections')>()), ...m }))
+vi.mock('@/api/connections', async (orig) => ({
+  ...(await orig<typeof import('@/api/connections')>()),
+  listConnectionApps: m.listConnectionApps,
+  configureConnectionApp: m.configureConnectionApp,
+  removeConnectionApp: m.removeConnectionApp,
+}))
+vi.mock('@/workspace/WorkspaceProvider', () => ({
+  useWorkspace: () => ({ workspaces: [{ slug: 'w', display_name: 'W', role: m.role.current }], loading: false }),
+}))
 
 import { ConnectionAppsPanel } from './ConnectionAppsPanel'
 
@@ -38,6 +47,7 @@ const show = () => render(<ConnectionAppsPanel workspace="w" />)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  m.role.current = 'admin'
   m.listConnectionApps.mockResolvedValue([SALESFORCE, GOOGLE])
   m.configureConnectionApp.mockImplementation(async (_w: string, p: string) => (p === 'google' ? GOOGLE : SALESFORCE))
   m.removeConnectionApp.mockResolvedValue(undefined)
@@ -78,7 +88,7 @@ describe('ConnectionAppsPanel', () => {
     expect((document.getElementById('connection-app-google-client-secret') as HTMLInputElement).placeholder).toBe('')
 
     fireEvent.change(secret, { target: { value: 'sekrit-123' } })
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Save Salesforce' }))
     await waitFor(() => expect(m.configureConnectionApp).toHaveBeenCalled())
     expect(m.configureConnectionApp.mock.calls[0][2].client_secret).toBe('sekrit-123')
     await screen.findByText('Saved.')
@@ -94,7 +104,7 @@ describe('ConnectionAppsPanel', () => {
     })
     fireEvent.change(screen.getByLabelText(/Allowed domains/), { target: { value: 'dimagi.com' } })
     fireEvent.click(screen.getByLabelText('Read calendars'))
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[1])
+    fireEvent.click(screen.getByRole('button', { name: 'Save Google' }))
     await waitFor(() => expect(m.configureConnectionApp).toHaveBeenCalledWith('w', 'google', {
       client_id: 'g-client',
       client_secret: '',
@@ -110,7 +120,7 @@ describe('ConnectionAppsPanel', () => {
       target: { value: 'g-client' },
     })
     fireEvent.click(screen.getByLabelText('Read mail'))
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[1])
+    fireEvent.click(screen.getByRole('button', { name: 'Save Google' }))
     await waitFor(() => expect(m.configureConnectionApp).toHaveBeenCalled())
     expect(m.configureConnectionApp.mock.calls[0][2].scopes).toEqual([])
   })
@@ -122,7 +132,7 @@ describe('ConnectionAppsPanel', () => {
     fireEvent.change(document.getElementById('connection-app-salesforce-client-id') as HTMLInputElement, {
       target: { value: 'other-client' },
     })
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Save Salesforce' }))
     expect(await screen.findByText(
       'Disconnect its 3 connections (Remove) before changing the client ID or login URL.',
     )).toBeTruthy()
@@ -132,20 +142,83 @@ describe('ConnectionAppsPanel', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     show()
     await screen.findByTestId('connection-app-salesforce')
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Salesforce' }))
     expect(confirm).toHaveBeenCalledWith('Remove the Salesforce app? This disconnects 3 connections.')
     expect(m.removeConnectionApp).not.toHaveBeenCalled()
 
     confirm.mockReturnValue(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Salesforce' }))
     await waitFor(() => expect(m.removeConnectionApp).toHaveBeenCalledWith('w', 'salesforce'))
     confirm.mockRestore()
+  })
+
+  it('keeps "Saved." and the saved values when the save changes updated_at (no remount)', async () => {
+    const after = { ...SALESFORCE, client_id: 'new-client', updated_at: '2026-10-30T12:00:00Z' }
+    m.configureConnectionApp.mockResolvedValue(after)
+    // Should anything re-read the list, it sees the changed row too.
+    m.listConnectionApps.mockResolvedValueOnce([SALESFORCE, GOOGLE]).mockResolvedValue([after, GOOGLE])
+    show()
+    await screen.findByTestId('connection-app-salesforce')
+    const card = screen.getByTestId('connection-app-salesforce')
+    const id = document.getElementById('connection-app-salesforce-client-id') as HTMLInputElement
+    fireEvent.change(id, { target: { value: 'new-client' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Salesforce' }))
+    expect(await screen.findByText('Saved.')).toBeTruthy()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByText('Saved.')).toBeTruthy()
+    expect(screen.getByTestId('connection-app-salesforce')).toBe(card)   // same element: not remounted
+    expect((document.getElementById('connection-app-salesforce-client-id') as HTMLInputElement).value).toBe('new-client')
+  })
+
+  it('shows why a Remove failed, and keeps the app', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    m.removeConnectionApp.mockRejectedValue(new Error('Could not remove the app.'))
+    show()
+    await screen.findByTestId('connection-app-salesforce')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Salesforce' }))
+    expect(await screen.findByText('Could not remove the app.')).toBeTruthy()
+    expect(m.listConnectionApps).toHaveBeenCalledTimes(1)   // nothing re-read: nothing changed
+    expect(screen.getByTestId('connection-app-salesforce').textContent).toContain('Set up')
+    confirm.mockRestore()
+  })
+
+  it('after a Remove, re-reads and shows the provider as not set up', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const gone = { ...SALESFORCE, configured: false, client_id: '', has_secret: false, connection_count: 0, options: {} }
+    m.listConnectionApps.mockResolvedValueOnce([SALESFORCE, GOOGLE]).mockResolvedValue([gone, GOOGLE])
+    show()
+    await screen.findByTestId('connection-app-salesforce')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Salesforce' }))
+    expect(await screen.findByText('Removed.')).toBeTruthy()
+    expect(screen.getByTestId('connection-app-salesforce').textContent).toContain('Not set up')
+    expect((document.getElementById('connection-app-salesforce-client-id') as HTMLInputElement).value).toBe('')
+    confirm.mockRestore()
+  })
+
+  it('a member who is not an admin reads one line, and nothing is fetched', async () => {
+    m.role.current = 'editor'
+    show()
+    expect(await screen.findByText('Only a workspace admin or owner can set up connections.')).toBeTruthy()
+    expect(m.listConnectionApps).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('connection-app-salesforce')).toBeNull()
+  })
+
+  it('option help describes the field without being part of its name', async () => {
+    m.listConnectionApps.mockResolvedValue([{
+      ...GOOGLE,
+      option_fields: [{ ...GOOGLE.option_fields[0], help: 'Comma-separated; empty allows any account.' }],
+    }])
+    show()
+    const input = (await screen.findByLabelText(/Allowed domains/)) as HTMLInputElement
+    const help = document.getElementById(input.getAttribute('aria-describedby') ?? '')
+    expect(help?.textContent).toBe('Comma-separated; empty allows any account.')
+    expect(input.closest('label')?.textContent).not.toContain('Comma-separated')
   })
 
   it('offers no Remove for a provider that was never set up', async () => {
     m.listConnectionApps.mockResolvedValue([GOOGLE])
     show()
     await screen.findByTestId('connection-app-google')
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Remove/ })).toBeNull()
   })
 })
