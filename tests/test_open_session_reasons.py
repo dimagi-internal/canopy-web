@@ -190,3 +190,34 @@ def test_a_web_chat_an_agent_started_closes_once_nothing_runs_on_it():
                        origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
         Turn.objects.filter(pk=turn.pk).update(**starter)
     assert _reasons() == {"by-person": "person_started"}
+
+
+def test_a_conversation_in_a_slack_thread_stays_open_like_a_web_chat():
+    """Someone asked an agent in Slack (or typed `/agent read-channel`): replies are new turns on
+    the same session, so it is a person's chat — open until idle for a day — not work that ran
+    on its own. An agent-started one, and any other auto session, still closes with its turn."""
+    user, ws, agent = _ctx()
+    cloud = _runner(ws, user, "cloud-ec2-1", kind=Runner.CLOUD, reports=False)
+    ace_login = User.objects.create_user("ace-login", "ace@dimagi-ai.com", "pw")
+    Agent.objects.filter(pk=agent.pk).update(user=ace_login)
+    two_days_ago = timezone.now() - dt.timedelta(days=2)
+
+    def slack_session(key, *, origin=Turn.ORIGIN_SLACK, starter=None, when=None):
+        session = _recorded(agent, cloud, key)
+        Session.objects.filter(pk=session.pk).update(metadata={"slack_thread": f"T1:C1:{key}"})
+        turn = _driven(cloud, agent, key, Turn.DONE, mode="auto", origin=origin)
+        updates = dict(starter or {})
+        if when is not None:
+            updates.update(created_at=when, finished_at=when)
+        if updates:
+            Turn.objects.filter(pk=turn.pk).update(**updates)
+
+    slack_session("slack-fresh", starter={"initiator_kind": "user", "initiator_user": user})
+    slack_session("slack-abandoned", starter={"initiator_kind": "user", "initiator_user": user},
+                  when=two_days_ago)
+    slack_session("slack-by-agent", starter={"initiator_kind": "user", "initiator_user": ace_login})
+    # Not a conversation: a scheduled turn that happens to be auto.
+    _recorded(agent, cloud, "scheduled")
+    _driven(cloud, agent, "scheduled", Turn.DONE, mode="auto")
+
+    assert _reasons() == {"slack-fresh": "person_started"}
