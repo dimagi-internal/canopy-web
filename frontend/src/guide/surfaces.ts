@@ -333,6 +333,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ["Turn on the agent panel on canopy's own pages", 'Connect another site by URL', 'Choose which agents a site may offer', 'Disconnect a site'],
   },
   {
+    path: '/w/:workspace/settings/connections',
+    title: 'Connections',
+    audience: 'Workspace admin setting up Salesforce or Google',
+    what: "The OAuth apps this workspace's people and agents connect their Salesforce and Google accounts with, one per provider: the client ID, a write-only client secret, the provider's settings, and which extra permissions to ask for. Shows the callback URL to register as the redirect URI at the provider. Removing an app disconnects every connection made with it.",
+    actions: ['Copy the callback URL', 'Save the client ID and secret', 'Choose the permissions to ask for', 'Remove an app (disconnects its connections)'],
+  },
+  {
     path: '/w/:workspace/settings/secrets',
     title: 'Secrets',
     audience: 'Workspace owner',

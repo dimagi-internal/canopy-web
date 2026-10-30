@@ -66,7 +66,8 @@ describe('ConnectionsPanel', () => {
     at('/settings')
     const b = (await screen.findByRole('button', { name: 'Connect Salesforce' })) as HTMLButtonElement
     expect(b.disabled).toBe(true)
-    expect(screen.getByText('Not set up on this deployment')).toBeTruthy()
+    expect(screen.getByText('Not set up in your workspaces')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/deployment/)
   })
 
   it('reports the callback result', async () => {
@@ -89,31 +90,58 @@ describe('ConnectionsPanel', () => {
     expect(a.getAttribute('href')).toContain('/auth/connections/salesforce/w/start/')
   })
 
-  it('lists a provider once per workspace that set it up, each connecting with its own app', async () => {
-    const other = { ...PROVIDER, workspace: 'b', workspace_name: 'B' }
-    listMyConnections.mockResolvedValue({
-      providers: [PROVIDER, other],
-      connections: [conn({ id: 1, workspace: 'b', account_label: 'in-b@dimagi.com' }),
-        conn({ id: 2, workspace: 'gone', account_label: 'orphan@dimagi.com' })],
-    })
-    at('/settings')
-    const rows = await screen.findAllByTestId('connection-provider-salesforce')
-    expect(rows).toHaveLength(2)
-    expect(rows[0].textContent).toContain('orphan@dimagi.com')      // a workspace with no row: first row
-    expect(rows[0].textContent).not.toContain('in-b@dimagi.com')
-    expect(rows[1].textContent).toContain('in-b@dimagi.com')
-  })
-
-  it('connects each workspace with its own start URL', async () => {
+  it('one Connect per workspace that set the provider up, each naming its workspace and using its start URL', async () => {
     listMyConnections.mockResolvedValue({
       providers: [PROVIDER, { ...PROVIDER, workspace: 'b', workspace_name: 'B' }], connections: [],
     })
     at('/settings')
-    await screen.findAllByTestId('connection-provider-salesforce')
-    const hrefs = screen.getAllByRole('link', { name: 'Connect Salesforce' }).map((a) => a.getAttribute('href'))
-    expect(hrefs).toHaveLength(2)
-    expect(hrefs[0]).toContain('/auth/connections/salesforce/w/start/')
-    expect(hrefs[1]).toContain('/auth/connections/salesforce/b/start/')
+    expect(await screen.findAllByTestId('connection-provider-salesforce')).toHaveLength(1)
+    const w = screen.getByRole('link', { name: 'Connect Salesforce in W' }) as HTMLAnchorElement
+    const b = screen.getByRole('link', { name: 'Connect Salesforce in B' }) as HTMLAnchorElement
+    expect(w.getAttribute('href')).toContain('/auth/connections/salesforce/w/start/')
+    expect(b.getAttribute('href')).toContain('/auth/connections/salesforce/b/start/')
+  })
+
+  it('leaves the workspace out of Connect when only one of the person\'s workspaces set the provider up', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER, { name: 'google', title: 'Google', workspace: 'b', workspace_name: 'B', configured: true }],
+      connections: [],
+    })
+    at('/settings')
+    expect(await screen.findByRole('link', { name: 'Connect Salesforce' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Connect Google' })).toBeTruthy()
+    expect(screen.queryByText(/ in [WB]$/)).toBeNull()
+  })
+
+  it('a workspace already connected in shows the connection, and Connect only for the other', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER, { ...PROVIDER, workspace: 'b', workspace_name: 'B' }],
+      connections: [conn({ id: 1, workspace: 'w', workspace_name: 'W' })],
+    })
+    at('/settings')
+    expect(await screen.findByRole('link', { name: 'Connect Salesforce in B' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Connect Salesforce in W' })).toBeNull()
+  })
+
+  it('names each connection\'s workspace only when the person has connections in more than one', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
+    at('/settings')
+    await screen.findByText('jj@dimagi.com')
+    expect(screen.queryByText(/^In W/)).toBeNull()
+    cleanup()
+
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER, { ...PROVIDER, workspace: 'b', workspace_name: 'B' }],
+      connections: [conn({ id: 1, account_label: 'a@dimagi.com' }),
+        conn({ id: 2, workspace: 'b', workspace_name: 'B', account_label: 'b@dimagi.com', needs_reconnect: true })],
+    })
+    at('/settings')
+    await screen.findByText('b@dimagi.com')
+    expect(screen.getByText(/^In W · /)).toBeTruthy()
+    expect(screen.getByText(/^In B · /)).toBeTruthy()
+    // Reconnect goes to the connection's own workspace.
+    expect(screen.getByRole('link', { name: 'Reconnect' }).getAttribute('href'))
+      .toContain('/auth/connections/salesforce/b/start/')
   })
 
   it('says what an insufficient_scope connect means', async () => {

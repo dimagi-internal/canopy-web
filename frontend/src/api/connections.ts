@@ -82,15 +82,34 @@ export function connectionStartPath(provider: string, workspace: string, returnT
   return `${connectionStartAction(provider, workspace)}?${q.toString()}`
 }
 
-/** The connections listed under provider row `p`: those made in its workspace, and
- *  (on the provider's first row) any whose workspace has no row of its own, so a
- *  connection is never hidden and never listed twice. */
-export function connectionsUnder(
-  p: ProviderOut, providers: readonly ProviderOut[], connections: readonly ConnectionOut[],
-): ConnectionOut[] {
-  const rows = providers.filter((r) => r.name === p.name)
-  const listed = new Set(rows.map((r) => r.workspace))
-  const first = rows[0] === p
-  return connections.filter((c) => c.provider === p.name
-    && (c.workspace === p.workspace || (first && !listed.has(c.workspace))))
+// ---- A workspace's connection apps (its OAuth clients), admin-only ----------
+// Saving or removing one needs a fresh passkey; the step-up middleware answers
+// that, as for disconnecting an agent's connection.
+
+export type ConnectionAppOut = components['schemas']['ConnectionAppOut']
+export type ConnectionAppIn = components['schemas']['ConnectionAppIn']
+export type OptionFieldOut = components['schemas']['OptionFieldOut']
+export type ScopeChoiceOut = components['schemas']['ScopeChoiceOut']
+
+export async function listConnectionApps(workspace: string): Promise<ConnectionAppOut[]> {
+  const res = await apiV2.GET('/api/workspaces/{workspace}/connection-apps', { params: { path: { workspace } } })
+  const d = unwrap(res, 'Could not read the workspace’s connection apps.') as unknown as { apps: ConnectionAppOut[] }
+  return [...d.apps]
+}
+
+export async function configureConnectionApp(
+  workspace: string, provider: string, body: ConnectionAppIn,
+): Promise<ConnectionAppOut> {
+  const res = await apiV2.PUT('/api/workspaces/{workspace}/connection-apps/{provider}', {
+    params: { path: { workspace, provider } },
+    body,
+  })
+  return unwrap(res, 'Could not save the app.') as unknown as ConnectionAppOut
+}
+
+export async function removeConnectionApp(workspace: string, provider: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{workspace}/connection-apps/{provider}', {
+    params: { path: { workspace, provider } },
+  })
+  ensureOk(res, 'Could not remove the app.')
 }

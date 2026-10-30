@@ -9,9 +9,17 @@ const m = vi.hoisted(() => ({
   grantConnection: vi.fn(),
   revokeConnectionGrant: vi.fn(),
   listAgents: vi.fn(),
+  role: { current: null as string | null },
 }))
-vi.mock('@/api/connections', async (orig) => ({ ...(await orig<typeof import('@/api/connections')>()), ...m }))
+vi.mock('@/api/connections', async (orig) => ({
+  ...(await orig<typeof import('@/api/connections')>()),
+  listAgentConnections: m.listAgentConnections,
+  disconnectAgentConnection: m.disconnectAgentConnection,
+  grantConnection: m.grantConnection,
+  revokeConnectionGrant: m.revokeConnectionGrant,
+}))
 vi.mock('@/api/agents', () => ({ listAgents: m.listAgents }))
+vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => m.role.current }))
 
 import { AgentConnectionsPanel } from './AgentConnectionsPanel'
 
@@ -29,6 +37,7 @@ const show = () =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  m.role.current = null
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
   for (const k of ['disconnectAgentConnection', 'grantConnection', 'revokeConnectionGrant'] as const) m[k].mockResolvedValue(undefined)
 })
@@ -75,6 +84,27 @@ describe('AgentConnectionsPanel', () => {
     show()
     expect((await screen.findByRole('button', { name: 'Reconnect' })).closest('form')).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Connect Other' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('Not set up for this workspace')).toBeTruthy()
+    // Not an admin of the workspace: no link to a settings page they cannot use.
+    expect(screen.queryByRole('link', { name: 'Set it up' })).toBeNull()
+  })
+
+  it('starts the connect under the agent\'s workspace', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [{ ...PROVIDER, workspace: 'dimagi' }], connections: [] })
+    show()
+    const form = (await screen.findByRole('button', { name: 'Connect Salesforce' })).closest('form') as HTMLFormElement
+    expect(form.getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/dimagi\/start\/$/)
+  })
+
+  it('links a workspace admin to where the provider is set up', async () => {
+    m.role.current = 'admin'
+    m.listAgentConnections.mockResolvedValue({
+      providers: [{ name: 'google', title: 'Google', workspace: 'dimagi', workspace_name: 'Dimagi', configured: false }],
+      connections: [],
+    })
+    show()
+    const link = await screen.findByRole('link', { name: 'Set it up' })
+    expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
   it('shares with another agent (chip appears, picker clears), then stops sharing (chip goes)', async () => {

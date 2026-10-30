@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartAction,
   disconnectAgentConnection,
@@ -13,6 +13,9 @@ import { listAgents } from '@/api/agents'
 import { getCsrfToken } from '@/api/base'
 import { ConnectOutcome, Scopes, detailLine } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
+import { roleAllows } from '@/lib/workspaceRoles'
+import { scopedPath } from '@/lib/scopedLinks'
+import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 /**
  * What an agent can act as through canopy-held connections: its own, and ones
@@ -27,8 +30,11 @@ import { Button } from 'canopy-ui/ui'
  * GET that names an agent, and asks the provider for a fresh login where it
  * supports one, so the account attached is the one the admin types in — the
  * agent's — not whichever session their browser happens to hold.
+ *
+ * An agent connects with its OWN workspace's app (its admin sets it up under
+ * the workspace's Settings → Connections), so the start URL names that workspace.
  */
-export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string } }) {
+export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string; workspace?: string | null } }) {
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [others, setOthers] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -38,6 +44,9 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
+  // The agent's workspace: the API names it on every provider row.
+  const workspace = data?.providers.find((p) => p.workspace)?.workspace || agent.workspace || ''
+  const canSetUp = roleAllows(useWorkspaceRole(workspace), 'integrations')
 
   const load = useCallback(() => {
     listAgentConnections(agent.slug).then((d) => { setData(d); setError('') }).catch(() => setError('Could not read the agent’s connections.'))
@@ -81,7 +90,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
       {data.providers.map((p) => {
         const rows = data.connections.filter((c) => c.provider === p.name)
         const own = rows.filter((c) => !c.granted_from)
-        const start = { action: connectionStartAction(p.name, p.workspace ?? ''), returnTo: pathname, agent: agent.slug }
+        const start = { action: connectionStartAction(p.name, p.workspace || workspace), returnTo: pathname, agent: agent.slug }
         return (
           <div key={p.name} className="space-y-2" data-testid={`agent-connection-provider-${p.name}`}>
             <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">{p.title}</p>
@@ -103,7 +112,17 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
             {!p.configured ? (
               <div>
                 <Button size="sm" disabled>Connect {p.title}</Button>
-                <p className="mt-1 text-[12px] text-muted-foreground">Not set up on this deployment</p>
+                <p className="mt-1 text-[12px] text-muted-foreground">
+                  Not set up for this workspace
+                  {canSetUp && workspace && (
+                    <>
+                      {' · '}
+                      <Link to={scopedPath(workspace, '/settings/connections')} className="text-primary hover:underline">
+                        Set it up
+                      </Link>
+                    </>
+                  )}
+                </p>
               </div>
             ) : own.length === 0 ? (
               <ConnectForm label={`Connect ${p.title}`} {...start} />
