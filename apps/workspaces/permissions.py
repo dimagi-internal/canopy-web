@@ -133,6 +133,21 @@ def role_allows(role: str | None, capability: str) -> bool:
     return _rank(role) >= _M.ROLE_RANK[MINIMUM_ROLE[capability]]
 
 
+def role_meets(role: str | None, floor: str) -> bool:
+    """Is `role` the workspace role named `floor`, or stronger? For data that stores a
+    workspace role by name (an access-list line "editors of connect"); `floor` must be
+    a workspace role, `""` meaning any member. A non-member (`role` None) meets nothing
+    but `""`."""
+    if not floor:
+        return role is not None
+    return _rank(role) >= _M.ROLE_RANK[floor]
+
+
+def is_role(name: str) -> bool:
+    """Is `name` a workspace role someone can hold (not a superuser cap)?"""
+    return name in _M.ROLE_RANK and name != _M.SUPERUSER
+
+
 def can(user, workspace, capability: str) -> bool:
     """May `user` exercise `capability` in `workspace` (a `Workspace` or slug)?
     False for a non-member, an anonymous user, or an unknown capability's
