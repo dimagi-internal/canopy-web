@@ -832,6 +832,68 @@ export async function getAgentAccess(slug: string): Promise<AgentAccessOut> {
   return unwrap(res, 'getAgentAccess') as unknown as AgentAccessOut
 }
 
+// THE ACCESS LIST: one list of (who, role) lines per agent, plus the workspace-wide
+// default lines it inherits (docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md).
+// A refused line answers 422 with a reason fit to show beside the form (the
+// ApiError message is that `detail`); a duplicate is a 409 the same way.
+export type AccessListOut = Schemas['AccessListOut']
+export type AccessLineOut = Schemas['AccessLineOut']
+export type AccessLineIn = Schemas['AccessLineIn']
+export type AccessLinePatch = Schemas['AccessLinePatch']
+export type AccessRoleOut = Schemas['AccessRoleOut']
+
+export async function getAccessList(slug: string): Promise<AccessListOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/access-list', { params: { path: { slug } } })
+  return unwrap(res, 'getAccessList') as unknown as AccessListOut
+}
+
+export async function addAccessLine(slug: string, line: AccessLineIn): Promise<AccessLineOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/access-list', { params: { path: { slug } }, body: line })
+  return unwrap(res, 'addAccessLine') as unknown as AccessLineOut
+}
+
+export async function changeAccessLine(slug: string, id: number, patch: AccessLinePatch): Promise<AccessLineOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/access-list/{line_id}', {
+    params: { path: { slug, line_id: id } },
+    body: patch,
+  })
+  return unwrap(res, 'changeAccessLine') as unknown as AccessLineOut
+}
+
+export async function removeAccessLine(slug: string, id: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/access-list/{line_id}', {
+    params: { path: { slug, line_id: id } },
+  })
+  ensureOk(res, 'removeAccessLine')
+}
+
+export async function setInheritWorkspaceDefaults(slug: string, inherit: boolean): Promise<AccessListOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/inherit-workspace-defaults', {
+    params: { path: { slug } },
+    body: { inherit },
+  })
+  return unwrap(res, 'setInheritWorkspaceDefaults') as unknown as AccessListOut
+}
+
+// A workspace's default lines: every agent in it and below inherits them unless it
+// opts out. Workspace admins change them; `editor` is the workspace owner's call.
+export async function listAgentDefaults(workspace: string): Promise<AccessLineOut[]> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/agent-defaults', { params: { path: { slug: workspace } } })
+  return unwrap(res, 'listAgentDefaults') as unknown as AccessLineOut[]
+}
+
+export async function addAgentDefault(workspace: string, line: AccessLineIn): Promise<AccessLineOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/agent-defaults', { params: { path: { slug: workspace } }, body: line })
+  return unwrap(res, 'addAgentDefault') as unknown as AccessLineOut
+}
+
+export async function removeAgentDefault(workspace: string, id: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/agent-defaults/{line_id}', {
+    params: { path: { slug: workspace, line_id: id } },
+  })
+  ensureOk(res, 'removeAgentDefault')
+}
+
 export type AgentInterfaceOut = Schemas['AgentInterfaceOut']
 
 // What callers (anyone not the owner or an admin) may ask this agent for.
