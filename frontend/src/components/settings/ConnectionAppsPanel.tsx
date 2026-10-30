@@ -201,10 +201,7 @@ function AppCard({
               placeholder={f.default === undefined || f.default === null ? '' : String(f.default)}
               onChange={(e) => setOptions((o) => ({ ...o, [f.name]: e.target.value }))}
             />
-            {/* `help` is newer than some generated types; read it loosely. */}
-            {(f as { help?: string }).help && (
-              <span className="block text-[11px]">{(f as { help?: string }).help}</span>
-            )}
+            {f.help && <span className="block text-[11px]">{f.help}</span>}
           </label>
         ))}
       </div>
