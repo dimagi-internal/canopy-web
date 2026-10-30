@@ -205,7 +205,7 @@ def test_previewing_the_move_writes_nothing_and_says_whether_anyone_changes(w):
     assert (body["already"], body["ok"], body["differences"], body["unsupported"]) == (False, True, [], [])
     assert body["probed"] > 5
     assert {(ln["who"], ln["role"]) for ln in body["lines"]} >= {
-        ("a known contact at @dimagi.com (verified)", "viewer"), ("everyone in connect", "viewer")}
+        ("A known visitor or sender at @dimagi.com (verified)", "viewer"), ("Everyone in connect", "viewer")}
     assert not AgentGrant.objects.filter(agent=w["agent"]).exists()
     assert _c(w["ed"]).get("/api/agents/hal/access-list-conversion").status_code == 403
 

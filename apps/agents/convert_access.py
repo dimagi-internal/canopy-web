@@ -31,7 +31,7 @@ from django.contrib.auth import get_user_model
 from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
 
-from . import access, roles
+from . import access, grants, roles
 from . import interface as iface_mod
 from .models import Agent, AgentGrant
 
@@ -64,15 +64,12 @@ class Line:
         g.subject_key = self.key
         return g
 
+    def who(self) -> str:
+        """The line's `who`, in the access list's own words."""
+        return grants.describe(self.as_grant(None))
+
     def describe(self) -> str:
-        who = {G.WORKSPACE: f"everyone in {self.subject_workspace}"
-                            + (f" at least {self.at_least}" if self.at_least else ""),
-               G.CONTACT: "a known contact", G.DOMAIN: "anyone"}[self.kind]
-        if self.domain:
-            who += f" at @{self.domain}"
-        if self.kind != G.WORKSPACE and self.verified:
-            who += " (verified)"
-        return f"{who} -> {self.role}" + (" (manual only)" if self.manual_only else "")
+        return f"{self.who()} -> {self.role}" + (" (manual only)" if self.manual_only else "")
 
 
 @dataclass
