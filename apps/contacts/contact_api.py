@@ -48,6 +48,7 @@ from apps.embedding.rate_limit import (
 from apps.harness import acting_person, sensitivity
 from apps.harness import initiator as who
 from apps.harness.schemas import TurnOut
+from apps.tokens.debug_lifetime import debug_shortened
 from apps.tokens.models import ContactToken, EmbedAuditLog
 from apps.tokens.schemas import WsTicketOut
 
@@ -60,7 +61,7 @@ log = logging.getLogger(__name__)
 #: A contact's session is short and re-established from the host's assertion,
 #: which the host can mint again at any time without troubling the visitor.
 #: There is no refresh: a contact's session is a visit, not a login.
-CONTACT_TOKEN_TTL_SECONDS = 30 * 60
+CONTACT_TOKEN_TTL_SECONDS = debug_shortened(30 * 60, "CANOPY_CONTACT_TOKEN_TTL_SECONDS")
 
 #: When the arrival carried a host grant, the token lives only this long, so
 #: the widget re-mints — and the host issues a fresh ID-JAG — while the visitor is
