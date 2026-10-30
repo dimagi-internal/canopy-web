@@ -7716,6 +7716,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/vault/client-report": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report a vault unlock/setup outcome the browser saw
+         * @description The browser alone sees why an unlock failed (which method, a seal that
+         *     did not open, a passkey that gave no PRF). It reports that here, with no
+         *     secret in it, and the server logs it beside the client and keyset facts.
+         */
+        readonly post: operations["post_vault_client_report"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/tasks/": {
         readonly parameters: {
             readonly query?: never;
@@ -31294,6 +31316,34 @@ export interface components {
             readonly replace: boolean;
         };
         /**
+         * VaultClientReportIn
+         * @description What the browser saw while unlocking or setting up. Never a secret.
+         */
+        readonly VaultClientReportIn: {
+            /** Stage */
+            readonly stage: string;
+            /** Method */
+            readonly method: string;
+            /** Outcome */
+            readonly outcome: string;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            /** Browser Prf */
+            readonly browser_prf?: boolean | null;
+            /** Asked */
+            readonly asked?: readonly string[];
+            /** Secret Key Remembered */
+            readonly secret_key_remembered?: boolean | null;
+            /**
+             * Page
+             * @default
+             */
+            readonly page: string;
+        };
+        /**
          * TaskCreateIn
          * @description One task made in a workspace (`POST /api/tasks/`): `workspace` (default:
          *     the project's, else the one you are pinned to, else your only one).
@@ -54633,6 +54683,28 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["VaultKeysetOut"];
                 };
+            };
+        };
+    };
+    readonly post_vault_client_report: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultClientReportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
