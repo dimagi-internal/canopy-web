@@ -398,7 +398,7 @@ export function parseRecoveryCode(code: string): Bytes {
   let v = 0n
   for (const ch of s) {
     const i = CROCKFORD.indexOf(ch)
-    if (i < 0) throw new Error(`"${ch}" is not in a recovery code`)
+    if (i < 0) throw new Error('A recovery code has only letters and digits, and that one has a character it cannot contain')
     v = (v << 5n) | BigInt(i)
   }
   v >>= BigInt(5 * s.length - 256)
@@ -457,7 +457,7 @@ export function parseSecretKeyCode(code: string): Bytes {
   let v = 0n
   for (const ch of s) {
     const i = CROCKFORD.indexOf(ch)
-    if (i < 0) throw new Error(`"${ch}" is not in a Secret Key`)
+    if (i < 0) throw new Error('A Secret Key has only letters and digits, and that one has a character it cannot contain')
     v = (v << 5n) | BigInt(i)
   }
   return hexToBytes((v >> 2n).toString(16).padStart(32, '0'))
