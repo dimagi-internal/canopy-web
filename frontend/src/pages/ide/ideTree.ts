@@ -30,6 +30,8 @@ export type IdeSession = {
   emdash_project?: string
   project?: string
   runner_reported?: boolean
+  /** You started it, or it was found on your own box (`SessionOut.started_by_you`). */
+  started_by_you?: boolean
   /** The session this one was started from: forked, Slack-branched or dispatched. */
   parent_session_id?: string | null
   /** What created it; a fork records `forked_from`. */
@@ -53,6 +55,8 @@ export type IdeFilters = {
   states: Record<IdeState, boolean>
   modes: Record<IdeMode, boolean>
   archived: boolean
+  /** Show only the sessions you started (`started_by_you`). */
+  mineOnly: boolean
   query: string
 }
 
@@ -61,6 +65,7 @@ export const DEFAULT_FILTERS: IdeFilters = {
   states: { running: true, input: true, idle: true },
   modes: { manual: true, auto: true, none: true },
   archived: false,
+  mineOnly: false,
   query: '',
 }
 
@@ -88,6 +93,7 @@ export function folderKey(s: Pick<IdeSession, 'emdash_project' | 'project' | 'ag
 
 export function matches(s: IdeSession, f: IdeFilters): boolean {
   if (!f.archived && s.status === 'archived') return false
+  if (f.mineOnly && !s.started_by_you) return false
   if (f.hiddenRunners.includes(runnerKey(s))) return false
   if (!f.states[sessionState(s)]) return false
   if (!f.modes[sessionMode(s)]) return false

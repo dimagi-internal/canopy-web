@@ -302,6 +302,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
                            else sensitivity.is_conversation_person(session, user=viewer))
                           if sensitive else None),
         "started_by_name": _started_by_name(session),
+        "started_by_you": viewer is not None and access.is_own_session(viewer, session),
         "runner_requirements": sorted(rr.requirements_of_session(session)),
         "last_reply": last_reply,
         "agent_spoke_last": agent_spoke_last,

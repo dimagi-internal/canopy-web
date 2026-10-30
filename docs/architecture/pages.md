@@ -344,7 +344,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `/chat/:id`, the old address, redirect here, keeping query and hash. Coming back to the list paints the tab's
   last copy at once and refreshes underneath; the rows never wait on the
   fleet or agent reads, which only feed "+ New chat". Listed rows open
-  without the private-conversation read, as /ide's do.
+  without the private-conversation read, as /ide's do. **Started by me**
+  (remembered per browser) keeps only your own sessions — the ones you started
+  and those found on your own box, `SessionOut.started_by_you`
+  (`access.is_own_session`, the one-row form of `access.sessions_of_q`).
 - **`/sessions/:id`** — live multiplayer chat with an agent on the `canopy-ui/chat`
   kit (`ChatPanel` + `useSessionSocket` over `ws/canopy-sessions/{id}/`;
   per-person drafts, presence, streamed reply). A send enqueues a session
@@ -618,7 +621,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   the name is an agent you can see or a repo an online runner holds). A delete
   the list called unconfirmed that then lands takes its error back. The rail header is two lines: the state totals (which are the
   state toggles), search, a **Filters** menu (runners, Alt-click to solo; mode;
-  archived) whose button says how many are off, and `⋯` (collapse all, hide
+  started by me; archived) whose button says how many are off, and `⋯` (collapse all, hide
   the list, hide the app bar). The ☰ folds the app bar away
   (`components/AppLayout/appBarStore.ts`, `/ide` only); `⌘B` hides the list
   and `/` focuses search. The chat runs `compact` (one-line header) inside

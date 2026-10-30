@@ -255,6 +255,19 @@ def sessions_of_q(user_ids) -> Q:
                 runner_binding__runner__owner_id__in=user_ids))
 
 
+def is_own_session(user, session) -> bool:
+    """`sessions_of_q` for one row already in hand: `user` started it, or it is a
+    runner-discovered session on their box that is not an agent's own work."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if session.created_by_id is not None:
+        return session.created_by_id == user.pk
+    if session.origin != Session.ORIGIN_RUNNER or session.agent_id is not None:
+        return False
+    binding = _binding(session)
+    return binding is not None and binding.runner_id is not None and binding.runner.owner_id == user.pk
+
+
 def _not_sensitive_q() -> Q:
     """Sessions that are certainly not sensitive: no runner requirement at all.
     `sensitivity.is_sensitive` reads the same key; any value there (even one that

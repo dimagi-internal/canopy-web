@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -606,5 +606,46 @@ describe('ChatSessionsPanel — coming back to the list', () => {
 
     await waitFor(() => expect(knownNotPrivate('plain')).toBe(true))
     expect(knownNotPrivate('sealed')).toBe(false)
+  })
+})
+
+describe('ChatSessionsPanel — Started by me', () => {
+  // jsdom here exposes a `localStorage` whose methods are missing (see
+  // ideHooks.test.ts), so a plain map stands in, fresh for every test.
+  let store: Map<string, string>
+  beforeEach(() => {
+    store = new Map()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('leaves out sessions you did not start, and remembers the choice', async () => {
+    listRunners.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('mine', { title: 'My chat', started_by_you: true }),
+      chatSession('theirs', { title: 'Their chat', started_by_you: false }),
+    ])
+
+    renderPanel([agent()])
+    expect(await screen.findByText('Their chat')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('toggle-mine-only'))
+    expect(screen.getByText('My chat')).toBeTruthy()
+    expect(screen.queryByText('Their chat')).toBeNull()
+    expect(store.get('canopy.sessions.mineOnly')).toBe('1')
+  })
+
+  it('says so, with a way back, when none are yours', async () => {
+    store.set('canopy.sessions.mineOnly', '1')
+    listRunners.mockResolvedValue([])
+    listSessions.mockResolvedValue([chatSession('theirs', { title: 'Their chat', started_by_you: false })])
+
+    renderPanel([agent()])
+    expect(await screen.findByText('None of these chats were started by you')).toBeTruthy()
+    fireEvent.click(screen.getByText('Show all 1'))
+    expect(await screen.findByText('Their chat')).toBeTruthy()
   })
 })

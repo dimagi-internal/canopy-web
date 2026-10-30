@@ -41014,6 +41014,11 @@ export interface components {
              */
             readonly started_by_name: string;
             /**
+             * Started By You
+             * @default false
+             */
+            readonly started_by_you: boolean;
+            /**
              * Origin Resource
              * @default
              */
@@ -41867,6 +41872,11 @@ export interface components {
              * @default
              */
             readonly started_by_name: string;
+            /**
+             * Started By You
+             * @default false
+             */
+            readonly started_by_you: boolean;
             /**
              * Origin Resource
              * @default

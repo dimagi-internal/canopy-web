@@ -425,7 +425,7 @@ export function IdePage() {
             data-testid="ide-filters"
             className={clsx(
               'flex h-6 shrink-0 items-center gap-1 rounded border px-1.5 text-[12px] hover:bg-muted',
-              hiddenCount || filters.archived
+              hiddenCount || filters.archived || filters.mineOnly
                 ? 'border-primary/40 bg-primary/10 text-foreground'
                 : 'border-border text-muted-foreground',
             )}
@@ -433,6 +433,7 @@ export function IdePage() {
             {/* Say how much is filtered out even while the menu is shut — a
                 hidden filter that silently narrows the list is worse than clutter. */}
             Filters{hiddenCount ? ` · ${hiddenCount} off` : ''}
+            {filters.mineOnly ? ' · mine' : ''}
             {filters.archived ? ' · +archived' : ''}
             <ChevronDown className="h-3 w-3 opacity-60" aria-hidden />
           </DropdownMenuTrigger>
@@ -476,6 +477,14 @@ export function IdePage() {
               </DropdownMenuCheckboxItem>
             ))}
             <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={filters.mineOnly}
+              onClick={() => setFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
+              data-testid="ide-mine-only"
+              className="text-[12px]"
+            >
+              Started by me
+            </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={filters.archived}
               onClick={() => setFilters((f) => ({ ...f, archived: !f.archived }))}
