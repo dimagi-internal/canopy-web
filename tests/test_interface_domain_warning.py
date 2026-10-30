@@ -1,24 +1,20 @@
-"""An interface rule naming a mail domain that can never prove its senders is
-WARNED about, never refused (canopy-web#1280).
+"""The interface no longer carries who-may-use-it rules, so it no longer warns about their domains.
 
-`member@<domain>` and `…@<domain>:verified` are satisfied by email only when the
-message is DMARC-aligned or DKIM-signed by its own From: domain. A domain with no
-DMARC record and no aligned DKIM can never produce that, so the rule silently
-admits nobody and every member writing in from it is treated as a contact.
+Until the access list (agent-roles design, 2026-10-30) an interface rule naming a mail domain that
+can never prove its senders (`member@<domain>`, no DMARC and no aligned DKIM) was WARNED about,
+never refused (canopy-web#1280). Those rules are gone: `parse` refuses the retired keys and points
+at the access list, and the interface API carries neither a `summary` nor `warnings`. What survives
+is the DMARC lookup (`apps.contacts.domain_proof`), which decides whether a sender is proven.
 """
 from __future__ import annotations
 
-import time
-
 import pytest
 from django.contrib.auth.models import User
-from django.core.cache import cache
 from django.test import Client
 
-from apps.agents.interface import _rules_needing_proof, domain_warnings, parse
+from apps.agents.interface import InterfaceError, parse
 from apps.agents.models import Agent
 from apps.contacts import domain_proof
-from apps.contacts.models import Contact
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -32,27 +28,6 @@ capabilities:
 """
 
 
-@pytest.fixture(autouse=True)
-def _clean_cache():
-    cache.clear()
-    yield
-    cache.clear()
-
-
-@pytest.fixture()
-def dns(monkeypatch):
-    """A fake resolver: {domain: 'found'|'missing'|'unknown'}, recording queries."""
-    answers: dict[str, str] = {}
-    asked: list[str] = []
-
-    def lookup(domain):
-        asked.append(domain)
-        return answers.get(domain, "missing")
-
-    monkeypatch.setattr(domain_proof, "_lookup_dmarc", lookup)
-    return answers, asked
-
-
 @pytest.fixture()
 def w():
     op = User.objects.create_user("op", "op@dimagi.com", "pw")
@@ -64,103 +39,28 @@ def w():
     return {"op": op, "ws": ws, "agent": agent, "client": c}
 
 
-def test_only_rules_that_need_mail_proof_are_probed():
-    iface = parse({"full": ["member@a.org", "contact@b.org", "contact@c.org:verified"],
-                   "capabilities": {"ask": {"callers": ["member", "contact:verified",
-                                                        "member@a.org", "member@d.org:verified"]}}})
-    assert _rules_needing_proof(iface) == {
-        "a.org": ["member@a.org"],
-        "c.org": ["contact@c.org:verified"],
-        "d.org": ["member@d.org:verified"],
-    }
+@pytest.mark.parametrize("doc, key", [
+    ({"full": ["member@nodmarc.org"]}, "full"),
+    ({"editors": "confined"}, "editors"),
+    ({"capabilities": {"ask": {"callers": ["member@a.org"]}}}, "callers"),
+])
+def test_parse_refuses_the_retired_rules_and_points_at_the_access_list(doc, key):
+    with pytest.raises(InterfaceError) as exc:
+        parse(doc)
+    assert f"`{key}:`" in str(exc.value) and "access list" in str(exc.value)
 
 
-def test_publishing_warns_about_a_domain_that_cannot_prove_itself(w, dns):
-    answers, _ = dns
-    answers.update({"dimagi.com": "found", "signs.org": "missing"})
-    # signs.org has no DMARC but its mail IS DKIM-signed by itself: seen aligned.
-    Contact.objects.create(workspace=w["ws"], email="x@signs.org",
-                           auth_result=Contact.AUTH_DKIM_ALIGNED)
-    r = w["client"].put("/api/agents/ace/interface", {"source": SOURCE},
-                        content_type="application/json")
-    assert r.status_code == 200, r.content
-    warnings = r.json()["warnings"]
-    assert len(warnings) == 1
-    msg = warnings[0]
-    assert msg.startswith("member@nodmarc.org:")
-    # A plain `contact@` rule needs no proof, so it is not named.
-    assert "contact@nodmarc.org" not in msg
-    assert "_dmarc.nodmarc.org" in msg and "DKIM" in msg
-    # Saved regardless — a warning, not a refusal.
+def test_publishing_the_old_rules_is_refused_and_saves_nothing(w):
+    r = w["client"].put("/api/agents/ace/interface", {"source": SOURCE}, content_type="application/json")
+    assert r.status_code == 422, r.content
+    assert "access list" in r.content.decode()
     w["agent"].refresh_from_db()
-    assert w["agent"].interface["full"] == ["member@nodmarc.org", "contact@dimagi.com:verified"]
-    # And it is still there when the interface is read back.
-    assert w["client"].get("/api/agents/ace/interface").json()["warnings"] == warnings
+    assert not w["agent"].interface.get("capabilities")
 
 
-def test_aligned_mail_seen_answers_without_dns(w, dns):
-    _, asked = dns
-    Contact.objects.create(workspace=w["ws"], email="a@nodmarc.org", auth_result=Contact.AUTH_DMARC)
-    assert domain_warnings(parse({"full": ["member@nodmarc.org"]}), w["ws"].pk) == []
-    assert asked == []
-
-
-def test_another_workspaces_mail_is_not_evidence(w, dns):
-    other = Workspace.objects.create(slug="other", display_name="Other", created_by=w["op"])
-    Contact.objects.create(workspace=other, email="a@nodmarc.org", auth_result=Contact.AUTH_DMARC)
-    assert len(domain_warnings(parse({"full": ["member@nodmarc.org"]}), w["ws"].pk)) == 1
-
-
-def test_unaligned_mail_seen_is_not_evidence(w, dns):
-    Contact.objects.create(workspace=w["ws"], email="a@nodmarc.org", auth_result=Contact.AUTH_DKIM)
-    assert len(domain_warnings(parse({"full": ["member@nodmarc.org"]}), w["ws"].pk)) == 1
-
-
-def test_a_dns_failure_is_unknown_and_raises_no_warning(w, dns):
-    answers, _ = dns
-    answers["nodmarc.org"] = "unknown"
-    assert domain_warnings(parse({"full": ["member@nodmarc.org"]}), w["ws"].pk) == []
-
-
-def test_answers_are_cached(w, dns):
-    _, asked = dns
-    iface = parse({"full": ["member@nodmarc.org"]})
-    domain_warnings(iface, w["ws"].pk)
-    domain_warnings(iface, w["ws"].pk)
-    assert asked == ["nodmarc.org"]
-
-
-def test_a_broken_probe_never_fails_a_save(w, monkeypatch):
-    def boom(domain):
-        raise RuntimeError("resolver exploded")
-
-    monkeypatch.setattr(domain_proof, "_lookup_dmarc", boom)
-    r = w["client"].put("/api/agents/ace/interface", {"source": SOURCE},
-                        content_type="application/json")
-    assert r.status_code == 200 and r.json()["warnings"] == []
-
-
-def test_the_dns_budget_bounds_a_slow_resolver(w, monkeypatch):
-    from apps.agents import interface
-
-    monkeypatch.setattr(interface, "_PROOF_BUDGET_SECONDS", 0.05)
-    asked = []
-
-    def slow(domain):
-        asked.append(domain)
-        time.sleep(0.1)
-        return "missing"
-
-    monkeypatch.setattr(domain_proof, "_lookup_dmarc", slow)
-    iface = parse({"full": ["member@a.org", "member@b.org", "member@c.org"]})
-    domain_warnings(iface, w["ws"].pk)
-    assert len(asked) == 1
-
-
-def test_no_interface_means_no_warnings_and_no_probe(w, dns):
-    _, asked = dns
-    assert w["client"].get("/api/agents/ace/interface").json()["warnings"] == []
-    assert asked == []
+def test_the_interface_api_carries_no_summary_or_warnings(w):
+    body = w["client"].get("/api/agents/ace/interface").json()
+    assert "summary" not in body and "warnings" not in body
 
 
 def test_the_real_lookup_reads_the_dmarc_txt(monkeypatch):

@@ -1,7 +1,7 @@
 """GET /api/agents/{slug}/access — everyone's role on an agent, in one place.
 
 The roster composes four sources (owner, explicit admins, implicit workspace-owner
-admins, the published interface). It must say exactly what the harness would
+admins, the agent's access list). It must say exactly what the harness would
 do, so the parity test below checks it against `interface.capability_for` for a
 real signed-in turn of every member.
 """
@@ -16,6 +16,7 @@ from apps.agents.models import Agent, AgentAdmin
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import editors_run, publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -61,13 +62,21 @@ def test_every_member_listed_with_role_and_reason(world):
     assert [m["agent_role"] for m in r.json()["members"]][:3] == ["owner", "admin", "admin"]
 
 
-def test_no_interface_means_admins_and_editors_only(world):
-    # 2026-10-04 (docs/architecture/access.md): with nothing published, the
-    # agent's admins and the workspace's editors reach it — editors manual only —
-    # and a viewer reaches nothing.
+def test_a_new_agent_with_no_lines_is_for_its_owner_and_admins_only(world):
+    # agent-roles design: a workspace editor no longer gets in implicitly.
+    rows = _by_email(_get(world["ed"]).json())
+    assert rows["ed@dimagi.com"]["access"] == "none"
+    assert rows["vw@partner.org"]["access"] == "none"
+    assert rows["adm@dimagi.com"]["access"] == "full"
+    assert rows["adm@dimagi.com"]["may_request_auto"] is True
+
+
+def test_an_editor_line_for_workspace_editors_means_admins_and_editors_only(world):
+    # A line "everyone in the workspace at least editor -> editor, manual only": admins and
+    # editors reach the whole agent — editors manual only — and a viewer reaches nothing.
+    editors_run(world["agent"])
     body = _get(world["ed"]).json()
     rows = _by_email(body)
-    assert body["interface_published"] is False
     assert rows["ed@dimagi.com"]["access"] == "full"
     assert rows["ed@dimagi.com"]["manual_only"] is True
     assert rows["ed@dimagi.com"]["may_request_auto"] is False
@@ -75,42 +84,34 @@ def test_no_interface_means_admins_and_editors_only(world):
     assert rows["adm@dimagi.com"]["access"] == "full"
     assert rows["adm@dimagi.com"]["manual_only"] is False
     assert rows["adm@dimagi.com"]["may_request_auto"] is True
-    assert body["outsiders"] == []
 
 
-def test_published_interface_confines_members_and_names_outsiders(world):
+def test_the_access_list_confines_members_by_their_line(world):
     a = world["agent"]
-    a.interface = interface.parse({
+    publish(a, {
         "full": ["member@dimagi.com:verified", "contact@dimagi.com:verified"],
         "capabilities": {
             "ask": {"description": "Ask a question", "callers": ["member", "contact"]},
             "status": {"description": "Status", "callers": ["member@dimagi.com"]},
         },
     })
-    a.save()
     body = _get(world["ed"]).json()
     rows = _by_email(body)
-    assert body["interface_published"] is True
-    # a dimagi member is lifted to full by the full: rule
+    # a dimagi member is lifted to the whole agent by their editor line
     assert rows["ed@dimagi.com"]["access"] == "full"
-    assert rows["ed@dimagi.com"]["full_rule"] == "member@dimagi.com:verified"
+    assert rows["ed@dimagi.com"]["role"] == "editor"
     # a partner-domain viewer is confined to what lists plain `member`
     assert rows["vw@partner.org"]["access"] == "confined"
     assert rows["vw@partner.org"]["capabilities"] == ["ask"]
     # admins are never confined
     assert rows["adm@dimagi.com"]["access"] == "full"
-    assert {(o["caller"], o["access"], o["capability"]) for o in body["outsiders"]} == {
-        ("contact@dimagi.com:verified", "full", None),
-        ("contact", "confined", "ask"),
-    }
 
 
 def test_member_listed_nowhere_has_no_access(world):
     a = world["agent"]
-    a.interface = interface.parse({
+    publish(a, {
         "capabilities": {"ask": {"description": "Ask", "callers": ["member@dimagi.com"]}},
     })
-    a.save()
     rows = _by_email(_get(world["boss"]).json())
     assert rows["vw@partner.org"]["access"] == "none"
     assert rows["vw@partner.org"]["capabilities"] == []
@@ -129,11 +130,12 @@ def test_non_member_gets_404(world):
 def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
     a = world["agent"]
     if published:
-        a.interface = interface.parse({
+        publish(a, {
             "full": ["member@dimagi.com:verified"],
             "capabilities": {"ask": {"description": "Ask", "callers": ["member@partner.org"]}},
         })
-        a.save()
+    else:
+        editors_run(a)
     rows = _by_email(_get(world["boss"]).json())
     for key in ("boss", "op", "adm", "ed", "vw"):
         user = world[key]

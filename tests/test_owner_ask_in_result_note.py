@@ -12,7 +12,6 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.claim import claim_next_turn
@@ -20,6 +19,7 @@ from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -34,9 +34,8 @@ def fleet():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     M.objects.create(workspace=ws, user=jj, role=M.OWNER)
-    hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, turn_mode=Agent.MANUAL,
-                               interface=parse({"capabilities": {"ask": {
-                                   "callers": ["contact@dimagi.com:verified"]}}}))
+    hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, turn_mode=Agent.MANUAL)
+    publish(hal, {"capabilities": {"ask": {"callers": ["contact@dimagi.com:verified"]}}})
     laptop = enrolled(Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=jj,
                                             status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                             capabilities=CAPS))

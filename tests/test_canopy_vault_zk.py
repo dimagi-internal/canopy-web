@@ -41,6 +41,7 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import editors_run
 from tests.fixtures.vault_zk import VECTORS, ref
 
 pytestmark = pytest.mark.django_db
@@ -97,6 +98,7 @@ def fleet(client):
     WorkspaceMembership.objects.create(workspace=f.ws, user=f.user, role=WorkspaceMembership.OWNER)
     f.agent = Agent.objects.create(slug="eva", name="Eva", workspace=f.ws, owner=f.user,
                                    runtime_secrets=["CANOPY_WEB_PAT", "kindora"])
+    editors_run(f.agent)
     f.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=f.user, status=Runner.ONLINE, workspace=f.ws,
                                      last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=f.agent, runner=f.runner, rank=0)

@@ -42,7 +42,7 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
     // of each — its own entry so the grant has a URL to send an admin.
     { to: 'capabilities', label: 'Capabilities' },
     // Last, and its own entry: every control that CONFIGURES the agent — owner,
-    // admins, callers, turn mode, Slack, runners, credentials. They were
+    // admins, capabilities, turn mode, Slack, runners, credentials. They were
     // sections of Overview, a page named after a dashboard.
     { to: 'settings', label: 'Settings' },
   ]

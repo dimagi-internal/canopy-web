@@ -27,6 +27,7 @@ from apps.workspaces.models import Workspace
 from . import access as access_rule
 from . import interface as iface_mod
 from .credentials.vault_health import vault_health
+from . import grants as grants_mod
 from .models import Agent, AgentProject, AgentTask
 from .services import waiting_q
 from .setup import DONE, OPTIONAL, setup_steps
@@ -74,7 +75,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "turn_mode": agent.turn_mode,
         "has_interface": iface_mod.published(agent.interface or {}),
         "capabilities": len((agent.interface or {}).get("capabilities") or {}),
-        "full_access": [str(c) for c in ((agent.interface or {}).get("full") or [])],
+        "access_lines": [f"{grants_mod.describe(ln)}: {ln.role}" for ln in standings.lines_of(agent)],
         "skills": c.get("skills", 0),
         "schedules": c.get("schedules", 0),
         "projects": c.get("projects", 0),

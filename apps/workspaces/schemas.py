@@ -432,7 +432,7 @@ class AgentTopologyAgentOut(StrictModel):
 class AgentEdgeOut(StrictModel):
     """What `source` gets when it sends `target` work with its own login.
     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-    workspace-owner | admin | full-rule | editor (full, manual only) |
+    workspace-owner | admin | editor (full; manual only when its line says so) |
     no-interface (refused: nothing published) | capabilities | nothing-offered |
     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
     THIS caller may make (or unmake) the source's login an admin of the target."""
@@ -442,7 +442,6 @@ class AgentEdgeOut(StrictModel):
     access: Literal["full", "confined", "none"]
     basis: str
     capabilities: list[str]
-    full_rule: str | None
     explicit_admin: bool
     can_grant: bool
     can_revoke: bool
@@ -558,14 +557,14 @@ class AgentHealthOut(StrictModel):
     # manual: its turns stop for a person's approval before acting or sending;
     # auto: they run through. (A routing rule can set a turn's mode itself.)
     turn_mode: str
-    # Whether it publishes an interface: what people other than its admins may
-    # ask it to do. False = only its admins (and editors) can use it.
+    # Whether it publishes any capability: what people other than its admins may
+    # ask it to do.
     has_interface: bool
-    # How many capabilities that interface offers (confined access).
+    # How many capabilities it offers (confined access).
     capabilities: int
-    # Its `full:` rules: the caller classes that get the WHOLE agent, as its
-    # admins do (e.g. "@dimagi.com:verified").
-    full_access: list[str] = []
+    # Its access list in words, one `"<who>: <role>"` per line (its own and the workspace
+    # defaults it inherits): everyone else who can use it besides its admins.
+    access_lines: list[str] = []
     skills: int
     schedules: int
     # Active projects; open tasks (suggested or in progress); open tasks waiting

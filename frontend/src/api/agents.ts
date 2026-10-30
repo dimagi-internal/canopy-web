@@ -754,7 +754,6 @@ export async function getAgentAccess(slug: string): Promise<AgentAccessOut> {
 // A refused line answers 422 with a reason fit to show beside the form (the
 // ApiError message is that `detail`); a duplicate is a 409 the same way.
 export type AccessListOut = Schemas['AccessListOut']
-export type AccessConversionOut = Schemas['AccessConversionOut']
 export type AccessLineOut = Schemas['AccessLineOut']
 export type AccessLineIn = Schemas['AccessLineIn']
 export type AccessLinePatch = Schemas['AccessLinePatch']
@@ -783,18 +782,6 @@ export async function removeAccessLine(slug: string, id: number): Promise<void> 
     params: { path: { slug, line_id: id } },
   })
   ensureOk(res, 'removeAccessLine')
-}
-
-// Moving an agent from the rules it was published with onto its access list: a preview that
-// writes nothing, then the move, which the server refuses unless nobody's access would change.
-export async function previewAccessConversion(slug: string): Promise<AccessConversionOut> {
-  const res = await apiV2.GET('/api/agents/{slug}/access-list-conversion', { params: { path: { slug } } })
-  return unwrap(res, 'previewAccessConversion') as unknown as AccessConversionOut
-}
-
-export async function applyAccessConversion(slug: string): Promise<AccessListOut> {
-  const res = await apiV2.POST('/api/agents/{slug}/access-list-conversion', { params: { path: { slug } } })
-  return unwrap(res, 'applyAccessConversion') as unknown as AccessListOut
 }
 
 export async function setInheritWorkspaceDefaults(slug: string, inherit: boolean): Promise<AccessListOut> {
@@ -828,8 +815,8 @@ export async function removeAgentDefault(workspace: string, id: number): Promise
 
 export type AgentInterfaceOut = Schemas['AgentInterfaceOut']
 
-// What callers (anyone not the owner or an admin) may ask this agent for.
-// Live state on canopy-web: owners/admins edit it here (saveAgentInterface).
+// The capabilities this agent offers viewers and users, each with its lowest role.
+// Live state on canopy-web: agent admins edit it here (saveAgentInterface).
 export async function getAgentInterface(slug: string): Promise<AgentInterfaceOut> {
   const res = await apiV2.GET('/api/agents/{slug}/interface', { params: { path: { slug } } })
   return unwrap(res, 'getAgentInterface') as unknown as AgentInterfaceOut
@@ -898,7 +885,7 @@ export async function getAgentInterfaceHistory(slug: string): Promise<SettingCha
   )
 }
 
-// Back to the default interface: the owner, the admins and the workspace's editors, and nobody else.
+// Back to the default interface: no capabilities, so viewers and users can use nothing.
 export async function resetAgentInterface(slug: string): Promise<AgentInterfaceOut> {
   const res = await apiV2.DELETE('/api/agents/{slug}/interface', { params: { path: { slug } } })
   return unwrap(res, 'resetAgentInterface') as unknown as AgentInterfaceOut

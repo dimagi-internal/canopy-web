@@ -41,7 +41,6 @@ from django.test import Client
 from fastmcp import FastMCP
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import decrypt_secret
@@ -53,6 +52,7 @@ from apps.host_grants import client_identity, host_gateway, outbound
 from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 from tests.fixtures import passkey_confirm
 
 pytestmark = pytest.mark.django_db
@@ -155,7 +155,8 @@ def site(host):
     owner = User.objects.create_user("op", "op@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner, interface=parse(IFACE))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
+    publish(agent, IFACE)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     # What the host publishes, registered in canopy.
     app.public_keys = [public_pem(host.key)]
@@ -323,9 +324,8 @@ def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site
     host.config = dataclasses.replace(host.config, runner_requirements=("sensitive_data",))
     # A sensitive conversation runs only in a capability that handles sensitive data (spec
     # 2026-10-22-sensitive-data-agents §5).
-    site["agent"].interface = parse({"capabilities": {"connect": {
+    publish(site["agent"], {"capabilities": {"connect": {
         **IFACE["capabilities"]["connect"], "data": "sensitive"}}})
-    site["agent"].save(update_fields=["interface"])
     r = _arrive(host, scopes=(), member=False)
     assert r.status_code == 200, r.content
     auth = {"HTTP_AUTHORIZATION": f"Bearer {r.json()['token']}"}

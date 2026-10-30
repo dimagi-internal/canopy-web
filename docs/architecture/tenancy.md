@@ -266,7 +266,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   where that agent is in a workspace the person is in or may ask to join.
 - Acting needs participant role owner/editor; a `viewer` reads; sharing is the owner's
   (`/participants`, the chat header's People control).
-- Every door calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
+- Every entry point calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
   recipients. **Opening a chat is never a grant** — the socket must not auto-join anyone;
   participation comes only from creating, being shared, being in the Slack channel a
   session lives in, being on an email thread its proven sender addressed to you (`access.md` §
@@ -284,7 +284,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   turn, a turn in another session or another agent's turn brings no one. The
   runner-made session for a dispatched turn (`session_sync._adopt_turn_parent`)
   goes through the same rule.
-- `tests/test_session_acl.py` asserts every door gives the same answer for every (person,
+- `tests/test_session_acl.py` asserts every entry point gives the same answer for every (person,
   session shape), and fails on a `SessionParticipant` writer outside its allowlist.
 - Where a session is filed and moving it: `roles.md` → "Which workspace a session lives in".
 

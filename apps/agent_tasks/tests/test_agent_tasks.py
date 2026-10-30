@@ -16,6 +16,8 @@ from apps.harness import services as harness
 from apps.harness.models import Turn
 from apps.tokens.models import PersonalToken
 
+from tests.access_helpers import editors_run
+
 from .helpers import GOOD, INPUT, SCHEMA, _create, _pat, _post
 
 pytestmark = pytest.mark.django_db
@@ -58,6 +60,7 @@ def test_a_task_named_after_a_skill_tells_the_turn_to_use_it(world):
 
 
 def test_create_has_the_enqueue_turn_gate(world):
+    editors_run(world["agent"])
     assert _create(_pat(world["editor"])).status_code == 201
     assert _create(_pat(world["viewer"])).status_code == 403
     assert _create(_pat(world["outsider"])).status_code == 404
@@ -105,6 +108,7 @@ def test_who_may_read(world, task):
 
 
 def test_the_creator_reads_their_own_task(world):
+    editors_run(world["agent"])
     body = _create(_pat(world["editor"])).json()
     assert _pat(world["editor"]).get(f"/api/agent-tasks/{body['id']}").json()["status"] == "queued"
 

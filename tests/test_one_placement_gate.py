@@ -18,6 +18,7 @@ from apps.canopy_sessions.models import Session
 from apps.harness.models import Runner, RunnerAdmin, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -42,6 +43,7 @@ def team():
                     (carol, WorkspaceMembership.EDITOR)):
         WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=alice)
+    editors_run(agent)
     box = _box(alice, "alice-box")
     # carol administers alice's box without being an admin of the agent.
     RunnerAdmin.objects.create(runner=box, user=carol)

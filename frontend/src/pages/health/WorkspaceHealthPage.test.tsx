@@ -13,7 +13,7 @@ const step = (key: string, status: 'done' | 'todo', href = '') => ({
 function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut {
   return {
     slug, name: slug.toUpperCase(), workspace: 'connect', owner_email: `${slug}@x.org`, can_fix: true, email: '',
-    repo_url: '', turn_mode: 'manual', has_interface: false, capabilities: 0, full_access: [], skills: 2, schedules: 0,
+    repo_url: '', turn_mode: 'manual', has_interface: false, capabilities: 0, access_lines: [], skills: 2, schedules: 0,
     projects: 1, open_tasks: 3, waiting_tasks: 1, created_at: '2026-10-01T00:00:00Z',
     active_sessions: 1, last_session_at: '2026-10-17T00:00:00Z',
     recent_sessions: [{ id: 's1', workspace: 'connect', title: `${slug} chat`, at: '2026-10-17T00:00:00Z', active: true }],
@@ -209,9 +209,9 @@ describe('runners on Health', () => {
 })
 
 describe('whoCanUse', () => {
-  it('names both kinds of published access, never "0 capabilities"', () => {
-    expect(whoCanUse({ has_interface: false, capabilities: 0, full_access: [] })).toBe('Admins only')
-    expect(whoCanUse({ has_interface: true, capabilities: 0, full_access: ['@dimagi.com:verified'] })).toBe('Admins + full: 1 rule')
-    expect(whoCanUse({ has_interface: true, capabilities: 3, full_access: ['a', 'b'] })).toBe('Admins + full: 2 rules · 3 capabilities')
+  it('names who is on the access list and what is published, never "0 capabilities"', () => {
+    expect(whoCanUse({ capabilities: 0, access_lines: [] })).toBe('Admins only')
+    expect(whoCanUse({ capabilities: 0, access_lines: ['Everyone in connect: editor'] })).toBe('Admins + 1 on its access list')
+    expect(whoCanUse({ capabilities: 3, access_lines: ['a: user', 'b: viewer'] })).toBe('Admins + 2 on its access list · 3 capabilities')
   })
 })

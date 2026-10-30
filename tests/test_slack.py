@@ -45,8 +45,17 @@ from tests.fixtures.slack import (
     mention,
     thread_reply,
 )
+from tests.access_helpers import editors_run, publish
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
+
+
+@pytest.fixture
+def hal(hal):
+    """Hal as these tests were written for him: workspace editors may drive him, manually.
+    A new agent's access list is empty, which lets in only its owner and admins."""
+    editors_run(hal)
+    return hal
 
 
 # ---- the door --------------------------------------------------------------
@@ -2294,11 +2303,7 @@ def test_declaring_without_a_config_token_says_so(slack, ws, installation, owner
 def test_a_confined_reply_says_it_is_a_separate_session(slack, installation, hal):
     """In Slack a confined turn looks exactly like typing into the thread, but it
     runs in its own session on the runner. Shayoni's reply did this, 2026-10-01."""
-    from apps.agents.interface import parse
-
-    hal.interface = parse({"capabilities": {"ask": {"description": "Ask Hal",
-                                                     "callers": ["contact"]}}})
-    hal.save(update_fields=["interface"])
+    publish(hal, {"capabilities": {"ask": {"description": "Ask Hal", "callers": ["contact"]}}})
     mention("hal who owns the budget?")
     assert Turn.objects.get().capability == "ask"
     text = _line(slack)["text"]
@@ -2317,10 +2322,7 @@ ROOT = "1700000999.000100"   # FakeSlack's ts for every chat.postMessage
 
 
 def _ask_for_contacts(agent):
-    from apps.agents.interface import parse
-
-    agent.interface = parse({"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
-    agent.save(update_fields=["interface"])
+    publish(agent, {"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
 
 
 def test_a_confined_reply_in_a_members_thread_forks_to_its_own_thread(slack, linked, hal, alice):

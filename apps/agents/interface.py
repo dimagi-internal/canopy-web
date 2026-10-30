@@ -1,16 +1,14 @@
-"""An agent's DECLARED INTERFACE: what it offers people who are not its admins.
+"""An agent's DECLARED CAPABILITIES: what it offers people who are not its admins.
 
-Every term here (`full:`, `capabilities:`, `callers:`, the caller classes,
-`full` / `confined` / `none`) is defined in `docs/architecture/access.md`, with
-the decision table; THE rule that applies it is `apps/agents/access.decide`.
+Who may use which capability is NOT here: it is the agent's access list
+(`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
+This says only what each capability IS — its tools, paths and sites — and the lowest role
+that may use it (`role: viewer | user`). THE rule that decides who gets which is
+`apps/agents/access.decide`; every term is defined in `docs/architecture/access.md`.
 
-Phase 4 of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
-and-access-design.md` (§4). An agent's owner and admins reach its full working
-session; so does a workspace editor, whose turns run manual. Everyone else — a
-viewer member, a contact (an emailer, a widget visitor) — reaches only what the
-agent declares here: `full` through a `full:` rule, `confined` to a capability,
-or `none`. It is LIVE STATE held by canopy-web (see "Stored on canopy-web"
-below) — never a file in the agent's repo — and canopy enforces it.
+An agent's owner and admins reach its full working session; so does anyone the access list
+makes an editor. Everyone else — a user, a viewer — reaches only a capability. It is LIVE STATE
+held by canopy-web, never a file in the agent's repo, and canopy enforces it.
 
 **Allowlist by construction.** Restricting a fully-powered agent per caller —
 instructions, a policy file, a hook with a denylist — leaks. So a caller turn
@@ -19,13 +17,12 @@ runs in its capability's profile, where everything not listed is denied:
     capabilities:
       ask:                                  # the free-form capability every channel uses
         description: Ask ACE about your programme.
-        callers: [contact:verified, member] # who may invoke it
+        role: viewer                        # the lowest role that may use it (viewer | user)
         entry: /ace:ask --thread {thread_id}  # the session's prompt (optional)
         tools: [Read, Grep, "mcp__canopy-web__who_is_asking"]
         bash: ["canopy email read --repo . {thread_id}"]
         read_paths: ["{cwd}/**"]
         write_paths: ["{cwd}/.ace-ask/*"]    # where Write/Edit may land (none → no writes)
-    callers_default: none
 
 **A page can pick the capability.** A capability may name the resources it serves,
 and a conversation held on a page that declared one of them runs there instead
@@ -33,7 +30,7 @@ of in `ask`:
 
     capabilities:
       marketplace:
-        callers: [contact]
+        role: viewer
         pages: ["labs-marketplace://*"]   # what the PAGE declared it is showing
         tools: [Skill, "mcp__*canopy-web__current_page",
                 "mcp__*connect_labs__marketplace_*"]
@@ -46,8 +43,8 @@ what it needed was to give an email stranger the same thing. That is the wrong
 trade in both directions: the page's conversation is under-equipped and the
 mailbox is over-exposed.
 
-It cannot widen anything on the host's word. The page supplies only the resource
-it is showing; every tool in the profile was chosen by the agent's owner. A host
+It cannot widen anything on the host's word: the page supplies only the
+resource it is showing; every tool in the profile was chosen by the agent's owner. A host
 that lies about its resource reaches exactly the tools that owner already decided
 to expose to that page — and it had to be an allowlisted app, framing from a
 registered origin, to open a conversation at all.
@@ -59,7 +56,7 @@ ran as the AGENT. A site capability instead names a registered Connected site:
 
     capabilities:
       connect:
-        callers: [contact, member]
+        role: viewer
         sites: [connect-labs]               # a Connected site, by name
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL narrowing
 
@@ -76,52 +73,14 @@ granted. The page's `backing_tool` tells the agent where to read the rows on
 screen; it is not a filter (until 2026-09-29 it was).
 
 **Default deny.** Every agent HAS an interface; until its owner changes it, it is the default
-(`default_interface()`: no `full:` rule, no capability). An agent that has published nothing is reachable by its
-admins and its workspace's editors (full profile, manual only) and by nobody
-else: a viewer member, a contact or an unidentified caller is refused (viewers
-since 2026-10-04). Until 2026-09-26 it ran EVERY turn full, which made the
-enforcement below opt-in — and on that day Hal, with no interface, pushed and
-deployed code for a colleague on Slack who was not a member of its workspace.
-Publishing an interface is how an agent lets anyone else in. A capability with
-no `pages` is never selected by a page, so an existing interface behaves
-exactly as it did.
+(`default_interface()`: no capability). An agent that has published nothing is reachable by its
+owner, admins and anyone its access list makes an editor, and by nobody else. A capability
+with no `pages` is never selected by a page. An agent with no `ask` capability cannot be asked
+by a viewer even if the list names them: a line can only open a capability that exists.
 
-Caller classes: `member` (a workspace member who is not an agent admin), `contact`
-(someone canopy knows who is not a member), `unknown` (nobody established who).
-`@domain.tld` narrows one to addresses at exactly that domain; `:verified`
-additionally requires THIS message to be verified — for a contact, mail that is
-DMARC-aligned or DKIM-signed by its own From: domain.
-
-**`:verified` is mail-only for a contact**, so it can never admit a visitor from
-an embedded site: the host vouches for them, canopy verifies the host's
-signature rather than the person, and such an arrival is capped at tier 2 by
-design. Gate an embedded agent's interface on `contact`, not
-`contact:verified` — the latter reads like a slightly stricter rule and is in
-fact one nobody can ever pass.
-
-**`full:` — domain-wide access.** A list of caller classes that get the agent's
-WHOLE profile, as its admins do, e.g. `full: [contact@dimagi.com:verified]`:
-staff writing in from a verified company address steer the agent exactly as
-before interfaces existed, while everyone else is confined to a capability.
-
-**`editors:` — confine the workspace's editors too.** By default a workspace
-editor who is not an agent admin gets the whole agent, every turn manual (an
-admin's go-ahead before anything goes out). For an agent meant for everyone —
-a support agent — neither half fits: editors' chats wait on an admin, or a
-`full: [member]` rule hands them the whole agent in its own mode. `editors:
-confined` decides those editors exactly like a viewer member instead: a `full:`
-rule that names them still applies first, else the capability listing them
-(confined, in the agent's normal turn mode), else refused. `editors: full` (or
-no key, which is how it is stored) is the editor tier. Owner and admins are
-unaffected either way:
-
-    editors: confined
-    capabilities:
-      ask: {callers: [member], tools: [Read]}
-
-**Stored on canopy-web, not in the agent's repo.** Who may do what is live
-state an owner changes as people come and go, not code that ships with the
-agent; it is edited on the agent's page (or `canopy agent interface set`).
+**Removed 2026-10-30:** `full:`, each capability's `callers:`, `callers_default:` and
+`editors:`. A published interface that still carries them is refused with a message pointing
+at the access list; the data migration `agents/0112` moved every agent's rules onto its list.
 """
 from __future__ import annotations
 
@@ -130,10 +89,8 @@ import re
 from apps.agents import roles
 from apps.agents.interface_default import VERSION, default_interface  # noqa: F401  (re-exported)
 from apps.canopy_sessions.models import SessionParticipant
-from apps.contacts.domain_proof import proof
 from apps.harness import initiator as who
 from apps.harness import invocations
-from apps.harness.caller_context import is_verified
 
 #: The fallback capability for a free-form channel (email, chat, Slack, a widget on a
 #: page that declared nothing). Named capabilities are for callers that ask for
@@ -156,42 +113,20 @@ PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 #: turn predating this reads as "full", which is what it was.
 FULL = ""
 
-CALLER_CLASSES = frozenset({"member", "contact", "unknown"})
-
 #: The lowest role that may use a capability (`role:` on it). Who HAS a role is the
 #: access list's business (`apps/agents/grants.py`); a capability only says how much it takes.
-DOOR_ROLES = (roles.VIEWER, roles.USER)
+CAPABILITY_ROLES = (roles.VIEWER, roles.USER)
 
 
 def capability_role(cap: dict) -> str:
-    """The lowest role that may open `cap`: its `role:` when it says, else what its
-    `callers` already meant — a capability open to contacts is for viewers, one open only to
-    members is for users. An interface written before roles keeps its meaning."""
+    """The lowest role that may use `cap`: its `role:`, `user` when it says nothing."""
     explicit = cap.get("role")
-    if explicit in DOOR_ROLES:
-        return explicit
-    callers = cap.get("callers") or []
-    return roles.VIEWER if any(c.startswith(("contact", "unknown")) for c in callers) else roles.USER
+    return explicit if explicit in CAPABILITY_ROLES else roles.USER
 
 
 def role_opens(role: str | None, cap: dict) -> bool:
     """May someone holding `role` use `cap`?"""
     return roles.at_least(role, capability_role(cap))
-
-#: `editors:` — where a workspace editor who is not an agent admin lands. `full`
-#: (the default, never written) is the editor tier: the whole agent, every turn
-#: manual. `confined` decides them exactly like a viewer member: a `full:` rule
-#: that names them, else the capability that lists them (in the agent's own turn
-#: mode, like any confined turn), else refused.
-EDITORS_FULL, EDITORS_CONFINED = "full", "confined"
-
-#: `base[@domain][:verified]` — `contact@dimagi.com:verified` is a contact whose
-#: address is at dimagi.com AND whose message proves it. The domain is matched
-#: EXACTLY: not a subdomain, not a suffix, so `@dimagi.com` never admits
-#: `dimagi.com.evil.org` or `x.dimagi.com`.
-_CALLER = re.compile(r"^(?P<base>member|contact|unknown)"
-                     r"(?:@(?P<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))?"
-                     r"(?::(?P<verified>verified))?$")
 
 #: What a capability's `input` fields may be. Declared and shown, but no capability
 #: passes typed inputs today: the MCP capability tools that did were removed
@@ -214,7 +149,7 @@ class InterfaceError(ValueError):
         self.path = path if path is not None else _path_of(message)
 
 
-_PATH = re.compile(r"^(?P<path>full|[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)(?::|\s)")
+_PATH = re.compile(r"^(?P<path>[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)(?::|\s)")
 
 
 def _path_of(message: str) -> str:
@@ -236,23 +171,29 @@ def _strings(value, field: str, cap: str) -> list[str]:
     return out
 
 
+#: Keys the access list replaced; refused with the pointer below, never silently ignored.
+_RETIRED = {"full", "editors", "callers"}
+_RETIRED_HINT = ("{where}: `{key}:` is gone — who may use an agent is its access list now "
+                 "(Settings → Access, or /api/agents/<slug>/access-list). A capability only says what "
+                 "it is and the lowest `role:` (viewer or user) that may use it")
+
+
 def parse(doc) -> dict:
     """Validate and normalise a published interface. Raises InterfaceError.
 
     Strict on purpose: an unknown key is refused rather than ignored, because
-    a misspelt `tool:` silently dropped would publish a profile that allows
-    less than its author thinks — and a misspelt `callers:` one that allows
-    nobody, or everybody, depending on the default.
+    a misspelt `tools:` silently dropped would publish a profile that allows
+    less than its author thinks.
     """
     if not isinstance(doc, dict):
         raise InterfaceError("the interface must be a mapping")
-    extra = set(doc) - {"capabilities", "callers_default", "version", "full", "editors"}
+    for key in sorted(_RETIRED & set(doc)):
+        raise InterfaceError(_RETIRED_HINT.format(where="interface", key=key), key)
+    extra = set(doc) - {"capabilities", "callers_default", "version"}
     if extra:
         raise InterfaceError(f"unknown top-level key(s): {sorted(extra)}")
     if doc.get("callers_default", "none") != "none":
-        # The only default that is safe to publish. Named so that a reader of
-        # the file sees the rule, and so that "everyone" is never one edit away.
-        raise InterfaceError("callers_default must be 'none'")
+        raise InterfaceError("callers_default is gone: nobody is let in by default")
     caps = doc.get("capabilities") or {}
     if not isinstance(caps, dict) or len(caps) > 50:
         raise InterfaceError("capabilities must be a mapping of at most 50 entries")
@@ -262,12 +203,13 @@ def parse(doc) -> dict:
             raise InterfaceError(f"capability name {name!r} must match {_NAME.pattern}")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
-        bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
+        if "callers" in cap:
+            raise InterfaceError(_RETIRED_HINT.format(where=name, key="callers"), f"{name}.callers")
+        bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "pages", "sites", "ceiling", "own_login",
                           "data", "role"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
-        callers = _classes(cap.get("callers"), f"{name}.callers")
         entry = cap.get("entry")
         if entry is not None and (not isinstance(entry, str) or "\n" in entry
                                   or len(entry) > _MAX_PATTERN
@@ -282,10 +224,13 @@ def parse(doc) -> dict:
                                      f"and not be one of {sorted(_RESERVED_INPUTS)}")
             if typ not in INPUT_TYPES:
                 raise InterfaceError(f"{name}.input.{field}: type must be one of {sorted(INPUT_TYPES)}")
+        role = cap.get("role", roles.USER)
+        if role not in CAPABILITY_ROLES:
+            raise InterfaceError(f"{name}.role must be one of {list(CAPABILITY_ROLES)}", f"{name}.role")
         out[name] = {
             "input": dict(inputs),
             "description": str(cap.get("description") or "")[:500],
-            "callers": callers,
+            "role": role,
             "entry": entry,
             "tools": _strings(cap.get("tools"), "tools", name),
             "bash": _strings(cap.get("bash"), "bash", name),
@@ -301,30 +246,7 @@ def parse(doc) -> dict:
         }
         if cap.get("data") is not None:
             out[name]["data"] = _data(cap["data"], name, out[name])
-        if cap.get("role") is not None:
-            if cap["role"] not in DOOR_ROLES:
-                raise InterfaceError(f"{name}.role must be one of {list(DOOR_ROLES)}", f"{name}.role")
-            out[name]["role"] = cap["role"]
-    full = _classes(doc.get("full"), "full")
-    parsed = {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
-    editors = doc.get("editors", EDITORS_FULL)
-    if editors not in (EDITORS_FULL, EDITORS_CONFINED):
-        raise InterfaceError(f"editors must be '{EDITORS_FULL}' or '{EDITORS_CONFINED}', "
-                             f"not {editors!r}", "editors")
-    if editors == EDITORS_CONFINED:
-        # Written only when it differs from the default, so every interface
-        # published before the key existed parses to exactly what it did.
-        if not out and not full:
-            raise InterfaceError("editors: 'confined' sends editors to the capabilities, so "
-                                 "publish at least one capability or `full:` rule", "editors")
-        parsed["editors"] = EDITORS_CONFINED
-    return parsed
-
-
-def editors_confined(iface: dict | None) -> bool:
-    """Whether this interface sends workspace editors (who are not agent admins)
-    through the capabilities, like any viewer member, instead of the editor tier."""
-    return (iface or {}).get("editors") == EDITORS_CONFINED
+    return {"version": VERSION, "capabilities": out}
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
@@ -427,7 +349,7 @@ def _declared_resource(turn) -> str:
     return resource if isinstance(resource, str) else ""
 
 
-def _page_capability(turn, iface: dict, classes: set[str], opens=None) -> str | None:
+def _page_capability(turn, iface: dict, opens) -> str | None:
     """The capability whose `pages` match what this turn's page declared.
 
     Checked before falling back to `ask`, so a conversation held on a page the
@@ -448,7 +370,7 @@ def _page_capability(turn, iface: dict, classes: set[str], opens=None) -> str | 
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
         patterns = cap.get("pages") or []
-        if not patterns or not (opens(cap) if opens else classes & set(cap.get("callers") or [])):
+        if not patterns or not opens(cap):
             continue
         if any(fnmatchcase(resource, pattern) for pattern in patterns):
             return name
@@ -465,7 +387,7 @@ def _conversation_site(turn) -> str:
     return site.strip() if isinstance(site, str) else ""
 
 
-def _site_capability(turn, iface: dict, classes: set[str], opens=None) -> str | None:
+def _site_capability(turn, iface: dict, opens) -> str | None:
     """The capability whose `sites` include the site this conversation is on.
 
     Tried after `_page_capability` (a page-specific capability is the narrower one)
@@ -476,7 +398,7 @@ def _site_capability(turn, iface: dict, classes: set[str], opens=None) -> str | 
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
-        if site in (cap.get("sites") or []) and (opens(cap) if opens else classes & set(cap.get("callers") or [])):
+        if site in (cap.get("sites") or []) and opens(cap):
             return name
     return None
 
@@ -545,119 +467,15 @@ def page_turn(turn, agent=None) -> dict | None:
     return {"site": site, "withheld": own_login_of(agent, site)}
 
 
-def _classes(value, where: str) -> list[str]:
-    out = []
-    for c in _strings(value, where.rpartition(".")[2] or where, where.rpartition(".")[0] or "interface"):
-        c = c.lower()
-        if not _CALLER.match(c):
-            raise InterfaceError(
-                f"{where}: {c!r} is not a caller class — member | contact | unknown, "
-                "optionally @domain.tld, optionally :verified")
-        out.append(c)
-    return out
-
-
-def caller_classes(turn, relationship: str) -> set[str]:
-    """The classes this turn's asker falls in: the base, the base at their
-    address's domain, and the `:verified` form of each when THIS message is."""
-
-    kind = turn.initiator_kind
-    if kind == who.CONTACT:
-        base = "contact"
-        address = getattr(turn.initiator_contact, "email", "") or ""
-    elif kind == who.USER and relationship == "member":
-        base = "member"
-        address = getattr(turn.initiator_user, "email", "") or ""
-    else:
-        # Anyone else — including a canopy user with no business in this
-        # workspace — is no more than someone unidentified.
-        base, address = "unknown", ""
-    return _expand(base, address, is_verified(turn))
-
-
-def _expand(base: str, address: str, verified: bool) -> set[str]:
-    classes = {base}
-    domain = address.strip().lower().rpartition("@")[2] if "@" in (address or "") else ""
-    if domain:
-        classes.add(f"{base}@{domain}")
-    if verified:
-        classes |= {f"{c}:verified" for c in list(classes)}
-    return classes
-
-
-def full_rule(classes: set[str], iface: dict) -> str | None:
-    """The `full:` entry that grants these classes the agent's whole profile."""
-    for rule in iface.get("full") or []:
-        if rule in classes:
-            return rule
-    return None
-
-
-#: Wall-clock budget for the DNS half of `domain_warnings`, across all domains.
-#: Past it, the remaining domains are simply not checked this time.
-_PROOF_BUDGET_SECONDS = 2.5
-
-
-def _rules_needing_proof(iface: dict) -> dict[str, list[str]]:
-    """{domain: [rules]} for every rule that only an aligned email can satisfy at
-    that domain: `member@d` (a member's mail is tied to their account only when
-    aligned, else they arrive as a contact) and anything `@d:verified`."""
-    rules = list(iface.get("full") or [])
-    for cap in (iface.get("capabilities") or {}).values():
-        rules += list(cap.get("callers") or [])
-    out: dict[str, list[str]] = {}
-    for rule in rules:
-        m = _CALLER.match(rule)
-        if not m or not m["domain"]:
-            continue
-        if m["base"] == "member" or m["verified"]:
-            bucket = out.setdefault(m["domain"], [])
-            if rule not in bucket:
-                bucket.append(rule)
-    return out
-
-
-def domain_warnings(iface: dict, workspace_id) -> list[str]:
-    """Warnings for rules naming a mail domain that cannot prove its senders
-    (canopy-web#1280). A warning, never a refusal, and never an exception: the
-    interface is saved whatever this says. A domain whose DNS could not be asked
-    is not warned about — see apps/contacts/domain_proof.py."""
-    import time
-
-    warnings: list[str] = []
-    try:
-        needing = _rules_needing_proof(iface)
-        started = time.monotonic()
-        for domain in sorted(needing):
-            if time.monotonic() - started > _PROOF_BUDGET_SECONDS:
-                break
-            if proof(domain, workspace_id).can_prove is not False:
-                continue
-            rules = ", ".join(needing[domain])
-            warnings.append(
-                f"{rules}: mail from {domain} can never prove who sent it — {domain} publishes "
-                f"no DMARC record and no mail DKIM-signed by {domain} itself has been seen. "
-                f"Everyone writing in from it is treated as a contact, so this rule admits no "
-                f"one by email. Fix it at {domain}: sign its mail with DKIM using its own key, "
-                f"or publish a DMARC record at _dmarc.{domain}.")
-    except Exception:  # informational — a bug here must not fail a save or a read
-        import logging
-        logging.getLogger(__name__).exception("interface domain warnings failed")
-    return warnings
-
-
 def published(iface: dict) -> bool:
-    """Whether the agent has declared anything. An interface with neither a
-    `full:` rule nor a capability says nothing, and is treated as none."""
-    return bool(iface.get("capabilities") or iface.get("full"))
+    """Whether the agent has declared a capability. An interface with none says nothing
+    and is treated as none."""
+    return bool(iface.get("capabilities"))
 
 
 #: THE default interface (`default_interface`, from `interface_default.py`), which every agent
-#: has until its owner changes it: no
-#: `full:` rule, no capability, `callers_default: none`. It says out loud what
-#: "nothing published" used to mean by absence — the owner, the admins and the
-#: workspace's editors reach the agent, and nobody else — so `published` reads it
-#: as none and `access.decide` behaves exactly as it did for an empty `{}`.
+#: has until its owner changes it: no capability. Only its owner, its admins and the editors
+#: its access list names reach it.
 def is_default(iface: dict | None) -> bool:
     """Whether this interface is the default (or empty, which reads the same)."""
     return not published(iface or {})
@@ -666,8 +484,8 @@ def is_default(iface: dict | None) -> bool:
 def validate(doc) -> list[dict]:
     """Every problem with a draft, as `[{path, message}]` — [] when `parse` accepts it.
 
-    `parse` stops at the first fault; a form wants one per field, so the top level,
-    `full:` and each capability are parsed on their own. The server's parser stays the
+    `parse` stops at the first fault; a form wants one per field, so the top level
+    and each capability are parsed on their own. The server's parser stays the
     only judge: this never decides what is valid, it only asks `parse` more than once.
     """
     errors: list[dict] = []
@@ -691,71 +509,6 @@ def validate(doc) -> list[dict]:
     for name, cap in caps.items():
         attempt({"capabilities": {name: cap}}, str(name))
     return errors
-
-
-_BASE_WORDS = {"member": "workspace members", "contact": "contacts", "unknown": "unidentified callers"}
-
-
-def describe_caller(rule: str) -> str:
-    """A caller class in plain English: `contact@dimagi.com:verified` → "Verified
-    contacts at dimagi.com". An unparseable rule is shown as written."""
-    m = _CALLER.match(rule)
-    if not m:
-        return rule
-    words = _BASE_WORDS[m["base"]]
-    if m["verified"]:
-        words = "verified " + words
-    if m["domain"]:
-        words += f" at {m['domain']}"
-    return words[0].upper() + words[1:]
-
-
-def access_summary(iface: dict) -> list[dict]:
-    """One line per caller class: `[{who, reaches, rule}]` — what each can reach.
-
-    Always opens with the people no interface is needed for, then every rule the
-    interface names (a `full:` rule reaches everything; otherwise the capabilities
-    that list it), and ends with who is refused. Computed here so the page and the
-    CLI say the same thing and the English lives beside the rule it describes.
-    """
-    iface = iface or {}
-    if editors_confined(iface):
-        # Decided like any member: the member rules below, nothing more.
-        caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
-                       if any(r.startswith("member") for r in c.get("callers") or []))
-        editors = ("only what members reach — the capabilities "
-                   + (", ".join(caps) if caps else "listing members (none do)")
-                   + ", unless a `full:` rule names them")
-    else:
-        editors = "everything (every turn they start needs an admin's go-ahead)"
-    out = [{"who": "Owner and admins", "reaches": "everything", "rule": None},
-           {"who": "Workspace editors", "reaches": editors, "rule": None}]
-    reach: dict[str, list[str]] = {}
-    for rule in iface.get("full") or []:
-        reach.setdefault(rule, [])
-    for name, cap in (iface.get("capabilities") or {}).items():
-        for rule in cap.get("callers") or []:
-            reach.setdefault(rule, []).append(name)
-    full = set(iface.get("full") or [])
-
-    def order(rule: str):
-        m = _CALLER.match(rule)
-        base = ("member", "contact", "unknown").index(m["base"]) if m else 9
-        return (base, bool(m and m["domain"]) is False, rule)
-
-    for rule in sorted(reach, key=order):
-        reaches = "everything" if rule in full else ", ".join(reach[rule])
-        out.append({"who": describe_caller(rule), "reaches": reaches, "rule": rule})
-    out.append({"who": "Everyone else", "reaches": "refused", "rule": None})
-    return out
-
-
-#: Who reaches an agent that has published NO interface: its admins and canopy
-#: itself. A workspace EDITOR still does — through the editor tier of
-#: `apps/agents/access.decide` (full profile, manual only), not through this set
-#: — and a viewer member or a contact is refused (2026-10-04; members used to be
-#: let in wholesale). See docs/architecture/access.md.
-_TRUSTED_WITHOUT_INTERFACE = frozenset({"owner", "admin", "system"})
 
 
 def session_writer(turn, agent) -> str | None:
@@ -795,13 +548,11 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     """Which profile this turn runs in: FULL, a capability name, or None (refused).
 
     A thin face over THE rule, `apps.agents.access.decide` — see
-    docs/architecture/access.md for the tiers. In short: FULL for its owner,
-    admins, canopy's own turns, a `full:` rule, a writer in an admin's own
-    session, and a workspace editor (whose turns then run manual); a viewer or
-    a contact gets the capability they asked for — `requested`, e.g. a tool
-    called over MCP — or the page's/site's capability, or `ask`, if their class is
-    listed for it; otherwise they are refused (`callers_default: none`). With
-    NO published interface, only admins and editors get in.
+    docs/architecture/access.md. In short: FULL for its owner, admins, canopy's own turns,
+    a writer in an admin's own session and anyone the access list makes an editor; a user or
+    a viewer gets the capability they asked for — `requested`, e.g. a tool called over MCP —
+    or the page's/site's capability, or `ask`, if their role may use it; otherwise they are
+    refused. An agent that has published no capability lets in only those who run it whole.
     """
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
@@ -809,17 +560,16 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
 
 
 def granted_by(turn, agent) -> str:
-    """WHY this turn has the access it has, for the envelope: `owner`, `admin`,
-    `system`, `editor`, `session:<role>`, `full:<rule>`, `capability:<name>` or
-    `refused`."""
+    """WHY this turn has the access it has, for the envelope: `owner`, `admin`, `system`,
+    `session:<role>`, `grant:<line>`, `capability:<name>` or `refused`."""
     return grant_facts(turn, agent)["granted_by"]
 
 
 def grant_facts(turn, agent) -> dict:
     """The envelope's account of the asker's standing, from ONE decision: `granted_by`
     (the older why-word above), `role` (where they stand on the agent's role ladder, None
-    when refused) and `source` (what put them there: owner | admin | system |
-    workspace-editor | rule:<full rule> | capability:<name> | list:<access-list line>)."""
+    when refused), `source` (what put them there: owner | admin | system |
+    capability:<name> | session | list:<access-list line>)."""
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     d = access.decide_for_turn(turn, agent, turn.capability or None)
@@ -832,15 +582,11 @@ def grant_facts(turn, agent) -> dict:
 
 
 def offered_to(user, agent) -> list[str]:
-    """The capabilities `user` may invoke on `agent` directly — their extended A2A card.
+    """The capabilities `user` may use on `agent` directly — their extended A2A card.
 
-    Everything for anyone whose turns run in the whole agent anyway: the owner,
-    admins, a workspace editor, a member lifted by a `full:` rule. For any other
-    workspace member, the capabilities listing `member` or `member:verified`: a
-    request authenticated by a canopy session or token IS verified, so the two
-    are the same for someone calling as themselves. Nothing for anyone who is
-    not a member of the agent's workspace — this surface is for people canopy
-    already knows by login; outsiders arrive by email or widget.
+    Everything for anyone whose turns run in the whole agent anyway (owner, admins, editors);
+    for anyone else, the capabilities their role on the agent's access list may use. Nothing
+    for someone the list does not name.
     """
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
     if not caps or not getattr(user, "is_authenticated", False):
@@ -848,13 +594,11 @@ def offered_to(user, agent) -> list[str]:
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     d = access.decide(agent, user, verified=True)
-    if d.role not in (access.OWNER, access.ADMIN, access.MEMBER):
-        return []
     if d.access == access.FULL:
         return sorted(caps)
-    # Calling as themselves over an authenticated token IS verified.
-    classes = _expand("member", getattr(user, "email", "") or "", True)
-    return sorted(n for n, c in caps.items() if classes & set(c.get("callers") or []))
+    if d.access == access.CONFINED:
+        return sorted(n for n, c in caps.items() if role_opens(d.agent_role, c))
+    return []
 
 
 def profile(agent, capability: str) -> dict | None:
@@ -867,7 +611,7 @@ def profile(agent, capability: str) -> dict | None:
     if capability == FULL:
         return None
     cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
-    cap = cap or {"description": "", "callers": [], "entry": None,
+    cap = cap or {"description": "", "entry": None,
                   "tools": [], "bash": [], "read_paths": [], "write_paths": [], "input": {},
                   "pages": [], "sites": [], "ceiling": []}
     out = {"name": capability, **{k: cap.get(k) for k in

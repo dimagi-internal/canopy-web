@@ -661,7 +661,7 @@ class AgentLicenseOut(StrictModel):
     email: str
     name: str
     status: Literal["requested", "active", "revoked"]
-    #: Why it was issued (`admin`, `full:<rule>`, `editor`, `approved by …`).
+    #: Why it was issued (`admin`, `grant:<line>`, `approved by …`).
     basis: str = ""
     note: str = ""
     requested_at: dt.datetime
@@ -693,11 +693,8 @@ class AgentAccessRowOut(StrictModel):
     # or nothing (the published interface lists no capability for them).
     access: Literal["full", "confined", "none"]
     capabilities: list[str] = []
-    # The `full:` interface rule that lifted a member to full access, if one did.
-    full_rule: str | None = None
-    # The editor tier (docs/architecture/access.md): a workspace editor who is
-    # not an agent admin reaches the whole agent, but every turn they start runs
-    # manual — outbound needs an admin.
+    # An editor line that says `manual_only` (docs/architecture/access.md): they reach the whole
+    # agent, but every turn they start runs manual — outbound needs an admin.
     manual_only: bool = False
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False
@@ -712,19 +709,8 @@ class AgentAccessRowOut(StrictModel):
     via: str = ""
 
 
-class AgentOutsiderRuleOut(StrictModel):
-    caller: str
-    access: Literal["full", "confined"]
-    capability: str | None = None
-
-
 class AgentAccessOut(StrictModel):
     members: list[AgentAccessRowOut]
-    # Rules reaching people outside the workspace (contacts, unidentified).
-    outsiders: list[AgentOutsiderRuleOut]
-    # False = no interface: only the agent's admins and workspace editors reach
-    # it (editors manual only); viewers and everyone outside get nothing.
-    interface_published: bool
     slack_enabled: bool
 
 
@@ -741,14 +727,6 @@ class CapabilitySensitiveIn(StrictModel):
     handles_sensitive: bool
 
 
-class InterfaceSummaryLineOut(StrictModel):
-    # "Dimagi members" / "ask": one caller class and what it reaches.
-    who: str
-    reaches: str
-    # The caller class as written in the interface; None for the fixed lines.
-    rule: str | None = None
-
-
 class InterfaceProblemOut(StrictModel):
     # The field the parser's message is about: `full`, a capability name, or
     # `<capability>.<field>`; "" when it is about the whole document.
@@ -758,13 +736,11 @@ class InterfaceProblemOut(StrictModel):
 
 class AgentInterfaceValidateOut(StrictModel):
     errors: list[InterfaceProblemOut]
-    # When the draft is valid: its access summary, the parsed model (what the form
-    # edits) and the same model as YAML (what the Advanced view edits) — so the form
-    # and the YAML switch without a YAML library in the browser.
-    summary: list[InterfaceSummaryLineOut] = []
+    # When the draft is valid: the parsed model (what the form edits) and the same model as
+    # YAML (what the Advanced view edits) — so the form and the YAML switch without a YAML
+    # library in the browser.
     interface: dict | None = None
     yaml: str = ""
-    warnings: list[str] = []
 
 
 class AgentInterfaceOut(StrictModel):
@@ -774,16 +750,10 @@ class AgentInterfaceOut(StrictModel):
     source: str = ""
     # `source` when there is one, else the interface rendered as YAML.
     yaml: str = ""
-    # True while the interface is the default: owner, admins and editors only.
+    # True while the interface is the default: no capability published.
     is_default: bool = True
-    # One line per caller class saying what it reaches.
-    summary: list[InterfaceSummaryLineOut] = []
     published_at: dt.datetime | None = None
     published_by_email: str | None = None
-    # Rules that cannot work as written, e.g. `member@<domain>` for a domain whose
-    # mail can never prove its sender (no DMARC, no aligned DKIM). Advisory: the
-    # interface is saved regardless.
-    warnings: list[str] = []
 
 
 class AgentCanopyUserIn(StrictModel):
@@ -3561,6 +3531,9 @@ class AccessLineOut(StrictModel):
     granted_by_email: str | None = None
     granted_at: dt.datetime | None = None
     can_edit: bool = False
+    # Advice only (never a refusal) when the line can never match as written, e.g. a verified
+    # address at a domain whose mail cannot prove its senders. Set when the line is added.
+    warning: str = ""
 
 
 class AccessImplicitOut(StrictModel):
@@ -3577,7 +3550,6 @@ class AccessRoleOut(StrictModel):
 
 
 class AccessListOut(StrictModel):
-    uses_access_list: bool
     inherit_workspace_defaults: bool
     lines: list[AccessLineOut]
     implicit: list[AccessImplicitOut]
@@ -3599,18 +3571,3 @@ class AgentDefaultsOut(StrictModel):
     can_give_editor: bool = False   # the workspace owner: a default that lets people run every agent
 
 
-class AccessConversionLineOut(StrictModel):
-    who: str
-    role: str
-    manual_only: bool = False
-
-
-class AccessConversionOut(StrictModel):
-    """What moving an agent onto its access list would do, and whether it changes anyone's access."""
-
-    already: bool                       # it is on the list already: nothing to do
-    ok: bool                            # safe to apply: every rule translated, every probe answers as before
-    probed: int                         # how many (person, capability) questions were asked both ways
-    lines: list[AccessConversionLineOut]
-    unsupported: list[str]              # rules that have no line, and so keep the agent on its old rules
-    differences: list[str]              # a (person, capability) the new answer would change; empty when ok

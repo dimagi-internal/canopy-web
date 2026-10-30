@@ -15,6 +15,7 @@ from apps.agents.models import Agent, AgentAdmin, AgentCredential, AgentCredenti
 from apps.harness.models import Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
@@ -51,10 +52,9 @@ def world(monkeypatch):
     for u, role in ((aath, "editor"), (vic, "viewer"), (sarvesh, "editor"), (hal, "editor")):
         WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
     agent = Agent.objects.create(
-        slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["nova-api-key"],
-        interface={"version": 1, "full": ["member@dimagi.com"], "capabilities": {
-            "ask": {"callers": ["member", "contact"], "tools": ["Read"]}}},
-    )
+        slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["nova-api-key"])
+    publish(agent, {"version": 1, "full": ["member@dimagi.com"], "capabilities": {
+        "ask": {"callers": ["member", "contact"], "tools": ["Read"]}}})
     AgentCredential.objects.create(agent=agent, name="nova-api-key", value_zk=SECRET, kv=0)
     AgentAdmin.objects.create(agent=agent, user=sarvesh, granted_by=jj)
     # Who may read, not the device layer (tests/test_canopy_vault_zk.py pins the proof).
@@ -84,7 +84,7 @@ def test_a_full_rule_member_is_licensed_on_first_use(world):
     res = _open(world["aath"])
     assert res.status_code == 201, res.content
     lic = AgentLicense.objects.get(agent=world["agent"], user=world["aath"])
-    assert lic.status == AgentLicense.ACTIVE and lic.basis == "full:member@dimagi.com"
+    assert lic.status == AgentLicense.ACTIVE and lic.basis.startswith("grant:")
     assert lic.last_private_runner.name == "aath-mbp"
     turn = Turn.objects.get(pk=res.json()["turn_id"])
     assert turn.origin_ref["license"]["id"] == lic.pk
@@ -94,7 +94,7 @@ def test_an_editor_with_no_full_rule_is_licensed_through_the_editor_tier(world):
     """hal@dimagi-ai.com: an editor the `full:` rule does not name."""
     assert _open(world["hal"]).status_code == 201
     lic = AgentLicense.objects.get(agent=world["agent"], user=world["hal"])
-    assert lic.status == AgentLicense.ACTIVE and lic.basis == "editor"
+    assert lic.status == AgentLicense.ACTIVE and lic.basis.startswith("grant:")
 
 
 def test_the_owner_holds_one_implicitly(world):
@@ -127,10 +127,10 @@ def test_approve_reinstates_but_only_whom_the_caller_list_allows(world):
     admin.post(f"/api/agents/ace/licenses/{world['aath'].pk}/revoke", content_type="application/json")
     assert admin.post(f"/api/agents/ace/licenses/{world['aath'].pk}/approve").json()["status"] == "active"
     assert _open(world["aath"], session="s3").status_code == 201
-    # A viewer is not reinstated by an admin's say-so: the caller list decides.
+    # A viewer is not reinstated by an admin's say-so: the access list decides.
     _open(world["viewer"])
     refused = admin.post(f"/api/agents/ace/licenses/{world['viewer'].pk}/approve")
-    assert refused.status_code == 409 and "full" in refused.json()["detail"]
+    assert refused.status_code == 409 and "access list" in refused.json()["detail"]
 
 
 def test_only_an_agent_admin_changes_licenses(world):

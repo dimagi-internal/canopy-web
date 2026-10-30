@@ -16,6 +16,7 @@ from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -40,6 +41,7 @@ def world():
     w.ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=w.owner, parent=w.org)
     _member(w.ws, w.owner, WorkspaceMembership.OWNER)
     w.agent = Agent.objects.create(slug="ace", name="ACE", workspace=w.ws, owner=w.owner)
+    editors_run(w.agent)    # workspace editors have the whole agent: the old implicit rule
     w.vault = vault_members.vault_for_agent(w.agent)
     return w
 

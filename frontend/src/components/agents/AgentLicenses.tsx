@@ -13,7 +13,7 @@ import { toneText } from 'canopy-ui/lib'
 //
 // A license is a person running the agent in their own Claude Code, on their own
 // computer, with canopy keeping the record. The caller list decides who MAY
-// (the People and Callers settings); this table is who DOES — since when, from
+// (the People and Access settings); this table is who DOES — since when, from
 // which machines, how often, and how many credential reads went out under it.
 // Admins revoke per person here without editing the rule; approve re-asks the
 // caller list on the server, so it can never license someone the list does not

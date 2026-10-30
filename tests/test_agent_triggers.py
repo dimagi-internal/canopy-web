@@ -25,12 +25,12 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.attention.models import Alert
 from apps.harness import alerts_trigger, caller_context, schedule_turns, services, triggers, turn_mode
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -59,8 +59,7 @@ def w():
         M.objects.create(user=u, workspace=ws, role=role)
         EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
     agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=op, turn_mode="auto")
-    agent.interface = parse(HAL)
-    agent.save(update_fields=["interface"])
+    publish(agent, HAL)
     other = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=op)
     return {"ws": ws, "agent": agent, "other": other, "boss": boss, "op": op, "ed": ed}
 

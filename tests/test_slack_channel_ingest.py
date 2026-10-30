@@ -22,6 +22,7 @@ from apps.slack.models import SlackChannelIngest, SlackIngestMessage, SlackUserL
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_user
+from tests.access_helpers import editors_run
 from tests.fixtures.slack import ALICE, BOB, _link_client, _owner, click
 from tests.fixtures.slack_channel_ingest import CHAN, OWEN, UHAL, _reads, _run
 
@@ -425,6 +426,7 @@ def _turns():
 
 
 def test_read_channel_reads_everything_then_only_what_is_new(allowed, channel, linked, hal, ws, slack):
+    editors_run(hal)
     # anchor 1, the note in its thread, anchor 2: each command gets its own thread
     slack.ts_seq = ["1700000801.000100", "1700000801.500000", "1700000802.000100"]
     note = _read_channel("what's new?")
@@ -546,6 +548,7 @@ def test_a_first_read_can_be_bounded_and_still_catches_old_threads_with_new_repl
         channel, installation, ws, hal, hal_login, linked, slack):
     """`first_read_hours` is one-time: the first read starts as if an earlier read ended N hours ago
     — new posts, and new replies to older threads WITH their opener — and later reads carry on from it."""
+    editors_run(hal)
     import time
 
     now = time.time()

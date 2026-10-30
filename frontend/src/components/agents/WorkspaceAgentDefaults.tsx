@@ -13,6 +13,7 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
   const { workspaces } = useWorkspace()
   const [data, setData] = useState<AgentDefaultsOut | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -89,11 +90,17 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
           canGiveEditor={data.can_give_editor}
           submitLabel="Add default"
           onAdd={async (line) => {
-            await addAgentDefault(workspace, line)
+            const added = await addAgentDefault(workspace, line)
             setError(null)
+            setNotice(added.warning || null)
             await load()
           }}
         />
+      )}
+      {notice && (
+        <p role="status" className="m-0 mt-2 text-[12px] text-warning" data-testid="agent-default-warning">
+          {notice}
+        </p>
       )}
       {data?.can_edit && !data.can_give_editor && (
         <p className="m-0 mt-2 text-[11px] text-muted-foreground">

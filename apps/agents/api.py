@@ -58,7 +58,7 @@ from .gates import (
     agent_for_work,
     listed_agent_workspaces,
 )
-from .interface import InterfaceError, access_summary, default_interface, domain_warnings, is_default, parse, validate
+from .interface import InterfaceError, default_interface, is_default, parse, validate
 from .models import (
     AgentAdmin,
     AgentCredentialRead,
@@ -654,11 +654,9 @@ def _interface_out(agent) -> dict:
             # The same model as YAML, for the Advanced view and the CLI, when no
             # hand-written source was kept.
             "yaml": agent.interface_source or yaml.safe_dump(iface, sort_keys=False),
-            "is_default": is_default(iface), "summary": access_summary(iface),
+            "is_default": is_default(iface),
             "published_at": agent.interface_published_at,
-            "published_by_email": by.email if by is not None else None,
-            # Computed AFTER any save, cached and time-boxed: it never blocks one.
-            "warnings": domain_warnings(iface, agent.workspace_id) if not is_default(iface) else []}
+            "published_by_email": by.email if by is not None else None}
 
 
 @router.get("/{slug}/interface", response=AgentInterfaceOut,
@@ -675,7 +673,7 @@ def get_interface(request: HttpRequest, slug: str):
              summary="Check a draft interface with the server's parser, without saving it")
 @gate("agent-admin", kind="action")
 def validate_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
-    agent = agent_for_admin(request, slug)
+    agent_for_admin(request, slug)
     if (payload.source is None) == (payload.interface is None):
         raise HttpError(422, "send exactly one of `source` (YAML) or `interface` (a mapping)")
     doc = payload.interface
@@ -683,15 +681,13 @@ def validate_interface(request: HttpRequest, slug: str, payload: AgentInterfaceI
         try:
             doc = yaml.safe_load(payload.source) or {}
         except yaml.YAMLError as exc:
-            return {"errors": [{"path": "", "message": f"not valid YAML: {exc}"}],
-                    "summary": [], "warnings": []}
+            return {"errors": [{"path": "", "message": f"not valid YAML: {exc}"}]}
     errors = validate(doc)
     if errors:
-        return {"errors": errors, "summary": [], "warnings": []}
+        return {"errors": errors}
     parsed = parse(doc)
-    return {"errors": [], "summary": access_summary(parsed), "interface": parsed,
-            "yaml": payload.source if payload.source is not None else yaml.safe_dump(parsed, sort_keys=False),
-            "warnings": domain_warnings(parsed, agent.workspace_id)}
+    return {"errors": [], "interface": parsed,
+            "yaml": payload.source if payload.source is not None else yaml.safe_dump(parsed, sort_keys=False)}
 
 
 @router.put("/{slug}/interface", response=AgentInterfaceOut,
@@ -792,18 +788,15 @@ def list_admins(request: HttpRequest, slug: str):
             summary="Everyone's role on this agent, why, and what they can reach")
 @gate("member")
 def agent_access(request: HttpRequest, slug: str):
-    """Every member of the agent's workspace with their role on the agent
-    (owner / admin / member), the reason for it, and what they reach signed in:
-    the whole agent, the capabilities its published interface lists for them,
-    or nothing. `outsiders` lists the interface rules that reach people outside
-    the workspace. Readable by any member, like the admin list."""
+    """Every member of the agent's workspace with their role on the agent (owner, admin,
+    editor, user, viewer), the reason for it, and what they reach signed in: the whole agent,
+    the capabilities their role may use, or nothing. People outside the workspace whom the
+    access list names are on the list itself (`/access-list`). Readable by any member, like
+    the admin list."""
 
     agent = agent_for_read(request, slug)
-    iface = agent.interface or {}
     return {
         "members": access.roster(agent),
-        "outsiders": access.outsiders(agent),
-        "interface_published": not is_default(iface),
         "slack_enabled": agent.slack_enabled,
     }
 
@@ -879,8 +872,8 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
              summary="Issue or reinstate a person's license to use this agent directly")
 @gate("agent-admin", setting=True)  # + access.decide must give them the whole agent (409)
 def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
-    """Re-asks the caller list: refused (409) unless it gives them the whole agent —
-    make them an editor or add a `full:` rule first."""
+    """Re-asks the access list: refused (409) unless it gives them the whole agent —
+    put them on it as an editor first."""
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()

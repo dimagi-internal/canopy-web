@@ -16,7 +16,6 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import encrypt_secret
@@ -29,6 +28,7 @@ from apps.mcp_apps_host import mcp_apps
 from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 from tests.mcp_apps_host import VIEW_URI, FakeLabs
 
 pytestmark = pytest.mark.django_db
@@ -53,8 +53,8 @@ def w():
     owner = User.objects.create_user("op", "op@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner,
-                                 interface=parse(IFACE))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
+    publish(agent, IFACE)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.host_issuer = "https://labs.test"
     app.host_mcp_resource = RESOURCE

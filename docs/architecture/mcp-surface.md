@@ -48,8 +48,8 @@ under their credentials. To use an agent, install its plugin from your agent
 catalog (`/plugins/marketplace.json`, marketplace `canopy-agents`; see
 `plugin-marketplace.md`) into your own Claude Code and run it
 locally as yourself — see `/get-started`. A call to an `<agent>__…` tool gets
-MCP's unknown-tool error. An agent's declared interface still confines
-the callers who DO reach it through canopy (web chat, Slack, email, embedded
+MCP's unknown-tool error. An agent's capabilities still confine
+the viewers and users who DO reach it through canopy (web chat, Slack, email, embedded
 sites).
 
 A handful of **hand-written** tools cover what is not a REST route

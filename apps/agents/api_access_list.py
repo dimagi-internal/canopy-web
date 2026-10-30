@@ -18,12 +18,10 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, convert_access, grants, roles
+from . import access, grants, roles
 from .gates import agent_for_admin, agent_for_read
 from .models import Agent, AgentGrant
 from .schemas import (
-    AccessConversionLineOut,
-    AccessConversionOut,
     AccessImplicitOut,
     AccessInheritIn,
     AccessLineIn,
@@ -43,9 +41,9 @@ _CAN = {roles.READ: "ask", roles.WRITE: "use what it publishes", roles.RUN: "run
         roles.OWN: "transfer or delete it"}
 
 
-def _out(line: AgentGrant, *, can_edit: bool) -> AccessLineOut:
+def _out(line: AgentGrant, *, can_edit: bool, warning: str = "") -> AccessLineOut:
     return AccessLineOut(
-        id=line.pk, scope="agent" if line.agent_id else "workspace",
+        warning=warning, id=line.pk, scope="agent" if line.agent_id else "workspace",
         scope_workspace=line.workspace_id, kind=line.kind, who=grants.describe(line), role=line.role,
         user_id=line.user_id, subject_workspace=line.subject_workspace_id, at_least=line.at_least,
         domain=line.domain, verified=line.verified, manual_only=line.manual_only, note=line.note,
@@ -111,7 +109,7 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
     admin = agent.is_admin(request.user)
     lines = [_out(ln, can_edit=admin and ln.agent_id is not None) for ln in grants.lines_for(agent)]
     return AccessListOut(
-        uses_access_list=agent.uses_access_list, inherit_workspace_defaults=agent.inherit_workspace_defaults,
+        inherit_workspace_defaults=agent.inherit_workspace_defaults,
         lines=lines, implicit=_implicit(agent), roles=_roles_out(), can_edit=admin)
 
 
@@ -126,7 +124,7 @@ def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> S
     line = _create({"agent": agent}, _fields(payload, request.user), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),
                       summary=f"added {grants.describe(line)} as {line.role} on {agent.slug}")
-    return Status(201, _out(line, can_edit=True))
+    return Status(201, _out(line, can_edit=True, warning=grants.domain_warning(line, agent.workspace_id)))
 
 
 def _own_line(agent: Agent, line_id: int) -> AgentGrant:
@@ -190,44 +188,6 @@ def set_inherit_workspace_defaults(request: HttpRequest, slug: str, payload: Acc
     return get_access_list(request, slug)
 
 
-# --- moving an agent onto its list ----------------------------------------------------------
-
-def _conversion_out(conv: convert_access.Conversion) -> AccessConversionOut:
-    return AccessConversionOut(
-        already=conv.already, ok=conv.ok or conv.already, probed=conv.probed,
-        lines=[AccessConversionLineOut(who=ln.who(), role=ln.role, manual_only=ln.manual_only)
-               for ln in conv.lines],
-        unsupported=conv.unsupported, differences=[str(d) for d in conv.differences])
-
-
-@router.get("/{slug}/access-list-conversion", response=AccessConversionOut,
-            summary="Preview moving this agent onto its access list: the lines it would get, and whether anyone's access would change (an agent admin)")
-@gate("agent-admin")
-def preview_access_conversion(request: HttpRequest, slug: str) -> AccessConversionOut:
-    """Translates the rules the agent was published with (`full:`, each capability's `callers`,
-    `editors:`, and the implicit workspace-editor rule) into lines, then asks the access
-    rule the old way and the new way about everyone who could plausibly ask. Writes nothing."""
-    return _conversion_out(convert_access.plan(agent_for_admin(request, slug)))
-
-
-@router.post("/{slug}/access-list-conversion", response=AccessListOut,
-             summary="Move this agent onto its access list; refused unless nobody's access would change (an agent admin)")
-@gate("agent-admin", setting=True)
-def apply_access_conversion(request: HttpRequest, slug: str) -> AccessListOut:
-    agent = agent_for_admin(request, slug)
-    conv = convert_access.plan(agent)
-    if not (conv.ok or conv.already):
-        raise HttpError(409, "moving this agent would change someone's access, so it was not done: "
-                        + "; ".join([*conv.unsupported, *[str(d) for d in conv.differences[:3]]]))
-    with transaction.atomic():
-        convert_access.apply(conv, by=request.user)
-    audit.note_change(scope=f"access-list:{agent.slug}", before={"uses_access_list": conv.already},
-                      after={"uses_access_list": True, "lines": len(conv.lines)},
-                      summary=f"moved {agent.slug} onto its access list ({len(conv.lines)} lines)")
-    agent.refresh_from_db()
-    return get_access_list(request, slug)
-
-
 # --- a workspace's default lines ----------------------------------------------------------
 
 def _workspace_or_404(request: HttpRequest, slug: str) -> Workspace:
@@ -266,7 +226,7 @@ def add_agent_default(request: HttpRequest, slug: str, payload: AccessLineIn) ->
     line = _create({"workspace": ws}, _fields(payload, request.user), request.user)
     audit.note_change(scope=f"agent-defaults:{ws.slug}", before=None, after=_summary(line),
                       summary=f"added {grants.describe(line)} as {line.role} on every agent in {ws.slug}")
-    return Status(201, _out(line, can_edit=True))
+    return Status(201, _out(line, can_edit=True, warning=grants.domain_warning(line, ws.slug)))
 
 
 @defaults_router.delete("/{slug}/agent-defaults/{line_id}", response={204: None},

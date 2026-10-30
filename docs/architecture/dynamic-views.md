@@ -72,8 +72,9 @@ call `canopy.runAgentTask(...)` (below), and the page starts that agent task
   view has no business setting (`parent`), never reaches the server.
 - **Run as the viewer.** The page POSTs `/api/w/<the view's workspace>/agent-tasks/` with the
   viewer's own session, then long-polls `GET …/{id}?wait_s=20` until done, failed or cancelled. The
-  server's gate decides: **a workspace editor, admin or owner may run a declared task** (unless the
-  agent's interface refuses them); **a workspace viewer, a project lead who is only a viewer, a
+  server's gate decides: **a workspace editor, admin or owner may run a declared task** (when the agent
+  takes work from them: `access.decide` must not refuse them, so a workspace editor the
+  agent's access list does not name is refused); **a workspace viewer, a project lead who is only a viewer, a
   contact or a non-member may not** — the server's 403/404 reaches the view as a rejected promise
   with its message. The task is the viewer's: they are its creator and the turn's initiator, and
   only they and the agent's admins may read or cancel it.

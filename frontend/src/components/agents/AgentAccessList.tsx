@@ -15,7 +15,6 @@ import {
 import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { AccessLineForm } from './AccessLineForm'
-import { AccessMove } from './AccessMove'
 import { ADDABLE_ROLES, ADDRESS_ONLY_KINDS, ascending, canText, roleWord } from './accessWords'
 import { AgentAccessPeople } from './AgentAccessPeople'
 import { AgentAdmins } from './AgentAdmins'
@@ -45,6 +44,8 @@ export function AgentAccessList({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Advice from the server about a line that was added but can never match as written.
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -99,10 +100,6 @@ export function AgentAccessList({
           </div>
         ))}
       </dl>
-
-      {!data.uses_access_list && (
-        <AccessMove agentSlug={agentSlug} agentName={agentName} canEdit={data.can_edit} onMoved={load} />
-      )}
 
       <div>
         <h4 className="m-0 mb-1 text-[12px] font-medium text-foreground">Who has access</h4>
@@ -174,11 +171,17 @@ export function AgentAccessList({
             roles={data.roles}
             workspaces={workspaces.map((w) => [w.slug, w.display_name] as [string, string])}
             onAdd={async (line) => {
-              await addAccessLine(agentSlug, line)
+              const added = await addAccessLine(agentSlug, line)
               setError(null)
+              setNotice(added.warning || null)
               await load()
             }}
           />
+          {notice && (
+            <p role="status" className="m-0 mt-2 text-[12px] text-warning" data-testid="access-line-warning">
+              {notice}
+            </p>
+          )}
         </div>
       )}
 

@@ -368,11 +368,10 @@ def test_a_turn_after_the_grant_ran_out_tells_the_person_to_send_again(site, hos
     conversation = _start(token)
     HostGrant.objects.filter(pk=grant.pk).update(expires_at=timezone.now() - dt.timedelta(seconds=1))
     _page(site)  # a later page's grant never stands in
-    from apps.agents.interface import parse
+    from tests.access_helpers import publish
 
-    site["agent"].interface = parse({"capabilities": {"connect": {"callers": ["member"],
-                                                                  "sites": ["connect-labs"]}}})
-    site["agent"].save()
+    publish(site["agent"], {"capabilities": {"connect": {"callers": ["member"],
+                                                         "sites": ["connect-labs"]}}})
     turn = Turn.objects.create(chat_session=conversation, prompt="hi", initiator_user=site["visitor"],
                                initiator_kind="user", capability="connect")
     with pytest.raises(host_gateway.GatewayRefusal) as refused:

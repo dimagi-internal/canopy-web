@@ -25,6 +25,7 @@ from apps.host_grants import host_gateway
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
 from apps.tokens.models import AppCredential, AppCredentialAgent
+from tests.access_helpers import publish
 from tests.fixtures import site_gateway as sg
 
 pytestmark = pytest.mark.django_db
@@ -85,10 +86,9 @@ def test_with_no_ceiling_canopy_adds_no_narrowing_of_its_own(w, host):
     """An owner who sets no ceiling defers to the host: every tool the host lists for
     the visitor's grant (this stand-in host lists all three, a real one lists only its
     scopes' tools) is offered, and canopy names none of them."""
-    w["agent"].interface = parse({"capabilities": {
+    publish(w["agent"], {"capabilities": {
         "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
                     "tools": ["mcp__*canopy-web__who_is_asking"]}}})
-    w["agent"].save()
     _grant(w)
     with _visitor(w):
         out = _call(host, "site_tools", {}).structured_content
@@ -172,9 +172,8 @@ def test_a_conversation_on_another_site_is_refused(w, host):
 def test_a_capability_that_does_not_name_the_site_is_refused(w, host):
     _grant(w)
     Turn.objects.filter(pk=w["turn"].pk).update(capability="ask")
-    w["agent"].interface = parse({"capabilities": {
+    publish(w["agent"], {"capabilities": {
         "ask": {"callers": ["contact", "member"], "tools": list(GATEWAY_TOOLS)}}})
-    w["agent"].save()
     _refused(w, host, "not set up to use")
 
 
@@ -236,17 +235,17 @@ def test_a_confined_session_without_the_site_capability_cannot_even_see_it(w, ho
 # --- interface parsing --------------------------------------------------------------------
 
 
-def test_the_interface_parses_sites_and_ceiling_and_refuses_nonsense():
+def test_the_interface_parses_sites_and_ceiling_and_refuses_nonsense(w):
     from apps.agents.interface import InterfaceError
 
-    out = parse(IFACE)["capabilities"]["connect"]
+    out = w["agent"].interface["capabilities"]["connect"]     # IFACE, published
     assert out["sites"] == ["connect-labs"] and out["ceiling"] == ["mcp__*connect_labs__marketplace_*"]
     with pytest.raises(InterfaceError, match="needs `sites:`"):
-        parse({"capabilities": {"x": {"callers": ["contact"], "ceiling": ["*"]}}})
+        parse({"capabilities": {"x": {"role": "viewer", "ceiling": ["*"]}}})
     with pytest.raises(InterfaceError, match="not a Connected site name"):
-        parse({"capabilities": {"x": {"callers": ["contact"], "sites": ["a b"]}}})
+        parse({"capabilities": {"x": {"role": "viewer", "sites": ["a b"]}}})
     # `pages:` still parses — ACE's live interface uses it.
-    assert parse({"capabilities": {"m": {"callers": ["contact"],
+    assert parse({"capabilities": {"m": {"role": "viewer",
                                          "pages": ["labs-marketplace://*"]}}})
 
 
@@ -312,8 +311,7 @@ def _declared(w):
     2026-10-22-sensitive-data-agents §6)."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    w["agent"].interface = parse({"capabilities": caps})
-    w["agent"].save(update_fields=["interface"])
+    publish(w["agent"], {"capabilities": caps})
 
 
 def test_the_same_turn_on_a_sensitive_runner_resolves(w):
@@ -396,7 +394,8 @@ def _reports_sensitive(runner):
 
 def _labsdata(w):
     agent = Agent.objects.create(slug="labsdata", name="Labs data", workspace=w["ws"],
-                                 owner=w["owner"], interface=parse(IFACE))
+                                 owner=w["owner"])
+    publish(agent, IFACE)
     AppCredentialAgent.objects.create(app=w["app"], agent=agent)
     return agent
 

@@ -206,9 +206,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
     anchor, and a tab with an open setup step carries a dot. **Overview**
     (setup checklist, persona, where it runs — turn mode + runners and source
     rules, see [`runners.md`](runners.md), and the repository — delete);
-    **Roles** (owner + one roster of every member's role on the agent, why,
-    and what they can reach — `GET /api/agents/{slug}/access`; admins
-    granted/revoked on the row); **Channels** (callers, Slack, email, Google
+    **Roles** (owner; the canopy login; **Access**, the agent's access list and the
+    workspace defaults it inherits — `GET /api/agents/{slug}/access-list` — beside a
+    roster of every workspace member's role on the agent, why, and what they can
+    reach — `GET /api/agents/{slug}/access`; agent admins granted/revoked on the row;
+    **Direct use**); **Channels** (capabilities, Slack, email, Google
     account); **External accounts** (GitHub delegation, the
     Google mailbox); **Security** — first **Vault**: the shared `VaultView`
     (`components/vault/`, adapter `pages/agents/AgentSecretsPanel.tsx`) — a summary
@@ -408,8 +410,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   as its Settings page), its vault state (canopy-web / moving / none,
   `apps/agents/credentials/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
-  each linking to the agent's page; who can use it (admins only, or the
-  capabilities its interface publishes) and its turn mode; how it is used over
+  each linking to the agent's page; who can use it (its owner and agent admins only, or the
+  capabilities it publishes) and its turn mode; how it is used over
   30 days beside its setup, since an agent with steps left can be in use — turns
   started and how many failed, the people who used it, the runners its turns ran
   on (`analytics.agent_turns`, from the fact log), and a "Used" tile; open sessions and

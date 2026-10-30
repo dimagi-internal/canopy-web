@@ -7,7 +7,7 @@ lists exist for that session. Listing and calling are both filtered, and
 `who_is_asking` answers only about the session's own conversation.
 
 A FULL-profile caller token for an AGENT's turn (`read_only`: an editor's turn, a
-`full:` rule's, a writer's in someone else's chat) sees every tool that only READS,
+writer's in someone else's chat) sees every tool that only READS,
 run as the asker, plus driving their own open page, and no write: the asker granted
 the agent no act-as-you permission (`READ_ONLY_REFUSAL`). It writes as the agent's own
 login. A repo chat's token (no agent) is the person's own tool: every tool, as them.
@@ -79,7 +79,7 @@ def _allowed(name: str, claims: dict, tool=None) -> bool:
     if claims.get("all_tools"):
         if not claims.get("read_only"):
             return True         # a repo chat: the person's own tool, every tool as them
-        # An agent's full-profile turn asked by someone else (an editor, a `full:` rule,
+        # An agent's full-profile turn asked by someone else (an editor,
         # a writer in someone else's chat): every READ, run as the asker, and driving
         # their own open page (`caller_tokens.PAGE_DRIVE_TOOLS`). Never a write: the
         # asker granted the agent no act-as-you permission, so it may not act as them.

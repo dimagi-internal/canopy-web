@@ -9,11 +9,11 @@ they read. The rules, in order (`request`):
    nor the caller list brings it back — only an admin's `approve`.
 2. `decide` gives the person the WHOLE agent → the license is ACTIVE at once.
    Its basis is `decide`'s: `owner`/`admin` (an owner holds one implicitly — it is
-   written on first use, never asked for), `full:<rule>`, or `editor`.
+   written on first use, never asked for), `admin`, or a line on its access list (`grant:<line>`).
 3. Anything less (a viewer, a contact: confined or none) → a REQUESTED row the
    agent's admins see, and a refusal that says what to ask for. Approving it
    re-asks `decide`, so an admin cannot license someone the caller list does not
-   give the whole agent: raise their role or add a `full:` rule first.
+   give the whole agent: raise their role on its access list first.
 
 What a license admits: a direct turn (`apps/harness/local.py`) and the credential
 reads made during it (`/credentials/resolve` with that turn's `X-Canopy-Turn-Id`,
@@ -66,7 +66,7 @@ def request(agent, user) -> AgentLicense:
         AgentLicense.objects.filter(pk=lic.pk, status=AgentLicense.REQUESTED).update(note=why[:300])
         raise LicenseRefusedError(
             f"you may not use {agent.slug} directly: {why}. Your request is recorded for "
-            f"{agent.slug}'s admins; they can make you an editor or add a `full:` rule for you.")
+            f"{agent.slug}'s admins; they can make you an editor on its access list.")
     if lic.status != AgentLicense.ACTIVE:
         lic.status, lic.basis, lic.issued_at, lic.note = (
             AgentLicense.ACTIVE, decision.basis[:200], timezone.now(), "")
@@ -110,7 +110,7 @@ def approve(agent, user, *, by) -> AgentLicense:
     if decision.access != access.FULL:
         raise LicenseRefusedError(
             f"{getattr(user, 'email', 'they')} does not get the whole of {agent.slug} from its "
-            "caller list — make them an editor, or add a `full:` rule for them, then approve")
+            "caller list — put them on its access list as an editor, then approve")
     lic = _row(agent, user)
     lic.status, lic.issued_at, lic.issued_by, lic.revoked_at, lic.revoked_by, lic.note = (
         AgentLicense.ACTIVE, timezone.now(), by, None, None, "")

@@ -41,10 +41,9 @@ CONTENT_WRITE = "content.write"
 
 #: Reshape an agent and direct its work: edit it, its skills, schedules, tasks
 #: and routing; run turns; raise asks that dispatch work. NOT its keys — those
-#: are the agent's admins' (`Agent.is_admin`) — and not `auto`: a turn an editor
-#: who is not an agent admin starts always runs manual, and setting `auto` on a
-#: dispatch, a routing rule or the agent's switch is an admin's (the editor tier,
-#: docs/architecture/access.md).
+#: are the agent's admins' (`Agent.is_admin`) — and not `auto`: setting `auto` on a
+#: dispatch, a routing rule or the agent's switch is an admin's, and a turn an editor
+#: starts runs manual when their access-list line says so (docs/architecture/access.md).
 AGENT_WORK = "agent.work"
 
 #: Type into a runner-discovered emdash session (someone's live box).

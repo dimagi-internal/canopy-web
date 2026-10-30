@@ -22,7 +22,7 @@ const { WorkspaceAgentDefaults } = await import('./WorkspaceAgentDefaults')
 const LINE: AccessLineOut = {
   id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'viewer',
   user_id: null, subject_workspace: 'connect', at_least: '', domain: '', verified: false, manual_only: false, note: '',
-  granted_by_email: null, granted_at: null, can_edit: true,
+  granted_by_email: null, granted_at: null, can_edit: true, warning: '',
 }
 
 const ROLES: AgentDefaultsOut['roles'] = [

@@ -10,6 +10,6 @@ VERSION = 1
 
 
 def default_interface() -> dict:
-    """No `full:` rule, no capability, `callers_default: none` — the owner, the admins and
+    """No capability — the owner, the admins and
     the workspace's editors reach the agent, and nobody else. A fresh dict every call."""
-    return {"version": VERSION, "full": [], "capabilities": {}, "callers_default": "none"}
+    return {"version": VERSION, "capabilities": {}}

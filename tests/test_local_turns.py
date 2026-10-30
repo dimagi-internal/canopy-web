@@ -18,6 +18,8 @@ from apps.harness import routing
 from apps.harness.models import PrivateRunner, Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
+from .access_helpers import editors_run
+
 pytestmark = pytest.mark.django_db
 
 
@@ -42,6 +44,7 @@ def world():
     WorkspaceMembership.objects.create(workspace=ws, user=admin, role=WorkspaceMembership.EDITOR)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=jj, turn_mode="auto")
     AgentAdmin.objects.create(agent=agent, user=admin, granted_by=jj)
+    editors_run(agent)
     return {"ws": ws, "agent": agent, "owner": jj, "editor": editor, "viewer": viewer, "admin": admin}
 
 

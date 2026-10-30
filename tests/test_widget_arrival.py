@@ -139,10 +139,9 @@ def _agent_login(w, *, member=True, bind=True):
 
 
 def _publish_ask_interface(agent):
-    from apps.agents.interface import parse
+    from tests.access_helpers import publish
 
-    agent.interface = parse({"capabilities": {"ask": {"callers": ["contact", "member"]}}})
-    agent.save(update_fields=["interface"])
+    publish(agent, {"capabilities": {"ask": {"callers": ["contact", "member"]}}})
 
 
 def _turn_as(raw, agent_slug="echo"):

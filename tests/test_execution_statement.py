@@ -13,9 +13,9 @@ from canopy_sdk.keys import generate_private_key
 from canopy_sdk.stores import MemoryJtiStore
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.harness.models import Runner, RunnerFlag, Turn
 from apps.host_grants import client_identity, host_gateway
+from tests.access_helpers import publish
 from tests.fixtures import site_gateway as sg
 from tests.fixtures.site_gateway import HOST_TOKEN, IFACE, RESOURCE
 from tests.fixtures.site_gateway import call as _call
@@ -41,9 +41,9 @@ def _sensitive_cap(w, *, sensitive=True):
     """`connect` handles sensitive data; the turn on a sensitive-data box."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    w["agent"].interface = parse({"capabilities": caps})
+    publish(w["agent"], {"capabilities": caps})
     w["agent"].interface_published_by = w["owner"]
-    w["agent"].save(update_fields=["interface", "interface_published_by"])
+    w["agent"].save(update_fields=["interface_published_by"])
     box = Runner.objects.create(name="cloud-zdr-1", workspace=w["ws"], kind=Runner.CLOUD,
                                 status=Runner.ONLINE, owner=w["owner"],
                                 last_heartbeat_at=timezone.now(),
@@ -135,8 +135,7 @@ def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
 
 def test_turning_sensitive_off_closes_the_door(w, host):
     _sensitive_cap(w)
-    w["agent"].interface = parse(IFACE)
-    w["agent"].save(update_fields=["interface"])
+    publish(w["agent"], IFACE)
     # The sensitive turn's caller token itself now stands for nothing
     # (`caller_tokens._sensitive_grant`), before the gateway's own refusal.
     with pytest.raises(AssertionError):

@@ -12,13 +12,13 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.agents.services import runner_may_hold_agent
 from apps.harness.runner_requirements import is_sensitive_data_box
 from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 
@@ -32,8 +32,8 @@ def w():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
-    labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=jj,
-                                    interface=parse(SENSITIVE_IFACE))
+    labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=jj)
+    publish(labsdata, SENSITIVE_IFACE)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=jj)
     box = Runner.objects.create(name="cloud-zdr-1", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
@@ -85,8 +85,7 @@ def test_a_sensitive_box_does_not_claim_another_agents_turn(w):
 
 def test_withdrawing_sensitive_takes_the_agent_off_the_box(w):
     _declare(w["box"])
-    w["labsdata"].interface = parse({"capabilities": {"data": {
+    publish(w["labsdata"], {"capabilities": {"data": {
         "callers": ["member"], "sites": ["connect-labs"], "tools": ["Read"]}}})
-    w["labsdata"].save(update_fields=["interface"])
 
     assert not runner_may_hold_agent(w["box"], w["labsdata"])

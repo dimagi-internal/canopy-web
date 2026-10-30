@@ -5,7 +5,7 @@ import { explainEdge, grantable } from './agentTopology'
 
 const edge = (over: Partial<AgentEdgeOut>): AgentEdgeOut => ({
   source: 'ada', target: 'hal', access: 'confined', basis: 'capabilities', capabilities: ['ask'],
-  full_rule: null, explicit_admin: false, can_grant: true, can_revoke: false, ...over,
+  explicit_admin: false, can_grant: true, can_revoke: false, ...over,
 })
 const agent = (slug: string, login: string | null): AgentTopologyAgentOut => ({
   slug, name: slug[0].toUpperCase() + slug.slice(1), workspace: 'connect', owner_email: null,
@@ -14,7 +14,10 @@ const agent = (slug: string, login: string | null): AgentTopologyAgentOut => ({
 
 describe('explainEdge', () => {
   it('names the capability a confined sender is held to', () => {
-    expect(explainEdge(edge({}), agent('ada', 'ada@x'), agent('hal', null))).toContain('confines members to ask')
+    expect(explainEdge(edge({}), agent('ada', 'ada@x'), agent('hal', null))).toContain('confines ada@x to ask')
+  })
+  it('says nothing about a removed whole-agent rule for an unknown basis', () => {
+    expect(explainEdge(edge({ basis: 'something-else' }), agent('ada', 'ada@x'), agent('hal', null))).toBe('something-else')
   })
   it('says what to do when the login is outside the workspace', () => {
     const e = edge({ access: 'none', basis: 'not-member', can_grant: false })

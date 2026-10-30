@@ -16,8 +16,8 @@ they cannot disagree).
    plugin runs `canopy agent use <slug>` once on their computer: it installs the
    agent's plugin, enrols this computer's key so it can read the agent's secrets
    from canopy vault, and records their sessions as **direct turns** on the agent's
-   page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
-   whom `access.decide` gives the whole agent (`apps/agents/credentials/licenses.py`). The people
+   page. Who may: the agent's owner and agent admins and anyone with an editor line on its
+   access list — whom `access.decide` gives the whole agent (`apps/agents/credentials/licenses.py`). The people
    doing it are listed under the agent's Settings → Overview → Where it runs and → Roles → Direct
    use. A computer without the runner app gets its own key for reading the agent's
    vault (a `computer` runner made when it registers, which is no fleet runner).
@@ -324,7 +324,7 @@ claim (agent turns AND chats with the agent), credential resolve, the per-turn
 GitHub token (re-asked at issue, since an owner can be demoted mid-turn), pins
 (which also need the pinner to be an agent admin or that runner's admin —
 `access.may_pin_runner`), and every routing write (runner list, source rules, actor
-routes). Don't let a runner-assignment row be the trust boundary: the editor tier
+routes). Don't let a runner-assignment row be the trust boundary: a workspace editor
 writes those rows. A teammate whose laptop should run an agent's work needs an admin
 grant on that agent. An agent's own canopy login is not a holder.
 
@@ -669,7 +669,7 @@ directed-only box is drawn as `directed` (never serving), not as a route.
 
 `RunnerAssignment.turn_mode` (`""` = defer, `manual`, `auto`; rule-level, written to
 every row of the rule) rides the routing ladder: actor rule → source rule →
-`Agent.turn_mode`, under the dispatch request and the editor tier
+`Agent.turn_mode`, under the dispatch request and the `manual_only` cap of an editor line
 (`apps/harness/turn_mode.py`; full ladder in `access.md` → "Turn mode"). Decided at
 CLAIM, stamped on `Turn.turn_mode` / `turn_mode_basis` so a rule edited mid-turn
 does not flip work under way, and delivered in the caller envelope (`turn_mode`),

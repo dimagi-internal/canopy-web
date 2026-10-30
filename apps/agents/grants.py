@@ -13,6 +13,7 @@ are not lines here yet: `access.decide` asks them first.
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -20,12 +21,15 @@ from dataclasses import dataclass, field
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 
+from apps.contacts.domain_proof import proof
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, ancestor_chains
 
 from . import roles
 from .models import AgentGrant
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -201,3 +205,23 @@ def describe(line: AgentGrant) -> str:
     if line.kind == AgentGrant.DOMAIN:
         return f"Anyone{d}{proof}"
     return f"A known visitor or sender{d}{proof}"
+
+
+def domain_warning(line: AgentGrant, workspace_id) -> str:
+    """Advice, never a refusal, about a line that names a domain it can never match: a line
+    that needs a VERIFIED address at a domain whose mail cannot prove its senders (no DMARC
+    record, and no mail DKIM-signed by the domain itself has been seen: canopy-web#1280) admits
+    nobody by email. "" when there is nothing to say, including when DNS could not be asked —
+    a warning raised by a resolver hiccup would teach people to ignore the real one."""
+    if line.kind not in (AgentGrant.DOMAIN, AgentGrant.CONTACT) or not line.verified or not line.domain:
+        return ""
+    try:
+        if proof(line.domain, workspace_id).can_prove is not False:
+            return ""
+    except Exception:  # informational — a bug here must not fail adding a line
+        logger.exception("domain warning failed")
+        return ""
+    return (f"Mail from {line.domain} can never prove who sent it: {line.domain} publishes no DMARC "
+            f"record and no mail DKIM-signed by {line.domain} itself has been seen. This line admits "
+            f"nobody by email until it does. Fix it at {line.domain}: sign its mail with DKIM using "
+            f"its own key, or publish a DMARC record at _dmarc.{line.domain}.")

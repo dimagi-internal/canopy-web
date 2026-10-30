@@ -63,11 +63,6 @@ class Agent(models.Model):
     #: agent gets its audience from one place. An agent holding credentials people should
     #: be named for (Hal, Eva) turns it off and lists its own. See `apps/agents/grants.py`.
     inherit_workspace_defaults = models.BooleanField(default=True)
-    #: Is this agent's "who may use it" the access list ALONE? Off, the interface's `full:`
-    #: rules, its capabilities' `callers` and the implicit "a workspace editor is an editor" rule
-    #: still apply beside the list. Switched on by `convert_access` once the list says the
-    #: same thing; the last step deletes the old rules and this flag with them.
-    uses_access_list = models.BooleanField(default=False)
     interface_published_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
@@ -441,8 +436,8 @@ class AgentLicense(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                              related_name="agent_licenses")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=REQUESTED)
-    #: Why it was issued, in `access.decide`'s words: `admin`, `full:member@dimagi.com`,
-    #: `editor`, or `approved by <email>`.
+    #: Why it was issued, in `access.decide`'s words: `admin`, `grant:<access-list line>`, or
+    #: `approved by <email>`.
     basis = models.CharField(max_length=200, blank=True, default="")
     requested_at = models.DateTimeField(auto_now_add=True)
     issued_at = models.DateTimeField(null=True, blank=True)

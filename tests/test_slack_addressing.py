@@ -14,6 +14,7 @@ import pytest
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Turn
 from apps.slack import services
+from tests.access_helpers import editors_run
 from tests.fixtures.slack import BOT, TEAM, mention
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
@@ -142,6 +143,7 @@ def test_a_plain_reply_in_a_closed_thread_is_never_silent(slack, linked, hal, ac
 
 
 def test_the_button_starts_a_new_session_with_the_thread_and_the_refused_message(slack, linked, hal, ace):
+    editors_run(hal)
     closed = _closed_thread(hal)
     slack.threads[THREAD] = [
         {"ts": THREAD, "user": "UBOB", "text": "Can hal check the RUTF numbers?"},
@@ -175,6 +177,7 @@ def test_the_button_starts_a_new_session_with_the_thread_and_the_refused_message
 
 
 def test_a_double_click_starts_one_session(slack, linked, hal, ace, ws):
+    editors_run(hal)
     from apps.slack.models import SlackUserLink
     from apps.workspaces import services as wsvc
     from apps.workspaces.models import WorkspaceMembership
@@ -219,10 +222,9 @@ def test_a_closed_private_conversation_takes_nothing_from_slack(slack, linked, h
 def test_a_click_that_would_run_confined_forks_like_a_confined_reply(slack, linked, hal, ace, alice):
     """Bob is a contact and hal answers contacts only through `ask`: in someone
     else's (closed) conversation he gets a thread of his own, as a reply would."""
-    from apps.agents.interface import parse
+    from tests.access_helpers import publish
 
-    hal.interface = parse({"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
-    hal.save(update_fields=["interface"])
+    publish(hal, {"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
     closed = _closed_thread(hal)
     closed.created_by = alice
     closed.save(update_fields=["created_by"])
