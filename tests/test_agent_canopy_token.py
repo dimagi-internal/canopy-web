@@ -60,21 +60,47 @@ def test_an_agent_with_no_login_gets_a_new_one_and_an_expiring_token(owner, agen
     assert body["raw"] and body["raw"] not in (token.label, str(token.pk))
 
 
-def test_creating_the_login_takes_someone_who_could_invite_it(ws, agent):
-    """A new login is a new member, so an agent owner who is only an editor cannot make
-    one — but can mint for the login once it exists and is token-only."""
+def test_creating_the_login_takes_someone_who_could_invite_it_or_the_agents_admin_for_an_agent_address(ws, agent):
+    """A new login is a new member. A workspace admin may add one (they could invite); so may
+    the AGENT's own admin when the address is one only an agent has — an owner who is only a
+    workspace editor can finish setting their own agent up, and the account cannot be a
+    person's way in. For any other address it still takes someone who could invite."""
     editor = a_member(ws, email="ed@dimagi.com", role=WorkspaceMembership.EDITOR)
     agent.owner = editor
     agent.save()
+    # An address at a person's domain: an editor who owns the agent still cannot.
+    agent.email = "scout@dimagi.com"
+    agent.save()
     resp = _post(editor)
     assert resp.status_code == 403 and "invite" in resp.json()["detail"]
-    assert agent.user is None and not get_user_model().objects.filter(
-        email="scout@dimagi-ai.com").exists()
+    assert agent.user is None and not get_user_model().objects.filter(email="scout@dimagi.com").exists()
+    # The agent's own address (dimagi-ai.com is the agents' domain): the owner may.
+    agent.email = "scout@dimagi-ai.com"
+    agent.save()
+    resp = _post(editor)
+    assert resp.status_code == 201, resp.content
+    agent.refresh_from_db()
+    assert agent.user.email == "scout@dimagi-ai.com" and not agent.user.has_usable_password()
+
+
+def test_a_workspace_admin_who_is_not_the_agents_admin_still_cannot(ws, agent):
     admin = a_member(ws, email="ad@dimagi.com", role=WorkspaceMembership.ADMIN)
-    assert _post(admin).status_code == 403  # a workspace admin is not the AGENT's admin
+    assert _post(admin).status_code == 403          # the route is the AGENT's admins'
     AgentAdmin.objects.create(agent=agent, user=admin)
-    assert _post(admin).status_code == 201
-    assert _post(editor).status_code == 201  # the login exists and has never signed in
+    agent.email = "scout@dimagi.com"
+    agent.save()
+    assert _post(admin).status_code == 201          # they can invite, so any address
+
+
+def test_a_hosted_agent_mail_domain_counts_as_an_agent_address(ws, agent):
+    from apps.mail.models import MailDomain
+
+    editor = a_member(ws, email="ed@dimagi.com", role=WorkspaceMembership.EDITOR)
+    agent.owner, agent.email = editor, "scout@agents.example"
+    agent.save()
+    assert _post(editor).status_code == 403
+    MailDomain.objects.create(workspace=ws, name="agents.example", status="verified", agent_addresses=True)
+    assert _post(editor).status_code == 201
 
 
 def test_running_it_again_mints_for_the_same_login(owner, agent):
