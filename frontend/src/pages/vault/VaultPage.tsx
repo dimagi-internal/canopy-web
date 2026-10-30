@@ -41,7 +41,10 @@ export function VaultPage(): JSX.Element {
       .then(setVault)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not load this vault'))
   }, [vaultId])
-  useEffect(() => load(), [load])
+  useEffect(() => {
+    setVault(null)
+    load()
+  }, [vaultId, load])
 
   const back = (
     <Link to={scopedPath(workspace, '/settings/secrets')} className="text-primary hover:underline">All vaults →</Link>
@@ -51,6 +54,7 @@ export function VaultPage(): JSX.Element {
       <div className="max-w-4xl">
         <p className="text-[12px]">{back}</p>
         <p className="mt-6 text-sm text-destructive" data-testid="vault-page-error">{error}</p>
+        <button type="button" onClick={load} className="mt-2 text-[12px] text-primary hover:underline">Try again</button>
       </div>
     )
   }

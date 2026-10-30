@@ -19,7 +19,7 @@ import {
 } from '@/vault/operations'
 import type { VaultOutletContext } from './VaultPage'
 
-// A workspace vault's three bodies — Storage & key (Overview), Who can open it (Members), Secrets —
+// A workspace vault's three bodies — Storage & key, Who can open them, Secrets —
 // drawn by VaultPage inside the shared VaultView as its sections (the old tab addresses still open them). Who may change what is the server's rule
 // for each route; a control is offered only to someone who manages the vault.
 
@@ -31,10 +31,10 @@ const quietClass =
   'min-h-11 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-40 sm:min-h-0'
 
 /** A titled block inside one of the vault's sections. */
-function Sub({ id, title, children }: { id: string; title: string; children: React.ReactNode }): JSX.Element {
+function Sub({ id, title, children }: { id: string; title?: string; children: React.ReactNode }): JSX.Element {
   return (
     <div id={id} className="mb-5 scroll-mt-6">
-      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</h4>
+      {title && <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</h4>}
       {children}
     </div>
   )
@@ -82,7 +82,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
     }
     return () => { live = false }
   }, [manages, v.vault_id, v.kv])
-  // People waiting are granted from the key line; each runner from its row on Members.
+  // People waiting are granted from the key line; each runner from its row under Who can open them.
   const peopleWaiting = pending.filter((p) => p.kind !== 'device')
   const served = v.attachments.filter((a) => !a.runner)
   const grant = (only: (t: ZkTargetOut) => boolean) => run(async () => {
@@ -131,7 +131,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
 
       <Sub id="serves" title="Access">
         <p className="mb-2 text-[12px] text-muted-foreground">
-          The agents whose secrets this vault adds to. The runners that read it are on Members.
+          The agents whose secrets this vault adds to. The runners that read it are under Who can open them.
         </p>
         {served.length === 0 && <p className="text-[12px] text-muted-foreground">No agent reads it yet.</p>}
         {served.length > 0 && (
@@ -212,7 +212,7 @@ export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOut
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <th className="py-1 font-normal">Runner</th><th className="py-1 font-normal">Its key</th>
-              <th className="py-1 font-normal">Access</th><th />
+              <th className="py-1 font-normal">Access</th><th><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -269,7 +269,7 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   return (
-    <Sub id="secrets" title="Secrets">
+    <Sub id="vault-secrets">
       {v.secrets.length === 0 && <p className="text-[12px] text-muted-foreground">None yet.</p>}
       {v.secrets.length > 0 && (
         <table className="w-full text-[12px]" data-testid="ws-vault-secrets">
@@ -308,7 +308,7 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
         </form>
       )}
       {manages && v.kv === 0 && (
-        <p className="mt-2 text-[12px] text-muted-foreground">Make the vault&rsquo;s key (Overview) before anything can go in.</p>
+        <p className="mt-2 text-[12px] text-muted-foreground">Make the vault&rsquo;s key (Storage &amp; key) before anything can go in.</p>
       )}
       <p className="mt-2 text-[11px] text-muted-foreground">
         A value is encrypted in this browser under the vault&rsquo;s key; canopy-web stores only ciphertext and shows only names.

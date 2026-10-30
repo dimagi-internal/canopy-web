@@ -7,7 +7,9 @@ import {
   unlockVaultKey,
   type Unlock,
 } from '@/vault/operations'
-import { PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
+import { LoadFailed } from '@/components/vault/LoadFailed'
+import { RecoveryCodeBox } from '@/components/vault/RecoveryCodeBox'
+import { keyFlowError } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // Zero-knowledge for this agent (Canopy Vault Phase 2, canopy-web#1550). With
@@ -25,23 +27,11 @@ export const ZK_TRUST_CAVEAT =
   'serve a page that captures your key when you unlock it here. The canopy CLI on your own machine does not ' +
   'depend on that.'
 
-function message(e: unknown, fallback: string): string {
-  if (e instanceof PrfUnsupportedError) return USE_A_PASSPHRASE
-  if (e instanceof Error && e.name === 'NotAllowedError') return 'The passkey prompt was dismissed.'
-  return e instanceof Error ? e.message : fallback
-}
-
-function download(slug: string, code: string, kv: number, person: boolean) {
-  const text = person
+function recoveryFile(slug: string, code: string, kv: number, person: boolean): string {
+  return person
     ? `Canopy recovery code\n\n${code}\n\nIf you lose your passkey and passphrase, this gets you back into every agent you hold. Keep it offline.\n`
     : `Canopy recovery code\nAgent: ${slug}\nKey version: ${kv}\n\n${code}\n\n` +
       'Anyone with this code and access to the agent can read its secrets. Keep it offline.\n'
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = person ? 'canopy-recovery-code.txt' : `canopy-vault-recovery-${slug}-kv${kv}.txt`
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 export function AgentZkSection({
@@ -61,9 +51,9 @@ export function AgentZkSection({
   const unlock: Unlock = () => unlockVaultKey(own.prompt)
   const [state, setState] = useState<ZkStateOut | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [code, setCode] = useState<{ code: string; kv: number; person: boolean } | null>(null)
-  const [saved, setSaved] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [typed, setTyped] = useState('')
   const pendingConfirm = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null)
@@ -77,20 +67,20 @@ export function AgentZkSection({
     let cancelled = false
     if (!canEdit) return
     getZkState(slug)
-      .then((s) => !cancelled && update(s))
-      .catch(() => !cancelled && update(null))
+      .then((s) => { if (!cancelled) { setFailed(false); update(s) } })
+      .catch(() => { if (!cancelled) { setFailed(true); update(null) } })
     return () => {
       cancelled = true
     }
   }, [slug, canEdit, update])
 
-  if (!canEdit || state === null) return null
+  if (!canEdit) return null
+  if (state === null) return failed ? <LoadFailed what="its key and recovery" /> : null
 
   /** Show the recovery code ONCE; resolves when the person says they kept it. */
   const confirmCode = (kv: number, person = false) => (c: string) =>
     new Promise<void>((resolve, reject) => {
       pendingConfirm.current = { resolve, reject }
-      setSaved(false)
       setCode({ code: c, kv, person })
     })
 
@@ -109,7 +99,7 @@ export function AgentZkSection({
       update(await fn())
       if (changed) onChanged?.()
     } catch (e) {
-      setError(message(e, `Could not ${label}`))
+      setError(keyFlowError(e, `Could not ${label}`))
     } finally {
       setBusy(null)
     }
@@ -213,40 +203,19 @@ export function AgentZkSection({
       )}
 
       {code && (
-        <div role="dialog" aria-modal="true" aria-label="Recovery code"
-             className="mt-3 space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-[12px]"
-             data-testid="zk-recovery-code">
-          <p className="font-medium text-foreground">
-            {code.person ? 'Your recovery code — shown once' : 'Recovery code — shown once'}
-          </p>
-          <p className="text-muted-foreground">
-            {code.person
-              ? 'If you lose your passkey and passphrase, this gets you back into every agent you hold. canopy-web does not keep a copy — save it in your password manager.'
-              : 'It opens this agent\u2019s secrets if every machine and person loses access. canopy-web does not keep a copy. Save it before you continue.'}
-          </p>
-          <code className="block select-all break-all rounded border border-border bg-card px-2 py-1 font-mono text-[13px] text-foreground">
-            {code.code}
-          </code>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => download(slug, code.code, code.kv, code.person)}
-                    className="min-h-11 rounded-md border border-input px-3 py-1 text-foreground hover:border-primary sm:min-h-0">
-              Download
-            </button>
-            <label className="flex items-center gap-1 text-foreground">
-              <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)}
-                     data-testid="zk-code-saved" />
-              I have saved it
-            </label>
-            <button type="button" disabled={!saved} onClick={() => closeCode(true)} data-testid="zk-code-continue"
-                    className="min-h-11 rounded-md bg-primary px-3 py-1 font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
-              Continue
-            </button>
-            <button type="button" onClick={() => closeCode(false)}
-                    className="min-h-11 rounded-md px-3 py-1 text-muted-foreground hover:text-foreground sm:min-h-0">
-              Cancel
-            </button>
-          </div>
-        </div>
+        <RecoveryCodeBox
+          testId="zk-recovery-code" savedTestId="zk-code-saved" continueTestId="zk-code-continue"
+          title={code.person ? 'Your recovery code — shown once' : 'Recovery code — shown once'}
+          code={code.code}
+          filename={code.person ? 'canopy-recovery-code.txt' : `canopy-vault-recovery-${slug}-kv${code.kv}.txt`}
+          fileText={recoveryFile(slug, code.code, code.kv, code.person)}
+          onContinue={() => closeCode(true)}
+          onCancel={() => closeCode(false)}
+        >
+          {code.person
+            ? 'If you lose your passkey and passphrase, this gets you back into every agent you hold. canopy-web does not keep a copy — save it in your password manager.'
+            : 'It opens this agent\u2019s secrets if every machine and person loses access. canopy-web does not keep a copy. Save it before you continue.'}
+        </RecoveryCodeBox>
       )}
 
       {own.element}

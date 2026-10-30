@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getAgentDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
+import { LoadFailed } from '@/components/vault/LoadFailed'
 import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
 
 // The machines that can read this agent's secrets (Canopy Vault, canopy-web#1538).
@@ -19,13 +20,14 @@ export function AgentDeviceKeysSection({
   onLoaded?: (keys: RunnerDeviceKeyOut[]) => void
 }) {
   const [keys, setKeys] = useState<RunnerDeviceKeyOut[] | null>(null)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     if (!canEdit) return
     getAgentDeviceKeys(slug)
       .then((k) => { if (!cancelled) { setKeys(k); onLoaded?.(k) } })
-      .catch(() => { if (!cancelled) { setKeys([]); onLoaded?.([]) } })
+      .catch(() => { if (!cancelled) setFailed(true) })
     return () => {
       cancelled = true
     }
@@ -43,17 +45,22 @@ export function AgentDeviceKeysSection({
       <p className="mb-2 text-[12px] text-muted-foreground">
         A machine you approve can read this agent&rsquo;s secrets; one you don&rsquo;t, can&rsquo;t.
       </p>
+      {failed && <LoadFailed what="the machines" />}
       {keys !== null && active === 0 && (
         <p className="mb-2 text-[11px] text-destructive" data-testid="no-active-device-key">
           No approved machine yet: none can read this agent&rsquo;s secrets until you approve one.
         </p>
       )}
-      {keys === null ? (
+      {failed ? null : keys === null ? (
         <p className="text-[11px] text-muted-foreground">…</p>
       ) : (
         <DeviceKeysTable
           keys={keys}
-          onChange={(next) => setKeys((ks) => (ks ?? []).map((k) => (k.id === next.id ? next : k)))}
+          onChange={(next) => {
+            const updated = (keys ?? []).map((k) => (k.id === next.id ? next : k))
+            setKeys(updated)
+            onLoaded?.(updated)
+          }}
         />
       )}
     </section>

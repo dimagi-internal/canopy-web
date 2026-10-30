@@ -13,6 +13,7 @@ import { getAgentMailbox } from '@/api/mail'
 import type { RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import type { VaultMembersOut, ZkStateOut } from '@/api/vault'
 import { EncryptedBadge, VaultEditor, type VaultEntry } from '@/components/vault/VaultEditor'
+import { LoadFailed } from '@/components/vault/LoadFailed'
 import { VaultSection } from '@/components/vault/VaultSection'
 import { VaultView } from '@/components/vault/VaultView'
 import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
@@ -64,6 +65,8 @@ export function AgentSecretsPanel({
 }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The secrets could not be read at all: say so, not 'no secrets yet'.
+  const [loadFailed, setLoadFailed] = useState(false)
   const [zk, setZk] = useState<ZkStateOut | null>(null)
   const [alerts, setAlerts] = useState<AgentCredentialAlertOut[] | null>(null)
   const [members, setMembers] = useState<VaultMembersOut | null>(null)
@@ -74,17 +77,20 @@ export function AgentSecretsPanel({
   const unlock = () => unlockVaultKey(unlocker.prompt)
 
   const reload = useCallback(() => {
-    getAgentCredentialStatus(agent.slug).then(setRows).catch(() => undefined)
+    getAgentCredentialStatus(agent.slug)
+      .then(setRows)
+      .catch(() => setError('Could not refresh the list of secrets — reload the page.'))
   }, [agent.slug])
 
   useEffect(() => {
     let cancelled = false
     setRows(null)
     getAgentCredentialStatus(agent.slug)
-      .then((r) => !cancelled && setRows(r))
+      .then((r) => { if (!cancelled) { setError(null); setRows(r) } })
       .catch((e: unknown) => {
         if (cancelled) return
         setError(e instanceof Error ? e.message : 'Failed to load')
+        setLoadFailed(true)
         setRows([])
       })
     return () => {
@@ -103,7 +109,8 @@ export function AgentSecretsPanel({
 
   useEffect(() => {
     if (!agent.email?.trim()) return
-    getAgentMailbox(agent.slug).then((m) => setHosted(m.kind === 'hosted'), () => undefined)
+    // If we cannot tell, assume a hosted address: better to imply no gog-token than to flag one missing.
+    getAgentMailbox(agent.slug).then((m) => setHosted(m.kind === 'hosted'), () => setHosted(true))
   }, [agent.slug, agent.email])
 
   if (rows === null) return <WorkbenchSkeleton />
@@ -160,7 +167,7 @@ export function AgentSecretsPanel({
     <div data-testid="agent-secrets">
       <VaultView
         facts={{
-          secrets: stored,
+          secrets: loadFailed ? undefined : stored,
           people: canEdit ? members?.members.length : undefined,
           machines: canEdit ? activeMachines : undefined,
           attention: canEdit ? attention : [],
@@ -186,7 +193,7 @@ export function AgentSecretsPanel({
                   ].filter(Boolean).join(' ')}
                 </p>
               )}
-              <VaultEditor
+              {loadFailed ? <LoadFailed what="its secrets" /> : <VaultEditor
                 entries={entries}
                 canEdit={canEdit}
                 onSave={save}
@@ -198,7 +205,7 @@ export function AgentSecretsPanel({
                   const row = byName.get(e.name)
                   return row?.set && canEdit ? <CredentialReadHistory slug={agent.slug} row={row} alerts={alerts} /> : null
                 }}
-              />
+              />}
               {error && (
                 <p className="mt-3 text-[13px] text-destructive" data-testid="agent-credentials-error">
                   {error}
@@ -221,7 +228,7 @@ export function AgentSecretsPanel({
           anchors: ['cred-vault-members', 'cred-device-keys'],
           body: (
             <>
-              <AgentVaultMembersSection slug={agent.slug} onLoaded={setMembers} />
+              <AgentVaultMembersSection slug={agent.slug} onLoaded={setMembers} canEdit={canEdit} />
               <AgentDeviceKeysSection
                 slug={agent.slug}
                 canEdit={canEdit}

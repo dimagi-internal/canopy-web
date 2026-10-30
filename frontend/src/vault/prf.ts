@@ -45,6 +45,15 @@ export const PRF_UNSUPPORTED =
 export const USE_A_PASSPHRASE =
   "Your passkey app can't unlock a vault key, so use a passphrase — save it and the Secret Key in your password manager."
 
+/** What to tell a person when a key-setup flow failed: the passphrase hint when the
+ *  passkey cannot hold the key, a plain line when they dismissed the passkey sheet,
+ *  else the error's own message. */
+export function keyFlowError(e: unknown, fallback: string): string {
+  if (e instanceof PrfUnsupportedError) return USE_A_PASSPHRASE
+  if (isPasskeyRefusal(e)) return 'The passkey prompt was dismissed.'
+  return e instanceof Error ? e.message : fallback
+}
+
 /** Best-effort early hint (`PublicKeyCredential.getClientCapabilities`, where
  *  the browser has it). `null` = cannot tell until a passkey is used. */
 export async function browserSupportsPrf(): Promise<boolean | null> {

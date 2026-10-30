@@ -12,7 +12,7 @@ import {
   vaultKeyForFlow,
   type PreparedRecovery,
 } from '@/vault/operations'
-import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
+import { browserSupportsPrf, keyFlowError } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { PasskeysPanel } from './PasskeysPanel'
 import { useHash } from '@/lib/useHash'
@@ -98,10 +98,7 @@ function RecoveryRow() {
     if (hash === '#vault-key') setMore(true)
   }, [hash])
 
-  const fail = (e: unknown, fallback: string) =>
-    setError(e instanceof PrfUnsupportedError ? USE_A_PASSPHRASE
-      : e instanceof Error && e.name === 'NotAllowedError' ? 'The passkey prompt was dismissed.'
-        : e instanceof Error ? e.message : fallback)
+  const fail = (e: unknown, fallback: string) => setError(keyFlowError(e, fallback))
 
   const create = async () => {
     setBusy(true)
