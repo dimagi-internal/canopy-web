@@ -204,9 +204,34 @@ def test_complete_non_json_body_is_provider_error(user):
 
 
 def test_complete_identity_failure_stores_nothing(user):
+    fake = FakeSF(identity=_resp(403, {"error": "nope"}))
     with pytest.raises(services.ConnectionError) as e:
-        _connect({}, ("user", user.pk), user, FakeSF(identity=_resp(403, {"error": "nope"})))
+        _connect({}, ("user", user.pk), user, fake)
     assert e.value.code == "provider_error"
+    assert not Connection.objects.exists()
+    # Issued, then refused: the grant is revoked at the provider.
+    assert fake.calls[-1][1:] == (REVOKE_URL, {"token": "5Aep_refresh_1", "token_type_hint": "refresh_token",
+                                               "client_id": "3MVG-client", "client_secret": "shh"})
+
+
+def test_complete_without_a_refresh_token_revokes_the_access_token(user):
+    fake = FakeSF(token=[_resp(body=_token_body(refresh_token=None))])
+    with pytest.raises(services.ConnectionError) as e:
+        _connect({}, ("user", user.pk), user, fake)
+    assert e.value.code == "provider_error"
+    assert fake.calls[-1][1] == REVOKE_URL
+    assert (fake.calls[-1][2]["token"], fake.calls[-1][2]["token_type_hint"]) == ("00D!access_1", "access_token")
+
+
+@pytest.mark.parametrize("revoke", [_resp(400, {"error": "invalid_token"}), requests.Timeout("slow")])
+def test_a_failed_revoke_of_a_refused_grant_is_logged_not_raised(user, revoke, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    fake = FakeSF(token=[_resp(body=_token_body(scope="refresh_token"))], revoke=revoke)   # no `api`
+    with pytest.raises(services.ConnectionError) as e:
+        _connect({}, ("user", user.pk), user, fake)
+    assert e.value.code == "insufficient_scope"                 # the refusal, not the revoke failure
+    kinds = [services.parse_log_line(r.getMessage())[0] for r in caplog.records]
+    assert kinds[-2:] == ["provider_error", "revoke_failed"]
     assert not Connection.objects.exists()
 
 

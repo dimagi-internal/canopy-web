@@ -34342,6 +34342,12 @@ export interface components {
             readonly required: boolean;
             /** Default */
             readonly default?: string | number | null;
+            /**
+             * Help
+             * @description What to enter and how it is used, for the form to show.
+             * @default
+             */
+            readonly help: string;
         };
         /** ScopeChoiceOut */
         readonly ScopeChoiceOut: {

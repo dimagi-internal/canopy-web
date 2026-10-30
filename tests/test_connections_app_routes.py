@@ -101,13 +101,14 @@ def test_list_shows_every_provider_set_up_or_not(admin, ws):
         "has_secret": False, "options": {}, "scopes": [], "scope_choices": [],
         "option_fields": [
             {"name": "login_url", "label": row["option_fields"][0]["label"], "kind": "url", "required": True,
-             "default": "https://login.salesforce.com"},
+             "default": "https://login.salesforce.com", "help": ""},
             {"name": "access_token_seconds", "label": row["option_fields"][1]["label"], "kind": "int",
-             "required": False, "default": 1800},
+             "required": False, "default": 1800, "help": row["option_fields"][1]["help"]},
         ],
         "callback_url": "http://testserver/auth/connections/salesforce/w/callback/",
         "connection_count": 0, "updated_at": None, "configured_by_email": "",
     }
+    assert "session timeout" in row["option_fields"][1]["help"]
 
 
 def test_put_creates_then_lists_without_the_secret(admin, ws):

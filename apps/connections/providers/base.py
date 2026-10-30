@@ -51,8 +51,9 @@ What a provider declares, and where providers differ:
   compares; the label is display only).
 - `pkce`: whether the provider takes a PKCE challenge (default yes).
 
-Revocation follows RFC 7009: the token, `token_type_hint=refresh_token`, and the
-client's authentication.
+Revocation follows RFC 7009: the token, its `token_type_hint` (a refresh token,
+or the access token of a grant refused before it had one), and the client's
+authentication.
 """
 from __future__ import annotations
 
@@ -118,6 +119,9 @@ class Identity:
     # The account's email when the provider vouches it is verified (Google), lowercased;
     # "" otherwise. What `check_owner` may authorize on, unlike `label`.
     email: str = ""
+    # The organisation domain the provider vouches the account belongs to (Google's
+    # `hd`: a Workspace account's domain; "" for a consumer account), lowercased.
+    hosted_domain: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,6 +133,7 @@ class OptionField:
     kind: Literal["url", "int", "text"]
     required: bool = False
     default: Any = None
+    help: str = ""  # one or two sentences the form shows under the field
 
 
 class Provider:
@@ -285,12 +290,13 @@ class Provider:
         extra = self.app.extra_scopes if self.app is not None else ()
         return tuple(s for s in dict.fromkeys((*self.required_scopes, *extra)) if s not in held)
 
-    def revoke(self, token: str) -> None:
-        """Revoke a refresh token (RFC 7009), with the client's authentication."""
+    def revoke(self, token: str, *, hint: Literal["refresh_token", "access_token"] = "refresh_token") -> None:
+        """Revoke a token (RFC 7009) — a refresh token unless `hint` says it is an
+        access token — with the client's authentication."""
         url = self.revoke_url()
         if not url:
             return
-        data, auth = self._authenticated({"token": token, "token_type_hint": "refresh_token"})
+        data, auth = self._authenticated({"token": token, "token_type_hint": hint})
         resp = self._call(requests.post, url, "revoke", data=data, **auth)
         if resp.status_code != 200:
             raise self._error(resp, "revoke")

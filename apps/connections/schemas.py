@@ -78,6 +78,7 @@ class OptionFieldOut(StrictModel):
     kind: Literal["url", "int", "text"]
     required: bool
     default: str | int | None = None
+    help: str = Field(default="", description="What to enter and how it is used, for the form to show.")
 
 
 class ConnectionAppOut(StrictModel):

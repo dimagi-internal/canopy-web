@@ -500,7 +500,8 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     The state is popped first, so a failed exchange still spends it. A callback
     for another provider or workspace than the flow was begun with is
     `bad_state`, and nothing is exchanged. Nothing is stored unless the
-    exchange, the identity lookup and the provider's `check_owner` succeed.
+    exchange, the identity lookup and the provider's `check_owner` succeed;
+    a grant refused after the exchange is revoked at the provider (best effort).
     Connecting the same account again for the same owner with the same app
     updates that row (and clears any reconnect stamp) rather than adding a second.
     """
@@ -529,26 +530,35 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     subject = _parked_subject(provider, parked)
     try:
         token = p.exchange_code(code, redirect_uri, parked["verifier"])
+    except providers.ProviderError as e:
+        record(subject, "provider_error", by=by, warn=True, during="connect", error=_error_code(e))
+        raise ConnectionError("provider_error", str(e)) from None
+    # From here the provider has issued a grant: every refusal revokes it, so a
+    # refused account (the admin's own, signed in by mistake) is not left holding
+    # a live grant to this client that canopy has thrown away.
+    try:
         ident = p.identity(token)
     except providers.ProviderError as e:
-        record(subject, "provider_error", by=by, warn=True, during="connect",
-               error=e.code or ("provider_unavailable" if isinstance(e, providers.ProviderUnavailable)
-                                else "provider_error"))
+        record(subject, "provider_error", by=by, warn=True, during="connect", error=_error_code(e))
+        _discard_grant(p, subject, token)
         raise ConnectionError("provider_error", str(e)) from None
     if not token.refresh_token:
         record(subject, "provider_error", by=by, warn=True, during="connect", error="no_refresh_token")
+        _discard_grant(p, subject, token)
         raise ConnectionError("provider_error", f"{p.title} issued no refresh token")
     missing = p.missing_scopes(token.scopes)
     if missing:
         # The consent screen let the person untick a permission canopy needs.
         record(subject, "provider_error", by=by, warn=True, during="connect", error="insufficient_scope",
                missing=" ".join(missing))
+        _discard_grant(p, subject, token)
         raise ConnectionError("insufficient_scope", f"{p.title} did not grant {', '.join(missing)}")
     try:
         p.check_owner(ident, owner_kind=parked["owner_kind"], owner=owner_obj)
     except providers.ProviderError as e:
         code = "wrong_account" if e.code == "wrong_account" else "provider_error"
         record(subject, "provider_error", by=by, warn=True, during="connect", error=code)
+        _discard_grant(p, subject, token)
         raise ConnectionError(code, str(e)) from None
 
     lookup = {"app": app, "provider": provider, "account_id": ident.account_id, **owner_kw}
@@ -567,21 +577,49 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         # The app row, locked, is still the client that issued this grant: a client
         # id change or a removal that committed during the exchange refuses it
         # (and either one, waiting on this lock, sees the new connection).
-        if not ConnectionApp.objects.select_for_update().filter(pk=app.pk, client_id=parked["client_id"]).exists():
-            raise ConnectionError("bad_state", "that app has changed; start the connection again")
-        try:
-            with transaction.atomic():
-                conn, _ = Connection.objects.update_or_create(**lookup, defaults=defaults)
-        except IntegrityError:
-            # A concurrent completion for the same account inserted the row between
-            # our lookup and insert. It exists now: update it with this grant.
-            conn = Connection.objects.select_for_update().get(**lookup)
-            for k, v in defaults.items():
-                setattr(conn, k, v)
-            conn.save()
+        changed = not ConnectionApp.objects.select_for_update().filter(
+            pk=app.pk, client_id=parked["client_id"]).exists()
+        if not changed:
+            conn = _upsert_connection(lookup, defaults)
+    if changed:
+        # Revoked outside the transaction: a network call never holds a row lock.
+        _discard_grant(p, subject, token)
+        raise ConnectionError("bad_state", "that app has changed; start the connection again")
     record(Subject.of(conn), "connected", by=by,
            summary=f"{conn.owner_label} connected {p.title} as {conn.account_label}")
     return conn
+
+
+def _upsert_connection(lookup: dict, defaults: dict) -> Connection:
+    """Insert or update the grant's row; the caller holds the transaction."""
+    try:
+        with transaction.atomic():
+            conn, _ = Connection.objects.update_or_create(**lookup, defaults=defaults)
+    except IntegrityError:
+        # A concurrent completion for the same account inserted the row between
+        # our lookup and insert. It exists now: update it with this grant.
+        conn = Connection.objects.select_for_update().get(**lookup)
+        for k, v in defaults.items():
+            setattr(conn, k, v)
+        conn.save()
+    return conn
+
+
+def _error_code(e: providers.ProviderError) -> str:
+    return e.code or ("provider_unavailable" if isinstance(e, providers.ProviderUnavailable) else "provider_error")
+
+
+def _discard_grant(p: providers.Provider, subject: Subject, token: providers.TokenResponse) -> None:
+    """Revoke a grant the provider issued but canopy refused — its refresh token,
+    else its access token — best effort: a failure is a `revoke_failed` record,
+    never raised, so the refusal the caller is about to raise is what surfaces."""
+    secret, hint = ((token.refresh_token, "refresh_token") if token.refresh_token
+                    else (token.access_token, "access_token"))
+    try:
+        p.revoke(secret, hint=hint)
+    except Exception as e:  # noqa: BLE001
+        record(subject, "revoke_failed", warn=True, during="connect",
+               error=getattr(e, "code", "") or type(e).__name__)
 
 
 # ---- using the grant ---------------------------------------------------------

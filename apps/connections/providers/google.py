@@ -10,7 +10,8 @@ OpenID Connect userinfo (`sub`, a verified `email`).
 
 Any Google account may connect by default — a Workspace account of any
 organisation or a personal @gmail.com one. A workspace narrows that with the
-`allowed_domains` option; an agent must connect its own Google account
+`allowed_domains` option (exact domains: `dimagi.com` does not admit
+`mail.dimagi.com`); an agent must connect its own Google account
 (`Agent.google_identity()`) when it has one.
 """
 from __future__ import annotations
@@ -30,6 +31,10 @@ USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 _SCOPE = "https://www.googleapis.com/auth/"
 USERINFO_EMAIL = f"{_SCOPE}userinfo.email"
+
+# Google's consumer-account domains. No Workspace organisation owns them, so an
+# account there carries no `hd`, and the address is the only thing to match.
+CONSUMER_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 
 # One DNS name: dot-separated labels of letters, digits and inner hyphens, a
 # letter-led last label, at most 253 characters.
@@ -59,8 +64,10 @@ class GoogleProvider(Provider):
     option_fields = (
         # Empty (the default): any Google account, including personal @gmail.com
         # ones and other organisations' Workspace accounts.
-        OptionField("allowed_domains", "Allowed email domains (comma-separated, e.g. dimagi.com, "
-                    "dimagi-ai.com; blank allows any Google account)", "text"),
+        OptionField("allowed_domains", "Allowed email domains", "text",
+                    help="Comma-separated, e.g. dimagi.com, dimagi-ai.com. Blank allows any Google "
+                         "account. Each domain is matched exactly (not its subdomains), and must be "
+                         "the account's Google Workspace domain; gmail.com admits personal accounts."),
     )
     # No locked options: the authorization server is always Google's, so nothing
     # here says which server a grant belongs to. `allowed_domains` may change while
@@ -74,7 +81,8 @@ class GoogleProvider(Provider):
         domains = tuple(dict.fromkeys(_domains(cleaned.get("allowed_domains"))))
         bad = [d for d in domains if not _DOMAIN.match(d)]
         if bad:
-            raise ValueError(f"Not a domain: {', '.join(bad)}")
+            raise ValueError(f"Not a domain: {', '.join(bad)} (write a non-ASCII domain in its "
+                             "punycode xn-- form)")
         if domains:
             cleaned["allowed_domains"] = ", ".join(domains)
         else:
@@ -107,9 +115,9 @@ class GoogleProvider(Provider):
             hint = owner.google_identity() if owner is not None else ""
             if hint:
                 params["login_hint"] = hint
-        # `hd` only narrows the account chooser, and only to one domain; the domain
-        # rule itself is enforced by `check_owner` on the verified email.
-        if len(self.allowed_domains) == 1:
+        # `hd` only narrows the account chooser, and only to one hosted (Workspace)
+        # domain; the domain rule itself is enforced by `check_owner`.
+        if len(self.allowed_domains) == 1 and self.allowed_domains[0] not in CONSUMER_DOMAINS:
             params["hd"] = self.allowed_domains[0]
         return params
 
@@ -127,14 +135,23 @@ class GoogleProvider(Provider):
         # A boolean in the userinfo response; older Google responses sent the string.
         if body.get("email_verified") not in (True, "true"):
             raise ProviderError(f"Google has not verified {email}")
-        return Identity(account_id=sub, label=email, email=email)
+        return Identity(account_id=sub, label=email, email=email,
+                        hosted_domain=str(body.get("hd") or "").strip().lower())
 
     def check_owner(self, identity: Identity, *, owner_kind, owner) -> None:
         email = identity.email
         allowed = self.allowed_domains
-        if allowed and email.rpartition("@")[2] not in allowed:
-            raise ProviderError(f"{email} is not in {', '.join(allowed)}", code="wrong_account")
+        domain = email.rpartition("@")[2]
+        # An allowed domain admits an account only when Google says the account
+        # belongs to that domain's Workspace (`hd`), not merely because its address
+        # is there: a consumer Google account can be registered with any verified
+        # address, such as a former employee's still-working one. gmail.com and
+        # googlemail.com have no Workspace, so for them the address is the match.
+        if allowed and (domain not in allowed
+                        or (domain not in CONSUMER_DOMAINS and identity.hosted_domain != domain)):
+            raise ProviderError(f"{email} is not a Google account of {', '.join(allowed)}",
+                                code="wrong_account")
         if owner_kind == "agent" and owner is not None:
-            expected = owner.google_identity()
-            if expected and email != expected.lower():
+            expected = owner.google_identity()  # already lowercase
+            if expected and email != expected:
                 raise ProviderError(f"signed in as {email}, not {expected}", code="wrong_account")

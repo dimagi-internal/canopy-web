@@ -326,11 +326,14 @@ def test_check_owner_refusal_stores_nothing(ws, user, eva, monkeypatch, caplog):
     app = sf_app(ws, provider="picky", **OPTIONS)
     session = {}
     state = _flow(session, app, ("agent", eva.pk))["state"][0]
-    with FakeSF(), pytest.raises(services.ConnectionError) as e:   # identity: jj@dimagi.com
+    with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:   # identity: jj@dimagi.com
         services.complete(session, provider="picky", workspace=ws, code="c", state=state,
                           redirect_uri=REDIRECT, by=user)
     assert e.value.code == "wrong_account"
     assert not Connection.objects.exists() and not Event.objects.exists()
+    # The refused account's grant is revoked, not left live at the provider.
+    assert fake.calls[-1] == ("POST", REVOKE_URL, {"token": "5Aep_refresh_1", "token_type_hint": "refresh_token",
+                                                   "client_id": "3MVG-client", "client_secret": "shh"})
     kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
     assert (kind, pairs["during"], pairs["error"], pairs["owner"]) == \
         ("provider_error", "connect", "wrong_account", "agent:eva")
@@ -465,6 +468,8 @@ def test_a_client_id_change_during_the_exchange_stores_nothing(ws, user):
                               redirect_uri=REDIRECT, by=user)
     assert e.value.code == "bad_state"
     assert not Connection.objects.exists()
+    # The grant the exchange produced is revoked rather than left live at Salesforce.
+    assert fake.calls[-1][1] == REVOKE_URL and fake.calls[-1][2]["token"] == "5Aep_refresh_1"
 
 
 def test_remove_catches_a_connection_made_while_it_ran(ws, user, eva, monkeypatch):

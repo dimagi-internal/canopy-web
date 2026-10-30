@@ -8,6 +8,7 @@ must connect its own Google account (`Agent.google_identity()`) when it has one.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -48,6 +49,7 @@ class FakeGoogle:
         self.n = 0
         self.granted = f"{BASE} {READ_MAIL} {CALENDAR}"
         self.user = {"sub": "1098", "email": "someone@gmail.com", "email_verified": True}
+        self.revoke_status = 200
 
     def _resp(self, body, status=200):
         r = mock.Mock(status_code=status)
@@ -65,8 +67,12 @@ class FakeGoogle:
                 body["refresh_token"] = "1//refresh"
             return self._resp(body)
         if url == REVOKE_URL:
-            return self._resp({})
+            # Google answers 400 invalid_token for a token already revoked or expired.
+            return self._resp({} if self.revoke_status == 200 else {"error": "invalid_token"}, self.revoke_status)
         raise AssertionError(url)
+
+    def revokes(self):
+        return [c[2] for c in self.calls if c[1] == REVOKE_URL]
 
     def get(self, url, headers=None, timeout=None):
         assert url == USERINFO_URL and timeout == 15
@@ -139,6 +145,13 @@ def test_a_person_connects_with_offline_access_and_the_chosen_scopes(google, use
     assert query["client_id"] == "123.apps.googleusercontent.com"
     assert query["code_challenge_method"] == "S256"
     assert "status=connected" in landed
+    exchange = [c for c in google.calls if c[1] == TOKEN_URL][0][2]
+    assert exchange == {"grant_type": "authorization_code", "code": "4/code",
+                        "redirect_uri": "http://testserver/auth/connections/google/w/callback/",
+                        "code_verifier": exchange["code_verifier"],
+                        "client_id": "123.apps.googleusercontent.com", "client_secret": "GOCSPX-s"}
+    assert len(exchange["code_verifier"]) >= 43
+    assert google.revokes() == []                                     # a kept grant is not revoked
 
     conn = Connection.objects.get(provider="google", user=user)
     assert conn.account_id == "1098" and conn.account_label == "someone@gmail.com"
@@ -164,6 +177,7 @@ def test_a_grant_missing_a_chosen_scope_is_refused(google, user, ws):
     _, _, landed = _connect(user)
     assert "reason=insufficient_scope" in landed
     assert not Connection.objects.exists()
+    assert [r["token"] for r in google.revokes()] == ["1//refresh"]   # not left live at Google
 
 
 def test_a_grant_missing_the_identity_scope_is_refused(google, user, ws):
@@ -184,6 +198,13 @@ def test_an_unverified_or_incomplete_identity_is_refused(google, user, ws, user_
     _, _, landed = _connect(user)
     assert "status=error" in landed and "reason=provider_error" in landed
     assert not Connection.objects.exists()
+    assert [r["token"] for r in google.revokes()] == ["1//refresh"]
+
+
+def test_the_legacy_string_email_verified_is_accepted(google, user, ws):
+    google.user = {"sub": "1", "email": "someone@gmail.com", "email_verified": "true"}
+    _, _, landed = _connect(user)
+    assert "status=connected" in landed
 
 
 # ---- allowed domains ----------------------------------------------------------------
@@ -194,8 +215,9 @@ def test_one_allowed_domain_hints_it_and_refuses_another(google, user, ws):
     assert query["hd"] == "dimagi.com"
     assert "reason=wrong_account" in landed                  # someone@gmail.com
     assert not Connection.objects.exists()
+    assert [r["token"] for r in google.revokes()] == ["1//refresh"]
 
-    google.user = {"sub": "2", "email": "JJ@Dimagi.com", "email_verified": True}
+    google.user = {"sub": "2", "email": "JJ@Dimagi.com", "email_verified": True, "hd": "dimagi.com"}
     _, _, landed = _connect(user)
     assert "status=connected" in landed
     assert Connection.objects.get().account_label == "jj@dimagi.com"
@@ -203,7 +225,28 @@ def test_one_allowed_domain_hints_it_and_refuses_another(google, user, ws):
 
 def test_several_allowed_domains_send_no_hd(google, user, ws):
     _domains(ws, user, "dimagi.com, dimagi-ai.com")
-    google.user = {"sub": "3", "email": "eva@dimagi-ai.com", "email_verified": True}
+    google.user = {"sub": "3", "email": "eva@dimagi-ai.com", "email_verified": True, "hd": "dimagi-ai.com"}
+    _, query, landed = _connect(user)
+    assert "hd" not in query
+    assert "status=connected" in landed
+
+
+@pytest.mark.parametrize("hd", [None, "", "other.org", "dimagi-ai.com"])
+def test_an_allowed_address_without_that_workspace_domain_is_refused(google, user, ws, hd):
+    """A consumer Google account registered with a dimagi.com address (no `hd`), or a
+    Workspace account of another organisation, is not a dimagi.com account."""
+    _domains(ws, user, "dimagi.com, dimagi-ai.com")
+    google.user = {"sub": "5", "email": "former@dimagi.com", "email_verified": True,
+                   **({"hd": hd} if hd is not None else {})}
+    _, _, landed = _connect(user)
+    assert "reason=wrong_account" in landed
+    assert not Connection.objects.exists()
+
+
+@pytest.mark.parametrize("email", ["someone@gmail.com", "someone@googlemail.com"])
+def test_a_consumer_domain_matches_by_address_and_sends_no_hd(google, user, ws, email):
+    _domains(ws, user, "gmail.com" if email.endswith("@gmail.com") else "googlemail.com")
+    google.user = {"sub": "6", "email": email, "email_verified": True}     # consumer: no `hd`
     _, query, landed = _connect(user)
     assert "hd" not in query
     assert "status=connected" in landed
@@ -218,6 +261,16 @@ def test_allowed_domains_are_normalised_and_checked(user, ws):
         with pytest.raises(services.ConnectionError) as e:
             _domains(ws, user, bad)
         assert e.value.code == "invalid_app", bad
+    with pytest.raises(services.ConnectionError) as e:
+        _domains(ws, user, "bücher.de")
+    assert "punycode" in str(e.value)
+    assert _domains(ws, user, "xn--bcher-kva.de").options == {"allowed_domains": "xn--bcher-kva.de"}
+
+
+def test_the_allowed_domains_field_explains_itself():
+    (field,) = GoogleProvider.option_fields
+    assert field.label == "Allowed email domains"
+    assert "Blank allows any Google account" in field.help and "not its subdomains" in field.help
 
 
 def test_allowed_domains_may_change_while_connections_exist(google, user, ws):
@@ -238,11 +291,24 @@ def test_an_agent_is_hinted_and_must_sign_in_as_its_own_account(google, user, ws
     assert query["login_hint"] == "eva@dimagi-ai.com"
     assert "reason=wrong_account" in landed                  # the admin's browser was someone@gmail.com
     assert not Connection.objects.exists()
+    # The admin's own account is not left with a live grant to the workspace's client.
+    assert google.revokes() == [{"token": "1//refresh", "token_type_hint": "refresh_token",
+                                 "client_id": "123.apps.googleusercontent.com", "client_secret": "GOCSPX-s"}]
 
     google.user = {"sub": "4", "email": "EVA@dimagi-ai.com", "email_verified": True}
     _, _, landed = _connect(user, agent="eva")
     assert "status=connected" in landed
     assert Connection.objects.get(agent=eva).account_label == "eva@dimagi-ai.com"
+
+
+def test_an_agent_with_one_allowed_domain_gets_both_hints_and_both_checks(google, user, ws):
+    _domains(ws, user, "dimagi-ai.com")
+    _agent(user, ws, google_account="eva@gmail.com")          # its identity is outside the domain
+    google.user = {"sub": "7", "email": "eva@gmail.com", "email_verified": True}
+    _, query, landed = _connect(user, agent="eva")
+    assert query["hd"] == "dimagi-ai.com" and query["login_hint"] == "eva@gmail.com"
+    assert "reason=wrong_account" in landed                  # the domain rule binds agents too
+    assert not Connection.objects.exists()
 
 
 def test_an_agent_with_no_google_identity_is_not_hinted_and_takes_any_account(google, user, ws):
@@ -267,6 +333,16 @@ def test_refresh_keeps_the_refresh_token_google_does_not_resend(google, user, ws
     assert decrypt_secret(conn.refresh_token_enc) == "1//refresh"
     assert conn.access_token_seconds == 3599
     assert GoogleProvider.rotates_refresh_token is False
+
+
+def test_a_400_from_googles_revoke_still_disconnects(google, user, ws, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    _connect(user)
+    google.revoke_status = 400                                # already revoked at Google
+    services.disconnect(Connection.objects.get(), by=user)
+    assert not Connection.objects.exists()
+    assert any(services.parse_log_line(r.getMessage())[1].get("error") == "invalid_token"
+               for r in caplog.records if r.name == "apps.connections.services")
 
 
 def test_disconnect_revokes_the_refresh_token_at_google(google, user, ws):

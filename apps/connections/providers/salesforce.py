@@ -47,7 +47,9 @@ class SalesforceProvider(Provider):
         # Salesforce never says how long a token lives: set this to the Connected
         # App's session timeout, never longer.
         OptionField("access_token_seconds", "Access token lifetime (seconds)", "int",
-                    default=default_access_token_seconds),
+                    default=default_access_token_seconds,
+                    help="Salesforce does not say how long a token lives: set this to the Connected "
+                         "App's session timeout, never longer."),
     )
 
     # A grant's refresh token is only good at the login host that issued it.
