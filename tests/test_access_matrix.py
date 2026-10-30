@@ -4,8 +4,9 @@ Owner decisions of 2026-10-04: one function (`apps.agents.access.decide`) decide
 what a person may make an agent do, and every entry point that makes an agent
 work asks it — the harness API, a canopy-web chat send, Slack intake, email
 intake and the caller envelope. This matrix walks roles × entry points ×
-interface (none / Eva-like `full: [member, contact@dimagi.com:verified]` /
-Hal-like ask-only) and pins, for each cell, the profile the turn runs in, why
+access list (none / editors only / Eva-like "members and verified dimagi staff are editors" /
+Hal-like ask-only, each with and without the editors line; written in the old words through
+`tests/access_helpers.publish`) and pins, for each cell, the profile the turn runs in, why
 (`granted_by`), and the mode it is claimed in — plus who may REQUEST `auto`, the
 pin rule, and the routing-auto gate.
 """
@@ -17,8 +18,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import access
-from apps.agents.interface import parse
-from apps.agents.models import Agent, AgentAdmin
+from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import send as session_send
 from apps.harness import caller_context, services
@@ -26,6 +26,8 @@ from apps.harness import initiator as who
 from apps.harness import turn_mode
 from apps.harness.models import Runner, RunnerAdmin, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+from .access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -35,7 +37,16 @@ EVA = {"full": ["member", "contact@dimagi.com:verified"]}
 #: Hal-like: everyone not an admin is confined to `ask`.
 HAL = {"capabilities": {"ask": {"description": "Ask", "callers": ["member", "contact"],
                                 "tools": ["Read"]}}}
-IFACES = {"none": None, "eva": EVA, "hal": HAL}
+#: The interface, in the old words, and whether the old implicit "workspace editors drive it,
+#: manual" rule is also a line on the list. `none` is the new default (an agent nothing was
+#: said about: owner and admins only); `editors` is that rule alone, what an absent interface
+#: used to mean; `*_confined` was `editors: confined`.
+IFACES = {"none": (None, False), "editors": (None, True), "eva": (EVA, True), "hal": (HAL, True),
+          "eva_confined": (EVA, False), "hal_confined": (HAL, False)}
+#: Why, for each access-list line the matrix uses (`Decision.basis`).
+MEMBER_LINE = "grant:workspace:connect::"
+EDITORS_LINE = "grant:workspace:connect:editor:"
+DIMAGI_STAFF_LINE = "grant:contact:dimagi.com"
 
 
 def _dmarc(domain):
@@ -63,9 +74,9 @@ def w():
             "ws_admin": wsadm, "editor": ed, "viewer": vw}
 
 
-def _publish(agent, doc):
-    agent.interface = parse(doc) if doc else {}
-    agent.save(update_fields=["interface"])
+def _publish(agent, iface):
+    doc, editors = IFACES[iface]
+    publish(agent, doc, editors=editors)
 
 
 # --- the entry points ---------------------------------------------------------------------
@@ -107,33 +118,26 @@ def _via_email(w, email, key, verified=True):
 ENTRY_POINTS = {"api": _via_api, "chat": _via_chat, "slack": _via_slack}
 
 #: What each member role reaches, per interface: (profile, granted_by, mode at claim).
-#: The agent's own switch is `auto`, so `manual` here is the editor tier at work.
+#: The agent's own switch is `auto`, so `manual` here is an editor line that says `manual_only`.
+OWNER_ROW = {i: ("full", "owner", "auto") for i in IFACES}
+ADMIN_ROW = {i: ("full", "admin", "auto") for i in IFACES}
+REFUSED = (None, "refused", None)
 EXPECT = {
-    "owner":    {"none": ("full", "owner", "auto"), "eva": ("full", "owner", "auto"),
-                 "hal": ("full", "owner", "auto")},
-    "ws_owner": {"none": ("full", "admin", "auto"), "eva": ("full", "admin", "auto"),
-                 "hal": ("full", "admin", "auto")},
-    "admin":    {"none": ("full", "admin", "auto"), "eva": ("full", "admin", "auto"),
-                 "hal": ("full", "admin", "auto")},
-    # A workspace admin runs the workspace and holds no agent keys: editor tier.
-    "ws_admin": {"none": ("full", "editor", "manual"), "eva": ("full", "full:member", "auto"),
-                 "hal": ("full", "editor", "manual")},
-    "editor":   {"none": ("full", "editor", "manual"), "eva": ("full", "full:member", "auto"),
-                 "hal": ("full", "editor", "manual")},
-    "viewer":   {"none": (None, "refused", None), "eva": ("full", "full:member", "auto"),
-                 "hal": ("confined", "capability:ask", "auto")},
+    "owner": OWNER_ROW, "ws_owner": ADMIN_ROW, "admin": ADMIN_ROW,
+    # A workspace admin or editor holds no agent keys: only a line lets them in. The old
+    # "editors drive it" rule is a line now, so it must be on the list for them to get in.
+    "ws_admin": {"none": REFUSED, "editors": ("full", EDITORS_LINE, "manual"),
+                 "eva": ("full", MEMBER_LINE, "auto"), "hal": ("full", EDITORS_LINE, "manual"),
+                 "eva_confined": ("full", MEMBER_LINE, "auto"),
+                 "hal_confined": ("confined", "capability:ask", "auto")},
+    "editor": {"none": REFUSED, "editors": ("full", EDITORS_LINE, "manual"),
+               "eva": ("full", MEMBER_LINE, "auto"), "hal": ("full", EDITORS_LINE, "manual"),
+               "eva_confined": ("full", MEMBER_LINE, "auto"),
+               "hal_confined": ("confined", "capability:ask", "auto")},
+    "viewer": {"none": REFUSED, "editors": REFUSED, "eva": ("full", MEMBER_LINE, "auto"),
+               "hal": ("confined", "capability:ask", "auto"), "eva_confined": ("full", MEMBER_LINE, "auto"),
+               "hal_confined": ("confined", "capability:ask", "auto")},
 }
-
-#: `editors: confined` (a support agent meant for everyone): a workspace editor or
-#: admin who is not an agent admin is decided exactly like a viewer — a `full:`
-#: rule still lifts them (eva), else the capability, confined, in the agent's own
-#: mode with no manual cap (hal). Owners, admins and viewers are unchanged.
-IFACES["eva_confined"] = {**EVA, "editors": "confined"}
-IFACES["hal_confined"] = {**HAL, "editors": "confined"}
-for _role, _row in EXPECT.items():
-    _row["eva_confined"] = _row["eva"]
-    _row["hal_confined"] = (("confined", "capability:ask", "auto")
-                            if _role in ("ws_admin", "editor") else _row["hal"])
 
 
 def _check(turn, want):
@@ -158,7 +162,7 @@ def _check(turn, want):
 @pytest.mark.parametrize("role", list(EXPECT))
 @pytest.mark.parametrize("door", list(ENTRY_POINTS))
 def test_members_through_every_signed_in_entry_point(w, door, role, iface):
-    _publish(w["agent"], IFACES[iface])
+    _publish(w["agent"], iface)
     user = w[role]
     turn = ENTRY_POINTS[door](w, user, f"{door}-{role}-{iface}")
     want = EXPECT[role][iface]
@@ -167,6 +171,9 @@ def test_members_through_every_signed_in_entry_point(w, door, role, iface):
         # talks to an agent by chat, Slack or a capability's MCP tool instead.
         assert turn is None
         return
+    if turn is None:        # refused at the door: the list does not name them
+        assert want[0] is None
+        return
     _check(turn, want)
 
 
@@ -174,28 +181,26 @@ def test_members_through_every_signed_in_entry_point(w, door, role, iface):
 @pytest.mark.parametrize("role", list(EXPECT))
 def test_members_by_verified_email(w, role, iface):
     """A member proven by THIS message's DMARC is that member (`member_behind_email`)."""
-    _publish(w["agent"], IFACES[iface])
+    _publish(w["agent"], iface)
     _check(_via_email(w, w[role].email, f"{role}-{iface}"), EXPECT[role][iface])
 
 
+STAFF = {"full": (("full", DIMAGI_STAFF_LINE, "auto")), "ask": ("confined", "capability:ask", "auto")}
 CONTACTS = {
-    # (address, verified) -> per interface
-    ("staff@dimagi.com", True): {"none": (None, "refused", None),
-                                 "eva": ("full", "full:contact@dimagi.com:verified", "auto"),
-                                 "hal": ("confined", "capability:ask", "auto")},
-    ("staff@dimagi.com", False): {"none": (None, "refused", None), "eva": (None, "refused", None),
-                                  "hal": ("confined", "capability:ask", "auto")},
-    ("someone@partner.org", True): {"none": (None, "refused", None), "eva": (None, "refused", None),
-                                    "hal": ("confined", "capability:ask", "auto")},
+    # (address, verified) -> per interface; `editors` lines are about members only
+    ("staff@dimagi.com", True): {"none": REFUSED, "editors": REFUSED, "eva": STAFF["full"],
+                                 "hal": STAFF["ask"]},
+    ("staff@dimagi.com", False): {"none": REFUSED, "editors": REFUSED, "eva": REFUSED, "hal": STAFF["ask"]},
+    ("someone@partner.org", True): {"none": REFUSED, "editors": REFUSED, "eva": REFUSED, "hal": STAFF["ask"]},
 }
-for _row in CONTACTS.values():   # `editors:` is about members only
+for _row in CONTACTS.values():
     _row["eva_confined"], _row["hal_confined"] = _row["eva"], _row["hal"]
 
 
 @pytest.mark.parametrize("iface", list(IFACES))
 @pytest.mark.parametrize("sender", list(CONTACTS))
 def test_contacts_by_email(w, sender, iface):
-    _publish(w["agent"], IFACES[iface])
+    _publish(w["agent"], iface)
     address, verified = sender
     turn = _via_email(w, address, f"{address}-{verified}-{iface}", verified=verified)
     _check(turn, CONTACTS[sender][iface])
@@ -204,24 +209,26 @@ def test_contacts_by_email(w, sender, iface):
 
 
 def test_a_refusal_says_what_the_caller_can_do(w):
-    _publish(w["agent"], None)
+    _publish(w["agent"], "none")
     t = _via_chat(w, w["viewer"], "r1")
-    assert "published no interface" in t.result_note and "editor" in t.result_note
-    _publish(w["agent"], {"capabilities": {"ask": {"callers": ["member"]},
-                                           "status": {"callers": ["member"]}}})
+    assert "access list" in t.result_note and "editor" in t.result_note and w["owner"].email in t.result_note
+    publish(w["agent"], {"capabilities": {"ask": {"callers": ["member"]},
+                                          "status": {"callers": ["member"]}}})
     d = access.decide(w["agent"], w["viewer"], verified=True, capability="deploy")
-    assert d.access == access.NONE
-    assert "you may use capability 'ask', 'status'" in d.reason
+    assert d.access == access.NONE        # a line cannot use a capability the agent does not have
+    assert "access list" in d.reason and w["owner"].email in d.reason
+    assert access.decide(w["agent"], w["viewer"], verified=True, capability="status").access == access.CONFINED
 
 
 def test_the_mcp_tool_list_follows_the_rule(w):
     from apps.agents.interface import offered_to
 
-    _publish(w["agent"], HAL)
+    _publish(w["agent"], "hal")
     assert offered_to(w["editor"], w["agent"]) == ["ask"]      # full: every capability
     assert offered_to(w["viewer"], w["agent"]) == ["ask"]
-    _publish(w["agent"], {"capabilities": {"ask": {"callers": ["contact"]},
-                                           "admin_only": {"callers": []}}})
+    AgentGrant.objects.filter(agent=w["agent"]).delete()
+    publish(w["agent"], {"capabilities": {"ask": {"callers": ["contact"]},
+                                          "admin_only": {"callers": []}}})
     assert offered_to(w["editor"], w["agent"]) == ["admin_only", "ask"]
     assert offered_to(w["viewer"], w["agent"]) == []
 
@@ -234,6 +241,7 @@ def test_the_mcp_tool_list_follows_the_rule(w):
 ])
 @pytest.mark.parametrize("mode", ["", "manual", "auto"])
 def test_who_may_request_which_mode(w, role, may_auto, mode):
+    _publish(w["agent"], "editors")
     c = Client()
     c.force_login(w[role])
     body = {"agent_slug": "agent", "origin": "api", "idempotency_key": f"m-{role}-{mode}",
@@ -258,6 +266,7 @@ def test_who_may_request_which_mode(w, role, may_auto, mode):
 
 
 def test_an_editor_promoted_while_queued_gets_the_agents_mode_at_claim(w):
+    _publish(w["agent"], "editors")
     t = _via_api(w, w["editor"], "promote")
     assert turn_mode.for_turn(t, fresh=True).mode == "manual"
     AgentAdmin.objects.create(agent=w["agent"], user=w["editor"], granted_by=w["owner"])
@@ -275,6 +284,7 @@ def _runner(owner, name):
     ("owner", True), ("ws_owner", True), ("admin", True), ("ws_admin", False), ("editor", False),
 ])
 def test_pinning_needs_agent_admin_or_runner_admin(w, role, may_pin):
+    _publish(w["agent"], "editors")
     box = _runner(w["owner"], "owners-box")                 # may hold the agent
     c = Client()
     c.force_login(w[role])

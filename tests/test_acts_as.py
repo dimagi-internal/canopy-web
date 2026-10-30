@@ -21,6 +21,7 @@ from apps.harness.models import PrivateRunner, Runner, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces import role_cap
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import editors_run
 from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
@@ -36,9 +37,10 @@ def world(monkeypatch):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     other = User.objects.create_user("aath", "aath@dimagi.com")
     WorkspaceMembership.objects.create(workspace=ws, user=other, role=WorkspaceMembership.EDITOR)
-    # No published interface: an editor gets the whole agent (manual), a viewer nothing.
+    # Workspace editors drive the whole agent (manual); a viewer gets nothing.
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, turn_mode=Agent.AUTO,
                                runtime_secrets=["hal-key"])
+    editors_run(hal)
     AgentCredential.objects.create(agent=hal, name="hal-key", value_zk=SECRET, kv=0)
     box = Runner.objects.create(name="jj-mbp-cdp", kind=Runner.EMDASH, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
@@ -227,7 +229,7 @@ def test_a_local_turn_opened_as_an_editor_is_an_editors(world):
     assert turn.turn_mode == "manual"
     assert "acting as editor" in turn.turn_mode_basis
     lic = world["hal"].licenses.get(user=world["jj"])
-    assert lic.status == "active" and lic.basis == "editor"
+    assert lic.status == "active" and lic.basis.startswith("grant:workspace:dimagi:editor")
 
 
 def test_its_reads_go_out_under_the_license_and_keep_the_cap(world):

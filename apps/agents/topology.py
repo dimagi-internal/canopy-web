@@ -37,8 +37,8 @@ from .tree import agents_in_tree
 
 #: Why an edge has the access it has. `editor`: full, but manual only.
 #: `no-interface`: a viewer, refused because the target published no interface.
-OWNER, WS_OWNER, ADMIN, FULL_RULE, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
-    "owner", "workspace-owner", "admin", "full-rule", "editor", "no-interface", "capabilities",
+OWNER, WS_OWNER, ADMIN, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
+    "owner", "workspace-owner", "admin", "editor", "no-interface", "capabilities",
     "nothing-offered", "not-member", "no-login",
 )
 
@@ -48,7 +48,7 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
     agent's login (`may_manage`: the viewer owns `dst` or its workspace)."""
     login = src.user
     out = {"source": src.slug, "target": dst.slug, "access": "none", "basis": NO_LOGIN,
-           "capabilities": [], "full_rule": None, "explicit_admin": False,
+           "capabilities": [], "explicit_admin": False,
            "can_grant": False, "can_revoke": False}
     if login is None:
         return out
@@ -68,14 +68,11 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
     else:
         d = access.decide(dst, login, verified=True, standing=st)
         iface = dst.interface or {}
-        if d.access == access.FULL and d.basis.startswith("full:"):
-            out.update(access="full", basis=FULL_RULE, full_rule=d.basis.split(":", 1)[1])
-        elif d.access == access.FULL:
+        if d.access == access.FULL:
             out.update(access="full", basis=EDITOR)
         elif d.access == access.CONFINED:
             caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
-                          if iface_mod._expand("member", login.email or "", True)
-                          & set(c.get("callers") or []))
+                          if iface_mod.role_opens(d.agent_role, c))
             out.update(access="confined", basis=CAPABILITIES, capabilities=caps)
         else:
             out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE

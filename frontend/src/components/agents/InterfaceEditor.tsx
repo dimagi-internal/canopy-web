@@ -8,21 +8,18 @@ import {
 } from '@/api/agents'
 import {
   askCapability,
-  CALLER_BASES,
+  CAPABILITY_ROLES,
   clone,
-  formatCaller,
   fromLines,
-  parseCaller,
-  previewCapability,
-  previewFull,
   problemsFor,
   renamedCapability,
-  siteDoor,
+  siteCapability,
   toLines,
   uniqueName,
   withCapability,
   withoutCapability,
   type Capability,
+  type CapabilityRole,
   type InterfaceModel,
   type Problem,
 } from './interfaceModel'
@@ -30,98 +27,11 @@ import {
 const field = 'rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground'
 const smallButton = 'rounded-md border border-border bg-input px-2.5 py-1 text-[12px] font-medium text-foreground hover:border-primary'
 
-type Summary = { readonly who: string; readonly reaches: string }
-
 function Errors({ messages, testId }: { messages: string[]; testId?: string }) {
   if (messages.length === 0) return null
   return (
     <div data-testid={testId ?? 'field-error'} role="alert" className="text-[11px] text-destructive">
       {messages.map((m) => <div key={m}>{m}</div>)}
-    </div>
-  )
-}
-
-function DomainInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  const [text, setText] = useState(value)
-  // A row removed above this one hands it another rule's domain.
-  useEffect(() => setText((t) => (t.trim().toLowerCase() === value ? t : value)), [value])
-  return (
-    <input
-      aria-label={label}
-      placeholder="any domain"
-      value={text}
-      onChange={(e) => {
-        setText(e.target.value)
-        onChange(e.target.value)
-      }}
-      className={`${field} w-40`}
-    />
-  )
-}
-
-// Rows of "who": a class picker, an optional domain and a verified box, each with its sentence.
-function CallersEditor({
-  label,
-  rules,
-  onChange,
-  preview,
-  errors,
-}: {
-  label: string
-  rules: string[]
-  onChange: (rules: string[]) => void
-  preview: (rule: string) => string
-  errors: string[]
-}) {
-  const set = (i: number, rule: string) => onChange(rules.map((r, j) => (j === i ? rule : r)))
-  return (
-    <div className="flex flex-col gap-1.5">
-      {rules.map((rule, i) => {
-        const parts = parseCaller(rule)
-        return (
-          <div key={i} data-testid="caller-row" className="flex flex-col gap-0.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                aria-label={`${label} class ${i + 1}`}
-                value={parts.base}
-                onChange={(e) => set(i, formatCaller({ ...parts, base: e.target.value }))}
-                className={`${field} w-auto`}
-              >
-                {CALLER_BASES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-              </select>
-              <DomainInput
-                label={`${label} domain ${i + 1}`}
-                value={parts.domain}
-                onChange={(domain) => set(i, formatCaller({ ...parts, domain }))}
-              />
-              <label className="flex items-center gap-1 text-[12px] text-foreground-secondary">
-                <input
-                  type="checkbox"
-                  aria-label={`${label} verified ${i + 1}`}
-                  checked={parts.verified}
-                  onChange={(e) => set(i, formatCaller({ ...parts, verified: e.target.checked }))}
-                />
-                verified
-              </label>
-              <button
-                type="button"
-                aria-label={`Remove ${label} ${i + 1}`}
-                onClick={() => onChange(rules.filter((_, j) => j !== i))}
-                className="text-[12px] text-muted-foreground underline hover:text-destructive"
-              >
-                Remove
-              </button>
-            </div>
-            <div data-testid="caller-preview" className="text-[11px] text-muted-foreground">{preview(rule)}</div>
-          </div>
-        )
-      })}
-      <Errors messages={errors} />
-      <div>
-        <button type="button" onClick={() => onChange([...rules, 'member'])} className={smallButton}>
-          Add who
-        </button>
-      </div>
     </div>
   )
 }
@@ -201,16 +111,21 @@ function CapabilityCard({
         </button>
       </div>
       <Errors messages={problemsFor(problems, name)} testId="card-error" />
-      <div className="flex flex-col gap-1">
-        <div className="text-[12px] font-medium text-foreground">Who may use it</div>
-        <CallersEditor
-          label={`${name} caller`}
-          rules={cap.callers ?? []}
-          onChange={(callers) => set({ callers })}
-          preview={(rule) => previewCapability(rule, name)}
-          errors={err('callers')}
-        />
-      </div>
+      <label className="flex flex-col gap-0.5 text-[12px] font-medium text-foreground">
+        <span>Role</span>
+        <select
+          aria-label={`${name} role`}
+          value={cap.role ?? 'user'}
+          onChange={(e) => set({ role: e.target.value as CapabilityRole })}
+          className={`${field} w-auto max-w-full`}
+        >
+          {CAPABILITY_ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+        </select>
+        <span className="text-[11px] font-normal text-muted-foreground">
+          This is the lowest role that may use it. Who has which role is set on the agent&apos;s Access setting.
+        </span>
+        <Errors messages={err('role')} />
+      </label>
       <details open className="flex flex-col gap-2">
         <summary className="cursor-pointer text-[12px] font-medium text-foreground">What it may use</summary>
         <div className="mt-2 flex flex-col gap-2">
@@ -311,7 +226,6 @@ export function InterfaceEditor({
   const [mode, setMode] = useState<'form' | 'yaml'>('form')
   const [yamlText, setYamlText] = useState(saved.yaml ?? saved.source ?? '')
   const [problems, setProblems] = useState<readonly Problem[]>([])
-  const [summary, setSummary] = useState<readonly Summary[]>(saved.summary ?? [])
   const [validYaml, setValidYaml] = useState<string | null>(saved.yaml ?? null)
   const [validModel, setValidModel] = useState<InterfaceModel | null>(model)
   const [checking, setChecking] = useState(false)
@@ -336,7 +250,6 @@ export function InterfaceEditor({
           if (mine !== seq.current) return
           setProblems(r.errors)
           if (r.errors.length === 0) {
-            setSummary(r.summary)
             setValidYaml(r.yaml)
             setValidModel((r.interface ?? null) as InterfaceModel | null)
           } else {
@@ -398,11 +311,6 @@ export function InterfaceEditor({
         </button>
       </div>
 
-      <div data-testid="draft-summary" className="rounded-md border border-border bg-card px-3 py-2">
-        <div className="mb-1 text-[11px] font-medium text-muted-foreground">With these settings</div>
-        <SummaryLines lines={summary} />
-      </div>
-
       {mode === 'yaml' ? (
         <div className="flex flex-col gap-2">
           <label htmlFor={`iface-${agentSlug}`} className="text-[12px] text-muted-foreground">Interface (YAML)</label>
@@ -418,23 +326,10 @@ export function InterfaceEditor({
         </div>
       ) : (
         <>
-          <section className="flex flex-col gap-1.5">
-            <h3 className="m-0 text-[13px] font-medium text-foreground">Whole agent</h3>
-            <p className="m-0 text-[11px] text-muted-foreground">
-              Who gets everything the agent&apos;s admins get. Leave empty to keep it to the owner, admins and editors.
-            </p>
-            <CallersEditor
-              label="Whole-agent rule"
-              rules={model.full ?? []}
-              onChange={(full) => edit({ ...model, full })}
-              preview={previewFull}
-              errors={problemsFor(problems, 'full')}
-            />
-          </section>
           <section className="flex flex-col gap-2">
             <h3 className="m-0 text-[13px] font-medium text-foreground">Capabilities</h3>
             <p className="m-0 text-[11px] text-muted-foreground">
-              What everyone else may do. A caller reaches a capability only if it lists them; everything not listed is refused.
+              What viewers and users may do. Each capability names the lowest role that may use it; who has which role is set on the Access setting. Anything not listed here is refused.
             </p>
             {names.map((n) => (
               <CapabilityCard
@@ -447,7 +342,7 @@ export function InterfaceEditor({
                 onRemove={() => edit(withoutCapability(model, n))}
               />
             ))}
-            {names.length === 0 && <p className="m-0 text-[12px] text-muted-foreground">No capabilities: nobody outside the owner, admins and editors can use this agent.</p>}
+            {names.length === 0 && <p className="m-0 text-[12px] text-muted-foreground">No capabilities: only people the access list makes editors, agent admins or the owner can use this agent.</p>}
             <div className="flex flex-wrap gap-2">
               {!caps.ask && (
                 <button type="button" onClick={() => edit(withCapability(model, 'ask', askCapability(agentSlug)))} className={smallButton}>
@@ -455,11 +350,11 @@ export function InterfaceEditor({
                 </button>
               )}
               {sites.map((s) => (
-                <button key={s} type="button" onClick={() => edit(withCapability(model, uniqueName(model, s.replace(/-.*$/, '')), siteDoor(s)))} className={smallButton}>
+                <button key={s} type="button" onClick={() => edit(withCapability(model, uniqueName(model, s.replace(/-.*$/, '')), siteCapability(s)))} className={smallButton}>
                   Add a {s} site capability
                 </button>
               ))}
-              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), { ...askCapability(agentSlug), description: '', entry: null }))} className={smallButton}>
+              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), { ...askCapability(agentSlug), description: '', entry: null, role: 'user' }))} className={smallButton}>
                 Add a blank capability
               </button>
             </div>
@@ -493,19 +388,5 @@ export function InterfaceEditor({
       </div>
       {error && <p role="alert" className="m-0 whitespace-pre-wrap text-[12px] text-destructive">{error}</p>}
     </div>
-  )
-}
-
-// One line per caller class: who, and what they reach.
-export function SummaryLines({ lines }: { lines: readonly Summary[] }) {
-  return (
-    <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-[13px]">
-      {lines.map((l) => (
-        <li key={l.who} data-testid="summary-line" className="text-foreground">
-          <span className="font-medium">{l.who}</span>
-          <span className="text-foreground-secondary">: {l.reaches}</span>
-        </li>
-      ))}
-    </ul>
   )
 }

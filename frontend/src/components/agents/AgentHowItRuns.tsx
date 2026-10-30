@@ -195,7 +195,7 @@ export function AgentHowItRuns({
         <CopyCommand command={`canopy agent use ${slug}`} testId="agent-use-command" />
         <p className="text-[12px] text-muted-foreground">
           It installs {name}&rsquo;s plugin, lets this computer read its secrets, and records your sessions as
-          direct turns here. Who may: its owner and admins, anyone a full: rule names, and workspace editors.
+          direct turns here. Who may: the editors, agent admins and owner on its access list.
         </p>
         {readiness && (
           <p className="flex items-center gap-2 text-[12px] text-foreground" data-testid="viewer-readiness"

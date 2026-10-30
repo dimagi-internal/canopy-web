@@ -14,13 +14,13 @@ from django.test import Client, override_settings
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentTask
 from apps.mcp import delegation
 from apps.mcp.server import mcp
 from apps.host_grants import host_gateway, self_host
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 
 BASE = "https://canopy.test"
 
@@ -49,7 +49,8 @@ def self_host_world():
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     WorkspaceMembership.objects.create(user=visitor, workspace=ws, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(user=owner, workspace=other, role=WorkspaceMembership.OWNER)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner, interface=parse(IFACE))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
+    publish(agent, IFACE)
     app = AppCredential.create_credential(name="canopy-web", created_by=owner, workspace=ws)
     # The site configured exactly as the docs say: its JWKS URL is canopy's own
     # host key, its issuer and MCP resource are this deployment.

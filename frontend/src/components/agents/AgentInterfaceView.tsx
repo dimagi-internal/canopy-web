@@ -7,8 +7,8 @@ import {
   type AgentInterfaceOut,
   type SettingChangeOut,
 } from '@/api/agents'
-import { InterfaceEditor, SummaryLines } from './InterfaceEditor'
-import { describeCaller, type Capability } from './interfaceModel'
+import { InterfaceEditor } from './InterfaceEditor'
+import type { Capability } from './interfaceModel'
 
 // The capabilities an interface marks as handling sensitive data.
 function sensitiveCapabilities(iface: unknown): string[] {
@@ -41,9 +41,10 @@ function changeLabel(c: SettingChangeOut): string {
   return 'Saved'
 }
 
-// The agent's declared interface: who may make it do what. LIVE STATE held by
-// canopy-web — not a file in the agent's repo — so owners and admins edit it
-// here (a form, with the YAML one click away), and every member can read it.
+// The agent's declared interface: the capabilities it offers viewers and users, each with the
+// lowest role that may use it. Who has which role is the Access setting, not this. LIVE STATE held
+// by canopy-web — not a file in the agent's repo — so agent admins edit it here (a form, with the
+// YAML one click away), and anyone who can see the agent can read it.
 export function AgentInterfaceView({
   agentSlug,
   agentName,
@@ -113,30 +114,30 @@ export function AgentInterfaceView({
     )
   }
 
-  const iface = (data.interface ?? {}) as { full?: string[]; capabilities?: Record<string, Capability> }
+  const iface = (data.interface ?? {}) as { capabilities?: Record<string, Capability> }
   const caps = iface.capabilities ?? {}
   const names = Object.keys(caps)
   const isDefault = data.is_default
 
   return (
     <div className="flex flex-col gap-2">
-      <div data-testid="access-summary" className="flex flex-col gap-1 rounded-md border border-border bg-card px-3 py-2">
-        <div className="text-[11px] font-medium text-muted-foreground">
-          Access summary{isDefault ? ' — default' : ''}
-        </div>
-        {isDefault && (
-          <p data-testid="interface-default" className="m-0 text-[13px] text-foreground">
-            Owner and admins only (default). Nobody else can use {agentName ?? agentSlug} until you add a rule.
-          </p>
-        )}
-        <SummaryLines lines={data.summary ?? []} />
-      </div>
+      {isDefault && (
+        <p data-testid="interface-default" className="m-0 text-[13px] text-foreground">
+          {agentName ?? agentSlug} offers no capabilities (default), so viewers and users cannot use it. Who may use
+          it is set on the Access setting.
+        </p>
+      )}
+      {names.length > 0 && (
+        <p className="m-0 text-[12px] text-muted-foreground">
+          Each capability names the lowest role that may use it. Who has which role is set on the Access setting.
+        </p>
+      )}
       {names.length > 0 && (
         <table className="w-full text-[13px]">
           <thead>
             <tr className="text-left text-[11px] text-muted-foreground">
               <th className="py-1 font-medium">Capability</th>
-              <th className="py-1 font-medium">Who</th>
+              <th className="py-1 font-medium">Lowest role</th>
               <th className="py-1 font-medium">Allows</th>
               <th className="py-1 font-medium">Sensitive data</th>
             </tr>
@@ -156,7 +157,7 @@ export function AgentInterfaceView({
                     )}
                   </td>
                   <td className="py-1.5 align-top text-[12px] text-foreground-secondary">
-                    {(c.callers ?? []).map(describeCaller).join(', ') || 'nobody'}
+                    {c.role === 'viewer' ? 'Viewer' : 'User'}
                   </td>
                   <td className="py-1.5 align-top font-mono text-[11px] text-foreground-secondary">
                     {[...(c.sites ?? []).map((s) => `site: ${s}`), ...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (
@@ -200,15 +201,6 @@ export function AgentInterfaceView({
           {data.published_by_email ? ` by ${data.published_by_email}` : ''}. Everything not listed is refused.
         </p>
       )}
-      {(data.warnings ?? []).map((w) => (
-        <p
-          key={w}
-          data-testid="interface-warning"
-          className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-warning"
-        >
-          {w}
-        </p>
-      ))}
       {canEdit && (
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -216,7 +208,7 @@ export function AgentInterfaceView({
             onClick={() => setEditing(true)}
             className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-primary"
           >
-            {isDefault ? 'Add rules' : 'Edit'}
+            {isDefault ? 'Add capabilities' : 'Edit'}
           </button>
           {!isDefault && (
             <button

@@ -1,10 +1,8 @@
-"""`access.decide` reads the access list alongside an agent's published rules.
+"""`access.decide` gives everyone but the owner, the admins and canopy exactly what their line says.
 
-`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`, step 2: whatever the
-list gives the asker is merged with what the interface already gave them and the more
-permissive answer stands, so an agent with an empty list decides exactly as it always did
-(`tests/test_access_matrix.py` is the oracle for that) and every decision now says which role
-it put the asker in and why.
+`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`: an agent's access list
+is the only way in beyond its owner and admins, every decision says which role it put the asker in
+and why, and a line can only use a capability the agent actually has.
 """
 from __future__ import annotations
 
@@ -25,8 +23,8 @@ M, G = WorkspaceMembership, AgentGrant
 
 #: A viewer capability (`ask`, open to contacts) and a user one (`canopy`, members only).
 IFACE = {"capabilities": {
-    "ask": {"callers": [], "role": "viewer", "tools": ["Read"]},
-    "canopy": {"callers": [], "role": "user", "tools": ["Read", "Grep"]},
+    "ask": {"role": "viewer", "tools": ["Read"]},
+    "canopy": {"role": "user", "tools": ["Read", "Grep"]},
 }}
 
 
@@ -63,35 +61,34 @@ def _slack_turn(w, contact, assurance="slack_member"):
 
 # --- every decision now names its role and where it came from ---------------------------
 
-def test_the_rules_an_agent_was_published_with_are_named_on_the_ladder(w):
+def test_owner_and_admin_are_named_on_the_ladder_and_a_workspace_editor_with_no_line_is_refused(w):
     agent = w["agent"]
-    Agent.objects.filter(pk=agent.pk).update(interface=parse({**IFACE, "full": ["member@dimagi.com"]}))
-    agent.refresh_from_db()
     d = access.decide(agent, w["owner"], verified=True)
     assert (d.agent_role, d.source) == (roles.OWNER, "owner")
     AgentAdmin.objects.create(agent=agent, user=w["vw"], granted_by=w["owner"])
     d = access.decide(agent, w["vw"], verified=True)
     assert (d.agent_role, d.source) == (roles.ADMIN, "admin")
-    M.objects.create(user=w["out"], workspace=w["connect"], role=M.EDITOR)
-    d = access.decide(agent, w["out"], verified=True)
-    # `out` is a connect editor AND a member at dimagi.com: the `full:` rule is the more
-    # permissive of the two (no manual gate), so it is what they are named by.
-    assert (d.agent_role, d.source, d.manual_only) == (roles.EDITOR, "rule:member@dimagi.com", False)
-
-
-def test_the_implicit_workspace_editor_tier_is_an_editor_whose_turns_are_manual(w):
-    d = access.decide(w["agent"], w["owner"], verified=True)    # owner: baseline
-    assert d.agent_role == roles.OWNER
     editor = get_user_model().objects.create_user("ce", "ce@elsewhere.org", "pw")
     M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
+    d = access.decide(agent, editor, verified=True)
+    # Being a workspace editor is not a role on the agent: nothing names them, so nothing.
+    assert (d.access, d.agent_role) == (access.NONE, None)
+    assert "access list" in d.reason and w["owner"].email in d.reason
+
+
+def test_a_line_that_says_manual_only_is_the_old_editor_tier(w):
+    editor = get_user_model().objects.create_user("ce", "ce@elsewhere.org", "pw")
+    M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
+    _line(w, roles.EDITOR, kind=G.WORKSPACE, subject_workspace=w["connect"], at_least=M.EDITOR, manual_only=True)
     d = access.decide(w["agent"], editor, verified=True)
-    assert (d.access, d.agent_role, d.source, d.manual_only) == (
-        access.FULL, roles.EDITOR, "workspace-editor", True)
+    assert (d.access, d.agent_role, d.manual_only) == (access.FULL, roles.EDITOR, True)
+    assert d.source.startswith("list:workspace:connect:editor")
+    assert d.via == "Everyone in connect, editor or above"
 
 
 def test_a_confined_decision_is_a_viewer_or_a_user_by_the_capability_it_uses(w):
     d = access.decide(w["agent"], w["vw"], verified=True, capability="ask")
-    assert (d.access, d.agent_role) == (access.NONE, None)        # the capabilities name no callers, the list no one
+    assert (d.access, d.agent_role) == (access.NONE, None)        # nothing on the list names them
     # A connect viewer with an explicit list line: the capability decides viewer vs user.
     _line(w, roles.USER, kind=G.PERSON, user=w["vw"])
     d = access.decide(w["agent"], w["vw"], verified=True, capability="canopy")
@@ -152,10 +149,11 @@ def test_a_line_can_keep_the_manual_gate_and_a_second_line_can_lift_it(w):
     assert gated.pk                                                              # the gated line is still there
 
 
-def test_the_list_never_lowers_what_the_published_rules_gave(w):
+def test_the_strongest_line_wins_even_when_a_weaker_one_also_names_them(w):
     editor = get_user_model().objects.create_user("ce", "ce@elsewhere.org", "pw")
     M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
-    _line(w, roles.VIEWER, kind=G.PERSON, user=editor)
+    _line(w, roles.EDITOR, kind=G.PERSON, user=editor)
+    _line(w, roles.VIEWER, kind=G.WORKSPACE, subject_workspace=w["connect"])
     d = access.decide(w["agent"], editor, verified=True)
     assert (d.access, d.agent_role) == (access.FULL, roles.EDITOR)
 
@@ -171,7 +169,7 @@ def test_a_workspace_default_reaches_the_agent_unless_it_opts_out(w):
 
 def test_the_sensitive_data_rule_still_confines_a_listed_editor(w):
     iface = {**IFACE, "capabilities": {**IFACE["capabilities"],
-             "data": {"callers": [], "role": "user", "tools": ["Read"], "data": "sensitive",
+             "data": {"role": "user", "tools": ["Read"], "data": "sensitive",
                      "sites": ["connect-labs"]}}}
     Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(iface))
     w["agent"].refresh_from_db()

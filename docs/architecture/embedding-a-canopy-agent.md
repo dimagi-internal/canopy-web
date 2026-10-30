@@ -1506,9 +1506,10 @@ page picks among read-only views of its own data.
    On labs (canopy.dimagi.com): `https://canopy.dimagi.com/oauth/host/jwks.json`,
    `https://canopy.dimagi.com`,
    `https://canopy.dimagi.com/api/mcp/`.
-3. On each agent, a capability for members naming the site, e.g.
-   `sites: [canopy-web]`, `callers: [member]` (a `ceiling:` is optional and only
-   narrows). `site_tools`/`site_call` are added to it automatically.
+3. On each agent, a capability naming the site, e.g.
+   `sites: [canopy-web]`, `role: viewer` (a `ceiling:` is optional and only
+   narrows), and an access-list line giving the people who should use it at least that
+   role, such as a workspace-wide default line for everyone in the workspace. `site_tools`/`site_call` are added to it automatically.
    (A full-profile turn — the agent's owner, a workspace owner, an admin — has
    no caller token and so no gateway; it already runs with its own canopy login.)
 4. **Test connection** on that site should come back all green.

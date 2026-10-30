@@ -1,6 +1,6 @@
 """A FULL-profile turn asked by a colleague reads canopy as the colleague (who-is-asking phase 5).
 
-canopy-web#1332. ACE's `full: [member]` rule gives a workspace member the agent's
+canopy-web#1332. ACE's access-list line (every workspace member is an editor) gives a workspace member the agent's
 whole profile, so their turn was not confined and no caller token was minted: the
 session's canopy tools used the runner's PAT and read ACE's private widget chats
 as the runner's owner. Driven through the real verifier and the MOUNTED server.
@@ -16,7 +16,6 @@ from django.contrib.auth.models import User
 from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.harness import caller_tokens, claiming, services
@@ -26,6 +25,7 @@ from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -41,8 +41,8 @@ def w():
     M.objects.create(user=op, workspace=ws, role=M.OWNER)
     for u in (matt, lili):
         M.objects.create(user=u, workspace=ws, role=M.VIEWER)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op,
-                                 interface=parse({"full": ["member"]}))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op)
+    publish(agent, {"full": ["member"]})
     return {"op": op, "matt": matt, "lili": lili, "ws": ws, "agent": agent}
 
 
@@ -84,7 +84,7 @@ def _listing(args=None):
 
 # -- who gets a scoped token ------------------------------------------------
 
-def test_a_full_rule_members_turn_is_scoped_and_claims_a_token(w):
+def test_an_editor_line_members_turn_is_scoped_and_claims_a_token(w):
     t = _asked_by(w["matt"], w["agent"], "m1")
     assert t.capability == ""                                  # full, not confined
     assert caller_tokens.is_caller_scoped(t)

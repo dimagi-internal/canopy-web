@@ -62,12 +62,12 @@ that agent is deleted or moved, and the host then shows no agents.
 | ace-web publishes its keys | `GET /ace/api/canopy/jwks`, derived from that key | Yes — code |
 | canopy trusts ace-web | the `ace-web` **Connected site** row: workspace `connect`, `jwks_url` set, **no** pasted keys, agent `ace` | **No — hand-made prod state** |
 | canopy is an OAuth client of hosts (host grants) | `CANOPY_OAUTH_CLIENT_KEY` + `CANOPY_OAUTH_DPOP_KEY`, secrets `canopy-web/oauth-client-key` + `canopy-web/oauth-dpop-key` created by CFN | Containers are in CFN; **values are deliberately `PLACEHOLDER`**, so `/oauth/*.json` answer 503 and no `id_jag` is redeemed |
-| ACE's declared interface | live state on canopy-web (agent → Overview → Callers) | **No — hand-made prod state** |
+| ACE's declared interface (its capabilities) and access list | live state on canopy-web (agent → Settings → Channels → Capabilities, and → Roles → Access) | **No — hand-made prod state** |
 
 ### The gap, stated plainly
 
 Three rows above are **typed-once production state that exists in no file**:
-the Connected site row, the signing key's value, and ACE's published interface.
+the Connected site row, the signing key's value, and ACE's published interface and access list.
 Rebuild the database and they are gone; nothing in CI would notice. This is the
 same shape as the hand-applied IAM grants in
 [`deploy.md` § AWS IAM](../architecture/deploy.md#aws-iam) — recorded here so it is at least *known*, not so it is fine.

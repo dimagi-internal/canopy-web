@@ -20,23 +20,22 @@ from an agent's base (`base_url + "/.well-known/agent-card.json"`). The
 authenticated extended card sits beside it at `{base}/extendedAgentCard`, the
 path the HTTP+JSON binding gives `GetExtendedAgentCard`.
 
-**Who is discoverable.** An agent has a PUBLIC card only if it offers a
-capability to someone outside its workspace — a caller class of `contact` or
-`unknown`. Everything else 404s, identically to a slug that does not exist,
-so a private agent's existence does not leak. That includes an agent whose
-only outsider access is a `full:` rule: `full:` grants a whole working
-profile, which is not a skill and is not advertised. The public card lists
-only those outsider capabilities; the EXTENDED card adds what the requesting
-canopy user may invoke themselves (`interface.offered_to`).
+**Who is discoverable.** An agent has a PUBLIC card only if its access list reaches someone
+outside its workspace — a line naming people only by their address (anyone at a domain, or a
+known visitor or sender) — with a role that may use one of its capabilities. Everything else
+404s, identically to a slug that does not exist, so a private agent's existence does not leak.
+An editor line that happens to name outsiders is not advertised: the whole agent is not a skill.
+The public card lists only those outsider capabilities; the EXTENDED card adds what the
+requesting canopy user may invoke themselves (`interface.offered_to`).
 
-**No MCP door.** canopy's MCP server is canopy the product, not a way to run an
+**No MCP entry point.** canopy's MCP server is canopy the product, not a way to run an
 agent: a member uses an agent by installing its plugin into their own Claude
 Code (`/get-started`), or by chatting with it on canopy-web. Neither is an A2A
-binding, so the card lists only the outsider doors (contact sessions, email).
+binding, so the card lists only the outsider entry points (contact sessions, email).
 
 **What never appears.** A capability's `tools`, `bash`, `read_paths`,
 `entry`, `pages` and `input` — the enforcement detail of its profile — and any
-email address: a caller class names at most a DOMAIN (`contact@dimagi.com`),
+email address: an access-list line names at most a DOMAIN (`@dimagi.com`),
 which becomes a `domain:` tag. Neither card names the agent's workspace.
 
 **Unsigned, for now.** A2A cards MAY carry JWS signatures (§8.4, RFC 7515 over
@@ -53,6 +52,7 @@ import json
 
 from django.conf import settings
 
+from . import grants, roles
 from . import interface as iface_mod
 from .schemas import (
     A2AAgentCapabilities,
@@ -70,15 +70,12 @@ from .schemas import (
 #: The A2A protocol version these cards are written against.
 A2A_PROTOCOL_VERSION = "1.0"
 
-#: Caller classes that are not a member of the agent's workspace.
-OUTSIDER_BASES = frozenset({"contact", "unknown"})
-
 # Security scheme names, as keys of `securitySchemes`.
 PAT = "canopyPersonalAccessToken"
 SESSION = "canopySession"
 CONTACT = "canopyContactToken"
 
-# `protocolBinding` for the doors canopy actually has. None of them is one of
+# `protocolBinding` for the entry points canopy actually has. None of them is one of
 # A2A's own three bindings (JSONRPC / GRPC / HTTP+JSON) — canopy does not speak
 # A2A messaging yet — so each is named by a URI, as spec §5.8 asks of a custom
 # binding. A client that only speaks the standard bindings will see no binding
@@ -103,13 +100,6 @@ def card_base(slug: str) -> str:
 
 # --- which capabilities appear -----------------------------------------------------
 
-def _parsed(klass: str) -> tuple[str, str, bool] | None:
-    m = iface_mod._CALLER.match(klass or "")
-    if not m:
-        return None
-    return m.group("base"), m.group("domain") or "", bool(m.group("verified"))
-
-
 def _capabilities(agent) -> dict:
     iface = getattr(agent, "interface", None) or {}
     if not iface_mod.published(iface):
@@ -117,48 +107,49 @@ def _capabilities(agent) -> dict:
     return iface.get("capabilities") or {}
 
 
+def _outsider_lines(agent) -> list:
+    """The agent's lines (its own and its workspace's defaults) that name people only by
+    address: the ones that reach outside the workspace. A line that gives the whole agent
+    (editor) is a working session, not a skill, and is not advertised."""
+    return [ln for ln in grants.lines_for(agent)
+            if ln.kind in grants.ADDRESS_ONLY and not roles.allows(ln.role, roles.RUN)]
+
+
+def _reaching(lines: list, cap: dict) -> list:
+    need = iface_mod.capability_role(cap)
+    return [ln for ln in lines if roles.at_least(ln.role, need)]
+
+
 def public_capabilities(agent) -> list[str]:
-    """Capabilities someone outside the agent's workspace could invoke."""
-    out = []
-    for name, cap in _capabilities(agent).items():
-        classes = [_parsed(c) for c in cap.get("callers") or []]
-        if any(p and p[0] in OUTSIDER_BASES for p in classes):
-            out.append(name)
-    return sorted(out)
+    """Capabilities someone outside the agent's workspace could use."""
+    lines = _outsider_lines(agent)
+    return sorted(n for n, cap in _capabilities(agent).items() if _reaching(lines, cap))
 
 
-def _contact_token_reaches(cap: dict) -> bool:
-    """Whether a visitor arriving by contact token can pass this capability.
+def _contact_token_reaches(lines: list, cap: dict) -> bool:
+    """Whether a visitor arriving by contact token can use this capability.
 
-    `:verified` is mail-only for a contact (interface.py), so a capability
-    gated on `contact:verified` alone is reachable by email and nothing else.
-    """
-    for c in cap.get("callers") or []:
-        p = _parsed(c)
-        if p and p[0] == "contact" and not p[2]:
-            return True
-    return False
+    `verified` is mail-only for a contact (grants.py), so a capability reached only by
+    verified lines is reachable by email and nothing else."""
+    return any(ln.kind == grants.AgentGrant.CONTACT and not ln.verified for ln in _reaching(lines, cap))
 
 
 # --- rendering ---------------------------------------------------------------------
 
-def _tags(cap: dict, *, outsiders_only: bool) -> list[str]:
+def _tags(agent, cap: dict, *, outsiders_only: bool) -> list[str]:
     tags: set[str] = set()
-    for c in cap.get("callers") or []:
-        p = _parsed(c)
-        if p is None:
+    for ln in _reaching([ln for ln in grants.lines_for(agent) if not roles.allows(ln.role, roles.RUN)], cap):
+        outsider = ln.kind in grants.ADDRESS_ONLY
+        if outsiders_only and not outsider:
             continue
-        base, domain, verified = p
-        if outsiders_only and base not in OUTSIDER_BASES:
-            continue
-        tags.add(f"caller:{base}")
-        if domain:
-            # A DOMAIN, never an address: caller classes cannot name a person.
-            tags.add(f"domain:{domain}")
-        if verified:
+        tags.add("caller:contact" if outsider else "caller:member")
+        if ln.domain:
+            # A DOMAIN, never an address: a line cannot name a person's address.
+            tags.add(f"domain:{ln.domain}")
+        if outsider and ln.verified:
             tags.add("verified-sender")
-    # `tags` is REQUIRED and must be non-empty; a capability no class is
-    # listed for is one only the agent's owner and admins reach.
+    # `tags` is REQUIRED and must be non-empty; a capability no line reaches is one only the
+    # agent's owner and admins use.
     return sorted(tags) or ["caller:admin"]
 
 
@@ -167,12 +158,12 @@ def _requirement(*names: str) -> A2ASecurityRequirement:
 
 
 def _skill(agent, name: str, cap: dict, *, public: bool) -> A2AAgentSkill:
-    security = [_requirement(CONTACT)] if _contact_token_reaches(cap) else []
+    security = [_requirement(CONTACT)] if _contact_token_reaches(_outsider_lines(agent), cap) else []
     return A2AAgentSkill(
         id=name,
         name=name.replace("_", " ").capitalize(),
         description=(cap.get("description") or "").strip() or f"Ask {agent.name} ({name}).",
-        tags=_tags(cap, outsiders_only=public),
+        tags=_tags(agent, cap, outsiders_only=public),
         security_requirements=security or None,
     )
 
@@ -229,7 +220,7 @@ def _card(agent, skills: list[A2AAgentSkill], interfaces: list[A2AAgentInterface
         capabilities=A2AAgentCapabilities(streaming=False, push_notifications=False,
                                           extended_agent_card=True),
         security_schemes=_security_schemes(),
-        # The one door a skill uses. The PAT and the session cookie are declared
+        # The one entry point a skill uses. The PAT and the session cookie are declared
         # as schemes but not listed: they fetch the extended card, and invoke
         # nothing.
         security_requirements=[_requirement(CONTACT)],
@@ -243,7 +234,8 @@ def _card(agent, skills: list[A2AAgentSkill], interfaces: list[A2AAgentInterface
 def _interfaces(agent, caps: dict, public_names: list[str]) -> list[A2AAgentInterface]:
     base = base_url()
     outsider = []
-    if any(_contact_token_reaches(caps[n]) for n in public_names):
+    lines = _outsider_lines(agent)
+    if any(_contact_token_reaches(lines, caps[n]) for n in public_names):
         outsider.append(A2AAgentInterface(url=f"{base}/api/contact/sessions",
                                           protocol_binding=CONTACT_BINDING,
                                           protocol_version=A2A_PROTOCOL_VERSION))

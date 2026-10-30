@@ -25,6 +25,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 JJ = "jj@dimagi.com"
@@ -42,6 +43,8 @@ def world():
     eva_login = User.objects.create_user("eva-agent", "eva@dimagi-ai.com", "pw")
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, user=hal_login)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj, user=eva_login)
+    editors_run(hal)
+    editors_run(eva)
     laptop = _runner("haldimagi-mbp-cdp", jj, ws, Runner.EMDASH)
     RunnerAssignment.objects.create(agent=hal, runner=laptop, rank=0)
     cloud = _runner("cloud-ec2-2", jj, ws, Runner.CLOUD)

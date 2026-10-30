@@ -51,7 +51,7 @@ def test_any_member_reads_the_list_and_sees_the_roles_that_come_with_the_agent(w
     r = _c(w["vw"]).get("/api/agents/hal/access-list")
     assert r.status_code == 200
     body = r.json()
-    assert body["can_edit"] is False and body["uses_access_list"] is False
+    assert body["can_edit"] is False and "uses_access_list" not in body
     assert {(ln["scope"], ln["who"], ln["role"]) for ln in body["lines"]} == {
         ("agent", "vw@dimagi.com", "user"), ("workspace", "Anyone at @dimagi.com (verified)", "viewer")}
     assert all(ln["can_edit"] is False for ln in body["lines"])
@@ -179,7 +179,7 @@ def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):
     from apps.agents.interface import parse
 
     Agent.objects.filter(pk=w["agent"].pk).update(
-        interface=parse({"capabilities": {"ask": {"callers": [], "role": "viewer", "tools": ["Read"]}}}))
+        interface=parse({"capabilities": {"ask": {"role": "viewer", "tools": ["Read"]}}}))
     w["agent"].refresh_from_db()
     r = _post(w, "boss", {"kind": "workspace", "role": "user", "workspace": "dimagi"},
               "/api/workspaces/dimagi/agent-defaults")
@@ -192,45 +192,25 @@ def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):
     assert _c(w["owner"]).get("/api/agents/hal/access-list").json()["lines"] == []
 
 
-# --- moving an agent onto its list -------------------------------------------------------
+# --- advice about a line that can never match ---------------------------------------------
 
-def test_previewing_the_move_writes_nothing_and_says_whether_anyone_changes(w):
-    from apps.agents.interface import parse
+def test_a_verified_line_for_a_domain_that_cannot_prove_its_senders_is_added_with_a_warning(w, monkeypatch):
+    from apps.contacts.domain_proof import DomainProof
 
-    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(
-        {"capabilities": {"ask": {"callers": ["member", "contact@dimagi.com:verified"], "tools": ["Read"]}}}))
-    r = _c(w["owner"]).get("/api/agents/hal/access-list-conversion")
-    assert r.status_code == 200
-    body = r.json()
-    assert (body["already"], body["ok"], body["differences"], body["unsupported"]) == (False, True, [], [])
-    assert body["probed"] > 5
-    assert {(ln["who"], ln["role"]) for ln in body["lines"]} >= {
-        ("A known visitor or sender at @dimagi.com (verified)", "viewer"), ("Everyone in connect", "viewer")}
-    assert not AgentGrant.objects.filter(agent=w["agent"]).exists()
-    assert _c(w["ed"]).get("/api/agents/hal/access-list-conversion").status_code == 403
+    monkeypatch.setattr("apps.agents.grants.proof",
+                        lambda domain, ws: DomainProof(domain=domain, dmarc=False, aligned_seen=False))
+    r = _post(w, "owner", {"kind": "domain", "role": "viewer", "domain": "no-dmarc.example"})
+    assert r.status_code == 201
+    assert "can never prove who sent it" in r.json()["warning"] and "no-dmarc.example" in r.json()["warning"]
+    assert AgentGrant.objects.filter(agent=w["agent"], domain="no-dmarc.example").exists()   # advice, not a refusal
 
 
-def test_applying_the_move_switches_the_agent_and_lists_the_lines(w):
-    from apps.agents.interface import parse
+@pytest.mark.parametrize("dmarc,seen,verified", [(True, False, True), (None, False, True), (False, False, False)])
+def test_no_warning_when_the_domain_can_prove_itself_or_dns_could_not_be_asked_or_proof_is_not_needed(
+        w, monkeypatch, dmarc, seen, verified):
+    from apps.contacts.domain_proof import DomainProof
 
-    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(
-        {"capabilities": {"ask": {"callers": ["member"], "tools": ["Read"]}}}))
-    assert _c(w["ed"]).post("/api/agents/hal/access-list-conversion").status_code == 403
-    r = _c(w["owner"]).post("/api/agents/hal/access-list-conversion")
-    assert r.status_code == 200, r.content
-    assert r.json()["uses_access_list"] is True
-    assert {(ln["who"], ln["role"]) for ln in r.json()["lines"]} == {
-        ("Everyone in connect", "user"), ("Everyone in connect, editor or above", "editor")}
-    again = _c(w["owner"]).get("/api/agents/hal/access-list-conversion").json()
-    assert (again["already"], again["ok"]) == (True, True)
-
-
-def test_a_move_that_cannot_be_done_cleanly_is_refused(w):
-    from apps.agents.interface import parse
-
-    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(
-        {"capabilities": {"ask": {"callers": ["unknown"], "tools": ["Read"]}}}))
-    r = _c(w["owner"]).post("/api/agents/hal/access-list-conversion")
-    assert r.status_code == 409 and "unknown" in r.json()["detail"]
-    w["agent"].refresh_from_db()
-    assert w["agent"].uses_access_list is False
+    monkeypatch.setattr("apps.agents.grants.proof",
+                        lambda domain, ws: DomainProof(domain=domain, dmarc=dmarc, aligned_seen=seen))
+    r = _post(w, "owner", {"kind": "domain", "role": "viewer", "domain": "ok.example", "verified": verified})
+    assert r.status_code == 201 and r.json()["warning"] == ""

@@ -1,6 +1,6 @@
 # Agent roles and one access list
 
-**Status:** building, 2026-10-30. Jonathan, after an audit showed the same colleague reaching five different amounts of five agents, depending on which workspace the agent happened to live in and which domains its interface had copy-pasted: "we start to use groups for permissions instead of individuals", one role vocabulary, and the interface should stop being a place where nobody understands who gets what.
+**Status:** built 2026-10-30. Jonathan, after an audit showed the same colleague reaching five different amounts of five agents, depending on which workspace the agent happened to live in and which domains its interface had copy-pasted: "we start to use groups for permissions instead of individuals", one role vocabulary, and the interface should stop being a place where nobody understands who gets what.
 
 ## The problem
 
@@ -62,31 +62,27 @@ The highest role among a person's matching lines wins. Implicit lines, shown in 
 
 The sensitive-data rule stays over the top, unchanged.
 
-## Compatibility
+## What was done to the old rules
 
-Existing behaviour is preserved at cutover by translating, not by reinterpreting:
+The old rules were translated, then removed:
 
-* the implicit "workspace editor → editor tier, manual" becomes an explicit workspace-default line `everyone in <ws> at least editor → editor, manual_only`;
-* each `full:` rule becomes a line (`member` → everyone in the agent's workspace; `contact@d:verified` → verified contacts at d);
-* each capability's `callers` become lines (or, when they repeat the agent's other lines, nothing) and the capability keeps only `role`;
-* `editors: confined` is the absence of the editor line;
-* `Agent.owner` and `AgentAdmin` stay the stores of owner and admin for now and appear as implicit lines.
-
-`Agent.uses_access_list` marks an agent whose access is the list alone: until it is set the old rules still apply beside the list; `convert_access` sets it once every probe answers as before. The last step deletes the old rules and the flag.
-
-`manual_only` is a flag on the line so that dropping the gate is one visible change per agent, not a code change. A parity test runs the old table and the new resolver over every (role × interface × capability) cell of `tests/test_access_matrix.py` and requires the same answer.
-
-The caller envelope keeps `relationship` for agents already reading it and gains `role` and `source`; the old values map owner→owner, admin→admin, member→editor/user/viewer by the winning line, contact→viewer.
+* migration `agents/0112` moved every agent's rules onto its list: the implicit "workspace editor → editor tier, manual" became a line `everyone in <ws> at least editor → editor, manual_only` (unless the interface said `editors: confined`); each `full:` rule became a line (`member` → everyone in the agent's workspace; `contact@d:verified` → a verified contact at d); each capability's `callers` became lines and the capability kept only `role`. It stripped `full:`, `editors:`, `callers_default` and `callers` from the stored interface and kept every agent's old interface and source in the settings audit (`SettingChange`, operation `access_list_migration`);
+* the parser refuses the retired keys with a pointer to the access list, and `Agent.uses_access_list` and `convert_access` are deleted;
+* `AgentAdmin` and `Agent.owner` deliberately stay the stores of admin and owner and appear as implicit lines on the list, so there was nothing to fold;
+* `manual_only` stays a flag on the line, so dropping the gate is one visible change per agent, not a code change;
+* the caller envelope keeps `relationship` (owner / admin / system, and member / contact for everyone else) for agents already reading it, and gains `role` and `source`.
 
 ## An agent's own login (who may create it)
 
 An agent's admin may create the agent's canopy login without being a workspace admin, when the address is at a domain canopy itself owns for agents. That is what makes it safe: the login is a brand-new, password-less account that no person can sign in to, so it cannot become a way to put a human's address into a workspace. Still never adopts an existing account; still one login to one agent; recorded in the settings audit.
 
-## Build order
+## Build order (done)
 
-1. This spec, `roles.py` (the ladder and permission table), the `AgentGrant` table, the resolver. Nothing reads it yet.
-2. Translate every agent's access into lines (data migration); `decide` reads lines; parity test.
-3. Capabilities carry `role`; the standard `ask` template; the interface's `full:`, `callers`, `callers_default` and `editors:` are read for compatibility, then removed.
-4. The access list in the UI (replacing the Callers tab and the roster), `who_is_asking` and the envelope carry `role` and `source`, so an agent can say why someone is a viewer and who can raise them.
+1. This spec, `roles.py` (the ladder and permission table), the `AgentGrant` table, the resolver.
+2. Every agent's access translated into lines (data migration); `decide` reads lines; `convert_access` checked that every real interface answered as before.
+3. Capabilities carry `role`; the interface's `full:`, `callers`, `callers_default` and `editors:` removed (migration `agents/0112`).
+4. The access list in the UI (replacing the Callers tab), `who_is_asking` and the envelope carry `role` and `source`.
 5. The agent-login gate.
-6. Remove the old paths and fold `AgentAdmin` into lines.
+6. The old paths removed (`uses_access_list`, `convert_access`, the caller classes). `AgentAdmin` and `Agent.owner` stay as the stores of admin and owner.
+
+The reference for the result is `docs/architecture/access.md`.

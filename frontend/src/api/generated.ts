@@ -4612,11 +4612,11 @@ export interface paths {
         };
         /**
          * Everyone's role on this agent, why, and what they can reach
-         * @description Every member of the agent's workspace with their role on the agent
-         *     (owner / admin / member), the reason for it, and what they reach signed in:
-         *     the whole agent, the capabilities its published interface lists for them,
-         *     or nothing. `outsiders` lists the interface rules that reach people outside
-         *     the workspace. Readable by any member, like the admin list.
+         * @description Every member of the agent's workspace with their role on the agent (owner, admin,
+         *     editor, user, viewer), the reason for it, and what they reach signed in: the whole agent,
+         *     the capabilities their role may use, or nothing. People outside the workspace whom the
+         *     access list names are on the list itself (`/access-list`). Readable by any member, like
+         *     the admin list.
          */
         readonly get: operations["agent_access"];
         readonly put?: never;
@@ -4683,8 +4683,8 @@ export interface paths {
         readonly put?: never;
         /**
          * Issue or reinstate a person's license to use this agent directly
-         * @description Re-asks the caller list: refused (409) unless it gives them the whole agent —
-         *     make them an editor or add a `full:` rule first.
+         * @description Re-asks the access list: refused (409) unless it gives them the whole agent —
+         *     put them on it as an editor first.
          */
         readonly post: operations["approve_agent_license"];
         readonly delete?: never;
@@ -5187,29 +5187,6 @@ export interface paths {
          */
         readonly put: operations["set_inherit_workspace_defaults"];
         readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/access-list-conversion": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Preview moving this agent onto its access list: the lines it would get, and whether anyone's access would change (an agent admin)
-         * @description Translates the rules the agent was published with (`full:`, each capability's `callers`,
-         *     `editors:`, and the implicit workspace-editor rule) into lines, then asks the access
-         *     rule the old way and the new way about everyone who could plausibly ask. Writes nothing.
-         */
-        readonly get: operations["preview_access_conversion"];
-        readonly put?: never;
-        /** Move this agent onto its access list; refused unless nobody's access would change (an agent admin) */
-        readonly post: operations["apply_access_conversion"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10549,8 +10526,7 @@ export interface paths {
          * @description A session on your private runner is using `agent`: record it as a turn.
          *
          *     Allowed when `access.decide` gives you the WHOLE agent (its owner or an admin,
-         *     a `full:` rule in its caller list, or a workspace editor); a viewer or
-         *     contact gets 403 with what to ask for — they use the agent through canopy, on
+         *     or an editor line on its access list); a user or viewer gets 403 with what to ask for — they use the agent through canopy, on
          *     its confined `ask` path. The turn runs `manual` unless you are an agent admin
          *     and ask for `auto`. Idempotent per Claude session: a resumed session re-opens
          *     its live turn. The response carries the caller envelope.
@@ -25091,29 +25067,10 @@ export interface components {
              * @default true
              */
             readonly is_default: boolean;
-            /**
-             * Summary
-             * @default []
-             */
-            readonly summary: readonly components["schemas"]["InterfaceSummaryLineOut"][];
             /** Published At */
             readonly published_at?: string | null;
             /** Published By Email */
             readonly published_by_email?: string | null;
-            /**
-             * Warnings
-             * @default []
-             */
-            readonly warnings: readonly string[];
-        };
-        /** InterfaceSummaryLineOut */
-        readonly InterfaceSummaryLineOut: {
-            /** Who */
-            readonly who: string;
-            /** Reaches */
-            readonly reaches: string;
-            /** Rule */
-            readonly rule?: string | null;
         };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {
@@ -25128,11 +25085,6 @@ export interface components {
         readonly AgentInterfaceValidateOut: {
             /** Errors */
             readonly errors: readonly components["schemas"]["InterfaceProblemOut"][];
-            /**
-             * Summary
-             * @default []
-             */
-            readonly summary: readonly components["schemas"]["InterfaceSummaryLineOut"][];
             /** Interface */
             readonly interface?: {
                 readonly [key: string]: unknown;
@@ -25142,11 +25094,6 @@ export interface components {
              * @default
              */
             readonly yaml: string;
-            /**
-             * Warnings
-             * @default []
-             */
-            readonly warnings: readonly string[];
         };
         /** InterfaceProblemOut */
         readonly InterfaceProblemOut: {
@@ -25182,10 +25129,6 @@ export interface components {
         readonly AgentAccessOut: {
             /** Members */
             readonly members: readonly components["schemas"]["AgentAccessRowOut"][];
-            /** Outsiders */
-            readonly outsiders: readonly components["schemas"]["AgentOutsiderRuleOut"][];
-            /** Interface Published */
-            readonly interface_published: boolean;
             /** Slack Enabled */
             readonly slack_enabled: boolean;
         };
@@ -25221,8 +25164,6 @@ export interface components {
              * @default []
              */
             readonly capabilities: readonly string[];
-            /** Full Rule */
-            readonly full_rule?: string | null;
             /**
              * Manual Only
              * @default false
@@ -25245,18 +25186,6 @@ export interface components {
              * @default
              */
             readonly via: string;
-        };
-        /** AgentOutsiderRuleOut */
-        readonly AgentOutsiderRuleOut: {
-            /** Caller */
-            readonly caller: string;
-            /**
-             * Access
-             * @enum {string}
-             */
-            readonly access: "full" | "confined";
-            /** Capability */
-            readonly capability?: string | null;
         };
         /**
          * AgentLicenseOut
@@ -25945,11 +25874,14 @@ export interface components {
              * @default false
              */
             readonly can_edit: boolean;
+            /**
+             * Warning
+             * @default
+             */
+            readonly warning: string;
         };
         /** AccessListOut */
         readonly AccessListOut: {
-            /** Uses Access List */
-            readonly uses_access_list: boolean;
             /** Inherit Workspace Defaults */
             readonly inherit_workspace_defaults: boolean;
             /** Lines */
@@ -26034,36 +25966,6 @@ export interface components {
         readonly AccessInheritIn: {
             /** Inherit */
             readonly inherit: boolean;
-        };
-        /** AccessConversionLineOut */
-        readonly AccessConversionLineOut: {
-            /** Who */
-            readonly who: string;
-            /** Role */
-            readonly role: string;
-            /**
-             * Manual Only
-             * @default false
-             */
-            readonly manual_only: boolean;
-        };
-        /**
-         * AccessConversionOut
-         * @description What moving an agent onto its access list would do, and whether it changes anyone's access.
-         */
-        readonly AccessConversionOut: {
-            /** Already */
-            readonly already: boolean;
-            /** Ok */
-            readonly ok: boolean;
-            /** Probed */
-            readonly probed: number;
-            /** Lines */
-            readonly lines: readonly components["schemas"]["AccessConversionLineOut"][];
-            /** Unsupported */
-            readonly unsupported: readonly string[];
-            /** Differences */
-            readonly differences: readonly string[];
         };
         /**
          * AgentDefaultsOut
@@ -33448,10 +33350,10 @@ export interface components {
             /** Capabilities */
             readonly capabilities: number;
             /**
-             * Full Access
+             * Access Lines
              * @default []
              */
-            readonly full_access: readonly string[];
+            readonly access_lines: readonly string[];
             /** Skills */
             readonly skills: number;
             /** Schedules */
@@ -33992,7 +33894,7 @@ export interface components {
          * AgentEdgeOut
          * @description What `source` gets when it sends `target` work with its own login.
          *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-         *     workspace-owner | admin | full-rule | editor (full, manual only) |
+         *     workspace-owner | admin | editor (full; manual only when its line says so) |
          *     no-interface (refused: nothing published) | capabilities | nothing-offered |
          *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
          *     THIS caller may make (or unmake) the source's login an admin of the target.
@@ -34011,8 +33913,6 @@ export interface components {
             readonly basis: string;
             /** Capabilities */
             readonly capabilities: readonly string[];
-            /** Full Rule */
-            readonly full_rule: string | null;
             /** Explicit Admin */
             readonly explicit_admin: boolean;
             /** Can Grant */
@@ -51774,50 +51674,6 @@ export interface operations {
                 readonly "application/json": components["schemas"]["AccessInheritIn"];
             };
         };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AccessListOut"];
-                };
-            };
-        };
-    };
-    readonly preview_access_conversion: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AccessConversionOut"];
-                };
-            };
-        };
-    };
-    readonly apply_access_conversion: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

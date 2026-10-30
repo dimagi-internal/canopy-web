@@ -17,7 +17,6 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions import agui
 from apps.canopy_sessions.consumers import without_tools
@@ -31,6 +30,7 @@ from apps.mcp_apps_host import mcp_apps, mcp_apps_views
 from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken, HostGrant, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 from tests.mcp_apps_host import VIEW_HTML, VIEW_URI, FakeLabs
 
 pytestmark = pytest.mark.django_db
@@ -85,10 +85,10 @@ def w():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     editor, viewer, nogrant = _member(ws, "eddie"), _member(ws, "vera"), _member(ws, "nora")
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner, interface=parse(
-        {"capabilities": {"connect": {"callers": ["contact"], "sites": ["connect-labs"],
-                                      "ceiling": ["workflow_*", "marketplace_*"],
-                                      "tools": ["mcp__*canopy-web__who_is_asking"]}}}))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
+    publish(agent, {"capabilities": {"connect": {"callers": ["contact"], "sites": ["connect-labs"],
+                                                 "ceiling": ["workflow_*", "marketplace_*"],
+                                                 "tools": ["mcp__*canopy-web__who_is_asking"]}}})
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.host_issuer = "https://labs.test"
     app.host_mcp_resource = RESOURCE
@@ -325,11 +325,10 @@ def test_an_expired_grant_is_no_grant(w, labs):
 def test_each_gate_refuses_with_its_own_code_and_never_calls(w, labs, name, code, status):
     Message.objects.filter(role=Message.TOOL_USE).update(turn=w["turn"])
     Turn.objects.filter(pk=w["turn"].pk).update(capability="connect")
-    w["agent"].interface = parse({"capabilities": {"connect": {
+    publish(w["agent"], {"capabilities": {"connect": {
         "callers": ["contact"], "sites": ["connect-labs"],
         "ceiling": ["workflow_*", "model_only_report", "no_such_tool"],
         "tools": ["mcp__*canopy-web__who_is_asking"]}}})
-    w["agent"].save()
     labs.calls.clear()
     r = through(labs, lambda: post(client_for(w["editor"]), base(w) + "/call",
                                    {"name": name, "arguments": {"run_id": 5}}))

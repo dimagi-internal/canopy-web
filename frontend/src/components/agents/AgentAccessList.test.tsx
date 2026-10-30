@@ -37,11 +37,10 @@ const { AgentAccessList } = await import('./AgentAccessList')
 const line = (o: Partial<AccessLineOut>): AccessLineOut => ({
   id: 1, scope: 'agent', scope_workspace: null, kind: 'person', who: 'ann@dimagi.com', role: 'user', user_id: 9,
   subject_workspace: null, at_least: '', domain: '', verified: true, manual_only: false, note: '',
-  granted_by_email: null, granted_at: null, can_edit: true, ...o,
+  granted_by_email: null, granted_at: null, can_edit: true, warning: '', ...o,
 })
 
 const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
-  uses_access_list: true,
   inherit_workspace_defaults: true,
   can_edit: true,
   lines: [
@@ -65,12 +64,10 @@ const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
 
 const ROSTER = {
   members: [
-    { user_id: 1, email: 'op@dimagi.com', name: 'Op', workspace_role: 'editor', agent_role: 'owner', basis: 'Owns this agent', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: false, may_request_auto: false, role: 'owner', source: 'owner', via: 'Owns this agent' },
-    { user_id: 4, email: 'ed@dimagi.com', name: 'Ed', workspace_role: 'editor', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: true, may_request_auto: false, role: 'editor', source: 'workspace-editor', via: 'The role this workspace gives an editor' },
-    { user_id: 6, email: 'no@partner.org', name: 'No', workspace_role: 'viewer', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'none', capabilities: [], full_rule: null, manual_only: false, may_request_auto: false, role: null, source: '', via: '' },
+    { user_id: 1, email: 'op@dimagi.com', name: 'Op', workspace_role: 'editor', agent_role: 'owner', basis: 'Owns this agent', granted_at: null, access: 'full', capabilities: [], manual_only: false, may_request_auto: false, role: 'owner', source: 'owner', via: 'Owns this agent' },
+    { user_id: 4, email: 'ed@dimagi.com', name: 'Ed', workspace_role: 'editor', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], manual_only: true, may_request_auto: false, role: 'editor', source: 'workspace-editor', via: 'The role this workspace gives an editor' },
+    { user_id: 6, email: 'no@partner.org', name: 'No', workspace_role: 'viewer', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'none', capabilities: [], manual_only: false, may_request_auto: false, role: null, source: '', via: '' },
   ],
-  outsiders: [],
-  interface_published: false,
   slack_enabled: false,
 } as unknown as AgentAccessOut
 
@@ -157,6 +154,15 @@ describe('AgentAccessList', () => {
     await waitFor(() => expect((screen.getByLabelText('Their email') as HTMLInputElement).value).toBe(''))
   })
 
+  it('shows the server’s advice when the line it added can never match as written', async () => {
+    addAccessLine.mockResolvedValue(line({ warning: 'Mail from no-dmarc.example can never prove who sent it' }))
+    show()
+    fireEvent.change(await screen.findByLabelText('Who'), { target: { value: 'domain' } })
+    fireEvent.change(screen.getByLabelText('Email domain'), { target: { value: 'no-dmarc.example' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect((await screen.findByTestId('access-line-warning')).textContent).toContain('can never prove who sent it')
+  })
+
   it('adds everyone in a workspace at least a workspace role, at a domain', async () => {
     addAccessLine.mockResolvedValue(line({}))
     show()
@@ -225,12 +231,5 @@ describe('AgentAccessList', () => {
     expect(screen.queryByLabelText('Role for ann@dimagi.com')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Remove ann@dimagi.com' })).toBeNull()
     expect((screen.getByLabelText(/Also take Connect/) as HTMLInputElement).disabled).toBe(true)
-  })
-
-  it('says when the agent still runs on its older published rules', async () => {
-    getAccessList.mockResolvedValue(LIST({ uses_access_list: false }))
-    show()
-    expect((await screen.findByText(/has not moved onto this list yet/)).textContent).toContain('see Capabilities')
-    expect(screen.getByRole('button', { name: 'See what moving would do' })).toBeTruthy()
   })
 })

@@ -41,7 +41,7 @@ def mint(turn: Turn, *, scoped: bool = False) -> str:
 
 #: Who holds the agent's whole profile AND may read as the runner's owner would:
 #: the people operating it, and canopy itself. Everyone else a `full` decision
-#: reaches — a `full:<rule>` grant, a workspace editor, a writer in an admin's
+#: reaches — an editor line on the access list, a writer in an admin's
 #: session — is a CALLER, and their session reads canopy as themselves.
 _OPERATORS = frozenset({"owner", "admin", "system"})
 
@@ -78,9 +78,9 @@ def is_caller_scoped(turn: Turn) -> bool:
     """Whether this FULL-profile turn must reach canopy's MCP as its asker.
 
     Who-is-asking phase 5 (§9.5, canopy-web#1332). A confined turn already gets
-    a caller token; a `full:` turn did not, so its session used the runner's
+    a caller token; an editor's full turn did not, so its session used the runner's
     PAT — and read across sessions as the runner's owner (2026-10-08, ACE
-    answering a `full: [member]` colleague). A turn with no agent (a project
+    answering a colleague it had given the whole agent). A turn with no agent (a project
     turn or project chat) has no agent to act as, so it acts as its verified
     asker (`_project_asker`); with no such person it gets no token at all."""
     from apps.agents import access

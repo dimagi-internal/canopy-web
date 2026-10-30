@@ -18,7 +18,6 @@ from django.http import HttpResponse
 from django.test import RequestFactory
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.harness import caller_tokens, services
@@ -27,6 +26,8 @@ from apps.harness.models import CallerToken, Turn
 from apps.mcp import api_tools
 from apps.tokens.middleware import BearerTokenAuthMiddleware
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+from .access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -166,8 +167,8 @@ def test_an_unscoped_token_on_a_full_turn_is_refused(client, w):
 def test_a_confined_token_is_refused(client, w):
     iface = {"capabilities": {"ask": {"callers": ["contact", "member"],
                                       "tools": ["mcp__*canopy-web__harness_list_turns"]}}}
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=w["ws"], owner=w["jj"],
-                                 interface=parse(iface))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=w["ws"], owner=w["jj"])
+    publish(agent, iface)
     turn, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_EMAIL, idempotency_key="e1",
                                     origin_ref={"from": "fatima@llo-foo.org", "thread_id": "t-1",
                                                 "headers": DMARC})

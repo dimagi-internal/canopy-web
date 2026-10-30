@@ -26,6 +26,7 @@ from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -36,6 +37,7 @@ WS = "turn-acl-ws"
 def fleet():
     ws = a_workspace(WS)  # named slug -> no access_request_domains
     agent = Agent.objects.create(slug="runbot", name="Run Bot", workspace=ws)
+    editors_run(agent)  # workspace editors drive it (manually); the viewer is on no line
     editor = a_member(ws, email="turn-editor@dimagi.com", role=WorkspaceMembership.EDITOR)
     viewer = a_member(ws, email="turn-viewer@dimagi.com", role=WorkspaceMembership.VIEWER)
     outsider = get_user_model().objects.create_user(

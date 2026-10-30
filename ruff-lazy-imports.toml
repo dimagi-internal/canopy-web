@@ -36,7 +36,7 @@
 "apps/agents/engagement.py" = ["PLC0415"]  # 1
 "apps/agents/fleet_api.py" = ["PLC0415"]  # 3
 "apps/agents/ideas.py" = ["PLC0415"]  # 2
-"apps/agents/interface.py" = ["PLC0415"]  # 4
+"apps/agents/interface.py" = ["PLC0415"]  # 2
 "apps/agents/kb_store.py" = ["PLC0415"]  # 4
 "apps/agents/kb_vectors.py" = ["PLC0415"]  # 2
 "apps/agents/models.py" = ["PLC0415"]  # 7
@@ -142,7 +142,7 @@
 "apps/harness/artifact_origin.py" = ["PLC0415"]  # 2
 "apps/harness/auto_debug.py" = ["PLC0415"]  # 9
 "apps/harness/aws_iam_proof.py" = ["PLC0415"]  # 2
-"apps/harness/caller_context.py" = ["PLC0415"]  # 15
+"apps/harness/caller_context.py" = ["PLC0415"]  # 14
 "apps/harness/caller_tokens.py" = ["PLC0415"]  # 3
 "apps/harness/channels/email.py" = ["PLC0415"]  # 3
 "apps/harness/claim.py" = ["PLC0415"]  # 11

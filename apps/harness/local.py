@@ -18,7 +18,7 @@ routed. It never held an agent back: it is the person's session, not the agent's
 session that dies without closing lands `lost` through the ordinary sweep.
 
 Mode: only an agent admin may run a direct turn `auto`, and only when they ask for
-it; every other turn — an editor's, a `full:`-rule member's — is `manual`, exactly
+it; every other turn — an editor's — is `manual`, exactly
 as access.md says of `auto` everywhere else. Stamped once, at open.
 """
 from __future__ import annotations

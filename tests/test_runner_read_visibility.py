@@ -31,6 +31,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -166,7 +167,7 @@ def test_an_editor_pins_only_to_a_runner_they_administer(teammate, workspace, ru
     whether the id is known at all (an invisible id still 422s as unknown)."""
     from apps.harness.models import RunnerAdmin
 
-    Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
+    editors_run(Agent.objects.create(slug="echo", name="Echo", workspace=workspace))
     body = {"agent_slug": "echo", "origin": "api", "idempotency_key": "pin-1",
             "prompt": "/echo:turn", "runner_id": str(runner.id)}
     resp = _client(teammate).post("/api/harness/turns/", body, content_type="application/json")

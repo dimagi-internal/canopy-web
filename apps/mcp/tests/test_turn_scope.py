@@ -13,13 +13,13 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.harness import caller_tokens, services
 from apps.harness.models import CallerToken, Turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -34,7 +34,8 @@ def w():
     op = User.objects.create_user("op", "op@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.OWNER)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op, interface=parse(IFACE))
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op)
+    publish(agent, IFACE)
     return {"op": op, "ws": ws, "agent": agent}
 
 

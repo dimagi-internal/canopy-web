@@ -234,7 +234,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
                     <td className="text-right tabular-nums"><CountLink n={a.skills} to={scopedPath(a.workspace, `/agents/${a.slug}/skills`)} label="skills" /></td>
                     <td className="text-right tabular-nums"><CountLink n={a.schedules} to={scopedPath(a.workspace, `/agents/${a.slug}/triggers`)} label="schedules" /></td>
                     <td className="whitespace-nowrap text-foreground-secondary"
-                        title={a.full_access.length ? `Whole agent for: ${a.full_access.join(', ')}` : undefined}>
+                        title={a.access_lines.length ? `On its access list: ${a.access_lines.join('; ')}` : undefined}>
                       <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#reach`)}>{whoCanUse(a)}</CellLink>
                     </td>
                     <td className="whitespace-nowrap text-foreground-secondary">
@@ -259,14 +259,13 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
   )
 }
 
-/** "Who can use it" in words: its admins, plus whatever its interface publishes —
- *  `full:` rules (the whole agent) and capabilities (confined to one job each). */
-export function whoCanUse(a: Pick<AgentHealthOut, 'has_interface' | 'capabilities' | 'full_access'>): string {
-  if (!a.has_interface) return 'Admins only'
+/** "Who can use it" in words: its admins, plus whoever its access list names, and how many
+ *  capabilities it publishes for the roles that cannot run the whole agent. */
+export function whoCanUse(a: Pick<AgentHealthOut, 'capabilities' | 'access_lines'>): string {
   const parts = []
-  if (a.full_access.length) parts.push(`full: ${a.full_access.length} rule${a.full_access.length === 1 ? '' : 's'}`)
+  if (a.access_lines.length) parts.push(`${a.access_lines.length} on its access list`)
   if (a.capabilities) parts.push(`${a.capabilities} capabilit${a.capabilities === 1 ? 'y' : 'ies'}`)
-  return `Admins + ${parts.join(' · ')}`
+  return parts.length ? `Admins + ${parts.join(' · ')}` : 'Admins only'
 }
 
 function matches(a: AgentHealthOut, f: Filter): boolean {

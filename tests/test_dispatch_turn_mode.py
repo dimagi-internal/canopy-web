@@ -25,6 +25,8 @@ from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
+from .access_helpers import editors_run
+
 pytestmark = pytest.mark.django_db
 User = get_user_model()
 ADA = "ada@dimagi-ai.com"
@@ -43,6 +45,7 @@ def fleet():
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=owner,
                                turn_mode=Agent.MANUAL)
     AgentAdmin.objects.create(agent=hal, user=ada, granted_by=owner)
+    editors_run(hal)
     now = timezone.now()
     box = Runner.objects.create(name="haldimagi-mbp-cdp", kind=Runner.EMDASH, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=now,

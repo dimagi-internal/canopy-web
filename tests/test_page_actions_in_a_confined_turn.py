@@ -13,7 +13,7 @@ import pytest
 from asgiref.sync import async_to_sync
 from fastmcp.exceptions import ToolError
 
-from apps.agents.interface import PAGE_TOOLS, parse, profile
+from apps.agents.interface import PAGE_TOOLS, profile
 from apps.agents.sensitive_data import PAGE_TOOL_GLOB, structural_refusals
 from apps.canopy_sessions import page_actions
 from apps.canopy_sessions.models import PageAction, Session
@@ -22,6 +22,7 @@ from apps.harness.models import Turn
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.page_tools import to_mcp_tool
 from apps.mcp.server import mcp
+from tests.access_helpers import publish
 from tests.fixtures import site_gateway as sg
 
 pytestmark = pytest.mark.django_db
@@ -51,8 +52,7 @@ def w():
 def _sensitive(w):
     caps = dict(sg.IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    w["agent"].interface = parse({"capabilities": caps})
-    w["agent"].save(update_fields=["interface"])
+    publish(w["agent"], {"capabilities": caps})
     for s in (w["session"], w["other"]):
         s.metadata = {**s.metadata, **SENSITIVE}
         s.save(update_fields=["metadata"])

@@ -39,7 +39,7 @@ def issue_credentials(turn):
         turn.mcp_token = mint(turn)
     else:
         # A FULL turn asked by someone who is not the agent's owner, an admin or
-        # canopy (a `full:` rule, an editor) is not confined, but must still read
+        # canopy (an editor) is not confined, but must still read
         # canopy as its asker rather than as the runner's owner (who-is-asking
         # phase 5, canopy-web#1332).
         # A project's turn (no agent) asked by a verified person reads canopy as

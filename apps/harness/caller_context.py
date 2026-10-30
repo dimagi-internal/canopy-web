@@ -366,14 +366,11 @@ def build(turn, *, reader_user=None) -> dict:
         # member of an agent that has published no interface. Otherwise the runner and the agent's
         # guard confine the session to exactly this.
         "profile": CONFINED_PROFILE if turn.capability else FULL_PROFILE,
-        # WHY: owner | admin | system | editor (a workspace editor: full, manual
-        # only) | session:<role> | full:<rule> | capability:<name> | refused |
-        # no-interface (a turn with no agent).
-        # `full:contact@dimagi.com:verified` is canopy granting domain-wide access —
-        # what `canopy caller tier` reads instead of an allowlist in the repo.
+        # WHY: owner | admin | system | session:<role> | grant:<access-list line> |
+        # capability:<name> | refused | no-interface (a turn with no agent).
         # `role`: WHERE the asker stands on the agent's role ladder (owner | admin | editor |
         # user | viewer | system; null when refused) and `source`: WHY (owner | admin | system |
-        # workspace-editor | rule:<full rule> | capability:<name> | list:<access-list line>) —
+        # session | list:<access-list line>) —
         # what an agent reads to say "you are a viewer here because ..." instead of
         # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
         **_grant(turn, agent),
@@ -556,17 +553,10 @@ def _trigger(turn, ref: dict) -> dict:
 
 
 def _matched_classes(turn) -> list[str]:
-    """The caller classes that earned this turn its capability (e.g. `contact:verified`)
-    — the interface clause an operator would edit to change who gets `ask`."""
-    agent = turn.acting_agent
-    if agent is None or not turn.capability:
-        return []
-    from apps.agents.interface import caller_classes
-
-    iface = getattr(agent, "interface", None) or {}
-    cap = (iface.get("capabilities") or {}).get(turn.capability) or {}
-    classes = caller_classes(turn, relationship(turn, agent))
-    return sorted(classes & set(cap.get("callers") or []))
+    """Deprecated: the caller classes that earned this turn its capability. The classes are
+    gone (who may use an agent is its access list; the envelope's `role` and `source` say
+    which line); the key stays, empty, for agents whose skills still read it."""
+    return []
 
 
 def _thread_history(turn, ref: dict) -> dict | None:

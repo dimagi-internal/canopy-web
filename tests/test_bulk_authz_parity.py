@@ -20,7 +20,7 @@ import itertools
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import access, interface
+from apps.agents import access
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import routing
 from apps.harness.models import Runner, RunnerAdmin
@@ -30,6 +30,7 @@ from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership as M, ancestor_chains
 from apps.workspaces.testing import enrolled
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -62,8 +63,8 @@ def world():
     ifaces = [{}, {"capabilities": {"ask": {"callers": ["member"]}}}, {"full": ["member"]}]
     agents = []
     for i, (ws, owner) in enumerate([(root, "jj"), (div, "divown"), (sub, "ed"), (sub, "vw"), (other, "out")]):
-        a = Agent.objects.create(slug=f"agent{i}", name=f"A{i}", workspace=ws, owner=people[owner],
-                                 interface=interface.parse(ifaces[i % 3]) if ifaces[i % 3] else {})
+        a = Agent.objects.create(slug=f"agent{i}", name=f"A{i}", workspace=ws, owner=people[owner])
+        publish(a, ifaces[i % 3])
         agents.append(a)
     AgentAdmin.objects.create(agent=agents[2], user=people["vw"])
     AgentAdmin.objects.create(agent=agents[1], user=people["ed"])

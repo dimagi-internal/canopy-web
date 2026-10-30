@@ -1,18 +1,18 @@
 # Roles — who can do what, and what actually enforces it
 
-> Every term here — workspace roles, agent roles (`owner` / `admin` / `member` /
-> `contact` / `system`), access (`full` / `confined` / `none`), the interface,
-> turn mode — is defined once, with THE rule that decides an agent turn, in
-> [`access.md`](access.md). This page is about enforcement.
+> Every term here — workspace roles, agent roles (`owner` / `admin` / `editor` /
+> `user` / `viewer`, plus `system`), the access list, access (`full` / `confined` /
+> `none`), capabilities, turn mode — is defined once, with THE rule that decides an
+> agent turn, in [`access.md`](access.md). This page is about enforcement.
 
 There are six tiers. Each contains the one below it.
 
 | Tier | Enforced as | Can |
 |---|---|---|
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **Viewer** | workspace member, `viewer` | Interact with an agent through what its published interface offers members (none published → nothing): chat, answer a blocked question, approve or decline a task, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
-| **Editor** | workspace member, `editor` | Create and edit agents, run turns (the agent's whole profile, **always `manual`** unless you are its admin), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
-| **Admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
+| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a viewer or user line opens a capability; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
+| **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `access.decide` giving you the agent; the whole profile needs an editor line on its access list, and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
+| **Workspace admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |
 | **Superuser** | workspace member, `superuser` | Everything an owner can do, in the workspace and every one below it, as oversight: none of the owner's email. Owners and superusers manage each other. The system superuser (`User.is_superuser`, Supervisor → Runners → System superusers) is the same idea for the whole fleet, with no workspace access. |
 
@@ -36,9 +36,9 @@ about who may call it, made when it is written, not discovered by an audit. A wr
 make must also give its reason (`viewer_write="..."`). Hand-written MCP tools, which are not
 routes, declare theirs in `route_gates.HAND_TOOL_GATES`.
 
-An admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
+A workspace admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
 they invite, re-role and remove viewers and editors, see invite links only for those roles,
-and can neither touch nor mint an admin or an owner. An admin is not an agent's admin either —
+and can neither touch nor mint a workspace admin or an owner. A workspace admin is not an agent admin either —
 `Agent.is_admin` is the agent's owner, a workspace OWNER, or an explicit `AgentAdmin` grant —
 because running a workspace is not holding its agents' keys.
 
@@ -202,13 +202,13 @@ workspace" 404). The API layer enforces the share token underneath; which pages 
 
 ## How you get into a workspace
 
-Every door — invite, approved access request, creating a workspace, and an agent's own
+Every way in — invite, approved access request, creating a workspace, and an agent's own
 login — is described once in [access.md § Getting into a workspace](access.md#getting-into-a-workspace).
 
 `apps/workspaces/tests/test_access_requests.py` asserts the only code that can create a
 `WorkspaceMembership` is `services._grant` (invite acceptance + request approval),
-`services.ensure_member` (the default-workspace bootstrap and the agent-login door) and
-workspace creation, so a new door cannot appear quietly; `tests/test_no_implicit_enrolment.py`
+`services.ensure_member` (the default-workspace bootstrap and the agent-login path) and
+workspace creation, so a new way in cannot appear quietly; `tests/test_no_implicit_enrolment.py`
 pins the same for `ensure_member` callers.
 
 **Never grant membership as a side effect.** Not of a visibility check, and not of a write:
@@ -252,7 +252,7 @@ in** (`harness.routing.runner_tenant_slugs`). Both rules, and everything that as
 and [§ Which agents a box may hold](runners.md#which-agents-a-box-may-hold).
 
 **Only the box that claimed a turn reports on it** — start, finish, ledger events, transcript
-lines (`harness.api.reporting_turn_or_404`). An unclaimed turn takes the editor tier.
+lines (`harness.api.reporting_turn_or_404`). An unclaimed turn takes the tier of cancelling it: a workspace editor on an agent turn.
 
 **A turn's CONTENT is a log** (`apps/harness/turn_access.py`). Every member sees that a turn
 ran, when and how it ended; its prompt, result, ledger, raw transcript, caller context and

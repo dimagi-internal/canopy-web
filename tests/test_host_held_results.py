@@ -48,6 +48,7 @@ from apps.mcp_apps_host import mcp_apps, mcp_apps_views
 from apps.realtime.groups import session_group
 from apps.tokens.models import HostGrant, PersonalToken
 from apps.workspaces.models import WorkspaceMembership
+from tests.access_helpers import publish
 from tests.fixtures import site_gateway as sg
 from tests.fixtures.host_results import META_KEY, ResultStore, facts
 from tests.fixtures.sensitive import vault_key
@@ -179,8 +180,7 @@ def w():
     """sg.world (a visitor's conversation, for `site_read`) plus a member's own
     conversation on the same site with two colleagues, each with their own grant."""
     w = sg.world()
-    w["agent"].interface = parse(IFACE)
-    w["agent"].save(update_fields=["interface"])
+    publish(w["agent"], IFACE)
     w["eddie"], w["vera"] = _member(w["ws"], "eddie"), _member(w["ws"], "vera")
     w["mine"] = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["owner"],
                                        metadata={"embed_app": "connect-labs"})
@@ -703,8 +703,7 @@ def test_site_read_follows_the_owners_ceiling(w, host):
     uri = _link(out.structured_content)["uri"]
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "ceiling": ["mcp__*connect_labs__marketplace_*"]}
-    w["agent"].interface = parse({"capabilities": caps})
-    w["agent"].save(update_fields=["interface"])
+    publish(w["agent"], {"capabilities": caps})
     host.seen.clear()
     with sg.visitor(w), pytest.raises(Exception, match="may not use"):
         sg.call(host, "site_read", {"uri": uri})
@@ -717,9 +716,9 @@ def _sensitive(w):
 
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    w["agent"].interface = parse({"capabilities": caps})
+    publish(w["agent"], {"capabilities": caps})
     w["agent"].interface_published_by = w["owner"]
-    w["agent"].save(update_fields=["interface", "interface_published_by"])
+    w["agent"].save(update_fields=["interface_published_by"])
     box = Runner.objects.create(name="zdr", workspace=w["ws"], kind=Runner.CLOUD, status=Runner.ONLINE,
                                 owner=w["owner"], last_heartbeat_at=timezone.now(),
                                 capabilities={"data_mode": "sensitive_data"})
@@ -741,7 +740,7 @@ def test_site_read_is_a_tool_a_sensitive_capability_holds(w, host):
     read = _visitor_call(w, host, "site_read", {"uri": uri}).structured_content
     assert json.loads(read["contents"][0]["text"])["rows"][0][0] == SENTINEL
     # And the structural check of `data: sensitive` admits it by name.
-    parse({"capabilities": {"c": {"callers": ["contact"], "sites": ["connect-labs"], "data": "sensitive",
+    parse({"capabilities": {"c": {"sites": ["connect-labs"], "data": "sensitive",
                                   "tools": ["mcp__*canopy-web__site_read", "Read"]}}})
 
 
@@ -751,8 +750,7 @@ def test_site_read_is_refused_outside_the_requirements_and_never_reaches_the_hos
     if breach != "no_grant":
         sg.grant(w)
     if breach == "undeclared":
-        w["agent"].interface = parse(IFACE)   # `connect` without `data: sensitive`
-        w["agent"].save(update_fields=["interface"])
+        publish(w["agent"], IFACE)   # `connect` without `data: sensitive`
     if breach == "runner":
         RunnerFlag.objects.filter(runner=box).delete()
     uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]

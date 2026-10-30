@@ -14,6 +14,7 @@ from apps.agents.models import Agent, AgentProject
 from apps.dynamic_views.models import DynamicView
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member, a_workspace
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -30,7 +31,7 @@ def world():
     editor = a_member(ws, email="ed@dimagi.com", role=M.EDITOR)
     viewer = a_member(ws, email="vi@dimagi.com", role=M.VIEWER)
     bot = a_member(ws, email="bailey@marshellis.com", role=M.VIEWER)
-    Agent.objects.create(slug="bailey", name="Bailey", workspace=ws, owner=owner, user=bot)
+    editors_run(Agent.objects.create(slug="bailey", name="Bailey", workspace=ws, owner=owner, user=bot))
     elsewhere = a_workspace("elsewhere")
     stranger_owner = a_member(elsewhere, email="other@dimagi.com", role=M.OWNER)
     Agent.objects.create(slug="hal", name="Hal", workspace=elsewhere, owner=stranger_owner)

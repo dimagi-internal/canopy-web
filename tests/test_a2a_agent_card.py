@@ -12,10 +12,10 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -44,7 +44,7 @@ ACE = {
             "input": {"opportunity_id": "integer"},
             "tools": ["Skill"],
         },
-        "deploy": {"description": "Ship it.", "callers": [], "bash": ["git push"]},
+        "deploy": {"description": "Ship it.", "role": "user", "bash": ["git push"]},
     },
 }
 INTERNAL = ["/ace:ask", "who_is_asking", "canopy email read", "{cwd}", "labs-marketplace://",
@@ -71,14 +71,13 @@ def w():
     M.objects.create(user=mem, workspace=ws, role=M.VIEWER)  # an editor sees every skill (editor tier)
     M.objects.create(user=admin, workspace=ws, role=M.EDITOR)
     ace = Agent.objects.create(slug="ace", name="ACE", description="Runs Connect opportunities.",
-                               email="ace@dimagi-ai.com", workspace=ws, owner=op,
-                               interface=parse(ACE))
+                               email="ace@dimagi-ai.com", workspace=ws, owner=op)
+    publish(ace, ACE, editors=False)
     AgentAdmin.objects.create(agent=ace, user=admin)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=op, interface={})
-    inner = Agent.objects.create(
-        slug="inner", name="Inner", workspace=ws, owner=op,
-        interface=parse({"full": ["contact@dimagi.com:verified"],
-                         "capabilities": {"ask": {"callers": ["member"]}}}))
+    inner = Agent.objects.create(slug="inner", name="Inner", workspace=ws, owner=op)
+    publish(inner, {"full": ["contact@dimagi.com:verified"],
+                    "capabilities": {"ask": {"callers": ["member"]}}}, editors=False)
     return {"op": op, "mem": mem, "admin": admin, "stranger": stranger, "ws": ws,
             "ace": ace, "hal": hal, "inner": inner}
 
@@ -103,13 +102,15 @@ def test_public_card_lists_only_what_an_outsider_can_reach(w):
     ask = _skills(body)["ask"]
     assert ask["name"] == "Ask"
     assert ask["description"] == "Ask ACE about your programme."
-    # Only outsider classes become tags on the public card.
-    assert ask["tags"] == ["caller:contact"]
+    # Only the lines that name outsiders become tags on the public card. Lines are the agent's,
+    # not a capability's: every viewer capability is open to every viewer line.
+    assert ask["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
     assert ask["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
     mkt = _skills(body)["marketplace"]
     assert mkt["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
-    # `contact:verified` is mail-only: no contact-token door for it.
-    assert "securityRequirements" not in mkt
+    # A known visitor with no proof (the `contact` line) reaches both viewer capabilities, so both
+    # have a contact-token entry point; a capability reached only by verified lines would not.
+    assert mkt["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
 
 
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE)
@@ -173,7 +174,7 @@ def test_public_card_is_cacheable_and_conditional(w):
     # Republishing the interface changes the card, and so the tag.
     iface = dict(ACE, capabilities={**ACE["capabilities"],
                                     "ask": {**ACE["capabilities"]["ask"], "description": "New."}})
-    Agent.objects.filter(slug="ace").update(interface=parse(iface))
+    publish(Agent.objects.get(slug="ace"), iface, editors=False)
     assert Client().get(_card_url("ace"), HTTP_IF_NONE_MATCH=etag).status_code == 200
 
 
@@ -187,11 +188,11 @@ def test_a_member_sees_public_plus_their_own(w):
     r = _pat(w["mem"]).get(_ext_url("ace"))
     assert r.status_code == 200, r.content
     skills = _skills(r.json())
-    assert set(skills) == {"ask", "marketplace", "summarise_opportunity"}
-    # A member-only skill has no A2A door: members use the agent's plugin.
+    assert set(skills) == {"ask", "marketplace", "summarise_opportunity", "deploy"}   # every user capability
+    # A member-only skill has no A2A entry point: members use the agent's plugin.
     assert "securityRequirements" not in skills["summarise_opportunity"]
     assert "inputModes" not in skills["summarise_opportunity"]
-    assert skills["ask"]["tags"] == ["caller:contact", "caller:member"]
+    assert skills["ask"]["tags"] == ["caller:contact", "caller:member", "domain:partner.org", "verified-sender"]
     assert not any(i["url"].endswith("/api/mcp/") for i in r.json()["supportedInterfaces"])
     assert r["Cache-Control"] == "private, max-age=60"
     assert "Authorization" in r["Vary"]
@@ -206,7 +207,7 @@ def test_owner_and_admin_see_everything(w):
         c.force_login(w[who])
         skills = _skills(c.get(_ext_url("ace")).json())
         assert set(skills) == {"ask", "marketplace", "summarise_opportunity", "deploy"}, who
-        assert skills["deploy"]["tags"] == ["caller:admin"]
+        assert skills["deploy"]["tags"] == ["caller:member"]   # a user capability: every user line reaches it
 
 
 def test_a_full_rule_member_sees_everything(w):

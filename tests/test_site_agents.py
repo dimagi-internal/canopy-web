@@ -21,7 +21,6 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
 from apps.host_grants import client_identity, site_needs
@@ -29,6 +28,7 @@ from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
+from tests.access_helpers import publish
 
 pytestmark = pytest.mark.django_db
 
@@ -55,14 +55,14 @@ def w():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=owner,
-                                    description="data questions", interface=parse(SENSITIVE_IFACE),
-                                    interface_published_by=owner,
+                                    description="data questions", interface_published_by=owner,
                                     interface_published_at=timezone.now())
-    ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner,
-                               interface=parse(PLAIN_IFACE))
+    publish(labsdata, SENSITIVE_IFACE)
+    ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
+    publish(ace, PLAIN_IFACE)
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=ws, owner=owner)
-    Agent.objects.create(slug="unlisted", name="Unlisted", workspace=ws, owner=owner,
-                         interface=parse(PLAIN_IFACE))
+    unlisted = Agent.objects.create(slug="unlisted", name="Unlisted", workspace=ws, owner=owner)
+    publish(unlisted, PLAIN_IFACE)
     key = generate_private_key("EdDSA")
     app = AppCredential.create_credential(name=SITE, created_by=owner, workspace=ws)
     app.public_keys = [public_pem(key)]
@@ -188,8 +188,8 @@ def test_it_lists_only_the_agents_allowed_on_the_site(w):
 def test_an_agent_of_another_workspace_is_never_listed(w):
     stranger = get_user_model().objects.create_user("s", "s@dimagi.com", "pw")
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=stranger)
-    foreign = Agent.objects.create(slug="foreign", name="Foreign", workspace=other,
-                                   interface=parse(PLAIN_IFACE))
+    foreign = Agent.objects.create(slug="foreign", name="Foreign", workspace=other)
+    publish(foreign, PLAIN_IFACE)
     AppCredentialAgent.objects.create(app=w["app"], agent=foreign)
     assert "foreign" not in _agents(w).slugs
 
@@ -198,7 +198,6 @@ def test_handles_sensitive_reflects_the_interface_setting(w):
     got = _agents(w)
     data = got.agent("labsdata").capability("data")
     assert data.handles_sensitive and data.sensitive_set_by == "Jo Owner" and data.sensitive_set_at
-    assert data.callers == ("contact", "member")
     assert not got.agent("ace").handles_sensitive
     assert got.agent("ace").capability("connect").sensitive_set_by == ""
 

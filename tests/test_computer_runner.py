@@ -35,6 +35,8 @@ from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
+from .access_helpers import editors_run
+
 pytestmark = pytest.mark.django_db
 User = get_user_model()
 
@@ -48,6 +50,8 @@ def world():
     WorkspaceMembership.objects.create(workspace=ws, user=aath, role=WorkspaceMembership.EDITOR)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj)
+    editors_run(hal)
+    editors_run(eva)
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                 capabilities={"agents": ["hal", "eva"], "sessions": True})

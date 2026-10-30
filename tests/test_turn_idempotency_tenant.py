@@ -20,6 +20,7 @@ from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -30,6 +31,8 @@ def two_tenants():
     ws_b = a_workspace("idem-b")
     agent_a = Agent.objects.create(slug="idem-alpha", name="Alpha", workspace=ws_a)
     agent_b = Agent.objects.create(slug="idem-bravo", name="Bravo", workspace=ws_b)
+    editors_run(agent_a)
+    editors_run(agent_b)
     editor_a = a_member(ws_a, email="idem-a-editor@dimagi.com", role=WorkspaceMembership.EDITOR)
     editor_b = a_member(ws_b, email="idem-b-editor@dimagi.com", role=WorkspaceMembership.EDITOR)
     return {"agent_a": agent_a, "agent_b": agent_b, "editor_a": editor_a, "editor_b": editor_b}
@@ -125,6 +128,7 @@ def test_the_database_holds_a_key_unique_per_workspace(two_tenants):
 def test_same_workspace_other_agent_is_a_conflict_too(two_tenants):
     other = Agent.objects.create(slug="idem-alpha-2", name="Alpha 2",
                                  workspace=two_tenants["agent_a"].workspace)
+    editors_run(other)
     services.enqueue_turn(agent=other, origin=Turn.ORIGIN_API, idempotency_key="k-other")
     res = _post(_as(two_tenants["editor_a"]), "idem-alpha", "k-other")
     assert res.status_code == 409, res.content

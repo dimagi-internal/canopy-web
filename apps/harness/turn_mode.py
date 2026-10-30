@@ -131,8 +131,8 @@ def requested(turn, agent) -> Resolved | None:
 
 
 def editor_cap(turn, agent) -> Resolved | None:
-    """MANUAL for a turn started by a workspace editor who is not an agent admin
-    (the editor tier of docs/architecture/access.md), or for one canopy started
+    """MANUAL for a turn started by an editor whose access-list line says `manual_only`
+    (docs/architecture/access.md), or for one canopy started
     on behalf of such a person (`_accountable_cap`), else None."""
     if getattr(turn, "initiator_user_id", None) is None:
         return None

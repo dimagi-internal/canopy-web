@@ -16,8 +16,8 @@ from apps.canopy_sessions.models import Session
 from apps.harness import services as harness
 from apps.harness.models import Turn
 from apps.agents.models import Agent
-from apps.agents.testing import admit_contacts
 from apps.harness import initiator as who
+from tests.access_helpers import let_in
 from tests.fixtures.contact_websocket import _contact_token, _world
 
 pytestmark = pytest.mark.django_db
@@ -33,7 +33,7 @@ def _clean_cache():
 @pytest.fixture()
 def w():
     owner, ws, app, priv = _world()
-    admit_contacts(Agent.objects.get(slug="echo"))
+    let_in(Agent.objects.get(slug="echo"), "contact", "editor")   # the old `full: [contact]`
     me = Client(HTTP_AUTHORIZATION=f"Bearer {_contact_token(priv, sub='neal')}")
     other = Client(HTTP_AUTHORIZATION=f"Bearer {_contact_token(priv, sub='someone-else')}")
     sid = me.post("/api/contact/sessions", {"agent_slug": "echo", "metadata": {"opp_slug": "bednets"}},

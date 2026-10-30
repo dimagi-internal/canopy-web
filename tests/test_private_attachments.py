@@ -24,7 +24,6 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.interface import parse
 from apps.canopy_sessions import conversation_keys, private_attachments
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import Attachment, Message, SessionKey, SessionKeyWrap, SessionParticipant
@@ -33,6 +32,7 @@ from apps.harness.closing import close_turn
 from apps.harness.models import Runner, Turn, TurnEvent
 from apps.harness.sweeps import expire_unrun_sensitive_turns
 from apps.workspaces.models import WorkspaceMembership
+from tests.access_helpers import publish
 from tests.fixtures.sensitive import minted, unwrap, vault_key, world
 
 pytestmark = pytest.mark.django_db
@@ -77,9 +77,8 @@ def bucket(settings):
 def w():
     out = world()
     # A private conversation runs only in a capability that handles sensitive data.
-    out["agent"].interface = parse({"capabilities": {"data": {
+    publish(out["agent"], {"capabilities": {"data": {
         "callers": ["member"], "sites": ["connect-labs"], "data": "sensitive", "tools": ["Read"]}}})
-    out["agent"].save(update_fields=["interface"])
     out["hot"].metadata = {**out["hot"].metadata, "embed_app": "connect-labs"}
     out["hot"].save(update_fields=["metadata"])
     for s in (out["hot"], out["cold"]):

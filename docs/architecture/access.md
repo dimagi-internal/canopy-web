@@ -2,10 +2,10 @@
 
 Every word canopy uses about who may do what has exactly one meaning, and it is
 defined here. Code docstrings point at this page instead of re-defining terms
-(`apps/agents/access.py`, `apps/harness/caller_context.py`,
-`apps/workspaces/permissions.py`, `apps/agents/interface.py`,
-`apps/harness/turn_mode.py`). Reuse existing words, one meaning per word, no new
-terms.
+(`apps/agents/access.py`, `apps/agents/grants.py`, `apps/agents/roles.py`,
+`apps/harness/caller_context.py`, `apps/workspaces/permissions.py`,
+`apps/agents/interface.py`, `apps/harness/turn_mode.py`). Reuse existing words, one
+meaning per word, no new terms. Design: `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`.
 
 There are two ladders, and they are different questions:
 
@@ -14,43 +14,36 @@ There are two ladders, and they are different questions:
 * an **agent role** says what a person may make one *agent* do.
 
 THE rule that joins them is one function, `apps/agents/access.decide(agent, who,
-*, verified, origin, capability=None, turn=None)`, which returns a `Decision(role, access,
-capability, may_request_auto, may_pin_runner, manual_only, basis, reason)`. Every
-entry point that makes an agent do work asks it (see "Where it is asked" below);
-`tests/test_access_matrix.py` asks it through every entry point. Don't write a second
-predicate for "may this person make this agent do X" — ask `decide`.
+*, verified, origin, capability=None, turn=None, standing=None, lines=None)`, which returns a
+`Decision(role, access, capability, may_request_auto, may_pin_runner, manual_only, basis, reason,
+agent_role, source, via)`. Every entry point that makes an agent do work asks it (see "Where it
+is asked" below); `tests/test_access_matrix.py` asks it through every entry point. Don't write a
+second predicate for "may this person make this agent do X" — ask `decide`.
 
-## Agent roles and the access list (the model being moved to)
+## The words
 
-Spec: `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`. The words
-below are the ones to use; the older ones in the rest of this page (`member`, `contact`,
-`full:`, `callers`, `editors:`) are read for agents not yet moved and removed when the last
-one has.
+| Word | Means | Where it lives |
+|---|---|---|
+| **workspace role** | What a person may do in a workspace: viewer < editor < admin < owner < superuser. | `apps/workspaces/permissions.py`, `WorkspaceMembership.ROLE_RANK` |
+| **agent role** | What a person may do with ONE agent, one ladder, strongest first: **owner** > **admin** > **editor** > **user** > **viewer**. Never "member" or "contact": those words describe how canopy knows someone, not what they may do. | `apps/agents/roles.py`, the only place that names them |
+| **system** | Not a person and not on the ladder: canopy itself (a schedule, a drill), the agent's OWN canopy login, an approved task's dispatch. It may do what an agent admin may. | `roles.SYSTEM` |
+| **permission** | What an agent role is made of: `read` (use a capability published for viewers), `write` (use one published for users, including one that acts), `run` (steer the whole agent), `edit`, `admin`, `own`. | `roles.py` |
+| **access list** | The one list per agent that says who has which role: lines of `(who, role)`. | `AgentGrant`, `apps/agents/grants.py` |
+| **line** | One entry of an access list. `who` is a person, everyone in a workspace, anyone at a domain, or a known visitor or sender. | "The access list" below |
+| **workspace default** | A line set once on a workspace; every agent in it, and in the workspaces below it, inherits it unless the agent opts out. | `AgentGrant.workspace`, `Agent.inherit_workspace_defaults` |
+| **capability** | A named, sandboxed profile an agent publishes (`ask`, ACE's `connect`): which tools, paths and sites a confined session may touch, and the lowest role (`viewer` or `user`) that may use it. It never says who: that is the access list's job. | the agent's interface, `apps/agents/interface.py` |
+| **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email. Every one asks `decide`. | "Where it is asked" |
+| **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Decision.agent_role`, `Decision.source` |
+| **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
+| **verified** | THIS message proves the sender's address: a signed-in request, mail that is DMARC-aligned or DKIM-signed by its own From: domain, a full member of our own Slack. An embedded site's visitor is never verified (the host vouches for them, not the human). | `caller_context.is_verified` |
+| **access level** | What a turn may reach: `full`, `confined` or `none`. | "Access levels" |
+| **agent admin** | Someone who holds an agent's keys: its owner, a workspace owner (implicitly), or a person granted by name (`AgentAdmin`), each still a member of the workspace. `Agent.is_admin` answers it. On the ladder, *admin* is this role and *owner* is the agent's owner above it. | `Agent.is_admin` |
+| **workspace admin** | A person with the workspace role admin: runs the workspace, holds no agent keys. | "Workspace roles" |
+| **runner admin** | A runner's owner or a `RunnerAdmin` grant. | "Runner roles" |
+| **vault key holder** | A person who holds a copy of a vault's key. | `vault.md` |
 
-* **Role** — what a person may do with ONE agent, one ladder: **owner** > **admin** >
-  **editor** > **user** > **viewer** (`apps/agents/roles.py`, the only place that names them).
-  viewer asks; user also uses what the agent publishes (including capabilities that act); editor also
-  runs the whole agent and changes its skills; admin also configures it in canopy-web; owner
-  also transfers or deletes it. Never say bare "admin": agent admin, workspace admin, runner
-  admin, vault key holder.
-* **Access list** — one list per agent of `(who, role)` lines (`AgentGrant`,
-  `apps/agents/grants.py`). `who` is a person, everyone in a workspace (optionally at least a
-  role there, optionally at a domain), anyone at a domain, or a known visitor or sender.
-  A person's role is the strongest line that names them. Lines can also sit on a workspace and
-  are inherited by every agent in it and below, unless an agent opts out
-  (`inherit_workspace_defaults`). Change them at `/api/agents/{slug}/access-list` and
-  `/api/workspaces/{slug}/agent-defaults`.
-* **Capability** — a named profile an agent publishes for viewers and users (`ask`, ACE's `connect`).
-  It says only the lowest role that may use it; who has a role is the list's business.
-* **Source** — why someone has a role (`Decision.source`, the envelope's `role` and `source`).
-  A role is what you can do; a source is why. They are never the same word.
-* An agent moves from the older rules to its list with the preview-and-move in its Access
-  setting (`apps/agents/convert_access.py`), which refuses unless `decide` answers the same
-  for everyone who could plausibly ask. `Agent.uses_access_list` marks one that has moved.
-
-Old word → new: owner → owner · admin → admin · "workspace editor, whole agent, every turn
-manual" → editor whose line is `manual_only` · `member` → user (or viewer, by the capability) ·
-`contact` → viewer · `full: [x]` → an editor line for x.
+The words say which admin they mean, always: a message that says "admin" alone has not said
+who may.
 
 ## Whose authority an agent acts with
 
@@ -79,13 +72,13 @@ for a touch. An `auto` turn may ask to act as the person to read only
   expires like any PAT (`PAT_DEFAULT_TTL_DAYS`, 180 days) and rotation replaces it first
   (`pat_rotation.max_days`).
 * **A delegated credential** — a standing credential from a person's own account given
-  to the agent: its owner's or an admin's GitHub token, shown as "GitHub · delegated by
+  to the agent: its owner's or an agent admin's GitHub token, shown as "GitHub · delegated by
   <name>". It is a vault entry with `account: "delegated"` and `delegated_by`
   (`models.VaultEntryAccount`, read through `credentials/accounts.py`), sealed (`zks1`)
   to the machines that run the agent — a runner serving it whose owner is one of its
   admins, and that is a cloud box or the person's own (`accounts.delegated_devices`;
-  another admin's laptop would let them open it) — and to nothing else: never under the vault key,
-  so no member, admin or license holder reads it, nor canopy-web, nor the person it came
+  another agent admin's laptop would let them open it) — and to nothing else: never under the vault key,
+  so no workspace member, agent admin or license holder reads it, nor canopy-web, nor the person it came
   from (they replace or withdraw it, `/settings`). It is the agent's to use in any turn
   `decide` lets run in the full profile (never a caller's confined turn); a box gets it
   only in its own resolve's `delegated` field, proved by its device key. canopy gives it
@@ -102,7 +95,7 @@ for a touch. An `auto` turn may ask to act as the person to read only
   "Acting as the person on canopy-web" below). Nothing else lets an agent act as a
   person. In particular:
   - **An agent's caller token only reads.** A full-profile AGENT turn asked by someone
-    who is not the agent's owner, an admin or canopy — an editor, a `full:` rule, a
+    who is not the agent's owner, an agent admin or canopy — an editor line, a
     writer in someone else's chat — reaches canopy as its asker so that it sees what
     they may see (`CallerToken`, `Grant.read_only`), but its tools are the READ tools
     only (MCP readOnlyHint: every GET route, and the hand-written reads) plus driving
@@ -118,10 +111,10 @@ for a touch. An `auto` turn may ask to act as the person to read only
     keeps every tool, as them.
   - **An agent's canopy login is always the account at its own email** (`Agent.email`),
     never any other (`agent_login.link_by_email`; `services.link_canopy_user` refuses
-    any other account). An admin links it, browser or token — gated by role: with no
+    any other account). An agent admin links it, browser or token — gated by role: with no
     account at that email canopy creates one (never signed in interactively) and links
     it; an existing account there that nobody has ever signed in to interactively links
-    directly (no person is behind it to accept); when the account is the admin's own,
+    directly (no person is behind it to accept); when the account is the agent admin's own,
     after a passkey step-up; when it is anyone else's account that has signed in, canopy
     can't tell an agent's mailbox from a person's, so a
     request (`AgentLoginRequest`, 7 days) waits for the person holding it to accept, in
@@ -139,18 +132,18 @@ for a touch. An `auto` turn may ask to act as the person to read only
 ## Workspace roles
 
 `viewer < editor < admin < owner < superuser` (`WorkspaceMembership.ROLE_RANK`). What each may
-do is one table, `apps/workspaces/permissions.py`, keyed by capability; nothing
+do is one table, `apps/workspaces/permissions.py`, keyed by permission name; nothing
 outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.md`.
 
-| Role | Holds | In plain words |
+| Workspace role | Holds | In plain words |
 |---|---|---|
-| **viewer** | `read` | Reads the workspace; talks to an agent through what its interface offers members. |
-| **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **edits agents and dispatches turns to them** — those turns always run `manual`. |
+| **viewer** | `read` | Reads the workspace. Talks to an agent only as far as that agent's access list and capabilities let them. |
+| **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **reshapes agents and sends them work** (the routes behind an agent's settings, schedules, tasks and dispatch). Whether a turn of theirs runs the agent's whole profile is the agent's access list, not this role. |
 | **admin** | + `logs.read`, `members.manage`, `integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide` | **Runs the workspace**: every log, members below admin, the integrations, the default runner order, how long chat and turn content is kept, which turns are refused, and starting or declining a proposed project (beside that project's own owner). **Holds no agent keys** — a workspace admin is not an agent admin. |
-| **owner** | + `own`, `control` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is **every agent's admin**. Holds or stops all work in the workspace's tree. **Is told**: blocking alerts, access requests, owner notices. |
+| **owner** | + `own`, `control` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is an **agent admin of every agent** in it. Holds or stops all work in the workspace's tree. **Is told**: blocking alerts, access requests, owner notices. |
 | **superuser** | everything an owner holds | **Oversight**: an owner's keys, here and below, **without the owner's email** (`services.owner_user_ids` and `services.mail_recipients` leave superusers out — unless nobody else would be told). The workspace-level sibling of the system superuser (`User.is_superuser`), which holds the same two switches for the whole fleet and no workspace access. |
 
-**Workspace permissions** (the capability names): `read`, `content.write`,
+**Workspace permissions** (the names a gate asks `perms.can` for): `read`, `content.write`,
 `agent.work`, `session.drive`, `events.write`, `logs.read`, `members.manage`,
 `integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide`, `own`, `control`.
 
@@ -165,18 +158,18 @@ below) and workspace creation — `apps/workspaces/tests/test_access_requests.py
 fails on a fourth path, and `tests/test_no_implicit_enrolment.py` pins
 `ensure_member`'s callers:
 
-* **An invite.** An **admin** or **owner** invites an email address at a role they
+* **An invite.** A workspace **admin** or **owner** invites an email address at a role they
   may grant (`permissions.may_manage_member`; **viewer** unless they choose
   otherwise). Canopy emails the `/invite/:token` link; accepting grants that role
   (never lowering one already held).
 * **An approved access request.** A person whose login email's domain is in the
   workspace's **`access_request_domains`** may ask (`POST
   /api/workspaces/{slug}/access-requests`, with an optional note) — the first-run
-  screen offers "Request an invitation to <workspace>". Every **admin** and
+  screen offers "Request an invitation to <workspace>". Every workspace **admin** and
   **owner** — owners of a parent workspace included — is emailed (and pushed) a
   deep link to the request's page,
   `/w/:workspace/settings/access-requests/:id`, where one of them **approves** at
-  **viewer**, **editor** or **admin** (an owner any of them; an admin only below
+  **viewer**, **editor** or **admin** (an owner any of them; a workspace admin only below
   admin — `permissions.may_manage_member`) or
   **denies**, with an optional reason. The requester is emailed the outcome. One
   open request per person per workspace; asking again is idempotent. `GET
@@ -184,7 +177,7 @@ fails on a fourth path, and `tests/test_no_implicit_enrolment.py` pins
   the invite mechanism (labs SES) plus Web Push and are best-effort: a failure
   never fails the request — it is stored on the request (`notify_result`) and
   written to the event log (`source=workspaces.access`, `warn`).
-* **A tree add.** An **admin** or **owner** adds someone who is ALREADY a member of
+* **A tree add.** A workspace **admin** or **owner** adds someone who is ALREADY a member of
   another workspace in the same tree — one the adder is in too — directly, at a role
   they may grant, with no invite (`POST /api/workspaces/{slug}/members/`,
   `services.add_tree_member`, from the "Members across workspaces" page
@@ -219,7 +212,7 @@ the **same 404**. Approval is upgrade-only, like an invite, so it never demotes 
 `PUT /api/workspaces/{slug}/access-settings`): blank is off, and every request
 waits for a person. Set to **viewer** or **editor** (never above), a request is
 approved the moment it is made — still an ordinary request record (`status:
-approved`, `auto: true`, `decided_by: null`), and every admin and owner is still
+approved`, `auto: true`, `decided_by: null`), and every workspace admin and owner is still
 emailed the link, from which they can change the person's role or remove them.
 `dimagi` is set to **editor** for now while it bootstraps (`workspaces/0012`);
 every other workspace is off. Turning it off or lowering it is a settings
@@ -227,18 +220,103 @@ change. The domains themselves are server-set, never client input.
 
 ## Agent roles
 
-What a person IS to one agent (`Decision.role`, the envelope's `relationship`):
+What a person may make ONE agent do, one ladder (`apps/agents/roles.py`), strongest first:
 
-| Agent role | Who |
-|---|---|
-| **owner** | `Agent.owner`, while still a member of the agent's workspace. |
-| **admin** | A workspace **owner**, or an explicit `AgentAdmin` grant (still a member). `Agent.is_admin` answers owner-or-admin. |
-| **member** | Any other member of the agent's workspace (viewer, editor or workspace admin). |
-| **contact** | Anyone who is not a member: an emailer, a widget visitor, a canopy user from another tenant, someone unidentified. (Envelope VERSION 1 said `caller`.) |
-| **system** | Not a person: canopy itself (a schedule, a drill), the agent's OWN canopy login (`Agent.user`), an approved task's `on_approve` dispatch. Another agent's login is not `system` — it is graded like anyone. |
+| Agent role | Holds | In plain words |
+|---|---|---|
+| **viewer** | `read` | Asks. Uses a capability whose lowest role is `viewer` (usually `ask`), and nothing else. |
+| **user** | + `write` | Uses any capability the agent publishes for users, including one that acts. Never the whole agent. |
+| **editor** | + `run`, `edit` | Steers the **whole agent**, in its own authority: every skill it has (the `full` access level). |
+| **admin** | + `admin` | Configures the agent in canopy-web: its access list, capabilities, credentials, routing, runners, integrations. May ask for `auto` and pin any runner that can hold it. |
+| **owner** | + `own` | Everything an agent admin may, plus transfer or delete the agent and name its admins. |
 
-An agent's **admins** (owner + admin) hold its keys: credentials, the vault
-pointer, GitHub delegation, the interface, its admin list, and routing in `auto`.
+* `system` is not on the ladder (see "The words"). Another agent's login is not `system`: it is
+  graded like any person, or agent A could steer all of agent B.
+* **What `decide` reads.** `decide` asks one permission of a line's role: `run`
+  (`roles.allows(role, roles.RUN)`): editor and above get the whole agent; user and viewer get a
+  capability, chosen by `role:` on the capability. The routes that change an agent still gate on
+  the workspace role (`agent.work`, an editor or above in the agent's workspace) or on
+  `Agent.is_admin`; they do not read the agent role.
+* **Where each role comes from.** The owner (`Agent.owner`, while still a member of the agent's
+  workspace), agent admins (a workspace owner, or an `AgentAdmin` grant) and canopy itself hold
+  their role with **no line**: `Agent.owner` and `AgentAdmin` remain the stores of owner and admin,
+  and the access list shows them as **implicit** lines it does not let you edit. Every other role
+  is a line on the access list. A line cannot give `admin` or `owner`.
+* **An owner or agent admin who has left the workspace is neither** (`Agent.is_admin`,
+  `caller_context.relationship_for_user`): both need current membership.
+* Roles describe a person; what a *turn* gets also depends on who started it and how
+  (`Decision.source`, below).
+
+## The access list
+
+An agent's **access list** (`AgentGrant`, `apps/agents/grants.py`) is the one place that says
+who has which role on it. A **line** is `(who, role)`, with a `manual_only` flag and a free-text note. `who` is one of
+four kinds (the API's `kind`):
+
+| `kind` | Who | It matches an asker when… |
+|---|---|---|
+| `person` | One canopy user. | they are that user. |
+| `workspace` | Everyone in a workspace, optionally only those with at least a workspace role there (`at_least`), optionally only those whose address is at a `domain`. | their effective role in that workspace meets the floor (a parent workspace's owners and admins count here as they do everywhere), and their address is at the domain if one is named. Never matches a contact. |
+| `domain` | Anyone at an email domain, member or not (the domain must be named). | their address is at the domain. `verified` (the default) also needs THIS message to prove the address. |
+| `contact` | A known visitor or sender canopy holds as a contact: an emailer, a Slack person outside the workspace, a widget visitor who may have no address. Optionally at a `domain` (blank: any), optionally `verified`. | canopy knows them as a contact, and the domain and `verified` conditions hold. |
+
+* **The highest role among a person's matching lines wins** (`grants.resolve`). The winning
+  line's `source` is `list:<subject key>` (`person:12`, `workspace:connect:editor:`,
+  `domain:dimagi.com`, `contact:`); its words, for a person to read, are `Decision.via`
+  ("Anyone at @dimagi.com (verified)").
+* **`manual_only`** is a flag on a line: every turn it lets someone start runs `manual`, so an
+  agent admin approves what goes out. It matters for `editor` lines only (a user or viewer is in a
+  capability, whose turns follow the routing ladder). Several lines at the winning role count as
+  manual only when ALL of them say so: one line without the flag frees the person. Dropping the
+  gate is one visible edit to one line, never a code change.
+* **Which lines you can write** (`grants.check_line`): roles `viewer`, `user` or `editor`; a
+  `person` line names a canopy user in a workspace you can see (`no such person…` otherwise); a
+  `workspace` line names a workspace you are in, and `at_least` must be a workspace role; a
+  `domain` or `contact` line can give `viewer` or `user` but **not `editor`**, because an address
+  is something a message can claim, and running the whole agent takes a named person or a
+  workspace's people (lines the migration below carried over as they were are the exception); a
+  `domain` line must name its domain. One line per subject per list (409 on a repeat: change that line instead).
+* **Who may read and change it.** Any member of the agent's workspace reads the list
+  (`GET /api/agents/{slug}/access-list`). An **agent admin** adds, changes and removes the agent's
+  own lines and turns inheritance on or off. Every change is a settings change
+  (`access-list:<slug>`, `docs/architecture/settings-audit.md`). The UI is the agent's
+  Settings → Roles → Access.
+* **A line can only open what exists.** It cannot open a capability the agent has not published:
+  an agent with no `ask` capability cannot be asked by a viewer even if the list names them.
+* **Default: nobody.** A new agent has no lines of its own; with none inherited either, only its
+  owner and agent admins reach it (and editors only by being named). Nobody gets in by being in
+  the workspace.
+
+### Workspace defaults
+
+A line can sit on a **workspace** instead of an agent (`AgentGrant.workspace`). Every agent in
+that workspace and in the workspaces below it inherits it (`grants.lines_for`), unless the agent
+sets `inherit_workspace_defaults: false` (`PUT /api/agents/{slug}/inherit-workspace-defaults`, an
+agent admin; for an agent holding credentials people should be named for). That is the
+"workspace-wide" and "Dimagi-wide" mechanism: one line on `dimagi` reaches every agent there and
+below, and one change reaches them all. A new agent inherits its workspace's defaults and nothing
+else.
+
+Defaults are changed on the workspace (`GET|POST /api/workspaces/{slug}/agent-defaults`,
+`DELETE …/{line_id}`, the Members page): by a **workspace admin** (`members.manage`), except that
+a default giving `editor` (the whole of every agent) is the **workspace owner's** call. Each
+change is audited as `agent-defaults:<workspace>`. A default line shows on each agent's list
+marked `scope: workspace`, and is removed there only by going to the workspace.
+
+### Where the old rules went
+
+Before this list, access was spread over the interface's `full:` rules, each capability's
+`callers`, `editors: confined` and the implicit rule that a workspace editor is an agent editor
+whose every turn is manual. Migration `agents/0112` moved every agent's rules onto its list
+(`full: member` → everyone in the agent's workspace as `editor`; contact classes → `contact`
+lines; a capability's callers → lines at `viewer` if it was open to contacts, else `user`; the
+implicit editor rule → "everyone in the workspace, at least editor → `editor`, `manual_only`",
+unless the agent said `editors: confined`), gave each capability its `role`, stripped the old keys
+and kept each agent's old interface and source in the settings audit. The old rules are gone from
+the code: an interface that still carries `full:`, `editors:` or a capability's `callers:` is
+refused (422) with a pointer to the access list. One consequence worth knowing: **a workspace
+editor is no longer an agent editor.** The workspace role still gates the routes that reshape an
+agent; whether a person's own turn runs the whole agent is the access list.
 
 ## Access levels
 
@@ -250,77 +328,73 @@ What a turn may reach (`Decision.access`; the roster's "Can reach"):
 * **none** — refused. The turn is written `cancelled` with the reason and what the
   asker CAN do, or (over HTTP) the request gets a 403 saying so.
 
-## The interface
+## Capabilities (the agent's interface)
 
-An agent's **published interface** (`apps/agents/interface.py`, live state on
-canopy-web, never a repo file) says what it offers people who are not its admins:
+An agent's **published interface** (`apps/agents/interface.py`, live state on canopy-web, never a
+repo file) is its set of **capabilities**: named profiles it offers people who do not run the
+whole agent. It says what each one *is*, and nothing about who may use it.
 
-* **`full:`** — caller classes that get the whole agent, e.g. Eva's
-  `full: [member, contact@dimagi.com:verified]`.
-* **`capabilities:`** — named capabilities, each with its **`callers:`** (which classes
-  may use it) and its profile (`tools`, `bash`, `read_paths`, `write_paths`,
-  `entry`, `pages`, `sites`, `ceiling`). `ask` is the free-form capability every channel
-  falls back to.
-* **caller classes** — `member` (a workspace member who is not an agent admin),
-  `contact` (known, not a member), `unknown` (nobody established who); narrowed by
-  `@domain.tld` (exactly that domain) and `:verified` (THIS message is verified).
-* `callers_default` is always `none`.
-* **`editors:`** — `full` (default, omitted) or `confined`: whether a workspace editor who
-  is not an agent admin gets the editor tier (row 4) or is decided like a viewer member.
-* **The default interface** (`interface.default_interface()`): no `full:` rule, no capability,
-  `callers_default: none`. **Every agent has an interface** — a new agent is created with the
-  default (a field default on `Agent.interface`), `GET /interface` never returns `{}`, and
-  "unpublish" is now **reset to default**. The default behaves exactly as an absent interface
-  always did (rows 1, 4 and 5 below): the owner, admins and editors, and nobody else. The page
-  edits it as a form (Settings → Channels → Callers) with the YAML under "Advanced"; a draft is
-  checked by `POST /interface/validate`, which asks `interface.parse` per field.
+* A capability has a profile (`tools`, `bash`, `read_paths`, `write_paths`, `entry`, `input`,
+  `description`), optionally the resources it serves (`pages`, superseded; `sites` and `ceiling`;
+  `own_login`; `data: sensitive`), and **`role: viewer | user`**: the lowest agent role that may
+  use it (`user` when it says nothing). `ask` is the free-form capability every entry point falls
+  back to; the Capabilities form can add a standard read-only `ask`.
+* **Which capability a viewer or user gets**: the one the asker named, else the one whose `pages`
+  match the page the conversation was held on, else the one whose `sites` include the Connected
+  site it was held on, else `ask`: among those their role may open (`access._capability_for`). If
+  none, they are refused.
+* **Default deny.** The default interface (`interface.default_interface()`) is
+  `{version: 1, capabilities: {}}`: nothing published. Every agent has an interface (a field
+  default on `Agent.interface`; `GET /interface` never returns `{}`) and "unpublish" is **reset to
+  default**. An agent that has published nothing is reached by its owner, its agent admins and the
+  editors its access list names, and by nobody else.
+* **Retired keys are refused.** `full:`, `editors:` and a capability's `callers:` are a 422
+  naming the access list; `callers_default` may only be `none`. Strict on purpose: an unknown key
+  is refused, not ignored.
+* The page edits it as a form (Settings → Channels → Capabilities) with the YAML under
+  "Advanced"; a draft is checked by `POST /interface/validate`, which asks `interface.parse` per
+  field. Saving is for the agent's owner or an agent admin, browser or token.
 
 ## The rule (the decision table)
 
-Asked in this order; the first row that matches decides.
+`access.decide` asks in this order; the first row that matches decides.
 
 | # | Who | Access | Mode | May request `auto` | May pin a runner |
 |---|---|---|---|---|---|
-| 1 | **owner / admin / system** | `full` | the routing ladder | owner/admin, on a verified credential | owner/admin: any runner that may hold the agent |
-| 2 | a writer in an admin's own session (`session_writer`) | `full` | the routing ladder | no | only a runner they administer |
-| 3 | anyone a **`full:`** rule names | `full` | the routing ladder | no | only a runner they administer |
-| 4 | **workspace editor or above** who is not an agent admin, unless the interface says `editors: confined` | `full` | **always `manual`** | no | only a runner they administer |
-| 5 | viewer / contact, **no published interface** | `none` | — | — | — |
-| 6 | viewer / contact (or, under `editors: confined`, an editor) whose class a capability lists | `confined` to it | the routing ladder | no | — |
-| 7 | anyone else | `none` | — | — | — |
+| 1 | **owner / agent admin / system** (no line needed) | `full` | the routing ladder | owner / agent admin, on a verified credential | owner / agent admin: any runner that may hold the agent |
+| 2 | a writer in an agent admin's own session (`session_writer`) | `full` | the routing ladder | no | only a runner they administer |
+| 3 | a line gives them **editor** | `full` | the routing ladder, but **every turn `manual`** when the winning line is `manual_only` | no | only a runner they administer |
+| 4 | a line gives them **user** or **viewer**, and a capability their role opens exists | `confined` to it | the routing ladder | no | — |
+| 5 | anyone else (no line, or a line whose role opens no capability) | `none` | — | — | — |
+
+The decision carries `agent_role` (their place on the ladder; `None` when refused) and `source`
+(why): `owner`, `admin`, `system`, `session` or `list:<line>`. `basis` is the older single word
+for the same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 3),
+`capability:<name>` (row 4) or `refused` (row 5). The refusal names the agent's owner as the one who can
+add the asker, and what each role can do.
 
 * **Over the table: the sensitive-data rule** (`access._sensitive_rule`, spec
   `2026-10-22-sensitive-data-agents` §5). A capability its interface says
   handles sensitive data (`data: sensitive`, `apps/agents/sensitive_data.py`) — the one a turn names, or the
   one its conversation's site or page selects — is **confined for everyone**: whoever
-  the table gave FULL (owner, admin, `system`, a `full:` rule, an editor, a session
+  the table gave FULL (owner, agent admin, `system`, an editor line, a session
   writer) runs that capability's profile instead, keeping their role, mode and pin
   rights (`basis: sensitive:<capability>`). Any turn in a sensitive conversation (one
   that requires sensitive-data runners) must end in that capability; anything else — full, another capability, or a
-  caller the capability does not list — is refused. The setting is an interface setting,
-  saved by the agent's owner or an admin, browser or token — as YAML (`publish_interface`)
+  person the capability's role does not admit — is refused. The setting is an interface setting,
+  saved by the agent's owner or an agent admin, browser or token — as YAML (`publish_interface`)
   or with the capability's sensitive-data switch, which edits that YAML (`set_capability_sensitive`) — and audited
   like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
-  → Interface shows its history); such a capability that holds a shell, writes, or any
+  → Channels → Capabilities shows its history); such a capability that holds a shell, writes, or any
   tool but the gateway's site tools, `current_page`, `who_is_asking` and read-only
   local tools is a 422. The turn runs the agent's current code; no commit is pinned.
   A runner in sensitive-data mode refuses any unconfined envelope (`sensitive_data_unconfined`).
-* Row 3 before row 4 keeps an owner's chosen domain-wide setup intact:
-  Eva's members get her whole through `full: [member]`, in her routing's mode.
-* Row 4 (the **editor tier**): an editor may EDIT the agent (its definition and
-  settings, as `agent.work` always allowed) and DISPATCH work to it ("improve
-  yourself"), but every turn they start runs `manual` — outbound or irreversible
-  actions wait for an admin — and they may not set `auto` anywhere: not on a
-  dispatch, not on a routing rule or actor route, not on the agent's own switch.
-* **`editors: confined`** (an interface key; default `full`, which is row 4 and is
-  never written) skips row 4: an editor who is not an agent admin is decided exactly
-  like a viewer member — row 3 if a `full:` rule names them, else row 6 (the
-  capability listing `member`, in the routing ladder's mode with no manual cap, as
-  any confined turn), else row 7. For an agent meant for everyone, such as a support
-  agent, where neither "every editor chat waits for an admin" nor "`full: [member]`
-  hands editors the whole agent in auto" fits. Owner and admins (row 1) are
-  unaffected. Unknown values are refused at publish, as is `confined` on an
-  interface with no capability and no `full:` rule.
+* Row 3 (the **editor line**): an editor may steer the whole agent, in its full profile. With
+  `manual_only` on the winning line every turn they start runs `manual` — outbound or irreversible
+  actions wait for an agent admin — and they may not set `auto` anywhere: not on a dispatch, not on
+  a routing rule or actor route, not on the agent's own switch. Without it the routing ladder
+  decides, and they still cannot request `auto`. Granting a whole workspace `editor` through a default
+  is the workspace owner's call because it hands every agent there to everyone in it.
 * Row 1's `system` is bounded by the person canopy acted FOR: a schedule's
   occurrence (fired, run now, or a one-off) carries its creator as the
   accountable person, and unless they are an agent admin or the agent's own
@@ -331,7 +405,7 @@ Asked in this order; the first row that matches decides.
   one of the agent's admins) — and that holds for a chat WITH the agent as much
   as for its own turns. Pinning is for an **agent admin OR a runner admin**,
   consistent with actor routes, which require the runner admin — and for the
-  **agent's own login** (`Agent.user`) on a box its admins already route it to:
+  **agent's own login** (`Agent.user`) on a box its agent admins already route it to:
   an enabled box in its default order (its own or the workspace's it follows)
   that no strict rule for the agent's own address keeps its work off
   (`access._routed_to`). That lets an agent hand its next chat to another box it
@@ -343,6 +417,15 @@ Asked in this order; the first row that matches decides.
   its workspace's runner order shares or one its sender administers
   (`runners.md` → "Project chats"), never on a teammate's box by default.
   It acts as the person who asked (see "Projects run as the person who asked").
+
+**Where it is asked.** `harness.services.enqueue_turn` (`_apply_capability`) for
+every entry point — the harness API (`POST /api/harness/turns/`), a canopy-web chat send, Slack intake and
+email intake (after the existing sender triage: a blocked contact never reaches
+the rule; a member is recognised by mail only on THIS message's DMARC); the
+harness API also asks it up front to answer 403 with a reason; `turn_mode.for_turn`
+at every claim (an editor line's `manual_only`); the caller envelope (`profile`,
+`granted_by`); the extended A2A card (`offered_to`); the access roster and the
+agent topology.
 
 ## Triggers: what starts an agent on its own
 
@@ -359,10 +442,10 @@ name; `apps/harness/triggers.py`;
 Rules:
 
 * **Who may set one up** (`triggers.may_set_up`, also the gate on every change):
-  a `cron` trigger, `agent.work` (an editor); an `inbound_mail` trigger, or any trigger
-  with `turn_mode: auto`, an **admin of the agent** (`Agent.is_admin`) — it admits an
+  a `cron` trigger, `agent.work` (a workspace editor); an `inbound_mail` trigger, or any trigger
+  with `turn_mode: auto`, an **agent admin** (`Agent.is_admin`) — it admits an
   outside sender to make the agent work, the tier of a `SenderTrust` exception and the
-  interface.
+  access list.
 * **Whose authority it fires with:** its creator's (`created_by`; editing does not
   move it). Its turn is a SYSTEM turn (`initiator.system`) accountable to the creator,
   so `access.decide` gives it the agent's profile and the turn mode is bounded by the
@@ -397,8 +480,8 @@ Rules:
 * **Managing:** the agent's Triggers tab; `GET|POST /api/agents/{slug}/triggers/`,
   `PATCH|DELETE …/{id}`, `POST …/{id}/run-now` (cron). The `/schedules/` routes are
   the cron subset runners and the calendar use.
-* **A refusal points here:** a verified contact refused by an interface is told that,
-  if it is automated, an admin of the agent can bind it to an inbound-mail trigger on
+* **A refusal points here:** a verified contact refused by the access list is told that,
+  if it is automated, an agent admin can bind it to an inbound-mail trigger on
   the agent's Triggers tab, so an automated sender is never cancelled at enqueue
   without anyone being told.
 
@@ -410,33 +493,24 @@ access requests from a whole email domain).
 
 | Runner role | Who | May |
 |---|---|---|
-| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (`sensitive_data`), read its admin list, **list every session open on the box as facts only and close an idle one** (`GET /runners/{id}/sessions/`, `POST …/sessions/{sid}/close`: who started it, how, its turns, last activity, `open_reason` — never a title, prompt or message, so a person's web chat the admin cannot open is still accounted for; a close refuses one with a turn running, a question waiting, or mid-transfer), **start readiness drills and read their results**, and **route agents' work onto the box**: add it to an agent's default runner list, a source rule or a person's route (`_runners_for_routing`). That means a runner admin can direct which agents' work a box takes — and so whose Claude subscription it spends; that is the owner's explicit choice, not a side effect. The agent side is unchanged: the caller needs the agent's write tier, its **admin** for any `turn_mode: auto`, and the box must still be able to hold the agent (`runner_may_hold_agent`). Routing decides what the box runs, never who it speaks as — heartbeat, claim and the credential fetch stay the owner's. A drill on an agent also needs that agent's **admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the editor tier's always-`manual` rule; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
-| **runner owner** | `Runner.owner` — whoever paired it | Everything above, plus everything that speaks FOR the box with the owner's memberships: heartbeat, claim, executing turns (drill turns included), pause, retire, capabilities, granting and revoking runner admins. |
+| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (`sensitive_data`), read its admin list, **list every session open on the box as facts only and close an idle one** (`GET /runners/{id}/sessions/`, `POST …/sessions/{sid}/close`: who started it, how, its turns, last activity, `open_reason` — never a title, prompt or message, so a person's web chat the admin cannot open is still accounted for; a close refuses one with a turn running, a question waiting, or mid-transfer), **start readiness drills and read their results**, and **route agents' work onto the box**: add it to an agent's default runner list, a source rule or a person's route (`_runners_for_routing`). That means a runner admin can direct which agents' work a box takes — and so whose Claude subscription it spends; that is the owner's explicit choice, not a side effect. The agent side is unchanged: the caller needs the workspace's `agent.work` permission, and to be an **agent admin** for any `turn_mode: auto`, and the box must still be able to hold the agent (`runner_may_hold_agent`). Routing decides what the box runs, never who it speaks as — heartbeat, claim and the credential fetch stay the owner's. A drill on an agent also needs that agent's **agent admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the `manual_only` cap on an editor line; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
+| **runner owner** | `Runner.owner` — whoever paired it | Everything above, plus everything that speaks FOR the box with the owner's memberships: heartbeat, claim, executing turns (drill turns included), pause, retire, reporting what the box can run, granting and revoking runner admins. |
 
-Anyone else — a member, viewer or contact — gets the runner-admin routes' **404**,
+Anyone else — a workspace member of any role, or a contact — gets the runner-admin routes' **404**,
 never a 403, so a runner's existence does not leak. A workspace admin of the
 runner's tenant may also READ its drill results (`logs.read`), but not start one.
-
-**Where it is asked.** `harness.services.enqueue_turn` (`_apply_capability`) for
-every entry point — `POST /api/harness/turns/`, a canopy-web chat send, Slack intake and
-email intake (after the existing sender triage: a blocked contact never reaches
-the rule; a member is recognised by mail only on THIS message's DMARC); the
-harness API also asks it up front to answer 403 with a reason; `turn_mode.for_turn`
-at every claim (the editor tier's `manual`); the caller envelope (`profile`,
-`granted_by`); the extended A2A card (`offered_to`); the access roster and the
-agent topology.
 
 ## Turn mode
 
 * **`manual`** — every outbound or irreversible action (send, publish, push,
-  merge, deploy) needs the agent's owner/admin first. The default.
+  merge, deploy) needs the agent's owner or an agent admin first. The default.
 * **`auto`** — the agent acts and reports.
 
 Decided at claim, top rung first (`apps/harness/turn_mode.py`): a dispatch's
-requested mode (`auto` only from an agent admin) → the editor tier (`manual`) →
+requested mode (`auto` only from an agent admin) → the `manual_only` cap of an editor line (`manual`) →
 an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
-on any rung is for the agent's admins.
+on any rung is for the agent's owner and agent admins.
 
 ## Direct use of an agent
 
@@ -465,7 +539,7 @@ direct (a direct turn).
   runner's and serves exactly the agents its owner administers or holds an active
   license for; its token reaches only the owner's direct turns and license reads
   (`runner_auth._COMPUTER_RULES`), and the computer appears in no fleet runner list.
-* **Acting as a lower role.** `acts_as` (`editor` or `viewer`) is a property of
+* **Acting as a lower role.** `acts_as` (`editor` or `viewer`, workspace roles) is a property of
   ONE turn or of one client's requests — never a setting left on a machine:
   - a turn started with it (`TurnIn.acts_as`, `canopy agent dispatch --as editor`;
     `LocalTurnIn.acts_as` for a direct session) is judged at that role from start to
@@ -479,9 +553,11 @@ direct (a direct turn).
     (never loosening one a turn was started with); someone else's turn keeps its own.
   The cap rides on the user object (`apps/workspaces/role_cap.py`) and is honoured
   where roles are read — `member_role`/`member_roles`/`membership`,
-  `Agent.is_admin`, `relationship_for_user`, `caller_runs_agent` — so `decide` places
-  the person in the tier the cap names. It only ever lowers, so anyone may ask for it
-  with no proof. It is how anyone, an agent included, runs the non-admin path for real.
+  `Agent.is_admin`, `relationship_for_user`, `caller_runs_agent` — so a capped owner or agent
+  admin is neither, and `decide` gives them only what the access list does (their own lines,
+  and any workspace line at the lowered workspace role). It only ever lowers, so anyone may ask
+  for it with no proof. It is how anyone, an agent included, runs the path of someone who is
+  not an agent admin for real.
 * **No PAT on a private runner.** The owner's direct sessions there sign in with the
   box's own device key (its runner token), which on a private runner also reaches the
   local-turn routes (`runner_auth._PRIVATE_RULES`) — never `/api/private-runners`,
@@ -497,24 +573,24 @@ direct (a direct turn).
   initiator (verified, `via=local`), it is RUNNING from the start and never
   claimed, and it carries the same caller envelope a runner turn gets
   (`trigger.private_runner` names the machine; `trigger.runner` is null).
-* **Who may.** Exactly whom `decide` gives the WHOLE agent (rows 1–4): its owner
-  or an admin, a `full:` rule, a workspace editor. A viewer or contact is refused
-  (403) and keeps the confined `ask` path through canopy.
+* **Who may.** Exactly whom `decide` gives the WHOLE agent (rows 1–3): its owner
+  or an agent admin, anyone with an editor line. A user or viewer, or a contact, is refused
+  (403) and keeps the confined path through canopy.
 * **Mode.** `manual`, always — except an agent admin who asks for `auto`. Stamped
-  at open, like a dispatch's request; a `full:`-rule member does not get the
-  routing ladder here, because nothing about a session on their own machine is a
-  channel the owner set a posture for.
+  at open, like a dispatch's request; an editor does not get the
+  routing ladder here, because nothing about a session on their own machine is an
+  entry point the owner set a posture for.
 * **It never holds the agent.** A direct turn is the person's own session: it neither waits
   behind the agent's runner turns nor delays them, and two people may use the agent at once.
   (No agent turn holds the agent either: an agent is not a lane.)
 * A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
-  record that someone uses the agent directly. The caller list decides who MAY
+  record that someone uses the agent directly. The access list decides who MAY
   (`decide`, above); the license is who DOES. Requested on the first direct turn and
-  issued at once when `decide` gives the whole agent (basis `owner`, `admin`,
-  `full:<rule>`, `editor`); anyone else gets a `requested` row the agent's admins
+  issued at once when `decide` gives the whole agent (basis `owner`, `admin` or
+  `grant:<line>`, an editor line); anyone else gets a `requested` row the agent's admins
   see, and a refusal. An agent admin **revokes** it per person without editing the
   rule, and a revoked license is never re-issued automatically; **approve**
-  reinstates it, re-asking `decide`, so it cannot license someone the caller list
+  reinstates it, re-asking `decide`, so it cannot license someone the access list
   does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
   lists holders, their private runners, direct turns, credential reads and last use;
   the agent's Settings → Roles → Direct use shows it.
@@ -525,7 +601,7 @@ direct (a direct turn).
   token — a turn of theirs that runner claimed. No turn, no secrets. A request naming
   that turn is a `license` read even from an agent admin or a runner owner. What it is
   handed is `authority`'s direct column: never the agent's canopy login (graded `system`,
-  past the editor tier's manual cap), the owner's GitHub delegation, or lent or shared
+  past an editor line's `manual_only` cap), the owner's GitHub delegation, or lent or shared
   credentials. Each read is logged with `via=license`,
   the turn and the license. Secrets read this way reach the person's machine;
   nothing brokers each call through canopy-web.
@@ -552,9 +628,10 @@ before any session starts instead of spending one (`apps/admission`). The worked
 and waits for a human yes, and a cloud session that ends cannot receive one.
 
 * **What a rule is.** A row on a workspace (`AdmissionRule`), edited by its
-  admins (`admission.manage`) at `/w/:workspace/settings/admission-rules`. Its
+  workspace admins (`admission.manage`) at `/w/:workspace/settings/admission-rules`. Its
   conditions are any subset of: agent, origin (the `Turn.origin` vocabulary),
-  principal (`member`/`contact`/`agent`/`system`, from who asked), access
+  principal (who asked, in this condition's own words: `member` is a canopy user, `contact` an
+  outside person with no account, `agent`, `system`; it is not an agent role), access
   (`confined`/`full`), capability, turn mode, runner kind
   (`emdash`/`cloud`/`remote`), and reach (`paused`/`offline`, below). A blank
   condition means any. A rule needs at
@@ -611,7 +688,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
     (Auto-Submitted, Precedence bulk/list, list mail), a no-reply address, the
     agent's own mailbox, a system sender, or canopy/another agent. At most one
     reply goes per thread per 24 hours. It is **off** in each workspace until
-    one of its admins turns it on, on the Admission rules page
+    one of its workspace admins turns it on, on the Admission rules page
     (`AdmissionSettings`, `PUT /api/workspaces/{slug}/admission-settings`,
     logged to the event log); while it is off, the notice is recorded as
     `held`.
@@ -621,7 +698,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
     `Reply:` line: sent, queued for the runner, off in this workspace, or why
     not), and links to fix it: the rule
     on the settings page (`?rule=<id>`, highlighted), the agent's turn mode and
-    runners, its interface callers, and its turns.
+    runners, its access list, and its turns.
 * **Defaults.** Every workspace is seeded with two rows (migration
   `admission/0002`, and at creation for every new one). The first rejects email + confined + manual + cloud, with both
   notices, and is **on**. The second is the same on a laptop (`emdash`) runner
@@ -629,8 +706,8 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   with an `allow`, or delete it (a deleted default is not re-seeded).
 * **Refusals as rules.** canopy refuses two
   kinds of turn on its own, before any rule: mail from a contact the workspace
-  **blocked** (`channels.email.refused_email_turn`), and a person the agent's interface
-  **offers nothing** (`_apply_capability`, access `none`). Those are access
+  **blocked** (`channels.email.refused_email_turn`), and a person the agent offers
+  **nothing** (no line gives them a role that opens a capability) (`_apply_capability`, access `none`). Those are access
   decisions, so they stand whatever the rules say: no `allow` can cover them,
   and disabling their rule does not let them run. Each is reported through a
   rule instead (`evaluate.at_refusal`): conditions `sender: blocked` or
@@ -640,7 +717,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   the turn keeps the refusal's own `result_note`. Migration `admission/0005`,
   and every new workspace, seed `blocked-sender` and `offered-nothing`, each
   with **every notice off**, so by default these refusals stay silent. A blocked
-  sender gets no reply unless an admin turns one on.
+  sender gets no reply unless a workspace admin turns one on.
 
 * **Reach rules: no runner will take it.** `reach: paused` matches a turn when
   every runner that could take it (`harness.claim.turn_reach`, the claim's own
@@ -659,20 +736,32 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   last heard from. A chat, Slack or MCP asker reads that on the turn
   (`turn_status.rejection` → `TurnStatus.detail` on a `cancelled` turn).
   Migration `admission/0008`, and every new workspace, seed `no-runner-paused`
-  and `no-runner-offline` (24h): ordinary rules, **on**, owner notice only. An
-  admin who disables them gets turns that sit queued instead.
+  and `no-runner-offline` (24h): ordinary rules, **on**, owner notice only. A
+  workspace admin who disables them gets turns that sit queued instead.
 
 ## The caller envelope
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
-VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `relationship` (the agent role),
-`profile` (`full` | `confined`), `granted_by` (`owner` | `admin` | `system` |
-`editor` | `session:<role>` | `full:<rule>` | `capability:<name>` | `refused` |
-`no-interface` for a turn with no agent), `capability` (the confined profile),
-`turn_mode` (`{mode, basis}`), and:
+VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `role` and `source`
+(below), `relationship`, `profile` (`full` | `confined`), `granted_by`, `capability` (the confined
+profile), `turn_mode` (`{mode, basis}`), and:
+
+* **`role`** — where the asker stands on the agent's role ladder: `owner` | `admin` | `editor` |
+  `user` | `viewer` | `system`, null when refused. **`source`** — why: `owner` | `admin` |
+  `system` | `session` | `list:<line>` (the access-list line that gave it, e.g.
+  `list:domain:dimagi.com`), `""` when refused. An agent says "you are a viewer here because …"
+  from these, instead of guessing. Added without a version bump.
+* **`granted_by`** — the same answer as one word: `owner` | `admin` | `system` |
+  `session:<role>` | `grant:<line>` (an editor line) | `capability:<name>` (a user or viewer in
+  that capability) | `sensitive:<capability>` | `refused`, and `no-interface` for a turn with no
+  agent.
+* **`relationship`** — an older, coarser field, kept for readers that have not moved: `owner` |
+  `admin` | `system` for those, and `member` or `contact` for everyone else (in the agent's
+  workspace, or not). It is how canopy knows the asker, not a role: it says nothing about what
+  they may do. Read `role`.
 
 * **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
-  owner or admin dispatched the turn at it, push / PR / merge in this agent's OWN
+  owner or an agent admin dispatched the turn at it, push / PR / merge in this agent's OWN
   repo are pre-approved even in `manual`. Nothing else is.
 * **`sender_trust`** — `{email, reason, expires_at, active}` when an email turn's
   sender was tied to a member although THIS message is not aligned, by a temporary
@@ -698,7 +787,9 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
 * **`trigger.kind`** (v3) — what canopy-initiated work the turn is
   (`origin_ref.trigger`); null otherwise. **`trigger.agent_trigger`** —
   `{id, name, kind, set_up_by}` when one of the agent's own triggers fired the turn
-  (see "Triggers"); null otherwise. The same object is in `who.trigger`.
+  (see "Triggers"); null otherwise. The same object is in `who.trigger`. **`trigger.matched_classes`**
+  is kept for agents whose skills still read it and is always `[]`: the caller classes it listed
+  are gone, and `role` and `source` say which line admitted the asker.
 * **`conversation`** — `{session_id, thread_id, subject, slack}`. `slack` (v3,
   additive) is where in Slack the conversation is, whenever its session holds a
   Slack thread (born there, or bound by a share): `{team_id, channel_id,
@@ -726,10 +817,10 @@ tool; and beside every delivered prompt — the runner leaves
 `caller_context` UserPromptSubmit hook adds a summary next to the person's words
 (cloud: `CANOPY_CALLER`).
 
-* **Default deny.** The default interface (nothing published) means only the agent's admins and its
-  workspace's editors (manual) reach it; every viewer, contact or unidentified
-  caller is refused (rows 5 and 7). The interface is live state on canopy-web —
-  never a file in the agent's repo; owner-or-admin edit it on the agent. It
+* **Default deny.** An agent with no capability published and no editor line is reached only by
+  its owner and agent admins; every viewer, user, contact or unidentified
+  caller is refused (row 5). The interface is live state on canopy-web —
+  never a file in the agent's repo; the owner or an agent admin edits it on the agent. It
   confines callers who reach the agent through canopy (web chat, Slack, email,
   embedded sites). canopy's MCP server offers NO per-agent tools: someone who
   wants to use an agent installs its plugin and runs it in their own Claude
@@ -767,8 +858,8 @@ tool; and beside every delivered prompt — the runner leaves
   capability's own bash rules run the mail path (`canopy email …` /
   `bin/<slug>-email`).
 * **A colleague's FULL turn reads as the colleague.** A full-profile turn not
-  asked by the agent's owner, an admin or canopy (a `full:` rule, a workspace
-  editor, a writer in an admin's session — `caller_tokens.is_caller_scoped`)
+  asked by the agent's owner, an agent admin or canopy (an editor line, a
+  writer in an agent admin's session — `caller_tokens.is_caller_scoped`)
   gets a **scoped** caller token (`CallerToken.scoped`): every READ tool exists, plus
   driving the asker's open page (`all_tools` + `read_only`; a write is refused — the
   asker granted no act-as-you permission), and each runs as the conversation's current asker, so
@@ -838,8 +929,8 @@ On someone's behalf, these are judged as that person:
 
 | Decision | Where | Their access needed |
 |---|---|---|
-| Pin a turn, or place a chat, on a runner | `access.may_pin_runner` (dispatch pins, chat placement, moving queued turns) | the target agent's admin, or the runner's administrator |
-| Ask for `turn_mode: auto` | `turn_gates.check_requested_turn_mode`; the claim re-checks `requested_turn_mode_by`, which is them | the target agent's admin |
+| Pin a turn, or place a chat, on a runner | `access.may_pin_runner` (dispatch pins, chat placement, moving queued turns) | the target agent admin, or the runner's administrator |
+| Ask for `turn_mode: auto` | `turn_gates.check_requested_turn_mode`; the claim re-checks `requested_turn_mode_by`, which is them | the target agent admin |
 
 Reads are unchanged: a turn already reads as its asker where that matters (scoped caller
 tokens, above). Each decision made on someone's behalf is recorded as an
@@ -937,7 +1028,7 @@ host* (the header above is canopy-web's own decisions):
   session's `embed_app`) whose agent is set up for that site — some capability of its
   interface lists it in `sites:` (`interface.page_site_of`) — whatever the turn's
   profile: a confined visitor's (its capability must list the site), an editor's
-  (scoped token), the owner's or an admin's (found from the chat key the runner gave
+  (scoped token), the owner's or an agent admin's (found from the chat key the runner gave
   only that session). Every call uses the SENDER's grant for that page. A full-profile
   turn is narrowed by the widest ceiling the owner set on that site
   (`interface.site_ceiling`).
@@ -971,7 +1062,7 @@ coach). Canopy only operates on what a machine has already **sent**; it asks a
 machine for more (live streaming, history) only when its owner, or someone they
 explicitly added, asks (`access.may_pull`). Adding someone is the session owner's
 (`access.can_share`), with one more way in: the owner of the agent a member's
-conversation is with (`Agent.owner`, not its admins), once in it, may bring someone
+conversation is with (`Agent.owner`, not its agent admins), once in it, may bring someone
 new in — a person or an agent — but owns nothing, reads nothing new, and changes or
 removes nobody; never a contact's or a sensitive one (`access.can_add_people`). Sensitive conversations stay sealed to
 their own people (`tenancy.md` § Sensitive conversations). The rule is
@@ -1005,7 +1096,7 @@ only honours the rows.
 re-roled or removed, a Slack thread bound or detached, a move between workspaces, a
 person's project sharing or a coach's grant, and a session becoming sensitive each
 write one `session.*` event to the workspace's log, ids only, naming who did it and
-under which turn — so an admin can say what happened to a session without reading it
+under which turn — so a workspace admin can say what happened to a session without reading it
 (`chat-sessions.md` § A session's lifecycle is in the event log).
 
 ## Who is in a session
@@ -1047,7 +1138,7 @@ Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
 * **`@canopy branch <ask>` splits a conversation into a new thread**
   (`apps/slack/branch.py`). Inside a thread with an agent session, anyone who may
   write into that conversation (its owner or an editor — a member in the
-  channel is one — or an admin of its agent) gets a new top-level message, a
+  channel is one — or an agent admin) gets a new top-level message, a
   child `Session` (`parent_session`, `parent_claude_session` from the parent
   binding's `transcript_id`, `metadata.slack_branched_from`) keyed to the new
   thread, and a first turn seeded with the parent conversation, condensed by
@@ -1078,7 +1169,7 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   nothing across tenants.
 * **Raw conversations stay private.** The people API's one read of turn content
   is `GET /api/people/{id}/conversations/?agent=<slug>`: the turns
-  that person started with THAT agent, for that agent's OWN login only. An admin
+  that person started with THAT agent, for that agent's OWN login only. An agent admin
   of the agent may call it but sees only turns the turn ACL already shows them.
   No other agent, and no plain member, can read them. A fact's `source_turn` is
   a link, readable only by whoever can already read the turn.

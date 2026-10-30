@@ -805,8 +805,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     group: 'Agent workspace',
     title: 'Agent settings',
     audience: "The agent's owner and admins (some controls are workspace-owner only)",
-    what: "Everything that configures this agent, one tab per question: Overview (what is left to set up, what it is, where it runs — routing and the repository its runners clone — and delete it), Roles (owner, admins, who runs it in their own Claude Code), Channels (callers, Slack, email, Google account), External accounts (GitHub, its Google mailbox) and Security (its secrets in one table you change in place, where they live, its canopy login, then who and what can open them and read alerts). A tab with a setup step left carries a dot. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
-    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Publish what callers may ask for', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', 'Change, add, reveal or delete a secret', 'Connect its Google mailbox'],
+    what: "Everything that configures this agent, one tab per question: Overview (what is left to set up, what it is, where it runs — routing and the repository its runners clone — and delete it), Roles (owner, admins, who runs it in their own Claude Code), Channels (capabilities, Slack, email, Google account), External accounts (GitHub, its Google mailbox) and Security (its secrets in one table you change in place, where they live, its canopy login, then who and what can open them and read alerts). A tab with a setup step left carries a dot. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
+    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Publish the capabilities viewers and users may use, each with its lowest role', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', 'Change, add, reveal or delete a secret', 'Connect its Google mailbox'],
   },
   {
     path: '/w/:workspace/ddd',

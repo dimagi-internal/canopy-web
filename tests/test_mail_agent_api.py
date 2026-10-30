@@ -8,6 +8,7 @@ from apps.agents.models import Agent
 from apps.mail import ses
 from apps.mail.models import MailDomain, MailMessage, MailRoute, MailThread
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db
 
@@ -24,6 +25,7 @@ def w(settings, monkeypatch):
     WorkspaceMembership.objects.create(workspace=ws, user=viewer, role="viewer")
     d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified", daily_send_cap=2)
     a = Agent.objects.create(slug="mada", name="Ada", workspace=ws, owner=owner)
+    editors_run(a)
     r = MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
     t = MailThread.objects.create(workspace=ws, route=r, subject="Hello", message_count=1)
     MailMessage.objects.create(thread=t, direction="in", message_id="<in-1@x.org>",

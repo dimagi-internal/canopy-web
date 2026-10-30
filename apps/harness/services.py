@@ -50,9 +50,9 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     creates it — so no runner can claim it before the decision is recorded.
 
     THE rule, `apps.agents.access.decide` (docs/architecture/access.md): FULL
-    for its owner, admins, canopy's own turns and a workspace editor (whose turn
-    then runs manual — `turn_mode.editor_cap`); a viewer or a contact gets the
-    capability their class is offered, or a `full:` rule's whole profile. Anyone
+    for its owner, admins, canopy's own turns and an editor on its access list (whose
+    turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
+    gets the capability their role may use. Anyone
     offered nothing is refused: the turn is written already CANCELLED with the
     reason and what they CAN do, for the same reasons a blocked sender's is (the
     idempotency key holds, an old runner sees a 201, and the refusal is visible

@@ -1116,7 +1116,7 @@ class CallerToken(models.Model):
                                      null=True, blank=True, related_name="caller_tokens")
     turn = models.ForeignKey("Turn", on_delete=models.CASCADE, related_name="caller_tokens")
     #: Minted for a FULL-profile turn asked by someone who is not the agent's
-    #: owner, an admin or canopy (a `full:` rule, an editor): the session is not
+    #: owner, an admin or canopy (an editor): the session is not
     #: confined to a capability, but its canopy reads must still be the ASKER's
     #: (who-is-asking phase 5). Such a token lists every tool and runs each as
     #: the conversation's current asker; a confined token never does.

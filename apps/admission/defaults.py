@@ -60,8 +60,8 @@ DEFAULTS: tuple[dict, ...] = (
         "seed_key": "offered-nothing",
         "access": "none",
         "action": "reject", "notify_sender": False, "notify_owner": False, "enabled": True,
-        "reason": ("the agent's interface offers this person nothing: they are not one of its "
-                   "admins, and no `full:` rule or capability lists them."),
+        "reason": ("the agent offers this person nothing: they are not one of its "
+                   "admins, and nothing on its access list lets them in."),
     },
 )
 
