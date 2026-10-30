@@ -3509,3 +3509,73 @@ class ProjectProgressOut(StrictModel):
 
 AgentProjectDetailOut.model_rebuild()
 AgentDetailOut.model_rebuild()
+
+
+# ---- The access list (docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md) ----
+
+class AccessLineIn(StrictModel):
+    """One line to add: who, and what role they get."""
+
+    kind: Literal["person", "workspace", "domain", "contact"]
+    role: Literal["viewer", "user", "editor"]
+    user_id: int | None = None
+    email: str | None = None            # a person, by the address on their canopy account
+    workspace: str = ""                 # kind=workspace: everyone in this workspace
+    at_least: str = ""                  # ... who hold at least this workspace role ("" = any)
+    domain: str = ""                    # kind=domain/contact, or narrowing a workspace line
+    verified: bool = True
+    manual_only: bool = False
+    note: str = Field(default="", max_length=300)
+
+
+class AccessLinePatch(StrictModel):
+    role: Literal["viewer", "user", "editor"] | None = None
+    manual_only: bool | None = None
+    note: str | None = Field(default=None, max_length=300)
+
+
+class AccessLineOut(StrictModel):
+    id: int
+    #: "agent" (this agent's own line) or "workspace" (a default it inherits from `scope_workspace`).
+    scope: Literal["agent", "workspace"]
+    scope_workspace: str | None = None
+    kind: str
+    who: str
+    role: str
+    user_id: int | None = None
+    subject_workspace: str | None = None
+    at_least: str = ""
+    domain: str = ""
+    verified: bool = True
+    manual_only: bool = False
+    note: str = ""
+    granted_by_email: str | None = None
+    granted_at: dt.datetime | None = None
+    can_edit: bool = False
+
+
+class AccessImplicitOut(StrictModel):
+    """A role nobody wrote on the list: it comes with the agent or the workspace."""
+
+    who: str
+    role: str
+    why: str
+
+
+class AccessRoleOut(StrictModel):
+    role: str
+    can: list[str]
+
+
+class AccessListOut(StrictModel):
+    uses_access_list: bool
+    inherit_workspace_defaults: bool
+    lines: list[AccessLineOut]
+    implicit: list[AccessImplicitOut]
+    roles: list[AccessRoleOut]
+    #: Can the caller change this agent's list (an agent admin)?
+    can_edit: bool = False
+
+
+class AccessInheritIn(StrictModel):
+    inherit: bool
