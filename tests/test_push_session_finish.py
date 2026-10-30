@@ -182,10 +182,13 @@ def test_one_drain_is_bounded_so_a_slow_push_cannot_stall_the_tick(workspace, us
 def test_preferences_api_defaults_to_five_and_round_trips(user):
     c = Client()
     c.force_login(user)
-    assert c.get("/api/push/preferences").json() == {"session_idle_minutes": 5}
+    assert c.get("/api/push/preferences").json() == {"session_idle_minutes": 5, "approval_cards": True}
     r = c.patch("/api/push/preferences", {"session_idle_minutes": 15}, content_type="application/json")
     assert r.status_code == 200
-    assert c.get("/api/push/preferences").json() == {"session_idle_minutes": 15}
+    assert c.get("/api/push/preferences").json() == {"session_idle_minutes": 15, "approval_cards": True}
+    # Each setting changes alone: turning approval cards off leaves the quiet minutes.
+    off = c.patch("/api/push/preferences", {"approval_cards": False}, content_type="application/json")
+    assert off.json() == {"session_idle_minutes": 15, "approval_cards": False}
     bad = c.patch("/api/push/preferences", {"session_idle_minutes": -1}, content_type="application/json")
     assert bad.status_code == 422
 

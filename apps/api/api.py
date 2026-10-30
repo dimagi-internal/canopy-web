@@ -313,6 +313,7 @@ from apps.oauth_server.api import router as oauth_connected_router  # noqa: E402
 from apps.passkeys.api import router as passkeys_router  # noqa: E402
 from apps.passkeys.api_vault import router as vault_keyset_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
+from apps.approvals.api import router as approvals_router  # noqa: E402
 from apps.reviews.api import router as reviews_router  # noqa: E402
 from apps.runs.api import router as runs_router  # noqa: E402
 from apps.session_sharing.api import router as sessions_router  # noqa: E402
@@ -476,6 +477,7 @@ api.add_router("/checkins", checkins_router)
 # The two work-group run routes an un-updated engine still calls — one release only.
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
+api.add_router("/approvals", approvals_router)
 # A session's Slack thread (share / detach / new-thread) — Slack's own routes, at
 # the session paths they always had. Mounted first: fixed `/slack/...` paths.
 api.add_router("/canopy-sessions", slack_session_router)

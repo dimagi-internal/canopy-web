@@ -26,8 +26,11 @@ class PushUnsubscribeIn(StrictModel):
 
 class NotificationPreferenceOut(StrictModel):
     session_idle_minutes: int
+    approval_cards: bool = True
 
 
 class NotificationPreferenceIn(StrictModel):
     # 0 = off. Capped at a day: past that "it went quiet" is no longer news.
-    session_idle_minutes: int = Field(ge=0, le=1440)
+    session_idle_minutes: int | None = Field(default=None, ge=0, le=1440)
+    # None leaves it as it is. False stops approval cards being sent to you (push, Slack, email).
+    approval_cards: bool | None = None

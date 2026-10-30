@@ -69,6 +69,9 @@ class NotificationPreference(models.Model):
     # fires. Waiting (rather than pushing on every turn end) is what keeps an
     # agent's back-to-back turns from buzzing once each.
     session_idle_minutes = models.PositiveIntegerField(default=DEFAULT_SESSION_IDLE_MINUTES)
+    #: Whether approval cards (a proposal waiting on your yes) are sent to you: a push, a Slack DM,
+    #: or an email when neither reaches you. Off leaves them on the board and Home only.
+    approval_cards = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:  # pragma: no cover

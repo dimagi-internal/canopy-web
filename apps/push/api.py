@@ -101,14 +101,21 @@ def unsubscribe(request: HttpRequest, payload: PushUnsubscribeIn):
 def get_preferences(request: HttpRequest) -> NotificationPreferenceOut:
     """`session_idle_minutes`: how long a chat must stay quiet after its agent
     finishes before you are notified that it is done (0 = never)."""
-    return NotificationPreferenceOut(session_idle_minutes=session_idle_minutes_for(request.user))
+    pref = NotificationPreference.objects.filter(user=request.user).first()
+    return NotificationPreferenceOut(session_idle_minutes=session_idle_minutes_for(request.user),
+                                     approval_cards=pref.approval_cards if pref else True)
 
 
 @router.patch("/preferences", response=NotificationPreferenceOut, summary="Change your notification settings")
 @gate("self", setting=True)
 def set_preferences(request: HttpRequest, payload: NotificationPreferenceIn) -> NotificationPreferenceOut:
-    """Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you."""
-    NotificationPreference.objects.update_or_create(
-        user=request.user, defaults={"session_idle_minutes": payload.session_idle_minutes}
-    )
-    return NotificationPreferenceOut(session_idle_minutes=payload.session_idle_minutes)
+    """Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you, and/or
+    whether approval cards are sent to you. A field you leave out stays as it is."""
+    defaults = {}
+    if payload.session_idle_minutes is not None:
+        defaults["session_idle_minutes"] = payload.session_idle_minutes
+    if payload.approval_cards is not None:
+        defaults["approval_cards"] = payload.approval_cards
+    pref, _ = NotificationPreference.objects.update_or_create(user=request.user, defaults=defaults)
+    return NotificationPreferenceOut(session_idle_minutes=pref.session_idle_minutes,
+                                     approval_cards=pref.approval_cards)

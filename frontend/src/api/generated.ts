@@ -14555,9 +14555,76 @@ export interface paths {
         readonly head?: never;
         /**
          * Change your notification settings
-         * @description Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you.
+         * @description Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you, and/or
+         *     whether approval cards are sent to you. A field you leave out stays as it is.
          */
         readonly patch: operations["set_preferences"];
+        readonly trace?: never;
+    };
+    readonly "/api/approvals/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The cards waiting on you
+         * @description Proposals waiting on a yes or no from YOU: the people a card is sent to
+         *     (`deciders.for_task`) see it here. Anyone else in the workspace can still open a card by
+         *     its key and decide it, as on the board.
+         */
+        readonly get: operations["my_cards"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/approvals/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One card, with everything needed to decide it
+         * @description The card for task `key`: the ask, the person's words verbatim, the agent's reason, the exact
+         *     plan, what approving starts and what declining does, who it was sent to and — once decided —
+         *     who decided it, how, and what they said. 404 for a task in a workspace you are not in.
+         */
+        readonly get: operations["get_card"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/approvals/{key}/decide": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve or decline a card
+         * @description Approve (starts the turns the card names, once) or decline (nothing runs). 409 with who got
+         *     there first when it is already decided — never a second run. 403 when the board itself
+         *     would refuse you (a project decision card is the project owner's).
+         */
+        readonly post: operations["decide_card"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/canopy-sessions/slack/share": {
@@ -40595,11 +40662,130 @@ export interface components {
         readonly NotificationPreferenceOut: {
             /** Session Idle Minutes */
             readonly session_idle_minutes: number;
+            /**
+             * Approval Cards
+             * @default true
+             */
+            readonly approval_cards: boolean;
         };
         /** NotificationPreferenceIn */
         readonly NotificationPreferenceIn: {
             /** Session Idle Minutes */
-            readonly session_idle_minutes: number;
+            readonly session_idle_minutes?: number | null;
+            /** Approval Cards */
+            readonly approval_cards?: boolean | null;
+        };
+        /** ApprovalCardOut */
+        readonly ApprovalCardOut: {
+            /** Key */
+            readonly key: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "open" | "approved" | "declined" | "closed";
+            /** Workspace */
+            readonly workspace: string;
+            /** Url */
+            readonly url: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Agent Name */
+            readonly agent_name: string;
+            /** Filed By */
+            readonly filed_by: string;
+            /** Summary */
+            readonly summary: string;
+            /** Evidence */
+            readonly evidence: readonly components["schemas"]["ApprovalEvidenceOut"][];
+            /** Rationale */
+            readonly rationale: string;
+            /** Plan */
+            readonly plan: readonly string[];
+            /** Will Run */
+            readonly will_run: readonly components["schemas"]["ApprovalWillRunOut"][];
+            /** If Declined */
+            readonly if_declined: string;
+            /** Links */
+            readonly links: readonly components["schemas"]["ApprovalLinkOut"][];
+            /** Source Url */
+            readonly source_url: string;
+            /** Priority */
+            readonly priority: number;
+            /** Confidence */
+            readonly confidence: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Sent To */
+            readonly sent_to: readonly string[];
+            readonly decided?: components["schemas"]["ApprovalDecidedOut"] | null;
+            /** Can Decide */
+            readonly can_decide: boolean;
+        };
+        /** ApprovalDecidedOut */
+        readonly ApprovalDecidedOut: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            readonly decision: "approve" | "decline" | "other";
+            /** By */
+            readonly by: string;
+            /** Via */
+            readonly via: string;
+            /** At */
+            readonly at?: string | null;
+            /**
+             * Comment
+             * @default
+             */
+            readonly comment: string;
+        };
+        /** ApprovalEvidenceOut */
+        readonly ApprovalEvidenceOut: {
+            /** Quote */
+            readonly quote: string;
+            /** Who */
+            readonly who: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /** ApprovalLinkOut */
+        readonly ApprovalLinkOut: {
+            /** Label */
+            readonly label: string;
+            /** Url */
+            readonly url: string;
+        };
+        /** ApprovalWillRunOut */
+        readonly ApprovalWillRunOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Prompt */
+            readonly prompt: string;
+        };
+        /** ApprovalDecideIn */
+        readonly ApprovalDecideIn: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            readonly decision: "approve" | "decline";
+            /**
+             * Comment
+             * @default
+             */
+            readonly comment: string;
         };
         /** SlackShareOut */
         readonly SlackShareOut: {
@@ -63170,6 +63356,74 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["NotificationPreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly my_cards: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ApprovalCardOut"][];
+                };
+            };
+        };
+    };
+    readonly get_card: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovalCardOut"];
+                };
+            };
+        };
+    };
+    readonly decide_card: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ApprovalDecideIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovalCardOut"];
                 };
             };
         };

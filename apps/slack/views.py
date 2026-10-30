@@ -27,6 +27,7 @@ from apps.events.models import Event
 from apps.harness import clis
 from apps.workspaces.models import Workspace
 
+from . import approvals as approval_cards
 from . import client, ingest, relay, services
 from .verify import SignatureError, verify_slack_signature
 
@@ -354,6 +355,8 @@ def interactions(request: HttpRequest) -> HttpResponse:
 
     if action_id in checkins.ACTIONS:
         return _group_run_click(payload, action_id, action)
+    if action_id in approval_cards.ACTIONS:
+        return approval_cards.handle_click(payload, action)
     if not (action_id.startswith(menus.PICK)
             or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD, services.RESTART_CLOSED)):
         return HttpResponse(status=200)

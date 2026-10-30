@@ -58,6 +58,7 @@ import { KnowledgeBasePage } from './pages/projects/KnowledgeBasePage'
 import { McpServersPage } from './pages/projects/McpServersPage'
 import { ProjectsPage } from './pages/projects/ProjectsPage'
 import { TaskPage } from './pages/work/TaskPage'
+import { ApprovalPage } from './pages/ApprovalPage'
 import { TasksPage } from './pages/work/TasksPage'
 import { TriagePage } from './pages/work/TriagePage'
 import { ProjectPage } from './pages/work/ProjectPage'
@@ -429,6 +430,8 @@ export const routeTable: RouteObject[] = [
       // a board or a calendar; one task's page; what waits for a decision.
       { path: '/w/:workspace/tasks', element: <TasksPage /> },
       { path: '/w/:workspace/tasks/:taskKey', element: <TaskPage /> },
+      // A proposal waiting on a yes or no, with everything needed to decide it (the push, Slack and email link here).
+      { path: '/w/:workspace/approvals/:taskKey', element: <ApprovalPage /> },
       { path: '/w/:workspace/triage', element: <TriagePage /> },
       // Every project in the workspace, one row each; each opens its one page.
       { path: '/w/:workspace/projects', element: <ProjectsPage /> },

@@ -53,7 +53,7 @@ LAYERS: list[tuple[str, set[str]]] = [
     # L2 features — framework surfaces built on the core; nothing below names them.
     ("features", {"agent_runs", "capabilities", "connections", "feedback", "github_connect", "host_grants", "huddles",
                   "inbound", "issues", "mcp", "oauth_server", "plugins", "session_sharing", "slack",
-                  "system", "timeline", "threads"}),
+                  "system", "timeline", "threads", "approvals"}),
     # L3 product — canopy's own features (the tiers in test_architecture_boundary).
     ("product", _product_tier()),
     # L4 the composition root.

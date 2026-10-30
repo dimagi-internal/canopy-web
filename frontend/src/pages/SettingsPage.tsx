@@ -4,6 +4,7 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { listRunnerDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
+import { apiV2 } from '@/api/client.v2'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
@@ -95,6 +96,7 @@ export function SettingsPage() {
           <>
             <ContactDetailsPanel />
             <PresencePanel />
+            <ApprovalCardsPanel />
             <SessionWorkspacePanel />
             <SessionReviewersPanel />
           </>
@@ -127,6 +129,61 @@ export function SettingsPage() {
 }
 
 /** Whether others see you on the page they are viewing. */
+/**
+ * Approval cards: a proposal waiting on your yes, sent to you with everything needed to decide it
+ * (a notification, a Slack message, or an email when neither reaches you). Off leaves them on the
+ * board and Home only.
+ */
+function ApprovalCardsPanel() {
+  const [on, setOn] = useState<boolean | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    // A preference that fails to load just leaves the panel out; it is not worth an error.
+    void apiV2
+      .GET('/api/push/preferences')
+      .then(({ data }) => {
+        if (!cancelled && data) setOn(data.approval_cards)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  if (on === null) return null
+  const toggle = (next: boolean) => {
+    setOn(next)
+    void apiV2
+      .PATCH('/api/push/preferences', { body: { approval_cards: next } })
+      .then(({ data }) => (data ? setOn(data.approval_cards) : setOn(!next)))
+      .catch(() => setOn(!next))
+  }
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-foreground">Approval cards</h2>
+      <div className="flex items-start gap-3">
+        <input
+          id="approval-cards-toggle"
+          type="checkbox"
+          checked={on}
+          onChange={(e) => toggle(e.target.checked)}
+          aria-describedby="approval-cards-help"
+          className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-primary"
+        />
+        <div>
+          <label htmlFor="approval-cards-toggle" className="block text-sm text-foreground-secondary cursor-pointer">
+            Send me approval cards
+          </label>
+          <p id="approval-cards-help" className="text-xs text-muted-foreground">
+            A proposal waiting on your yes arrives as a notification, a Slack message with Approve and Decline
+            buttons, or an email when neither reaches you — with everything needed to decide. When off, they
+            stay on the board and Home.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PresencePanel() {
   // Defaults to visible (matches the backend default when no preference row
   // exists yet) so the checkbox never flashes unchecked before the fetch resolves.
