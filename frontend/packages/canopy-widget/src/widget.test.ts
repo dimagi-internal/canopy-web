@@ -228,6 +228,12 @@ describe('the credential path', () => {
     expect(init_.targetOrigin).not.toBe('*')
   })
 
+  it('lets the frame copy to the clipboard and ask for a passkey, and nothing more', () => {
+    const { iframe } = widgetHarness()
+    const allow = (iframe.getAttribute('allow') ?? '').split(';').map((p) => p.trim())
+    expect(allow).toEqual(['publickey-credentials-get', 'clipboard-write'])
+  })
+
   it('never puts the token in the iframe URL', async () => {
     const { iframe, fromFrame } = widgetHarness()
     await fromFrame({ source: SOURCE, type: 'ready' })
