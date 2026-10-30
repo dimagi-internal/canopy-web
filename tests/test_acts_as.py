@@ -6,7 +6,7 @@ never a setting left on a machine. Everything about the turn is judged at that r
 whether it may start, its mode, its envelope, its credential reads. So anyone, an
 agent included, can run the non-admin path (license, manual cap, refusal) for real.
 `Runner.private` takes a box out of the fleet: only what its owner puts on it and
-the local sessions on it.
+the direct sessions on it.
 """
 from __future__ import annotations
 
@@ -217,7 +217,7 @@ def test_the_rest_claim_reads_the_header(world):
     assert Turn.objects.get().origin_ref["acts_as"] == "editor"
 
 
-# --- local sessions opened as a lower role -----------------------------------------
+# --- direct sessions opened as a lower role -----------------------------------------
 
 def test_a_local_turn_opened_as_an_editor_is_an_editors(world):
     c = _pat(world["jj"])
@@ -255,7 +255,7 @@ def test_a_revoked_license_refuses_the_capped_owner_too(world):
     assert _open_local(c, world["box"], acts_as="editor").status_code == 403
 
 
-# --- the box's own key signs its owner's local sessions in: no PAT on a private runner ---
+# --- the box's own key signs its owner's direct sessions in: no PAT on a private runner ---
 
 def _box_token(box):
     from apps.harness.models import RunnerAccessToken, RunnerDeviceKey

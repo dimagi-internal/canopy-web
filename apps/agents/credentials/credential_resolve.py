@@ -93,7 +93,7 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
 
     The one decision both `/credentials/resolve` and `/credentials/access`
     make, so the cheap check can never disagree with the real gate. A request
-    naming the person's own open local turn is `license` whoever they are, an
+    naming the person's own open direct turn is `license` whoever they are, an
     admin or a runner owner included (`authority`: a direct session). Otherwise
     `runner` wins over `admin` when both hold (`caller_runs_agent` already implies
     admin), because it is the more specific claim and the audit trail should say a
@@ -107,17 +107,17 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     rtok = getattr(request, "runner_token", None)
     if rtok is not None:
         # A person's computer (no runner app) is never a `runner` reader: its token
-        # reads only under its owner's license, during their own local turn.
+        # reads only under its owner's license, during their own direct turn.
         if (rtok.runner.kind != Runner.COMPUTER and agent.is_admin(request.user)
                 and device_keys.runner_serves_agent(rtok.runner, agent)):
             return "runner", ""
         # A PRIVATE runner reads under its owner's license, for one of their own turns
-        # it holds (canopy-web#1705) — the same principal as their local sessions.
+        # it holds (canopy-web#1705) — the same principal as their direct sessions.
         if license_for_read(request, agent) is not None:
             return "license", ""
         return None, (f"this runner token is {rtok.runner.name}'s, and {rtok.runner.name} "
                       f"does not run {agent.slug}")
-    # A person's OWN open local turn on this agent (named in X-Canopy-Turn-Id) is a
+    # A person's OWN open direct turn on this agent (named in X-Canopy-Turn-Id) is a
     # direct session, whoever they are: an owner or admin using the agent in their own
     # Claude Code is read like anyone else, and steps up like anyone else
     # (`authority`). Asked first so being a runner owner or an admin changes nothing.

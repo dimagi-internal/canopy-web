@@ -15,7 +15,7 @@ they read. The rules, in order (`request`):
    re-asks `decide`, so an admin cannot license someone the caller list does not
    give the whole agent: raise their role or add a `full:` rule first.
 
-What a license admits: a local turn (`apps/harness/local.py`) and the credential
+What a license admits: a direct turn (`apps/harness/local.py`) and the credential
 reads made during it (`/credentials/resolve` with that turn's `X-Canopy-Turn-Id`,
 `credential_principal`). Usage and cost roll up to it later.
 """
@@ -93,7 +93,7 @@ def touch(lic: AgentLicense, *, private_runner=None) -> None:
 
 def revoke(agent, user, *, by, note: str = "") -> AgentLicense:
     """Revoke `user`'s license (creating a revoked row if they never had one, so a
-    first use cannot slip past it). Their open local turns keep running, but read
+    first use cannot slip past it). Their open direct turns keep running, but read
     nothing more: `credential_principal` asks for an ACTIVE license on every read."""
     lic = _row(agent, user)
     lic.status, lic.revoked_at, lic.revoked_by, lic.note = (

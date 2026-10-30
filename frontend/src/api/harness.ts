@@ -98,7 +98,7 @@ export async function setRunnerEngine(runnerId: string, engine: RunnerEngine): P
 }
 
 // Make a runner its owner's PRIVATE runner (canopy-web#1705): no fleet work, only
-// what its owner puts on it and the local sessions on it. (Running as a lower role is
+// what its owner puts on it and the direct sessions on it. (Running as a lower role is
 // a property of a turn — `acts_as` on it — not of a machine.)
 export async function setRunnerPrivate(runnerId: string, isPrivate: boolean): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/private', {

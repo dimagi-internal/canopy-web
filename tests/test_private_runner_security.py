@@ -1,9 +1,9 @@
 """A private runner speaks for its owner, so only its owner may extend that trust.
 
-A private runner's token signs in AS its owner: it opens their local turns and reads
+A private runner's token signs in AS its owner: it opens their direct turns and reads
 secrets under their license (canopy-web#1705). So who may put a key on such a box,
 which registration the box is, and what a SHARED box's token can do to its owner's
-local sessions are all decisions that must stay with the owner.
+direct sessions are all decisions that must stay with the owner.
 """
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ def test_a_private_runners_token_cannot_register_or_list_private_runners(world):
     assert runner_auth.reaches("POST", "/api/harness/local-turns", world["box"].pk, private=True)
 
 
-# --- a shared box's token never reports on its owner's local turns -------------------
+# --- a shared box's token never reports on its owner's direct turns -------------------
 
 def test_a_shared_runners_token_cannot_finish_its_owners_local_turn(world):
     jj, box = world["jj"], world["box"]

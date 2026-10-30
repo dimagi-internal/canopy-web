@@ -216,9 +216,9 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
          in substance: an admin can already write every value, swap the vault
          key, and put their own box on the agent to read them back.
        - `license`: holds an ACTIVE license to use the agent directly and names
-         their OWN open local turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
+         their OWN open direct turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
          The read is logged against that turn and license.
-       Anyone else — a member, an editor with no local turn — is refused, and
+       Anyone else — a member, an editor with no direct turn — is refused, and
        told which access to ask for. Tighter than workspace membership on purpose.
 
     Every read is recorded, so a credential fetch is visible in the fleet log

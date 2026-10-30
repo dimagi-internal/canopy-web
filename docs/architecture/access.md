@@ -35,7 +35,7 @@ credential follow from them, in ONE table (`credentials/authority.py`, asked by
 | **The agent's vault secrets** | the agent's | the agent's, as far as the person's role reads the vault |
 | **Delegated** (a person's lent account) | the agent's, sealed to the box | the person's own; the lent copy never travels |
 
-A person's own open local turn is a direct read whoever they are: an agent admin or a
+A person's own open direct turn is a direct read whoever they are: an agent admin or a
 runner owner is read like anyone and steps up like anyone. The one step-up is crossing
 from the agent's identity to the person's (below); nothing else in a direct session asks
 for a touch. An `auto` turn may ask to act as the person to read only
@@ -409,8 +409,8 @@ on any rung is for the agent's admins.
 A person may run an agent in their **own** Claude Code, with the agent's plugin and
 skills, and canopy keeps the record (`apps/harness/local.py`). The word for it is
 **direct** (against a session a runner box claims). The stored names stay `local`:
-`Turn.origin = local`, "a local turn", `/api/harness/local-turns/`; prose and screens say
-direct.
+`Turn.origin = local`, `LocalTurnIn`, `/api/harness/local-turns/`; prose and screens say
+direct (a direct turn).
 
 * A **private runner** (`PrivateRunner`) is a person's machine: plain Claude Code with
   the canopy plugin, no runner app. It is registered once with the person's own
@@ -421,7 +421,7 @@ direct.
   marked **`private`** (`PUT /api/harness/runners/{id}/private`, owner only). A
   private runner takes no fleet work — no routed turn, no workspace order, no source
   rule (`Runner.directed_only`) — only what its owner pins or binds to it, plus the
-  local sessions on it. Its device key is what those sessions prove themselves
+  direct sessions on it. Its device key is what those sessions prove themselves
   with, and it may read an agent's secrets while its owner holds an active license
   (`device_keys.private_runner_licensed`), for that owner's own turns only.
 * A machine **without** the runner app still gets its own key for reading the
@@ -429,12 +429,12 @@ direct.
   `computer` runner (`Runner.COMPUTER`, `local.ensure_computer_runner`, returned as
   `runner_id`) to enrol a device key on. The key is owner-approved like a private
   runner's and serves exactly the agents its owner administers or holds an active
-  license for; its token reaches only the owner's local turns and license reads
+  license for; its token reaches only the owner's direct turns and license reads
   (`runner_auth._COMPUTER_RULES`), and the computer appears in no fleet runner list.
 * **Acting as a lower role.** `acts_as` (`editor` or `viewer`) is a property of
   ONE turn or of one client's requests — never a setting left on a machine:
   - a turn started with it (`TurnIn.acts_as`, `canopy agent dispatch --as editor`;
-    `LocalTurnIn.acts_as` for a local session) is judged at that role from start to
+    `LocalTurnIn.acts_as` for a direct session) is judged at that role from start to
     finish — whether it may start at all, its mode (`auto` becomes `manual`), its
     envelope, and every read made during it (`X-Canopy-Turn-Id` by its initiator,
     or the turn of the caller token it calls MCP with — REST and MCP alike).
@@ -448,16 +448,16 @@ direct.
   `Agent.is_admin`, `relationship_for_user`, `caller_runs_agent` — so `decide` places
   the person in the tier the cap names. It only ever lowers, so anyone may ask for it
   with no proof. It is how anyone, an agent included, runs the non-admin path for real.
-* **No PAT on a private runner.** The owner's local sessions there sign in with the
+* **No PAT on a private runner.** The owner's direct sessions there sign in with the
   box's own device key (its runner token), which on a private runner also reaches the
   local-turn routes (`runner_auth._PRIVATE_RULES`) — never `/api/private-runners`,
   which takes the person's own token — and reads credentials under the owner's
   license. Such a turn's initiator assurance is `private-runner-key` (verified, like
-  a PAT). A shared runner's token opens no local session and reports on none, and a
+  a PAT). A shared runner's token opens no direct session and reports on none, and a
   private runner's reaches only its local-turn routes, for its own registration.
   Only the owner registers or approves a device key on a private runner
   (`runners.may_trust_device_keys`); its runner admins still see and may revoke them.
-* A **local turn** (`Turn.origin = local`) is one session there with one agent,
+* A **direct turn** (`Turn.origin = local`) is one session there with one agent,
   opened by the canopy plugin's SessionStart hook
   (`POST /api/harness/local-turns/`). It is a real turn: the person is its
   initiator (verified, `via=local`), it is RUNNING from the start and never
@@ -470,25 +470,25 @@ direct.
   at open, like a dispatch's request; a `full:`-rule member does not get the
   routing ladder here, because nothing about a session on their own machine is a
   channel the owner set a posture for.
-* **It never holds the agent.** A local turn is excluded from
+* **It never holds the agent.** A direct turn is excluded from
   `one_executing_turn_per_agent` and `routing.busy_agent_ids`: it is the person's
   session, not the agent's one continuous session, so it neither waits behind the
   agent's runner turns nor delays them, and two people may use the agent at once.
 * A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
   record that someone uses the agent directly. The caller list decides who MAY
-  (`decide`, above); the license is who DOES. Requested on the first local turn and
+  (`decide`, above); the license is who DOES. Requested on the first direct turn and
   issued at once when `decide` gives the whole agent (basis `owner`, `admin`,
   `full:<rule>`, `editor`); anyone else gets a `requested` row the agent's admins
   see, and a refusal. An agent admin **revokes** it per person without editing the
   rule, and a revoked license is never re-issued automatically; **approve**
   reinstates it, re-asking `decide`, so it cannot license someone the caller list
   does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
-  lists holders, their private runners, local turns, credential reads and last use;
+  lists holders, their private runners, direct turns, credential reads and last use;
   the agent's Settings → People → Direct use shows it.
 * **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
   read) AND one of the caller's OWN live turns on that agent named in
-  `X-Canopy-Turn-Id`: their running local turn, or — on their private runner's
+  `X-Canopy-Turn-Id`: their running direct turn, or — on their private runner's
   token — a turn of theirs that runner claimed. No turn, no secrets. A request naming
   that turn is a `license` read even from an agent admin or a runner owner. What it is
   handed is `authority`'s direct column: never the agent's canopy login (graded `system`,

@@ -38,7 +38,7 @@ class Runner(models.Model):
     EMDASH, CLOUD, REMOTE = "emdash", "cloud", "remote"
     # A person's COMPUTER used in plain Claude Code, with no runner app: the
     # lightweight runner a `PrivateRunner` gets when it is registered without one,
-    # so the machine can hold a device key — sign its owner's local sessions in and
+    # so the machine can hold a device key — sign its owner's direct sessions in and
     # read a zero-knowledge agent's vault under their license. It has no program
     # behind it: it never heartbeats, claims or takes a pin, and it is not a fleet
     # runner, so every fleet list (supervisor, routing pickers, workspace order,
@@ -347,7 +347,7 @@ class Runner(models.Model):
     machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
     #: A PRIVATE runner is its owner's own machine (canopy-web#1705): it takes no fleet
     #: work — nothing routed, no workspace order, no source rule — only what its owner
-    #: puts on it (a pin, a session bound to it) and the local sessions opened on it
+    #: puts on it (a pin, a session bound to it) and the direct sessions opened on it
     #: (`apps/harness/local.py`). Set by its owner, never reported by the box.
     private = models.BooleanField(default=False)
     #: The agents this box is DEDICATED to: when any are listed it runs only their
@@ -2612,12 +2612,12 @@ class PrivateRunner(models.Model):
     #: The hostname it registered from — a hint for the person, never an identity.
     host = models.CharField(max_length=200, blank=True, default="")
     created_at = models.DateTimeField(default=timezone.now)
-    #: Last time a local turn opened or renewed from it.
+    #: Last time a direct turn opened or renewed from it.
     last_seen_at = models.DateTimeField(null=True, blank=True)
     retired_at = models.DateTimeField(null=True, blank=True)
     #: The runner this machine also is (canopy-web#1705): one machine, one object with
-    #: two powers — local sessions here, and the runner app's turns. Its device key is
-    #: what a local turn proves itself with.
+    #: two powers — direct sessions here, and the runner app's turns. Its device key is
+    #: what a direct turn proves itself with.
     runner = models.OneToOneField("harness.Runner", null=True, blank=True,
                                   on_delete=models.SET_NULL, related_name="private_runner")
 

@@ -1062,7 +1062,7 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
 @gate("runner", setting=True)  # owner only (not RunnerAdmins)
 def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerPrivateIn):
     """A private runner takes no fleet work: nothing routed, no workspace order, no
-    source rule — only what its owner pins or binds to it, and the local sessions
+    source rule — only what its owner pins or binds to it, and the direct sessions
     opened on it. Owner only. (To run as a lower role, start the TURN with
     `acts_as` — it is a property of one turn, not of a machine.)"""
     # canopy-web#1705. Owner only, not runner admins: it decides whose work the box

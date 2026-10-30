@@ -7,7 +7,7 @@ does not branch on a principal's name to decide a credential's fate.
 Placements:
 - `runner`: a runner that claims the agent's turns, proved by its device key. A cloud box
   or a laptop running the runner app alike: the machine does not matter, who drives does.
-- `direct`: a person's own Claude Code session (stored as a local turn), under their
+- `direct`: a person's own Claude Code session (stored as a direct turn), under their
   license, on whatever machine they chose, a runner's laptop included.
 - `manage`: an agent admin reading by hand with their own token (the browser never
   reads plaintext, so this is a CLI). Not a way to run the agent: it hands out what

@@ -678,7 +678,7 @@ def run_once(cfg: Config, client: Client) -> str:
     desktop.observe(me)
 
     # Marked private on canopy-web: write this machine's private-runner registration,
-    # so local sessions here are recorded without `canopy private-runner register`.
+    # so direct sessions here are recorded without `canopy private-runner register`.
     _step("private runner", lambda: private_runner.observe(me, base_url=cfg.base_url))
 
     # Refresh on the runner's page: update this account's plugins and the canopy CLI

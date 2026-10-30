@@ -842,7 +842,7 @@ def _license_rows(agent) -> list[dict]:
 def list_agent_licenses(request: HttpRequest, slug: str):
     """Every license to use the agent in someone's own Claude Code — active,
     requested (the caller list did not allow it yet) or revoked — with the
-    private_runners it ran on, its local turns and credential reads, and when it was
+    private_runners it ran on, its direct turns and credential reads, and when it was
     last used. Readable by any member, like the admin list."""
     return _license_rows(agent_for_read(request, slug))
 
@@ -864,7 +864,7 @@ def _license_target(request: HttpRequest, slug: str, user_id: int):
 @gate("agent-admin", setting=True)
 def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
                          payload: AgentLicenseRevokeIn | None = None):
-    """Per person, without editing the caller list: they may not open a local turn
+    """Per person, without editing the caller list: they may not open a direct turn
     or read the agent's credentials again until an admin approves them. A revoked
     license is never re-issued automatically."""
 

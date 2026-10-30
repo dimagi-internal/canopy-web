@@ -269,7 +269,7 @@ export async function getRunnerTopology(slug: string): Promise<RunnerTopologyOut
 
 export type PrivateRunnerUseOut = components['schemas']['PrivateRunnerUseOut']
 
-// People's own machines their local turns on this workspace's agents ran on
+// People's own machines their direct turns on this workspace's agents ran on
 // (canopy-web#1704). Listed beside the runners; a private runner never claims work.
 export async function listWorkspacePrivateRunners(slug: string): Promise<PrivateRunnerUseOut[]> {
   const res = await apiV2.GET('/api/private-runners/used', { params: { query: { workspace: slug } } })

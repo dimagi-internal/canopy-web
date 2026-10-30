@@ -38,7 +38,7 @@ def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
     session is not live here), for a client that outlives the turn.
     Only with this runner's own runner token — a personal or OAuth token is
     refused, its owner's included. 404 unless this runner holds the turn and may
-    hold its agent; 409 with the reason for a local turn, a caller's (confined)
+    hold its agent; 409 with the reason for a direct turn, a caller's (confined)
     turn, or an agent with no active login. Each issue is logged with the
     agent's credential reads."""
     # The box's own credential, bound to this runner — never a person's token: a

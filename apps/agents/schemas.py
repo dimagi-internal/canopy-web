@@ -675,7 +675,7 @@ class AgentLicenseOut(StrictModel):
     revoked_at: dt.datetime | None = None
     revoked_by_email: str | None = None
     last_used_at: dt.datetime | None = None
-    #: The private runners their local turns on this agent ran on, most recent first.
+    #: The private runners their direct turns on this agent ran on, most recent first.
     private_runners: list[str] = []
     local_turns: int = 0
     credential_reads: int = 0
@@ -2088,7 +2088,7 @@ class AgentCredentialAccessOut(StrictModel):
     caller): `via` is `runner` when the caller pairs a live runner this agent
     routes to, `admin` when they are the agent's owner or an admin, `license`
     when they hold an active license to use it directly and name their own open
-    local turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+    direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
     names the access to ask for."""
 
     agent: str

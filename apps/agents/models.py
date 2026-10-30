@@ -339,7 +339,7 @@ class AgentLicense(models.Model):
     is who DOES (`apps/agents/licenses.py`, canopy-web#1704). Requested on first local
     use and issued at once when `decide` gives the person the whole agent; an admin
     revokes it per person without touching the rule, and a revoked license is not
-    re-issued automatically — only an admin's approve brings it back. Local turns and
+    re-issued automatically — only an admin's approve brings it back. Direct turns and
     credential reads point at it, so "who uses this agent outside canopy, and what did
     they read" is one query.
     """
@@ -603,7 +603,7 @@ class AgentCredentialRead(models.Model):
         "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
     #: `runner` (a box that runs the agent), `admin` (a human resolving by hand) or
-    #: `license` (a license holder's local turn, `licenses.py`).
+    #: `license` (a license holder's direct turn, `licenses.py`).
     via = models.CharField(max_length=16, blank=True, default="")
     #: The license a `license` read went out under.
     license = models.ForeignKey("AgentLicense", on_delete=models.SET_NULL, null=True,

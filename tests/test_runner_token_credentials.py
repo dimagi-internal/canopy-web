@@ -68,7 +68,7 @@ def test_the_token_reads_nothing_its_box_does_not_serve(fleet, sts):  # noqa: F8
     res = _get("/api/agents/ada/credentials/resolve", raw,
                HTTP_X_CANOPY_AWS_PROOF=_proof("http://testserver/api/agents/ada/credentials/resolve"))
     assert res.status_code == 403
-    # The owner's PAT is unchanged: an admin still resolves for a local session.
+    # The owner's PAT is unchanged: an admin still resolves for a direct session.
     assert _get("/api/agents/ada/credentials/resolve", fleet["pat"]).status_code == 200
 
 

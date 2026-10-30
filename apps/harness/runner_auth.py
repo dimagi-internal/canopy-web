@@ -61,7 +61,7 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
 
 #: What a PRIVATE runner's token reaches beyond the protocol (canopy-web#1705): its
 #: owner's own Claude Code sessions on that machine sign in with the box's device key
-#: instead of a PAT, so they open, renew and close their local turns and read their
+#: instead of a PAT, so they open, renew and close their direct turns and read their
 #: agent's secrets under the owner's license (credentials/resolve, above). Only on a
 #: private runner — the owner's own machine — never on
 #: a shared box, whose token speaks for the fleet, not a person. Not
@@ -75,7 +75,7 @@ _PRIVATE_RULES: tuple[tuple[frozenset[str], str], ...] = (
 #: ALL a COMPUTER's token reaches (`Runner.COMPUTER`: a person's computer used in
 #: plain Claude Code, no runner app). Not the runner protocol — it has no program to
 #: heartbeat or claim — only what its owner's sessions there do: open, renew and
-#: report their local turns (`api.reporting_turn_or_404` holds it to local turns
+#: report their direct turns (`api.reporting_turn_or_404` holds it to direct turns
 #: opened on this computer), and read an agent's secrets under the owner's license
 #: during one (`apps/agents/credential_resolve.credential_access` never makes it a `runner`).
 _COMPUTER_RULES: tuple[tuple[frozenset[str], str], ...] = _PRIVATE_RULES + (
@@ -88,7 +88,7 @@ _COMPUTER_RULES: tuple[tuple[frozenset[str], str], ...] = _PRIVATE_RULES + (
 def reaches(method: str, path: str, runner_id, *, private: bool = False,
             computer: bool = False) -> bool:
     """May a runner token for `runner_id` make this request? `private`: the runner is
-    its owner's private runner, which also opens its owner's local sessions.
+    its owner's private runner, which also opens its owner's direct sessions.
     `computer`: the runner is a computer with no runner app — only its local
     sessions and their license reads (`_COMPUTER_RULES`), never the protocol."""
     flat = strip_to_flat(path)

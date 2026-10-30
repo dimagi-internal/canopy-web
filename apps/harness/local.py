@@ -4,22 +4,22 @@ Three objects (canopy-web#1704, `docs/architecture/access.md` § Direct use):
 
 * a **private runner** (`models.PrivateRunner`) — the person's machine, registered once
   with their own token; it never claims anything;
-* a **local turn** (`Turn.ORIGIN_LOCAL`) — one Claude Code session there with one
+* a **direct turn** (`Turn.ORIGIN_LOCAL`) — one Claude Code session there with one
   agent, opened by the session's own SessionStart hook. It is a real turn: the
   person is its initiator, it carries the caller envelope, the turn mode, the
   credential reads and (when the session ends) the transcript;
 * a **license** (person × agent, `apps/agents/licenses.py`) — requested when the
-  first local turn opens, issued at once when the caller list gives the person
+  first direct turn opens, issued at once when the caller list gives the person
   the whole agent; the turn records it (`origin_ref.license`), and credential
   reads during the turn go out under it.
 
-A local turn is RUNNING from the moment it opens and is never queued, claimed or
+A direct turn is RUNNING from the moment it opens and is never queued, claimed or
 routed. It does not serialize the agent (`one_executing_turn_per_agent` and
 `routing.busy_agent_ids` exclude it): it is the person's session, not the agent's
 one continuous one. Its lease is long and renewed by the session's prompts; a
 session that dies without closing lands `lost` through the ordinary sweep.
 
-Mode: only an agent admin may run a local turn `auto`, and only when they ask for
+Mode: only an agent admin may run a direct turn `auto`, and only when they ask for
 it; every other turn — an editor's, a `full:`-rule member's — is `manual`, exactly
 as access.md says of `auto` everywhere else. Stamped once, at open.
 """
@@ -38,7 +38,7 @@ from .ledger import append_events
 from .models import PrivateRunner, Runner, Turn
 from .turn_mode import AUTO, MANUAL
 
-#: A local turn's lease. A person's session can sit idle for hours between prompts;
+#: A direct turn's lease. A person's session can sit idle for hours between prompts;
 #: the prompt hook renews it (throttled), and only a session silent this long is
 #: swept `lost`.
 LOCAL_LEASE = dt.timedelta(hours=8)
@@ -186,7 +186,7 @@ def authorize(agent, user):
 
 
 def mode_for(agent, user, requested: str = "") -> tuple[str, str]:
-    """(mode, basis) for a local turn. `auto` only for an agent admin who asked."""
+    """(mode, basis) for a direct turn. `auto` only for an agent admin who asked."""
     email = getattr(user, "email", "") or "a member"
     from apps.workspaces import role_cap
 
@@ -195,12 +195,12 @@ def mode_for(agent, user, requested: str = "") -> tuple[str, str]:
         email = f"{email} acting as {cap}"
     if requested == AUTO:
         if agent.is_admin(user):
-            return AUTO, f"local turn: auto requested by {email} (admin of {agent.slug})"
-        return MANUAL, (f"local turn: auto withheld — {email} is not an admin of {agent.slug}; "
+            return AUTO, f"direct turn: auto requested by {email} (admin of {agent.slug})"
+        return MANUAL, (f"direct turn: auto withheld — {email} is not an admin of {agent.slug}; "
                         "outbound needs an admin")
     if agent.is_admin(user):
-        return MANUAL, f"local turn: {email} (admin of {agent.slug}) — manual; ask for auto to act unreviewed"
-    return MANUAL, f"local turn: {email} — manual; outbound needs an admin of {agent.slug}"
+        return MANUAL, f"direct turn: {email} (admin of {agent.slug}) — manual; ask for auto to act unreviewed"
+    return MANUAL, f"direct turn: {email} — manual; outbound needs an admin of {agent.slug}"
 
 
 def _key(agent, claude_session_id: str) -> str:
@@ -209,7 +209,7 @@ def _key(agent, claude_session_id: str) -> str:
 
 def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_id: str,
               cwd: str = "", requested_mode: str = "", acts_as: str = "") -> tuple[Turn, bool]:
-    """Open — or re-open — the local turn for one Claude Code session.
+    """Open — or re-open — the direct turn for one Claude Code session.
 
     Idempotent per (agent, Claude session): `/resume` and `/clear` fire SessionStart
     again and must land on the same turn, renewed, rather than a second one. A
@@ -255,7 +255,7 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
                     **({"acts_as": acts_as} if acts_as else {})},
         claimed_at=now, started_at=now, lease_expires_at=now + LOCAL_LEASE,
         session_key=claude_session_id, enqueued_by=user,
-        # A local session is a person's own Claude Code session (its id is Claude's).
+        # A direct session is a person's own Claude Code session (its id is Claude's).
         cli=clis.CLAUDE_CODE,
         turn_mode=mode, turn_mode_basis=basis[:320],
         **asker.fields(),
@@ -267,7 +267,7 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
 
 
 def renew(turn: Turn, *, private_runner: PrivateRunner | None = None, now=None) -> Turn:
-    """Push a live local turn's lease out again. A no-op on a turn that has ended."""
+    """Push a live direct turn's lease out again. A no-op on a turn that has ended."""
     now = now or timezone.now()
     Turn.objects.filter(pk=turn.pk, status=Turn.RUNNING).update(
         lease_expires_at=now + LOCAL_LEASE)
@@ -279,7 +279,7 @@ def renew(turn: Turn, *, private_runner: PrivateRunner | None = None, now=None) 
 
 
 def is_initiator(turn: Turn, user) -> bool:
-    """A local turn is reported on (renewed, finished, transcript appended) by the
+    """A direct turn is reported on (renewed, finished, transcript appended) by the
     person whose session it is — there is no box that claimed it."""
     return (turn.origin == Turn.ORIGIN_LOCAL and turn.initiator_user_id is not None
             and turn.initiator_user_id == getattr(user, "pk", None))
@@ -289,7 +289,7 @@ def may_report(turn: Turn, request) -> bool:
     """`is_initiator`, and — when a runner token makes the request — that token is the
     PRIVATE runner this turn was opened on. A runner token signs in as its owner, so
     without this a shared box's token could finish or write the transcript of its
-    owner's local sessions; it speaks for the fleet, not for the person."""
+    owner's direct sessions; it speaks for the fleet, not for the person."""
     if not is_initiator(turn, request.user):
         return False
     rtok = getattr(request, "runner_token", None)

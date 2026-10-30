@@ -4,12 +4,12 @@ When the runner's owner marks it private on canopy-web (the runner's page → Pr
 runner), canopy-web links a private-runner registration to it and reports its id on
 every heartbeat. This writes it to ``~/.canopy/private-runner.json`` — the file the
 canopy plugin's SessionStart hook reads — so a Claude Code session on this machine that
-uses an agent is recorded as the owner's local turn, judged at the role the runner acts
+uses an agent is recorded as the owner's direct turn, judged at the role the runner acts
 as, without anyone running ``canopy private-runner register``.
 
 Only a file this module wrote is ever replaced or removed (``written_by``): a person's
 own ``canopy private-runner register`` stays theirs. Turning the runner shared again
-removes the file it wrote, so local sessions stop being recorded here.
+removes the file it wrote, so direct sessions stop being recorded here.
 """
 from __future__ import annotations
 
@@ -62,10 +62,10 @@ def observe(me: dict | None, *, base_url: str, path: Path | None = None) -> None
                "written_by": WRITTEN_BY}
         if {k: current.get(k) for k in doc} != doc:
             _write(path, {**doc, "registered_at": time.time()})
-            logger.info("private runner: local sessions here are recorded as the owner's local turns")
+            logger.info("private runner: direct sessions here are recorded as the owner's direct turns")
     elif not me.get("private") and ours:
         try:
             path.unlink()
-            logger.info("private runner: back to a shared runner; local sessions no longer recorded")
+            logger.info("private runner: back to a shared runner; direct sessions no longer recorded")
         except OSError:
             pass

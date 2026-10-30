@@ -1,4 +1,4 @@
-"""Direct use of an agent — a person's private runner and the local turns opened on it.
+"""Direct use of an agent — a person's private runner and the direct turns opened on it.
 
 `/api/private-runners/` is the person's own (like their tokens): register a machine
 once with your own canopy token (`canopy private-runner register`), list yours.
@@ -6,7 +6,7 @@ once with your own canopy token (`canopy private-runner register`), list yours.
 a session there starts using an agent: it opens (or re-opens) that session's turn
 and hands back the caller envelope a runner would have received at claim.
 Finishing it and uploading its transcript use the ordinary turn routes
-(`/api/harness/turns/{id}/finish`, `/transcript`), which accept a local turn's own
+(`/api/harness/turns/{id}/finish`, `/transcript`), which accept a direct turn's own
 initiator. Rules: `apps/harness/local.py`; canopy-web#1704.
 """
 from __future__ import annotations
@@ -72,10 +72,10 @@ def list_private_runners(request: HttpRequest):
 
 @private_runners_router.get("/used", response=list[PrivateRunnerUseOut],
                          summary="Private runners people use this workspace's agents from")
-@gate("member")  # those local turns on the workspace's agents ran on
+@gate("member")  # those direct turns on the workspace's agents ran on
 def list_workspace_private_runners(request: HttpRequest, workspace: str):
-    """Every private runner a local turn on one of `workspace`'s agents ran on: whose
-    it is, which agents, how many local turns, and when it was last seen. Shown
+    """Every private runner a direct turn on one of `workspace`'s agents ran on: whose
+    it is, which agents, how many direct turns, and when it was last seen. Shown
     beside the runners ("aath-mbp — private runner, Aathithya"); a private runner never
     claims work, so it has no status. Members of the workspace (else 404)."""
     from django.db.models import Count, Max
@@ -111,7 +111,7 @@ def list_workspace_private_runners(request: HttpRequest, workspace: str):
                           summary="Retire one of your private runners")
 @gate("self", setting=True)  # your own machines (direct use)
 def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
-    """Its local sessions stop opening, a runner app linked to it goes back to
+    """Its direct sessions stop opening, a runner app linked to it goes back to
     being shared, and the runner that held its keys when it has no runner app
     retires with it."""
     # Unlinked and shared rather than left private: a private runner with no live
@@ -145,7 +145,7 @@ def _local_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 
 @local_turns_router.post("/", response={200: LocalTurnOut, 201: LocalTurnOut},
-                         summary="Open the local turn for a Claude Code session on your private runner")
+                         summary="Open the direct turn for a Claude Code session on your private runner")
 # member of the agent's workspace (else 404), AND access.decide must give the
 # WHOLE agent (owner/admin, a `full:` rule, or a workspace editor) — else 403
 @gate(
@@ -179,7 +179,7 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
     rtok = getattr(request, "runner_token", None)
     if rtok is not None and (not rtok.runner.private or ws.runner_id != rtok.runner_id):
         # A box's key opens only ITS OWN owner's sessions, and only while it is private.
-        raise HttpError(403, "a runner signs in a local session only as its own private runner")
+        raise HttpError(403, "a runner signs in a direct session only as its own private runner")
     try:
         turn, created = local.open_turn(
             request, agent, private_runner=ws, claude_session_id=payload.claude_session_id,
@@ -198,8 +198,8 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
 
 
 @local_turns_router.post("/{turn_id}/renew", response=LocalTurnRenewOut,
-                         summary="Keep your local turn's lease alive")
-@gate("self", kind="turn")  # the local turn's own initiator
+                         summary="Keep your direct turn's lease alive")
+@gate("self", kind="turn")  # the direct turn's own initiator
 def renew_local_turn(request: HttpRequest, turn_id: uuid.UUID):
     turn = local.renew(_local_turn_or_404(request, turn_id))
     return {"turn_id": turn.pk, "status": turn.status, "lease_expires_at": turn.lease_expires_at}
