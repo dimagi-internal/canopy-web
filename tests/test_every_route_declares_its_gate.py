@@ -128,9 +128,9 @@ SECRET_FIELDS = frozenset({
     "webhook_secret", "value_zk", "values",
 })
 
-#: Same-module helpers that ask for the step-up, and the keyword that turns it on
+#: Helpers a route module imports (`vault_gates`) or defines that ask for the step-up, and the keyword that turns it on
 #: (None: always). `_vault(request, id, manage=True)` steps up; `_vault(request, id)` does not.
-STEP_UP_HELPERS = {"_zk_admin": None, "_agent_vault": "manage", "_vault": "manage"}
+STEP_UP_HELPERS = {"zk_admin": None, "agent_vault": "manage", "_vault": "manage"}
 
 
 def _secret_carrying(schema: dict) -> dict[str, list[str]]:

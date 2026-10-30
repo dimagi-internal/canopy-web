@@ -152,7 +152,7 @@ def _label(t: dict) -> str:
 
 
 def _admin_ids(vault) -> set[int]:
-    """The vault's owners and admins: only they may grant (`api_credentials._zk_admin`)."""
+    """The vault's owners and admins: only they may grant (`vault_gates.zk_admin`)."""
     return {uid for uid, m in vault_members.members(vault).items() if vault_members.is_admin(m.role)}
 
 
@@ -178,7 +178,7 @@ def workspace_holders(vault) -> list:
 def holders(agent) -> list:
     """Everyone who can grant: a member wrap at the current kv, still active, and an
     owner or admin of the vault now — a copy alone makes nobody a holder, and a
-    member's copy opens the vault but cannot grant (`api_credentials._zk_admin`)."""
+    member's copy opens the vault but cannot grant (`vault_gates.zk_admin`)."""
 
     ids = _admin_ids(vault_members.vault_for_agent(agent))
     return [w.user for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="member",

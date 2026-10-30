@@ -22,8 +22,8 @@
 "apps/agents/access.py" = ["PLC0415"]  # 3
 "apps/agents/api.py" = ["PLC0415"]  # 6
 "apps/agents/api_board.py" = ["PLC0415"]  # 1
-"apps/agents/api_credentials.py" = ["PLC0415"]  # 2
 "apps/agents/api_routing.py" = ["PLC0415"]  # 3
+"apps/agents/api_sender_trust.py" = ["PLC0415"]  # 2
 "apps/agents/api_skills.py" = ["PLC0415"]  # 1
 "apps/agents/apps.py" = ["PLC0415"]  # 6
 "apps/agents/creation.py" = ["PLC0415"]  # 3
