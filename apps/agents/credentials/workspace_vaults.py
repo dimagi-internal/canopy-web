@@ -26,7 +26,6 @@ from __future__ import annotations
 
 
 from django.db import transaction
-from django.db.models import Q
 
 from apps.harness import device_keys, runner_requirements
 from apps.harness.models import Runner, RunnerDeviceKey
@@ -230,10 +229,9 @@ def eligible_device_keys(vault: Vault) -> list:
     runners = serving_runners(vault)
     if runners:
         served |= set(RunnerDeviceKey.objects.filter(runner__in=runners).values_list("pk", flat=True))
-    return list(RunnerDeviceKey.objects.filter(pk__in=served, status=RunnerDeviceKey.ACTIVE,
-                                               ecdh_approved_at__isnull=False)
-                .exclude(ecdh_jkt="")
-                .filter(Q(runner__owner_id__in=ids) | Q(runner__owner__isnull=True, approved_by_id__in=ids))
+    return list(vault_members.devices_working_for(
+        RunnerDeviceKey.objects.filter(pk__in=served, status=RunnerDeviceKey.ACTIVE,
+                                       ecdh_approved_at__isnull=False).exclude(ecdh_jkt=""), ids)
                 .select_related("runner"))
 
 
@@ -349,14 +347,12 @@ def remove_secret(vault: Vault, name: str) -> bool:
 
 # ---- reads by a machine, and removal ------------------------------------------------------
 
-def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[dict]:
-    """For a resolve by `device_key`: each workspace vault layered under `agent`'s own,
-    in order — its binding id, kv, this device's copy of its key, and its ciphertext
-    (scoped by `?refs=` when the caller asked for names). A vault this device cannot
-    open (no copy, or its person is not a member) is listed with `wrap: null` and no
-    values, so the client can say which layer it is missing."""
+def _layers(vaults, device_key, wanted: set[str] | None) -> list[dict]:
+    """The wire shape of each vault in `vaults` that has a key, as one device reads it:
+    its binding id, kv, this device's copy of its key, and its ciphertext (only the
+    names in `wanted`, when given)."""
     out = []
-    for v in layers_for(agent):
+    for v in vaults:
         if not v.kv:
             continue
         mine = None
@@ -373,25 +369,18 @@ def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[di
     return out
 
 
+def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[dict]:
+    """For a resolve by `device_key`: each workspace vault layered under `agent`'s own,
+    in order. A vault this device cannot open (no copy, or its person is not a member) is
+    listed with `wrap: null` and no values, so the client can say which layer it is missing."""
+    return _layers(layers_for(agent), device_key, wanted)
+
+
 def runner_layers_payload(runner: Runner, device_key, wanted: set[str] | None) -> list[dict]:
     """`layers_payload` for a runner's own read: each vault that holds `runner`'s
-    credentials, oldest first, with this device's copy of its key and its ciphertext
-    (only the names in `wanted`, when given). The same shape, so `canopy` opens it with
-    the code that opens an agent's layers."""
-    out = []
-    for v in runner_vaults(runner):
-        if not v.kv:
-            continue
-        mine = None
-        if device_key is not None and vault_members.person_of_device(device_key) in vault_members.member_ids(v):
-            mine = VaultKeyWrap.objects.filter(vault=v, kv=v.kv, kind="device", device_key=device_key).first()
-        qs = VaultSecret.objects.filter(vault=v)
-        if wanted is not None:
-            qs = qs.filter(name__in=sorted(wanted))
-        out.append({"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
-                    "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
-                    "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
-    return out
+    credentials, oldest first. The same shape, so `canopy` opens it with the code that
+    opens an agent's layers."""
+    return _layers(runner_vaults(runner), device_key, wanted)
 
 
 def runner_secret_names(runner: Runner) -> set[str]:

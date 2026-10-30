@@ -808,6 +808,11 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 @gate("agent-admin", setting=True)
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = agent_for_admin(request, slug)
+    # A credential a person delegated is theirs to withdraw, never an admin's to delete.
+    try:
+        accounts.refuse_delegated_names(agent, [name])
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
     services.delete_agent_credential(agent, name)
     return services.agent_credential_status(agent)
 

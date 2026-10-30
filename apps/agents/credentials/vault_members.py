@@ -205,6 +205,13 @@ def person_of_device(device_key) -> int | None:
     return runner.owner_id or device_key.approved_by_id
 
 
+def devices_working_for(keys, person_ids):
+    """`keys` (a RunnerDeviceKey queryset) narrowed to the machines that work for one of
+    `person_ids`: the queryset form of `person_of_device`."""
+    return keys.filter(Q(runner__owner_id__in=person_ids)
+                       | Q(runner__owner__isnull=True, approved_by_id__in=person_ids))
+
+
 # ---- changing membership ----------------------------------------------------------------
 
 class VaultMembershipError(Exception):

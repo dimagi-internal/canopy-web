@@ -27,7 +27,6 @@ import binascii
 import re
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from apps.harness import device_keys
@@ -166,10 +165,10 @@ def eligible_device_keys_qs(agent, facts=None):
 
     ids = (facts.once(("vault-members", agent.pk), lambda: vault_members.agent_member_ids(agent)) if facts
            else vault_members.agent_member_ids(agent))
-    return (device_keys.keys_for_agent(agent, facts)
-            .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
-            .exclude(ecdh_jkt="")
-            .filter(Q(runner__owner_id__in=ids) | Q(runner__owner__isnull=True, approved_by_id__in=ids)))
+    return vault_members.devices_working_for(
+        device_keys.keys_for_agent(agent, facts)
+        .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
+        .exclude(ecdh_jkt=""), ids)
 
 
 def device_waits(agent, key) -> bool:

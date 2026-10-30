@@ -384,6 +384,14 @@ def test_create_url_prefills_githubs_form_for_this_agent(agent):
 
 # ---- nobody but its machines can read it ------------------------------------------
 
+def test_an_admin_cannot_delete_what_a_person_delegated(agent, owner, github, machine):
+    """The owner administers the agent, but the GitHub token is Olive's: only she withdraws it."""
+    _lend(agent, owner, github)
+    r = _client(owner).delete("/api/agents/echo/credentials/github-token")
+    assert r.status_code == 409 and r.json()["error"] == "delegated_entry"
+    assert AgentCredential.objects.filter(agent=agent, name="github-token").exists()
+
+
 def test_no_vault_write_but_its_persons_replaces_it(agent, owner, github, machine):
     _lend(agent, owner, github)
     c = _client(owner)
