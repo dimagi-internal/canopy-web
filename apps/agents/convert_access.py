@@ -31,7 +31,7 @@ from django.contrib.auth import get_user_model
 from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
 
-from . import access, grants, roles
+from . import access, roles
 from . import interface as iface_mod
 from .models import Agent, AgentGrant
 
