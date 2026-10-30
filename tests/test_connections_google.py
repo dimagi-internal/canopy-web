@@ -231,13 +231,30 @@ def test_several_allowed_domains_send_no_hd(google, user, ws):
     assert "status=connected" in landed
 
 
-@pytest.mark.parametrize("hd", [None, "", "other.org", "dimagi-ai.com"])
+@pytest.mark.parametrize("hd", [None, "", "other.org"])
 def test_an_allowed_address_without_that_workspace_domain_is_refused(google, user, ws, hd):
     """A consumer Google account registered with a dimagi.com address (no `hd`), or a
     Workspace account of another organisation, is not a dimagi.com account."""
     _domains(ws, user, "dimagi.com, dimagi-ai.com")
     google.user = {"sub": "5", "email": "former@dimagi.com", "email_verified": True,
                    **({"hd": hd} if hd is not None else {})}
+    _, _, landed = _connect(user)
+    assert "reason=wrong_account" in landed
+    assert not Connection.objects.exists()
+
+
+def test_a_secondary_domain_user_is_admitted_when_the_primary_is_listed_too(google, user, ws):
+    """An organisation's user on its secondary domain gets the primary domain as `hd`."""
+    _domains(ws, user, "dimagi.com, dimagi-ai.com")
+    google.user = {"sub": "7", "email": "eva@dimagi-ai.com", "email_verified": True, "hd": "dimagi.com"}
+    _, _, landed = _connect(user)
+    assert "status=connected" in landed
+    assert Connection.objects.count() == 1
+
+
+def test_a_secondary_domain_user_is_refused_when_only_the_address_domain_is_listed(google, user, ws):
+    _domains(ws, user, "dimagi-ai.com")
+    google.user = {"sub": "8", "email": "eva@dimagi-ai.com", "email_verified": True, "hd": "dimagi.com"}
     _, _, landed = _connect(user)
     assert "reason=wrong_account" in landed
     assert not Connection.objects.exists()

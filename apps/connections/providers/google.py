@@ -11,7 +11,9 @@ OpenID Connect userinfo (`sub`, a verified `email`).
 Any Google account may connect by default — a Workspace account of any
 organisation or a personal @gmail.com one. A workspace narrows that with the
 `allowed_domains` option (exact domains: `dimagi.com` does not admit
-`mail.dimagi.com`); an agent must connect its own Google account
+`mail.dimagi.com`). An account is admitted when its address's domain is listed
+and Google's `hd` (its Workspace's primary domain) is listed too; a user on an
+organisation's secondary domain therefore needs both listed. An agent must connect its own Google account
 (`Agent.google_identity()`) when it has one.
 """
 from __future__ import annotations
@@ -67,7 +69,9 @@ class GoogleProvider(Provider):
         OptionField("allowed_domains", "Allowed email domains", "text",
                     help="Comma-separated, e.g. dimagi.com, dimagi-ai.com. Blank allows any Google "
                          "account. Each domain is matched exactly (not its subdomains), and must be "
-                         "the account's Google Workspace domain; gmail.com admits personal accounts."),
+                         "the account's Google Workspace (a user on an organisation's secondary "
+                         "domain needs its primary domain listed too); gmail.com admits personal "
+                         "accounts."),
     )
     # No locked options: the authorization server is always Google's, so nothing
     # here says which server a grant belongs to. `allowed_domains` may change while
@@ -143,12 +147,15 @@ class GoogleProvider(Provider):
         allowed = self.allowed_domains
         domain = email.rpartition("@")[2]
         # An allowed domain admits an account only when Google says the account
-        # belongs to that domain's Workspace (`hd`), not merely because its address
+        # belongs to a Workspace we allow (`hd`), not merely because its address
         # is there: a consumer Google account can be registered with any verified
-        # address, such as a former employee's still-working one. gmail.com and
-        # googlemail.com have no Workspace, so for them the address is the match.
+        # address, such as a former employee's still-working one. An organisation's
+        # user on a secondary domain carries the primary domain as `hd`, so `hd`
+        # may be any allowed domain, but the address's own domain must be allowed
+        # too. gmail.com and googlemail.com have no Workspace, so for them the
+        # address is the match.
         if allowed and (domain not in allowed
-                        or (domain not in CONSUMER_DOMAINS and identity.hosted_domain != domain)):
+                        or (domain not in CONSUMER_DOMAINS and identity.hosted_domain not in allowed)):
             raise ProviderError(f"{email} is not a Google account of {', '.join(allowed)}",
                                 code="wrong_account")
         if owner_kind == "agent" and owner is not None:
