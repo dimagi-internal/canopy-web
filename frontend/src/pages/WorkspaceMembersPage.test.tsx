@@ -58,6 +58,12 @@ vi.mock('@/auth/AuthProvider', () => ({
   }),
 }))
 
+vi.mock('@/components/agents/WorkspaceAgentDefaults', () => ({
+  WorkspaceAgentDefaults: ({ canManage, isOwner }: { canManage: boolean; isOwner: boolean }) => (
+    <div data-testid="agent-defaults-stub">{`${canManage}:${isOwner}`}</div>
+  ),
+}))
+
 const { WorkspaceMembersPage } = await import('./WorkspaceMembersPage')
 
 function member(overrides: Partial<MemberOut> = {}): MemberOut {
@@ -114,6 +120,22 @@ describe('WorkspaceMembersPage', () => {
     expect(await screen.findByText('alice@dimagi.com')).toBeTruthy()
     expect(screen.getByText('carol@dimagi.com')).toBeTruthy()
     expect(screen.getByText('bob@example.com')).toBeTruthy()
+  })
+
+  it('shows the default access for agents, editable by an admin and giving editor only by an owner', async () => {
+    listMembers.mockResolvedValue([member({})])
+    listInvites.mockResolvedValue([])
+    mockRole = 'admin'
+    renderPage()
+    expect((await screen.findByTestId('agent-defaults-stub')).textContent).toBe('true:false')
+    cleanup()
+    mockRole = 'owner'
+    renderPage()
+    expect((await screen.findByTestId('agent-defaults-stub')).textContent).toBe('true:true')
+    cleanup()
+    mockRole = 'editor'
+    renderPage()
+    expect((await screen.findByTestId('agent-defaults-stub')).textContent).toBe('false:false')
   })
 
   it('puts the invite form directly under the members list, above pending invites', async () => {

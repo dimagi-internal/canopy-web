@@ -3,7 +3,7 @@ import { Navigate, useLocation, useNavigate, useOutletContext, useParams, useSea
 import { CheckCircle2 } from 'lucide-react'
 
 import { getAgentSetup } from '@/api/agentCreation'
-import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
+import { AgentAccessList } from '@/components/agents/AgentAccessList'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentHowItRuns } from '@/components/agents/AgentHowItRuns'
 import { AgentLicenses } from '@/components/agents/AgentLicenses'
@@ -45,8 +45,8 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 // (settingsTabs.ts), and the page scrolls to it there.
 //
 //   Overview           — what is left to set up, what it is, where it runs, delete
-//   Roles              — owner, its canopy user, roles, who runs it directly
-//   Channels           — callers, Slack, email, Google account
+//   Roles              — owner, its canopy user, access (who has which role), who runs it directly
+//   Channels           — doors, Slack, email, Google account
 //   External accounts  — GitHub, its Google mailbox
 //   Security           — its vault (secrets, who can open them, storage and key), then its canopy login
 export function AgentSettingsSection() {
@@ -244,16 +244,16 @@ export function AgentSettingsSection() {
               />
             </Setting>
             <Setting
-              title="People"
-              who={`workspace owners and ${agent.name}'s owner`}
-              canEdit={agent.can_manage_admins ?? false}
-              description={`What each workspace role gets on ${agent.name}, and who is set here.`}
+              title="Access"
+              who={`${agent.name}'s agent admins`}
+              canEdit={isAdmin}
+              description={`Who can use ${agent.name}, and what each may do: viewer, user, editor, then agent admin and owner.`}
             >
-              <AgentAccessRoster
+              <AgentAccessList
                 agentSlug={agent.slug}
                 agentName={agent.name}
                 workspace={agent.workspace ?? undefined}
-                canManage={agent.can_manage_admins ?? false}
+                canManageAdmins={agent.can_manage_admins ?? false}
               />
             </Setting>
             <Setting
@@ -272,10 +272,10 @@ export function AgentSettingsSection() {
         <Section id="reach" title="Channels">
           <div className="divide-y divide-border rounded-lg border border-border bg-card">
             <Setting
-              title="Callers"
+              title="Doors"
               who={admins}
               canEdit={isAdmin}
-              description={`Who outside the workspace may use ${agent.name}, and for what.`}
+              description={`The doors ${agent.name} opens: what a viewer or user may ask it for.`}
             >
               <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
             </Setting>

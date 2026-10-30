@@ -16,7 +16,7 @@ vi.mock('@/api/agents', async (orig) => ({
 // where they sit on the page, not their behaviour (they have their own tests).
 vi.mock('@/components/agents/AgentRouting', () => ({ AgentRouting: () => <div>routing-control</div> }))
 vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () => <div>owner-control</div> }))
-vi.mock('@/components/agents/AgentAccessRoster', () => ({ AgentAccessRoster: () => <div>access-roster</div> }))
+vi.mock('@/components/agents/AgentAccessList', () => ({ AgentAccessList: () => <div>access-list</div> }))
 vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
 vi.mock('@/components/agents/AgentMailboxControl', () => ({ AgentMailboxControl: () => <div>mailbox-control</div> }))
 vi.mock('@/pages/agents/AgentDeviceKeysSection', () => ({ AgentDeviceKeysSection: () => null }))
@@ -88,11 +88,11 @@ describe('AgentSettingsSection', () => {
 
     at(`${BASE}/roles`)
     expect(control('Roles', 'Owner')).toBeTruthy()
-    expect(control('Roles', 'People')).toBeTruthy()
+    expect(control('Roles', 'Access')).toBeTruthy()
     cleanup()
 
     at(`${BASE}/channels`)
-    for (const name of ['Callers', 'Slack', 'Email', 'Google account']) expect(control('Channels', name)).toBeTruthy()
+    for (const name of ['Doors', 'Slack', 'Email', 'Google account']) expect(control('Channels', name)).toBeTruthy()
     // Who may change each one is said to someone who cannot (this viewer is
     // not an admin), not discovered by an error.
     expect(within(region('Channels')).getAllByText("Only Hal's admins can change this.")).toHaveLength(4)
