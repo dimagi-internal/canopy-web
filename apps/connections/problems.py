@@ -29,13 +29,15 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
 }
 
 
-def problem_for(exc: services.ConnectionError, *, title: str, owner: str, **members) -> ProblemError:
+def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail: str | None = None,
+                **members) -> ProblemError:
     """The response for `exc`. `title` is the provider's display name; `owner` is
     whose connection it is, as a possessive ("Your", "eva's"). `members` add to
-    the body (`connect_url`, `accounts`). An unexpected code is a 502: it is
+    the body (`connect_url`, `accounts`); `detail` replaces the standard
+    sentence when the caller knows more of the case. An unexpected code is a 502: it is
     still the provider's or canopy's failure, never the caller's."""
     status, heading = _PROBLEMS.get(exc.code, (502, "Provider error"))
-    detail = {
+    detail = detail or {
         "not_configured": f"{title} is not set up for this workspace.",
         "app_locked": f"Accounts are connected with this {title} app, so its client id and login host "
                       "cannot change; remove the app (which disconnects them) to switch.",

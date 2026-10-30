@@ -446,7 +446,8 @@ export interface paths {
          *     connection made in a workspace I am still a member of counts; `?workspace=`
          *     picks one when I connected in several (409 `ambiguous` lists them in
          *     `workspaces`). 409 when I have not connected, or must reconnect
-         *     (`connect_url`, an absolute URL, says where). `?refresh=true` forces a new
+         *     (`connect_url`, an absolute URL, says where: a workspace's connect page, or
+         *     Settings when I must first choose a workspace or disconnect a spare account). `?refresh=true` forces a new
          *     token even when the cached one looks fresh (for a CLI whose token the
          *     provider already rejected).
          */

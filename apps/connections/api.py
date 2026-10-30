@@ -12,6 +12,7 @@ The browser legs of connecting are bare views (`views.py`).
 from __future__ import annotations
 
 from django.core.exceptions import PermissionDenied
+from django.db.models import Count
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -64,17 +65,11 @@ def _person_provider_rows(user) -> list[ProviderOut]:
 
 def _agent_provider_rows(agent: Agent) -> list[ProviderOut]:
     # The agent's own workspace's apps, set up or not: the only ones it connects with.
-    rows = []
-    for c in providers.CLASSES.values():
-        try:
-            services.app_for(agent.workspace_id, c.name)
-        except services.NotConfigured:
-            configured = False
-        else:
-            configured = True
-        rows.append(ProviderOut(name=c.name, title=c.title, workspace=agent.workspace_id,
-                                workspace_name=agent.workspace.display_name, configured=configured))
-    return rows
+    apps = {a.provider: a for a in ConnectionApp.objects.filter(workspace_id=agent.workspace_id)}
+    name = agent.workspace.display_name
+    return [ProviderOut(name=c.name, title=c.title, workspace=agent.workspace_id, workspace_name=name,
+                        configured=c.name in apps and providers.for_app(apps[c.name]).is_configured())
+            for c in providers.CLASSES.values()]
 
 
 def _title(provider: str) -> str:
@@ -267,32 +262,44 @@ def _plain_pat(request: HttpRequest) -> bool:
     return kind is not None and kind.name == kinds.PAT
 
 
-def _token_problem_members(request: HttpRequest, exc: services.ConnectionError, provider: str,
-                           workspace: str | None, conn: Connection | None) -> dict:
-    """`connect_url` (and, when it is ambiguous, `workspaces` and `accounts`) for
-    a 409 that a person fixes by connecting: the start URL of the workspace in
-    question — the connection's, the one asked for, or the only one set up —
-    else Settings, where they choose."""
-    user = request.user
-    members: dict = {}
+def _token_problem(request: HttpRequest, exc: services.ConnectionError, p: type[providers.Provider],
+                   workspace: str | None, conn: Connection | None) -> dict:
+    """The extra members (and, where the case needs its own words, `detail`) of
+    a 409 a person fixes themselves. `connect_url` is where to fix it: the start
+    URL of the one workspace in question (the connection's, the one asked for,
+    or the only one set up), else Settings, where they choose a workspace or
+    disconnect a spare account. Several workspaces in play are listed in
+    `workspaces`, and the detail says to pick one."""
+    user, provider = request.user, p.name
+    settings_url = request.build_absolute_uri("/settings/connections")
+    out: dict = {}
     if exc.code not in ("not_connected", "reconnect_required", "ambiguous"):
-        return members
-    where: list[str] = []
-    if conn is not None:
-        where = [conn.app.workspace_id]
-    elif exc.code == "ambiguous":
+        return out
+    if conn is not None:                       # reconnect: the connection's own workspace
+        out["connect_url"] = _start_url(request, provider, conn.app.workspace_id)
+        return out
+    pick = "pick one with `?workspace=<slug>` (`--workspace <slug>` in the CLI)"
+    if exc.code == "ambiguous":
         rows = services.person_connections(user, provider, workspace=workspace)
         where = sorted({c.app.workspace_id for c in rows})
-        members["workspaces"] = where
-        members["accounts"] = [c.account_label for c in rows]
-    else:
-        where = [a.workspace_id for a in services.apps_for_person(user, provider)
-                 if workspace is None or a.workspace_id == workspace]
+        out["accounts"] = [c.account_label for c in rows]
+        out["workspaces"] = where
+        out["connect_url"] = settings_url
         if len(where) > 1:
-            members["workspaces"] = where
-    members["connect_url"] = (_start_url(request, provider, where[0]) if len(where) == 1
-                              else request.build_absolute_uri("/settings/connections"))
-    return members
+            out["detail"] = (f"Your {p.title} is connected in more than one workspace "
+                             f"({', '.join(where)}); {pick}.")
+        return out
+    where = [a.workspace_id for a in services.apps_for_person(user, provider)
+             if workspace is None or a.workspace_id == workspace]
+    if len(where) == 1:
+        out["connect_url"] = _start_url(request, provider, where[0])
+        return out
+    out["connect_url"] = settings_url
+    if len(where) > 1:
+        out["workspaces"] = where
+        out["detail"] = (f"Your {p.title} is not connected. It is set up in more than one workspace "
+                         f"({', '.join(where)}): connect in one, then {pick}.")
+    return out
 
 
 @me_router.post("/{provider}/token", response=AccessTokenOut,
@@ -308,7 +315,8 @@ def my_connection_token(request: HttpRequest, provider: str, refresh: bool = Fal
     connection made in a workspace I am still a member of counts; `?workspace=`
     picks one when I connected in several (409 `ambiguous` lists them in
     `workspaces`). 409 when I have not connected, or must reconnect
-    (`connect_url`, an absolute URL, says where). `?refresh=true` forces a new
+    (`connect_url`, an absolute URL, says where: a workspace's connect page, or
+    Settings when I must first choose a workspace or disconnect a spare account). `?refresh=true` forces a new
     token even when the cached one looks fresh (for a CLI whose token the
     provider already rejected)."""
     if not _plain_pat(request):
@@ -323,13 +331,21 @@ def my_connection_token(request: HttpRequest, provider: str, refresh: bool = Fal
         conn = services.connection_for_person(request.user, provider, workspace=workspace or None)
         token = services.issue_token(conn, to="cli", by=request.user, refresh=refresh)
     except services.ConnectionError as exc:
-        members = _token_problem_members(request, exc, provider, workspace or None, conn)
+        members = _token_problem(request, exc, p, workspace or None, conn)
         raise problem_for(exc, title=p.title, owner="Your", **members) from None
     return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
                           expires_at=token.expires_at, account_label=token.account_label)
 
 
 # ---- a workspace's apps ----------------------------------------------------------
+
+def _connection_count(app: ConnectionApp | None) -> int:
+    if app is None:
+        return 0
+    # Annotated by the list (one query for every provider); a saved row counts its own.
+    n = getattr(app, "n_connections", None)
+    return app.connections.count() if n is None else n
+
 
 def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
              app: ConnectionApp | None) -> ConnectionAppOut:
@@ -345,7 +361,7 @@ def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
         option_fields=[OptionFieldOut(name=f.name, label=f.label, kind=f.kind, required=f.required,
                                       default=f.default) for f in cls.option_fields],
         callback_url=_callback_url(request, cls.name, slug),
-        connection_count=app.connections.count() if app is not None else 0,
+        connection_count=_connection_count(app),
         updated_at=app.updated_at if app is not None else None,
         configured_by_email=((app.configured_by.email or app.configured_by.get_username())
                              if app is not None and app.configured_by is not None else ""),
@@ -367,7 +383,8 @@ def list_connection_apps(request: HttpRequest, workspace: str) -> ConnectionApps
     to register at the provider, and how many connections it holds. Workspace
     admins only."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
-    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by").filter(workspace=ws)}
+    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by").filter(workspace=ws)
+            .annotate(n_connections=Count("connections"))}
     return ConnectionAppsOut(apps=[_app_out(request, ws.slug, c, rows.get(c.name))
                                    for c in providers.CLASSES.values()])
 

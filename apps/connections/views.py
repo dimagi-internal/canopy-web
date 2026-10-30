@@ -144,15 +144,18 @@ def connections_callback(request: HttpRequest, provider: str, workspace: str) ->
     if parked is None or parked.get("provider") != provider or parked.get("workspace") != workspace:
         return _land(request, return_to, provider, "error", "bad_state")
 
-    # Re-authorize: admin may have been revoked since `start`; a person's flow
-    # finishes only for the person who started it.
+    # Re-authorize what `start` checked, since either may have changed between
+    # the legs: the caller still administers the agent and the agent is still in
+    # this workspace (it connects with its own workspace's app only); a person's
+    # flow finishes only for the person who started it, still a member here.
     if parked.get("owner_kind") == "agent":
         agent = Agent.objects.filter(pk=parked.get("owner_id")).first()
-        if agent is not None and not agent.is_admin(request.user):
-            services.spend(request.session, state)  # nothing exchanged, nothing stored
-            return _land(request, return_to, provider, "error", "forbidden")
-    elif parked.get("owner_id") != request.user.pk:
-        services.spend(request.session, state)
+        allowed = agent is None or (agent.is_admin(request.user) and agent.workspace_id == workspace)
+    else:
+        allowed = (parked.get("owner_id") == request.user.pk
+                   and services.person_may_use(request.user, workspace))
+    if not allowed:
+        services.spend(request.session, state)  # nothing exchanged, nothing stored
         return _land(request, return_to, provider, "error", "forbidden")
 
     if request.GET.get("error"):  # the user declined, or the provider refused

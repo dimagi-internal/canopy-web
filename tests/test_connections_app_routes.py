@@ -334,6 +334,41 @@ def test_a_callback_for_another_workspace_is_bad_state(admin, ws):
     assert Connection.objects.get().app.workspace_id == "b"
 
 
+def _callback(client, slug, state):
+    return client.get(reverse("connections_callback", args=["salesforce", slug]), {"code": "c0de", "state": state})
+
+
+def test_a_person_removed_between_the_legs_is_forbidden_and_nothing_is_stored(admin, editor, ws):
+    sf_app(ws)
+    c = _browser(editor)
+    state = _state(_start(c, "w"))
+    M.objects.filter(workspace=ws, user=editor).delete()
+    with FakeSF() as fake:
+        resp = _callback(c, "w", state)
+    assert _landing(resp) == {"connection": "salesforce", "status": "error", "reason": "forbidden"}
+    assert fake.calls == [] and not Connection.objects.exists()
+    M.objects.create(workspace=ws, user=editor, role=M.EDITOR)
+    with FakeSF() as fake:                                             # the state was spent
+        assert _landing(_callback(c, "w", state))["reason"] == "bad_state"
+    assert fake.calls == []
+
+
+def test_an_agent_moved_between_the_legs_is_forbidden_and_nothing_is_stored(admin, ws):
+    sf_app(ws)
+    other = _ws("other", "Other", admin=[admin])
+    sf_app(other)
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=admin)
+    c = _browser(admin)
+    state = _state(_start(c, "w", agent="eva"))
+    eva.workspace = other
+    eva.save()
+    assert eva.is_admin(admin)                                         # still its admin
+    with FakeSF() as fake:
+        resp = _callback(c, "w", state)
+    assert _landing(resp) == {"connection": "salesforce", "status": "error", "reason": "forbidden"}
+    assert fake.calls == [] and not Connection.objects.exists()
+
+
 # ---- listings ----------------------------------------------------------------------
 
 def test_my_list_has_a_row_per_workspace_that_set_the_provider_up(admin, ws):
@@ -390,6 +425,8 @@ def test_ambiguous_across_workspaces_lists_them_and_workspace_picks_one(admin, w
     assert body["error"] == "ambiguous" and body["workspaces"] == ["b", "w"]
     assert body["accounts"] == ["jj@dimagi.com", "jj@dimagi.com"]
     assert body["connect_url"] == "http://testserver/settings/connections"
+    assert "--workspace <slug>" in body["detail"] and "b, w" in body["detail"]
+    assert "disconnect" not in body["detail"]
     got = _token(admin, "?workspace=b")
     assert got.status_code == 200 and got.json()["access_token"] == "00D!b"
     assert _token(admin, "?workspace=w").json()["access_token"] == "00D!cached"
@@ -403,9 +440,45 @@ def test_not_connected_points_at_the_one_set_up_workspace_or_lists_them(admin, w
     body = _token(admin).json()
     assert body["error"] == "not_connected" and body["workspaces"] == ["b", "w"]
     assert body["connect_url"] == "http://testserver/settings/connections"
+    assert "--workspace <slug>" in body["detail"]
     narrowed = _token(admin, "?workspace=b").json()
     assert narrowed["connect_url"] == "http://testserver/auth/connections/salesforce/b/start/"
     assert "workspaces" not in narrowed
+
+
+def test_two_accounts_in_one_workspace_are_disconnected_in_settings(admin, ws):
+    first = _stored({"user": admin}, admin, app=sf_app(ws))
+    Connection.objects.create(provider="salesforce", account_id="00Dother/005x", account_label="second@dimagi.com",
+                              user=admin, connected_by=admin, app=first.app)
+    body = _token(admin).json()
+    assert body["error"] == "ambiguous" and body["workspaces"] == ["w"]
+    assert "disconnect all but one" in body["detail"]
+    # Connecting again would not help: Settings is where a spare account is disconnected.
+    assert body["connect_url"] == "http://testserver/settings/connections"
+
+
+def test_nothing_set_up_points_at_settings(admin, ws):
+    body = _token(admin).json()
+    assert body["error"] == "not_connected" and "workspaces" not in body
+    assert body["connect_url"] == "http://testserver/settings/connections"
+
+
+def test_the_app_list_costs_the_same_however_many_connections(admin, ws):
+    from django.db import connection as db
+    from django.test.utils import CaptureQueriesContext
+
+    app = sf_app(ws)
+    c = _browser(admin)
+
+    def cost():
+        with CaptureQueriesContext(db) as q:
+            assert c.get(APPS.format("w")).status_code == 200
+        return len(q)
+    before = cost()
+    for i in range(3):
+        _stored({"user": admin}, admin, app=app, account_id=f"00D/{i}")
+    assert cost() == before
+    assert _row(c.get(APPS.format("w")).json())["connection_count"] == 3
 
 
 def test_reconnect_points_at_the_connections_workspace(admin, ws):
@@ -455,10 +528,11 @@ def test_an_apps_secret_is_never_in_a_response_log_event_or_setting_change(admin
     assert SettingChange.objects.filter(workspace=ws).exists()
 
 
-def test_only_the_write_carrying_the_secret_is_kept_off_mcp():
+def test_only_reading_an_app_is_an_mcp_tool():
     from apps.mcp import api_tools
 
     assert "configure_connection_app" in api_tools.EXCLUDED
+    assert "remove_connection_app" in api_tools.EXCLUDED              # disconnects a whole workspace
     assert not api_tools.is_tool_route("PUT", "/api/workspaces/w/connection-apps/salesforce")
+    assert not api_tools.is_tool_route("DELETE", "/api/workspaces/w/connection-apps/salesforce")
     assert api_tools.is_tool_route("GET", "/api/workspaces/w/connection-apps")
-    assert api_tools.is_tool_route("DELETE", "/api/workspaces/w/connection-apps/salesforce")

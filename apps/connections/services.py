@@ -272,7 +272,13 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
     else:
         if client_id != app.client_id and not client_secret:
             raise ConnectionError("invalid_app", "A new client id needs its client secret")
-        changed = [name for name in cls.locked_options if cleaned.get(name) != app.options.get(name)]
+        # Compared as cleaned, so a stored value in another spelling of the same
+        # setting (`https://login.salesforce.com/`) is not a change.
+        try:
+            stored = cls.clean_options(app.options)
+        except ValueError:  # a row that bypassed `configure_app`: compare as stored
+            stored = app.options
+        changed = [name for name in cls.locked_options if cleaned.get(name) != stored.get(name)]
         if (client_id != app.client_id or changed) and app.connections.exists():
             what = "client id" if client_id != app.client_id else ", ".join(changed)
             raise ConnectionError("app_locked", f"accounts are connected with this app: remove it (which "
@@ -302,16 +308,19 @@ def remove_app(app: ConnectionApp, *, by) -> None:
     subject = _app_subject(app)
     title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
     client_id, slug = app.client_id, app.workspace_id
-    late: list[tuple[Subject, str]] = []
+    late: list[tuple[Subject, str | None]] = []
     with transaction.atomic():
         locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk).first()
         if locked is not None:
             for conn in locked.connections.select_related("agent__workspace").order_by("pk"):
-                late.append((Subject.of(conn), _refresh_token_of(conn, Subject.of(conn))))
+                # Read only: an unreadable token is recorded after the transaction.
+                late.append((Subject.of(conn), _decrypted_refresh(conn)))
                 conn.delete()
             locked.delete()
     for late_subject, refresh in late:
-        _revoke(app, late_subject, refresh)
+        if refresh is None:
+            record(late_subject, "revoke_failed", warn=True, error="undecryptable")
+        _revoke(app, late_subject, refresh or "")
         record(late_subject, "disconnected", by=by,
                summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
     record(subject, "app_removed", by=by, workspace=slug, client_id=client_id,
@@ -715,13 +724,21 @@ def disconnect(conn: Connection, *, by) -> None:
            summary=f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
 
 
-def _refresh_token_of(conn: Connection, subject: Subject) -> str:
-    """The plaintext refresh token, or "" (recorded) when it cannot be read."""
+def _decrypted_refresh(conn: Connection) -> str | None:
+    """The plaintext refresh token, or None when it cannot be read."""
     try:
         return decrypt_secret(conn.refresh_token_enc)
     except Exception:  # noqa: BLE001 - an unreadable token cannot be revoked; still delete
+        return None
+
+
+def _refresh_token_of(conn: Connection, subject: Subject) -> str:
+    """The plaintext refresh token, or "" (recorded) when it cannot be read."""
+    refresh = _decrypted_refresh(conn)
+    if refresh is None:
         record(subject, "revoke_failed", warn=True, error="undecryptable")
         return ""
+    return refresh
 
 
 def _revoke(app: ConnectionApp, subject: Subject, refresh: str) -> None:

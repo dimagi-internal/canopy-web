@@ -554,3 +554,42 @@ def test_the_workspace_delete_route_succeeds_with_connections(user):
     with FakeSF():
         assert c.delete("/api/workspaces/gone/").status_code == 204
     assert not Workspace.objects.filter(slug="gone").exists() and not Connection.objects.exists()
+
+
+def test_a_locked_option_stored_in_another_spelling_is_not_a_change(ws, user):
+    """The lock compares cleaned values: a stored `https://login.salesforce.com/`
+    (a row that predates cleaning) and a saved `https://login.salesforce.com` are
+    the same login host, so saving does not trip `app_locked`."""
+    app = sf_app(ws)
+    ConnectionApp.objects.filter(pk=app.pk).update(options={"login_url": "https://login.salesforce.com/",
+                                                            "access_token_seconds": 1800})
+    _stored({"user": user}, user, app=app)
+    saved = services.configure_app(ws, "salesforce", client_id=app.client_id,
+                                   options={"login_url": "https://login.salesforce.com"}, by=user)
+    assert saved.options["login_url"] == "https://login.salesforce.com"
+    with pytest.raises(services.ConnectionError) as e:
+        services.configure_app(ws, "salesforce", client_id=app.client_id,
+                               options={"login_url": "https://test.salesforce.com"}, by=user)
+    assert e.value.code == "app_locked"
+
+
+def test_an_unreadable_late_token_is_recorded_after_the_removal_commits(ws, user, monkeypatch):
+    from django.db import connection as db
+
+    app = _configure(ws, user)
+    monkeypatch.setattr(services, "disconnect", lambda conn, *, by: None)   # the snapshot "misses" it
+    late = _stored({"user": user}, user, app=app)
+    Connection.objects.filter(pk=late.pk).update(refresh_token_enc="not-fernet")
+    depth_outside = len(db.atomic_blocks)
+    seen = []
+    real = services.record
+
+    def spy(subject, kind, **kw):
+        seen.append((kind, kw.get("error"), len(db.atomic_blocks)))
+        return real(subject, kind, **kw)
+    monkeypatch.setattr(services, "record", spy)
+    with FakeSF() as fake:
+        services.remove_app(app, by=user)
+    assert ("revoke_failed", "undecryptable", depth_outside) in seen
+    assert [c for c in fake.calls if c[1] == REVOKE_URL] == []
+    assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
