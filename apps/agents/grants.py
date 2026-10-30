@@ -20,6 +20,7 @@ from django.db.models import Q
 
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace, ancestor_chains
 
 from . import roles
 from .models import AgentGrant
@@ -68,6 +69,30 @@ def lines_for(agent) -> list[AgentGrant]:
         chain = [agent.workspace_id, *agent.workspace.ancestor_slugs()]
         scope |= Q(agent__isnull=True, workspace_id__in=chain)
     return list(AgentGrant.objects.filter(scope).select_related("user"))
+
+
+def lines_for_many(agents) -> dict[int, list[AgentGrant]]:
+    """`lines_for` for many agents at once: {agent_id: lines}, in a fixed number of queries
+    however many agents — for a view that judges many (person, agent) pairs."""
+    agents = list(agents)
+    out: dict[int, list[AgentGrant]] = {a.pk: [] for a in agents}
+    if not agents:
+        return out
+    for line in AgentGrant.objects.filter(agent__in=agents).select_related("user"):
+        out[line.agent_id].append(line)
+    inheriting = [a for a in agents if a.inherit_workspace_defaults and a.workspace_id]
+    if not inheriting:
+        return out
+    homes = {a.workspace_id for a in inheriting}
+    chains = ancestor_chains(dict(Workspace.objects.filter(slug__in=homes).values_list("slug", "parent_id")))
+    defaults: dict[str, list[AgentGrant]] = {}
+    scope = homes | {slug for chain in chains.values() for slug in chain}
+    for line in AgentGrant.objects.filter(agent__isnull=True, workspace_id__in=scope).select_related("user"):
+        defaults.setdefault(line.workspace_id, []).append(line)
+    for a in inheriting:
+        for slug in (a.workspace_id, *chains.get(a.workspace_id, [])):
+            out[a.pk].extend(defaults.get(slug, []))
+    return out
 
 
 def matches(line: AgentGrant, asker: Asker) -> bool:

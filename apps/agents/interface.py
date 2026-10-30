@@ -127,6 +127,7 @@ from __future__ import annotations
 
 import re
 
+from apps.agents import roles
 from apps.agents.interface_default import VERSION, default_interface  # noqa: F401  (re-exported)
 from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.domain_proof import proof
@@ -156,6 +157,26 @@ PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 FULL = ""
 
 CALLER_CLASSES = frozenset({"member", "contact", "unknown"})
+
+#: The lowest role that may open a door (`role:` on a capability). Who HAS a role is the
+#: access list's business (`apps/agents/grants.py`); a door only says how much it takes.
+DOOR_ROLES = (roles.VIEWER, roles.USER)
+
+
+def door_role(cap: dict) -> str:
+    """The lowest role that may open `cap`: its `role:` when it says, else what its
+    `callers` already meant — a door open to contacts is for viewers, one open only to
+    members is for users. An interface written before roles keeps its meaning."""
+    explicit = cap.get("role")
+    if explicit in DOOR_ROLES:
+        return explicit
+    callers = cap.get("callers") or []
+    return roles.VIEWER if any(c.startswith(("contact", "unknown")) for c in callers) else roles.USER
+
+
+def role_opens(role: str | None, cap: dict) -> bool:
+    """May someone holding `role` open `cap`?"""
+    return roles.at_least(role, door_role(cap))
 
 #: `editors:` — where a workspace editor who is not an agent admin lands. `full`
 #: (the default, never written) is the editor tier: the whole agent, every turn
@@ -243,7 +264,7 @@ def parse(doc) -> dict:
             raise InterfaceError(f"{name} must be a mapping")
         bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "pages", "sites", "ceiling", "own_login",
-                          "data"}
+                          "data", "role"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
@@ -280,6 +301,10 @@ def parse(doc) -> dict:
         }
         if cap.get("data") is not None:
             out[name]["data"] = _data(cap["data"], name, out[name])
+        if cap.get("role") is not None:
+            if cap["role"] not in DOOR_ROLES:
+                raise InterfaceError(f"{name}.role must be one of {list(DOOR_ROLES)}", f"{name}.role")
+            out[name]["role"] = cap["role"]
     full = _classes(doc.get("full"), "full")
     parsed = {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
     editors = doc.get("editors", EDITORS_FULL)
@@ -402,7 +427,7 @@ def _declared_resource(turn) -> str:
     return resource if isinstance(resource, str) else ""
 
 
-def _page_capability(turn, iface: dict, classes: set[str]) -> str | None:
+def _page_capability(turn, iface: dict, classes: set[str], opens=None) -> str | None:
     """The capability whose `pages` match what this turn's page declared.
 
     Checked before falling back to `ask`, so a conversation held on a page the
@@ -423,7 +448,7 @@ def _page_capability(turn, iface: dict, classes: set[str]) -> str | None:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
         patterns = cap.get("pages") or []
-        if not patterns or not (classes & set(cap.get("callers") or [])):
+        if not patterns or not (opens(cap) if opens else classes & set(cap.get("callers") or [])):
             continue
         if any(fnmatchcase(resource, pattern) for pattern in patterns):
             return name
@@ -440,7 +465,7 @@ def _conversation_site(turn) -> str:
     return site.strip() if isinstance(site, str) else ""
 
 
-def _site_capability(turn, iface: dict, classes: set[str]) -> str | None:
+def _site_capability(turn, iface: dict, classes: set[str], opens=None) -> str | None:
     """The capability whose `sites` include the site this conversation is on.
 
     Tried after `_page_capability` (a page-specific door is the narrower one)
@@ -451,7 +476,7 @@ def _site_capability(turn, iface: dict, classes: set[str]) -> str | None:
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
-        if site in (cap.get("sites") or []) and classes & set(cap.get("callers") or []):
+        if site in (cap.get("sites") or []) and (opens(cap) if opens else classes & set(cap.get("callers") or [])):
             return name
     return None
 
@@ -787,14 +812,23 @@ def granted_by(turn, agent) -> str:
     """WHY this turn has the access it has, for the envelope: `owner`, `admin`,
     `system`, `editor`, `session:<role>`, `full:<rule>`, `capability:<name>` or
     `refused`."""
+    return grant_facts(turn, agent)["granted_by"]
+
+
+def grant_facts(turn, agent) -> dict:
+    """The envelope's account of the asker's standing, from ONE decision: `granted_by`
+    (the older why-word above), `role` (where they stand on the agent's role ladder, None
+    when refused) and `source` (what put them there: owner | admin | system |
+    workspace-editor | rule:<full rule> | door:<name> | list:<access-list line>)."""
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
-    d = access.decide_for_turn(turn, agent)
-    if d.access == access.CONFINED:
-        # The capability the turn was STAMPED with at enqueue (a requested door
-        # may differ from the free-form one `decide` falls back to).
-        return f"capability:{turn.capability or d.capability}"
-    return d.basis
+    d = access.decide_for_turn(turn, agent, turn.capability or None)
+    if d.access == access.NONE and turn.capability:
+        d = access.decide_for_turn(turn, agent)   # the stamped door no longer admits them: as before
+    # The capability the turn was STAMPED with at enqueue (a requested door may differ from
+    # the free-form one `decide` falls back to).
+    why = f"capability:{turn.capability or d.capability}" if d.access == access.CONFINED else d.basis
+    return {"granted_by": why, "role": d.agent_role, "source": d.source}
 
 
 def offered_to(user, agent) -> list[str]:
