@@ -11,13 +11,15 @@ stolen session cannot swap in its own authenticator once a person has one.
 """
 from __future__ import annotations
 
+import logging
+
 from django.http import HttpRequest
 from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
-from apps.passkeys import services, stepup
+from apps.passkeys import services, stepup, vault_log
 from apps.passkeys.models import Passkey
 from apps.passkeys.schemas import (
     PasskeyAssertIn,
@@ -86,7 +88,12 @@ def finish_passkey_registration(request: HttpRequest, payload: PasskeyRegisterIn
     try:
         passkey = services.finish_registration(request, payload.credential, payload.label)
     except services.CeremonyError as exc:
+        vault_log.log("passkey_register_failed", request, level=logging.WARNING, error=str(exc)[:200])
         raise _bad(exc) from exc
+    vault_log.log("passkey_registered", request, aaguid=passkey.aaguid or "-",
+                  authenticator=vault_log.authenticator_name(passkey.aaguid), prf_enabled=passkey.prf_enabled,
+                  backed_up=passkey.backed_up, transports="/".join(passkey.transports or []) or "-",
+                  label=passkey.label)
     stepup.mark_stepped_up(request)
     return Status(201, _out(passkey))
 
@@ -144,6 +151,7 @@ def finish_passkey_step_up(request: HttpRequest, payload: PasskeyAssertIn) -> St
     try:
         services.finish_assertion(request, payload.credential)
     except services.CeremonyError as exc:
+        vault_log.log("step_up_failed", request, level=logging.WARNING, error=str(exc)[:200])
         raise _bad(exc) from exc
     stepup.mark_stepped_up(request)
     return _status(request)

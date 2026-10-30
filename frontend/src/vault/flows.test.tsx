@@ -9,7 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
-  putZkValues: vi.fn(), rotateZk: vi.fn(),
+  putZkValues: vi.fn(), rotateZk: vi.fn(), reportVaultClient: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
 const passkeysApi = vi.hoisted(() => ({ registerThisDevice: vi.fn(), listPasskeys: vi.fn(), deletePasskey: vi.fn() }))

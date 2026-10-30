@@ -22,6 +22,7 @@ import {
   getZkState,
   putAgentZkPins,
   putKeyset,
+  reportVaultClient,
   putWorkspaceVaultPins,
   putWorkspaceVaultValues,
   putZkValues,
@@ -142,17 +143,44 @@ async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Promise<Uin
   const byPasskey = prfSeals(ks), byPass = passSeals(ks)
   const ask: UnlockAsk = { passkey: byPasskey.length > 0, passphrase: byPass.length > 0,
                            needsSecretKey: !rememberedSecretKey(ks.user_id) }
+  const asked = [ask.passkey && 'passkey', ask.passphrase && 'passphrase'].filter(Boolean) as string[]
+  const secret_key_remembered = !ask.needsSecretKey
   const choice: UnlockChoice = ask.passkey && !ask.passphrase ? { method: 'passkey' } : await prompt(ask)
+  // The server log gets what only the browser sees: which door was offered and tried, and how it failed.
+  const fail = (method: 'passkey' | 'passphrase', error: string, outcome: 'failed' | 'unsupported' = 'failed') =>
+    reportVaultClient({ stage: 'unlock', method, outcome, error, asked, secret_key_remembered })
   if (choice.method === 'passkey') {
-    const touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
+    let touch
+    try {
+      touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
+    } catch (e) {
+      fail('passkey', `${e instanceof Error ? e.name : 'Error'}: ${e instanceof Error ? e.message : String(e)}`,
+           e instanceof PrfUnsupportedError ? 'unsupported' : 'failed')
+      throw e
+    }
     const seal = byPasskey.find((s) => s.cred === touch.cred)
-    if (!seal) throw new Error('That passkey does not hold your vault key — use one marked ✓ under Settings → Security.')
-    if (!touch.prf) throw new PrfUnsupportedError()
+    if (!seal) {
+      fail('passkey', 'touched passkey has no seal on the keyset')
+      throw new Error('That passkey does not hold your vault key — use one marked ✓ under Settings → Security.')
+    }
+    if (!touch.prf) {
+      fail('passkey', 'passkey answered without a PRF output', 'unsupported')
+      throw new PrfUnsupportedError()
+    }
     return openUserKey(seal, ks.user_id, touch.prf)
   }
   const code = choice.secretKey?.trim() || rememberedSecretKey(ks.user_id)
-  if (!code) throw new Error('Enter your Secret Key (it starts with CV1-, on your Emergency Kit).')
-  const sk = parseSecretKeyCode(code)
+  if (!code) {
+    fail('passphrase', 'no Secret Key typed or remembered')
+    throw new Error('Enter your Secret Key (it starts with CV1-, on your Emergency Kit).')
+  }
+  let sk
+  try {
+    sk = parseSecretKeyCode(code)
+  } catch (e) {
+    fail('passphrase', `Secret Key did not parse: ${e instanceof Error ? e.message : String(e)}`)
+    throw e
+  }
   for (const seal of byPass) {
     try {
       const scalar = await openUserKey2skd(seal, ks.user_id, choice.passphrase, sk)
@@ -162,6 +190,8 @@ async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Promise<Uin
       // the next passphrase seal, if any
     }
   }
+  // A remembered Secret Key (browser storage) that is stale reads exactly like a wrong passphrase; say which was used.
+  fail('passphrase', `no passphrase seal opened (${byPass.length} tried, Secret Key ${choice.secretKey ? 'typed' : 'remembered'})`)
   throw new Error('That passphrase and Secret Key do not open your vault key.')
 }
 
