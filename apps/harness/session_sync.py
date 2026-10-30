@@ -214,9 +214,9 @@ def _busy_reason(binding, turn_id) -> str:
     session whose last turn ended a minute ago, forking every quick follow-up):
 
     - another EXECUTING turn holds it: a chat turn on the same Session, or an
-      agent/project turn whose recorded session is this one on this box. Agent turns
-      already serialize per agent (`one_executing_turn_per_agent`); project turns do
-      not, and a chat turn is serialized per SESSION, not per agent.
+      agent/project turn whose recorded session is this one on this box. Any number of
+      an agent's turns may execute at once (each in its own session), so it is this
+      session's own holder that matters, not the agent's.
     - the engine says it is working (`agent_status`, emdash's own flag, or the
       runner's `agent_status_stale` dissent): a person typing in it, or work that
       outlived its turn. A blank status (the runner could not answer) is not busy."""

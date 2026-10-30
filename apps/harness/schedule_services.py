@@ -388,7 +388,7 @@ def delete_schedule(
 ) -> None:
     """Retire open occurrences FIRST — see the module docstring and the spec.
     There is no Turn->AgentSchedule FK, so nothing cascades; an executing
-    occurrence would otherwise hold one_executing_turn_per_agent forever."""
+    occurrence would otherwise keep running (and spawning) forever."""
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=kind
     )

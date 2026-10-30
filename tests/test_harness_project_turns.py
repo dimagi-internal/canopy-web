@@ -73,17 +73,17 @@ def test_two_project_turns_for_the_same_repo_both_execute():
     assert Turn.objects.filter(project="canopy-web", status=Turn.RUNNING).count() == 2
 
 
-def test_one_executing_turn_per_agent_still_holds_for_agents():
-    """The negative half of the test above: widening the model must not have
-    loosened the agent invariant it was protecting."""
+def test_agent_turns_run_side_by_side_like_project_turns():
+    """An agent is no more a lane than a repo is: both parallelize (the agent lane was
+    removed 2026-10-30, after one long ACE turn held every other request for hours)."""
     a = _agent()
     Turn.objects.create(
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="a1", status=Turn.RUNNING
     )
-    with pytest.raises(IntegrityError):
-        Turn.objects.create(
-            agent=a, origin=Turn.ORIGIN_API, idempotency_key="a2", status=Turn.RUNNING
-        )
+    Turn.objects.create(
+        agent=a, origin=Turn.ORIGIN_API, idempotency_key="a2", status=Turn.RUNNING
+    )
+    assert Turn.objects.filter(agent=a, status=Turn.RUNNING).count() == 2
 
 
 def test_str_does_not_crash_on_a_project_turn():

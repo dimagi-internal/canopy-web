@@ -14,9 +14,7 @@ Three objects (canopy-web#1704, `docs/architecture/access.md` § Direct use):
   reads during the turn go out under it.
 
 A direct turn is RUNNING from the moment it opens and is never queued, claimed or
-routed. It does not serialize the agent (`one_executing_turn_per_agent` and
-`routing.busy_agent_ids` exclude it): it is the person's session, not the agent's
-one continuous one. Its lease is long and renewed by the session's prompts; a
+routed. It never held an agent back: it is the person's session, not the agent's. Its lease is long and renewed by the session's prompts; a
 session that dies without closing lands `lost` through the ordinary sweep.
 
 Mode: only an agent admin may run a direct turn `auto`, and only when they ask for

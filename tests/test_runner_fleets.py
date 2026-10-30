@@ -389,9 +389,8 @@ def test_growth_stops_at_max_members(world, aws):
     assert aws.calls == [("desired", 2)]
 
 
-def test_a_fresh_turn_or_one_behind_its_agent_grows_nothing(world, aws):
+def test_a_fresh_turn_grows_nothing(world, aws):
     _turn(world["agent"], "running", status=Turn.RUNNING, claimed_by=world["one"], claimed_at=timezone.now())
-    _turn(world["agent"], "behind", age_seconds=300)
     other = Agent.objects.create(slug="eva", name="Eva", workspace=world["org"]["ws"])
     RunnerAssignment.objects.create(agent=other, runner=world["one"], rank=0)
     _turn(other, "fresh", age_seconds=5)

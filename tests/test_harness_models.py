@@ -36,11 +36,12 @@ def test_queued_turns_stack_freely():
     assert Turn.objects.filter(agent=a, status=Turn.QUEUED).count() == 2
 
 
-def test_one_executing_turn_per_agent():
+def test_an_agent_can_have_several_executing_turns():
+    """An agent is not a lane (removed 2026-10-30): a 9 h ACE turn held a dispatch 5 h 16 m."""
     a = _agent()
     Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1", status=Turn.CLAIMED)
-    with pytest.raises(IntegrityError):
-        Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k2", status=Turn.RUNNING)
+    Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k2", status=Turn.RUNNING)
+    assert Turn.objects.filter(agent=a, status__in=[Turn.CLAIMED, Turn.RUNNING]).count() == 2
 
 
 def test_terminal_turn_frees_the_execution_slot():
@@ -88,6 +89,7 @@ def test_runner_workspace_defaults_to_null_and_accepts_a_slug():
     assert bare.workspace_id is None
 
     from django.contrib.auth.models import User
+
     from apps.workspaces.models import Workspace
 
     owner = User.objects.create_user("ws-owner", "ws-owner@dimagi.com", "pw")

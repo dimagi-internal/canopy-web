@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import routing
-from apps.harness.models import Runner, Turn, PrivateRunner
+from apps.harness.models import PrivateRunner, Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -186,27 +186,26 @@ def test_local_turns_do_not_serialize_the_agent(world):
     assert _open(b, _register(b, "sarvesh-mbp")).status_code == 201
     runner = Runner.objects.create(name="box", kind=Runner.EMDASH, owner=world["owner"],
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now())
-    # The constraint itself admits the runner's turn beside both local ones.
+    # The runner's turn runs beside both local ones, and a queued turn waits behind none of them.
     with transaction.atomic():
         Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r1",
                             status=Turn.CLAIMED, claimed_by=runner)
-    assert world["agent"].pk in set(routing.busy_agent_ids().values_list("agent_id", flat=True))
+    queued = Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="q2")
+    assert routing.blocking_turn(queued) is None
 
 
 def test_a_local_turn_alone_leaves_the_agent_free(world):
     c = _client(world["editor"])
     _open(c, _register(c))
-    assert world["agent"].pk not in set(routing.busy_agent_ids().values_list("agent_id", flat=True))
     queued = Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="q1")
     assert routing.blocking_turn(queued) is None
 
 
-def test_two_runner_turns_still_cannot_execute_at_once(world):
-    """The exclusion is for direct turns only — the agent's own lane is unchanged."""
+def test_two_runner_turns_of_one_agent_can_execute_at_once(world):
+    """An agent is not a lane: its turns run side by side (the lane was removed 2026-10-30)."""
     Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r1", status=Turn.RUNNING)
-    with pytest.raises(IntegrityError), transaction.atomic():
-        Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r2",
-                            status=Turn.RUNNING)
+    Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r2", status=Turn.RUNNING)
+    assert Turn.objects.filter(agent=world["agent"], status=Turn.RUNNING).count() == 2
 
 
 def test_local_is_not_a_postable_origin(world):

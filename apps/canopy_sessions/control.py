@@ -297,8 +297,7 @@ def close_session(*, session: Session) -> str:
             return "unavailable"
         # Cancel BEFORE relaying. Deleting the emdash task kills the process the
         # turn runs in, so a live turn would otherwise stay EXECUTING with nobody
-        # left to finish it — held until the lease sweep, wedging the agent through
-        # one_executing_turn_per_agent. Cancelling first also means the ledger
+        # left to finish it — held until the lease sweep. Cancelling first also means the ledger
         # records a cancellation rather than a turn that merely stops emitting.
         cancel_session_turns(session)
         # Record BEFORE relaying, for the same reason `answer_menu` does: the frame

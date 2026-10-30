@@ -470,10 +470,9 @@ direct (a direct turn).
   at open, like a dispatch's request; a `full:`-rule member does not get the
   routing ladder here, because nothing about a session on their own machine is a
   channel the owner set a posture for.
-* **It never holds the agent.** A direct turn is excluded from
-  `one_executing_turn_per_agent` and `routing.busy_agent_ids`: it is the person's
-  session, not the agent's one continuous session, so it neither waits behind the
-  agent's runner turns nor delays them, and two people may use the agent at once.
+* **It never holds the agent.** A direct turn is the person's own session: it neither waits
+  behind the agent's runner turns nor delays them, and two people may use the agent at once.
+  (No agent turn holds the agent either: an agent is not a lane.)
 * A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
   record that someone uses the agent directly. The caller list decides who MAY
   (`decide`, above); the license is who DOES. Requested on the first direct turn and

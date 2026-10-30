@@ -184,8 +184,10 @@ def test_an_executing_project_turn_does_not_block_every_agent_turn():
     assert got.pk == queued.pk
 
 
-def test_an_executing_agent_turn_still_blocks_that_same_agent():
-    """The real constraint must survive the fix: one executing turn per agent."""
+def test_an_executing_agent_turn_does_not_block_that_agents_next_turn():
+    """An agent is not a lane. One long-running turn used to hold every other request for the
+    agent queued behind it -- an ACE turn running 9 h kept a pinned dispatch waiting 5h16m
+    (2026-10-30) on a box with room to spare. Turns of one agent run side by side."""
     jj = _user("jj")
     ws = _ws("dimagi", jj)
     runner = _runner(jj, workspace=ws)
@@ -201,4 +203,6 @@ def test_an_executing_agent_turn_still_blocks_that_same_agent():
         idempotency_key="hal-second", status=Turn.QUEUED, pinned_runner=runner,
     )
 
-    assert claim.claim_next_turn(runner) is None
+    got = claim.claim_next_turn(runner)
+    assert got is not None and got.idempotency_key == "hal-second"
+    assert Turn.objects.filter(agent=agent, status__in=[Turn.CLAIMED, Turn.RUNNING]).count() == 2

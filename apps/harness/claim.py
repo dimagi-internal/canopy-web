@@ -42,7 +42,6 @@ from .routing import (
     assignment_allows_for_agent,
     assignment_rows_for,
     blocking_turn,
-    busy_agent_ids,
     busy_session_ids,
     cannot_serve,
     is_project_session_turn,
@@ -854,11 +853,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # prefer_local turns fall to cloud only via the Phase 2 router policy;
         # Phase 0 has no cloud runners, so keep the simple rule: cloud never
         # takes local_only.
-    # Both busy sets live in `busy_agent_ids` / `busy_session_ids` (with why
-    # their null filters are load-bearing), shared with `blocking_turn` so the
-    # status line's "queued behind the current turn" is this exclusion, not a
-    # second guess at it.
-    busy_agents = busy_agent_ids()
+    # The busy set lives in `busy_session_ids` (with why its null filter is
+    # load-bearing), shared with `blocking_turn` so the status line's "queued
+    # behind the current turn" is this exclusion, not a second guess at it.
+    # Only a CONVERSATION is a lane: an agent has none, and any number of its
+    # turns execute at once (each on its own worktree, `cloud_runner`'s #1313).
     # A conversation this runner is running is not "busy" to it when it can
     # deliver the follow-up into that turn (`may_ride`, canopy-web#1153).
     ridable = ridable_sessions(runner)
@@ -896,12 +895,6 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=ws_slugs))
         | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=ws_slugs))
     )
-    # `busy_agents` serializes AGENTS only, and a project turn (agent_id NULL)
-    # must not be swept up by it. This plain exclude() is correct: Django compiles
-    # it to `NOT (agent_id IN (…) AND agent_id IS NOT NULL)`, so NULL-agent rows
-    # survive rather than falling into SQL's NULL-propagation trap. Verified by
-    # test_a_busy_agent_does_not_block_a_project_turn, which is what makes it safe
-    # to rely on.
     # Target match: this runner's declared agents/projects, plus every session
     # turn when it is session-capable (a chat send targets no specific agent — any
     # session-capable runner in the tenant may take it).
@@ -919,7 +912,6 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=runner))
         .filter(match_q)
         .filter(profile_q(runner))
-        .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
         # The AGENT hold (Agent.held): none of a held agent's turns — its own or a
         # chat with it — is claimed, ridden or pinned, like the fleet hold above
@@ -1073,8 +1065,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
-            # one_executing_turn_per_agent index (concurrent claim for the
-            # same agent) must not poison an outer transaction.
+            # one_executing_turn_per_session index (concurrent claim for the
+            # same conversation) must not poison an outer transaction.
             with transaction.atomic():
                 updated = Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED).update(
                     status=Turn.CLAIMED,
@@ -1088,7 +1080,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     **({"origin_ref": turn.origin_ref} if stamp else {}),
                 )
         except IntegrityError:
-            continue  # another runner claimed for this agent between our check and update
+            continue  # another runner claimed for this conversation between our check and update
         if updated:
             # The conversation is held to this CLI only once the box reports a
             # session in it (`clis.pin_conversation`): a turn that never starts

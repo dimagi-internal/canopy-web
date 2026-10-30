@@ -713,8 +713,8 @@ class Turn(models.Model):
     # already project-generic and has no concept of an agent.
     #
     # A pseudo-agent per repo was rejected: it would serialize repo work behind
-    # one_executing_turn_per_agent (emdash gives every task its own worktree, so
-    # repo work is *meant* to parallelize) and give every repo KPIs, a needs-you
+    # a lane (emdash gives every task its own worktree, so repo work is *meant*
+    # to parallelize) and give every repo KPIs, a needs-you
     # inbox, and a skills catalog it has no meaning for.
     project = models.CharField(max_length=100, blank=True, default="")
     # The chat case: a session turn (the interactive front-door). Its tenancy
@@ -984,33 +984,22 @@ class Turn(models.Model):
                 condition=~models.Q(cli_session_id=""),
                 name="uniq_turn_agent_cli_session",
             ),
-            # Serialize EXECUTION, not intake: queued turns stack freely.
+            # An AGENT is not a lane. There used to be a partial unique index here,
+            # `one_executing_turn_per_agent`, that let at most one of an agent's
+            # turns execute at a time; it was removed (2026-10-30) because nothing
+            # needed it and it made a single long-running turn hold every other
+            # request for that agent -- a dispatch, a chat message -- queued for
+            # hours behind it, on a runner with room to spare. Turns of one agent
+            # run side by side, each in its own worktree on the cloud runner.
             #
-            # Stays AGENT-ONLY on purpose. An agent is one identity with one
-            # continuous session, so serializing it is correct; a repo is not —
-            # emdash gives every task its own worktree. Widening this to projects
-            # would funnel all canopy-web work into a single lane.
-            #
-            # Project turns have agent=NULL and NULLs never compare equal, so they
-            # do not participate here at all. That is load-bearing, not incidental,
-            # so it has its own test.
-            #
-            # A LOCAL turn is excluded: it is a person's own session on their own
-            # machine, not the agent's one continuous session, so it neither waits
-            # behind the agent's runner turns nor holds them up — and two people
-            # may use the agent directly at once (`routing.busy_agent_ids` agrees).
-            models.UniqueConstraint(
-                fields=["agent"],
-                condition=(models.Q(status__in=["claimed", "running", "needs_human"])
-                           & ~models.Q(origin="local")),
-                name="one_executing_turn_per_agent",
-            ),
+            # The lanes that remain are the CONVERSATION's (below): two messages in
+            # one chat session never execute at once. Whatever an agent's own turns
+            # share -- its inbox, its board -- is that agent's procedure to
+            # coordinate, not the scheduler's.
             # A session serializes its own execution — one running turn per
-            # conversation. Session turns have agent=NULL so they do not
-            # participate in one_executing_turn_per_agent; NULLs never compare
-            # equal, so agent/project turns do not participate here. A RIDER
-            # (`rides_turn`) is exempt: it executes inside the running turn's
-            # session, not as a second one.
+            # conversation; NULLs never compare equal, so a turn with no chat
+            # session does not participate here. A RIDER (`rides_turn`) is exempt:
+            # it executes inside the running turn's session, not as a second one.
             models.UniqueConstraint(
                 fields=["chat_session"],
                 condition=models.Q(status__in=["claimed", "running", "needs_human"],
@@ -1333,9 +1322,9 @@ class AgentSchedule(models.Model):
     routing = models.CharField(max_length=15, choices=Turn.ROUTING_CHOICES, default=Turn.PREFER_LOCAL)
     grace_minutes = models.PositiveIntegerField(
         default=120,
-        help_text="How long an unattended fired turn may hold the agent before it is "
-        "released as MISSED. Guards one_executing_turn_per_agent: an abandoned "
-        "session would otherwise wedge the agent indefinitely.",
+        help_text="How long an unattended fired turn may run before it is released as "
+        "MISSED. Bounds an abandoned session that would otherwise occupy a runner "
+        "indefinitely.",
     )
     always_run = models.BooleanField(
         default=False,

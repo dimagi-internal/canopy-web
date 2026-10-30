@@ -13438,8 +13438,8 @@ export interface paths {
          *     itself, and POSTs /fire when a slot comes due.
          *
          *     Deliberately NOT gated on Runner.ONLINE, unlike claim_next_turn: ONLINE gates
-         *     claiming because claiming ASSIGNS work and takes the one_executing_turn_per_agent
-         *     lock, so an offline claimer would wedge the agent. Sync is a read, and fire only
+         *     claiming because claiming ASSIGNS work, so an offline claimer would strand a turn on a
+         *     box that cannot run it. Sync is a read, and fire only
          *     produces a QUEUED turn (which stacks freely and is executed by whichever ONLINE
          *     runner in the tenant claims it). Gating here would impose a boot-order dependency
          *     — a fresh daemon would have to sync before its first heartbeat.
