@@ -928,6 +928,24 @@ describe("sessionReducer — two people saying the same thing (final review I5)"
     expect(next.messages[0].status).toBe("complete")
   })
 
+  it("an echo carrying the send's client_id meets its row even past the recent-text window", () => {
+    // 2026-10-30: words alone are a guess, and the guess only looks at the last
+    // few user rows. The nonce is exact wherever the row sits.
+    const mine = yes({ id: "local:c1", turn_index: 3, status: "pending", content: { client_id: "c1" } })
+    const later = Array.from({ length: 8 }, (_, i) =>
+      yes({ id: `u${i}`, turn_index: 10 + i, plaintext: `other ${i}`, author: { name: "Bo", user_id: 2 } }))
+    const seeded = makeState({ current_user_id: 1, messages: [mine, ...later] })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "901", turn_index: 144448, plaintext: "yes", client_id: "c1",
+              author: { name: "Alice", user_id: 1 } },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(9)
+    const row = next.messages.find((m) => m.id === "901")
+    expect(row?.status).toBe("complete")
+    expect(row?.content?.client_id).toBe("c1")
+  })
+
   it("a receipted send (transient id) still reconciles with its transcript echo", () => {
     // A transcript-sourced send writes no durable row; its receipt carries a
     // `transient:` id, so the row is still waiting for the line the agent read.

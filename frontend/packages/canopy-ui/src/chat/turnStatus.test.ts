@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TurnStatus } from "./protocol";
-import { agentHasFloor, composerPlaceholder, pendingLabel, turnNotice } from "./turnStatus";
+import { agentHasFloor, composerPlaceholder, pendingLabel, turnNotice, turnPhase } from "./turnStatus";
 
 /** A status in the shape the server actually sends (`TurnStatus.as_dict`). */
 function status(over: Partial<TurnStatus> = {}): TurnStatus {
@@ -312,5 +312,27 @@ describe("composerPlaceholder — what happens to a message sent now", () => {
   it("says it waits in the queue behind a stuck ask", () => {
     expect(composerPlaceholder(status({ state: "waiting_runner", stuck: true })))
       .toBe("Type a message — it waits in the queue behind the one above");
+  });
+});
+
+describe("turnPhase — the one answer the header and the panel share", () => {
+  it("is queued the instant you send, before the server has said anything", () => {
+    expect(turnPhase({ awaitingReply: true })).toBe("queued");
+  });
+
+  it("is idle once the server has settled the turn, whatever the client flag says", () => {
+    // 2026-10-30: the header read `awaitingReply` alone and said "queued" over a
+    // turn the server had finished twenty minutes earlier.
+    expect(turnPhase({ status: status({ state: "done", settled: true }), awaitingReply: true })).toBe("idle");
+  });
+
+  it("follows the server: picking up is queued, working is working", () => {
+    expect(turnPhase({ status: status({ state: "picking_up", claimed_by: null }) })).toBe("queued");
+    expect(turnPhase({ status: status({ state: "working" }) })).toBe("working");
+  });
+
+  it("is working while a reply streams, and blocked when the agent waits on you", () => {
+    expect(turnPhase({ replying: true })).toBe("working");
+    expect(turnPhase({ activity: "blocked", awaitingReply: true, replying: true })).toBe("blocked");
   });
 });

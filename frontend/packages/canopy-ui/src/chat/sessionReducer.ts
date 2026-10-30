@@ -198,7 +198,13 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         return m.author != null && incomingAuthor != null && sameAuthor(m.author, incomingAuthor);
       };
       const recentUsers = prev.messages.filter((m) => m.role === "user").slice(-RECENT_USER_ROWS);
+      // The send's own nonce first: exact, author-proof, and not limited to the
+      // tail. The echo of a web send carries it (session_sync → stream_map); the
+      // text fallback below is only for lines that never had one — typed straight
+      // into emdash, or from a server that predates it.
+      const cid = frame.data.client_id;
       const existing =
+        (cid ? prev.messages.find((m) => m.role === "user" && m.content?.client_id === cid) : undefined) ??
         prev.messages.find(
           (m) => m.id === frame.data.message_id ||
             (m.role === "user" && m.turn_index === frame.data.turn_index),

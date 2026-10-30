@@ -62,6 +62,11 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
             # wait for a reload to see it.
             author = payload.get("author")
         data = {"message_id": mid, "turn_index": seq, "plaintext": text, "author": author}
+        # The send's nonce, when this line was a web send (session_sync hands it
+        # over from the stored row): the sender's browser matches its own
+        # optimistic row on it exactly, instead of on recent identical words.
+        if isinstance(payload.get("client_id"), str) and payload["client_id"]:
+            data["client_id"] = payload["client_id"]
         # The transcript record's provenance (`canopy_transcript.record_flags`),
         # as history rows carry it in `content["record"]` — so a compaction
         # summary renders as one live, not as a line the human typed.
