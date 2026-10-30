@@ -1050,7 +1050,7 @@ export async function setAgentClis(
 
 export type AgentLicenseOut = Schemas['AgentLicenseOut']
 
-// Who uses this agent LOCALLY, in their own Claude Code (canopy-web#1704): every
+// Who uses this agent DIRECTLY, in their own Claude Code (canopy-web#1704): every
 // license — active, requested (the caller list does not allow it yet) or revoked —
 // with the private_runners it ran on and when it was last used. Any member may read.
 export async function listAgentLicenses(slug: string): Promise<AgentLicenseOut[]> {

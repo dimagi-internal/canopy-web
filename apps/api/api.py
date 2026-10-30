@@ -430,7 +430,7 @@ api.add_router("/harness/runner-releases", runner_releases_router)
 # A turn-scoped agent login (spec 2026-10-21-turn-scoped-agent-token).
 api.add_router("/harness/runners", turn_agent_token_router)
 
-# Local use (canopy-web#1704): a person's private runner and the turns its sessions open.
+# Direct use (canopy-web#1704): a person's private runner and the turns its sessions open.
 api.add_router("/harness/local-turns", local_turns_router)
 api.add_router("/private-runners", private_runners_router)
 api.add_router("", workspace_vaults_router)  # workspace vaults: /workspaces/{slug}/vaults, /vaults/{id}

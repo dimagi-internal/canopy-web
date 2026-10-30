@@ -143,7 +143,7 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     return None, (
         f"resolving {agent.slug}'s secrets needs a live runner you pair that "
         f"{agent.slug} routes to, being {agent.slug}'s owner or an agent admin, or an active "
-        f"license to use it locally, during your own local turn (canopy private-runner register, "
+        f"license to use it directly, during your own direct session (canopy private-runner register, "
         f"then open a session with CANOPY_AGENT={agent.slug}); "
         f"{ask} to make you an admin (PUT /api/agents/{agent.slug}/admins/<your user id>)"
     )

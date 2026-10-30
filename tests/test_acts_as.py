@@ -243,7 +243,7 @@ def test_its_reads_go_out_under_the_license_and_keep_the_cap(world):
 def test_a_local_turn_opened_as_a_viewer_is_refused(world):
     res = _open_local(_pat(world["jj"]), world["box"], acts_as="viewer")
     assert res.status_code == 403
-    assert "may not use hal locally" in res.content.decode()
+    assert "may not use hal directly" in res.content.decode()
 
 
 def test_a_revoked_license_refuses_the_capped_owner_too(world):

@@ -10,7 +10,7 @@ Who may open a vault is `credentials.vault_members.members(vault)`, the union of
 
 - **direct members** (`VaultMember`): people added by name. A direct member counts only while they are in the vault's workspace (directly or inherited), until a manager removes them;
 - **links** (`VaultLink`), re-read on every question:
-  - `agent`: everyone with full access to the agent (`access.roster`), plus everyone with an active license to use it locally (`AgentLicense`). The agent's owner comes in as `owner`, its admins as `admin`, everyone else as the link's role;
+  - `agent`: everyone with full access to the agent (`access.roster`), plus everyone with an active license to use it directly (`AgentLicense`). The agent's owner comes in as `owner`, its admins as `admin`, everyone else as the link's role;
   - `workspace_owners` / `workspace_admins`: the owners (or admins) of a workspace, inherited down the tree as those roles are.
 
 Members are **people only**: an agent's own canopy login (`Agent.user`) is never a member by any source, and cannot be added (`vault_members.not_a_person`). They hold no vault key — except an agent login's test key, which opens no vault (below) — and an agent that could change its own vault's membership could hand its key to anyone.

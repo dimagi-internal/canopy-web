@@ -1,4 +1,4 @@
-"""Licenses: who uses an agent locally, and what that lets them read (canopy-web#1704).
+"""Licenses: who uses an agent directly, and what that lets them read (canopy-web#1704).
 
 The caller list decides who MAY; the license records who DOES. It is issued on
 first local use when `access.decide` gives the person the whole agent, revoked per

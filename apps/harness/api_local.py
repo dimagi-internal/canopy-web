@@ -1,4 +1,4 @@
-"""Local use of an agent — a person's private runner and the local turns opened on it.
+"""Direct use of an agent — a person's private runner and the local turns opened on it.
 
 `/api/private-runners/` is the person's own (like their tokens): register a machine
 once with your own canopy token (`canopy private-runner register`), list yours.
@@ -41,11 +41,11 @@ local_turns_router = Router(auth=session_auth, tags=["harness"])
 
 @private_runners_router.post("/", response={200: PrivateRunnerOut, 201: PrivateRunnerOut},
                           summary="Register this machine as one of your private runners")
-@gate("self", setting=True)  # your own machines (local use)
+@gate("self", setting=True)  # your own machines (direct use)
 def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
     """Idempotent per (you, name): registering the same machine again returns it
     (and brings back a retired one). A private runner is yours, not an agent's or a
-    workspace's — one serves every agent you use locally. It never claims turns.
+    workspace's — one serves every agent you use directly. It never claims turns.
 
     `runner_id` is the runner that holds this machine's device keys: the runner app
     you link (`runner`), else a `computer` runner made for it — enrol a key on it
@@ -109,7 +109,7 @@ def list_workspace_private_runners(request: HttpRequest, workspace: str):
 
 @private_runners_router.post("/{private_runner_id}/retire", response=PrivateRunnerOut,
                           summary="Retire one of your private runners")
-@gate("self", setting=True)  # your own machines (local use)
+@gate("self", setting=True)  # your own machines (direct use)
 def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
     """Its local sessions stop opening, a runner app linked to it goes back to
     being shared, and the runner that held its keys when it has no runner app

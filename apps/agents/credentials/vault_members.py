@@ -7,7 +7,7 @@ with the member so a page can always say WHY someone can open it:
 * **linked** — a `VaultLink` rule, re-read on every question so it follows the
   set it names: everyone with full access to an agent (`access.roster`; the
   agent's owner comes in as `owner`, its admins as `admin`) and everyone holding an active
-  license to use it locally, or the owners / admins of a workspace (inherited
+  license to use it directly, or the owners / admins of a workspace (inherited
   down the tree as those roles are).
 
 A person's role is the highest any source gives them, in the agent's words:
@@ -102,7 +102,7 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
                 continue
             role = {access.OWNER: OWNER, access.ADMIN: ADMIN}.get(row["agent_role"], link.role)
             _add(out, _UserRef(row["user_id"], row["email"]), role, source)
-        # A person licensed to use the agent locally (`AgentLicense`, canopy-web#1704)
+        # A person licensed to use the agent directly (`AgentLicense`, canopy-web#1704)
         # runs its tools on their own machine, so the link counts them too — an
         # admin may approve a license for someone the caller list alone would not.
         for lic in AgentLicense.objects.filter(agent=link.agent, status=AgentLicense.ACTIVE).select_related("user"):

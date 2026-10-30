@@ -403,10 +403,13 @@ an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
 on any rung is for the agent's admins.
 
-## Local use of an agent
+## Direct use of an agent
 
 A person may run an agent in their **own** Claude Code, with the agent's plugin and
-skills, and canopy keeps the record (`apps/harness/local.py`):
+skills, and canopy keeps the record (`apps/harness/local.py`). The word for it is
+**direct** (against a session a runner box claims). The stored names stay `local`:
+`Turn.origin = local`, "a local turn", `/api/harness/local-turns/`; prose and screens say
+direct.
 
 * A **private runner** (`PrivateRunner`) is a person's machine: plain Claude Code with
   the canopy plugin, no runner app. It is registered once with the person's own
@@ -471,7 +474,7 @@ skills, and canopy keeps the record (`apps/harness/local.py`):
   session, not the agent's one continuous session, so it neither waits behind the
   agent's runner turns nor delays them, and two people may use the agent at once.
 * A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
-  record that someone uses the agent locally. The caller list decides who MAY
+  record that someone uses the agent directly. The caller list decides who MAY
   (`decide`, above); the license is who DOES. Requested on the first local turn and
   issued at once when `decide` gives the whole agent (basis `owner`, `admin`,
   `full:<rule>`, `editor`); anyone else gets a `requested` row the agent's admins
@@ -480,7 +483,7 @@ skills, and canopy keeps the record (`apps/harness/local.py`):
   reinstates it, re-asking `decide`, so it cannot license someone the caller list
   does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
   lists holders, their private runners, local turns, credential reads and last use;
-  the agent's Settings → People → Local use shows it.
+  the agent's Settings → People → Direct use shows it.
 * **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
   read) AND one of the caller's OWN live turns on that agent named in
@@ -491,7 +494,7 @@ skills, and canopy keeps the record (`apps/harness/local.py`):
   past the editor tier's manual cap), the owner's GitHub delegation, lent or shared
   credentials, or the agent's 1Password service-account key (`op_sa_token`), which reads
   the whole vault, canopy login included — so a non-admin using a 1Password-backed
-  agent locally gets no secrets from it. Each read is logged with `via=license`,
+  agent directly gets no secrets from it. Each read is logged with `via=license`,
   the turn and the license. Secrets read this way reach the person's machine;
   nothing brokers each call through canopy-web.
 * **Reporting.** Only its initiator may renew, finish or append its transcript —

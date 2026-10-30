@@ -3097,7 +3097,7 @@ class RunnerDownloadsOut(Schema):
     sha: str
     downloads: list[RunnerDownloadOut]
 
-# --- local use: private runners + local turns (apps/harness/local.py, canopy-web#1704)
+# --- direct use: private runners + local turns (apps/harness/local.py, canopy-web#1704)
 
 
 class PrivateRunnerIn(Schema):

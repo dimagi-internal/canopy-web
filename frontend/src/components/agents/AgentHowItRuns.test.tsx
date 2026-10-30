@@ -119,7 +119,7 @@ describe('AgentHowItRuns', () => {
     </MemoryRouter>)
   }
 
-  it('shows both ways: the command and who uses it locally, and the runners it routes to', async () => {
+  it('shows both ways: the command and who uses it directly, and the runners it routes to', async () => {
     setup({ admin: true })
     const yourself = screen.getByRole('group', { name: 'Use it yourself in Claude Code' })
     expect(within(yourself).getByTestId('agent-use-command').textContent).toBe('canopy agent use hal')

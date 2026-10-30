@@ -366,7 +366,7 @@ class AgentAdmin(models.Model):
 
 
 class AgentLicense(models.Model):
-    """A person's license to use an agent LOCALLY — "Aathithya uses ACE locally, since …".
+    """A person's license to use an agent DIRECTLY — "Aathithya uses ACE directly, since …".
 
     The agent's caller list (`access.decide`) still decides who MAY hold one; this row
     is who DOES (`apps/agents/licenses.py`, canopy-web#1704). Requested on first local

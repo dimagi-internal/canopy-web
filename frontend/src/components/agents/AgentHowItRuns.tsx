@@ -24,7 +24,7 @@ import { CopyCommand } from './CopyCommand'
 //      cloud box) takes the turns schedules, mail and dispatches start.
 //
 // A summary, not a second control: each card links to the detailed setting it
-// summarises (People → Local use, Routing, Credentials, Schedules). Every read is
+// summarises (People → Direct use, Routing, Credentials, Schedules). Every read is
 // best effort — one that fails or is refused (the vault reads are admins-only)
 // leaves its part out rather than breaking the card.
 
@@ -205,7 +205,7 @@ export function AgentHowItRuns({
           </p>
         )}
         <div>
-          <Label>Using it locally</Label>
+          <Label>Using it directly</Label>
           {licenses === null ? (
             <p className="mt-1 text-[12px] text-muted-foreground">…</p>
           ) : using.length === 0 ? (
@@ -227,7 +227,7 @@ export function AgentHowItRuns({
           )}
           <a href="#operators" className="mt-1 inline-block text-[12px] text-primary hover:underline">
             {using.length > 5 ? `All ${using.length}` : 'Licences'}
-            {requested > 0 ? ` (${requested} requested)` : ''} → People → Local use
+            {requested > 0 ? ` (${requested} requested)` : ''} → People → Direct use
           </a>
         </div>
       </Card>

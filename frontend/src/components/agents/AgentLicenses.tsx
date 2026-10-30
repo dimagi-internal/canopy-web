@@ -9,7 +9,7 @@ import {
 import { relativeAge } from '@/lib/relativeAge'
 import { toneText } from 'canopy-ui/lib'
 
-// WHO USES THIS AGENT LOCALLY (canopy-web#1704).
+// WHO USES THIS AGENT DIRECTLY (canopy-web#1704).
 //
 // A license is a person running the agent in their own Claude Code, on their own
 // computer, with canopy keeping the record. The caller list decides who MAY
@@ -40,7 +40,7 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
     try {
       setRows(await listAgentLicenses(agentSlug))
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not load who uses it locally')
+      setError(e instanceof Error ? e.message : 'Could not load who uses it directly')
     }
   }, [agentSlug])
 
@@ -80,7 +80,7 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
       )}
       {rows.length === 0 ? (
         <p className="m-0 text-[12px] text-muted-foreground">
-          Nobody uses it locally yet. A person runs <code>canopy agent use {agentSlug}</code> once on
+          Nobody uses it directly yet. A person runs <code>canopy agent use {agentSlug}</code> once on
           their computer; their first session asks for a license.
         </p>
       ) : (
