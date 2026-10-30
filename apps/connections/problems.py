@@ -24,6 +24,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "insufficient_scope": (409, "Missing permissions"),
     "own_connection": (409, "Cannot share this connection"),
     "not_grantable": (409, "Cannot share this connection"),
+    "not_usable": (409, "Cannot share this connection"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),
 }

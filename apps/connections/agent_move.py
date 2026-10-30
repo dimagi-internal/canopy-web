@@ -26,9 +26,11 @@ def _title(provider: str) -> str:
 
 
 def _describe(conn: Connection) -> str:
-    shared = sorted(g.agent.slug for g in conn.grants.all())
-    return (f"{_title(conn.provider)} ({conn.account_label or conn.account_id})"
-            + (f", shared with {', '.join(shared)}" if shared else ""))
+    # The provider and how many agents it is shared with — never the account or
+    # the grantees' slugs: this text is stored in the destination's `agent.moved_in`
+    # Event, and those name things of the source workspace (and others).
+    shared = len(conn.grants.all())  # prefetched by the caller
+    return _title(conn.provider) + (f", shared with {shared} agent(s)" if shared else "")
 
 
 def participant(p: Plan, apply: bool) -> None:  # noqa: ARG001 - nothing is written either way

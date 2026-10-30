@@ -130,7 +130,9 @@ def test_the_move_dry_run_names_the_connections_that_stop(user, dimagi, x):
     p = move.plan(eva, x, by=user)
     stops = [s for s in p.stops_working if s["kind"] == "connections"]
     assert len(stops) == 1
-    assert "Salesforce (eva@dimagi-ai.com), shared with echo" in stops[0]["detail"]
+    assert "Salesforce, shared with 1 agent(s)" in stops[0]["detail"]
+    # Stored in the destination's Event: never the account or the grantees' slugs.
+    assert "eva@dimagi-ai.com" not in stops[0]["detail"] and "echo" not in stops[0]["detail"]
     assert "'dimagi'" in stops[0]["detail"] and "'x'" in stops[0]["detail"]
     assert {"table": "connections.Connection", "rows": 1,
             "why": "made with 'dimagi's connection apps, which stay there"} in p.left_behind
@@ -151,3 +153,24 @@ def test_an_agent_without_connections_adds_nothing_to_a_move(user, dimagi, x):
     p = move.plan(eva, x, by=user)
     assert not [s for s in p.stops_working if s["kind"].startswith("connections")]
     assert not [t for t in p.left_behind if t["table"] == "connections.Connection"]
+
+
+def test_a_moved_agents_connection_cannot_be_shared(user, dimagi, x):
+    eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
+    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
+    _moved(eva, x)
+    with pytest.raises(services.ConnectionError) as e:
+        services.grant(Connection.objects.get(pk=conn.pk), echo, by=user)
+    assert e.value.code == "not_usable"
+    assert not ConnectionGrant.objects.exists()
+
+
+def test_disconnecting_a_moved_agents_connection_is_recorded_in_the_apps_workspace_too(user, dimagi, x):
+    from apps.events.models import Event
+
+    eva = _agent(dimagi, user, "eva")
+    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
+    _moved(eva, x)
+    services.disconnect(Connection.objects.get(pk=conn.pk), by=user)
+    kinds = set(Event.objects.filter(kind="connections.disconnected").values_list("workspace_id", flat=True))
+    assert kinds == {"dimagi", "x"}

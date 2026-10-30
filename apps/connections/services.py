@@ -106,7 +106,7 @@ class ConnectionError(Exception):  # shadows the builtin inside this module only
     routes map it to a response in one place (`problems.problem_for`):
     `not_configured`, `not_connected`, `reconnect_required`, `ambiguous`,
     `insufficient_scope`, `provider_error`, `provider_unavailable`, `bad_state`,
-    `own_connection`, `not_grantable`, `app_locked` (an app's client id, or an
+    `own_connection`, `not_grantable`, `not_usable`, `app_locked` (an app's client id, or an
     option naming its authorization server, cannot change while connections
     use it), `invalid_app` (an app's settings
     were refused; the message says why), `wrong_account` (the provider signed
@@ -755,8 +755,13 @@ def disconnect(conn: Connection, *, by) -> None:
     grantees = _grantees(conn)
     _revoke(conn.app, subject, _refresh_token_of(conn, subject))
     conn.delete()  # its grants go with it (CASCADE)
-    record(subject, "disconnected", by=by,
-           summary=f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
+    summary = f"{subject.owner} disconnected {subject.provider} ({subject.account_label})"
+    record(subject, "disconnected", by=by, summary=summary)
+    # A moved agent's connection belongs to the app's workspace as much as the
+    # agent's: the admins removing that app see it go too.
+    app_ws = conn.app.workspace
+    if subject.workspace is not None and subject.workspace.pk != app_ws.pk:
+        record(dataclasses.replace(subject, workspace=app_ws), "disconnected", by=by, summary=summary)
     for grantee in grantees:
         _record_grant_revoked(subject, grantee, by=by, during="disconnected")
 
@@ -884,6 +889,10 @@ def grant(conn: Connection, agent, *, by) -> ConnectionGrant:
         raise ConnectionError("own_connection", "an agent already uses its own connection")
     if not (conn.agent.is_admin(by) and agent.is_admin(by)):
         raise PermissionDenied("granting a connection needs admin of both agents")
+    if not agent_connection_usable(conn):
+        # A moved owner's connection is dead; a grant of it would be too.
+        raise ConnectionError("not_usable", f"{conn.agent.slug} has moved out of the workspace that made "
+                                            "this connection; connect it again there first")
     g, created = ConnectionGrant.objects.get_or_create(
         connection=conn, agent=agent, defaults={"granted_by": by},
     )
