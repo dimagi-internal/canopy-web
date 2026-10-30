@@ -235,6 +235,74 @@ describe("jump to latest", () => {
     expect(scroller.scrollTop).toBe(2000);
     expect(screen.queryByTestId("jump-to-latest")).toBeNull();
   });
+
+  // Reopening a chat paints the tab's cached tail, then the socket's snapshot
+  // replaces it: both 60 rows, both ending on a textless tool row. Nothing the
+  // old dep looked at changed, so the view stayed where the cached copy left it.
+  it("snaps to the bottom when a same-length transcript replaces the one shown", () => {
+    const s = state({ turn_status: status({ state: "done", settled: true }) });
+    const view = panel(s);
+    const scroller = screen.getByTestId("chat-scroll");
+    tall(scroller);
+    scroller.scrollTop = 1500;
+    fireEvent.scroll(scroller);
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 3000 });
+    const swapped = s.messages.map((m) => ({ ...m, id: `${m.id}-new` }));
+    view.rerender(
+      <ChatPanel
+        state={{ ...s, messages: swapped }}
+        connected currentUserId={ME}
+        onSend={vi.fn()} onStop={vi.fn()} onUpdateDraft={vi.fn()} onDiscard={vi.fn()}
+      />,
+    );
+    expect(scroller.scrollTop).toBe(3000);
+  });
+
+  // A finished turn folding, markdown or a View laying out: the content grows
+  // with no new row at all. A following view keeps to the bottom; a reader
+  // scrolled up is left where they are.
+  describe("content that grows with no new row", () => {
+    let fire: (() => void) | null = null;
+    const RealRO = globalThis.ResizeObserver;
+    afterEach(() => {
+      globalThis.ResizeObserver = RealRO;
+      fire = null;
+    });
+    function fakeResizeObserver() {
+      globalThis.ResizeObserver = class {
+        constructor(cb: () => void) { fire = cb; }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
+    }
+
+    it("follows it while at the bottom", () => {
+      fakeResizeObserver();
+      const scroller = (panel(state({ turn_status: status({ state: "done", settled: true }) })),
+        screen.getByTestId("chat-scroll"));
+      tall(scroller);
+      scroller.scrollTop = 1500;
+      fireEvent.scroll(scroller);
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2600 });
+      act(() => fire?.());
+      expect(scroller.scrollTop).toBe(2600);
+    });
+
+    it("leaves a reader who scrolled up where they are", () => {
+      fakeResizeObserver();
+      const scroller = (panel(state({ turn_status: status({ state: "done", settled: true }) })),
+        screen.getByTestId("chat-scroll"));
+      tall(scroller);
+      scroller.scrollTop = 1500;
+      fireEvent.scroll(scroller);
+      scroller.scrollTop = 900;
+      fireEvent.scroll(scroller);
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2600 });
+      act(() => fire?.());
+      expect(scroller.scrollTop).toBe(900);
+    });
+  });
 });
 
 describe("find in transcript", () => {

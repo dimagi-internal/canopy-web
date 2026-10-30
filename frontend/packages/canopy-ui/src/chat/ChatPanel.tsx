@@ -223,7 +223,10 @@ export function ChatPanel({
   const lastMessageLen =
     messages.length > 0 ? messages[messages.length - 1].plaintext.length : 0;
   const queuedCount = state.queued?.length ?? 0;
-  const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
+  // The last row's id too: a snapshot that replaces the tab's cached tail holds
+  // the same number of rows, so a count alone said nothing had arrived.
+  const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : "";
+  const scrollDep = `${messages.length}:${lastMessageId}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
   const { containerRef, onScroll, onWheel, scrollToBottom, away, unseen } = useStickyBottom(scrollDep);
 
   // Is the newest turn still running? Then its work shows as it happens;

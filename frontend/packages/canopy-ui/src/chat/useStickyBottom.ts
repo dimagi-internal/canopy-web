@@ -97,10 +97,48 @@ export function useStickyBottom<T>(
       // new landed below them.
       setUnseen(true);
     }
-    // dep is intentionally the only signal that triggers a follow;
-    // it should change whenever the message list grows (length or
-    // the last message's content length).
+    // dep is the signal for "something new arrived" (it also drives
+    // `unseen`); it should change whenever the message list grows (length or
+    // the last message's content length). Growth with no new row is followed
+    // by the observer below.
   }, [dep, enabled]);
+
+  // Follow the content's HEIGHT, not only `dep`. Plenty changes what is on
+  // screen without changing `dep`: the socket's snapshot replacing the tab's
+  // cached copy of a chat (both are the 60-row tail, often ending on a tool row
+  // with no text, so `dep` reads identical), a finished turn folding, markdown,
+  // images and Views laying out after the render. Each left a following view
+  // short of the bottom with nothing to correct it — no scroll event fires when
+  // content grows below, so not even "Jump to latest" appeared — until some
+  // later change to `dep` (e.g. "Load all messages") happened to snap it.
+  useEffect(() => {
+    if (!enabled) return;
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const snap = () => {
+      if (!followRef.current) return;
+      el.scrollTop = el.scrollHeight;
+      lastTopRef.current = el.scrollTop;
+    };
+    const resize = new ResizeObserver(snap);
+    resize.observe(el);
+    for (const child of Array.from(el.children)) resize.observe(child);
+    // The list's root can be swapped (empty state → messages); watch whatever
+    // the container holds now.
+    const children = typeof MutationObserver === "undefined" ? null : new MutationObserver((records) => {
+      for (const r of records) {
+        r.addedNodes.forEach((n) => {
+          if (n instanceof Element) resize.observe(n);
+        });
+      }
+      snap();
+    });
+    children?.observe(el, { childList: true });
+    return () => {
+      resize.disconnect();
+      children?.disconnect();
+    };
+  }, [enabled]);
 
   return { containerRef, onScroll, onWheel, scrollToBottom, away, unseen };
 }
