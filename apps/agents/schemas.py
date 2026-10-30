@@ -2092,6 +2092,11 @@ class AgentCredentialAccessOut(StrictModel):
     names the access to ask for."""
 
     agent: str
+    #: Always "canopy-web": the one store there is. Kept only because a cloud runner
+    #: whose code predates 80986da7 reads it to decide whether an agent has an env to
+    #: resolve, and without it resolves NONE (every turn on that box then starts with
+    #: an empty env). Remove once no runner reports an older `code_sha`.
+    credential_source: Literal["canopy-web"] = "canopy-web"
     may_resolve: bool
     via: Literal["runner", "admin", "license"] | None = None
     reason: str = ""

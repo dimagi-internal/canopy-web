@@ -27539,6 +27539,12 @@ export interface components {
         readonly AgentCredentialAccessOut: {
             /** Agent */
             readonly agent: string;
+            /**
+             * Credential Source
+             * @default canopy-web
+             * @constant
+             */
+            readonly credential_source: "canopy-web";
             /** May Resolve */
             readonly may_resolve: boolean;
             /** Via */
