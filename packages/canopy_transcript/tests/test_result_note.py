@@ -41,3 +41,27 @@ def test_the_url_names_the_page_holding_the_turn():
         f"{BASE}/w/connect/activity"
     assert turn_url(BASE, {"id": TID}) == f"{BASE}/activity"
     assert turn_url("", {"id": TID, "agent_slug": "ace", "workspace_slug": "connect"}) == ""
+
+
+def test_a_cut_keeps_the_runners_reason_the_turn_failed():
+    # Failure investigation 21 (turn c4dd7019, 2026-10-30): the reason was cut off.
+    reason = ("[runner] out of Claude usage — every Claude credential on this box is "
+              "exhausted (tried: a, b, c). This runner has paused itself until 21:02.")
+    note = cap("Phase 4 is done. " * 300 + "\n\n" + reason, "https://x/chat/1")
+    assert len(note) <= MAX_CHARS
+    assert note.startswith("Phase 4 is done.")
+    assert "… [truncated — full reply: https://x/chat/1]" in note
+    assert note.endswith("\n\n" + reason)
+
+
+def test_a_runner_reason_too_long_for_half_the_note_is_cut_itself():
+    reason = "[runner] " + "why " * 1000
+    note = cap("reply " * 1000 + "\n\n" + reason, "u")
+    assert len(note) <= MAX_CHARS
+    assert note.startswith("reply reply")
+    assert "\n\n[runner] why why" in note and note.endswith("…")
+
+
+def test_a_runner_mention_mid_reply_is_not_a_reason():
+    note = cap("see [runner] logs\n\n[runner] x\n\nthen more " + "w " * 2000, "u")
+    assert note.endswith("… [truncated — full reply: u]")
