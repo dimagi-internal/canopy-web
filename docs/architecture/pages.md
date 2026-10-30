@@ -226,7 +226,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     Then **Canopy login**, what is about the agent and not the vault: its own
     sign-in to canopy (made in one click, stored in the vault; renews itself, with
     one button to make a new one now) and, closed, the test vault key
-    (`pages/agents/AgentCanopyLogin.tsx`, `AgentSecurityPanel.tsx`). The Google mint (`Connect the mailbox`)
+    (`pages/agents/AgentCanopyLogin.tsx`, `AgentSecurityPanel.tsx`). The Google mint (`Connect Google mailbox`)
     asks for Gmail only when the agent's address is a Google mailbox; for a
     canopy-hosted address it asks for Drive, Docs, Sheets, Slides, Forms and
     Calendar. The consent must come from the agent's `google_account`, else
@@ -240,7 +240,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     and come back here (`?google=<status>&mint=<id>`, followed to its end). The
     runner seals it as a credential they delegate (`google-delegated-<account>`,
     `POST|GET /api/agents/{slug}/google/delegate`, `vault.md` § Connect your own
-    Google account); it is listed and withdrawn at `/settings` → Your credentials
+    Google account); it is listed and withdrawn at `/settings/agents` → Your credentials
     delegated to agents. A non-admin is refused 403 `not_an_admin`.
   - The setup checklist (`apps/agents/setup.py`, `GET …/setup`) on Settings: a
     zero-knowledge agent's vault step comes before its mailbox, and is todo

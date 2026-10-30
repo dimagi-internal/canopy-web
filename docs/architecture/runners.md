@@ -18,7 +18,7 @@ they cannot disagree).
    from canopy vault, and records their sessions as **direct turns** on the agent's
    page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
    whom `access.decide` gives the whole agent (`apps/agents/credentials/licenses.py`). The people
-   doing it are listed under the agent's Settings → How it runs and → People → Local
+   doing it are listed under the agent's Settings → Overview → Where it runs and → Roles → Direct
    use. A computer without the runner app gets its own key for reading the agent's
    vault (a `computer` runner made when it registers, which is no fleet runner).
    Detail: [`access.md`](access.md) → "Direct use of an agent".

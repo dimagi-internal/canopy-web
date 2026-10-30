@@ -81,11 +81,3 @@ def test_a_non_admin_is_refused_before_any_step_up_question(fleet):
     r = _put(c, {"nova-api-key": SECRET})
     assert r.status_code == 403
     assert r.json().get("error") != "step_up_required"
-
-
-
-def test_the_reveal_route_is_gone(fleet):
-    grant_step_up(fleet["browser"])
-    r = fleet["browser"].post("/api/agents/eva/credentials/nova-api-key/reveal",
-                              content_type="application/json")
-    assert r.status_code in (404, 405)

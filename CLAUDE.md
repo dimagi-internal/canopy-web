@@ -65,7 +65,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Triggers (schedules + inbound mail), Huddles, Mail, Skills (+ History), Capabilities, Settings
 - `tasks` (+ `/:key`), `triage` — the workspace's tasks as a table / board / calendar with saved views, one task's page (`?peek=KEY` beside a list), what waits for a decision; ⌘K is the command palette anywhere
 - `projects/:handle` is a project's ONE page, for teammates and editors alike; `agents/:slug/projects/:ref` and `projects/:agent/:ref` redirect there. An idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
-- `runners/:id/<tab>`, `vaults/:id/<tab>` — one page per runner and per workspace vault, each tab a route; everything else links there (one editor per object, `components/objectPage/` → `docs/architecture/pages.md`)
+- `runners/:id/<tab>` (each tab a route) and `vaults/:id` (one page of collapsible sections; an old `/<tab>` opens the matching one) — one page per runner and per workspace vault; everything else links there (one editor per object, `components/objectPage/` → `docs/architecture/pages.md`)
 - `settings/<section>` — workspace settings: members, access-requests, slack, inbound, email, connected-apps, secrets, tasks, retention, admission-rules, topology (fleet map + runners/agents tables)
 - `sessions`, `sessions/:id` — the workspace's sessions; live multiplayer chat with an agent (`chat`, `chat/:id` redirect here)
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
@@ -82,7 +82,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
 - `/plugins/marketplace.json` — your agents as ONE Claude Code catalog, `canopy-agents` (github sources, your own GitHub access; `docs/architecture/plugin-marketplace.md`)
-- `/settings` — your account (runners you administer, GitHub, connected apps, tokens)
+- `/settings/<section>` — your account (sections in `docs/architecture/pages.md`)
 - `/sessions` — your shared transcripts; `/system` — capability catalog; `/guide` — in-app guide
 - `/people/me` — what agents know about you; `/hcp-clients` — HCP client registry (superusers); `/beta-requests` — requests for access to Canopy
 - `/invite/:token` — accept an invite (pre-auth preview); `/new-workspace` — first run

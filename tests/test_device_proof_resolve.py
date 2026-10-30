@@ -62,7 +62,7 @@ def fleet(client):
     give_vault_key(jj)
     client.force_login(jj)
     # Browser credential writes and device-key approvals need a passkey step-up
-    # (apps/passkeys); tests/test_canopy_vault_device_binding.py's own step-up
+    # (apps/passkeys); tests/test_device_proof_resolve.py's own step-up
     # cases below expire or omit it on purpose.
     grant_step_up(client)
     client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "pat-value"}},

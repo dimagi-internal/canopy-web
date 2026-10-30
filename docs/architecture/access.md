@@ -517,7 +517,7 @@ direct (a direct turn).
   reinstates it, re-asking `decide`, so it cannot license someone the caller list
   does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
   lists holders, their private runners, direct turns, credential reads and last use;
-  the agent's Settings → People → Direct use shows it.
+  the agent's Settings → Roles → Direct use shows it.
 * **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
   read) AND one of the caller's OWN live turns on that agent named in
@@ -879,7 +879,7 @@ for 30 minutes, and does so only once you approve with your passkey
   colleague's message, or the conversation closing, ends it. A push goes to the person's
   devices at once (how many it reached is kept: `push_sent`, and `pushed` in the event).
 - **Approved with a fresh passkey touch, for that request, in your browser.** A push, a
-  card on your supervisor feed and a row in Settings → Act-as-you permissions lead to
+  card on your supervisor feed and a row in Settings → Agents acting for you lead to
   `/act-as/<id>`: the agent, its reason verbatim, the conversation, what it asked for and
   the deadline — or, once it is not waiting, what happened and when.
   "Allow read-only" / "Allow read + write" each run a WebAuthn assertion begun for this
@@ -904,7 +904,7 @@ for 30 minutes, and does so only once you approve with your passkey
   `act_as_grant`); its credential label names the agent in the settings audit and turn
   provenance; `act_as.requested|approved|declined|stopped|expired` events (agent, person,
   turn, scope — never the reason) are in the workspace's event log for its admins.
-- **You see and stop it**: Settings → Act-as-you permissions, beside host grants, and the
+- **You see and stop it**: Settings → Agents acting for you, beside host grants, and the
   approval page; the agent may stop it too (`POST …/{id}/stop`).
 
 ## Acting as the person on a connected site (act-as-you permissions)
@@ -952,7 +952,7 @@ host* (the header above is canopy-web's own decisions):
   instructions. The caller envelope's `site` block tells the agent it is on a page,
   reaches the site only through the gateway as the person, and has no account of its
   own there in this conversation.
-- **The person sees and stops theirs**: Settings → Act-as-you permissions
+- **The person sees and stops theirs**: Settings → Agents acting for you
   (`/api/me/host-grants/`), and Stop in the panel (`/api/embed/host-grant`). Stop
   takes effect on the next call.
 
