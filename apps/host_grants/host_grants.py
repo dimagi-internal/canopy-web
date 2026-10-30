@@ -43,6 +43,8 @@ from django.core.cache import cache
 from django.db import models
 from django.utils import timezone
 
+from apps.tokens.debug_lifetime import debug_shortened
+
 from . import client_identity, outbound
 
 log = logging.getLogger(__name__)
@@ -64,8 +66,10 @@ METADATA_CACHE_SECONDS = 600
 #: An ID-JAG is a handful of claims; anything this large is not one, and is
 #: refused before a signature check spends CPU on it.
 MAX_ID_JAG_BYTES = contract.MAX_JWT_BYTES
+
 #: How long one passkey confirmation lets an agent act as the person on a page.
-CONFIRM_SECONDS = 30 * 60
+#: ``CANOPY_HOST_GRANT_CONFIRM_SECONDS`` shortens it for debugging (`debug_shortened`).
+CONFIRM_SECONDS = debug_shortened(30 * 60, "CANOPY_HOST_GRANT_CONFIRM_SECONDS")
 
 #: A refusal with a stable `code`. The message never contains a credential. The
 #: SDK's class, so a refusal from `consumer.check_id_jag` is this type.

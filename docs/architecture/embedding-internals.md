@@ -295,6 +295,12 @@ page within their own access. The rules:
   page (`same_page`) inherits the newest live confirmation AND its end
   (`host_grants._inherit`), so renewing the token never prompts and never extends;
   after the 30 minutes the passkey is asked for again the next time a turn needs it.
+  **Reproducing the end quickly:** set `CANOPY_HOST_GRANT_CONFIRM_SECONDS=30` (the
+  passkey window) and/or `CANOPY_CONTACT_TOKEN_TTL_SECONDS=30` (a no-grant panel token)
+  on a dev or staging box and restart. `apps/tokens/debug_lifetime.py` only ever
+  shortens (never lengthens, floor 5s), and logs a warning when it does. A token
+  shorter than the panel's 5-minute refresh skew is re-minted on every call, which is
+  fine for debugging and not for a real box.
 - **Never a contact's.** A contact has no passkey: `redeem` refuses a grant with no
   user (only the live probe's synthetic principal, `probe=True`, is exempt and is
   deleted with the probe), `contact_api` sends no ID-JAG on to it, and `lookup`
