@@ -178,8 +178,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     box that runs it reading with its own device proof — never to an admin or a
     license holder.
 
-    **Device proof.** With either
-    `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
+    **Device proof.** With zero-knowledge on (every agent that holds a value), the request must also carry a `DPoP` header: an RFC 9449
     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
     an ACTIVE runner device key on a runner this agent routes to or one its
@@ -830,7 +829,7 @@ def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: in
 @gate("agent-admin")  # can_manage per key = runners.may_trust_device_keys
 def agent_device_keys(request: HttpRequest, slug: str):
     """Every device key on a runner this agent routes to or its owner owns —
-    the keys `require_device_binding` would accept once active. `can_manage`
+    the keys that may read its secrets once active. `can_manage`
     says whether the caller may approve each (the runner's owner or an admin of
     it; on a private runner, its owner alone)."""
 

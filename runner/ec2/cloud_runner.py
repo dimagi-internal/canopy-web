@@ -3811,8 +3811,8 @@ def _probe_agent_vault(slug: str) -> None:
     # The turn this resolve is for, so canopy-web's read log names it (Canopy Vault,
     # canopy#946). Known when called from a turn's thread; an older canopy-web ignores it.
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
-    # And this box's IAM-role device proof (canopy-web#1549) — required only for an
-    # agent with require_device_binding; ignored by canopy-web otherwise.
+    # And this box's IAM-role device proof (canopy-web#1549) — required by canopy-web
+    # for every zero-knowledge agent.
     proof = _aws_proof_headers(f"{BASE_URL}/api/agents/{slug}/credentials/resolve")
     if not proof:
         # No proof to attach — a runner sharing its machine (the instance role is

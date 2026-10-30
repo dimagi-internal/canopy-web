@@ -218,7 +218,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     JSON), owner-agnostic so other vault pages reuse it; Reveal decrypts locally with the person's vault key, and Save encrypts
     locally once the agent has one), **Who can open them** (admins: the vault's
     people with why each can — `docs/architecture/vault.md` — and the machines
-    with device binding), **Storage & key** (the Canopy vault, key copies, zero-knowledge grant / rotate / recover
+    with approve / revoke), **Storage & key** (the Canopy vault, key copies, zero-knowledge grant / rotate / recover
     with code, every encryption in the browser, the one-time recovery-code
     dialog, the stated trust caveat) and, only when there are any, **Read
     alerts**. Sections other than Secrets start closed, open by themselves when

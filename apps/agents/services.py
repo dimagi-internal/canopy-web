@@ -338,7 +338,6 @@ def agent_detail(agent: Agent) -> dict:
         "cli_models": dict(agent.cli_models or {}),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
-        "require_device_binding": agent.require_device_binding,
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),

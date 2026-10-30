@@ -105,7 +105,7 @@ EXCLUDED_PREFIXES: dict[str, str] = {
 EXCLUDED_PATTERNS: dict[str, str] = {
     r"^/api/agents/[^/]+/(canopy-token|canopy-login|pat-rotation)(/|$)":
         "minting or rotating an agent's canopy token",
-    r"^/api/agents/[^/]+/(vault|test-vault-key|credentials|credential-source|device-binding|google)(/|$)":
+    r"^/api/agents/[^/]+/(vault|test-vault-key|credentials|credential-source|google)(/|$)":
         "an agent's vault, credentials and keys",
     r"^/api/agents/[^/]+/secret-requests/[^/]+/value$": "filling an agent's secret",
     r"^/api/canopy-sessions/(my-keys|my-vault-key)$": "the person's conversation keys",

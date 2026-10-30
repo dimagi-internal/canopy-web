@@ -1,28 +1,24 @@
 import { useEffect, useState } from 'react'
-import { getAgentDeviceKeys, setDeviceBinding, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
+import { getAgentDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
 
-// Device binding for this agent (Canopy Vault, canopy-web#1538). With it on, a box must prove it holds an
-// APPROVED device key to read the agent's secrets; a token alone no longer does.
-// The keys listed are those on runners this agent routes to or its owner owns.
+// The machines that can read this agent's secrets (Canopy Vault, canopy-web#1538).
+// Each holds a key made inside its own hardware; approving one (a passkey touch)
+// gives it a copy of the vault's key, and a read needs the machine to prove it holds
+// that key — a login token alone opens nothing. The keys listed are those on runners
+// this agent routes to or its owner owns.
 
 export function AgentDeviceKeysSection({
   slug,
-  requireDeviceBinding,
   canEdit,
   onLoaded,
 }: {
   slug: string
-  requireDeviceBinding?: boolean | null
   canEdit: boolean
   /** Told the machines' keys once read, for the vault's summary. */
   onLoaded?: (keys: RunnerDeviceKeyOut[]) => void
 }) {
   const [keys, setKeys] = useState<RunnerDeviceKeyOut[] | null>(null)
-  const [required, setRequired] = useState(Boolean(requireDeviceBinding))
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => setRequired(Boolean(requireDeviceBinding)), [requireDeviceBinding])
 
   useEffect(() => {
     let cancelled = false
@@ -38,32 +34,16 @@ export function AgentDeviceKeysSection({
 
   if (!canEdit) return null
 
-  const toggle = async () => {
-    setError(null)
-    try {
-      setRequired(await setDeviceBinding(slug, !required))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save')
-    }
-  }
-
   const active = (keys ?? []).filter((k) => k.status === 'active').length
   return (
     <section id="cred-device-keys" className="mb-6" data-testid="agent-device-keys">
       <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Machines
+        Machines that can read these secrets
       </h4>
-      <label className="mb-2 flex items-center gap-2 text-[12px] text-foreground">
-        <input
-          type="checkbox"
-          checked={required}
-          onChange={() => void toggle()}
-          aria-label="Only approved machines may read secrets"
-          data-testid="require-device-binding"
-        />
-        Only machines you approved may read this agent&rsquo;s secrets
-      </label>
-      {required && keys !== null && active === 0 && (
+      <p className="mb-2 text-[12px] text-muted-foreground">
+        A machine you approve can read this agent&rsquo;s secrets; one you don&rsquo;t, can&rsquo;t.
+      </p>
+      {keys !== null && active === 0 && (
         <p className="mb-2 text-[11px] text-destructive" data-testid="no-active-device-key">
           No approved machine yet: none can read this agent&rsquo;s secrets until you approve one.
         </p>
@@ -76,7 +56,6 @@ export function AgentDeviceKeysSection({
           onChange={(next) => setKeys((ks) => (ks ?? []).map((k) => (k.id === next.id ? next : k)))}
         />
       )}
-      {error && <p className="mt-2 text-[12px] text-destructive">{error}</p>}
     </section>
   )
 }

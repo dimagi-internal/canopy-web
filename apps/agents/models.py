@@ -146,12 +146,6 @@ class Agent(models.Model):
         default=dict, blank=True,
         help_text='Per-ref value source: {"name": {"value": "literal"}}.',
     )
-    # Canopy Vault device binding (canopy-web#1538 Phase 1a). When on,
-    # `/credentials/resolve` also demands a DPoP proof
-    # signed by an ACTIVE RunnerDeviceKey on a runner this agent routes to (or
-    # one its owner owns) — a PAT alone no longer reads the values. Owner/admin
-    # only (PATCH /device-binding); absent from AgentIn.
-    require_device_binding = models.BooleanField(default=False)
     # Canopy Vault Phase 1b (canopy-web#1549): rotate the agent's own
     # `canopy-pat` every `pat_rotation_days` (apps/agents/credentials/pat_rotation.py).
     # Owner/admin opt-in (PATCH /pat-rotation); `pat_rotation_enabled_by` is the

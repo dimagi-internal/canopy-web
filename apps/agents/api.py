@@ -95,7 +95,6 @@ from .schemas import (
     AgentTurnIn,
     AgentTurnOut,
     CapabilitySensitiveIn,
-    DeviceBindingIn,
     RepoCheckIn,
     RepoCheckOut,
     RepositoryIn,
@@ -1081,20 +1080,6 @@ def set_agent_clis(request: HttpRequest, slug: str, payload: AgentClisIn) -> Age
     agent.save(update_fields=["clis", "cli_models", "updated_at"])
     audit.note_change(scope=f"agent:{agent.slug}/clis", before=before,
                       after={"clis": agent.clis, "cli_models": agent.cli_models})
-    return _detail(request, agent)
-
-
-@router.patch("/{slug}/device-binding", response=AgentDetailOut,
-              summary="Require a runner device proof to resolve this agent's secrets")
-@gate("agent-admin", setting=True)
-def set_device_binding(request: HttpRequest, slug: str, payload: DeviceBindingIn) -> AgentDetailOut:
-    """Canopy Vault (canopy-web#1538). When on, `GET /credentials/resolve` answers 401
-    `{"error": "device_proof_required"}` unless the request carries a DPoP proof
-    from an ACTIVE runner device key on a runner this agent routes to, or one
-    owned by the agent's owner. Owner or admin only."""
-    agent = agent_for_admin(request, slug)
-    agent.require_device_binding = payload.require_device_binding
-    agent.save(update_fields=["require_device_binding", "updated_at"])
     return _detail(request, agent)
 
 

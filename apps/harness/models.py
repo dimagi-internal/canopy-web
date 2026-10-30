@@ -1723,8 +1723,8 @@ class RunnerDeviceKey(models.Model):
     The box generates an EC P-256 key — in the Secure Enclave or a TPM where it
     can — and registers only the PUBLIC half. It starts `pending`; a person who
     owns or administers the runner approves it from a browser (behind a passkey
-    step-up), and from then on `/credentials/resolve` for an agent with
-    `require_device_binding` accepts a DPoP proof signed by it (RFC 9449).
+    step-up), and from then on `/credentials/resolve` accepts a DPoP proof
+    signed by it (RFC 9449), which a zero-knowledge agent's read requires.
 
     Identified by `jkt`, the RFC 7638 thumbprint, which is unique: re-posting the
     same public key is idempotent, and one key never belongs to two runners.

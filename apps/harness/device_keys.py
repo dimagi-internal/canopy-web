@@ -3,7 +3,7 @@
 A runner registers the PUBLIC half of an EC P-256 key it holds (ideally in the
 Secure Enclave or a TPM). Once a person approves it, a request to
 `/credentials/resolve` can carry an RFC 9449 DPoP proof signed by that key, and
-for an agent with `require_device_binding` it must.
+for a zero-knowledge agent (every agent that holds a value) it must.
 
 The proof (the contract both halves build against):
 

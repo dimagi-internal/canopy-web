@@ -124,7 +124,7 @@ def test_a_runner_token_with_another_boxs_proof_is_refused(monkeypatch, owner, w
 
 
 def test_an_approved_box_that_does_not_run_the_agent_is_not_routed(monkeypatch, owner, ws, agent, alerts):
-    agent.require_device_binding = True
+    agent.zk_enabled = True
     agent.save()
     other = _box(owner, ws, "other")
     _proof(monkeypatch, refused="other does not run eva", unrouted=other)
@@ -134,7 +134,7 @@ def test_an_approved_box_that_does_not_run_the_agent_is_not_routed(monkeypatch, 
 
 
 def test_a_missing_proof_is_refused_and_the_owner_alerted(monkeypatch, owner, agent, alerts):
-    agent.require_device_binding = True
+    agent.zk_enabled = True
     agent.save()
     _proof(monkeypatch, refused="no device proof")
     out = cr.resolve(_request(owner), agent, None)
