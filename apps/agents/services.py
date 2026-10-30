@@ -7,7 +7,7 @@ import re
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -263,7 +263,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
 def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     """The agent's canopy login in one step: mint
     its token (`mint_agent_canopy_token`), store it as its login (`pat_rotation.CANOPY_PAT_REF`) sealed to whoever
-    may read the agent (`minted=True` → zks1), and turn on automatic rotation. The raw
+    may read the agent (`zks1`), and turn on automatic rotation. The raw
     token never leaves this function — the browser button that calls it has no use for
     it, and a response that carried it would put a live login in a page's memory.
 
@@ -284,7 +284,7 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     with transaction.atomic():
         raw, token, user, created = mint_agent_canopy_token(
             agent, actor, email=email, label=f"{agent.slug} agent")
-        set_agent_credentials(agent, {pat_rotation.CANOPY_PAT_REF: raw}, user=actor, minted=True)
+        set_agent_credentials(agent, {pat_rotation.CANOPY_PAT_REF: raw}, user=actor)
         del raw
         agent.refresh_from_db()
         rotation = pat_rotation.enable_refusal(agent, actor)
@@ -660,10 +660,6 @@ def create_project(agent: Agent | None, data, *, workspace: str = "", by_user=No
                        ext_id=ext_id, **payload)
 
 
-class ProposalStartError(ValueError):
-    """Starting a proposed project by PATCH, past its decision card."""
-
-
 def patch_project(project: AgentProject, data: dict) -> AgentProject:
     if "status" in data and data["status"] is not None:
         new = _norm_project_status(data["status"])
@@ -688,26 +684,6 @@ def patch_project(project: AgentProject, data: dict) -> AgentProject:
             project.owner_user = resolve_project_owner_in(project.workspace_id, data[key])
     project.save()
     return project
-
-
-def project_task_counts(agent: Agent) -> dict:
-    """`{project_id: (tasks, still open, waiting on a person)}` in ONE query.
-
-    The board shows a count per project, and resolving it per row would be a
-    query per project on a page that lists them all.
-    """
-    # Every task IN the projects the agent leads or works on, whoever does it.
-    project_ids = AgentProject.objects.filter(agent_projects_q(agent)).values("pk")
-    rows = (
-        AgentTask.objects.filter(project__in=project_ids)
-        .values("project_id")
-        .annotate(
-            total=Count("id"),
-            open=Count("id", filter=Q(status__in=LIVE_STATUSES)),
-            waiting=Count("id", filter=waiting_q()),
-        )
-    )
-    return {r["project_id"]: (r["total"], r["open"], r["waiting"]) for r in rows}
 
 
 def set_task_project(task, project) -> None:
@@ -1596,7 +1572,7 @@ SOURCE_CANOPY_WEB_ZK = "canopy-web-zk"
 SOURCE_UNSET = "unset"
 
 
-def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: bool = False) -> int:
+def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
     """Upsert named secrets. NON-CLOBBERING: a ref absent from `values` is left
     alone, so a single-field edit can never wipe the rest (the same rule
     RunnerCredentialIn follows, for the same reason).
@@ -1606,13 +1582,12 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     resolving to nothing — the worst of both.
 
     Zero-knowledge is the agent vault's only mode: every value written in
-    plaintext (`canopy vault import`, or one canopy-web made itself: `minted`,
-    canopy-pat rotation) is sealed to every reader of the
+    plaintext (`canopy vault import`, or one canopy-web made itself: the agent's canopy login,
+    its rotation) is sealed to every reader of the
     agent (`zks1`, `zk_seal.py`) and the plaintext forgotten. Raises ZkError
     `zk_no_recipients` when nobody could read it yet; nothing is written then.
     """
 
-    del minted  # every write is sealed; kept for callers' clarity
     blank = sorted(k for k, v in values.items() if not (v or "").strip())
     if blank:
         raise ValueError(f"blank value for: {', '.join(blank)}")
@@ -1723,12 +1698,17 @@ def declare_credential_names(agent, names) -> list[str]:
     write the list anyway is not widening anything by naming a secret, and a
     stored-but-undeclared value is one the agent's scoped reads never get —
     the Security tab showed it "not declared" with no way to fix it there."""
-    current = [str(n) for n in (agent.runtime_secrets or [])]
-    known = set(current) | {str(n) for n in (agent.runtime_sources or {})}
-    added = sorted({str(n).strip() for n in names if str(n).strip()} - known)
-    if added:
-        agent.runtime_secrets = current + added
-        agent.save(update_fields=["runtime_secrets"])
+    # Under the agent's row lock: two writes naming different secrets at once would each
+    # read the list before the other saved it, and one name would be lost.
+    with transaction.atomic():
+        locked = Agent.objects.select_for_update().get(pk=agent.pk)
+        current = [str(n) for n in (locked.runtime_secrets or [])]
+        known = set(current) | {str(n) for n in (locked.runtime_sources or {})}
+        added = sorted({str(n).strip() for n in names if str(n).strip()} - known)
+        if added:
+            locked.runtime_secrets = current + added
+            locked.save(update_fields=["runtime_secrets"])
+        agent.runtime_secrets = locked.runtime_secrets
     return added
 
 

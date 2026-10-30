@@ -55,11 +55,6 @@ def _point(pub: ec.EllipticCurvePublicKey) -> bytes:
     return pub.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
 
 
-def _public_key(jwk: dict) -> ec.EllipticCurvePublicKey:
-    x, y = b64u_bytes(jwk.get("x", ""), "x"), b64u_bytes(jwk.get("y", ""), "y")
-    return ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + x + y)
-
-
 def seal_to(plaintext: str, *, agent_id, name: str, kv: int, recipients: list[tuple[str, str, dict]],
             _ephemeral=None, _nonce: bytes | None = None) -> str:
     """`zks1:` value sealed to each `(kind, target, public_jwk)`. `_ephemeral` /
@@ -72,7 +67,7 @@ def seal_to(plaintext: str, *, agent_id, name: str, kv: int, recipients: list[tu
     aad = value_aad(agent_id, name, kv)
     out = []
     for kind, target, jwk in recipients:
-        q = _public_key(jwk)
+        q = zk.public_key(jwk)
         e = _ephemeral or ec.generate_private_key(ec.SECP256R1())
         nonce = _nonce or os.urandom(NONCE_LEN)
         epk = _point(e.public_key())

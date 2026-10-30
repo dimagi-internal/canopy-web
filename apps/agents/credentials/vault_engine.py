@@ -11,7 +11,8 @@ each kind's module decides. A `Store` names those differences; everything else i
 written here once, so a rule added to one kind of vault reaches the other.
 
 `zk.py` (an agent's vault) and `workspace_vaults.py` keep their public functions and
-build their store; nothing outside them calls this module.
+build their store; the shared leaf helpers (`value_digest`) are also read by `accounts` and
+`capabilities.slot_data`, which is why this module imports no vault of its own.
 """
 from __future__ import annotations
 

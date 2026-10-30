@@ -20,7 +20,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import services
-from apps.agents.credentials import pat_rotation, zk, zk_seal
+from apps.agents.credentials import pat_rotation, vault_engine, zk, zk_seal
 from apps.agents.models import (
     Agent,
     AgentAdmin,
@@ -767,7 +767,7 @@ def test_shape_check_accepts_the_vector_and_refuses_variants():
 
 def test_server_seal_opens_with_the_reference_for_device_and_member(fleet):
     assert _enable(fleet).status_code == 200
-    services.set_agent_credentials(_agent(fleet), {"gog-token": '{"t":1}'}, minted=True)
+    services.set_agent_credentials(_agent(fleet), {"gog-token": '{"t":1}'})
     stored = _stored("gog-token")
     assert stored.startswith("zks1:")
     assert ref.open_sealed_value(stored, _aid(fleet), "gog-token", "device", fleet.device.ecdh_jkt,
@@ -779,7 +779,7 @@ def test_server_seal_opens_with_the_reference_for_device_and_member(fleet):
 def test_resolve_hands_a_sealed_value_to_a_device_without_a_wrap(fleet):
     Agent.objects.filter(pk=fleet.agent.pk).update(runtime_secrets=["CANOPY_WEB_PAT", "kindora", "gog-token"])
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
-    services.set_agent_credentials(_agent(fleet), {"gog-token": "tok"}, minted=True)
+    services.set_agent_credentials(_agent(fleet), {"gog-token": "tok"})
     # Only sealed values asked for: no vault key needed, no 409.
     res = _resolve(fleet, refs="gog-token")
     assert res.status_code == 200, res.content
@@ -793,7 +793,7 @@ def test_resolve_hands_a_sealed_value_to_a_device_without_a_wrap(fleet):
 
 def test_state_names_sealed_values_and_a_settle_is_compare_and_swap(fleet):
     assert _enable(fleet).status_code == 200
-    services.set_agent_credentials(_agent(fleet), {"CANOPY_WEB_PAT": "minted"}, minted=True)
+    services.set_agent_credentials(_agent(fleet), {"CANOPY_WEB_PAT": "minted"})
     state = fleet.client.get(f"{ZK}?values=true").json()
     assert state["sealed"] == ["CANOPY_WEB_PAT"]
     read = state["values"]["CANOPY_WEB_PAT"]
@@ -802,7 +802,7 @@ def test_state_names_sealed_values_and_a_settle_is_compare_and_swap(fleet):
     res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": [stale]}, content_type="application/json")
     assert res.status_code == 409 and res.json()["error"] == "zk_value_changed"
     assert _stored("CANOPY_WEB_PAT") == read
-    ok = {**settled, "expect": zk.value_digest(read)}
+    ok = {**settled, "expect": vault_engine.value_digest(read)}
     res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": [ok]}, content_type="application/json")
     assert res.status_code == 200, res.content
     assert _stored("CANOPY_WEB_PAT").startswith("zk1:")
@@ -821,7 +821,7 @@ def test_expect_empty_means_no_value_stored(fleet):
 
 def test_enable_and_rotate_refuse_an_unsettled_value(fleet):
     assert _enable(fleet).status_code == 200
-    services.set_agent_credentials(_agent(fleet), {"CANOPY_WEB_PAT": "minted"}, minted=True)
+    services.set_agent_credentials(_agent(fleet), {"CANOPY_WEB_PAT": "minted"})
     body = {"new_kv": 2, "wraps": [member_wrap(fleet, kv=2), device_wrap(fleet, kv=2), recovery_wrap(fleet, kv=2)],
             "values": [{"name": "CANOPY_WEB_PAT", "value_zk": _stored("CANOPY_WEB_PAT")},
                        *zk_values(fleet, {"kindora": "kin-value"}, kv=2)]}
@@ -835,7 +835,7 @@ def test_sealing_with_nobody_to_read_it_is_refused(fleet):
     RunnerDeviceKey.objects.all().delete()
     UserVaultKeyset.objects.all().delete()
     with pytest.raises(zk.ZkError) as exc:
-        services.set_agent_credentials(_agent(fleet), {"gog-token": "t"}, minted=True)
+        services.set_agent_credentials(_agent(fleet), {"gog-token": "t"})
     assert exc.value.code == "zk_no_recipients"
 
 
