@@ -55,6 +55,7 @@ state or a verifier.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import logging
@@ -194,7 +195,7 @@ def app_for(workspace, provider: str) -> ConnectionApp:
     return app
 
 
-def _readable_slugs(user) -> set[str]:
+def readable_workspaces(user) -> set[str]:
     """The workspaces `user` can read: THE rule for whose apps a person may use
     and whose connections still hand them a token (`workspaces` decides membership)."""
     return {slug for slug, role in workspaces.member_roles(user).items() if perms.role_allows(role, perms.READ)}
@@ -203,7 +204,7 @@ def _readable_slugs(user) -> set[str]:
 def person_may_use(user, workspace) -> bool:
     """Whether `user` may connect with, and use connections from, the apps of
     `workspace` (a `Workspace` or slug): they can read it."""
-    return _slug(workspace) in _readable_slugs(user)
+    return _slug(workspace) in readable_workspaces(user)
 
 
 def apps_for_person(user, provider: str) -> list[ConnectionApp]:
@@ -211,7 +212,7 @@ def apps_for_person(user, provider: str) -> list[ConnectionApp]:
     if provider not in providers.CLASSES:
         return []
     rows = (ConnectionApp.objects.select_related("workspace")
-            .filter(provider=provider, workspace_id__in=_readable_slugs(user)).order_by("workspace_id"))
+            .filter(provider=provider, workspace_id__in=readable_workspaces(user)).order_by("workspace_id"))
     return [a for a in rows if providers.for_app(a).is_configured()]
 
 
@@ -273,6 +274,10 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
     else:
         if client_id != app.client_id and not client_secret:
             raise ConnectionError("invalid_app", "A new client id needs its client secret")
+        if not client_secret and not app.client_secret:
+            # Stored, but unreadable (the encryption key changed): keeping it would
+            # save an app that still cannot connect, and say nothing.
+            raise ConnectionError("invalid_app", "The saved client secret can no longer be read; enter it again")
         # Compared as cleaned, so a stored value in another spelling of the same
         # setting (`https://login.salesforce.com/`) is not a change.
         try:
@@ -281,9 +286,11 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
             stored = app.options
         changed = [name for name in cls.locked_options if cleaned.get(name) != stored.get(name)]
         if (client_id != app.client_id or changed) and app.connections.exists():
-            what = "client id" if client_id != app.client_id else ", ".join(changed)
-            raise ConnectionError("app_locked", f"accounts are connected with this app: remove it (which "
-                                                f"disconnects them) to change its {what}")
+            labels = {f.name: f.label for f in cls.option_fields}
+            what = " and ".join((["client id"] if client_id != app.client_id else [])
+                                + [labels.get(n, n) for n in changed])
+            raise ConnectionError("app_locked", f"Accounts are connected with this {cls.title} app, so its {what} "
+                                                "cannot change; remove the app (which disconnects them) to switch.")
     app.client_id = client_id
     if client_secret:
         app.client_secret = client_secret
@@ -309,21 +316,23 @@ def remove_app(app: ConnectionApp, *, by) -> None:
     subject = _app_subject(app)
     title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
     client_id, slug = app.client_id, app.workspace_id
-    late: list[tuple[Subject, str | None]] = []
+    late: list[tuple[Subject, str | None, list]] = []
     with transaction.atomic():
         locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk).first()
         if locked is not None:
             for conn in locked.connections.select_related("agent__workspace").order_by("pk"):
                 # Read only: an unreadable token is recorded after the transaction.
-                late.append((Subject.of(conn), _decrypted_refresh(conn)))
+                late.append((Subject.of(conn), _decrypted_refresh(conn), _grantees(conn)))
                 conn.delete()
             locked.delete()
-    for late_subject, refresh in late:
+    for late_subject, refresh, grantees in late:
         if refresh is None:
             record(late_subject, "revoke_failed", warn=True, error="undecryptable")
         _revoke(app, late_subject, refresh or "")
         record(late_subject, "disconnected", by=by,
                summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
+        for grantee in grantees:
+            _record_grant_revoked(late_subject, grantee, by=by, during="disconnected")
     record(subject, "app_removed", by=by, workspace=slug, client_id=client_id,
            summary=f"{_who(by) or 'someone'} removed {title} from {slug}")
 
@@ -743,10 +752,13 @@ def disconnect(conn: Connection, *, by) -> None:
     holding the grant, and deleting it does that whatever the provider says.
     """
     subject = Subject.of(conn)
+    grantees = _grantees(conn)
     _revoke(conn.app, subject, _refresh_token_of(conn, subject))
-    conn.delete()
+    conn.delete()  # its grants go with it (CASCADE)
     record(subject, "disconnected", by=by,
            summary=f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
+    for grantee in grantees:
+        _record_grant_revoked(subject, grantee, by=by, during="disconnected")
 
 
 def _decrypted_refresh(conn: Connection) -> str | None:
@@ -774,6 +786,24 @@ def _revoke(app: ConnectionApp, subject: Subject, refresh: str) -> None:
         providers.for_app(app).revoke(refresh)
     except Exception as e:  # noqa: BLE001
         record(subject, "revoke_failed", warn=True, error=getattr(e, "code", "") or type(e).__name__)
+
+
+def _grantees(conn: Connection) -> list:
+    """The agents `conn` is shared with, read before a delete takes the grants."""
+    if conn.agent_id is None:
+        return []
+    return [g.agent for g in conn.grants.select_related("agent__workspace").order_by("agent__slug")]
+
+
+def _record_grant_revoked(subject: Subject, grantee, *, by, **context) -> None:
+    """`grant_revoked` for one grantee: in the owner's workspace (whose connection
+    it is) and, when the grantee lives elsewhere, in the grantee's too, so the
+    workspace whose turns just lost it can see why."""
+    summary = f"{subject.owner}'s {subject.provider} no longer granted to {grantee.slug}"
+    record(subject, "grant_revoked", by=by, grantee=grantee.slug, summary=summary, **context)
+    if subject.workspace is not None and grantee.workspace_id != subject.workspace.pk:
+        record(dataclasses.replace(subject, workspace=grantee.workspace), "grant_revoked", by=by,
+               grantee=grantee.slug, summary=summary, **context)
 
 
 # ---- which connection an agent uses; grants ----------------------------------
@@ -815,7 +845,7 @@ def connection_for_agent(agent, provider: str) -> Connection:
 def person_connections(user, provider: str, *, workspace: str | None = None) -> list[Connection]:
     """The person's own connections for `provider` that are usable: made with an
     app in a workspace they can still read (and in `workspace`, when given)."""
-    readable = _readable_slugs(user)
+    readable = readable_workspaces(user)
     if workspace is not None:
         readable &= {workspace}
     return list(connections_for(("user", user.pk)).filter(provider=provider, app__workspace_id__in=readable)
@@ -870,5 +900,4 @@ def revoke_grant(g: ConnectionGrant, *, by) -> None:
     if not (conn.agent.is_admin(by) or agent.is_admin(by)):
         raise PermissionDenied("revoking a grant needs admin of either agent")
     g.delete()
-    record(Subject.of(conn), "grant_revoked", by=by, grantee=agent.slug,
-           summary=f"{conn.owner_label}'s {conn.provider} no longer granted to {agent.slug}")
+    _record_grant_revoked(Subject.of(conn), agent, by=by)

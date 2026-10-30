@@ -180,7 +180,11 @@ def test_remove_disconnects_every_connection_and_records(ws, user, eva, caplog):
     assert not ConnectionGrant.objects.exists() and not ConnectionApp.objects.filter(pk=app.pk).exists()
     assert Connection.objects.filter(pk=elsewhere.pk).exists()          # another workspace's app: untouched
     kinds = list(Event.objects.order_by("id").values_list("kind", flat=True))
-    assert kinds == ["connections.app_configured", "connections.disconnected", "connections.app_removed"]
+    assert kinds == ["connections.app_configured", "connections.disconnected", "connections.grant_revoked",
+                     "connections.app_removed"]
+    gone = Event.objects.get(kind="connections.grant_revoked")      # echo's loss is on the record
+    assert gone.payload["grantee"] == "echo" and gone.payload["by"] == "jj@dimagi.com"
+    assert gone.payload["during"] == "disconnected"
     removed = Event.objects.get(kind="connections.app_removed")
     assert removed.workspace_id == "w" and removed.payload["client_id"] == "3MVG-client"
     assert Event.objects.get(kind="connections.disconnected").payload["by"] == "jj@dimagi.com"
@@ -395,7 +399,9 @@ def test_the_login_host_is_locked_while_connections_use_it(ws, user, eva):
     _stored({"agent": eva}, user, app=app)
     with pytest.raises(services.ConnectionError) as e:
         _configure(ws, user, client_secret="", options={"login_url": "https://test.salesforce.com"})
-    assert e.value.code == "app_locked" and "login_url" in str(e.value)
+    # Named by the field's label, and only what is locked (not the client id).
+    assert e.value.code == "app_locked" and "its Login URL cannot change" in str(e.value)
+    assert "client id" not in str(e.value)
     app.refresh_from_db()
     assert app.options["login_url"] == "https://login.salesforce.com"
     # An option that does not name the server may still change.

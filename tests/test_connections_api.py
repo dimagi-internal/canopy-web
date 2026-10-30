@@ -552,3 +552,62 @@ def test_rows_carry_their_scopes(client, user, eva):
     mine = client.get("/api/connections/").json()["connections"]
     agents = client.get("/api/agents/eva/connections").json()["connections"]
     assert mine[0]["scopes"] == ["api", "refresh_token"] == agents[0]["scopes"]
+
+
+# ---- final review: usable, missing scopes, grants recorded on disconnect -------------
+
+def test_a_connection_in_a_workspace_i_left_is_listed_as_not_usable(client, user, ws):
+    """M4: the CLI says `not_connected` for it, so the list must not look healthy."""
+    here = _stored({"user": user}, user, app=sf_app(ws))
+    gone_ws = Workspace.objects.create(slug="gone", display_name="Gone", created_by=user)
+    WorkspaceMembership.objects.create(workspace=gone_ws, user=user, role=WorkspaceMembership.EDITOR)
+    left = _stored({"user": user}, user, app=sf_app(gone_ws), account_id="00Dorg/005b")
+    WorkspaceMembership.objects.filter(workspace=gone_ws, user=user).delete()
+    rows = {r["id"]: r for r in client.get("/api/connections/").json()["connections"]}
+    assert rows[here.pk]["usable"] is True
+    assert rows[left.pk]["usable"] is False and rows[left.pk]["workspace_name"] == "Gone"
+
+
+def test_an_agents_connection_from_before_a_move_is_listed_as_not_usable(client, user, ws, eva, echo):
+    other_ws = Workspace.objects.create(slug="x", display_name="X", created_by=user)
+    WorkspaceMembership.objects.create(workspace=other_ws, user=user, role=WorkspaceMembership.EDITOR)
+    old = _stored({"agent": eva}, user, app=sf_app(ws))
+    ConnectionGrant.objects.create(connection=old, agent=echo, granted_by=user)
+    Agent.objects.filter(pk=eva.pk).update(workspace=other_ws)
+    eva_rows = client.get("/api/agents/eva/connections").json()["connections"]
+    assert [(r["id"], r["workspace"], r["usable"]) for r in eva_rows] == [(old.pk, "w", False)]
+    echo_rows = client.get("/api/agents/echo/connections").json()["connections"]
+    assert [(r["granted_from"], r["usable"]) for r in echo_rows] == [("eva", False)]
+
+
+def test_a_scope_added_to_the_app_shows_on_existing_connections(client, user, ws, eva):
+    """M5: the admin ticks "Send mail"; existing grants lack it until reconnected."""
+    app = sf_app(ws, provider="google", allowed_domains="")
+    send, read = ("https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly")
+    for kw in ({"user": user}, {"agent": eva}):
+        _stored(kw, user, app=app, scopes=f"openid https://www.googleapis.com/auth/userinfo.email {read}")
+    app.scopes = f"{read} {send}"
+    app.save()
+    want = [{"scope": send, "label": "Send mail"}]
+    assert client.get("/api/connections/").json()["connections"][0]["missing_scopes"] == want
+    assert client.get("/api/agents/eva/connections").json()["connections"][0]["missing_scopes"] == want
+    app.scopes = read
+    app.save()
+    assert client.get("/api/connections/").json()["connections"][0]["missing_scopes"] == []
+
+
+def test_disconnecting_a_shared_connection_records_each_grant_it_takes(client, user, ws, eva, echo):
+    """M10: the grantee's workspace learns why its turns now get `not_connected`."""
+    other_ws = Workspace.objects.create(slug="x", display_name="X", created_by=user)
+    hal = Agent.objects.create(slug="hal", name="Hal", workspace=other_ws, owner=user)
+    conn = _stored({"agent": eva}, user)
+    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
+    ConnectionGrant.objects.create(connection=conn, agent=hal, granted_by=user)
+    with FakeSF():
+        assert client.delete(f"/api/agents/eva/connections/{conn.pk}").status_code == 204
+    revoked = Event.objects.filter(kind="connections.grant_revoked").order_by("id")
+    assert [(e.workspace_id, e.payload["grantee"], e.payload["by"], e.payload["during"]) for e in revoked] == [
+        ("w", "echo", "jj@dimagi.com", "disconnected"),
+        ("w", "hal", "jj@dimagi.com", "disconnected"),
+        ("x", "hal", "jj@dimagi.com", "disconnected"),      # hal lives elsewhere: its workspace hears too
+    ]

@@ -30,8 +30,11 @@ hands between the legs).
 
 The browser always lands back on a same-site `return_to` with
 `?connection=<provider>&status=connected|error[&reason=<code>]`; reasons:
-`not_configured`, `bad_state`, `forbidden`, `access_denied`, `insufficient_scope`,
-`provider_error`.
+`not_configured`, `bad_state`, `forbidden` (the caller no longer administers the
+agent, the agent left the workspace, or the person left it), `access_denied`,
+`insufficient_scope`, `wrong_account` (the provider signed in an account this
+owner may not connect: not the agent's own, or outside the app's allowed
+domains), `provider_error`.
 """
 from __future__ import annotations
 

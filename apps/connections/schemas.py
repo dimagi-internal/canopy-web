@@ -31,6 +31,11 @@ class ProviderOut(StrictModel):
     )
 
 
+class ScopeChoiceOut(StrictModel):
+    scope: str = Field(description="The scope as the provider names it.")
+    label: str = Field(description="What it allows, in words.")
+
+
 class ConnectionOut(StrictModel):
     id: int
     provider: str
@@ -46,6 +51,15 @@ class ConnectionOut(StrictModel):
         description="What the grant allows at the provider (e.g. `api`, `refresh_token`).",
     )
     needs_reconnect: bool = Field(description="The stored grant can no longer mint a token; connect again.")
+    usable: bool = Field(
+        description="Whether it can hand out a token now. A person's: only while they can still read "
+                    "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "
+                    "agent is in `workspace` (False once it has moved; disconnect it and connect again in its "
+                    "workspace). One shared with an agent: only while its owner is in `workspace`.")
+    missing_scopes: list[ScopeChoiceOut] = Field(
+        default_factory=list,
+        description="Scopes the app now asks for that this grant lacks (an admin chose them after it was "
+                    "connected), with what each allows; reconnect to allow them. Empty when nothing is missing.")
     connected_at: datetime
     last_used_at: datetime | None = None
     connected_by_email: str = Field(
@@ -67,11 +81,6 @@ class ConnectionsOut(StrictModel):
     connections: list[ConnectionOut]
 
 
-class ScopeChoiceOut(StrictModel):
-    scope: str = Field(description="The scope as the provider names it.")
-    label: str = Field(description="What it allows, in words.")
-
-
 class OptionFieldOut(StrictModel):
     name: str = Field(description="The key in `options`.")
     label: str
@@ -86,7 +95,9 @@ class ConnectionAppOut(StrictModel):
     title: str = Field(description="The provider's display name.")
     configured: bool = Field(description="A client id and secret are saved, so people and agents can connect.")
     client_id: str = Field(description="The OAuth client id (public); empty when nothing is saved.")
-    has_secret: bool = Field(description="A client secret is saved. The secret itself is never returned.")
+    has_secret: bool = Field(description="A client secret is saved and readable. The secret itself is never "
+                                         "returned. False when the saved one can no longer be decrypted: "
+                                         "enter it again.")
     options: dict[str, Any] = Field(default_factory=dict,
                                     description="The provider's own settings, as saved (see `option_fields`).")
     scopes: list[str] = Field(default_factory=list,
@@ -97,6 +108,11 @@ class ConnectionAppOut(StrictModel):
                                                 description="The settings this provider takes.")
     callback_url: str = Field(description="Register this as the callback (redirect) URL of the OAuth client "
                                           "at the provider.")
+    locked_options: list[str] = Field(
+        default_factory=list,
+        description="The `option_fields` that name the provider's authorization server (Salesforce: "
+                    "`login_url`): like `client_id`, they cannot change while `connection_count` is above zero "
+                    "(409 `app_locked`).")
     connection_count: int = Field(description="Connections made with this app; removing it disconnects them.")
     updated_at: datetime | None = None
     configured_by_email: str = Field(default="", description="Who last saved it; empty if unknown.")
@@ -107,9 +123,9 @@ class ConnectionAppsOut(StrictModel):
 
 
 class ConnectionAppIn(StrictModel):
-    client_id: str = Field(description="The OAuth client id (consumer key) from the provider.")
+    client_id: str = Field(max_length=255, description="The OAuth client id (consumer key) from the provider.")
     client_secret: str = Field(
-        default="",
+        default="", max_length=4096,
         description="The client secret. Blank keeps the saved one (send a new one to rotate it); required "
                     "the first time and with a new client id.")
     options: dict[str, Any] = Field(

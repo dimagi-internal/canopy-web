@@ -77,12 +77,23 @@ def _title(provider: str) -> str:
     return getattr(providers.CLASSES.get(provider), "title", provider)
 
 
-def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
+def _missing_scopes(conn: Connection) -> list[ScopeChoiceOut]:
+    # What the app asks for now that this grant lacks: an admin chose a scope after
+    # it was connected. Labelled from the provider's menu (else the scope itself).
+    cls = providers.CLASSES.get(conn.provider)
+    if cls is None:
+        return []
+    return [ScopeChoiceOut(scope=sc, label=cls.scope_choices.get(sc, sc))
+            for sc in providers.for_app(conn.app).missing_scopes(tuple(conn.scopes.split()))]
+
+
+def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> ConnectionOut:
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
-        needs_reconnect=conn.needs_reconnect, connected_at=conn.created_at,
+        needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
+        connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())
                             if conn.connected_by is not None else ""),
@@ -119,10 +130,14 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     A provider lists once per workspace of mine that has set it up (connect with
     that workspace's app), or once as not set up. Never calls the provider, so
     it is cheap to read on every visit to Settings. Whether a grant still works
-    shows as `needs_reconnect`, which the next real use of it keeps up to date."""
+    shows as `needs_reconnect`, which the next real use of it keeps up to date;
+    one in a workspace I have left is listed with `usable` false, to disconnect;
+    one missing a scope its app now asks for lists it in `missing_scopes`."""
     rows = (services.connections_for(("user", request.user.pk))
             .select_related("connected_by", "app__workspace"))
-    return ConnectionsOut(providers=_person_provider_rows(request.user), connections=[_out(c) for c in rows])
+    readable = services.readable_workspaces(request.user)
+    return ConnectionsOut(providers=_person_provider_rows(request.user),
+                          connections=[_out(c, usable=c.app.workspace_id in readable) for c in rows])
 
 
 @router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")
@@ -144,16 +159,22 @@ def disconnect_mine(request: HttpRequest, connection_id: int) -> Status:
 def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     """What this agent can act as: connections it owns, and ones another agent
     shares with it (`granted_from` names the owner), and the providers its own
-    workspace has set up, which are what it connects with. Only the agent's admins can see them."""
+    workspace has set up, which are what it connects with. A connection works
+    only while its owning agent is in the workspace whose app made it: one made
+    before the agent moved (or shared by an agent that has since moved) is listed
+    with `usable` false. Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
-    own = (services.connections_for(("agent", agent.pk)).select_related("connected_by", "app__workspace")
+    own = (services.connections_for(("agent", agent.pk))
+           .select_related("connected_by", "agent", "app__workspace")
            .prefetch_related("grants__agent"))
     granted = (Connection.objects.filter(grants__agent=agent)
                .select_related("connected_by", "agent", "app__workspace")
                .order_by("provider", "account_label", "pk").distinct())
     return ConnectionsOut(
         providers=_agent_provider_rows(agent),
-        connections=[_out(c) for c in own] + [_out(c, granted_from=c.agent.slug) for c in granted],
+        connections=([_out(c, usable=services.agent_connection_usable(c)) for c in own]
+                     + [_out(c, usable=services.agent_connection_usable(c), granted_from=c.agent.slug)
+                        for c in granted]),
     )
 
 
@@ -354,12 +375,14 @@ def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
         provider=cls.name, title=cls.title,
         configured=app is not None and providers.for_app(app).is_configured(),
         client_id=app.client_id if app is not None else "",
-        has_secret=bool(app is not None and app.client_secret_enc),
+        # Readable, not merely stored: one the key can no longer open is not a secret.
+        has_secret=bool(app is not None and app.client_secret),
         options=dict(app.options) if app is not None else {},
         scopes=list(app.extra_scopes) if app is not None else [],
         scope_choices=[ScopeChoiceOut(scope=k, label=v) for k, v in cls.scope_choices.items()],
         option_fields=[OptionFieldOut(name=f.name, label=f.label, kind=f.kind, required=f.required,
                                       default=f.default, help=f.help) for f in cls.option_fields],
+        locked_options=list(cls.locked_options),
         callback_url=_callback_url(request, cls.name, slug),
         connection_count=_connection_count(app),
         updated_at=app.updated_at if app is not None else None,
@@ -397,9 +420,10 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
     """Save this workspace's OAuth client for `provider`. A blank `client_secret`
     keeps the saved one; send a new one to rotate it (existing connections keep
     working). `options` merge over the saved settings; `scopes` replaces the
-    chosen list. While accounts are connected with the app, its client id (and,
-    for Salesforce, its login host) cannot change: 409 `app_locked`; remove the
-    app to switch. 400 `invalid_app` says what was refused. From a browser this
+    chosen list. While accounts are connected with the app, its client id and
+    its `locked_options` (Salesforce: its login URL) cannot change: 409
+    `app_locked`; remove the app to switch. Adding a scope does not change
+    existing connections: each lists it in `missing_scopes` until reconnected. 400 `invalid_app` says what was refused. From a browser this
     needs a fresh passkey check. Workspace admins only."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     # After the permission check: a non-admin gets 404/403, never a step-up prompt.
@@ -421,8 +445,10 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
 def remove_connection_app(request: HttpRequest, workspace: str, provider: str) -> Status:
     """Remove this workspace's OAuth client for `provider`. Every account
     connected with it is disconnected (each revoked at the provider) — people's
-    and agents'. Removing an app that is not set up is harmless. From a browser
-    this needs a fresh passkey check. Workspace admins only."""
+    and agents' — and agents it was shared with lose it. Removing an app that is
+    not set up is harmless. A workspace cannot be deleted while it has apps.
+    From a browser this needs a fresh passkey check. Workspace admins only; not
+    an MCP tool."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     # After the permission check: a non-admin gets 404/403, never a step-up prompt.
     if stepup.is_browser(request):

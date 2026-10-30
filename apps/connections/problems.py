@@ -34,13 +34,13 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail
     """The response for `exc`. `title` is the provider's display name; `owner` is
     whose connection it is, as a possessive ("Your", "eva's"). `members` add to
     the body (`connect_url`, `accounts`); `detail` replaces the standard
-    sentence when the caller knows more of the case. An unexpected code is a 502: it is
-    still the provider's or canopy's failure, never the caller's."""
+    sentence when the caller knows more of the case. A code with no standard sentence
+    (`app_locked`, `invalid_app`: the service's message names what was refused)
+    uses the exception's message. An unexpected code is a 502: it is still the
+    provider's or canopy's failure, never the caller's."""
     status, heading = _PROBLEMS.get(exc.code, (502, "Provider error"))
     detail = detail or {
         "not_configured": f"{title} is not set up for this workspace.",
-        "app_locked": f"Accounts are connected with this {title} app, so its client id and login host "
-                      "cannot change; remove the app (which disconnects them) to switch.",
         "wrong_account": f"That {title} account is not one {owner.lower() if owner == 'Your' else owner} "
                          "connection may use; sign in with the right account.",
         "not_connected": f"{owner} {title} is not connected.",

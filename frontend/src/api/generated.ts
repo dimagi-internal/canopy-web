@@ -394,7 +394,9 @@ export interface paths {
          *     A provider lists once per workspace of mine that has set it up (connect with
          *     that workspace's app), or once as not set up. Never calls the provider, so
          *     it is cheap to read on every visit to Settings. Whether a grant still works
-         *     shows as `needs_reconnect`, which the next real use of it keeps up to date.
+         *     shows as `needs_reconnect`, which the next real use of it keeps up to date;
+         *     one in a workspace I have left is listed with `usable` false, to disconnect;
+         *     one missing a scope its app now asks for lists it in `missing_scopes`.
          */
         readonly get: operations["my_connections"];
         readonly put?: never;
@@ -6247,7 +6249,10 @@ export interface paths {
          * An agent's connections, its own and shared with it
          * @description What this agent can act as: connections it owns, and ones another agent
          *     shares with it (`granted_from` names the owner), and the providers its own
-         *     workspace has set up, which are what it connects with. Only the agent's admins can see them.
+         *     workspace has set up, which are what it connects with. A connection works
+         *     only while its owning agent is in the workspace whose app made it: one made
+         *     before the agent moved (or shared by an agent that has since moved) is listed
+         *     with `usable` false. Only the agent's admins can see them.
          */
         readonly get: operations["agent_connections"];
         readonly put?: never;
@@ -9406,9 +9411,10 @@ export interface paths {
          * @description Save this workspace's OAuth client for `provider`. A blank `client_secret`
          *     keeps the saved one; send a new one to rotate it (existing connections keep
          *     working). `options` merge over the saved settings; `scopes` replaces the
-         *     chosen list. While accounts are connected with the app, its client id (and,
-         *     for Salesforce, its login host) cannot change: 409 `app_locked`; remove the
-         *     app to switch. 400 `invalid_app` says what was refused. From a browser this
+         *     chosen list. While accounts are connected with the app, its client id and
+         *     its `locked_options` (Salesforce: its login URL) cannot change: 409
+         *     `app_locked`; remove the app to switch. Adding a scope does not change
+         *     existing connections: each lists it in `missing_scopes` until reconnected. 400 `invalid_app` says what was refused. From a browser this
          *     needs a fresh passkey check. Workspace admins only.
          */
         readonly put: operations["configure_connection_app"];
@@ -9417,8 +9423,10 @@ export interface paths {
          * Remove a workspace's connection app
          * @description Remove this workspace's OAuth client for `provider`. Every account
          *     connected with it is disconnected (each revoked at the provider) — people's
-         *     and agents'. Removing an app that is not set up is harmless. From a browser
-         *     this needs a fresh passkey check. Workspace admins only.
+         *     and agents' — and agents it was shared with lose it. Removing an app that is
+         *     not set up is harmless. A workspace cannot be deleted while it has apps.
+         *     From a browser this needs a fresh passkey check. Workspace admins only; not
+         *     an MCP tool.
          */
         readonly delete: operations["remove_connection_app"];
         readonly options?: never;
@@ -17957,6 +17965,16 @@ export interface components {
              */
             readonly needs_reconnect: boolean;
             /**
+             * Usable
+             * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One shared with an agent: only while its owner is in `workspace`.
+             */
+            readonly usable: boolean;
+            /**
+             * Missing Scopes
+             * @description Scopes the app now asks for that this grant lacks (an admin chose them after it was connected), with what each allows; reconnect to allow them. Empty when nothing is missing.
+             */
+            readonly missing_scopes?: readonly components["schemas"]["ScopeChoiceOut"][];
+            /**
              * Connected At
              * Format: date-time
              */
@@ -18015,6 +18033,19 @@ export interface components {
              * @description Whether the workspace has an app (client id and secret) for the provider. False is a real state, not an error: the UI says 'not set up' instead of offering a button that cannot work.
              */
             readonly configured: boolean;
+        };
+        /** ScopeChoiceOut */
+        readonly ScopeChoiceOut: {
+            /**
+             * Scope
+             * @description The scope as the provider names it.
+             */
+            readonly scope: string;
+            /**
+             * Label
+             * @description What it allows, in words.
+             */
+            readonly label: string;
         };
         /** AccessTokenOut */
         readonly AccessTokenOut: {
@@ -34272,7 +34303,7 @@ export interface components {
             readonly client_id: string;
             /**
              * Has Secret
-             * @description A client secret is saved. The secret itself is never returned.
+             * @description A client secret is saved and readable. The secret itself is never returned. False when the saved one can no longer be decrypted: enter it again.
              */
             readonly has_secret: boolean;
             /**
@@ -34302,6 +34333,11 @@ export interface components {
              * @description Register this as the callback (redirect) URL of the OAuth client at the provider.
              */
             readonly callback_url: string;
+            /**
+             * Locked Options
+             * @description The `option_fields` that name the provider's authorization server (Salesforce: `login_url`): like `client_id`, they cannot change while `connection_count` is above zero (409 `app_locked`).
+             */
+            readonly locked_options?: readonly string[];
             /**
              * Connection Count
              * @description Connections made with this app; removing it disconnects them.
@@ -34348,19 +34384,6 @@ export interface components {
              * @default
              */
             readonly help: string;
-        };
-        /** ScopeChoiceOut */
-        readonly ScopeChoiceOut: {
-            /**
-             * Scope
-             * @description The scope as the provider names it.
-             */
-            readonly scope: string;
-            /**
-             * Label
-             * @description What it allows, in words.
-             */
-            readonly label: string;
         };
         /** ConnectionAppIn */
         readonly ConnectionAppIn: {

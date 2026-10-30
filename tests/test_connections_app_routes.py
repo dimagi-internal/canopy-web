@@ -98,7 +98,7 @@ def test_list_shows_every_provider_set_up_or_not(admin, ws):
     row = _row(body)
     assert row == {
         "provider": "salesforce", "title": "Salesforce", "configured": False, "client_id": "",
-        "has_secret": False, "options": {}, "scopes": [], "scope_choices": [],
+        "has_secret": False, "options": {}, "scopes": [], "scope_choices": [], "locked_options": ["login_url"],
         "option_fields": [
             {"name": "login_url", "label": row["option_fields"][0]["label"], "kind": "url", "required": True,
              "default": "https://login.salesforce.com", "help": ""},
@@ -537,3 +537,51 @@ def test_only_reading_an_app_is_an_mcp_tool():
     assert not api_tools.is_tool_route("PUT", "/api/workspaces/w/connection-apps/salesforce")
     assert not api_tools.is_tool_route("DELETE", "/api/workspaces/w/connection-apps/salesforce")
     assert api_tools.is_tool_route("GET", "/api/workspaces/w/connection-apps")
+
+
+# ---- final review: lock wording, unreadable secret, length limits ----------------------
+
+def test_app_locked_names_what_changed_not_the_login_host_for_every_provider(admin, ws):
+    """M8: the 409 says which setting is locked; Google, which has no locked
+    options, never mentions a login host."""
+    c = _browser(admin)
+    _stored({"user": admin}, admin, app=sf_app(ws))
+    detail = _put(c, client_id="3MVG-other", client_secret="s").json()["detail"]
+    assert "its client id cannot change" in detail and "Login URL" not in detail
+    detail = _put(c, client_id="3MVG-client", options={"login_url": "https://test.salesforce.com"}).json()["detail"]
+    assert "its Login URL cannot change" in detail and "client id" not in detail
+    g = sf_app(ws, provider="google")
+    Connection.objects.create(provider="google", account_id="g1", user=admin, connected_by=admin, app=g)
+    body = _put(c, provider="google", client_id="other-google", client_secret="s").json()
+    assert body["error"] == "app_locked" and "login" not in body["detail"].lower()
+    assert body["detail"].startswith("Accounts are connected with this Google app, so its client id")
+
+
+def test_an_unreadable_secret_is_not_saved_and_must_be_entered_again(admin, ws):
+    """M6: after a key change the stored ciphertext opens to nothing. It reads as
+    no secret, and a save that would keep it is refused rather than silently kept."""
+    c = _browser(admin)
+    app = sf_app(ws)
+    ConnectionApp.objects.filter(pk=app.pk).update(client_secret_enc="garbage-from-another-key")
+    row = _row(c.get(APPS.format("w")).json())
+    assert row["has_secret"] is False and row["configured"] is False
+    resp = _put(c, client_id=app.client_id)
+    assert resp.status_code == 400 and resp.json()["error"] == "invalid_app"
+    assert "enter it again" in resp.json()["detail"]
+    resp = _put(c, client_id=app.client_id, client_secret="fresh")
+    assert resp.status_code == 200 and resp.json()["has_secret"] is True
+
+
+def test_an_over_long_client_id_or_secret_is_a_422_not_a_500(admin, ws):
+    """M7."""
+    c = _browser(admin)
+    assert _put(c, client_id="x" * 256, client_secret="s").status_code == 422
+    assert _put(c, client_id="ok", client_secret="s" * 4097).status_code == 422
+    assert not ConnectionApp.objects.exists()
+    assert _put(c, client_id="x" * 255, client_secret="s").status_code == 200
+
+
+def test_the_list_says_which_options_are_locked(admin, ws):
+    """M2: the panel reads the locked settings from the API, not from a field name."""
+    rows = _browser(admin).get(APPS.format("w")).json()["apps"]
+    assert {r["provider"]: r["locked_options"] for r in rows} == {"salesforce": ["login_url"], "google": []}
