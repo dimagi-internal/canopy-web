@@ -25,7 +25,6 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
-from apps.mail.models import MailDomain
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -41,13 +40,10 @@ class AgentLoginRefused(Exception):
 
 def is_agent_address(address: str) -> bool:
     """Is `address` at a domain that exists for agents — one nobody signs in to as themselves?
-    The platform's agent domains (`AGENT_LOGIN_DOMAINS`) and any verified mail domain canopy
-    hosts agent addresses on."""
+    The platform's agent domains, `AGENT_LOGIN_DOMAINS` (dimagi-ai.com, the agents' Google
+    domain; dimagi.ai, the one canopy hosts their mailboxes on)."""
     domain = address.rpartition("@")[2].strip().lower()
-    if not domain:
-        return False
-    return domain in {d.lower() for d in settings.AGENT_LOGIN_DOMAINS} or MailDomain.objects.filter(
-        name=domain, agent_addresses=True, status=MailDomain.VERIFIED).exists()
+    return bool(domain) and domain in {d.lower() for d in settings.AGENT_LOGIN_DOMAINS}
 
 
 def create_agent_login(agent, actor, address: str):

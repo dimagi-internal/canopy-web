@@ -92,14 +92,10 @@ def test_a_workspace_admin_who_is_not_the_agents_admin_still_cannot(ws, agent):
     assert _post(admin).status_code == 201          # they can invite, so any address
 
 
-def test_a_hosted_agent_mail_domain_counts_as_an_agent_address(ws, agent):
-    from apps.mail.models import MailDomain
-
+def test_the_hosted_agent_domain_counts_as_an_agent_address_too(ws, agent):
     editor = a_member(ws, email="ed@dimagi.com", role=WorkspaceMembership.EDITOR)
-    agent.owner, agent.email = editor, "scout@agents.example"
+    agent.owner, agent.email = editor, "scout@dimagi.ai"
     agent.save()
-    assert _post(editor).status_code == 403
-    MailDomain.objects.create(workspace=ws, name="agents.example", status="verified", agent_addresses=True)
     assert _post(editor).status_code == 201
 
 
