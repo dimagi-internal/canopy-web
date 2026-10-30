@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { Link, Outlet, useParams } from 'react-router-dom'
 import { ObjectPage } from '@/components/objectPage/ObjectPage'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
+import { roleAllows, type Capability } from '@/lib/workspaceRoles'
 
 /**
  * One settings surface per workspace.
@@ -27,6 +28,8 @@ export interface SettingsSection {
   /** Path segment under /w/:workspace/settings. */
   segment: string
   label: string
+  /** Shown only to someone holding this capability (the page gates itself too). */
+  capability?: Capability
 }
 
 /** The tab row, in the order it renders. `members` is also the index target —
@@ -38,6 +41,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'inbound', label: 'Inbound email' },
   { segment: 'email', label: 'Email' },
   { segment: 'connected-apps', label: 'Connected sites' },
+  { segment: 'connections', label: 'Connections', capability: 'integrations' },
   { segment: 'secrets', label: 'Secrets' },
   { segment: 'tasks', label: 'Tasks' },
   { segment: 'retention', label: 'Retention' },
@@ -48,7 +52,9 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 export function WorkspaceSettingsPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()
   const { workspaces } = useWorkspace()
-  const name = workspaces.find((w) => w.slug === slug)?.display_name
+  const here = workspaces.find((w) => w.slug === slug)
+  const name = here?.display_name
+  const sections = SETTINGS_SECTIONS.filter((s) => !s.capability || roleAllows(here?.role, s.capability))
 
   return (
     <ObjectPage
@@ -56,7 +62,7 @@ export function WorkspaceSettingsPage(): JSX.Element {
       context={name}
       wide
       tabsLabel="Workspace settings"
-      tabs={SETTINGS_SECTIONS.map((s) => ({ to: s.segment, label: s.label }))}
+      tabs={sections.map((s) => ({ to: s.segment, label: s.label }))}
       subtitle={<>
         How this workspace is configured — who is in it, and how work reaches it. Your own
         account settings (AI backend, tokens, theme) live in{' '}

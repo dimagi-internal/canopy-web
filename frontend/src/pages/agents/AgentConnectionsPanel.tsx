@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartAction,
   disconnectAgentConnection,
@@ -11,8 +11,11 @@ import {
 } from '@/api/connections'
 import { listAgents } from '@/api/agents'
 import { getCsrfToken } from '@/api/base'
-import { ConnectOutcome, Scopes, detailLine } from '@/components/settings/ConnectionsPanel'
+import { ConnectOutcome, Scopes, detailLine, missingScopes } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
+import { roleAllows } from '@/lib/workspaceRoles'
+import { scopedPath } from '@/lib/scopedLinks'
+import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 /**
  * What an agent can act as through canopy-held connections: its own, and ones
@@ -27,8 +30,16 @@ import { Button } from 'canopy-ui/ui'
  * GET that names an agent, and asks the provider for a fresh login where it
  * supports one, so the account attached is the one the admin types in — the
  * agent's — not whichever session their browser happens to hold.
+ *
+ * An agent connects with its OWN workspace's app (its admin sets it up under
+ * the workspace's Settings → Connections), so the start URL names that workspace.
+ * A connection works only while its owning agent is in the workspace whose app
+ * made it (`usable`): one made before the agent moved is shown as such, with
+ * Disconnect only, and the Connect button returns for the agent's workspace. A
+ * Reconnect goes to the connection's own workspace (`c.workspace`), never the
+ * provider row's: after a move those differ, and the server refuses the other.
  */
-export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string } }) {
+export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string; workspace?: string | null } }) {
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [others, setOthers] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -38,6 +49,9 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
+  // The agent's workspace: the API names it on every provider row.
+  const workspace = data?.providers.find((p) => p.workspace)?.workspace || agent.workspace || ''
+  const canSetUp = roleAllows(useWorkspaceRole(workspace), 'integrations')
 
   const load = useCallback(() => {
     listAgentConnections(agent.slug).then((d) => { setData(d); setError('') }).catch(() => setError('Could not read the agent’s connections.'))
@@ -80,8 +94,9 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
       {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
       {data.providers.map((p) => {
         const rows = data.connections.filter((c) => c.provider === p.name)
-        const own = rows.filter((c) => !c.granted_from)
-        const start = { action: connectionStartAction(p.name), returnTo: pathname, agent: agent.slug }
+        // A connection left behind by a move does not count: connect again here.
+        const own = rows.filter((c) => !c.granted_from && c.usable)
+        const start = { action: connectionStartAction(p.name, p.workspace || workspace), returnTo: pathname, agent: agent.slug }
         return (
           <div key={p.name} className="space-y-2" data-testid={`agent-connection-provider-${p.name}`}>
             <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">{p.title}</p>
@@ -89,7 +104,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
               <Row
                 key={c.id}
                 c={c}
-                start={start}
+                start={{ ...start, action: connectionStartAction(c.provider, c.workspace ?? '') }}
                 busy={busy === c.id}
                 others={others}
                 picked={pick[c.id] ?? ''}
@@ -103,7 +118,17 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
             {!p.configured ? (
               <div>
                 <Button size="sm" disabled>Connect {p.title}</Button>
-                <p className="mt-1 text-[12px] text-muted-foreground">Not set up on this deployment</p>
+                <p className="mt-1 text-[12px] text-muted-foreground">
+                  Not set up for this workspace
+                  {canSetUp && workspace && (
+                    <>
+                      {' · '}
+                      <Link to={scopedPath(workspace, '/settings/connections')} className="text-primary hover:underline">
+                        Set it up
+                      </Link>
+                    </>
+                  )}
+                </p>
               </div>
             ) : own.length === 0 ? (
               <ConnectForm label={`Connect ${p.title}`} {...start} />
@@ -149,7 +174,9 @@ function Row({
 }) {
   const shared = !!c.granted_from
   const sharedWith = c.shared_with ?? []
-  const candidates = others.filter((s) => s !== self && !sharedWith.includes(s))
+  const candidates = c.usable ? others.filter((s) => s !== self && !sharedWith.includes(s)) : []
+  const where = c.workspace_name || c.workspace
+  const missing = c.usable ? missingScopes(c) : ''
   return (
     <div className="space-y-2 rounded border border-border bg-muted/40 p-2.5" data-testid={`agent-connection-${c.id}`}>
       <div className="flex items-center justify-between gap-4">
@@ -160,11 +187,21 @@ function Row({
             {shared && <> · shared by {c.granted_from}</>}
           </p>
           <Scopes c={c} />
-          {c.needs_reconnect && (
+          {!c.usable ? (
+            <p className="text-[12px] text-warning">
+              {shared
+                ? `${c.granted_from} is no longer in ${where}, where this was made, so it no longer works.`
+                : `Made in ${where} before the move — disconnect it and connect here.`}
+            </p>
+          ) : c.needs_reconnect ? (
             <p className="text-[12px] text-warning">
               {shared ? 'This connection needs reconnecting by its owner.' : 'This connection expired or was revoked. Reconnect it.'}
             </p>
-          )}
+          ) : missing ? (
+            <p className="text-[12px] text-warning">
+              {shared ? `Its owner must reconnect to allow: ${missing}` : `Reconnect to allow: ${missing}`}
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {shared ? (
@@ -173,7 +210,7 @@ function Row({
             </Button>
           ) : (
             <>
-              {c.needs_reconnect && <ConnectForm label="Reconnect" {...start} />}
+              {c.usable && (c.needs_reconnect || missing !== '') && <ConnectForm label="Reconnect" {...start} />}
               <Button size="sm" variant="outline" disabled={busy} onClick={onDisconnect}>
                 {busy ? 'Working…' : 'Disconnect'}
               </Button>

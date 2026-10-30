@@ -258,6 +258,7 @@ from apps.common.api import common_router, public_router  # noqa: E402
 from apps.connections.api import agents_router as connections_agents_router  # noqa: E402
 from apps.connections.api import me_router as connections_me_router  # noqa: E402
 from apps.connections.api import router as connections_router  # noqa: E402
+from apps.connections.api import workspaces_router as connection_apps_router  # noqa: E402
 from apps.connections.api_turns import router as connections_turns_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
@@ -406,6 +407,7 @@ api.add_router("", kb_router)
 api.add_router("/workspaces", workspaces_router)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
 api.add_router("/workspaces", connected_apps_router)
+api.add_router("/workspaces", connection_apps_router)  # a workspace's OAuth clients for connections
 api.add_router("/workspaces", site_needs_router)
 api.add_router("/workspaces", member_profile_router)  # one member's page, by the caller's role
 api.add_router("/sites", sites_router)

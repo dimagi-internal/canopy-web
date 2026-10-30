@@ -45,8 +45,9 @@ urlpatterns = [
     path("auth/github/callback/", github_connect_callback, name="github_connect_callback"),
     # Server-held OAuth connections (Salesforce first), for a person or an agent.
     # Bare views like the GitHub ones; login required, not public.
-    path("auth/connections/<str:provider>/start/", connections_start, name="connections_start"),
-    path("auth/connections/<str:provider>/callback/", connections_callback, name="connections_callback"),
+    path("auth/connections/<str:provider>/<str:workspace>/start/", connections_start, name="connections_start"),
+    path("auth/connections/<str:provider>/<str:workspace>/callback/", connections_callback,
+         name="connections_callback"),
     # canopy's OAuth CLIENT identity (host grant contract v1): the Client ID
     # Metadata Document — whose URL IS canopy's client_id — and the JWKS it
     # names. Bare views because the URL is the identifier a host allowlists;

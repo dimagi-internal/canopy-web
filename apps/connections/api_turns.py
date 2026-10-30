@@ -96,7 +96,7 @@ def turn_connection_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: u
     `min_life_seconds` (default 300) is how long the token must still live;
     `refresh` forces a new one."""
     try:
-        provider = providers.get(payload.provider)
+        provider = providers.get_class(payload.provider)
     except providers.UnknownProvider:
         raise HttpError(404, "unknown provider") from None
     runner, turn, agent = _turn_agent(request, runner_id, turn_id)

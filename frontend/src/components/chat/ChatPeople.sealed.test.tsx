@@ -97,7 +97,7 @@ describe('addPerson', () => {
     const { them, unlock } = await world()
     trust.pinPerson(9, 'an-older-thumbprint', 'peer@dimagi.com')
     await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock)).rejects.toThrow(/changed/)
-    const confirm = vi.fn(async (_who: { email: string; verdict: unknown }) => false)
+    const confirm = vi.fn<(who: { email: string; verdict: unknown }) => Promise<boolean>>(async () => false)
     await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, confirm)).rejects.toThrow()
     expect(confirm.mock.calls[0]![0].verdict).toMatchObject({ status: 'changed', was: 'an-older-thumbprint' })
     api.participantRecipient.mockResolvedValue({ user_id: 9, email: 'peer@dimagi.com', public_jwk: them.publicJwk,

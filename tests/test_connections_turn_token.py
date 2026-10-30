@@ -20,9 +20,9 @@ from apps.connections.models import Connection, ConnectionGrant
 from apps.events.models import Event
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FakeSF, _resp, _stored
+from tests.fixtures.connections import FakeSF, _resp, _stored, sf_app
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
+pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
@@ -198,16 +198,18 @@ def test_ambiguous_409(echo, runner, operator):
     first = _stored({"agent": echo}, operator)
     Connection.objects.create(
         provider="salesforce", agent=echo, account_id="00Dorg/005other", account_label="other@dimagi.com",
-        instance_url=first.instance_url, refresh_token_enc=first.refresh_token_enc, connected_by=operator)
+        instance_url=first.instance_url, refresh_token_enc=first.refresh_token_enc, connected_by=operator,
+        app=first.app)
     r = _ask(runner, _turn(echo, runner))
     assert r.status_code == 409 and r.json()["error"] == "ambiguous"
     assert not Event.objects.filter(kind="connections.token_issued").exists()
 
 
-def test_not_configured_409(echo, runner, operator, settings):
-    _stored({"agent": echo}, operator, access="")
-    settings.SALESFORCE_CLIENT_ID = ""
-    settings.SALESFORCE_CLIENT_SECRET = ""
+def test_not_configured_409(echo, runner, operator):
+    conn = _stored({"agent": echo}, operator, access="")
+    conn.app.client_id = ""
+    conn.app.client_secret = ""
+    conn.app.save()
     r = _ask(runner, _turn(echo, runner))
     assert r.status_code == 409 and r.json()["error"] == "not_configured"
 
@@ -244,7 +246,8 @@ def test_turn_connections_lists_own_and_granted_never_the_initiators(eva, echo, 
 
 
 def test_turn_connections_skips_a_provider_no_longer_registered(echo, runner, operator):
-    Connection.objects.create(provider="retired", account_id="x", agent=echo, connected_by=operator)
+    Connection.objects.create(provider="retired", account_id="x", agent=echo, connected_by=operator,
+                              app=sf_app(echo.workspace, provider="retired"))
     assert _list(runner, _turn(echo, runner)).json() == {"providers": []}
 
 

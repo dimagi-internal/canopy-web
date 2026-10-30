@@ -11,8 +11,12 @@ from apps.api.errors import ProblemError
 from . import services
 
 # code -> (status, title). 409: the caller's state needs changing (connect,
-# reconnect, disconnect one); 502/503: the provider, not the caller.
+# reconnect, disconnect one); 400: what the caller sent; 502/503: the provider,
+# not the caller.
 _PROBLEMS: dict[str, tuple[int, str]] = {
+    "invalid_app": (400, "Invalid app settings"),
+    "app_locked": (409, "App in use"),
+    "wrong_account": (409, "Wrong account"),
     "not_configured": (409, "Not set up"),
     "not_connected": (409, "Not connected"),
     "reconnect_required": (409, "Reconnect required"),
@@ -20,19 +24,26 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "insufficient_scope": (409, "Missing permissions"),
     "own_connection": (409, "Cannot share this connection"),
     "not_grantable": (409, "Cannot share this connection"),
+    "not_usable": (409, "Cannot share this connection"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),
 }
 
 
-def problem_for(exc: services.ConnectionError, *, title: str, owner: str, **members) -> ProblemError:
+def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail: str | None = None,
+                **members) -> ProblemError:
     """The response for `exc`. `title` is the provider's display name; `owner` is
     whose connection it is, as a possessive ("Your", "eva's"). `members` add to
-    the body (`connect_url`, `accounts`). An unexpected code is a 502: it is
-    still the provider's or canopy's failure, never the caller's."""
+    the body (`connect_url`, `accounts`); `detail` replaces the standard
+    sentence when the caller knows more of the case. A code with no standard sentence
+    (`app_locked`, `invalid_app`: the service's message names what was refused)
+    uses the exception's message. An unexpected code is a 502: it is still the
+    provider's or canopy's failure, never the caller's."""
     status, heading = _PROBLEMS.get(exc.code, (502, "Provider error"))
-    detail = {
-        "not_configured": f"{title} is not set up on this deployment.",
+    detail = detail or {
+        "not_configured": f"{title} is not set up for this workspace.",
+        "wrong_account": f"That {title} account is not one {owner.lower() if owner == 'Your' else owner} "
+                         "connection may use; sign in with the right account.",
         "not_connected": f"{owner} {title} is not connected.",
         "reconnect_required": f"{owner} {title} connection no longer works; connect it again.",
         "ambiguous": f"{owner} {title} has more than one account connected; disconnect all but one.",

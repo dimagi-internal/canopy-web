@@ -35,26 +35,26 @@ from apps.events.models import Event
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import SF, FakeSF, _resp, _token_body
+from tests.fixtures.connections import CLIENT_SECRET, FakeSF, _resp, _token_body, sf_app
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salesforce_configured")]
+pytestmark = pytest.mark.django_db
 
 VOCABULARY = {
     "connected": logging.INFO, "disconnected": logging.INFO, "granted": logging.INFO,
     "grant_revoked": logging.INFO, "token_issued": logging.INFO,
     "reconnect_required": logging.WARNING, "provider_error": logging.WARNING,
-    "revoke_failed": logging.WARNING,
+    "revoke_failed": logging.WARNING, "app_configured": logging.INFO, "app_removed": logging.INFO,
 }
 BASE_KEYS = ("connection", "provider", "owner", "account_label", "by")
 
 
 def _connect_in_browser(client, secrets, **agent):
-    start = reverse("connections_start", args=["salesforce"])
+    start = reverse("connections_start", args=["salesforce", "w"])
     resp = client.post(start, agent) if agent else client.get(start)
     state = parse_qs(urlparse(resp["Location"]).query)["state"][0]
     secrets += [state, client.session[services.SESSION_KEY][state]["verifier"]]
     with FakeSF():
-        landed = client.get(reverse("connections_callback", args=["salesforce"]),
+        landed = client.get(reverse("connections_callback", args=["salesforce", "w"]),
                             {"code": "c0de-secret", "state": state})
     assert "status=connected" in landed["Location"]
 
@@ -64,6 +64,7 @@ def world():
     user = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     ws = Workspace.objects.create(slug="w", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.EDITOR)
+    sf_app(ws)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=user)
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
     for a in (eva, echo):
@@ -76,19 +77,19 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     caplog.set_level(logging.DEBUG)
     caplog.set_level(logging.DEBUG, logger="apps")      # the settings quiet `apps` below WARNING
     secrets = ["00D!access_1", "5Aep_refresh_1", "00D!rotated", "5Aep_rotated", "c0de-secret",
-               SF["SALESFORCE_CLIENT_SECRET"]]
+               CLIENT_SECRET]
     browser = Client()
     browser.force_login(user)
 
     # Connects that fail: the provider refused at authorize; then no refresh token.
-    start = reverse("connections_start", args=["salesforce"])
+    start = reverse("connections_start", args=["salesforce", "w"])
     state = parse_qs(urlparse(browser.get(start)["Location"]).query)["state"][0]
     secrets.append(state)
-    browser.get(reverse("connections_callback", args=["salesforce"]), {"error": "server_error", "state": state})
+    browser.get(reverse("connections_callback", args=["salesforce", "w"]), {"error": "server_error", "state": state})
     state = parse_qs(urlparse(browser.get(start)["Location"]).query)["state"][0]
     secrets += [state, browser.session[services.SESSION_KEY][state]["verifier"]]
     with FakeSF(token=[_resp(body=_token_body(refresh_token=None))]):
-        browser.get(reverse("connections_callback", args=["salesforce"]), {"code": "c0de-secret", "state": state})
+        browser.get(reverse("connections_callback", args=["salesforce", "w"]), {"code": "c0de-secret", "state": state})
 
     # A person: connect, a cached and a refreshed (rotating) CLI token, disconnect.
     _connect_in_browser(browser, secrets)

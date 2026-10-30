@@ -182,6 +182,12 @@ EXCLUDED: dict[str, str] = {
     "turn_connection_token": _RUNNER,
     "turn_connections": _RUNNER,
     "my_connection_token": "a person's own token, for their CLI — never into a model's context",
+    # A workspace's OAuth client for connections: the body carries the client
+    # secret, which a tool call would put in a model's context; removing it
+    # disconnects a whole workspace. Reading it (never the secret) stays a tool.
+    "configure_connection_app": "carries an OAuth client secret — set it in the web app, never through a model",
+    "remove_connection_app": "disconnects every person's and agent's connection made with the workspace's "
+                             "app, and an MCP call skips the passkey step-up — remove it in Settings",
     # A login as a turn's agent: only the box's own runner token is accepted (a
     # person's token, and so any MCP call, is refused), so as a tool it could only fail.
     "turn_agent_token": _RUNNER,

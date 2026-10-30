@@ -1,4 +1,4 @@
-"""The Connection model and the provider registry."""
+"""The Connection and ConnectionApp models and the provider registry."""
 from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse
@@ -7,20 +7,14 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from django.test import override_settings
 
 from apps.agents.models import Agent
 from apps.connections import providers
-from apps.connections.models import Connection, ConnectionGrant
+from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
 from apps.workspaces.models import Workspace
+from tests.fixtures.connections import sf_app
 
 pytestmark = pytest.mark.django_db
-
-SF = {
-    "SALESFORCE_CLIENT_ID": "3MVG-client",
-    "SALESFORCE_CLIENT_SECRET": "shh",
-    "SALESFORCE_LOGIN_URL": "https://login.salesforce.com",
-}
 
 
 @pytest.fixture
@@ -29,14 +23,24 @@ def user():
 
 
 @pytest.fixture
-def agent(user):
-    ws = Workspace.objects.create(slug="w", display_name="W", created_by=user)
+def ws(user):
+    return Workspace.objects.create(slug="w", display_name="W", created_by=user)
+
+
+@pytest.fixture
+def agent(ws):
     return Agent.objects.create(slug="eva", name="Eva", workspace=ws)
+
+
+@pytest.fixture(autouse=True)
+def app(ws):
+    return sf_app(ws)
 
 
 def _conn(**kw):
     kw.setdefault("provider", "salesforce")
     kw.setdefault("account_id", "00D1/005A")
+    kw.setdefault("app", ConnectionApp.objects.get(workspace_id="w", provider="salesforce"))
     return Connection(**kw)
 
 
@@ -90,27 +94,60 @@ def test_grant_only_for_agent_owned_connections(user, agent):
         ConnectionGrant(connection=owned, agent=echo, granted_by=user).save()
 
 
-def test_registry_returns_salesforce_and_rejects_unknown():
-    sf = providers.get("salesforce")
-    assert sf.name == "salesforce"
-    assert providers.ALL["salesforce"] is sf
-    assert sf.rotates_refresh_token is True
+def test_registry_returns_salesforce_and_rejects_unknown(app):
+    cls = providers.get_class("salesforce")
+    assert cls.name == "salesforce" and cls.title == "Salesforce"
+    assert providers.CLASSES["salesforce"] is cls
+    assert cls.rotates_refresh_token is True
+    bound = providers.for_app(app)
+    assert isinstance(bound, cls) and bound.app is app
     with pytest.raises(providers.UnknownProvider):
-        providers.get("nope")
+        providers.get_class("nope")
 
 
-def test_salesforce_not_configured_without_settings():
-    sf = providers.get("salesforce")
-    with override_settings(SALESFORCE_CLIENT_ID="", SALESFORCE_CLIENT_SECRET=""):
-        assert sf.is_configured() is False
-    with override_settings(**SF):
-        assert sf.is_configured() is True
+def test_salesforce_not_configured_without_an_app_or_its_secret(app):
+    cls = providers.get_class("salesforce")
+    assert cls().is_configured() is False                       # no app at all
+    assert providers.for_app(app).is_configured() is True
+    app.client_secret = ""
+    assert providers.for_app(app).is_configured() is False
+    app.client_secret, app.client_id = "shh", ""
+    assert providers.for_app(app).is_configured() is False
 
 
-def test_salesforce_authorize_url_shape():
-    sf = providers.get("salesforce")
-    with override_settings(**{**SF, "SALESFORCE_LOGIN_URL": "https://test.salesforce.com"}):
-        url = sf.authorize_url("st8", "https://canopy.test/cb", "chal")
+def test_app_secret_is_stored_encrypted(app):
+    app.refresh_from_db()
+    assert app.client_secret == "shh" and "shh" not in app.client_secret_enc
+    app.client_secret_enc = "garbage"
+    assert app.client_secret == ""                              # unreadable reads as missing
+
+
+def test_one_app_per_workspace_and_provider(ws, app):
+    with pytest.raises(IntegrityError), transaction.atomic():
+        ConnectionApp.objects.create(workspace=ws, provider="salesforce", client_id="other")
+
+
+def test_deleting_an_app_takes_its_connections_and_grants(user, agent, app):
+    owned = _conn(agent=agent, connected_by=user)
+    owned.save()
+    _conn(user=user, connected_by=user).save()
+    echo = Agent.objects.create(slug="echo", name="Echo", workspace=agent.workspace)
+    ConnectionGrant(connection=owned, agent=echo, granted_by=user).save()
+    app.delete()
+    assert not Connection.objects.exists() and not ConnectionGrant.objects.exists()
+
+
+def test_the_same_account_through_two_workspaces_apps_is_two_rows(user):
+    other = Workspace.objects.create(slug="w2", display_name="W2", created_by=user)
+    _conn(user=user, connected_by=user).save()
+    _conn(user=user, connected_by=user, app=sf_app(other)).save()
+    assert Connection.objects.filter(user=user, account_id="00D1/005A").count() == 2
+
+
+def test_salesforce_authorize_url_shape(app):
+    app.options = {**app.options, "login_url": "https://test.salesforce.com"}
+    sf = providers.for_app(app)
+    url = sf.authorize_url("st8", "https://canopy.test/cb", "chal")
     p = urlparse(url)
     assert f"{p.scheme}://{p.netloc}{p.path}" == "https://test.salesforce.com/services/oauth2/authorize"
     q = {k: v[0] for k, v in parse_qs(p.query).items()}

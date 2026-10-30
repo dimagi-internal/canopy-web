@@ -41,6 +41,7 @@ import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { WorkspaceEmailPage } from '@/pages/WorkspaceEmailPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
+import { WorkspaceConnectionAppsSection } from '@/components/settings/ConnectionAppsPanel'
 import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
 import { WorkspaceAnalyticsPage } from './pages/health/WorkspaceAnalyticsPage'
@@ -372,6 +373,8 @@ export const routeTable: RouteObject[] = [
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'email', element: <WorkspaceEmailPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
+          // The OAuth apps (Salesforce, Google) the workspace's people and agents connect with.
+          { path: 'connections', element: <WorkspaceConnectionAppsSection /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
           { path: 'retention', element: <WorkspaceRetentionPage /> },
           { path: 'tasks', element: <WorkspaceTaskSettingsPage /> },
