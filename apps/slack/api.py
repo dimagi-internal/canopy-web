@@ -14,6 +14,7 @@ from ninja.errors import HttpError
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.canopy_sessions import channel_review
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
@@ -107,14 +108,16 @@ def _out(ws: Workspace) -> dict:
         },
         "channel_ingest": {"enabled": bool(link and link.channel_ingest_enabled),
                            "allowed": [_allow_out(a) for a in SlackChannelIngestAllow.objects
-                                       .select_related("agent", "added_by").filter(workspace=ws)
+                                       .select_related("agent", "added_by", "installation").filter(workspace=ws)
                                        .order_by("channel_name", "agent__slug")]},
     }
 
 
 def _allow_out(a: SlackChannelIngestAllow) -> dict:
     return {"id": str(a.pk), "agent": a.agent.slug, "channel": a.channel_id, "channel_name": a.channel_name,
-            "follow": a.follow, "note": a.note, "added_by_email": getattr(a.added_by, "email", "") or "",
+            "follow": a.follow,
+            "review_sessions": channel_review.is_on(a.agent, slack_team=a.installation.team_id,
+                                                    channel_id=a.channel_id), "note": a.note, "added_by_email": getattr(a.added_by, "email", "") or "",
             "added_at": a.added_at.isoformat() if a.added_at else ""}
 
 
@@ -194,7 +197,7 @@ def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackCha
         raise HttpError(404, f"agent '{payload.agent}' is not in '{ws.slug}'")
     try:
         ingest.allow(workspace=ws, agent=agent, channel=payload.channel, follow=payload.follow,
-                     note=payload.note, by=request.user)
+                     note=payload.note, by=request.user, review_sessions=payload.review_sessions)
     except ingest.IngestError as e:
         raise HttpError(e.status, str(e)) from e
     return _out(ws)

@@ -47,6 +47,8 @@ class SlackChannelAllowOut(StrictModel):
     channel: str
     channel_name: str
     follow: bool
+    # Whether the agent also reviews the canopy sessions that live in this channel.
+    review_sessions: bool
     note: str
     added_by_email: str
     added_at: str
@@ -56,6 +58,9 @@ class SlackChannelAllowIn(StrictModel):
     agent: str = Field(description="The agent's slug (an agent of this workspace).")
     channel: str = Field(description="The Slack channel: its id (C… or G…) or #name.")
     follow: bool = Field(default=False, description="Also allow following new messages, not only one read.")
+    review_sessions: bool = Field(default=False, description=(
+        "Also let the agent read the canopy sessions that live in this channel, read-only "
+        "(what people shared there to be helped). Not a coaching grant: nothing outside the channel."))
     note: str = Field(default="", max_length=500, description="Why — shown on the settings page and in the log.")
 
 

@@ -14539,7 +14539,9 @@ export interface paths {
          *     is on, by id or name — `?runner=<name>&state=active` is every open session on
          *     a box, what `POST /transfer-all` moves), `of_user` (one person's own sessions,
          *     by canopy user id: the chats they started and the runner sessions on their own
-         *     boxes — how a coach lists the sessions of someone who let it review them). To reach EVERY session
+         *     boxes — how a coach lists the sessions of someone who let it review them),
+         *     `slack_channel` (a Slack channel id: the sessions that live in it — how an agent
+         *     an admin gave that channel to lists what it may review). To reach EVERY session
          *     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
          */
         readonly get: operations["canopy_sessions_list_sessions"];
@@ -18898,6 +18900,8 @@ export interface components {
             readonly channel_name: string;
             /** Follow */
             readonly follow: boolean;
+            /** Review Sessions */
+            readonly review_sessions: boolean;
             /** Note */
             readonly note: string;
             /** Added By Email */
@@ -19043,6 +19047,12 @@ export interface components {
              * @default false
              */
             readonly follow: boolean;
+            /**
+             * Review Sessions
+             * @description Also let the agent read the canopy sessions that live in this channel, read-only (what people shared there to be helped). Not a coaching grant: nothing outside the channel.
+             * @default false
+             */
+            readonly review_sessions: boolean;
             /**
              * Note
              * @description Why — shown on the settings page and in the log.
@@ -62615,6 +62625,7 @@ export interface operations {
                 readonly until?: string | null;
                 readonly runner?: string;
                 readonly of_user?: number | null;
+                readonly slack_channel?: string;
             };
             readonly header?: never;
             readonly path?: never;

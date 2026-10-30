@@ -33,6 +33,7 @@ export function SlackSettingsPage(): JSX.Element {
   const [allowChannel, setAllowChannel] = useState('')
   const [allowAgent, setAllowAgent] = useState('')
   const [allowNote, setAllowNote] = useState('')
+  const [allowReview, setAllowReview] = useState(false)
 
   const load = useCallback(() => {
     getSlackConfig(workspace)
@@ -275,8 +276,10 @@ export function SlackSettingsPage(): JSX.Element {
               Add a channel and the agent that may read it. Nothing is read until someone types{' '}
               <code>/&lt;agent&gt; read-channel &lt;ask&gt;</code> in that channel: canopy then reads everything since
               the agent&apos;s last read there (all of it, the first time) and the agent answers in a thread. The agent
-              can&apos;t start a read itself. Removing a channel deletes what was read. Owners and admins can change
-              this list.
+              can&apos;t start a read itself. Tick the box to also let the agent read the canopy sessions that live in the
+              channel, read-only, so people who post there needn&apos;t each opt in to coaching; adding the same
+              channel and agent again updates it. Removing a channel deletes what was read and takes the sessions
+              back. Owners and admins can change this list.
             </p>
             {config.channel_ingest.allowed.length === 0 ? (
               <p className="mt-1 text-[12px] text-muted-foreground">None yet.</p>
@@ -287,6 +290,7 @@ export function SlackSettingsPage(): JSX.Element {
                     <span className="text-foreground">
                       <b>#{a.channel_name || a.channel}</b> for <b>{a.agent}</b>
                       {a.follow ? ' — read and follow' : ''}
+                      {a.review_sessions ? ' — and reviews the canopy sessions shared in it' : ''}
                       <span className="block text-[11px] text-muted-foreground">
                         {a.note ? `${a.note} · ` : ''}added by {a.added_by_email || 'someone'}{' '}
                         {a.added_at ? relativeAge(a.added_at) : ''}
@@ -318,10 +322,17 @@ export function SlackSettingsPage(): JSX.Element {
                 const agent = allowAgent.trim()
                 if (!channel || !agent) return
                 void act(async () => {
-                  await allowSlackChannel(workspace, { agent, channel, follow: false, note: allowNote.trim() })
+                  await allowSlackChannel(workspace, {
+                    agent,
+                    channel,
+                    follow: false,
+                    note: allowNote.trim(),
+                    review_sessions: allowReview,
+                  })
                   setAllowChannel('')
                   setAllowNote('')
-                  return `${agent} may now read ${channel}.`
+                  setAllowReview(false)
+                  return `${agent} may now read ${channel}${allowReview ? ' and review the canopy sessions shared in it' : ''}.`
                 })
               }}
             >
@@ -346,6 +357,15 @@ export function SlackSettingsPage(): JSX.Element {
                 aria-label="Why"
                 className="w-48 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
               />
+              <label className="flex items-center gap-1.5 text-[12px] text-foreground">
+                <input
+                  type="checkbox"
+                  checked={allowReview}
+                  onChange={(e) => setAllowReview(e.target.checked)}
+                  aria-label="Also review the canopy sessions shared in this channel"
+                />
+                Also review the canopy sessions shared in this channel (read-only)
+              </label>
               <button
                 type="submit"
                 disabled={busy || !allowChannel.trim() || !allowAgent.trim()}
