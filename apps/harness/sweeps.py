@@ -20,6 +20,7 @@ from .drills import expire_stale_drills
 from .models import FleetHold, Turn
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 from .services import wake_due_runners as _wake_due_runners
+from .waiting import note_waiting_turns
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,7 @@ def register() -> None:
 
     ticks.register("harness.queue_sweeps", queue_sweeps, queue_sweeps_every_s)
     ticks.register("harness.wake_due_runners", wake_due_runners, queue_sweeps_every_s)
+    ticks.register("harness.note_waiting_turns", note_waiting_turns, 60)
     ticks.register("harness.sensitive_turn_deadline", expire_unrun_sensitive_turns, 60)
     ticks.register("harness.retire_mail_anchors", retire_mail_anchors, mail_anchor_sweep_every_s)
     ticks.register("harness.release_held_mail", release_held_mail, 60)

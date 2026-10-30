@@ -159,6 +159,13 @@ class Runner(models.Model):
     # /unpause and /pause-without-`until` both cancel it.
     unpause_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    # When this runner last ASKED FOR WORK (`claim_next_turn`), as opposed to merely
+    # heartbeating. The two differ: a laptop's daemon can heartbeat for hours while
+    # the app that actually takes turns is asleep or stuck, and from the server an
+    # `online` runner then looks like one that is about to pick a queued turn up
+    # (2026-10-30: a turn pinned to an "online, ready" laptop sat 5h16m). Written at
+    # most every POLL_RECORD_EVERY_S. Null = never since this column existed.
+    last_claim_poll_at = models.DateTimeField(null=True, blank=True)
     # A FLEET member (`apps/harness/fleets.py`): one instance of an EC2 Auto Scaling
     # group a person approved once, joined on AWS's word that the instance is the
     # group's, never by a passkey per box. Interchangeable: canopy-web grows and
