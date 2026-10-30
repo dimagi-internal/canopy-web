@@ -49,8 +49,10 @@ export function roleWord(role: string | null | undefined): string {
   return role.charAt(0).toUpperCase() + role.slice(1)
 }
 
-/** Why a person has the role they have, from the roster row's `source`. */
-export function sourceWords(r: Pick<AgentAccessRowOut, 'source' | 'role'>): string {
+/** Why a person has the role they have: the server's own words (`via`) when it has them,
+ *  else from the roster row's `source`. */
+export function sourceWords(r: Pick<AgentAccessRowOut, 'source' | 'role' | 'via'>): string {
+  if (r.via && r.source.startsWith('list:')) return r.via
   const s = r.source
   if (s === 'owner') return 'Owns this agent'
   if (s === 'admin') return 'Is an agent admin'
@@ -61,13 +63,3 @@ export function sourceWords(r: Pick<AgentAccessRowOut, 'source' | 'role'>): stri
   if (s.startsWith('door:')) return `Through the "${s.slice(5)}" door`
   return r.role ? 'Set on this agent' : 'No line names them'
 }
-
-/** Where no agent's own `roles` payload is at hand (a workspace's defaults): the same ladder,
- *  in the same words the server sends. */
-export const DEFAULT_ROLES: AccessRoleOut[] = [
-  { role: 'owner', can: ['ask', 'use what it publishes', 'run the whole agent', 'change its skills and capabilities', 'configure it', 'transfer or delete it'] },
-  { role: 'admin', can: ['ask', 'use what it publishes', 'run the whole agent', 'change its skills and capabilities', 'configure it'] },
-  { role: 'editor', can: ['ask', 'use what it publishes', 'run the whole agent'] },
-  { role: 'user', can: ['ask', 'use what it publishes'] },
-  { role: 'viewer', can: ['ask'] },
-]

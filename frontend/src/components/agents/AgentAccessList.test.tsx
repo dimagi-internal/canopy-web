@@ -65,9 +65,9 @@ const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
 
 const ROSTER = {
   members: [
-    { user_id: 1, email: 'op@dimagi.com', name: 'Op', workspace_role: 'editor', agent_role: 'owner', basis: 'Owns this agent', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: false, may_request_auto: false, role: 'owner', source: 'owner' },
-    { user_id: 4, email: 'ed@dimagi.com', name: 'Ed', workspace_role: 'editor', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: true, may_request_auto: false, role: 'editor', source: 'workspace-editor' },
-    { user_id: 6, email: 'no@partner.org', name: 'No', workspace_role: 'viewer', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'none', capabilities: [], full_rule: null, manual_only: false, may_request_auto: false, role: null, source: '' },
+    { user_id: 1, email: 'op@dimagi.com', name: 'Op', workspace_role: 'editor', agent_role: 'owner', basis: 'Owns this agent', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: false, may_request_auto: false, role: 'owner', source: 'owner', via: 'Owns this agent' },
+    { user_id: 4, email: 'ed@dimagi.com', name: 'Ed', workspace_role: 'editor', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: true, may_request_auto: false, role: 'editor', source: 'workspace-editor', via: 'The role this workspace gives an editor' },
+    { user_id: 6, email: 'no@partner.org', name: 'No', workspace_role: 'viewer', agent_role: 'member', basis: 'Workspace member', granted_at: null, access: 'none', capabilities: [], full_rule: null, manual_only: false, may_request_auto: false, role: null, source: '', via: '' },
   ],
   outsiders: [],
   interface_published: false,
