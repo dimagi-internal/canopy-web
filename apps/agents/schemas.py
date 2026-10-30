@@ -3597,3 +3597,20 @@ class AgentDefaultsOut(StrictModel):
     roles: list[AccessRoleOut]
     can_edit: bool = False          # a workspace admin
     can_give_editor: bool = False   # the workspace owner: a default that lets people run every agent
+
+
+class AccessConversionLineOut(StrictModel):
+    who: str
+    role: str
+    manual_only: bool = False
+
+
+class AccessConversionOut(StrictModel):
+    """What moving an agent onto its access list would do, and whether it changes anyone's access."""
+
+    already: bool                       # it is on the list already: nothing to do
+    ok: bool                            # safe to apply: every rule translated, every probe answers as before
+    probed: int                         # how many (person, door) questions were asked both ways
+    lines: list[AccessConversionLineOut]
+    unsupported: list[str]              # rules that have no line, and so keep the agent on its old rules
+    differences: list[str]              # a (person, door) the new answer would change; empty when ok
