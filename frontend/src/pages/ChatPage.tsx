@@ -317,7 +317,7 @@ function ChatPageInner({
   const historySlot = !paging.historyUnavailable ? undefined : (
     <div className="flex flex-col items-center gap-1 border-b border-border py-2">
       <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-1.5 text-[12px] text-warning">
-        Full history unavailable — runner offline. Showing the latest messages.
+        Full history unavailable — {paging.historyError}. Showing the latest messages.
       </p>
     </div>
   )

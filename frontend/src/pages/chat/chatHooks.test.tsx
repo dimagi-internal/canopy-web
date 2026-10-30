@@ -182,7 +182,16 @@ describe('useTranscriptPaging', () => {
     const { result } = renderHook(() => useTranscriptPaging('s1', vi.fn()))
     await act(async () => { await result.current.loadFull() })
     expect(result.current.historyUnavailable).toBe(true)
+    expect(result.current.historyError).toBe('runner offline')
     expect(result.current.loadingFull).toBe(false)
+  })
+
+  it('reports a failed backfill as itself, not as the runner being offline', async () => {
+    chat.requestBackfill.mockRejectedValue(new Error('An unexpected error occurred.'))
+    const { result } = renderHook(() => useTranscriptPaging('s1', vi.fn()))
+    await act(async () => { await result.current.loadFull() })
+    expect(result.current.historyUnavailable).toBe(true)
+    expect(result.current.historyError).toBe('An unexpected error occurred.')
   })
 
   it('reads the full transcript once after the backfill', async () => {

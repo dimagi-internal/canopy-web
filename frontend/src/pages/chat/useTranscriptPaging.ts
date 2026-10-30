@@ -18,6 +18,9 @@ import { backfillAction, restToKitMessage } from '../chatPageLogic'
 export const BACKFILL_POLL_MS = 600
 export const BACKFILL_TIMEOUT_MS = 30_000
 
+/** `historyError` when the server says no reachable runner is bound. */
+export const RUNNER_OFFLINE = 'runner offline'
+
 /** The whole server transcript ("Load all messages") and the full backfill
  *  from the runner ("Load full session"). Whether the server holds more than
  *  the tail is seeded from the REST detail via `seed` — the WS `session.state`
@@ -29,10 +32,15 @@ export function useTranscriptPaging(
   const [hasMoreBefore, setHasMoreBefore] = useState(false)
   const [loadingAll, setLoadingAll] = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
-  const [historyUnavailable, setHistoryUnavailable] = useState(false)
+  // Why the full history isn't on screen, or null when nothing went wrong. Only
+  // the server's `unavailable` answer means the runner is unreachable; a refused
+  // or failed request is reported as itself. Every failure used to read
+  // "runner offline", which is false on a running session (2026-10-30: a 500
+  // on a live jj-mbp-cdp session showed it under a green "running").
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
   useEffect(() => {
-    setHistoryUnavailable(false)
+    setHistoryError(null)
   }, [sessionId])
 
   const seed = useCallback((m: Pick<ChatSessionDetail, 'has_more_before'>) => {
@@ -68,14 +76,14 @@ export function useTranscriptPaging(
     // See loadAll: capture the session this call was made for so a
     // stale response can never apply to a different session.
     const requestedId = sessionId
-    setHistoryUnavailable(false)
+    setHistoryError(null)
     setLoadingFull(true)
     try {
       const res = await requestBackfill(requestedId)
       if (requestedId !== sessionId) return
       const action = backfillAction(res.status)
       if (action === 'unavailable') {
-        setHistoryUnavailable(true)
+        setHistoryError(RUNNER_OFFLINE)
         return
       }
       if (action === 'reload-after-delay') {
@@ -104,8 +112,10 @@ export function useTranscriptPaging(
       if (requestedId !== sessionId) return
       prependMessages(full.messages.map(restToKitMessage))
       setHasMoreBefore(false)
-    } catch {
-      if (requestedId === sessionId) setHistoryUnavailable(true)
+    } catch (err) {
+      if (requestedId === sessionId) {
+        setHistoryError(err instanceof Error && err.message ? err.message : 'the request failed')
+      }
     } finally {
       if (requestedId === sessionId) setLoadingFull(false)
     }
@@ -115,7 +125,8 @@ export function useTranscriptPaging(
     hasMoreBefore,
     loadingAll,
     loadingFull,
-    historyUnavailable,
+    historyUnavailable: historyError !== null,
+    historyError,
     seed,
     loadAll,
     loadFull,
