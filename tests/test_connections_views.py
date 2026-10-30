@@ -166,7 +166,8 @@ def test_a_persons_start_uses_the_named_workspaces_app(user, ws):
         assert q["redirect_uri"][0] == f"http://testserver/auth/connections/salesforce/{slug}/callback/"
     ws.connection_apps.all().delete()
     assert _landing(_start(c))[1]["reason"] == "not_configured"     # w names no app now
-    assert "salesforce.com" in c.get(reverse("connections_start", args=["salesforce", "w2"]))["Location"]
+    location = c.get(reverse("connections_start", args=["salesforce", "w2"]))["Location"]
+    assert urlsplit(location).hostname == "login.salesforce.com"
 
 
 def test_unknown_provider_is_404(client):
