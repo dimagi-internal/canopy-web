@@ -21,6 +21,7 @@ import {
 } from '@/api/workspaces'
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
+import { WorkspaceAgentDefaults } from '@/components/agents/WorkspaceAgentDefaults'
 import { scopedPath } from '@/lib/scopedLinks'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
@@ -285,6 +286,8 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           )}
         </div>
       )}
+
+      <WorkspaceAgentDefaults workspace={slug} />
 
       <div className="mb-8">
         <WorkbenchSubHeader title="Pending invites" count={outstandingInvites.length} />

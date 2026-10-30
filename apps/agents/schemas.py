@@ -701,6 +701,15 @@ class AgentAccessRowOut(StrictModel):
     manual_only: bool = False
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False
+    # WHERE they stand on the agent's role ladder (owner | admin | editor | user | viewer;
+    # null when the agent lets them in nowhere) and what put them there (see
+    # `AccessListOut`). `agent_role` above is the older three-word view and stays for
+    # readers that have not moved.
+    role: Literal["owner", "admin", "editor", "user", "viewer"] | None = None
+    source: str = ""
+    # What put them there, in words ("Everyone in dimagi", "Anyone at @dimagi.com (verified)",
+    # "Owns the workspace"); "" when it is just the role the workspace gives an editor.
+    via: str = ""
 
 
 class AgentOutsiderRuleOut(StrictModel):
@@ -3509,3 +3518,99 @@ class ProjectProgressOut(StrictModel):
 
 AgentProjectDetailOut.model_rebuild()
 AgentDetailOut.model_rebuild()
+
+
+# ---- The access list (docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md) ----
+
+class AccessLineIn(StrictModel):
+    """One line to add: who, and what role they get."""
+
+    kind: Literal["person", "workspace", "domain", "contact"]
+    role: Literal["viewer", "user", "editor"]
+    user_id: int | None = None
+    email: str | None = None            # a person, by the address on their canopy account
+    workspace: str = ""                 # kind=workspace: everyone in this workspace
+    at_least: str = ""                  # ... who hold at least this workspace role ("" = any)
+    domain: str = ""                    # kind=domain/contact, or narrowing a workspace line
+    verified: bool = True
+    manual_only: bool = False
+    note: str = Field(default="", max_length=300)
+
+
+class AccessLinePatch(StrictModel):
+    role: Literal["viewer", "user", "editor"] | None = None
+    manual_only: bool | None = None
+    note: str | None = Field(default=None, max_length=300)
+
+
+class AccessLineOut(StrictModel):
+    id: int
+    #: "agent" (this agent's own line) or "workspace" (a default it inherits from `scope_workspace`).
+    scope: Literal["agent", "workspace"]
+    scope_workspace: str | None = None
+    kind: str
+    who: str
+    role: str
+    user_id: int | None = None
+    subject_workspace: str | None = None
+    at_least: str = ""
+    domain: str = ""
+    verified: bool = True
+    manual_only: bool = False
+    note: str = ""
+    granted_by_email: str | None = None
+    granted_at: dt.datetime | None = None
+    can_edit: bool = False
+
+
+class AccessImplicitOut(StrictModel):
+    """A role nobody wrote on the list: it comes with the agent or the workspace."""
+
+    who: str
+    role: str
+    why: str
+
+
+class AccessRoleOut(StrictModel):
+    role: str
+    can: list[str]
+
+
+class AccessListOut(StrictModel):
+    uses_access_list: bool
+    inherit_workspace_defaults: bool
+    lines: list[AccessLineOut]
+    implicit: list[AccessImplicitOut]
+    roles: list[AccessRoleOut]
+    #: Can the caller change this agent's list (an agent admin)?
+    can_edit: bool = False
+
+
+class AccessInheritIn(StrictModel):
+    inherit: bool
+
+
+class AgentDefaultsOut(StrictModel):
+    """A workspace's default lines, the roles they can give, and what the caller may do."""
+
+    lines: list[AccessLineOut]
+    roles: list[AccessRoleOut]
+    can_edit: bool = False          # a workspace admin
+    can_give_editor: bool = False   # the workspace owner: a default that lets people run every agent
+
+
+class AccessConversionLineOut(StrictModel):
+    who: str
+    role: str
+    manual_only: bool = False
+
+
+class AccessConversionOut(StrictModel):
+    """What moving an agent onto its access list would do, and whether it changes anyone's access."""
+
+    already: bool                       # it is on the list already: nothing to do
+    ok: bool                            # safe to apply: every rule translated, every probe answers as before
+    probed: int                         # how many (person, door) questions were asked both ways
+    lines: list[AccessConversionLineOut]
+    unsupported: list[str]              # rules that have no line, and so keep the agent on its old rules
+    differences: list[str]              # a (person, door) the new answer would change; empty when ok

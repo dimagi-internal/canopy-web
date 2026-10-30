@@ -834,6 +834,11 @@ MAIL_MAX_ATTACHMENT_BYTES = env.int("MAIL_MAX_ATTACHMENT_BYTES", default=10 * 10
 # belong to Dimagi/AWS, and a tenant must never be able to alter or delete them.
 MAIL_RESERVED_DOMAINS = env.list(
     "MAIL_RESERVED_DOMAINS", default=["dimagi.com", "dimagi-ai.com", "amazonses.com", "amazonaws.com"])
+# Domains whose addresses are for agents only: nobody signs in to them as themselves. An
+# agent's own canopy login may be created by its admin (not only a workspace admin) when its
+# address is at one of these — apps/agents/agent_login.py. dimagi-ai.com is the agents' Google
+# domain; dimagi.ai is the one canopy hosts their mailboxes on.
+AGENT_LOGIN_DOMAINS = env.list("AGENT_LOGIN_DOMAINS", default=["dimagi-ai.com", "dimagi.ai"])
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
 # Who is emailed when someone sends suggested edits on a review (apps/reviews/notify.py).
 # ACE runs the DDD loops that post these reviews, so it reads them for now; the person

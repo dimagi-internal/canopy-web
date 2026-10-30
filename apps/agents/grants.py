@@ -13,9 +13,11 @@ are not lines here yet: `access.decide` asks them first.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 
 from apps.workspaces import permissions as perms
@@ -69,7 +71,7 @@ def lines_for(agent) -> list[AgentGrant]:
     if agent.inherit_workspace_defaults and agent.workspace_id:
         chain = [agent.workspace_id, *agent.workspace.ancestor_slugs()]
         scope |= Q(agent__isnull=True, workspace_id__in=chain)
-    return list(AgentGrant.objects.filter(scope).select_related("user"))
+    return list(AgentGrant.objects.filter(scope).select_related("user", "granted_by"))
 
 
 def lines_for_many(agents) -> dict[int, list[AgentGrant]]:
@@ -124,3 +126,78 @@ def resolve(agent, asker: Asker, lines: list[AgentGrant] | None = None) -> Resol
     found.sort(key=lambda ln: -roles.rank(ln.role))
     top = [ln for ln in found if ln.role == found[0].role]
     return Resolution(found[0].role, manual_only=all(ln.manual_only for ln in top), lines=tuple(found))
+
+
+# --- editing the list -----------------------------------------------------------------
+
+class LineError(ValueError):
+    """A line the list refuses, with a message fit to show next to the form."""
+
+
+_DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
+#: Roles a person can ADD today. `admin` stays `Agent.is_admin` (owner, workspace owner,
+#: `AgentAdmin`); folding it into the list is the last step of the spec.
+ADDABLE = (roles.EDITOR, roles.USER, roles.VIEWER)
+#: Kinds whose members are identified only by an address a message can claim. They can open
+#: doors (viewer, user); they cannot run the whole agent — that takes a named person or a
+#: workspace's people. (Rules published before the list are carried over as they were.)
+ADDRESS_ONLY = (AgentGrant.DOMAIN, AgentGrant.CONTACT)
+
+
+def _person(actor, user_id, email):
+    User = get_user_model()
+    user = (User.objects.filter(pk=user_id).first() if user_id
+            else User.objects.filter(email__iexact=(email or "").strip(), is_active=True).first())
+    reach = wsvc.member_scope(actor)
+    if user is None or not (wsvc.user_workspace_slugs(user) & reach):
+        raise LineError("no such person among the workspaces you can see — they need a canopy account "
+                        "in one of them (or use an 'anyone at a domain' line)")
+    return user
+
+
+def check_line(actor, *, kind, role, user_id=None, email=None, workspace="", at_least="", domain="",
+               verified=True, scope_is_workspace=False):
+    """Validate one line a person is adding; returns the normalised field dict."""
+    if role not in ADDABLE:
+        raise LineError(f"role must be one of {list(ADDABLE)}; to make someone an admin of the agent, "
+                        "add them as an admin")
+    if kind in ADDRESS_ONLY and role == roles.EDITOR:
+        raise LineError("a line that names people only by their address can give viewer or user, not "
+                        "editor: name the person, or everyone in a workspace")
+    domain = (domain or "").strip().lower().lstrip("@")
+    fields: dict = {"kind": kind, "role": role, "domain": "", "at_least": "", "verified": True}
+    if kind == AgentGrant.PERSON:
+        fields["user"] = _person(actor, user_id, email)
+    elif kind == AgentGrant.WORKSPACE:
+        if workspace not in wsvc.member_scope(actor):
+            raise LineError(f"you are not in a workspace called {workspace!r}")
+        if at_least and not perms.is_role(at_least):
+            raise LineError(f"at_least must be a workspace role, not {at_least!r}")
+        if domain and not _DOMAIN.match(domain):
+            raise LineError(f"{domain!r} is not a domain")
+        fields.update(subject_workspace_id=workspace, at_least=at_least, domain=domain, verified=False)
+    elif kind in ADDRESS_ONLY:
+        if domain and not _DOMAIN.match(domain):
+            raise LineError(f"{domain!r} is not a domain")
+        if kind == AgentGrant.DOMAIN and not domain:
+            raise LineError("'anyone at a domain' needs the domain")
+        if not domain and not verified and kind == AgentGrant.DOMAIN:
+            raise LineError("an unverified line for any address would admit anyone")
+        fields.update(domain=domain, verified=bool(verified))
+    else:
+        raise LineError(f"unknown kind {kind!r}")
+    return fields
+
+
+def describe(line: AgentGrant) -> str:
+    """The line's `who`, in words."""
+    d = f" at @{line.domain}" if line.domain else ""
+    proof = " (verified)" if line.verified else ""
+    if line.kind == AgentGrant.PERSON:
+        return getattr(line.user, "email", "") or f"user {line.user_id}"
+    if line.kind == AgentGrant.WORKSPACE:
+        floor = f", {line.at_least} or above" if line.at_least else ""
+        return f"Everyone in {line.subject_workspace_id}{floor}{d}"
+    if line.kind == AgentGrant.DOMAIN:
+        return f"Anyone{d}{proof}"
+    return f"A known visitor or sender{d}{proof}"

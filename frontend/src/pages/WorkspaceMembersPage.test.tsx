@@ -58,6 +58,12 @@ vi.mock('@/auth/AuthProvider', () => ({
   }),
 }))
 
+vi.mock('@/components/agents/WorkspaceAgentDefaults', () => ({
+  WorkspaceAgentDefaults: ({ workspace }: { workspace: string }) => (
+    <div data-testid="agent-defaults-stub">{workspace}</div>
+  ),
+}))
+
 const { WorkspaceMembersPage } = await import('./WorkspaceMembersPage')
 
 function member(overrides: Partial<MemberOut> = {}): MemberOut {
@@ -114,6 +120,13 @@ describe('WorkspaceMembersPage', () => {
     expect(await screen.findByText('alice@dimagi.com')).toBeTruthy()
     expect(screen.getByText('carol@dimagi.com')).toBeTruthy()
     expect(screen.getByText('bob@example.com')).toBeTruthy()
+  })
+
+  it('shows the default access for agents for this workspace; what the caller may change is the server\'s to say', async () => {
+    listMembers.mockResolvedValue([member({})])
+    listInvites.mockResolvedValue([])
+    renderPage()
+    expect((await screen.findByTestId('agent-defaults-stub')).textContent).toBeTruthy()
   })
 
   it('puts the invite form directly under the members list, above pending invites', async () => {

@@ -108,10 +108,10 @@ def test_what_ace_says_about_staff_becomes_four_editor_lines(pop):
     lines = convert_access.translate(_agent(pop, "ace"))[0]
     got = sorted(ln.describe() for ln in lines if ln.role == roles.EDITOR and not ln.manual_only)
     assert got == [
-        "a known contact at @dimagi-associate.com (verified) -> editor",
-        "a known contact at @dimagi.com (verified) -> editor",
-        "everyone in connect at @dimagi-associate.com -> editor",
-        "everyone in connect at @dimagi.com -> editor",
+        "A known visitor or sender at @dimagi-associate.com (verified) -> editor",
+        "A known visitor or sender at @dimagi.com (verified) -> editor",
+        "Everyone in connect at @dimagi-associate.com -> editor",
+        "Everyone in connect at @dimagi.com -> editor",
     ]
 
 
@@ -169,7 +169,7 @@ def test_the_command_prints_a_dry_run_and_applies_only_on_request(pop):
     out = StringIO()
     call_command("convert_access", agent=["oolong"], stdout=out)
     text = out.getvalue()
-    assert "oolong: OK" in text and "a known contact at @dimagi.com (verified) -> viewer" in text
+    assert "oolong: OK" in text and "A known visitor or sender at @dimagi.com (verified) -> viewer" in text
     agent.refresh_from_db()
     assert agent.uses_access_list is False and not AgentGrant.objects.filter(agent=agent).exists()
     call_command("convert_access", agent=["oolong"], apply=True, stdout=StringIO())
