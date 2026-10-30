@@ -287,6 +287,8 @@ def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = MEMB
             return None
         link, _ = VaultLink.objects.update_or_create(vault=vault, kind=VaultLink.AGENT, agent=agent,
                                                      defaults={"role": role, "created_by": by})
+        # Changing a link's role can demote people it brought in: the vault must still keep an admin.
+        _require_an_admin(vault)
     return link
 
 

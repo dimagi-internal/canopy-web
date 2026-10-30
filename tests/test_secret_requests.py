@@ -338,6 +338,27 @@ def test_an_answered_or_expired_request_is_closed(f):
     assert res.status_code == 409 and res.json()["error"] == "request_closed"
 
 
+def test_a_value_sealed_to_a_stranger_is_refused_so_it_cannot_show_as_set_and_open_for_no_one(f):
+    """A chat writer seals the value themselves, so the server checks who it was sealed to."""
+    rid = _ask(f).json()["id"]
+    stranger = ec.generate_private_key(ec.SECP256R1())
+    # Sealed to a key of the writer's choosing, and to someone who is not a reader of this vault.
+    for readers in ([("member", "999999", stranger.public_key())],
+                    _readers(f) + [("member", "999999", stranger.public_key())]):
+        res = _fulfil(f, rid, _seal(f, readers=readers))
+        assert res.status_code == 422 and res.json()["error"] == "zk_unknown_recipient", readers
+    assert not AgentCredential.objects.filter(agent=f.agent).exists()
+    # The request is still open: the honest answer goes through.
+    assert _fulfil(f, rid, _seal(f)).status_code == 200
+
+
+def test_a_value_sealed_at_another_key_version_is_refused(f):
+    rid = _ask(f).json()["id"]
+    res = _fulfil(f, rid, _seal(f, kv=5))   # the request says kv 0; the sealed value says 5
+    assert res.status_code == 422 and res.json()["error"] == "zk_kv_mismatch"
+    assert not AgentCredential.objects.filter(agent=f.agent).exists()
+
+
 def test_the_kv_must_be_current(f):
     rid = _ask(f).json()["id"]
     res = _fulfil(f, rid, _seal(f), kv=3)

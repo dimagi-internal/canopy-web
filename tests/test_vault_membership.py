@@ -162,6 +162,24 @@ def test_a_machine_needs_its_person_to_be_a_member(world):
     assert theirs in set(zk.eligible_device_keys(world.agent))
 
 
+def test_an_agent_admin_outside_an_unlinked_vault_cannot_store_or_delete_its_secrets(world, client):
+    """Setting and deleting a value is a vault write like rotating its key: the agent's admin
+    must also manage the vault. Taken out of an unlinked vault, they no longer do."""
+    editor = _user("ed")
+    _member(world.ws, editor, WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=world.agent, user=editor, granted_by=world.owner)
+    vault_members.add_member(world.vault, world.owner, role="admin", by=world.owner)
+    vault_members.set_agent_link(world.vault, world.agent, linked=False)
+    client.force_login(editor)
+    grant_step_up(client)
+    put = client.put("/api/agents/ace/credentials", data={"values": {"k": "v"}}, content_type="application/json")
+    assert put.status_code == 403 and "manages this agent's vault" in put.json()["detail"]
+    assert client.delete("/api/agents/ace/credentials/k").status_code == 403
+    # Added back as a manager, the same admin may.
+    vault_members.add_member(world.vault, editor, role="admin", by=world.owner)
+    assert client.delete("/api/agents/ace/credentials/k").status_code == 200
+
+
 def test_a_machine_works_for_its_runner_owner_else_its_approver(world):
     key = _device(world.agent, world.owner, approved_by=None, name="owned")
     assert vault_members.person_of_device(key) == world.owner.pk

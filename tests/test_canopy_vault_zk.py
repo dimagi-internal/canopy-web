@@ -1356,6 +1356,27 @@ def test_only_a_workspace_owner_makes_one_and_only_a_manager_changes_it(fleet):
     assert c.get(f"/api/vaults/{vid}").status_code == 200   # a member of the workspace may look
 
 
+def test_a_vault_manager_cannot_attach_an_agent_they_do_not_administer(fleet):
+    """Attaching serves the vault's secrets to the agent's turns and makes its people members: a
+    manager of the vault (here a direct admin, no more) may do that only for an agent they administer."""
+    from apps.agents.credentials import vault_members
+    from apps.agents.models import Vault
+
+    vid = _ws_vault(fleet)
+    mgr = get_user_model().objects.create_user(username="mgr", email="mgr@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=mgr, role=WorkspaceMembership.EDITOR)
+    vault_members.add_member(Vault.objects.get(pk=vid), mgr, role="admin", by=fleet.user)
+    c = Client()
+    c.force_login(mgr)
+    grant_step_up(c)
+    res = c.post(f"/api/vaults/{vid}/attachments", data={"agent": "eva"}, content_type="application/json")
+    assert res.status_code == 404 and "no such agent" in res.json()["detail"]
+    assert fleet.client.get(f"/api/vaults/{vid}").json()["attachments"] == []
+    # The workspace's owner administers eva, so the same request from them works.
+    assert fleet.client.post(f"/api/vaults/{vid}/attachments", data={"agent": "eva"},
+                             content_type="application/json").status_code == 200
+
+
 def test_a_keeper_grants_a_workspace_vault_too(fleet):
     assert _enable(fleet).status_code == 200
     vid, binding, vk = _ws_enabled(fleet, {"x": "y"})

@@ -105,7 +105,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     The response is the MASKED status. From a browser session this needs a
     fresh passkey step-up (403 `step_up_required` otherwise); a token write —
     `canopy vault import` — does not, and is recorded like every settings change."""
-    agent = agent_for_admin(request, slug)
+    agent = _vault_manager(request, slug)
     # Step-up only for a person at a browser (canopy-web#1538): a stolen session
     # cookie is the threat it closes. A PAT write has no browser to ask and is
     # audited as a SettingChange like any other; requiring a passkey there would
@@ -256,13 +256,18 @@ def _credential_refusal(refusal: credential_resolve.Refusal) -> Exception:
 # its device). There is no turning it off: the agent vault has no other mode.
 
 
-def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
+def _vault_manager(request: HttpRequest, slug: str):
+    """The agent's admin AND an owner or admin of its vault, as the workspace vault's
+    writes are: someone taken out of an unlinked vault must not be able to rotate its key to
+    one of their own machines, nor store or delete values in it."""
     agent = agent_for_admin(request, slug)
-    # The agent's admin AND an owner or admin of its vault, as the workspace vault's
-    # writes are: someone taken out of an unlinked vault must not be able to rotate
-    # its key to one of their own machines and read what is written after.
     if not vault_members.is_admin(vault_members.role_of(vault_members.vault_for_agent(agent), request.user)):
         raise HttpError(403, "this action requires someone who manages this agent's vault")
+    return agent
+
+
+def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
+    agent = _vault_manager(request, slug)
     if browser_only or stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     return agent
@@ -743,7 +748,7 @@ def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
 
 @router.put("/{slug}/github", response=AgentGitHubOut,
             summary="Delegate your GitHub identity to this agent (owner or admin, write-only)")
-@gate("agent-owner", setting=True, step_up=True)  # strictly the agent's own owner (delegations.set_github)
+@gate("agent-admin", setting=True, step_up=True)  # an owner or admin lends their OWN identity (delegations.set_github)
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
     """Give this agent the caller's fine-grained GitHub token, as a credential delegated
     by them. It replaces the one delegated now.
@@ -807,7 +812,7 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
                summary="Remove one named secret")
 @gate("agent-admin", setting=True)
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
-    agent = agent_for_admin(request, slug)
+    agent = _vault_manager(request, slug)
     # A credential a person delegated is theirs to withdraw, never an admin's to delete.
     try:
         accounts.refuse_delegated_names(agent, [name])

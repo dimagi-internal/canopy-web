@@ -115,6 +115,16 @@ def sealed_targets(value: str) -> set[tuple[str, str]]:
         return set()
 
 
+def sealed_kv(value: str) -> int | None:
+    """The key version a `zks1:` value says it was sealed at; None for anything else."""
+    if not isinstance(value, str) or not value.startswith(SEALED_PREFIX):
+        return None
+    try:
+        return int(json.loads(b64u_bytes(value[len(SEALED_PREFIX):], "value_zk"))["kv"])
+    except (ValueError, KeyError, TypeError, ZkError):
+        return None
+
+
 def keep_only(value: str, allowed: set[tuple[str, str]]) -> tuple[str, set[tuple[str, str]]]:
     """`(value with only the recipients in allowed, the (kind, target) pairs dropped)`.
     Each recipient carries its own ciphertext, so dropping one decrypts nothing; the
