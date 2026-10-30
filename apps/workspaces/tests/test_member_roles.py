@@ -121,7 +121,7 @@ def test_set_member_role_rejects_a_role_outside_role_rank():
     owner = _user("a@dimagi.com")
     ws = _ws(owner)
     with pytest.raises(MemberError) as exc_info:
-        set_member_role(workspace=ws, user_id=owner.id, role="superuser")
+        set_member_role(workspace=ws, user_id=owner.id, role="emperor")
     assert exc_info.value.code == "invalid_role"
     assert WorkspaceMembership.objects.get(workspace=ws, user=owner).role == WorkspaceMembership.OWNER
 

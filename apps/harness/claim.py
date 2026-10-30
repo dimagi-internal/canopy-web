@@ -61,6 +61,7 @@ from .routing import (
     runner_tenant_slugs,
     runner_tenant_slugs_of,
     turn_serves_refusal,
+    turn_workspace_q,
 )
 from .turn_agent_tokens import revoke_stale
 
@@ -594,7 +595,17 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     orders = _orders_for(queued)
 
     out = []
+    held_ws = wsvc.held_slugs()
     for t in queued:
+        if held_ws and (slug := turn_workspace_slug(t)) in held_ws:
+            # Like the agent hold below: routing is beside the point until release.
+            holder = wsvc.held_by(slug)
+            name = holder.slug if holder is not None else slug
+            note = f" ({holder.held_note})" if holder is not None and holder.held_note else ""
+            out.append(_unclaimable_row(user, t, f"workspace {name}", "workspace_hold",
+                                        f"the workspace '{name}' is on hold{note} — nothing in it "
+                                        "runs until it is released"))
+            continue
         if (held := t.acting_agent) is not None and held.held:
             # Routing is beside the point until the agent hold is released — and
             # coverage does not know the hold, so this comes before `claimable_now`.
@@ -706,6 +717,15 @@ def _capability_sweep() -> None:
         import logging
 
         logging.getLogger(__name__).exception("capability sweep hook failed")
+
+
+def turn_workspace_slug(turn: Turn) -> str | None:
+    """The workspace a turn belongs to, by the same three sources."""
+    if turn.agent_id:
+        return turn.agent.workspace_id
+    if turn.chat_session_id:
+        return turn.chat_session.workspace_id
+    return turn.workspace_id
 
 
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
@@ -857,6 +877,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # but for one agent. Outside `match_q` so a pin cannot punch through it.
         .exclude(agent__held=True)
         .exclude(chat_session__agent__held=True)
+        # The WORKSPACE hold (Workspace.held): nothing in a held workspace, or one
+        # below it, is claimed — same place, same reason (a pin cannot punch through).
+        .exclude(turn_workspace_q(wsvc.held_slugs()))
         .filter(tenant_q)
         # assignment_allows reads turn.agent_id; the session leg's stickiness
         # check reads chat_session.agent_id + chat_session.runner_binding.

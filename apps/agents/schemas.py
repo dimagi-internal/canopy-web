@@ -711,7 +711,7 @@ class AgentAccessRowOut(StrictModel):
     user_id: int
     email: str
     name: str
-    workspace_role: Literal["owner", "admin", "editor", "viewer"]
+    workspace_role: Literal["superuser", "owner", "admin", "editor", "viewer"]
     agent_role: Literal["owner", "admin", "member"]
     # Why they hold `agent_role`, in words: "Owns the workspace", "Made admin by …".
     basis: str

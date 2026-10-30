@@ -90,7 +90,7 @@ or as you only under an act-as-you permission you granted.** Three kinds, one me
 
 ## Workspace roles
 
-`viewer < editor < admin < owner` (`WorkspaceMembership.ROLE_RANK`). What each may
+`viewer < editor < admin < owner < superuser` (`WorkspaceMembership.ROLE_RANK`). What each may
 do is one table, `apps/workspaces/permissions.py`, keyed by capability; nothing
 outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.md`.
 
@@ -99,11 +99,12 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 | **viewer** | `read` | Reads the workspace; talks to an agent through what its interface offers members. |
 | **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **edits agents and dispatches turns to them** — those turns always run `manual`. |
 | **admin** | + `logs.read`, `members.manage`, `integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide` | **Runs the workspace**: every log, members below admin, the integrations, the default runner order, how long chat and turn content is kept, which turns are refused, and starting or declining a proposed project (beside that project's own owner). **Holds no agent keys** — a workspace admin is not an agent admin. |
-| **owner** | + `own` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is **every agent's admin**. |
+| **owner** | + `own`, `control` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is **every agent's admin**. Holds or stops all work in the workspace's tree. **Is told**: blocking alerts, access requests, owner notices. |
+| **superuser** | everything an owner holds | **Oversight**: an owner's keys, here and below, **without the owner's email** (`services.owner_user_ids` and `services.mail_recipients` leave superusers out — unless nobody else would be told). The workspace-level sibling of the system superuser (`User.is_superuser`), which holds the same two switches for the whole fleet and no workspace access. |
 
 **Workspace permissions** (the capability names): `read`, `content.write`,
 `agent.work`, `session.drive`, `events.write`, `logs.read`, `members.manage`,
-`integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide`, `own`.
+`integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide`, `own`, `control`.
 
 ## Getting into a workspace
 

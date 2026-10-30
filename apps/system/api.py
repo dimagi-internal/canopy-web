@@ -23,7 +23,6 @@ from .schemas import (
     CapabilityDetailOut,
     OperatorAddIn,
     OperatorOut,
-    OperatorUpdateIn,
     PublicStatsOut,
 )
 
@@ -79,7 +78,7 @@ def _operator_out(request: HttpRequest, user_id: int) -> dict:
 @router.get("/operators", response=list[OperatorOut], summary="List superusers (superuser only)")
 @gate("superuser")
 def list_operators(request: HttpRequest) -> list[dict]:
-    """Everyone who holds the fleet-wide switches, with which alert mail reaches each."""
+    """Everyone who holds the fleet-wide switches."""
     if not request.user.is_superuser:
         raise HttpError(403, "only a superuser may see who the superusers are")
     return operators.operators(request.user)
@@ -99,20 +98,6 @@ def add_operator(request: HttpRequest, payload: OperatorAddIn):
     except operators.OperatorError as exc:
         raise _operator_error(exc)
     return 201, _operator_out(request, user.pk)
-
-
-@router.patch("/operators/{user_id}", response=OperatorOut, summary="Change a superuser's alert mail")
-@gate("superuser", setting=True)
-def update_operator(request: HttpRequest, user_id: int, payload: OperatorUpdateIn) -> dict:
-    """`alert_mail`: `all` (every alert their roles make them a recipient of) or
-    `assigned` (only alerts handed to them by name)."""
-    if not request.user.is_superuser:
-        raise HttpError(403, "only a superuser may change a superuser's alert mail")
-    try:
-        operators.set_alert_mail(user_id, payload.alert_mail)
-    except operators.OperatorError as exc:
-        raise _operator_error(exc)
-    return _operator_out(request, user_id)
 
 
 @router.delete("/operators/{user_id}", response={204: None}, summary="Remove a superuser (superuser only)")

@@ -6,7 +6,7 @@ import { grantableRoles } from '@/lib/workspaceRoles'
 /** Roles an approval can grant: never owner (ownership is handed over on the
  *  Members list), and only what `myRole` may grant (an admin: viewer, editor). */
 export function approvableRoles(myRole: string | null | undefined): ApprovableRole[] {
-  return grantableRoles(myRole).filter((r): r is ApprovableRole => r !== 'owner')
+  return grantableRoles(myRole).filter((r): r is ApprovableRole => r !== 'owner' && r !== 'superuser')
 }
 
 export function requesterLabel(req: Pick<AccessRequestOut, 'name' | 'email'>): string {

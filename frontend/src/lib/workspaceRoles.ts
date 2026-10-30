@@ -10,12 +10,12 @@
  * `workspaceRoles.test.ts` pins this table to the backend's.
  */
 
-export type WorkspaceRole = 'viewer' | 'editor' | 'admin' | 'owner'
+export type WorkspaceRole = 'viewer' | 'editor' | 'admin' | 'owner' | 'superuser'
 
-export const ROLE_RANK: Record<WorkspaceRole, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 }
+export const ROLE_RANK: Record<WorkspaceRole, number> = { viewer: 0, editor: 1, admin: 2, owner: 3, superuser: 4 }
 
 /** Lowest-first, for role pickers. */
-export const ROLES_ASCENDING: WorkspaceRole[] = ['viewer', 'editor', 'admin', 'owner']
+export const ROLES_ASCENDING: WorkspaceRole[] = ['viewer', 'editor', 'admin', 'owner', 'superuser']
 
 export type Capability =
   | 'read'
@@ -31,6 +31,7 @@ export type Capability =
   | 'admission.manage'
   | 'projects.decide'
   | 'own'
+  | 'control'
 
 export const MINIMUM_ROLE: Record<Capability, WorkspaceRole> = {
   read: 'viewer',
@@ -46,6 +47,7 @@ export const MINIMUM_ROLE: Record<Capability, WorkspaceRole> = {
   'admission.manage': 'admin',
   'projects.decide': 'admin',
   own: 'owner',
+  control: 'owner',
 }
 
 function rank(role: string | null | undefined): number {
@@ -58,7 +60,7 @@ export function roleAllows(role: string | null | undefined, capability: Capabili
 
 /**
  * May `actor` change a member holding `target` (to `next`), or invite at
- * `next`? An owner may do anything; anyone else with members.manage acts
+ * `next`? An owner or a superuser may do anything; anyone else with members.manage acts
  * strictly below themselves and grants only roles below themselves.
  */
 export function mayManageMember(
@@ -66,7 +68,7 @@ export function mayManageMember(
   target: string | null,
   next: string | null = null,
 ): boolean {
-  if (actor === 'owner') return true
+  if (actor === 'owner' || actor === 'superuser') return true
   if (!roleAllows(actor, 'members.manage')) return false
   const mine = rank(actor)
   if (target !== null && rank(target) >= mine) return false

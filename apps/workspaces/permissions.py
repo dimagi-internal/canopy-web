@@ -100,6 +100,11 @@ PROJECTS_DECIDE = "projects.decide"
 #: agents' keys.
 OWN = "own"
 
+#: Hold this workspace's work (and every workspace's below it) and stop what is
+#: running there — the workspace kill switch. Owner and superuser: it cuts
+#: everyone's work off, so it sits with the keys.
+CONTROL = "control"
+
 MINIMUM_ROLE: dict[str, str] = {
     READ: _M.VIEWER,
     CONTENT_WRITE: _M.EDITOR,
@@ -114,6 +119,7 @@ MINIMUM_ROLE: dict[str, str] = {
     ADMISSION_MANAGE: _M.ADMIN,
     PROJECTS_DECIDE: _M.ADMIN,
     OWN: _M.OWNER,
+    CONTROL: _M.OWNER,
 }
 
 
@@ -193,14 +199,15 @@ def may_manage_member(actor_role: str | None, target_role: str | None,
     (to `new_role`, or remove them when `new_role` is None), or invite at
     `target_role`?
 
-    An owner may do anything to anyone (the last-owner guard is separate, in
-    `services`). Anyone else with MEMBERS_MANAGE acts only STRICTLY below
+    An owner or a superuser may do anything to anyone (the last-owner guard is
+    separate, in `services`) — so an owner can make or remove a superuser, and a
+    superuser an owner. Anyone else with MEMBERS_MANAGE acts only STRICTLY below
     themselves, and may only grant a role strictly below themselves — so an
     admin can invite, promote and remove viewers and editors, but can neither
     make another admin nor touch one, and nothing short of an owner can mint an
     owner.
     """
-    if actor_role == _M.OWNER:
+    if actor_role in (_M.OWNER, _M.SUPERUSER):
         return True
     if not role_allows(actor_role, MEMBERS_MANAGE):
         return False

@@ -12,7 +12,14 @@ from django.utils.html import escape
 from .links import access_request_link, access_request_path, base_url
 from .models import Workspace, WorkspaceAccessRequest, WorkspaceMembership
 from .notifications import _button, _send, _who
-from .services import _email_domain, _grant, effective_memberships, is_member, user_workspace_slugs
+from .services import (
+    _email_domain,
+    _grant,
+    effective_memberships,
+    is_member,
+    mail_recipients,
+    user_workspace_slugs,
+)
 
 # The replacement for self-join. A domain match lets someone ASK; a person
 # (an admin or owner of the workspace) decides. Every request tells every admin
@@ -213,10 +220,10 @@ def notify_admins(req: WorkspaceAccessRequest) -> dict:
                 + _button(link, label)
                 + f'<p style="color:#78716c;font-size:13px">{escape(link)}<br>You are getting this '
                   f"because you are an admin or owner of {escape(ws.display_name)} on Canopy.</p>")
-        from apps.push.services import alert_mail_recipients, send_to_user
+        from apps.push.services import send_to_user
 
-        # Minus those who asked for only what is handed to them — never down to nobody.
-        recipients = alert_mail_recipients(access_request_recipients(ws))
+        # Owners and admins, not the workspace's superusers — never down to nobody.
+        recipients = mail_recipients(access_request_recipients(ws), ws)
         for admin in recipients:
             if not admin.email:
                 continue

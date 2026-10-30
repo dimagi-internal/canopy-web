@@ -1076,6 +1076,22 @@ def enrolled_slugs(runner: Runner) -> set[str]:
                .values_list("workspace_id", flat=True))
 
 
+def turn_workspace_q(slugs) -> Q:
+    """Turns whose workspace is one of `slugs`, each target kind by its own
+    workspace source — agent turns by the agent's, session turns by the chat's,
+    repo turns by their own — split for the NULL-join reason `agent_tenant_q`
+    gives. Matches nothing when `slugs` is empty. Used by the workspace hold (the
+    claim refuses these) and the workspace stop (it cancels these)."""
+    slugs = set(slugs)
+    if not slugs:
+        return Q(pk__in=[])
+    return (
+        (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
+        | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
+        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs))
+    )
+
+
 def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
     """THE tenancy predicate for a row that derives its tenant from an Agent
     (a `Turn.agent`, an `AgentSchedule.agent`).

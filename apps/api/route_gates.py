@@ -69,7 +69,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
   ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
-  ``admission.manage``, ``projects.decide``, ``own``.
+  ``admission.manage``, ``projects.decide``, ``own``, ``control``.
 * ``agent-admin`` — ``Agent.is_admin`` (its owner, a workspace owner, an
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
@@ -154,7 +154,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "anonymous", "token-link", "authenticated", "self", "member",
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
-    "admission.manage", "projects.decide", "own",
+    "admission.manage", "projects.decide", "own", "control",
     "agent-admin", "agent-owner", "vault-admin", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",

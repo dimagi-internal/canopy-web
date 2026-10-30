@@ -38,7 +38,7 @@ describe('FleetHoldCard', () => {
   it('shows a non-admin only the banner while held', () => {
     render(<FleetHoldCard hold={hold({ held: true, note: 'tracing', queued: 3 })} onChange={() => {}} />)
     expect(screen.getByTestId('fleet-hold-banner').textContent).toContain('3 turns waiting')
-    expect(screen.getByTestId('fleet-hold-why').textContent).toContain('tracing')
+    expect(screen.getByTestId('fleet-hold-banner-why').textContent).toContain('tracing')
     expect(screen.queryByTestId('fleet-hold-toggle')).toBeNull()
   })
 
@@ -69,7 +69,7 @@ describe('FleetHoldCard', () => {
   it('lets a holder who may not release turn it on but not off, and offers no stop', () => {
     render(<FleetHoldCard hold={hold({ held: true, can_hold: true })} onChange={() => {}} />)
     expect((screen.getByTestId('fleet-hold-toggle') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.queryByTestId('fleet-stop-start')).toBeNull()
+    expect(screen.queryByTestId('fleet-hold-stop-start')).toBeNull()
   })
 
   it('stops everything as a separate, confirmed action that leaves the hold alone', async () => {
@@ -77,12 +77,12 @@ describe('FleetHoldCard', () => {
     const onChange = vi.fn()
     render(<FleetHoldCard hold={hold(superuser)} onChange={onChange} />)
 
-    fireEvent.click(screen.getByTestId('fleet-stop-start'))
+    fireEvent.click(screen.getByTestId('fleet-hold-stop-start'))
     expect(stopFleet).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('fleet-stop-confirm'))
+    fireEvent.click(screen.getByTestId('fleet-hold-stop-confirm'))
 
     await waitFor(() =>
-      expect(screen.getByTestId('fleet-stopped').textContent).toContain('Stopped 2 working sessions and 1 more running turn'),
+      expect(screen.getByTestId('fleet-hold-stopped').textContent).toContain('Stopped 2 working sessions and 1 more running turn'),
     )
     expect(holdFleet).not.toHaveBeenCalled()
     expect(onChange).not.toHaveBeenCalled()

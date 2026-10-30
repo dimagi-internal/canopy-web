@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
-// Superusers: listed with their alert mail, added by email, removed — never the last
-// one (the button is not offered when only one is left; the server refuses it too).
+// System superusers: listed, added by email, removed — never the last one (the button
+// is not offered when only one is left; the server refuses it too). No email setting:
+// the role brings none.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
@@ -10,13 +11,12 @@ import type { OperatorOut } from '@/api/harness'
 const listOperators = vi.fn<() => Promise<OperatorOut[]>>()
 const addOperator = vi.fn<(email: string) => Promise<OperatorOut>>()
 const removeOperator = vi.fn<(id: number) => Promise<void>>()
-const setOperatorAlertMail = vi.fn<(id: number, v: OperatorOut['alert_mail']) => Promise<OperatorOut>>()
-vi.mock('@/api/harness', () => ({ listOperators, addOperator, removeOperator, setOperatorAlertMail }))
+vi.mock('@/api/harness', () => ({ listOperators, addOperator, removeOperator }))
 
 const { OperatorsCard } = await import('./OperatorsCard')
 
-const jj: OperatorOut = { user_id: 1, email: 'jj@dimagi.com', name: 'Jonathan', alert_mail: 'all', is_you: true }
-const lucina: OperatorOut = { user_id: 2, email: 'lucina@dimagi.com', name: '', alert_mail: 'assigned', is_you: false }
+const jj: OperatorOut = { user_id: 1, email: 'jj@dimagi.com', name: 'Jonathan', is_you: true }
+const lucina: OperatorOut = { user_id: 2, email: 'lucina@dimagi.com', name: '', is_you: false }
 
 afterEach(() => {
   cleanup()
@@ -24,28 +24,29 @@ afterEach(() => {
 })
 
 describe('OperatorsCard', () => {
-  it('renders nothing for someone who is not a superuser', () => {
+  it('renders nothing for someone who is not a system superuser', () => {
     const { container } = render(<OperatorsCard show={false} />)
     expect(container.innerHTML).toBe('')
     expect(listOperators).not.toHaveBeenCalled()
   })
 
-  it('adds a superuser by email and sets their alert mail', async () => {
-    listOperators.mockResolvedValueOnce([jj]).mockResolvedValue([jj, { ...lucina, alert_mail: 'all' }])
+  it('adds and removes a system superuser by email', async () => {
+    listOperators.mockResolvedValueOnce([jj]).mockResolvedValueOnce([jj, lucina]).mockResolvedValue([jj])
     addOperator.mockResolvedValue(lucina)
-    setOperatorAlertMail.mockResolvedValue(lucina)
+    removeOperator.mockResolvedValue()
     render(<OperatorsCard show />)
 
     await waitFor(() => expect(screen.getAllByTestId('operator-row')).toHaveLength(1))
     expect(screen.queryByTestId('operator-remove')).toBeNull() // never the last one
+    expect(screen.queryByTestId('operator-alert-mail')).toBeNull()
 
     fireEvent.change(screen.getByTestId('operator-email'), { target: { value: 'lucina@dimagi.com' } })
     fireEvent.click(screen.getByTestId('operator-add'))
     await waitFor(() => expect(screen.getAllByTestId('operator-row')).toHaveLength(2))
     expect(addOperator).toHaveBeenCalledWith('lucina@dimagi.com')
 
-    fireEvent.change(screen.getAllByTestId('operator-alert-mail')[1], { target: { value: 'assigned' } })
-    await waitFor(() => expect(setOperatorAlertMail).toHaveBeenCalledWith(2, 'assigned'))
+    fireEvent.click(screen.getAllByTestId('operator-remove')[1])
+    await waitFor(() => expect(removeOperator).toHaveBeenCalledWith(2))
   })
 
   it('says why an add failed', async () => {
