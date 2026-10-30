@@ -149,3 +149,29 @@ def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
             assert row["access"] == "none", user.email
         else:
             assert row["access"] == "confined" and decided in row["capabilities"], user.email
+
+
+def test_the_roster_lists_the_agents_own_login_as_the_system_not_a_person(tmp_path):
+    """The roster is a response with a closed set of roles: the agent's own login (`Agent.user`)
+    decides as `system`, and used to fail validation, taking the whole Access setting down for
+    every agent that has a login."""
+    from django.contrib.auth import get_user_model
+    from django.test import Client
+
+    from apps.agents.models import Agent
+    from apps.workspaces.models import Workspace, WorkspaceMembership as M
+
+    mk = get_user_model().objects.create_user
+    boss, bot = mk("rboss", "rboss@dimagi.com", "pw"), mk("rhal", "rhal@dimagi-ai.com", "pw")
+    ws = Workspace.objects.create(slug="rconnect", display_name="Connect", created_by=boss)
+    M.objects.create(user=boss, workspace=ws, role=M.OWNER)
+    M.objects.create(user=bot, workspace=ws, role=M.EDITOR)
+    Agent.objects.create(slug="rhal", name="Hal", workspace=ws, owner=boss, user=bot)
+    c = Client()
+    c.force_login(boss)
+    r = c.get("/api/agents/rhal/access")
+    assert r.status_code == 200, r.content
+    rows = {m["email"]: m for m in r.json()["members"]}
+    assert (rows["rhal@dimagi-ai.com"]["role"], rows["rhal@dimagi-ai.com"]["source"]) == ("system", "system")
+    assert "acts as the agent itself" in rows["rhal@dimagi-ai.com"]["via"]
+    assert rows["rboss@dimagi.com"]["role"] == "owner"

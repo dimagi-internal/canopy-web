@@ -438,6 +438,8 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
                            if iface_mod.role_opens(d.agent_role, c)) if d.access == CONFINED else [])
             access, manual_only, may_auto = d.access, d.manual_only, False
             role, source, via = d.agent_role, d.source, d.via
+            if d.source == "system":
+                via = "The agent's own login: it acts as the agent itself"
         else:
             access, caps, manual_only, may_auto = FULL, [], False, True
             role, source, via = held, held, basis
