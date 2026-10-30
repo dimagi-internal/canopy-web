@@ -16,8 +16,8 @@ There are two ladders, and they are different questions:
 THE rule that joins them is one function, `apps/agents/access.decide(agent, who,
 *, verified, origin, capability=None, turn=None)`, which returns a `Decision(role, access,
 capability, may_request_auto, may_pin_runner, manual_only, basis, reason)`. Every
-door that makes an agent do work asks it (see "Where it is asked" below);
-`tests/test_access_matrix.py` asks it through every door. Don't write a second
+entry point that makes an agent do work asks it (see "Where it is asked" below);
+`tests/test_access_matrix.py` asks it through every entry point. Don't write a second
 predicate for "may this person make this agent do X" — ask `decide`.
 
 ## Agent roles and the access list (the model being moved to)
@@ -29,7 +29,7 @@ one has.
 
 * **Role** — what a person may do with ONE agent, one ladder: **owner** > **admin** >
   **editor** > **user** > **viewer** (`apps/agents/roles.py`, the only place that names them).
-  viewer asks; user also uses what the agent publishes (including doors that act); editor also
+  viewer asks; user also uses what the agent publishes (including capabilities that act); editor also
   runs the whole agent and changes its skills; admin also configures it in canopy-web; owner
   also transfers or deletes it. Never say bare "admin": agent admin, workspace admin, runner
   admin, vault key holder.
@@ -40,8 +40,8 @@ one has.
   are inherited by every agent in it and below, unless an agent opts out
   (`inherit_workspace_defaults`). Change them at `/api/agents/{slug}/access-list` and
   `/api/workspaces/{slug}/agent-defaults`.
-* **Door** — a named profile an agent publishes for viewers and users (`ask`, ACE's `connect`).
-  It says only the lowest role that may open it; who has a role is the list's business.
+* **Capability** — a named profile an agent publishes for viewers and users (`ask`, ACE's `connect`).
+  It says only the lowest role that may use it; who has a role is the list's business.
 * **Source** — why someone has a role (`Decision.source`, the envelope's `role` and `source`).
   A role is what you can do; a source is why. They are never the same word.
 * An agent moves from the older rules to its list with the preview-and-move in its Access
@@ -49,7 +49,7 @@ one has.
   for everyone who could plausibly ask. `Agent.uses_access_list` marks one that has moved.
 
 Old word → new: owner → owner · admin → admin · "workspace editor, whole agent, every turn
-manual" → editor whose line is `manual_only` · `member` → user (or viewer, by the door) ·
+manual" → editor whose line is `manual_only` · `member` → user (or viewer, by the capability) ·
 `contact` → viewer · `full: [x]` → an editor line for x.
 
 ## Whose authority an agent acts with
@@ -160,9 +160,9 @@ Nothing is automatic: there is no self-join and no domain auto-join. People at a
 listed domain may only **request an invitation**. A person becomes a member in
 exactly four ways — and an agent's own login in a fifth — and the only code that may
 create a `WorkspaceMembership` is `services._grant` (the first two, and a tree add),
-`services.ensure_member` (the default-workspace bootstrap, and the agent-login door
+`services.ensure_member` (the default-workspace bootstrap, and the agent-login path
 below) and workspace creation — `apps/workspaces/tests/test_access_requests.py`
-fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
+fails on a fourth path, and `tests/test_no_implicit_enrolment.py` pins
 `ensure_member`'s callers:
 
 * **An invite.** An **admin** or **owner** invites an email address at a role they
@@ -257,9 +257,9 @@ canopy-web, never a repo file) says what it offers people who are not its admins
 
 * **`full:`** — caller classes that get the whole agent, e.g. Eva's
   `full: [member, contact@dimagi.com:verified]`.
-* **`capabilities:`** — named doors, each with its **`callers:`** (which classes
+* **`capabilities:`** — named capabilities, each with its **`callers:`** (which classes
   may use it) and its profile (`tools`, `bash`, `read_paths`, `write_paths`,
-  `entry`, `pages`, `sites`, `ceiling`). `ask` is the free-form door every channel
+  `entry`, `pages`, `sites`, `ceiling`). `ask` is the free-form capability every channel
   falls back to.
 * **caller classes** — `member` (a workspace member who is not an agent admin),
   `contact` (known, not a member), `unknown` (nobody established who); narrowed by
@@ -297,7 +297,7 @@ Asked in this order; the first row that matches decides.
   writer) runs that capability's profile instead, keeping their role, mode and pin
   rights (`basis: sensitive:<capability>`). Any turn in a sensitive conversation (one
   that requires sensitive-data runners) must end in that capability; anything else — full, another capability, or a
-  caller the door does not list — is refused. The setting is an interface setting,
+  caller the capability does not list — is refused. The setting is an interface setting,
   saved by the agent's owner or an admin, browser or token — as YAML (`publish_interface`)
   or with the capability's sensitive-data switch, which edits that YAML (`set_capability_sensitive`) — and audited
   like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
@@ -418,7 +418,7 @@ never a 403, so a runner's existence does not leak. A workspace admin of the
 runner's tenant may also READ its drill results (`logs.read`), but not start one.
 
 **Where it is asked.** `harness.services.enqueue_turn` (`_apply_capability`) for
-every door — `POST /api/harness/turns/`, a canopy-web chat send, Slack intake and
+every entry point — `POST /api/harness/turns/`, a canopy-web chat send, Slack intake and
 email intake (after the existing sender triage: a blocked contact never reaches
 the rule; a member is recognised by mail only on THIS message's DMARC); the
 harness API also asks it up front to answer 403 with a reason; `turn_mode.for_turn`
@@ -843,7 +843,7 @@ On someone's behalf, these are judged as that person:
 
 Reads are unchanged: a turn already reads as its asker where that matters (scoped caller
 tokens, above). Each decision made on someone's behalf is recorded as an
-`agent.on_behalf.decided` event. Every turn the agent starts from there, through any door
+`agent.on_behalf.decided` event. Every turn the agent starts from there, through any entry point
 (a dispatch, a send into another session, a new session), carries
 `origin_ref.on_behalf_of` (`{user_id, email, turn, agent, decided}`), stamped by
 `services.enqueue_turn` alone; a client's own is dropped. Its initiator stays the agent:
@@ -970,7 +970,7 @@ turn in it (`access.own_turn_session`), or the person granted it review (a
 coach). Canopy only operates on what a machine has already **sent**; it asks a
 machine for more (live streaming, history) only when its owner, or someone they
 explicitly added, asks (`access.may_pull`). Adding someone is the session owner's
-(`access.can_share`), with one more door: the owner of the agent a member's
+(`access.can_share`), with one more way in: the owner of the agent a member's
 conversation is with (`Agent.owner`, not its admins), once in it, may bring someone
 new in — a person or an agent — but owns nothing, reads nothing new, and changes or
 removes nobody; never a contact's or a sensitive one (`access.can_add_people`). Sensitive conversations stay sealed to
@@ -997,7 +997,7 @@ people you added", "Everyone on this email thread (4)", "Members of #channel", "
 `tests/test_session_audience.py` holds its readers equal to `access.can_read` for every
 session shape. The chat page and the embedded panel show it as one line at the top.
 
-The email and Slack rows describe the doors those channels open (participant rows
+The email and Slack rows describe the entry points those channels open (participant rows
 written when a person is on the thread or in the channel); the session ACL itself
 only honours the rows.
 
@@ -1011,8 +1011,8 @@ under which turn — so an admin can say what happened to a session without read
 ## Who is in a session
 
 A session is visible to the people who were in the conversation where it happened, plus
-whoever they add. A `SessionParticipant` row (EDITOR) is the grant, made at the channel's
-door; the ACL itself stays `apps/canopy_sessions/access.py`. Never a non-member, a contact
+whoever they add. A `SessionParticipant` row (EDITOR) is the grant, made at the channel;
+the ACL itself stays `apps/canopy_sessions/access.py`. Never a non-member, a contact
 or an agent's login, and never into a sensitive conversation.
 
 * **Email: everyone on the thread** (`harness.channels.email.admit_thread_people`) — the

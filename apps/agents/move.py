@@ -423,7 +423,7 @@ def _identity(p: Plan, apply: bool) -> None:
     if login is not None and not wsvc.is_member(login, dest.slug):
         if perms.can(p.by, dest, perms.MEMBERS_MANAGE):
             # The agent's own login is part of the agent: it joins the new home
-            # through the door that made it a member at home (`agent_login`),
+            # through the path that made it a member at home (`agent_login`),
             # and only when the mover could add a member there anyway.
             if apply:
 

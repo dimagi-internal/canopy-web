@@ -23,7 +23,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 M, G = WorkspaceMembership, AgentGrant
 
-#: A viewer door (`ask`, open to contacts) and a user door (`canopy`, members only).
+#: A viewer capability (`ask`, open to contacts) and a user one (`canopy`, members only).
 IFACE = {"capabilities": {
     "ask": {"callers": [], "role": "viewer", "tools": ["Read"]},
     "canopy": {"callers": [], "role": "user", "tools": ["Read", "Grep"]},
@@ -89,10 +89,10 @@ def test_the_implicit_workspace_editor_tier_is_an_editor_whose_turns_are_manual(
         access.FULL, roles.EDITOR, "workspace-editor", True)
 
 
-def test_a_confined_decision_is_a_viewer_or_a_user_by_the_door_it_opens(w):
+def test_a_confined_decision_is_a_viewer_or_a_user_by_the_capability_it_uses(w):
     d = access.decide(w["agent"], w["vw"], verified=True, capability="ask")
-    assert (d.access, d.agent_role) == (access.NONE, None)        # the doors name no callers, the list no one
-    # A connect viewer with an explicit list line: the door decides viewer vs user.
+    assert (d.access, d.agent_role) == (access.NONE, None)        # the capabilities name no callers, the list no one
+    # A connect viewer with an explicit list line: the capability decides viewer vs user.
     _line(w, roles.USER, kind=G.PERSON, user=w["vw"])
     d = access.decide(w["agent"], w["vw"], verified=True, capability="canopy")
     assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", roles.USER)
@@ -117,17 +117,17 @@ def test_an_address_that_is_not_proven_does_not_match_a_verified_domain_line(w):
     assert access.decide_for_turn(guest, w["agent"]).access == access.NONE
 
 
-def test_a_viewer_opens_viewer_doors_only_and_a_user_opens_both(w):
+def test_a_viewer_uses_viewer_capabilities_only_and_a_user_uses_both(w):
     _line(w, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
     d = access.decide(w["agent"], contact, verified=True, capability="canopy")
-    assert d.access == access.NONE                                              # a viewer cannot open a user door
+    assert d.access == access.NONE                                              # a viewer cannot use a user capability
     G.objects.filter(agent=w["agent"]).update(role=roles.USER)
     d = access.decide(w["agent"], contact, verified=True, capability="canopy")
     assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", roles.USER)
 
 
-def test_a_line_cannot_open_a_door_the_agent_does_not_have(w):
+def test_a_line_cannot_use_a_capability_the_agent_does_not_have(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
     _line({**w, "agent": bare}, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")

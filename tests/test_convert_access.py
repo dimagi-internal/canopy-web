@@ -1,6 +1,6 @@
 """Translating an agent's published rules into its access list changes nobody's access.
 
-`apps/agents/convert_access.py` rewrites `full:`, each door's `callers`, `editors:` and the
+`apps/agents/convert_access.py` rewrites `full:`, each capability's `callers`, `editors:` and the
 implicit "a workspace editor is an editor" rule as access-list lines, then asks
 `access.decide` the old way and the new way about everyone who could plausibly ask. These are
 the access-relevant parts of the interfaces actually published on 2026-10-30 (tools and paths
@@ -115,7 +115,7 @@ def test_what_ace_says_about_staff_becomes_four_editor_lines(pop):
     ]
 
 
-def test_a_door_is_a_viewer_door_when_it_was_open_to_contacts_and_a_user_door_when_only_to_members(pop):
+def test_a_capability_is_for_viewers_when_it_was_open_to_contacts_and_for_users_when_only_to_members(pop):
     iface = convert_access.translate(_agent(pop, "ace"))[1]
     assert {n: c["role"] for n, c in iface["capabilities"].items()} == {
         "ask": roles.VIEWER, "canopy": roles.USER, "connect": roles.VIEWER}

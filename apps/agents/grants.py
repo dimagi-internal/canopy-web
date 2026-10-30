@@ -139,7 +139,7 @@ _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
 #: `AgentAdmin`); folding it into the list is the last step of the spec.
 ADDABLE = (roles.EDITOR, roles.USER, roles.VIEWER)
 #: Kinds whose members are identified only by an address a message can claim. They can open
-#: doors (viewer, user); they cannot run the whole agent — that takes a named person or a
+#: capabilities (viewer, user); they cannot run the whole agent — that takes a named person or a
 #: workspace's people. (Rules published before the list are carried over as they were.)
 ADDRESS_ONLY = (AgentGrant.DOMAIN, AgentGrant.CONTACT)
 

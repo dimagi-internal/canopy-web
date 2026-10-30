@@ -1,4 +1,4 @@
-"""THE rule, asked through every door — docs/architecture/access.md.
+"""THE rule, asked through every entry point — docs/architecture/access.md.
 
 Owner decisions of 2026-10-04: one function (`apps.agents.access.decide`) decides
 what a person may make an agent do, and every entry point that makes an agent
@@ -68,7 +68,7 @@ def _publish(agent, doc):
     agent.save(update_fields=["interface"])
 
 
-# --- the doors ---------------------------------------------------------------------
+# --- the entry points ---------------------------------------------------------------------
 
 def _via_api(w, user, key):
     c = Client()
@@ -104,7 +104,7 @@ def _via_email(w, email, key, verified=True):
     return turn
 
 
-DOORS = {"api": _via_api, "chat": _via_chat, "slack": _via_slack}
+ENTRY_POINTS = {"api": _via_api, "chat": _via_chat, "slack": _via_slack}
 
 #: What each member role reaches, per interface: (profile, granted_by, mode at claim).
 #: The agent's own switch is `auto`, so `manual` here is the editor tier at work.
@@ -156,14 +156,14 @@ def _check(turn, want):
 
 @pytest.mark.parametrize("iface", list(IFACES))
 @pytest.mark.parametrize("role", list(EXPECT))
-@pytest.mark.parametrize("door", list(DOORS))
-def test_members_through_every_signed_in_door(w, door, role, iface):
+@pytest.mark.parametrize("door", list(ENTRY_POINTS))
+def test_members_through_every_signed_in_entry_point(w, door, role, iface):
     _publish(w["agent"], IFACES[iface])
     user = w[role]
-    turn = DOORS[door](w, user, f"{door}-{role}-{iface}")
+    turn = ENTRY_POINTS[door](w, user, f"{door}-{role}-{iface}")
     want = EXPECT[role][iface]
     if door == "api" and role == "viewer":
-        # The harness API's agent branch is the editor tier's door: a viewer
+        # The harness API's agent branch is the editor tier's entry point: a viewer
         # talks to an agent by chat, Slack or a capability's MCP tool instead.
         assert turn is None
         return
@@ -218,7 +218,7 @@ def test_the_mcp_tool_list_follows_the_rule(w):
     from apps.agents.interface import offered_to
 
     _publish(w["agent"], HAL)
-    assert offered_to(w["editor"], w["agent"]) == ["ask"]      # full: every door
+    assert offered_to(w["editor"], w["agent"]) == ["ask"]      # full: every capability
     assert offered_to(w["viewer"], w["agent"]) == ["ask"]
     _publish(w["agent"], {"capabilities": {"ask": {"callers": ["contact"]},
                                            "admin_only": {"callers": []}}})

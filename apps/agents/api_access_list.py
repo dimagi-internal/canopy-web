@@ -204,7 +204,7 @@ def _conversion_out(conv: convert_access.Conversion) -> AccessConversionOut:
             summary="Preview moving this agent onto its access list: the lines it would get, and whether anyone's access would change (an agent admin)")
 @gate("agent-admin")
 def preview_access_conversion(request: HttpRequest, slug: str) -> AccessConversionOut:
-    """Translates the rules the agent was published with (`full:`, each door's `callers`,
+    """Translates the rules the agent was published with (`full:`, each capability's `callers`,
     `editors:`, and the implicit workspace-editor rule) into lines, then asks the access
     rule the old way and the new way about everyone who could plausibly ask. Writes nothing."""
     return _conversion_out(convert_access.plan(agent_for_admin(request, slug)))

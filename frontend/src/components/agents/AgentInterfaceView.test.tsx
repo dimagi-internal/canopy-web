@@ -132,13 +132,13 @@ describe('AgentInterfaceView', () => {
     expect((await screen.findByTestId('interface-warning')).textContent).toBe(warning)
   })
 
-  it('an admin adds an ask door for colleagues in the form and saves the model', async () => {
+  it('an admin adds an ask capability for colleagues in the form and saves the model', async () => {
     getAgentInterface.mockResolvedValue(DEFAULT)
     saveAgentInterfaceModel.mockImplementation(async (_s: string, m: unknown) => ({ ...PUBLISHED, interface: m }))
     render(<AgentInterfaceView agentSlug="echo" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Add rules' }))
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Add an ask door for colleagues' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add an ask capability for colleagues' }))
     expect((await screen.findAllByTestId('capability-card')).length).toBe(1)
     expect(screen.getByTestId('caller-preview').textContent).toBe('Workspace members can use ask.')
     await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))

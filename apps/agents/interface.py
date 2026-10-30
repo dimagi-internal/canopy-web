@@ -17,7 +17,7 @@ instructions, a policy file, a hook with a denylist — leaks. So a caller turn
 runs in its capability's profile, where everything not listed is denied:
 
     capabilities:
-      ask:                                  # the free-form door every channel uses
+      ask:                                  # the free-form capability every channel uses
         description: Ask ACE about your programme.
         callers: [contact:verified, member] # who may invoke it
         entry: /ace:ask --thread {thread_id}  # the session's prompt (optional)
@@ -27,7 +27,7 @@ runs in its capability's profile, where everything not listed is denied:
         write_paths: ["{cwd}/.ace-ask/*"]    # where Write/Edit may land (none → no writes)
     callers_default: none
 
-**A page can pick the door.** A capability may name the resources it serves,
+**A page can pick the capability.** A capability may name the resources it serves,
 and a conversation held on a page that declared one of them runs there instead
 of in `ask`:
 
@@ -41,7 +41,7 @@ of in `ask`:
 This exists because an embedded page already publishes a contract — `setPageState`
 says what it is showing and which tool resolves those rows — and until now nothing
 could answer it. Every free-form channel collapsed to `ask`, so an agent embedded
-in a page had one door shared with its email, and the only way to give the page
+in a page had one capability shared with its email, and the only way to give the page
 what it needed was to give an email stranger the same thing. That is the wrong
 trade in both directions: the page's conversation is under-equipped and the
 mailbox is over-exposed.
@@ -135,7 +135,7 @@ from apps.harness import initiator as who
 from apps.harness import invocations
 from apps.harness.caller_context import is_verified
 
-#: The fallback door for a free-form channel (email, chat, Slack, a widget on a
+#: The fallback capability for a free-form channel (email, chat, Slack, a widget on a
 #: page that declared nothing). Named capabilities are for callers that ask for
 #: something specific, or for a page whose declared resource matches one's
 #: `pages` — see `_page_capability`.
@@ -148,7 +148,7 @@ GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
 
 #: The actions the conversation's own page declares (`apps/mcp/page_tools.py`), also
 #: added to every capability that names `sites:`: a site conversation is held on a
-#: page, and what that page offers is part of the door. Each runs in the visitor's
+#: page, and what that page offers is part of the capability. Each runs in the visitor's
 #: own tab, as them; a confined turn reaches only its own conversation's page.
 PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 
@@ -158,14 +158,14 @@ FULL = ""
 
 CALLER_CLASSES = frozenset({"member", "contact", "unknown"})
 
-#: The lowest role that may open a door (`role:` on a capability). Who HAS a role is the
-#: access list's business (`apps/agents/grants.py`); a door only says how much it takes.
+#: The lowest role that may use a capability (`role:` on it). Who HAS a role is the
+#: access list's business (`apps/agents/grants.py`); a capability only says how much it takes.
 DOOR_ROLES = (roles.VIEWER, roles.USER)
 
 
-def door_role(cap: dict) -> str:
+def capability_role(cap: dict) -> str:
     """The lowest role that may open `cap`: its `role:` when it says, else what its
-    `callers` already meant — a door open to contacts is for viewers, one open only to
+    `callers` already meant — a capability open to contacts is for viewers, one open only to
     members is for users. An interface written before roles keeps its meaning."""
     explicit = cap.get("role")
     if explicit in DOOR_ROLES:
@@ -175,8 +175,8 @@ def door_role(cap: dict) -> str:
 
 
 def role_opens(role: str | None, cap: dict) -> bool:
-    """May someone holding `role` open `cap`?"""
-    return roles.at_least(role, door_role(cap))
+    """May someone holding `role` use `cap`?"""
+    return roles.at_least(role, capability_role(cap))
 
 #: `editors:` — where a workspace editor who is not an agent admin lands. `full`
 #: (the default, never written) is the editor tier: the whole agent, every turn
@@ -193,7 +193,7 @@ _CALLER = re.compile(r"^(?P<base>member|contact|unknown)"
                      r"(?:@(?P<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))?"
                      r"(?::(?P<verified>verified))?$")
 
-#: What a capability's `input` fields may be. Declared and shown, but no door
+#: What a capability's `input` fields may be. Declared and shown, but no capability
 #: passes typed inputs today: the MCP capability tools that did were removed
 #: (agents are used through their plugin, not canopy's MCP).
 INPUT_TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
@@ -431,7 +431,7 @@ def _page_capability(turn, iface: dict, classes: set[str], opens=None) -> str | 
     """The capability whose `pages` match what this turn's page declared.
 
     Checked before falling back to `ask`, so a conversation held on a page the
-    agent has declared a door for gets THAT door, and every other channel is
+    agent has declared a capability for gets THAT capability, and every other channel is
     unaffected. Names are tried in order for determinism; a capability the
     caller's class is not listed for is skipped rather than refusing outright,
     because `ask` may still admit them.
@@ -468,7 +468,7 @@ def _conversation_site(turn) -> str:
 def _site_capability(turn, iface: dict, classes: set[str], opens=None) -> str | None:
     """The capability whose `sites` include the site this conversation is on.
 
-    Tried after `_page_capability` (a page-specific door is the narrower one)
+    Tried after `_page_capability` (a page-specific capability is the narrower one)
     and before falling back to `ask`. A capability the caller's class is not
     listed for is skipped, exactly as for pages.
     """
@@ -517,7 +517,7 @@ def page_site_of(turn, agent=None) -> str:
 def site_ceiling(agent, site: str) -> list[str]:
     """The owner's narrowing of `site`'s tools for a FULL-profile turn on its page: the
     union of the ceilings of the capabilities that list it, or none (the host's grant
-    decides) when any of them sets none — a full turn gets the widest door the owner
+    decides) when any of them sets none — a full turn gets the widest capability the owner
     opened on that site, never more."""
     caps = _caps_for_site(agent, site)
     if not caps or any(not cap.get("ceiling") for cap in caps):
@@ -721,10 +721,10 @@ def access_summary(iface: dict) -> list[dict]:
     iface = iface or {}
     if editors_confined(iface):
         # Decided like any member: the member rules below, nothing more.
-        doors = sorted(n for n, c in (iface.get("capabilities") or {}).items()
+        caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
                        if any(r.startswith("member") for r in c.get("callers") or []))
         editors = ("only what members reach — the capabilities "
-                   + (", ".join(doors) if doors else "listing members (none do)")
+                   + (", ".join(caps) if caps else "listing members (none do)")
                    + ", unless a `full:` rule names them")
     else:
         editors = "everything (every turn they start needs an admin's go-ahead)"
@@ -799,7 +799,7 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     admins, canopy's own turns, a `full:` rule, a writer in an admin's own
     session, and a workspace editor (whose turns then run manual); a viewer or
     a contact gets the capability they asked for — `requested`, e.g. a tool
-    called over MCP — or the page's/site's door, or `ask`, if their class is
+    called over MCP — or the page's/site's capability, or `ask`, if their class is
     listed for it; otherwise they are refused (`callers_default: none`). With
     NO published interface, only admins and editors get in.
     """
@@ -819,13 +819,13 @@ def grant_facts(turn, agent) -> dict:
     """The envelope's account of the asker's standing, from ONE decision: `granted_by`
     (the older why-word above), `role` (where they stand on the agent's role ladder, None
     when refused) and `source` (what put them there: owner | admin | system |
-    workspace-editor | rule:<full rule> | door:<name> | list:<access-list line>)."""
+    workspace-editor | rule:<full rule> | capability:<name> | list:<access-list line>)."""
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     d = access.decide_for_turn(turn, agent, turn.capability or None)
     if d.access == access.NONE and turn.capability:
-        d = access.decide_for_turn(turn, agent)   # the stamped door no longer admits them: as before
-    # The capability the turn was STAMPED with at enqueue (a requested door may differ from
+        d = access.decide_for_turn(turn, agent)   # the stamped capability no longer admits them: as before
+    # The capability the turn was STAMPED with at enqueue (a requested one may differ from
     # the free-form one `decide` falls back to).
     why = f"capability:{turn.capability or d.capability}" if d.access == access.CONFINED else d.basis
     return {"granted_by": why, "role": d.agent_role, "source": d.source}
@@ -878,7 +878,7 @@ def profile(agent, capability: str) -> dict | None:
     if cap.get("sites"):
         # A site capability reaches its host ONLY through canopy's gateway, so
         # the gateway is part of the profile by construction — an owner cannot
-        # publish a site door and forget the one tool that opens it. The host's
+        # publish a site capability and forget the one tool that opens it. The host's
         # own MCP server is not added: a visitor turn does not call it directly.
         # The page's own actions likewise: they are the page's, not the host's
         # (`site_call` refuses them by name and points here).

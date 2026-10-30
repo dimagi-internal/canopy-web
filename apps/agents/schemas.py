@@ -3610,7 +3610,7 @@ class AccessConversionOut(StrictModel):
 
     already: bool                       # it is on the list already: nothing to do
     ok: bool                            # safe to apply: every rule translated, every probe answers as before
-    probed: int                         # how many (person, door) questions were asked both ways
+    probed: int                         # how many (person, capability) questions were asked both ways
     lines: list[AccessConversionLineOut]
     unsupported: list[str]              # rules that have no line, and so keep the agent on its old rules
-    differences: list[str]              # a (person, door) the new answer would change; empty when ok
+    differences: list[str]              # a (person, capability) the new answer would change; empty when ok

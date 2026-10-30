@@ -92,7 +92,7 @@ describe('AgentSettingsSection', () => {
     cleanup()
 
     at(`${BASE}/channels`)
-    for (const name of ['Doors', 'Slack', 'Email', 'Google account']) expect(control('Channels', name)).toBeTruthy()
+    for (const name of ['Capabilities', 'Slack', 'Email', 'Google account']) expect(control('Channels', name)).toBeTruthy()
     // Who may change each one is said to someone who cannot (this viewer is
     // not an admin), not discovered by an error.
     expect(within(region('Channels')).getAllByText("Only Hal's admins can change this.")).toHaveLength(4)

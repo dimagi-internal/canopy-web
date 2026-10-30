@@ -8,7 +8,7 @@ An agent's access is decided by things that each live somewhere else: its owner
 implicitly — `Agent.is_admin` — and listed nowhere), the person's workspace role
 (`apps/workspaces/permissions.py`), and the published interface
 (`apps/agents/interface.py`), which confines everyone else to a capability or
-lets a `full:` rule through. `decide` composes the whole answer, and EVERY door
+lets a `full:` rule through. `decide` composes the whole answer, and EVERY entry point
 that makes an agent do work asks it — harness enqueue, a chat send, Slack, email
 (through `harness.services.enqueue_turn`), the caller envelope, the turn mode at
 claim, and the roster below — so no two of them can disagree.
@@ -80,7 +80,7 @@ class Decision:
     # (owner | admin | member | contact | system), kept until its readers move.
     agent_role: str | None = None
     # WHERE the role came from: `owner` | `admin` | `system` | `workspace-editor` (the
-    # implicit rule) | `rule:<full rule>` | `door:<name>` | `session` | `list:<line>`.
+    # implicit rule) | `rule:<full rule>` | `capability:<name>` | `session` | `list:<line>`.
     source: str = ""
     # `source` in words, for a person to read: the access-list line's `who` ("Anyone at
     # @dimagi.com (verified)"); "" for the older rules, which have their own words.
@@ -174,8 +174,8 @@ def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> st
     offered = _offered(classes, iface)
     what = f"capability '{requested}'" if requested else "nothing"
     if offered:
-        doors = ", ".join(f"'{n}'" for n in offered)
-        return (f"{agent.slug} offers {what} to you; you may use capability {doors} "
+        caps = ", ".join(f"'{n}'" for n in offered)
+        return (f"{agent.slug} offers {what} to you; you may use capability {caps} "
                 "(e.g. on a thread)")
     hint = ""
     if "contact:verified" in classes:
@@ -219,7 +219,7 @@ SENSITIVE_REFUSAL = ("this conversation holds a host's sensitive data, so it run
                      "and {slug} has none for it{you}")
 
 
-def _sensitive_door(agent, iface: dict, capability: str | None, turn) -> str | None:
+def _sensitive_capability(agent, iface: dict, capability: str | None, turn) -> str | None:
     """The `data: sensitive` capability this ask is in: the one it names, else the
     one its conversation's site or page selects. Callers are NOT checked here."""
     from fnmatch import fnmatchcase
@@ -246,27 +246,27 @@ def _sensitive_door(agent, iface: dict, capability: str | None, turn) -> str | N
 def _sensitive_rule(agent, d: Decision, *, capability: str | None, turn) -> Decision:
     """Spec 2026-10-22-sensitive-data-agents §5, "confined for everyone".
 
-    * in a sensitive-data door, whoever would have had the agent's FULL profile (owner,
-      admin, system, a `full:` rule, an editor, a session writer) runs that door's
+    * in a sensitive-data capability, whoever would have had the agent's FULL profile (owner,
+      admin, system, a `full:` rule, an editor, a session writer) runs that capability's
       confined profile instead — same role, same mode, same pin rights;
-    * a confined caller keeps the door the table gave them;
+    * a confined caller keeps the capability the table gave them;
     * a turn in a sensitive conversation that ends up anywhere but a
-      sensitive-data door is refused, never run full or in another capability.
+      sensitive-data capability is refused, never run full or in another one.
     """
     from apps.harness import sensitivity
 
     iface = getattr(agent, "interface", None) or {}
-    door = _sensitive_door(agent, iface, capability, turn)
+    capability_name = _sensitive_capability(agent, iface, capability, turn)
     sensitive = turn is not None and sensitivity.is_sensitive(turn)
-    if door is None and not sensitive:
+    if capability_name is None and not sensitive:
         return d
-    if door is not None and d.access == FULL:
-        return replace(d, access=CONFINED, capability=door, basis=f"sensitive:{door}")
+    if capability_name is not None and d.access == FULL:
+        return replace(d, access=CONFINED, capability=capability_name, basis=f"sensitive:{capability_name}")
     if d.access == NONE or not sensitive:
         return d
-    if door is not None and d.access == CONFINED and d.capability == door:
+    if capability_name is not None and d.access == CONFINED and d.capability == capability_name:
         return d
-    you = "" if door is None else f" that is open to you ('{door}' does not list you)"
+    you = "" if capability_name is None else f" that is open to you ('{capability_name}' does not list you)"
     return replace(d, access=NONE, capability=None, may_request_auto=False, may_pin_runner=False,
                    manual_only=False, basis="refused", agent_role=None, source="",
                    reason=SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
@@ -287,7 +287,7 @@ def _stamp(agent, d: Decision) -> Decision:
                                "session": "session"}.get(what, what))
     if d.access == CONFINED:
         cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(d.capability) or {}
-        return replace(d, agent_role=iface_mod.door_role(cap), source=f"door:{d.capability}")
+        return replace(d, agent_role=iface_mod.capability_role(cap), source=f"capability:{d.capability}")
     return d
 
 
@@ -307,9 +307,9 @@ def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.As
                         workspace_roles=getattr(standing, "roles", None))
 
 
-def _door_for(agent, iface: dict, asker_role: str, capability, turn):
-    """The door a viewer or user is confined to: the one named, else the page's or the
-    site's, else `ask` — the same order as always — among doors their role can open."""
+def _capability_for(agent, iface: dict, asker_role: str, capability, turn):
+    """The capability a viewer or user is confined to: the one named, else the page's or the
+    site's, else `ask` — the same order as always — among those their role can use."""
     def opens(cap):
         return iface_mod.role_opens(asker_role, cap)
 
@@ -343,7 +343,7 @@ def _with_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
                           agent_role=roles.EDITOR, source=f"list:{got.lines[0].subject_key}",
                           via=grants.describe(got.lines[0]))
     else:
-        name, _cap = _door_for(agent, iface, got.role, capability, turn)
+        name, _cap = _capability_for(agent, iface, got.role, capability, turn)
         if name is None:
             return d
         listed = Decision(d.role, CONFINED, name, False, False, False, f"capability:{name}",
@@ -364,10 +364,10 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
 
     `verified` is about THIS message (a signed-in request always is). `origin`
     is the channel (for the record; the rule does not vary by it). `capability`
-    is a capability the asker named (e.g. a storyboard's), else the free-form door.
+    is a capability the asker named (e.g. a storyboard's), else the free-form one (`ask`).
     `turn`, when given, supplies what only a turn knows: its initiator kind
     (canopy itself, another agent), the conversation it continues
-    (`session_writer`) and the page or site it is held on (which door applies).
+    (`session_writer`) and the page or site it is held on (which capability applies).
     """
 
     iface = getattr(agent, "interface", None) or {}
@@ -532,7 +532,7 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
                 caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
                               if iface_mod.role_opens(d.agent_role, c))
             elif d.access == CONFINED:
-                # Every door listed for them, not just the free-form one.
+                # Every capability listed for them, not just the free-form one.
                 caps = _offered(iface_mod._expand("member", user.email or "", True), iface)
             else:
                 caps = []
