@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as slack from '@/api/slack'
@@ -146,7 +146,7 @@ describe('SlackSettingsPage — reading whole channels', () => {
 
   it('an owner allow-lists a channel for one agent, and removes it', async () => {
     const entry = {
-      id: 'a1', agent: 'ada', channel: 'C1', channel_name: 'canopy-support', follow: false, note: 'champions',
+      id: 'a1', agent: 'ada', channel: 'C1', channel_name: 'canopy-support', follow: false, review_sessions: false, note: 'champions',
       added_by_email: 'jj@dimagi.com', added_at: '',
     }
     vi.mocked(slack.getSlackConfig).mockResolvedValue({ ...base, channel_ingest: { enabled: false, allowed: [entry] } })
@@ -160,8 +160,17 @@ describe('SlackSettingsPage — reading whole channels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect((await screen.findByTestId('slack-note')).textContent).toContain('ada may now read #ai-champions.')
     expect(slack.allowSlackChannel).toHaveBeenCalledWith('connect', {
-      agent: 'ada', channel: '#ai-champions', follow: false, note: '',
+      agent: 'ada', channel: '#ai-champions', follow: false, note: '', review_sessions: false,
     })
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: '#canopy-support' } })
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'trellis' } })
+    fireEvent.click(screen.getByLabelText('Also review the canopy sessions shared in this channel'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() =>
+      expect(slack.allowSlackChannel).toHaveBeenLastCalledWith('connect', {
+        agent: 'trellis', channel: '#canopy-support', follow: false, note: '', review_sessions: true,
+      }),
+    )
     fireEvent.click(await screen.findByRole('button', { name: 'Remove #canopy-support for ada' }))
     expect((await screen.findByTestId('slack-note')).textContent).toContain('its reads were revoked')
     expect(slack.disallowSlackChannel).toHaveBeenCalledWith('connect', 'a1')
