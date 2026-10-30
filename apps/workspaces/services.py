@@ -16,7 +16,7 @@ replaced the self-join of 2026-09-12).
 Elsewhere in this package: `links` (addresses under `/w/<ws>/`), `invites`,
 `login_gate` (who may sign in or create a workspace), `access_requests`,
 `notifications` (the shared email plumbing) and `vault` (the tenant's shared
-1Password vault).
+vault).
 """
 from __future__ import annotations
 

@@ -157,14 +157,13 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | a Claude credential in the new box's vault | `wire.sh` (waits for a probe) | the box's Credentials tab (`wire.sh` prints it): Make its key, then + Token / + API key |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
 | operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
-| per agent still on 1Password: its vault + service-account key | `wire.sh` (refuses in `--standby`) | `canopy agent vault --slug <slug> --workspace <ws>` (the setup checklist's Vault step) |
 | per agent: GitHub delegation (owner's token) | `wire.sh` | agent Settings → Credentials → GitHub (the owner) |
 
 ## Where secrets live, and which key reads them
 
 Every secret an agent uses is in a **canopy vault**, zero-knowledge: canopy-web stores
 ciphertext and the copies of each vault's key, wrapped to the people and machines the
-vault lists, and no 1Password key at all.
+vault lists. There is no other secret store.
 
 | what | vault | the box opens it with |
 |---|---|---|
@@ -174,9 +173,7 @@ vault lists, and no 1Password key at all.
 | the box's own Claude login | the **runner's vault** | its device key |
 
 Set them on the vault's page (`/w/<ws>/vaults/<id>`), the agent's **Settings →
-Credentials**, and **`/supervisor` → Runners → the box**. An agent still on 1Password
-(`credential_source: 1password`) keeps its own vault key in canopy-web
-(`PUT /api/agents/<slug>/vault`); one on the canopy vault is refused one.
+Credentials**, and **`/supervisor` → Runners → the box**.
 
 ## Is it healthy? (no shell needed)
 
@@ -197,9 +194,9 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — the runner sweeps scratch and prunes caches on its own at its next idle moment; a fail that stays is not scratch: grow `VolumeSize` (see "Disk") |
 | `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR/sessions` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
 | `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → Credentials → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
-| `env.<slug>` | the agent's `~/.<slug>/.env` could not be re-read from its vault when a turn was claimed (op's reason in the detail) — turns run on the last good file, which may be stale. Fix the vault/key; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
+| `env.<slug>` | the agent's `~/.<slug>/.env` could not be resolved from its Canopy vault when a turn was claimed (the CLI's reason in the detail) — turns run on the last good values, which may be stale. Fix the vault; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
 
-Per-agent results (mailbox, secrets via `op inject` — `env_ok`, with op's own
+Per-agent results (mailbox, secrets from the Canopy vault — `env_ok`, with the CLI's own
 reason in `detail`) stay on `GET /api/agents/{slug}/readiness`. A readiness
 **drill** (the Drills panel, or `POST /api/harness/runners/{id}/drill`) is still
 the end-to-end proof that an agent can run a turn here and reach canopy-web.
@@ -238,7 +235,7 @@ use; one with local changes, or on a branch, is left alone.
 `cloud_runner.py`'s `main()` clones/pulls `canopy-web` to `/opt/canopy-web` and runs
 `runner/ec2/bootstrap_agents.sh` from that clone once per service start —
 **after** `fetch_and_stage_credential()` has staged this runner's credential bundle (the box holds
-no 1Password key and no GitHub token — those come per agent from canopy-web; see the docstring on
+no per-agent key and no GitHub token — those come per agent from canopy-web; see the docstring on
 `bootstrap_agent_fleet()` for exactly why the ordering has to be this way round, not
 a cloud-init `ExecStartPre`). The script is idempotent — each step is `OK`-skipped when
 already satisfied — and best-effort per agent: one agent's problems log loudly but do not
@@ -246,14 +243,14 @@ stop the others, and do not block the runner from starting up and claiming turns
 
 **The script prepares the BOX; canopy prepares each AGENT** (canopy
 `docs/architecture/agent-setup-lifecycle.md`). Steps: (1) install/verify `uv`, the
-`canopy` CLI (a `uv tool`), `gog` (latest Linux release), `op`/`gh`/`claude`/`git`;
+`canopy` CLI (a `uv tool`), `gog` (latest Linux release), `gh`/`claude`/`git`;
 (2) gog's keyring backend = `file` (headless Linux has no OS keychain) and the roster
 from canopy-web (`AGENT_SLUGS` only offline); (4) the `canopy` Claude plugin, Claude Code
 and the CLI brought current — BEFORE (3), because the CLI is what prepares the agents;
 (3) per agent, `canopy agent prepare --runner --slug <s>` — the ONE implementation,
 shared with laptops: credentials from canopy-web (`/credentials/resolve`, with this box's
-token), clone/pull the repo canopy-web records into `/opt/agents/<slug>`, `op inject`
-its `.env.tpl` with the agent's own key (`env_ok`), its plugin and required plugins
+token), clone/pull the repo canopy-web records into `/opt/agents/<slug>`, write
+its `.env` from the agent's Canopy vault (`env_ok`), its plugin and required plugins
 (node deps, key files), `bin/<slug>-setup`, the Gmail client and the NEWEST of the
 vault's and canopy-web's token, a real gmail call (`mailbox_ok`, `turn_ready`), then the
 readiness report (`GET /api/agents/<slug>/readiness`); (4b) prune caches; (5) summary.
@@ -412,25 +409,16 @@ stop borrowing the runner's own `CANOPY_TOKEN` for agent work: agents are alread
 their own canopy-web users, so a **per-agent PAT** gives per-agent attribution and
 per-agent revocation for free.
 
-This follows the normal fleet standard (`.env.tpl` + `op inject`) — no new auth
-primitive. `canopy agent vault --slug <slug>` does it: it mints the agent's own token
+This follows the normal fleet standard (the agent's Canopy vault) — no new auth
+primitive. `canopy agent prepare` does it: it mints the agent's own token
 (`POST /api/agents/<slug>/canopy-token`, which creates the agent's canopy login if it has
-none — never adopts an existing account) and writes it to the vault item `canopy-pat`,
-field `credential`, without printing it. The agent's `.env.tpl` carries one line:
-
-```bash
-CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential
-```
-
-`op inject` materializes it into `~/.<slug>/.env` when the agent's next turn is claimed
-(and at every bootstrap).
+none — never adopts an existing account) and stores it in the agent's vault as
+`CANOPY_WEB_PAT`, without printing it. The canopy CLI on the box then opens the vault and
+hands the value to each turn when the agent's next turn is claimed (and at every
+bootstrap).
 
 `canopy_web.resolve_pat()` already reads `CANOPY_WEB_PAT` ahead of the token file,
-so nothing else has to change once the line is there.
-
-> **Do not put a literal `op://vault/item/field` in a comment.** `op inject`
-> resolves references anywhere in the file, comments included, and the resolved
-> secret can leak to stdout. Use angle-bracket placeholders, as above.
+so nothing else has to change once the value is there.
 
 ## Device binding: the box's instance role (Canopy Vault, #1549)
 
@@ -468,21 +456,18 @@ Vault AWS-auth pattern):
 ## Vault standard
 
 See "Where secrets live" above for WHICH KEY reads which vault — this section is
-only about naming. Agent `.env.tpl` files reference
-**`op://Agent-<Name>/<kebab-item>/<field>`** (e.g. `Agent-Ace/gog-token/credential`)
-for per-agent items, and the tenant's shared vault (**`op://Canopy-Shared/...`** in
-the `connect`/`dimagi` workspaces) for fleet-wide ones (`gog-oauth-client`,
-`canopy-drive-folder`). The old `AI-Agents` vault stays readable
-during the migration but nothing new should point at it. The vault NAME is whatever
-canopy-web has registered for that agent or workspace — it is no longer derived from
-the slug, so an agent whose vault is not registered is simply not provisioned.
+only about naming. An agent's values are named entries in its own Canopy vault
+(e.g. `gog-token`, `canopy-pat`), and fleet-wide ones (`gog-oauth-client`,
+`canopy-drive-folder`) live in the tenant's workspace vault. Which vault is whose is
+whatever canopy-web has recorded for that agent or workspace — it is never derived
+from the slug, so an agent with no vault is simply not provisioned.
 **GitHub is not in any vault.** A box holds no GitHub credential: an agent's
 GitHub identity is its OWNER's, lent to that one agent (`AgentDelegation`, set on
 the agent's Settings → Credentials → GitHub). Each turn asks canopy-web for it
 (`POST /api/harness/runners/{id}/turns/{id}/github-token`) and it lives only in
 that turn's environment; bootstrap uses the same token for that agent's private
 clones. `bootstrap_agents.sh` reads each agent's own
-`Agent-<Name>/gog-token/credential` with that agent's key. See
+`gog-token` from its Canopy vault. See
 `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
 
 ## Gmail token re-staging
@@ -492,15 +477,15 @@ it can come from either of two places — both equally valid, because the fleet'
 Google OAuth clients are one app (`canopy` = Desktop, `canopy-web` = Web; a token
 under either serves every turn, canopy `agent_email.FLEET_CLIENTS`):
 
-- **Browser (no terminal, no 1Password):** the agent's Settings → Credentials
+- **Browser (no terminal):** the agent's Settings → Credentials
   (`/w/<ws>/agents/<slug>/settings#credentials`) → **Connect Google mailbox**, as the
   agent's owner or an admin, signing in as the agent's mailbox. Mints under
   `canopy-web`; one of the agent's online runners exchanges the code and stores the
   token encrypted in the agent's vault, so canopy-web never sees it
   (`_drain_google_mint`, `canopy vault google-mint`; `docs/architecture/vault.md`).
 - **Terminal:** `gog login <mailbox> --client canopy --services gmail,drive,docs,sheets,forms,appscript`
-  on a laptop, then `gog auth tokens export` and `op` it into that agent's
-  `Agent-<Name>/gog-token` item, field `credential`.
+  on a laptop, then `gog auth tokens export` and add it to that agent's Canopy vault
+  as `gog-token`.
 
 `bootstrap_agents.sh` leaves a live mailbox alone; otherwise it imports the NEWER of
 the two by the token's `created_at`. So after re-minting, press **Refresh** on the
@@ -509,9 +494,7 @@ The imported file is never left on disk (`shred -u`, falling back to `rm -f`).
 
 ## Secrets (in Secrets Manager, under `canopy/cloud-runner/`)
 - `canopy/cloud-runner/canopy-pat` — **no longer needed by a new box.** A new stack sets `CanopyTokenSecret=''`, so the box holds no PAT and pairs by invitation (below); `up.sh` neither checks nor reads it. A stack made before that keeps its `CanopyTokenSecret` on update, and its box (already paired, keyless) does not need the PAT either; the boot script tolerates a named secret that is gone. So the secret can be deleted once no stack reads it — a **human AWS step after the deploy** (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/canopy-pat`), not done by any script.
-- ~~`canopy/cloud-runner/claude-oauth-token`~~ — **gone.** A box's Claude credentials live only in its vault; nothing reads this secret, and it can be deleted (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/claude-oauth-token`).
 - `canopy/cloud-runner/gog-keyring-password` — read only by a box built before it ran several runners. A box of several runners derives each agent's keyring password from its runner's own secret; `up.sh` no longer requires this one. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh).
-- ~~`canopy/cloud-runner/op-service-account-token`~~ — **gone.** `wire.sh` no longer reads it, the credential bundle no longer carries it, and `RunnerCredential` no longer stores it. A box-wide 1Password key lived in the runner's environment, which every turn inherits: one credential that reads EVERY agent's vault, handed to each of them. Agent secrets are read with the per-agent and per-tenant keys canopy-web issues (see "Where secrets live"). The Secrets Manager entry can be deleted; nothing reads it.
 
 `up.sh` publishes the first-boot seed itself (`seed.py`), not staged by hand:
 - `canopy/cloud-runner/runner-seed` — a JSON manifest: `{format, parts, sha256, sha, committed_at}`. The `sha`/`committed_at` are the seed's provenance, which the box stamps into `/opt/canopy-runner/build-info.json` so its first auto-update check can answer.
@@ -525,7 +508,7 @@ the change (the live `canopy-cloud-runner`, as of 2026-10-04) have the old
 `canopy-fetch-env` baked into their UserData and read them. See "Migrating the live
 stack" below. `--purge-secrets` removes both formats.
 
-Stage them with `./secrets.sh {canopy|claude|gog} <file|->` (`op` is legacy — nothing reads it). `wire.sh` copies a live
+Stage them with `./secrets.sh {canopy|gog} <file|->`. `wire.sh` copies a live
 runner's Claude credential bundle (or, with none, the Secrets Manager fallback) into the
 freshly-paired runner's bundle (`/api/harness/runners/{id}/credential`) — that's what unblocks
 `fetch_and_stage_credential()` and lets bootstrap actually run.
@@ -991,7 +974,7 @@ dozen lines that just `git show`s the real updater out of `origin/main`).
 A recycle destroys the instance's EBS volume, and that volume is not empty: it holds
 the five agent clones, the gog keyring with all five gmail tokens, and every
 provisioned `~/.<slug>/.env`. `bootstrap_agents.sh` rebuilds all of it idempotently
-from 1Password, so a recycle is recoverable — but it also mints a NEW runner id,
+from the Canopy vaults, so a recycle is recoverable — but it also mints a NEW runner id,
 which is why `wire.sh` has to re-swap every agent's assignments afterwards.
 
 If you would rather keep that state, the only things missing from a running box are

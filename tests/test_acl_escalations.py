@@ -28,6 +28,7 @@ from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.passkeys.testing import give_vault_key
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 
@@ -92,13 +93,14 @@ def test_an_assignment_alone_does_not_release_secrets(esc):
     assert "s3cret" not in res.content.decode()
 
 
-def test_an_agent_admins_box_still_resolves(esc):
+def test_an_agent_admins_box_still_resolves(esc, monkeypatch):
     from apps.agents import services as asvc
 
     AgentAdmin.objects.create(agent=esc["agent"], user=esc["editor"])
     asvc.set_agent_credentials(esc["agent"], {"canopy-pat": "s3cret"}, user=esc["owner"])
     box = _runner(esc["editor"], "admin-box")
     RunnerAssignment.objects.create(agent=esc["agent"], runner=box, rank=0)
+    accept_device_proof(monkeypatch, box)  # this test is about who may resolve, not the proof
     res = Client().get("/api/agents/escbot/credentials/resolve",
                        HTTP_AUTHORIZATION=f"Bearer {_pat(esc['editor'])}")
     assert res.status_code == 200, res.content

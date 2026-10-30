@@ -77,11 +77,6 @@ def _burst_limit() -> int:
     return int(getattr(settings, "CANOPY_VAULT_READ_BURST_LIMIT", 50) or 50)
 
 
-def _applies(agent) -> bool:
-    # A zero-knowledge agent's values come from canopy-web whatever the source says.
-    return agent.credential_source == agent.CANOPY_WEB or agent.zk_enabled
-
-
 def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None,
                handed: list[str], runner=None) -> list:
     """Check one SUCCESSFUL resolve. `via` is resolve's principal (`runner` or
@@ -90,9 +85,6 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
     only)."""
     raised = []
     try:
-        if not _applies(agent):
-            return raised
-
         user = request.user
         # A box's own credential refresh (the runner-update timer, bootstrap) runs
         # outside any turn by design and says so. It cannot hide a misuse the turn
@@ -147,8 +139,6 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
 def device_proof_refused(agent, request, *, reason: str, runner=None):
     """A resolve answered 401 `device_proof_required`."""
     try:
-        if not _applies(agent):
-            return None
         return raise_alert(
             agent, "device-proof", user=request.user, runner=runner, request=request,
             turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
@@ -184,9 +174,9 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
         logger.exception("unrouted-box event failed for %s", agent.slug)
 
 
-#: The resolve extras (credential_resolve.RESOLVE_SECRET_EXTRAS) are fields, not refs an
-#: agent declares, so naming them is never "undeclared". `github_token` was one, and an
-#: older canopy CLI still names it (it is never returned now): not undeclared either.
+#: Names an older canopy CLI still sends that are fields, not refs an agent declares, so
+#: naming them is never "undeclared". `github_token` and `op_sa_token` were fields once;
+#: neither is ever returned now.
 _EXTRAS = {"op_sa_token", "github_token"}
 
 

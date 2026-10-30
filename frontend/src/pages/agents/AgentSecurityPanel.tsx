@@ -20,7 +20,7 @@ export function AgentSecurityPanel({
   reloadKey = 0,
   onChanged,
 }: {
-  agent: { slug: string; name?: string; credential_source?: string | null }
+  agent: { slug: string; name?: string }
   canEdit: boolean
   /** Bumped when the vault's secrets changed, so the login line re-reads. */
   reloadKey?: number
@@ -29,35 +29,31 @@ export function AgentSecurityPanel({
 }) {
   const [hasLogin, setHasLogin] = useState<boolean | null>(null)
   const [renews, setRenews] = useState<number | null>(null)
-  const onCanopy = agent.credential_source !== '1password'
 
   useEffect(() => {
     let cancelled = false
     getAgentCredentialStatus(agent.slug)
       .then((rows) => !cancelled && setHasLogin(rows.some((r) => r.name === LOGIN_REF && r.set)), () => undefined)
-    if (canEdit && onCanopy) {
+    if (canEdit) {
       getPatRotation(agent.slug).then((r) => !cancelled && setRenews(r.enabled ? r.period_days : 0), () => undefined)
     }
     return () => {
       cancelled = true
     }
-  }, [agent.slug, canEdit, onCanopy, reloadKey])
+  }, [agent.slug, canEdit, reloadKey])
 
-  const loginSummary = !onCanopy
-    ? 'kept in 1Password'
-    : hasLogin === null
-      ? undefined
-      : !hasLogin
-        ? 'not made yet'
-        : renews ? `stored · renews every ${renews} days` : 'stored · does not renew on its own'
+  const loginSummary = hasLogin === null
+    ? undefined
+    : !hasLogin
+      ? 'not made yet'
+      : renews ? `stored · renews every ${renews} days` : 'stored · does not renew on its own'
 
   return (
     <div data-testid="agent-security">
       <VaultSection id="agent-login" title="Canopy login" summary={loginSummary}
-        tone={onCanopy && hasLogin === false ? 'attention' : 'quiet'} anchors={['canopy-login', 'cred-pat-rotation']}>
+        tone={hasLogin === false ? 'attention' : 'quiet'} anchors={['canopy-login', 'cred-pat-rotation']}>
         <AgentSecretsHomeSection
           slug={agent.slug}
-          credentialSource={agent.credential_source}
           storedNames={hasLogin ? [LOGIN_REF] : []}
           canEdit={canEdit}
           onChanged={onChanged}

@@ -16,7 +16,7 @@ Per-endpoint coverage would be one test per line; these pin the TIERS instead:
 - membership-only — the interaction tier a `viewer` must keep
 plus the two security-critical specifics: a non-member gets 404 never 403 on
 an owner endpoint, and an editor (the self-join default) is refused on all
-three owner endpoints individually.
+owner endpoints individually.
 """
 from __future__ import annotations
 
@@ -64,13 +64,6 @@ def _put_credentials(client, values=None):
     )
 
 
-def _put_vault(client):
-    return client.put(
-        "/api/agents/aclbot/vault",
-        data={"vault": "op://acl-vault", "service_key": "sa-token"}, content_type="application/json",
-    )
-
-
 def _delete_credential(client, name="a-secret"):
     return client.delete(f"/api/agents/aclbot/credentials/{name}")
 
@@ -88,30 +81,19 @@ def test_viewer_refused_on_credentials(acl):
     assert _put_credentials(acl["client"]).status_code == 403
 
 
-def test_viewer_refused_on_vault(acl):
-    acl["client"].force_login(acl["viewer"])
-    assert _put_vault(acl["client"]).status_code == 403
-
-
 def test_viewer_refused_on_delete_credential(acl):
     acl["client"].force_login(acl["viewer"])
     assert _delete_credential(acl["client"]).status_code == 403
 
 
-# --- editor: the auto-join default, refused on all three owner endpoints ------
+# --- editor: the auto-join default, refused on the owner endpoints -----------
 # This is the finding's core: before Phase 0, an editor (i.e. anyone in the
 # allowlisted domain) could overwrite an agent's encrypted credentials and
-# vault pointer. Pin all three individually.
+# credential. Pin each individually.
 
 def test_editor_refused_on_credentials(acl):
     acl["client"].force_login(acl["editor"])
     res = _put_credentials(acl["client"])
-    assert res.status_code == 403, res.content
-
-
-def test_editor_refused_on_vault(acl):
-    acl["client"].force_login(acl["editor"])
-    res = _put_vault(acl["client"])
     assert res.status_code == 403, res.content
 
 

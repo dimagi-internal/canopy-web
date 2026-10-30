@@ -80,7 +80,7 @@ def _run(tmp: pathlib.Path) -> subprocess.CompletedProcess:
     home = tmp / "home"
     (home / ".claude" / "canopy").mkdir(parents=True)
     (home / ".claude" / "canopy" / "workbench-token").write_text("t0ken\n")
-    for name, body in (("aws", "#!/bin/sh\necho fake-token\n"), ("op", "#!/bin/sh\nexit 1\n")):
+    for name, body in (("aws", "#!/bin/sh\necho fake-token\n"),):
         p = tmp / "bin" / name
         p.write_text(body)
         p.chmod(0o755)

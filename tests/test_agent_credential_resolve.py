@@ -1,14 +1,9 @@
-"""Credential source + the admin resolve path (canopy#850, design revision 2026-10-09).
+"""The admin resolve path (canopy#850).
 
-Two halves:
-
-- `Agent.credential_source` ("1password" | "canopy-web") says which backend
-  `canopy cred` resolves an agent's secrets from. Set by the agent's owner or an
-  admin only; the repo's self-publish upsert cannot move it.
-- `GET /credentials/resolve` gains a second principal: besides a caller pairing a
-  live runner the agent routes to (`via: runner`), the agent's owner or an admin
-  may resolve for a local Claude Code session (`via: admin`). Still bearer-only.
-  `GET /credentials/access` answers the same gate for the caller without values.
+`GET /credentials/resolve` has two principals: a caller pairing a live runner the
+agent routes to (`via: runner`), and the agent's owner or an admin resolving for a
+local Claude Code session (`via: admin`). Still bearer-only.
+`GET /credentials/access` answers the same gate for the caller without values.
 """
 from __future__ import annotations
 
@@ -23,6 +18,7 @@ from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.testing import give_vault_key
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 
@@ -55,7 +51,7 @@ def _session(user) -> Client:
 
 
 @pytest.fixture
-def cs():
+def cs(monkeypatch):
     ws = a_workspace(WS)
     owner = a_member(ws, email="cs-owner@dimagi.com", role=WorkspaceMembership.EDITOR)
     admin = a_member(ws, email="cs-admin@dimagi.com", role=WorkspaceMembership.EDITOR)
@@ -65,6 +61,7 @@ def cs():
     AgentAdmin.objects.create(agent=agent, user=admin)
     give_vault_key(owner)  # someone to seal its value to: every value is zero-knowledge
     asvc.set_agent_credentials(agent, {"canopy-pat": SECRET}, user=owner)
+    accept_device_proof(monkeypatch)  # these tests are about who may resolve
     return {"ws": ws, "owner": owner, "admin": admin, "editor": editor, "agent": agent}
 
 
@@ -75,75 +72,6 @@ def _box(user, agent) -> Runner:
     )
     RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
     return r
-
-
-# --- credential_source ---------------------------------------------------------
-
-def test_credential_source_defaults_to_1password_and_is_on_the_read_schemas(cs):
-    c = _session(cs["editor"])
-    assert c.get("/api/agents/csbot/").json()["credential_source"] == "1password"
-    listed = {a["slug"]: a for a in c.get("/api/agents/").json()["items"]}
-    assert listed["csbot"]["credential_source"] == "1password"
-
-
-@pytest.mark.parametrize("who", ["owner", "admin"])
-def test_owner_or_admin_sets_the_credential_source(cs, who):
-    # Zero-knowledge is the agent vault's only mode: the stored value was sealed
-    # to the agent's readers (its owner's vault key) when it was written.
-    res = _session(cs[who]).patch(
-        "/api/agents/csbot/credential-source",
-        data={"credential_source": "canopy-web"}, content_type="application/json",
-    )
-    assert res.status_code == 200, res.content
-    assert res.json()["credential_source"] == "canopy-web"
-    cs["agent"].refresh_from_db()
-    assert cs["agent"].credential_source == "canopy-web"
-    assert cs["agent"].zk_enabled and cs["agent"].zk_kv == 0
-    row = cs["agent"].credentials.get(name="canopy-pat")
-    assert row.value_zk.startswith("zks1:")
-
-
-def test_a_legacy_agent_holding_nothing_starts_its_vault_on_the_move(cs):
-    cs["agent"].credentials.all().delete()
-    type(cs["agent"]).objects.filter(pk=cs["agent"].pk).update(zk_enabled=False, zk_kv=0)
-    res = _session(cs["owner"]).patch(
-        "/api/agents/csbot/credential-source",
-        data={"credential_source": "canopy-web"}, content_type="application/json",
-    )
-    assert res.status_code == 200, res.content
-    cs["agent"].refresh_from_db()
-    assert cs["agent"].credential_source == "canopy-web"
-    assert cs["agent"].zk_enabled and cs["agent"].zk_kv == 0
-
-
-def test_an_editor_cannot_set_the_credential_source(cs):
-    res = _session(cs["editor"]).patch(
-        "/api/agents/csbot/credential-source",
-        data={"credential_source": "canopy-web"}, content_type="application/json",
-    )
-    assert res.status_code == 403
-    cs["agent"].refresh_from_db()
-    assert cs["agent"].credential_source == "1password"
-
-
-def test_an_unknown_credential_source_is_rejected(cs):
-    res = _session(cs["owner"]).patch(
-        "/api/agents/csbot/credential-source",
-        data={"credential_source": "vault-of-glass"}, content_type="application/json",
-    )
-    assert res.status_code == 422
-
-
-def test_the_self_publish_upsert_cannot_move_the_credential_source(cs):
-    res = _session(cs["owner"]).post(
-        "/api/agents/",
-        data={"slug": "csbot", "name": "CS", "workspace": WS, "credential_source": "canopy-web"},
-        content_type="application/json",
-    )
-    # StrictModel rejects the unknown field rather than silently dropping it.
-    assert res.status_code == 422, res.content
-    cs["agent"].refresh_from_db()
-    assert cs["agent"].credential_source == "1password"
 
 
 # --- resolve: runner OR admin, bearer-only -----------------------------------
@@ -209,9 +137,8 @@ def test_a_non_member_gets_404_not_a_reason(cs):
 def test_access_for_an_admin_says_admin(cs):
     res = _session(cs["admin"]).get("/api/agents/csbot/credentials/access")
     assert res.status_code == 200
-    assert res.json() == {"agent": "csbot", "credential_source": "1password",
-                          "may_resolve": True, "via": "admin", "reason": "",
-                          "delegated_withheld": []}
+    assert res.json() == {"agent": "csbot", "may_resolve": True, "via": "admin",
+                          "reason": "", "delegated_withheld": []}
 
 
 def test_access_for_a_runner_pair_says_runner_over_bearer(cs):
@@ -221,10 +148,8 @@ def test_access_for_a_runner_pair_says_runner_over_bearer(cs):
 
 
 def test_access_for_a_member_says_no_and_why(cs):
-    cs["agent"].credential_source = "canopy-web"
-    cs["agent"].save(update_fields=["credential_source"])
     body = _session(cs["editor"]).get("/api/agents/csbot/credentials/access").json()
-    assert body["credential_source"] == "canopy-web"
+    assert "credential_source" not in body
     assert body["may_resolve"] is False and body["via"] is None
     assert "admin" in body["reason"]
     assert SECRET not in str(body)

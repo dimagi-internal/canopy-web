@@ -83,7 +83,6 @@ def test_the_staged_secrets_are_all_purgeable():
     staged = _names_in(EC2 / "secrets.sh")
     assert staged == {
         "canopy-pat",
-        "op-service-account-token",
         "gog-keyring-password",
     }, f"secrets.sh's managed set changed: {sorted(staged)}"
     assert staged <= _purged_by_down_sh()

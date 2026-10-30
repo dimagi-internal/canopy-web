@@ -117,9 +117,7 @@ export function AgentAccountsPanel({
   const gog = rows?.find((r) => r.name === GOG_TOKEN_REF)
   const mailbox: CredStatus = gog?.set
     ? { label: 'Connected', tone: 'success' }
-    : gog
-      ? { label: 'From 1Password', tone: 'muted' }
-      : { label: 'Not connected', tone: 'destructive' }
+    : { label: 'Not connected', tone: 'destructive' }
 
   const statusRows: { key: string; name: string; href?: string; s: CredStatus | undefined }[] = [
     { key: 'github', name: 'GitHub', href: '#cred-github', s: status.github },

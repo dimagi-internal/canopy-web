@@ -67,9 +67,7 @@ function openedBy(zk: ZkStateOut, me: string, keys: RunnerDeviceKeyOut[]): strin
 }
 
 async function findAgents(): Promise<AgentRow[]> {
-  // Only agents whose secrets live in this vault: a 1Password agent has nothing
-  // here, even when you administer it (or administer everything).
-  const agents = (await listAgents({ limit: 200 })).items.filter((a) => a.credential_source === 'canopy-web')
+  const agents = (await listAgents({ limit: 200 })).items
   const rows = await Promise.all(agents.map(async (a): Promise<AgentRow | null> => {
     try {
       return { slug: a.slug, name: a.name || a.slug, zk: await getZkState(a.slug) } // refuses unless you administer it

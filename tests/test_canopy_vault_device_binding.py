@@ -53,8 +53,7 @@ def fleet(client):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj,
-                                 runtime_secrets=["canopy-pat"],
-                                 credential_source=Agent.CANOPY_WEB)
+                                 runtime_secrets=["canopy-pat"])
     runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE, workspace=ws,
                                    last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
@@ -227,12 +226,6 @@ def test_binding_on_and_no_proof_is_the_contract_401(fleet):
     assert {k: body[k] for k in ("error", "reason", "detail")} == {
         "error": "device_proof_required", "reason": "no_valid_proof", "detail": "no device proof"}
     assert "pat-value" not in res.content.decode()
-
-
-def test_binding_only_applies_to_canopy_web_agents(fleet):
-    _bind(fleet)
-    Agent.objects.filter(pk=fleet["agent"].pk).update(credential_source=Agent.ONEPASSWORD)
-    assert _resolve(fleet).status_code == 200
 
 
 def test_a_valid_proof_from_an_active_key_resolves_and_names_the_runner(fleet):

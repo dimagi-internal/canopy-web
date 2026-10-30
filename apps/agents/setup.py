@@ -13,8 +13,8 @@ the real check would be the "screen says fine, turn fails" bug this exists to pr
 `where` says which tool does it: "web" steps are a link to the control that does it;
 "claude-code" steps are judgment work — a persona, the first real skill — that happens in a
 session in the agent's repo, so the step carries the prompt that starts one; "terminal"
-steps need a person's own access that canopy-web does not hold (the vault: 1Password
-rights), so the step carries the one command that does it.
+steps need a person's own access that canopy-web does not hold, so the step carries the
+one command that does it.
 """
 from __future__ import annotations
 
@@ -158,21 +158,14 @@ def _vault(agent: Agent, settings: str, vh: dict | None = None, facts=None) -> d
     """Where its secrets live — read from THE vault verdict (`vault_health`), so this
     step and the workspace health dashboard cannot disagree. An agent resolving from
     the canopy-web vault is judged by that vault (every declared secret stored, every
-    machine let in); one resolving from 1Password by its 1Password vault and key.
-    `vh`: its `vault_health`, when the caller has read it already."""
+    machine let in). `vh`: its `vault_health`, when the caller has read it already."""
 
-    if agent.credential_source == Agent.CANOPY_WEB:
-        return _canopy_vault(agent, settings, vh or vault_health(agent, facts), facts)
-    return _op_vault(agent, settings)
+    return _canopy_vault(agent, settings, vh or vault_health(agent, facts), facts)
 
 
 def _canopy_login(agent: Agent, settings: str) -> dict | None:
     """Its own canopy login (`canopy-pat`) — one click on its Credentials page makes it,
-    stores it sealed and turns on renewal. Only for an agent on the Canopy vault; a
-    1Password agent's login comes from its vault like every other secret."""
-    if agent.credential_source != Agent.CANOPY_WEB:
-        return None
-
+    stores it sealed and turns on renewal."""
     has = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists()
     return _step(
         "canopy_login", "Give it its canopy login", DONE if has else TODO,
@@ -199,18 +192,11 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
                          href="/settings#vault-key", action="Set up your vault key")
     # Its canopy login has its own step (and button); listing it here too would be
     # one missing thing reported twice.
-    leftover = [n for n in vh["in_1password"] + vh["missing"] if n != CANOPY_PAT_REF]
-    vh = {**vh, "in_1password": [n for n in vh["in_1password"] if n != CANOPY_PAT_REF],
-          "missing": [n for n in vh["missing"] if n != CANOPY_PAT_REF]}
-    if leftover:
-        parts = []
-        if vh["in_1password"]:
-            parts.append(f"still only in 1Password: {', '.join(vh['in_1password'])}")
-        if vh["missing"]:
-            parts.append(f"not stored anywhere: {', '.join(vh['missing'])}")
+    vh = {**vh, "missing": [n for n in vh["missing"] if n != CANOPY_PAT_REF]}
+    if vh["missing"]:
         return _step("vault", title, TODO,
-                     f"It reads its secrets from canopy-web, but {'; '.join(parts)}. Store each "
-                     "one here so its runners can read it.",
+                     f"It reads its secrets from canopy-web, but these are not stored anywhere: "
+                     f"{', '.join(vh['missing'])}. Store each one here so its runners can read it.",
                      href=f"{settings}#credentials", action="Add the missing secrets")
     if vh["machines_waiting"]:
         # Straight to the waiting machine's own row under Your runners, which lets it
@@ -229,45 +215,6 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
                  f"All {vh['declared']} declared secrets are in canopy-web." if vh["declared"] else
                  "It reads secrets from canopy-web and declares none.",
                  href=f"{settings}#credentials", action="See its secrets")
-
-
-def _op_vault(agent: Agent, settings: str) -> dict:
-    """The agent's 1Password vault and the key a runner reads it with — and, once a box
-    has used them, whether its secrets actually materialized (`env_ok`, the box's own
-    `op inject`). Recorded-but-broken reads as todo with the box's reason: a key that is
-    stored but cannot read the vault is the 2026-09-22 "four agents, two weeks, only in
-    journald" failure.
-
-    Creating a vault and minting its key need a PERSON's 1Password rights, which neither
-    canopy-web nor a box has, so this step is a terminal command, not a link. One command
-    does all of it and is safe to re-run: `canopy agent vault` (canopy repo)."""
-
-    command = f"canopy agent vault --slug {agent.slug} --workspace {agent.workspace_id}"
-    if not agent.op_vault:
-        # The person creating it names the vault; it is never derived from the slug.
-        command += " --vault <vault name>"
-    title = "Give it a vault"
-    if not agent.op_vault or not agent.op_sa_token_enc:
-        state = (f"Its vault, {agent.op_vault}, has no key stored here, so no runner can read it."
-                 if agent.op_vault else "It has no 1Password vault yet.")
-        return _step(
-            "vault", title, TODO,
-            f"{state} Someone with 1Password rights runs this once (naming the vault, if it has "
-            "none): it creates the vault, mints "
-            "what can be minted, asks for what only a person knows, and stores a read-only key "
-            "here for its runners.",
-            where="terminal", command=command)
-    failed = list(AgentBootstrapReport.objects.filter(agent=agent, env_ok=False)
-                  .values_list("runner_name", "detail"))
-    if failed:
-        name, why = failed[0]
-        return _step(
-            "vault", title, TODO,
-            f"{name} could not read its secrets from {agent.op_vault}"
-            + (f": {why}" if why else "") + ". Re-run the command to check every value.",
-            where="terminal", command=command)
-    return _step("vault", title, DONE, f"Secrets in {agent.op_vault}; its runners hold a key for it.",
-                 where="terminal", command=command)
 
 
 def runner_takers(agent: Agent, facts=None):
@@ -413,7 +360,7 @@ def setup_steps(agent: Agent, *, viewer_is_admin: bool = False, vault_state: dic
     # A zero-knowledge agent on the canopy-web vault seals what Google hands back to
     # whoever can open its vault, so the vault comes first; otherwise the mint fails
     # with `zk-no-recipients`.
-    zk_first = agent.zk_enabled and agent.credential_source == Agent.CANOPY_WEB
+    zk_first = agent.zk_enabled
     return [
         _step("repo", "Give it a repository", DONE if agent.repo_url else TODO,
               f"Code lives in {repo or agent.repo_url}." if agent.repo_url else

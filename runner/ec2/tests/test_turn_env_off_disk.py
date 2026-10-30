@@ -45,15 +45,12 @@ def test_an_old_canopy_cli_keeps_the_legacy_env_file_and_turns_read_their_pat(of
     (tmp_path / "home" / ".eva").mkdir(parents=True)
     (tmp_path / "home" / ".eva" / ".env").write_text("CANOPY_WEB_PAT=eva-pat\n")
     (tmp_path / "agents" / "eva").mkdir(parents=True)
-    synced = []
-    monkeypatch.setattr(mod, "_refresh_agent_env", lambda slug, tok, vault="": synced.append(slug))
-    monkeypatch.setattr(mod, "_api", lambda *a, **k: (200, {"op_sa_token": ""}))
+    monkeypatch.setattr(mod, "_api", lambda *a, **k: (200, {}))
     monkeypatch.setattr(mod, "_turn_values", lambda slug, **k: pytest.fail("no in-memory resolve on an old CLI"))
     assert mod.secrets_off_disk() is False
     assert "older than 0.2.736" in mod._HEALTH["secrets"]["detail"]
     env = mod._agent_env("eva")
     assert env["CANOPY_WEB_PAT"] == "eva-pat" and "CANOPY_AGENT_ENV_FILE" not in env
-    assert synced == ["eva"]
     # prepare --runner keeps writing files, and the legacy file is NOT removed.
     assert mod._off_disk_env({"X": "1"}) == {"X": "1"}
     assert not root.exists() or list(root.iterdir()) == []
@@ -91,26 +88,6 @@ def test_a_box_without_runners_keeps_its_files_unless_it_opts_in(off_disk, monke
     (tmp_path / "runners.json").write_text("{}")
     monkeypatch.setattr(mod, "RUNNERS_FILE", tmp_path / "runners.json")
     assert mod.secrets_off_disk() is True
-
-
-def test_an_agent_with_nothing_to_resolve_has_an_empty_env_not_a_failure(off_disk, monkeypatch, tmp_path):
-    """canopy's "n/a": no .env.tpl and not canopy-web-sourced."""
-    mod, _ = off_disk
-    (tmp_path / "agents" / "bob" / ".git").mkdir(parents=True)
-    monkeypatch.setattr(mod, "_api", lambda m, p, *a, **k: (200, {"credential_source": "1password"}))
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: pytest.fail("nothing to resolve"))
-    assert mod._turn_values("bob") == {}
-    # A canopy-web-sourced agent does resolve (and fails, if the resolve does).
-    (tmp_path / "agents" / "cw" / ".git").mkdir(parents=True)
-    monkeypatch.setattr(mod, "_api", lambda m, p, *a, **k: (200, {"credential_source": "canopy-web"}))
-    monkeypatch.setattr(mod.subprocess, "run",
-                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "refused"))
-    monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "")
-    assert mod._turn_values("cw") is None
-    # A template is a source on its own.
-    (tmp_path / "agents" / "tpl" / ".git").mkdir(parents=True)
-    (tmp_path / "agents" / "tpl" / ".env.tpl").write_text("X=op://v/i/f\n")
-    assert mod._has_env_source("tpl") is True
 
 
 # ---- backing off an agent whose credentials fail (review: retry budget) ---------------
@@ -207,27 +184,25 @@ def test_values_are_resolved_in_memory_and_cached_for_the_ttl(off_disk, monkeypa
     assert mod._turn_values("eva", now=1000.0 + mod._AGENT_ENV_TTL_SECONDS + 1) == {"CANOPY_WEB_PAT": "pat-2"}
 
 
-def test_resolve_extras_from_the_cli_are_used_instead_of_a_proofless_resolve(off_disk, monkeypatch):
-    """When `--print-json` carries the resolve's op key / vault (it
-    resolved with the runner's proof), the runner uses them and makes no resolve of
-    its own; without them it keeps its own resolve."""
+def test_delegated_tokens_from_the_cli_are_staged_without_a_proofless_resolve(off_disk, monkeypatch):
+    """When `--print-json` carries the resolve's `delegated` map (it resolved with the
+    runner's proof), the runner uses it and makes no resolve of its own."""
     mod, _ = off_disk
     doc = {"agent": "eva", "source": "canopy-web", "values": {"X": "1"},
-           "op_sa_token": "ops_eva", "op_vault": "Agent-Eva"}
+           "delegated": {"GOOGLE_ACCESS_TOKEN_me": "tok", "empty": ""}}
     monkeypatch.setattr(mod.subprocess, "run",
                         lambda argv, **kw: subprocess.CompletedProcess(argv, 0, json.dumps(doc), ""))
     monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "crt")
     monkeypatch.setattr(mod, "_api", lambda *a, **k: pytest.fail("a proofless resolve was made"))
-    mod._turn_values("eva")
-    assert mod._agent_op_token("eva") == "ops_eva"
-    assert mod._AGENT_VAULT["eva"] == "Agent-Eva"
+    assert mod._turn_values("eva") == {"X": "1"}
+    assert mod._AGENT_DELEGATED["eva"] == {"GOOGLE_ACCESS_TOKEN_me": "tok"}
 
 
 def test_a_failed_refresh_keeps_the_last_good_values(off_disk, monkeypatch):
     mod, _ = off_disk
     mod._TURN_VALUES["eva"] = (0.0, {"CANOPY_WEB_PAT": "good"})
     monkeypatch.setattr(mod.subprocess, "run",
-                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "op: unreachable"))
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "vault unreachable"))
     monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "")
     assert mod._turn_values("eva", now=10_000.0) == {"CANOPY_WEB_PAT": "good"}
     assert mod._HEALTH["env.eva"]["status"] == "warn"
@@ -237,7 +212,7 @@ def test_off_disk_agent_env_never_reads_or_syncs_the_legacy_file(off_disk, monke
     mod, _ = off_disk
     (tmp_path / "home" / ".eva").mkdir(parents=True)
     (tmp_path / "home" / ".eva" / ".env").write_text("CANOPY_WEB_PAT=stale\n")
-    monkeypatch.setattr(mod, "_refresh_agent_env", lambda *a, **k: pytest.fail("cred sync writes ~/.eva/.env"))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: pytest.fail("cred sync writes the legacy file"))
     monkeypatch.setattr(mod, "_api", lambda *a, **k: (200, {}))
     monkeypatch.setattr(mod, "_turn_values", lambda slug, **k: {"CANOPY_WEB_PAT": "fresh"})
     assert mod._agent_env("eva")["CANOPY_WEB_PAT"] == "fresh"
@@ -358,12 +333,12 @@ def test_a_turn_whose_env_cannot_be_resolved_fails_clearly_and_is_not_run(turn_b
     and no session, which canopy-web re-queues as a non-attempt."""
     mod, root, timeline = turn_box
     monkeypatch.setattr(mod, "_turn_values", lambda slug, **k: None)
-    mod._TURN_ENV_ERRORS["eva"] = "op: could not reach 1Password"
+    mod._TURN_ENV_ERRORS["eva"] = "vault: could not reach canopy-web"
     monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: pytest.fail("ran without its credentials"))
     mod._run_turn("rid", _turn())
     [finish] = _finish(timeline)
     assert finish == {"status": "failed",
-                      "result_note": "[runner] could not resolve eva's credentials: op: could not reach 1Password"}
+                      "result_note": "[runner] could not resolve eva's credentials: vault: could not reach canopy-web"}
     assert "session_key" not in finish
     assert list(root.iterdir()) == []
 
@@ -371,10 +346,10 @@ def test_a_turn_whose_env_cannot_be_resolved_fails_clearly_and_is_not_run(turn_b
 def test_the_real_resolve_failure_reaches_the_note(off_disk, monkeypatch, tmp_path):
     mod, _ = off_disk
     monkeypatch.setattr(mod.subprocess, "run",
-                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "op: vault not found"))
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "vault not found"))
     monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "")
     assert mod._turn_values("eva", now=1.0) is None
-    assert "op: vault not found" in mod._TURN_ENV_ERRORS["eva"]
+    assert "vault not found" in mod._TURN_ENV_ERRORS["eva"]
 
 
 def test_a_turn_whose_env_file_cannot_be_written_fails_clearly(turn_box, monkeypatch):
@@ -413,8 +388,8 @@ def test_legacy_secret_files_are_removed(off_disk, tmp_path):
     for f in files:
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text("secret")
-    keep = tmp_path / "agents" / "eva" / ".env.tpl"
-    keep.write_text("CANOPY_WEB_PAT=op://x/y")
+    keep = tmp_path / "agents" / "eva" / "README.md"
+    keep.write_text("not a secret")
     removed = mod.remove_legacy_secret_files(["eva", "../etc"])
     assert sorted(removed) == sorted(map(str, files))
     assert not any(f.exists() for f in files) and keep.exists()

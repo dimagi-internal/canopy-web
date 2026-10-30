@@ -322,11 +322,13 @@ def _status(agent):
 
 def test_a_new_agent_has_everything_but_its_repo_left_to_do(editor, ws):
     steps = setup_steps(_agent(ws, editor))
-    assert [s["key"] for s in steps] == ["repo", "github", "mailbox", "vault", "runner", "job",
-                                         "first_turn"]
+    assert [s["key"] for s in steps] == ["repo", "github", "mailbox", "vault", "canopy_login", "runner",
+                                         "job", "first_turn"]
     assert {s["key"]: s["status"] for s in steps} == {
-        "repo": "done", "github": "todo", "mailbox": "todo", "vault": "todo", "runner": "todo",
-        "job": "todo", "first_turn": "todo"}
+        "repo": "done", "github": "todo", "mailbox": "todo", "canopy_login": "todo",
+        # Declares no secret, and (not zero-knowledge) has no vault to open: nothing to do.
+        "vault": "done",
+        "runner": "todo", "job": "todo", "first_turn": "todo"}
     job = next(s for s in steps if s["key"] == "job")
     assert job["where"] == "claude-code"
     assert next(s for s in steps if s["key"] == "github")["action"] == "Add a GitHub token"
@@ -437,35 +439,20 @@ def test_the_runner_step_follows_routing_and_who_may_hold_the_agent(editor, ws):
     assert _status(agent)["runner"] == "todo"
 
 
-def test_the_vault_step_is_one_terminal_command_and_reads_what_the_box_reported(editor, ws):
-    """Creating a vault needs a person's 1Password rights, which nothing here holds — so
-    the step is the command, not a link. Done means the box could READ it (`env_ok`), not
-    merely that a key is stored: a stored key that cannot read its vault is the failure
-    that sat in journald for two weeks (2026-09-22)."""
-    from apps.agents import services
+def test_the_vault_step_lists_the_declared_secrets_not_yet_stored(editor, ws):
+    """Done means every declared secret is in canopy-web; the agent's own login has its own
+    step, so it is never reported here as well. The checklist has no 1Password vault step."""
+    from apps.agents.models import AgentCredential
 
-    agent = _agent(ws, editor)
+    agent = _agent(ws, editor, runtime_secrets=["CANOPY_WEB_PAT", "gog-token", "api-key"])
     vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
-    assert (vault["status"], vault["where"]) == ("todo", "terminal")
-    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts --vault <vault name>"
-    assert "no 1Password vault" in vault["detail"]
+    assert vault["status"] == "todo" and vault["href"].endswith("#credentials")
+    assert "gog-token, api-key" in vault["detail"] and "CANOPY_WEB_PAT" not in vault["detail"]
+    assert "1Password" not in str(setup_steps(agent)) and "canopy agent vault" not in str(setup_steps(agent))
 
-    services.set_agent_vault(agent, vault="Agent-Scout")
-    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
-    assert "has no key stored here" in vault["detail"]
-    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts"
-
-    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud", env_ok=False,
-                                        detail="op inject: vault not found")
-    services.set_agent_vault(agent, service_key="ops_key")
-    # Storing a key wipes what a box said about the old one — not yet reported is not failed.
-    assert AgentBootstrapReport.objects.get(agent=agent).env_ok is None
+    AgentCredential.objects.create(agent=agent, name="gog-token")
+    AgentCredential.objects.create(agent=agent, name="api-key")
     assert _status(agent)["vault"] == "done"
-
-    AgentBootstrapReport.objects.filter(agent=agent).update(env_ok=False, detail="403 Forbidden")
-    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
-    assert vault["status"] == "todo"
-    assert "olive-cloud could not read its secrets from Agent-Scout: 403 Forbidden" in vault["detail"]
 
 
 def test_the_setup_route_is_readable_by_any_member(editor, ws):
@@ -525,7 +512,7 @@ def test_the_runner_step_offers_pairing_to_whoever_could_hold_the_agent(editor, 
 
 def _zk_agent(ws, owner):
     """A new agent as creation makes it: zero-knowledge, on the canopy-web vault, at kv 0."""
-    return _agent(ws, owner, zk_enabled=True, zk_kv=0, credential_source=Agent.CANOPY_WEB)
+    return _agent(ws, owner, zk_enabled=True, zk_kv=0)
 
 
 def test_a_zero_knowledge_agent_sets_up_its_vault_before_google(editor, ws):
@@ -560,7 +547,7 @@ def test_a_vault_open_only_to_a_non_admin_still_has_nobody(editor, ws):
 
 
 def test_an_agent_that_is_not_zero_knowledge_keeps_google_before_its_vault(editor, ws):
-    agent = _agent(ws, editor, credential_source=Agent.CANOPY_WEB)
+    agent = _agent(ws, editor)
     keys = [s["key"] for s in setup_steps(agent)]
     assert keys.index("mailbox") < keys.index("vault")
 

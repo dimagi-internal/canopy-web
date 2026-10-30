@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import subprocess
 
-from test_wire_credential_source import LIVE, NEW, _row, _setup
+from test_wire_runner_vault import LIVE, NEW, _row, _setup
 from test_wire_probe_wait import _checks
 
 SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "wire.sh"

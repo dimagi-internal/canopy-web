@@ -4827,34 +4827,6 @@ export interface paths {
         readonly patch: operations["set_agent_clis"];
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/credential-source": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Set where an agent's secrets resolve from (1password | canopy-web)
-         * @description Choose the backend `canopy cred` resolves this agent's secrets from
-         *     (canopy#850). `1password`: through `op`, with the agent's vault key.
-         *     `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
-         *
-         *     The agent's owner or an admin only (`agent_for_admin`), like the
-         *     credentials and the vault pointer themselves: choosing where an agent's
-         *     secrets come from is part of controlling them. Absent from AgentIn, so the
-         *     repo's self-publish upsert cannot move it. From a browser it needs a fresh
-         *     passkey step-up, like every other change to where secrets live.
-         */
-        readonly patch: operations["set_credential_source"];
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/device-binding": {
         readonly parameters: {
             readonly query?: never;
@@ -4870,11 +4842,10 @@ export interface paths {
         readonly head?: never;
         /**
          * Require a runner device proof to resolve this agent's secrets
-         * @description Canopy Vault (canopy-web#1538). When on and `credential_source` is
-         *     `canopy-web`, `GET /credentials/resolve` answers 401
+         * @description Canopy Vault (canopy-web#1538). When on, `GET /credentials/resolve` answers 401
          *     `{"error": "device_proof_required"}` unless the request carries a DPoP proof
          *     from an ACTIVE runner device key on a runner this agent routes to, or one
-         *     owned by the agent's owner. Owner or admin only, like the credential source.
+         *     owned by the agent's owner. Owner or admin only.
          */
         readonly patch: operations["set_device_binding"];
         readonly trace?: never;
@@ -5579,10 +5550,8 @@ export interface paths {
          *
          *     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
          *     always was. With `refs`, `values` holds only the named refs that the
-         *     agent also declares (`runtime_secrets`), and the secret extra
-         *     `op_sa_token` is included
-         *     only when named in `refs` too. `op_vault` and `mailbox`
-         *     are not secrets and are always returned.
+         *     agent also declares (`runtime_secrets`). `mailbox` is not a secret and is always
+         *     returned.
          *
          *     **Delegated credentials** (a token a person gave the agent from their own
          *     account, such as its GitHub token) never ride `values`. They come only in
@@ -5590,11 +5559,7 @@ export interface paths {
          *     box that runs it reading with its own device proof — never to an admin or a
          *     license holder.
          *
-         *     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
-         *     service-account token (`op_sa_token` is ""): its values come from here, so
-         *     the box has no reason to hold a key to its vault.
-         *
-         *     **Device proof.** With `credential_source` `canopy-web` and either
+         *     **Device proof.** With either
          *     `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
          *     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
          *     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
@@ -5608,7 +5573,7 @@ export interface paths {
          *     STS endpoint and accepts the returned role if an ACTIVE `aws-iam` device key
          *     for it sits on a runner this agent routes to.
          *
-         *     **Alerts.** With `credential_source` `canopy-web`, the agent's owner is told
+         *     **Alerts.** The agent's owner is told
          *     (email + push, at most once per kind per hour) of a box read (`via`
          *     runner) with no `X-Canopy-Turn-Id`, a read of an undeclared ref, a burst of
          *     reads, or a refusal for a bad or missing device proof.
@@ -5642,32 +5607,6 @@ export interface paths {
          */
         readonly get: operations["resolve_agent_credentials"];
         readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/vault": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** This agent's 1Password vault (masked — never the key) */
-        readonly get: operations["get_agent_vault"];
-        /**
-         * Set the vault + its service-account token (write-only)
-         * @description The key is scoped to ONE agent's vault by design. Refused (422) for an agent whose
-         *     secrets live in the canopy vault: canopy-web holds no 1Password key for it.
-         *
-         *     A single fleet-wide token would be simpler to operate and would make
-         *     canopy-web worth attacking for every agent's secrets at once; this bounds a
-         *     compromise to the one agent whose key was taken (Jonathan, 2026-09-06).
-         */
-        readonly put: operations["set_agent_vault"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -9020,7 +8959,7 @@ export interface paths {
         /**
          * What is not set up right, across this workspace and every one below it
          * @description Every agent in the tree with its setup checklist (the same steps as its own
-         *     Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
+         *     Settings page and `agent_setup`), its vault state (canopy-web, moving)
          *     and properties; every workspace with its shared vault; the runners its agents
          *     route to or that live in it (the runner topology's rows, plus whether each runs
          *     current code and its own failing checks). Each step carries the link
@@ -24421,21 +24360,10 @@ export interface components {
              */
             readonly slack_enabled: boolean;
             /**
-             * Credential Source
-             * @default 1password
-             * @enum {string}
-             */
-            readonly credential_source: "1password" | "canopy-web";
-            /**
              * Require Device Binding
              * @default false
              */
             readonly require_device_binding: boolean;
-            /**
-             * Op Vault
-             * @default
-             */
-            readonly op_vault: string;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
         };
         /**
@@ -24765,21 +24693,10 @@ export interface components {
              */
             readonly slack_enabled: boolean;
             /**
-             * Credential Source
-             * @default 1password
-             * @enum {string}
-             */
-            readonly credential_source: "1password" | "canopy-web";
-            /**
              * Require Device Binding
              * @default false
              */
             readonly require_device_binding: boolean;
-            /**
-             * Op Vault
-             * @default
-             */
-            readonly op_vault: string;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             /**
@@ -25243,23 +25160,8 @@ export interface components {
             } | null;
         };
         /**
-         * CredentialSourceIn
-         * @description Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
-         *
-         *     Its own endpoint, owner/admin only, for the same reason as TurnModeIn: the
-         *     agent-repo self-publish upsert must never be able to move its own secrets.
-         */
-        readonly CredentialSourceIn: {
-            /**
-             * Credential Source
-             * @enum {string}
-             */
-            readonly credential_source: "1password" | "canopy-web";
-        };
-        /**
          * DeviceBindingIn
-         * @description Require a device proof on resolve (only meaningful with credential_source
-         *     canopy-web). Owner/admin only, like CredentialSourceIn.
+         * @description Require a device proof on resolve. Owner/admin only.
          */
         readonly DeviceBindingIn: {
             /** Require Device Binding */
@@ -27513,11 +27415,6 @@ export interface components {
         readonly AgentCredentialAccessOut: {
             /** Agent */
             readonly agent: string;
-            /**
-             * Credential Source
-             * @enum {string}
-             */
-            readonly credential_source: "1password" | "canopy-web";
             /** May Resolve */
             readonly may_resolve: boolean;
             /** Via */
@@ -27557,26 +27454,14 @@ export interface components {
          * AgentCredentialsResolveOut
          * @description PLAINTEXT, for a runner. The one route that returns values.
          *
-         *     It carries the 1Password vault + service token as well, because the runner is
-         *     what resolves this agent's secrets — canopy-web only custodies the key. Both
-         *     ride this route rather than a new one so there is exactly ONE plaintext gate
-         *     to reason about, and one audit entry per fetch.
+         *     There is exactly ONE plaintext gate to reason about, and one audit entry per
+         *     fetch.
          */
         readonly AgentCredentialsResolveOut: {
             /** Values */
             readonly values?: {
                 readonly [key: string]: string;
             };
-            /**
-             * Op Vault
-             * @default
-             */
-            readonly op_vault: string;
-            /**
-             * Op Sa Token
-             * @default
-             */
-            readonly op_sa_token: string;
             /**
              * Mailbox
              * @default
@@ -27746,41 +27631,6 @@ export interface components {
             readonly kv: number;
             /** Device Key */
             readonly device_key: string;
-        };
-        /** AgentVaultOut */
-        readonly AgentVaultOut: {
-            /**
-             * Vault
-             * @default
-             */
-            readonly vault: string;
-            /**
-             * Key Set
-             * @default false
-             */
-            readonly key_set: boolean;
-            /**
-             * Declared
-             * @default 0
-             */
-            readonly declared: number;
-            /**
-             * Locatable
-             * @default 0
-             */
-            readonly locatable: number;
-        };
-        /**
-         * AgentVaultIn
-         * @description Non-clobbering, like every other credential write here: a blank/omitted
-         *     service_key leaves the stored one alone, so editing the vault name does not
-         *     silently wipe the key.
-         */
-        readonly AgentVaultIn: {
-            /** Vault */
-            readonly vault?: string | null;
-            /** Service Key */
-            readonly service_key?: string | null;
         };
         /**
          * VaultKeeperPinsOut
@@ -33212,27 +33062,19 @@ export interface components {
         };
         /** AgentVaultHealthOut */
         readonly AgentVaultHealthOut: {
-            /** Source */
-            readonly source: string;
             /**
              * State
              * @enum {string}
              */
-            readonly state: "canopy-web" | "moving" | "1password" | "none";
+            readonly state: "canopy-web" | "moving" | "none";
             /** Declared */
             readonly declared: number;
             /** Refs */
             readonly refs: readonly components["schemas"]["VaultRefOut"][];
             /** Stored */
             readonly stored: readonly string[];
-            /** In 1Password */
-            readonly in_1password: readonly string[];
             /** Missing */
             readonly missing: readonly string[];
-            /** Op Vault */
-            readonly op_vault: string;
-            /** Op Key Set */
-            readonly op_key_set: boolean;
             /** Zero Knowledge */
             readonly zero_knowledge: boolean;
             /** Machines Waiting */
@@ -33322,8 +33164,6 @@ export interface components {
             readonly vault_canopy_web?: number | null;
             /** Vault Moving */
             readonly vault_moving?: number | null;
-            /** Vault 1Password */
-            readonly vault_1password?: number | null;
             /** Vault None */
             readonly vault_none?: number | null;
             /** Runners */
@@ -33339,7 +33179,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "stored" | "literal" | "local" | "1password" | "missing";
+            readonly status: "stored" | "literal" | "local" | "missing";
         };
         /** WorkspaceHealthNodeOut */
         readonly WorkspaceHealthNodeOut: {
@@ -50843,32 +50683,6 @@ export interface operations {
             };
         };
     };
-    readonly set_credential_source: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["CredentialSourceIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentDetailOut"];
-                };
-            };
-        };
-    };
     readonly set_device_binding: {
         readonly parameters: {
             readonly query?: never;
@@ -51941,54 +51755,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkWrapMissingOut"];
-                };
-            };
-        };
-    };
-    readonly get_agent_vault: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentVaultOut"];
-                };
-            };
-        };
-    };
-    readonly set_agent_vault: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["AgentVaultIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentVaultOut"];
                 };
             };
         };

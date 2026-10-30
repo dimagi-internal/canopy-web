@@ -11,7 +11,7 @@ import { useActiveWorkspace } from '@/workspace/WorkspaceProvider'
 /**
  * /get-started — how a person starts using canopy agents: install canopy,
  * install an agent, set the agent up. Agents run in the person's OWN Claude
- * Code, set up from the agent's 1Password vault, not remotely through
+ * Code, set up from the agent's Canopy vault, not remotely through
  * canopy-web's MCP connector.
  *
  * Public (an exact-match allowlist entry in apps/common/middleware.py, beside
@@ -134,7 +134,7 @@ export function GetStartedPage(): JSX.Element {
       <h1 className="mt-1 text-2xl font-semibold text-foreground">Use a canopy agent in your own Claude Code</h1>
       <p className="mt-3 text-[15px] leading-relaxed text-foreground-secondary">
         Agents like ACE are Claude Code plugins. They run on your machine, in your own Claude Code, set up
-        from the agent&apos;s 1Password vault. Three steps, about ten minutes.
+        from the agent&apos;s Canopy vault. Three steps, about ten minutes.
       </p>
       <ol aria-label="The three steps" className="mt-4 flex flex-wrap gap-2">
         {['install canopy', 'install an agent', 'set up the agent'].map((label, i) => (
@@ -151,9 +151,7 @@ export function GetStartedPage(): JSX.Element {
           <InlineCode>dimagi</InlineCode> or <InlineCode>connect</InlineCode>), and{' '}
           <strong className="text-foreground">read access to each agent&apos;s GitHub repo</strong> (ACE&apos;s
           is public; the others are private and need access granted on GitHub). If you don&apos;t have an
-          account, ask a workspace admin to invite you. To set up an agent you also need the{' '}
-          <strong className="text-foreground">1Password CLI</strong>, signed in, with access to that
-          agent&apos;s vault. You don&apos;t need a runner.
+          account, ask a workspace admin to invite you. You don&apos;t need a runner.
         </Panel>
       </div>
 
@@ -224,7 +222,7 @@ export function GetStartedPage(): JSX.Element {
         <Step n={3} title="Set up the agent">
           <p className="mt-1 text-[13px] leading-relaxed text-foreground-secondary">
             Each agent has its own setup command. It loads the agent&apos;s settings and logins from the
-            agent&apos;s 1Password vault, then checks everything works.
+            agent&apos;s Canopy vault, then checks everything works.
           </p>
           <div className="mt-3 space-y-2">
             {setupPlugins.map((p) => (
@@ -233,9 +231,7 @@ export function GetStartedPage(): JSX.Element {
           </div>
           <Notes>
             <li>
-              You need the 1Password CLI (<InlineCode>op</InlineCode>) signed in to{' '}
-              <InlineCode>dimagi.1password.com</InlineCode>, with access to the agent&apos;s vault (ACE&apos;s is{' '}
-              <InlineCode>Agent-Ace</InlineCode>). If you don&apos;t have access, ask the agent&apos;s owner.
+              You need access to the agent&apos;s Canopy vault. If you don&apos;t have it, ask the agent&apos;s owner.
             </li>
             <li>Setup tells you exactly what&apos;s missing, and you can run it again any time.</li>
           </Notes>

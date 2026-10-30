@@ -56,7 +56,7 @@ def canopy_cli(home: Optional[Path] = None) -> Optional[str]:
 def _child_env(cfg, bearer: str = "") -> dict:
     env = {k: v for k, v in os.environ.items()
            if k not in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CANOPY_TURN_ID",
-                        "CANOPY_CALLER", "OP_SERVICE_ACCOUNT_TOKEN")}
+                        "CANOPY_CALLER")}
     # Register as THIS runner's identity: its own runner token once it has one
     # (runner_token.RunnerCredential), else its owner's PAT — the only way a box
     # with no approved key yet can register the key in the first place.

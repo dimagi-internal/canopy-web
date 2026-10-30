@@ -7,7 +7,7 @@ turn as "not signed in". The stored value was there; it just did not work.
 """
 from __future__ import annotations
 
-from test_wire_credential_source import LIVE, NEW, _row, _setup, _wire
+from test_wire_runner_vault import LIVE, NEW, _row, _setup, _wire
 
 
 AFTER = "2026-10-19T12:01:00Z"

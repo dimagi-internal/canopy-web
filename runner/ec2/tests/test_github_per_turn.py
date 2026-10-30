@@ -34,7 +34,7 @@ TOKENS = {
 def cr(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
-    monkeypatch.setattr(cloud_runner, "_agent_op_token", lambda slug: "")
+    monkeypatch.setattr(cloud_runner, "_probe_agent_vault", lambda slug: None)
 
     def api(method, path, body=None, **_):
         if path.endswith("/github-token"):

@@ -51,7 +51,7 @@ from apps.workspaces import services as wsvc
 from . import access, agent_login, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
-from .credentials import delegations, licenses, login_test_key, zk
+from .credentials import delegations, licenses, login_test_key
 from .gates import (
     agent_for_admin,
     agent_for_read,
@@ -95,7 +95,6 @@ from .schemas import (
     AgentTurnIn,
     AgentTurnOut,
     CapabilitySensitiveIn,
-    CredentialSourceIn,
     DeviceBindingIn,
     RepoCheckIn,
     RepoCheckOut,
@@ -545,9 +544,8 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
     return _detail(request, agent)
 
 
-# Returns a secret, once. Its caller is `canopy agent vault`, which writes it straight
-# into the agent's 1Password vault; a fleet-baseline rail keeps agents from calling the
-# MCP twin of this route, whose result would land in a transcript.
+# Returns a secret, once. A fleet-baseline rail keeps agents from calling the MCP twin of
+# this route, whose result would land in a transcript.
 @router.post("/{slug}/canopy-token", response={201: AgentCanopyTokenOut},
              summary="Mint the agent's own canopy-web token (shown once)")
 # + members.manage to CREATE the agent's login, own for one that has signed in
@@ -1086,43 +1084,14 @@ def set_agent_clis(request: HttpRequest, slug: str, payload: AgentClisIn) -> Age
     return _detail(request, agent)
 
 
-@router.patch("/{slug}/credential-source", response=AgentDetailOut,
-              summary="Set where an agent's secrets resolve from (1password | canopy-web)")
-@gate("agent-admin", setting=True, step_up=True)
-def set_credential_source(request: HttpRequest, slug: str,
-                          payload: CredentialSourceIn) -> AgentDetailOut:
-    """Choose the backend `canopy cred` resolves this agent's secrets from
-    (canopy#850). `1password`: through `op`, with the agent's vault key.
-    `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
-
-    The agent's owner or an admin only (`agent_for_admin`), like the
-    credentials and the vault pointer themselves: choosing where an agent's
-    secrets come from is part of controlling them. Absent from AgentIn, so the
-    repo's self-publish upsert cannot move it. From a browser it needs a fresh
-    passkey step-up, like every other change to where secrets live."""
-    agent = agent_for_admin(request, slug)
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    with transaction.atomic():
-        agent = zk._locked(agent)
-        if payload.credential_source == "canopy-web":
-            # Zero-knowledge is the agent vault's only mode: an agent moving here
-            # is on it from now, as a new agent is born.
-            services.start_zero_knowledge(agent)
-        agent.credential_source = payload.credential_source
-        agent.save(update_fields=["credential_source", "updated_at"])
-    return _detail(request, agent)
-
-
 @router.patch("/{slug}/device-binding", response=AgentDetailOut,
               summary="Require a runner device proof to resolve this agent's secrets")
 @gate("agent-admin", setting=True)
 def set_device_binding(request: HttpRequest, slug: str, payload: DeviceBindingIn) -> AgentDetailOut:
-    """Canopy Vault (canopy-web#1538). When on and `credential_source` is
-    `canopy-web`, `GET /credentials/resolve` answers 401
+    """Canopy Vault (canopy-web#1538). When on, `GET /credentials/resolve` answers 401
     `{"error": "device_proof_required"}` unless the request carries a DPoP proof
     from an ACTIVE runner device key on a runner this agent routes to, or one
-    owned by the agent's owner. Owner or admin only, like the credential source."""
+    owned by the agent's owner. Owner or admin only."""
     agent = agent_for_admin(request, slug)
     agent.require_device_binding = payload.require_device_binding
     agent.save(update_fields=["require_device_binding", "updated_at"])

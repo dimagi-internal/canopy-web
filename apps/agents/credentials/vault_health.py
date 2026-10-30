@@ -2,36 +2,32 @@
 
 One answer for every screen that asks: the setup checklist's vault step
 (`setup._vault`) and the workspace health dashboard (`health.agent_row`) both
-read `vault_health`, so they cannot disagree about whether an agent is done
-moving off 1Password.
+read `vault_health`, so they cannot disagree about whether an agent's declared
+secrets are all in the vault.
 
 Each declared ref (`Agent.runtime_secrets`) is classified against what is
-actually stored in canopy-web (`AgentCredential`) and where its vault declaration
-says it lives (`runtime_sources`, the same `vault_import.plan_import` the importer
-uses):
+actually stored in canopy-web (`AgentCredential`) and what its declaration says
+(`runtime_sources`):
 
 - ``stored``    — a value is in canopy-web.
 - ``literal``   — the declaration carries it as a plain value (a base URL); no
                   secret to move.
 - ``local``     — minted per machine (`local_only`); never in any vault.
-- ``1password`` — only an ``op://`` reference: it lives in 1Password.
 - ``missing``   — no value here, and the declaration does not say where it lives.
 
-An agent resolving from canopy-web (`credential_source`) is fully moved when no
-ref is ``1password`` or ``missing``. One resolving from 1Password needs its vault
-and the key a runner reads it with.
+An agent is complete when no ref is ``missing``.
 """
 from __future__ import annotations
 
 from apps.harness import device_keys
 
 from ..models import Agent, AgentCredential
-from . import vault_import, zk
+from . import zk
 
-STORED, LITERAL, LOCAL, ONEPASSWORD, MISSING = "stored", "literal", "local", "1password", "missing"
+STORED, LITERAL, LOCAL, MISSING = "stored", "literal", "local", "missing"
 
 #: The agent's own vault state, in the words the dashboard shows.
-MOVED, MOVING, ON_1PASSWORD, NO_SECRETS = "canopy-web", "moving", "1password", "none"
+MOVED, MOVING = "canopy-web", "moving"
 
 
 def classify(agent: Agent, stored: set[str] | None = None) -> dict[str, str]:
@@ -40,17 +36,20 @@ def classify(agent: Agent, stored: set[str] | None = None) -> dict[str, str]:
         stored = set(AgentCredential.objects.filter(agent=agent).values_list("name", flat=True))
     declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
     out: dict[str, str] = {}
-    for item in vault_import.plan_import(declared, agent.runtime_sources or {}):
-        if item.name in stored:
-            out[item.name] = STORED
-        elif item.kind == "value":
-            out[item.name] = LITERAL
-        elif item.kind == "op":
-            out[item.name] = ONEPASSWORD
-        elif "local-only" in item.reason:
-            out[item.name] = LOCAL
+    sources = agent.runtime_sources or {}
+    for name in declared:
+        src = sources.get(name)
+        src = src if isinstance(src, dict) else {}
+        if name in stored:
+            out[name] = STORED
+        elif "value" in src and not src.get("local_only"):
+            # Declared literal — a base URL, an APK version. Not a secret at all.
+            out[name] = LITERAL
+        elif src.get("local_only"):
+            # Minted per-human on a workstation: no vault copy exists.
+            out[name] = LOCAL
         else:
-            out[item.name] = MISSING
+            out[name] = MISSING
     return out
 
 
@@ -79,24 +78,13 @@ def vault_health(agent: Agent, facts=None) -> dict:
     by_class: dict[str, list[str]] = {}
     for name, cls in refs.items():
         by_class.setdefault(cls, []).append(name)
-    on_canopy = agent.credential_source == Agent.CANOPY_WEB
-    leftover = by_class.get(ONEPASSWORD, []) + by_class.get(MISSING, [])
-    if on_canopy:
-        state = MOVING if leftover else MOVED
-    elif not refs and not agent.op_vault:
-        state = NO_SECRETS
-    else:
-        state = ON_1PASSWORD
+    state = MOVING if by_class.get(MISSING) else MOVED
     return {
-        "source": agent.credential_source,
         "state": state,
         "declared": len(refs),
         "refs": [{"name": n, "status": c} for n, c in refs.items()],
         "stored": by_class.get(STORED, []),
-        "in_1password": by_class.get(ONEPASSWORD, []),
         "missing": by_class.get(MISSING, []),
-        "op_vault": agent.op_vault,
-        "op_key_set": bool(agent.op_sa_token_enc),
         "zero_knowledge": agent.zk_enabled,
-        "machines_waiting": machines_waiting(agent, facts) if on_canopy else [],
+        "machines_waiting": machines_waiting(agent, facts),
     }

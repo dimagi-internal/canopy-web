@@ -35,7 +35,6 @@ const FILTER_LABEL: Partial<Record<Filter, string>> = {
 const VAULT_LABEL: Record<AgentVault['state'], { text: string; className: string }> = {
   'canopy-web': { text: 'canopy-web', className: 'border-success/30 bg-success/10 text-success' },
   moving: { text: 'Moving', className: 'border-warning/30 bg-warning/10 text-warning' },
-  '1password': { text: '1Password', className: 'border-border bg-muted text-foreground-secondary' },
   none: { text: 'No secrets', className: 'border-border bg-card text-muted-foreground' },
 }
 
@@ -71,7 +70,6 @@ export function withSetup(health: WorkspaceHealthOut, setup: Record<string, Agen
       needs_setup: read.filter((a) => a.left).length,
       vault_canopy_web: vault('canopy-web'),
       vault_moving: vault('moving'),
-      vault_1password: vault('1password'),
       vault_none: vault('none'),
     },
   }
@@ -98,14 +96,13 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
 
   return (
     <div className="space-y-6">
-      <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
+      <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
         <Tile label="Agents" value={t.agents} onClick={show('all')} />
         <Tile label="Used, 30 days" value={t.used_30d} hint="a turn, chat or message" onClick={show('used')} />
         <Tile label="Fully set up" value={t.set_up} onClick={show('done')} />
         <Tile label="With steps left" value={t.needs_setup} onClick={show('setup')} />
         <Tile label="On canopy-web vault" value={t.vault_canopy_web} onClick={show('canopy-web')} />
         <Tile label="Moving" value={t.vault_moving} hint="some secrets elsewhere" onClick={show('moving')} />
-        <Tile label="On 1Password" value={t.vault_1password} onClick={show('1password')} />
         <Tile label="No secrets" value={t.vault_none} onClick={show('none')} />
         <Tile label="Runners online" value={t.runners_online} hint={`of ${t.runners}`}
               onClick={() => document.getElementById('health-runners')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })} />
@@ -281,7 +278,7 @@ function matches(a: AgentHealthOut, f: Filter): boolean {
   // A row whose checklist is not in yet matches no filter that reads it.
   if (f === 'done') return a.left === 0
   if (f === 'setup') return (a.left ?? 0) > 0
-  if (f === 'vault') return a.vault?.state === 'moving' || a.vault?.state === '1password'
+  if (f === 'vault') return a.vault?.state === 'moving'
   return a.vault?.state === f
 }
 
@@ -338,7 +335,7 @@ function Tile({ label, value, hint, onClick }: { label: string; value: number | 
 
 function VaultBadge({ vault: v }: { vault: AgentVault }): JSX.Element {
   const label = VAULT_LABEL[v.state]
-  const extra = v.in_1password.length + v.missing.length
+  const extra = v.missing.length
   return (
     <span className="inline-flex items-center gap-1">
       <span className={clsx('rounded border px-1.5 py-0.5 text-[11px]', label.className)}>{label.text}</span>
@@ -385,15 +382,14 @@ function AgentDetail({ agent, failed }: { agent: AgentHealthOut; failed: boolean
         <SetupSteps steps={agent.steps} canFix={agent.can_fix} />
       </div>
       <div className="rounded-lg border border-border bg-card p-3 text-[12px]">
-        <p className="mb-2 font-semibold text-foreground">Secrets · reads from {v.source}</p>
+        <p className="mb-2 font-semibold text-foreground">Secrets · in the canopy-web vault</p>
         {v.refs.length === 0 ? <p className="text-muted-foreground">Declares no secrets.</p> : (
           <table className="w-full">
             <tbody className="divide-y divide-border">
               {v.refs.map((r) => (
                 <tr key={r.name}>
                   <td className="py-1 font-mono">{r.name}</td>
-                  <td className={clsx('text-right', r.status === 'missing' ? 'text-destructive'
-                    : r.status === '1password' && v.source === 'canopy-web' ? 'text-warning' : 'text-foreground-secondary')}>
+                  <td className={clsx('text-right', r.status === 'missing' ? 'text-destructive' : 'text-foreground-secondary')}>
                     {REF_LABEL[r.status]}
                   </td>
                 </tr>
@@ -401,7 +397,6 @@ function AgentDetail({ agent, failed }: { agent: AgentHealthOut; failed: boolean
             </tbody>
           </table>
         )}
-        {v.op_vault && <p className="mt-2 text-muted-foreground">1Password vault {v.op_vault}{v.op_key_set ? ', key stored' : ', no key stored'}</p>}
         {v.machines_waiting.length > 0 && (
           <p className="mt-2 text-muted-foreground">Waiting to be let in: {v.machines_waiting.join(', ')}</p>
         )}
@@ -441,6 +436,5 @@ const REF_LABEL: Record<AgentVault['refs'][number]['status'], string> = {
   stored: 'in canopy-web',
   literal: 'plain value (not a secret)',
   local: 'minted per machine',
-  '1password': 'in 1Password',
   missing: 'not stored anywhere',
 }

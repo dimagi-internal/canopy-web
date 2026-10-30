@@ -98,12 +98,12 @@ def test_every_resolve_carries_the_proof(cloud_runner, monkeypatch):
 
     def api(method, path, body=None, *, prefix="/api/harness", headers=None):
         seen.append(dict(headers or {}))
-        return 200, {"op_sa_token": "ops_agent", "op_vault": "Agent-Eva"}
+        return 200, {"zk": True}
 
     monkeypatch.setattr(cloud_runner, "_api", api)
     monkeypatch.setattr(cloud_runner, "BASE_URL", "https://canopy.example")
-    cloud_runner._AGENT_OP.clear()
-    assert cloud_runner._agent_op_token("eva") == "ops_agent"
+    cloud_runner._VAULT_PROBE_AT.clear()
+    cloud_runner._probe_agent_vault("eva")
     doc = json.loads(base64.b64decode(seen[0]["X-Canopy-Aws-Proof"]))
     assert doc["headers"]["X-Canopy-Proof-Htu"] == HTU
 
@@ -275,7 +275,7 @@ def test_a_zk_agent_without_a_wrap_is_a_named_health_failure(cloud_runner, monke
     monkeypatch.setattr(cloud_runner, "_aws_proof_headers", lambda url: {})
     logs = []
     monkeypatch.setattr(cloud_runner, "_log", logs.append)
-    cloud_runner._AGENT_OP.pop("eva", None)
-    assert cloud_runner._agent_op_token("eva") == ""
+    cloud_runner._VAULT_PROBE_AT.pop("eva", None)
+    cloud_runner._probe_agent_vault("eva")
     assert any("grant" in line for line in logs)
     assert cloud_runner._HEALTH["zk.eva"]["status"] == "fail"

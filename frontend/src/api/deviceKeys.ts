@@ -3,7 +3,7 @@
 // pages that show these can be tested without dragging in ./agents or ./harness.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
-import { ensureOk, unwrap } from './problem'
+import { unwrap } from './problem'
 
 type Schemas = components['schemas']
 export type RunnerDeviceKeyOut = Schemas['RunnerDeviceKeyOut']
@@ -83,15 +83,6 @@ export async function setPatRotation(slug: string, enabled: boolean, periodDays:
 
 export type AgentCanopyLoginOut = Schemas['AgentCanopyLoginOut']
 
-
-/** Where the agent's secrets live. Needs a passkey step-up, which `apiV2` prompts for. */
-export async function setCredentialSource(slug: string, source: '1password' | 'canopy-web'): Promise<void> {
-  const res = await apiV2.PATCH('/api/agents/{slug}/credential-source', {
-    params: { path: { slug } },
-    body: { credential_source: source },
-  })
-  ensureOk(res, 'setCredentialSource')
-}
 
 /** Make the agent's canopy login and store it in its Canopy vault. The token is never returned. */
 export async function giveCanopyLogin(slug: string): Promise<AgentCanopyLoginOut> {

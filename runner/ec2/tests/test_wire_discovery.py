@@ -7,7 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from test_wire_credential_source import LIVE, NEW, OTHER, _row, _setup, _wire
+from test_wire_runner_vault import LIVE, NEW, OTHER, _row, _setup, _wire
 
 def _ago(seconds: int) -> str:
     return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=seconds)).isoformat()

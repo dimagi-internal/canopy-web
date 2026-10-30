@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// Where a new agent's secrets live and its one-click canopy login — no terminal,
-// no 1Password (marshellis audit, 2026-10-18).
+// Where a new agent's secrets live and its one-click canopy login — no terminal
+// (marshellis audit, 2026-10-18).
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-const dk = vi.hoisted(() => ({ getPatRotation: vi.fn(), giveCanopyLogin: vi.fn(), setCredentialSource: vi.fn() }))
+const dk = vi.hoisted(() => ({ getPatRotation: vi.fn(), giveCanopyLogin: vi.fn() }))
 vi.mock('@/api/deviceKeys', () => dk)
 const vault = vi.hoisted(() => ({ getKeyset: vi.fn() }))
 vi.mock('@/api/vault', () => vault)
@@ -25,9 +25,8 @@ describe('AgentSecretsHomeSection', () => {
     vault.getKeyset.mockResolvedValue({ exists: true })
     dk.giveCanopyLogin.mockResolvedValue({ user_email: 'scout@marshellis.com', created_user: true, token_id: 1, rotation_enabled: true })
     const onChanged = vi.fn()
-    render(<AgentSecretsHomeSection slug="scout" credentialSource="canopy-web" storedNames={[]} canEdit onChanged={onChanged} />)
-    expect(screen.getByTestId('secrets-home-canopy-web').getAttribute('aria-pressed')).toBe('true')
-    expect(screen.queryByText(/1password vault|op inject|canopy agent vault/i)).toBeNull()
+    render(<AgentSecretsHomeSection slug="scout" storedNames={[]} canEdit onChanged={onChanged} />)
+    expect(screen.getByTestId('secrets-home-explain').textContent).toMatch(/Canopy vault/)
     fireEvent.click(screen.getByTestId('canopy-login-give'))
     expect((await screen.findByTestId('canopy-login-note')).textContent).toMatch(/scout@marshellis.com.*renews itself/)
     expect(dk.giveCanopyLogin).toHaveBeenCalledWith('scout')
@@ -41,7 +40,7 @@ describe('AgentSecretsHomeSection', () => {
     const commit = vi.fn(async () => ({}))
     ops.prepareRecoveryCode.mockResolvedValue({ code: 'CODE-1234', commit })
     dk.giveCanopyLogin.mockResolvedValue({ user_email: 'scout@marshellis.com', created_user: true, token_id: 1, rotation_enabled: true })
-    render(<AgentSecretsHomeSection slug="scout" credentialSource="canopy-web" storedNames={[]} canEdit />)
+    render(<AgentSecretsHomeSection slug="scout" storedNames={[]} canEdit />)
     fireEvent.click(screen.getByTestId('canopy-login-give'))
     expect((await screen.findByTestId('canopy-login-code')).textContent).toContain('CODE-1234')
     expect(dk.giveCanopyLogin).not.toHaveBeenCalled()
@@ -53,19 +52,8 @@ describe('AgentSecretsHomeSection', () => {
 
   it('shows a stored, renewing login as done', async () => {
     dk.getPatRotation.mockResolvedValue({ enabled: true, period_days: 30, history: [] })
-    render(<AgentSecretsHomeSection slug="scout" credentialSource="canopy-web" storedNames={['CANOPY_WEB_PAT']} canEdit />)
+    render(<AgentSecretsHomeSection slug="scout" storedNames={['CANOPY_WEB_PAT']} canEdit />)
     expect((await screen.findByTestId('canopy-login-ok')).textContent).toMatch(/Stored ✓.*renews itself every 30 days/)
     await waitFor(() => expect(screen.queryByTestId('canopy-login-give')).toBeNull())
-  })
-
-  it('switches to 1Password and tells the page', async () => {
-    dk.getPatRotation.mockResolvedValue({ enabled: false, period_days: 30, history: [] })
-    dk.setCredentialSource.mockResolvedValue(undefined)
-    const onSource = vi.fn()
-    render(<AgentSecretsHomeSection slug="scout" credentialSource="canopy-web" storedNames={[]} canEdit onSource={onSource} />)
-    fireEvent.click(screen.getByTestId('secrets-home-1password'))
-    await waitFor(() => expect(onSource).toHaveBeenCalledWith('1password'))
-    expect(dk.setCredentialSource).toHaveBeenCalledWith('scout', '1password')
-    expect(screen.queryByTestId('canopy-login-give')).toBeNull()
   })
 })

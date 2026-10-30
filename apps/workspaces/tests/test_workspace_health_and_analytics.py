@@ -45,9 +45,8 @@ def tree():
     WorkspaceMembership.objects.create(workspace=dimagi, user=staff, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(workspace=connect, user=builder, role=WorkspaceMembership.EDITOR)
     hal = Agent.objects.create(
-        slug="hal", name="Hal", workspace=connect, owner=builder,
-        credential_source=Agent.CANOPY_WEB, runtime_secrets=["gh", "base-url", "old"],
-        runtime_sources={"base-url": {"value": "https://x"}, "old": {"op": "op://V/old/credential"}},
+        slug="hal", name="Hal", workspace=connect, owner=builder, runtime_secrets=["gh", "base-url", "old"],
+        runtime_sources={"base-url": {"value": "https://x"}, "old": {}},
     )
     AgentCredential.objects.create(agent=hal, name="gh")
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=ceo)
@@ -67,15 +66,15 @@ def _turn(agent, key, user=None):
 def test_vault_health_classifies_each_declared_secret(tree):
     vh = vault_health(tree["hal"])
     assert {r["name"]: r["status"] for r in vh["refs"]} == {
-        "gh": "stored", "base-url": "literal", "old": "1password"}
+        "gh": "stored", "base-url": "literal", "old": "missing"}
     assert vh["state"] == "moving"
-    assert vh["in_1password"] == ["old"]
+    assert vh["missing"] == ["old"]
 
 
-def test_a_canopy_web_agent_is_not_asked_for_a_1password_vault(tree):
+def test_the_vault_step_names_the_secrets_not_yet_stored(tree):
     step = next(s for s in setup_steps(tree["hal"]) if s["key"] == "vault")
     assert step["status"] == "todo"
-    assert "still only in 1Password: old" in step["detail"]
+    assert "not stored anywhere: old" in step["detail"]
     assert step["where"] == "web" and step["href"].endswith("#credentials")
 
     AgentCredential.objects.create(agent=tree["hal"], name="old")
@@ -115,7 +114,7 @@ def test_health_reads_the_fleet_once_however_many_runners_hold_device_keys(tree)
     from apps.harness.models import Runner, RunnerDeviceKey, WorkspaceRunnerOrder
 
     Agent.objects.filter(pk__in=[tree["hal"].pk, tree["eva"].pk]).update(
-        zk_enabled=True, credential_source=Agent.CANOPY_WEB)
+        zk_enabled=True)
 
     def add_runner(n):
         r = Runner.objects.create(name=f"box-{n}", kind=Runner.CLOUD, host=f"box-{n}", owner=tree["ceo"],
@@ -541,8 +540,7 @@ def test_health_does_not_ask_about_every_vault_key_in_the_system(tree):
     `is_admin` of every keyset holder in the system made the health page's queries grow
     with keysets × agents; the cheap check is two queries per agent whatever the count."""
     for slug in ("zk1", "zk2", "zk3"):
-        Agent.objects.create(slug=slug, name=slug, workspace_id="connect", owner=tree["builder"],
-                             credential_source=Agent.CANOPY_WEB, zk_enabled=True, zk_kv=0)
+        Agent.objects.create(slug=slug, name=slug, workspace_id="connect", owner=tree["builder"], zk_enabled=True, zk_kv=0)
     before = _health_queries(tree["ceo"])
     for i in range(8):  # vault keys held by people who administer none of these agents
         _keyset(_user(f"stranger{i}@dimagi.com"))
@@ -552,8 +550,7 @@ def test_health_does_not_ask_about_every_vault_key_in_the_system(tree):
 def test_has_recipients_matches_recipients_for(tree):
     from apps.agents.credentials import zk_seal
 
-    agent = Agent.objects.create(slug="zk", name="zk", workspace_id="connect", owner=tree["builder"],
-                                 credential_source=Agent.CANOPY_WEB, zk_enabled=True, zk_kv=0)
+    agent = Agent.objects.create(slug="zk", name="zk", workspace_id="connect", owner=tree["builder"], zk_enabled=True, zk_kv=0)
     _keyset(tree["staff"])  # an editor of the parent: not an admin of the agent
     assert zk_seal.has_recipients(agent) is False and zk_seal.recipients_for(agent) == []
     _keyset(tree["ceo"])  # owner of the parent workspace: an admin by inheritance

@@ -735,7 +735,7 @@
       "assigned": "hal",
       "project": "P2",
       "url": "/w/connect/agents/hal/work",
-      "next_action": "BLOCKED on creds: ~/.chrome-sales/.sf-creds.json + .gws-sa-key.json must be provisioned on cloud-ec2-2 (Hal's 1Password SA can't see them). Deps already fixed.",
+      "next_action": "BLOCKED on creds: ~/.chrome-sales/.sf-creds.json + .gws-sa-key.json must be provisioned on cloud-ec2-2 (Hal's service account can't see them). Deps already fixed.",
       "updated_at": "2026-10-06T22:08:57.288586Z"
     },
     {

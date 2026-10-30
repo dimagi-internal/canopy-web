@@ -2,9 +2,9 @@
 //
 // The mint exists because provisioning a mailbox was the last thing that could
 // not be done from a browser: it meant a terminal, `gog auth login`, a loopback
-// listener, and a hand-written 1Password item. Jonathan's goal on 2026-09-05 was
+// listener, and a hand-written secret. Jonathan's goal on 2026-09-05 was
 // that "someone could plausibly create a completely new agent without direct
-// access to the cloud box or 1pass" — this is the piece that was missing.
+// access to the cloud box" — this is the piece that was missing.
 
 /** The credential slot a Google mailbox lands in — the same one a hand-minted
  *  token uses, so the box never has two sources of truth for one mailbox. */
@@ -16,7 +16,7 @@ export const GOG_TOKEN_REF = 'gog-token'
  *  It used to be the declaration alone, so the button rendered only for an agent
  *  that declared secrets — ace — and never for ada/echo/eva/hal (declared: 0), which
  *  all have mailboxes and all run on the same `gog-token` slot. For those four the
- *  only way to re-mint was a terminal `gog login` plus a 1Password write, which is
+ *  only way to re-mint was a terminal `gog login` plus a hand-written secret, which is
  *  the exact trip this button exists to remove (2026-10-04). */
 export function declaresMailbox(rows: readonly { name: string }[], email?: string | null): boolean {
   return Boolean(email?.trim()) || rows.some((r) => r.name === GOG_TOKEN_REF)

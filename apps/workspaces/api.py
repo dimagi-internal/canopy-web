@@ -772,7 +772,7 @@ def _tree_reader(request: HttpRequest, slug: str):
 @gate("logs.read")  # same tree read; can_fix mirrors Agent.is_admin
 def workspace_health(request: HttpRequest, slug: str, setup: bool = True) -> WorkspaceHealthOut:
     """Every agent in the tree with its setup checklist (the same steps as its own
-    Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
+    Settings page and `agent_setup`), its vault state (canopy-web, moving)
     and properties; every workspace with its shared vault; the runners its agents
     route to or that live in it (the runner topology's rows, plus whether each runs
     current code and its own failing checks). Each step carries the link

@@ -16,7 +16,7 @@ import { VaultSection, type VaultTone } from '@/components/vault/VaultSection'
 // `children`, as more `VaultSection`s, or beside the vault, not inside it.
 
 export interface VaultFacts {
-  /** "Canopy vault" or "1Password". */
+  /** Where it lives, e.g. "Canopy vault". */
   where: string
   /** Sealed so canopy-web cannot read it. */
   encrypted?: boolean

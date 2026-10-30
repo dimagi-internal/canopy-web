@@ -55,9 +55,7 @@ export function AgentSettingsSection() {
   const { hash, search, key } = useLocation()
   const navigate = useNavigate()
   const isAdmin = agent.is_admin ?? false
-  // Where its secrets live, and a counter the login bumps so the vault's table re-reads.
-  const [source, setSource] = useState<string | null>(agent.credential_source ?? null)
-  useEffect(() => setSource(agent.credential_source ?? null), [agent.credential_source])
+  // A counter the login bumps so the vault's table re-reads.
   const [vaultVersion, setVaultVersion] = useState(0)
   const admins = `${agent.name}'s admins`
   // Routing writes are gated on agent.work (their @gate): workspace editors.
@@ -322,15 +320,14 @@ export function AgentSettingsSection() {
         <>
           <Section id="vault" title="Vault">
             <AgentSecretsPanel
-              agent={{ ...agent, credential_source: source }}
+              agent={agent}
               canEdit={isAdmin}
               reloadKey={vaultVersion}
-              onSourceChange={setSource}
             />
           </Section>
           <Section id="agent-security" title="Agent security">
             <AgentSecurityPanel
-              agent={{ ...agent, credential_source: source }}
+              agent={agent}
               canEdit={isAdmin}
               reloadKey={vaultVersion}
               onChanged={() => setVaultVersion((v) => v + 1)}

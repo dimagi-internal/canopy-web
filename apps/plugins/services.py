@@ -174,11 +174,8 @@ def entry(plugin: _Plugin) -> dict:
         "description": agent.description or agent.name,
         "source": plugin_source(agent),
         "metadata": {
-            # An INSTANCE is canopy-web's Agent row: identity, workspace, and the
-            # 1Password vault its setup reads from. `vault` is the vault NAME
-            # only (never the service-account token); 1Password decides who can
-            # read it. "" when the agent has none recorded.
-            "instances": [{"agent": a.slug, "workspace": a.workspace_id, "vault": a.op_vault or ""}
+            # An INSTANCE is canopy-web's Agent row: identity and workspace.
+            "instances": [{"agent": a.slug, "workspace": a.workspace_id}
                           for a in sorted(plugin.instances, key=lambda a: a.slug)],
         },
     }

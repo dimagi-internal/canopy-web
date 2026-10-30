@@ -218,8 +218,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     JSON), owner-agnostic so other vault pages reuse it; Reveal decrypts locally with the person's vault key, and Save encrypts
     locally once the agent has one), **Who can open them** (admins: the vault's
     people with why each can — `docs/architecture/vault.md` — and the machines
-    with device binding), **Storage & key** (Canopy vault or 1Password and its
-    service-account form, key copies, zero-knowledge grant / rotate / recover
+    with device binding), **Storage & key** (the Canopy vault, key copies, zero-knowledge grant / rotate / recover
     with code, every encryption in the browser, the one-time recovery-code
     dialog, the stated trust caveat) and, only when there are any, **Read
     alerts**. Sections other than Secrets start closed, open by themselves when
@@ -292,7 +291,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     with its sensitive data, and — only then — whether it can handle that data,
     with why not and a link to fix it (marked only when an offered agent cannot);
     the site's pages + scopes sit collapsed, for reference.
-  - **secrets** — the workspace's SHARED 1Password vault (what every agent here
+  - **secrets** — the workspace's SHARED vaults (what every agent here
     reads, e.g. the Google OAuth clients), and the one screen that states the
     credential model whole: an agent's own vault is on the agent (Settings →
     Security), a box's Claude login is on the runner (`/supervisor` →
@@ -402,7 +401,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/health`** — admin+ (`logs.read`, per descendant). What is not set up right
   across this workspace and every one below it (`GET /api/workspaces/{slug}/health`,
   `apps/agents/health.py`): every agent with its setup checklist (the SAME steps
-  as its Settings page), its vault state (canopy-web / moving / 1Password / none,
+  as its Settings page), its vault state (canopy-web / moving / none,
   `apps/agents/credentials/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
   each linking to the agent's page; who can use it (admins only, or the
