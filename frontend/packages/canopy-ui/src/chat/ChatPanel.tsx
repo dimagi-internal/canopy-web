@@ -149,10 +149,15 @@ export function ChatPanel({
   // knows to show its "sent after the current reply" placeholder — Send
   // itself is never locked out by this any more (0.13): a send made while the
   // agent is replying is QUEUED, not blocked, and <QueuedRows> shows it landed.
+  //
+  // Never YOUR line. A pending user row is a send waiting for its receipt, not
+  // a reply under way — `awaitingReply` already covers that window. Counting it
+  // here meant one row that never got confirmed held "Queued… 22m · Stop" under
+  // a turn that had finished long ago, with no frame able to clear it.
   const inFlightMessage = useMemo(
     () =>
       state.messages.find(
-        (m) => m.status === "streaming" || m.status === "pending",
+        (m) => m.role !== "user" && (m.status === "streaming" || m.status === "pending"),
       ) ?? null,
     [state.messages],
   );
