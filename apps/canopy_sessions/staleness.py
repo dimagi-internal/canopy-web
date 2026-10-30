@@ -82,6 +82,12 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 # 2026-10-26). Sending to it again is a new turn, which reopens it. A session an
 # AGENT started (its first turn's initiator is an agent, or an agent's own login)
 # ran on its own whatever channel it came in on.
+#
+# A conversation in a SLACK THREAD is a person's chat too: people reply in the thread,
+# and a reply is a new turn on the same session. It used to count as having "ran on its
+# own" the moment its one turn ended, so a person who asked an agent in Slack (or typed
+# `/agent read-channel`) never found that session in their active list (Jonathan,
+# 2026-10-30). It now follows the web-chat rule: open until idle for CLOUD_CHAT_IDLE.
 CLOUD_CHAT_IDLE = dt.timedelta(hours=24)
 
 # How long a transferred session stays listed while its NEW box has not reported it
@@ -223,13 +229,16 @@ def _predicates() -> _Predicates:
     started_by_agent = Coalesce(Subquery(by_agent.values("_by_agent")[:1]), Value(False))
     auto = Q(Exact(first("turn_mode"), "auto"))
     web_chat = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT))
-    ran_on_its_own = auto & (~web_chat | Q(Exact(started_by_agent, True)))
+    # A conversation: a person's web chat, or a session bound to a Slack thread.
+    slack_thread = Q(metadata__has_key="slack_thread")
+    conversation = web_chat | slack_thread
+    ran_on_its_own = auto & (~conversation | Q(Exact(started_by_agent, True)))
     # Idle: no driving turn created or finished within CLOUD_CHAT_IDLE. Turn times,
     # not the binding's: a cloud binding's `live_seen_at` is stamped per turn and
     # its `last_interacted_at` is never reported.
     idle_cutoff = timezone.now() - CLOUD_CHAT_IDLE
     recent = driving_turns().filter(Q(created_at__gte=idle_cutoff) | Q(finished_at__gte=idle_cutoff))
-    chat_idle = auto & web_chat & ~Q(Exists(recent))
+    chat_idle = auto & conversation & ~Q(Exists(recent))
     in_flight = Exists(driving_turns().filter(status__in=Turn.NON_TERMINAL))
     no_dialog = Q(runner_binding__pending_question__isnull=True) | Q(
         runner_binding__pending_question={}
@@ -265,6 +274,7 @@ def _predicates() -> _Predicates:
     # A session mid-transfer is unseen by design (see TRANSFER_WINDOW), not gone.
     p.quiet, p.unobserved, p.cloud_gone = quiet, unobserved, cloud_gone
     p.first_mode, p.first_origin = first("turn_mode"), first("origin")
+    p.slack_thread = slack_thread
     p.in_flight, p.no_dialog = in_flight, no_dialog
     p.runner_unseen, p.web_unseen = runner_unseen, web_unseen
     p.transferring = transferring_q()
@@ -280,7 +290,7 @@ OPEN_REASONS = (
     "turn_running",       # cloud: a turn that drives it is queued, claimed or running
     "dialog_up",          # cloud: a question is waiting for an answer
     "manual_turn",        # cloud: its first claimed turn ran in manual mode
-    "person_started",     # cloud: a person's web chat with a turn within CLOUD_CHAT_IDLE
+    "person_started",     # cloud: a person's web chat or Slack thread with a turn within CLOUD_CHAT_IDLE
     "no_turn_found",      # cloud: no claimed turn drives it, so nothing can finish it
     "unbound",            # a web chat no runner has picked up yet
     "unobservable",       # held by a box that has never sent a session report
@@ -308,7 +318,7 @@ def open_reason():
         When(cloud & Q(p.in_flight), then=Value("turn_running")),
         When(cloud & ~p.no_dialog, then=Value("dialog_up")),
         When(cloud & Q(Exact(p.first_mode, "manual")), then=Value("manual_turn")),
-        When(cloud & Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)),
+        When(cloud & (Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)) | p.slack_thread),
              then=Value("person_started")),
         When(cloud & Q(Exact(p.first_mode, "")), then=Value("no_turn_found")),
         When(~runner & ~bound, then=Value("unbound")),
