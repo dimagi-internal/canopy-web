@@ -121,6 +121,13 @@ def cells_hash(body: bytes) -> str:
         return ""
 
 
+def _recovered(row: dict) -> dict:
+    """`row` without the `last_error` an earlier outage left: this fetch answered, so the
+    error is history. Kept, it reads as a live failure to anything keyed on it (eva's
+    Drive-version check re-exports a file with an error mark on every refresh)."""
+    return {k: v for k, v in row.items() if k != "last_error"}
+
+
 class Fetch:
     """`raw.Raw`'s cached GET, over the curation state instead of a data directory."""
 
@@ -165,7 +172,7 @@ class Fetch:
                     self.counts["requests"] += 1
                 r = self._client().get(url, headers={**({"User-Agent": ua} if ua else {}), **cond} or None)
                 if r.status_code == 304 and cond:
-                    row = {**old, "checked_at": now()}
+                    row = {**_recovered(old), "checked_at": now()}
                     self._count("not_modified")
                     break
                 if r.status_code in (429, 500, 502, 503, 504):
@@ -181,7 +188,7 @@ class Fetch:
                         old.get("sha256") == digest or (old.get("stable") in said)):
                     # Same bytes, or an export that says the same: keep the row (and its
                     # original), so nothing downstream is re-read or re-published.
-                    row = {**old, "checked_at": now(), **({"stable": st} if st else {})}
+                    row = {**_recovered(old), "checked_at": now(), **({"stable": st} if st else {})}
                     self._count("same_content")
                     break
                 row = {"url": url, "final_url": str(r.url), "status": r.status_code, "ctype": ctype,

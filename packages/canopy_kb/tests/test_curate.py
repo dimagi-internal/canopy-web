@@ -204,6 +204,19 @@ def test_an_outage_keeps_the_last_good_copy_and_a_404_is_a_removal(monkeypatch):
         assert f.get("https://x/a", refetch=True)["status"] == 404
 
 
+def test_an_answer_after_an_outage_clears_the_error_mark(monkeypatch):
+    store = MemoryStore()
+    with Curation(store) as cur:
+        f, _ = _fetcher(cur, [_Resp(200, b"x", {"content-type": "application/pdf", "etag": "e1"}),
+                              *[_Resp(503)] * 5, _Resp(200, b"x", {"content-type": "application/pdf"}),
+                              *[_Resp(503)] * 5, _Resp(304)], monkeypatch)
+        f.get("https://x/a")
+        assert f.get("https://x/a", refetch=True)["last_error"] == 503
+        assert "last_error" not in f.get("https://x/a", refetch=True)  # same content
+        assert f.get("https://x/a", refetch=True)["last_error"] == 503
+        assert "last_error" not in f.get("https://x/a", refetch=True)  # not modified
+
+
 def test_a_google_export_that_says_the_same_keeps_its_row_and_original(monkeypatch):
     import io
     import zipfile
