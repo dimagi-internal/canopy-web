@@ -14,7 +14,9 @@ so rotating an app's secret carries every connection with it. `begin` parks the
 app and `complete` refuses a callback for any other provider or workspace (an
 OAuth mix-up defence: a code is only ever exchanged by the client it was issued
 to). A person's connection is usable only while they can still read its app's
-workspace; an agent connects with its own workspace's app.
+workspace; an agent connects with its own workspace's app, and its connection
+is usable only while the agent is still in that app's workspace (a moved agent's
+old connection stops; so do the grants of it, wherever the grantee is).
 
 An `Owner` is `("user", user_id)` or `("agent", agent_id)`. There is no fallback
 between owners: an agent uses its own connection or one explicitly granted to
@@ -65,7 +67,7 @@ from typing import Any, Literal
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -776,20 +778,33 @@ def _revoke(app: ConnectionApp, subject: Subject, refresh: str) -> None:
 
 # ---- which connection an agent uses; grants ----------------------------------
 
+def agent_connections_usable() -> dict:
+    """The filter for agent-owned connections that still work: the owning agent is
+    in the workspace whose app made it. THE rule for an agent at use time (connect
+    already holds it; a move breaks it): a moved agent's old connection, and every
+    grant of it, stop — never run on the old workspace's OAuth client unseen."""
+    return {"agent__isnull": False, "agent__workspace_id": F("app__workspace_id")}
+
+
+def agent_connection_usable(conn: Connection) -> bool:
+    """`agent_connections_usable` for one row already loaded (with `agent`, `app`)."""
+    return conn.agent_id is not None and conn.agent.workspace_id == conn.app.workspace_id
+
+
 def connection_for_agent(agent, provider: str) -> Connection:
-    """The agent's own connection for `provider`, else one granted to it.
+    """The agent's own connection for `provider`, else one granted to it — each
+    only while usable (`agent_connections_usable`).
 
     Never a person's connection. More than one candidate at the level that
     answers is `ambiguous` rather than a guess.
     """
-    own = list(Connection.objects.filter(agent=agent, provider=provider)[:2])
+    usable = Connection.objects.filter(provider=provider, **agent_connections_usable())
+    own = list(usable.filter(agent=agent)[:2])
     if len(own) == 1:
         return own[0]
     if len(own) > 1:
         raise ConnectionError("ambiguous", f"{agent.slug} holds more than one {provider} connection")
-    granted = list(Connection.objects.filter(
-        grants__agent=agent, provider=provider, agent__isnull=False,
-    ).distinct()[:2])
+    granted = list(usable.filter(grants__agent=agent).distinct()[:2])
     if len(granted) == 1:
         return granted[0]
     if len(granted) > 1:
@@ -822,10 +837,11 @@ def connection_for_person(user, provider: str, *, workspace: str | None = None) 
 
 
 def providers_for_agent(agent) -> list[str]:
-    """The providers `agent` has a connection for — its own or one granted to it —
-    sorted. What a runner stages for a turn; never a person's connection."""
-    own = Connection.objects.filter(agent=agent).values_list("provider", flat=True)
-    granted = Connection.objects.filter(grants__agent=agent, agent__isnull=False).values_list("provider", flat=True)
+    """The providers `agent` has a usable connection for — its own or one granted
+    to it — sorted. What a runner stages for a turn; never a person's connection."""
+    usable = Connection.objects.filter(**agent_connections_usable())
+    own = usable.filter(agent=agent).values_list("provider", flat=True)
+    granted = usable.filter(grants__agent=agent).values_list("provider", flat=True)
     # A row for a provider no longer registered here has nothing to stage.
     return sorted(p for p in set(own) | set(granted) if p in providers.CLASSES)
 
