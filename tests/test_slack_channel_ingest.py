@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from django.test import Client
 from django.utils import timezone
 
 from apps.events.models import Event
@@ -355,10 +356,11 @@ def test_a_pending_request_can_be_withdrawn(pending, channel, hal_login, owen):
 
 # ---- the allow-list: an owner's explicit, standing permission --------------------
 
-def _allow(ws, *, follow=False, channel="#canopy-support", user=None):
+def _allow(ws, *, follow=False, channel="#canopy-support", user=None, review_sessions=False):
     return _link_client(user or _owner(ws)).post(
         f"/api/slack-config/{ws.slug}/channel-ingest/allowed",
-        {"agent": "hal", "channel": channel, "follow": follow, "note": "AI champions"},
+        {"agent": "hal", "channel": channel, "follow": follow, "note": "AI champions",
+         "review_sessions": review_sessions},
         content_type="application/json")
 
 
@@ -490,3 +492,44 @@ def test_moving_the_agent_drops_its_allow_list(allowed, channel, ws, hal):
     assert any(b["kind"] == "slack_channel_allow" for b in move.plan(hal, dest, by=owner).stops_working)
     move.move(hal, dest, by=owner)
     assert not SlackChannelIngestAllow.objects.exists()
+
+
+def test_allow_listing_can_also_give_the_agent_the_channels_sessions(channel, installation, ws, hal, hal_login, owen):
+    """`review_sessions` is the admin's one switch: the agent's own login then reads the sessions
+    that live in that channel (and only that channel) until the entry is removed."""
+    from apps.canopy_sessions.models import Session
+
+    def reads(session):
+        c = Client()
+        c.force_login(hal_login)
+        return c.get(f"/api/canopy-sessions/{session.pk}").status_code == 200
+
+    poster = a_user("ana@dimagi.com")
+    wsvc.ensure_member(ws, poster, WorkspaceMembership.EDITOR)
+    meta = {"slack_team": installation.team_id, "slack_channel": CHAN}
+    inside = Session.objects.create(workspace=ws, created_by=poster, metadata=meta)
+    sealed = Session.objects.create(workspace=ws, created_by=poster,
+                                    metadata={**meta, "runner_requirements": ["sensitive_data"]})
+    elsewhere = Session.objects.create(workspace=ws, created_by=poster,
+                                       metadata={**meta, "slack_channel": "C999"})
+    unshared = Session.objects.create(workspace=ws, created_by=poster)
+
+    resp = _allow(ws)                                       # allow-listed to read: no sessions yet
+    assert resp.json()["channel_ingest"]["allowed"][0]["review_sessions"] is False
+    assert not reads(inside)
+
+    assert _allow(ws, user=owen, review_sessions=True).status_code == 200
+    (entry,) = _allow(ws, review_sessions=True).json()["channel_ingest"]["allowed"]
+    assert entry["review_sessions"] is True
+    assert reads(inside)
+    assert not any(reads(s) for s in (sealed, elsewhere, unshared))
+    listed = Client()
+    listed.force_login(hal_login)
+    ids = [r["id"] for r in listed.get(f"/api/canopy-sessions/?slack_channel={CHAN}&state=all").json()]
+    assert ids == [str(inside.pk)]
+
+    assert _allow(ws).status_code == 200                    # switched off on the same entry
+    assert not reads(inside)
+    _allow(ws, review_sessions=True)
+    _link_client(_owner(ws)).delete(f"/api/slack-config/{ws.slug}/channel-ingest/allowed/{entry['id']}")
+    assert not reads(inside)                                # removing the entry takes it back

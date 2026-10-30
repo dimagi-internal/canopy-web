@@ -59,7 +59,7 @@ export async function setSlackChannelIngest(workspace: string, enabled: boolean)
 // matching ask reads at once, with a notice in the channel. Admins and owners.
 export async function allowSlackChannel(
   workspace: string,
-  body: { agent: string; channel: string; follow: boolean; note: string },
+  body: { agent: string; channel: string; follow: boolean; note: string; review_sessions: boolean },
 ): Promise<SlackConfigOut> {
   const res = await apiV2.POST('/api/slack-config/{workspace}/channel-ingest/allowed', {
     params: { path: { workspace } },
