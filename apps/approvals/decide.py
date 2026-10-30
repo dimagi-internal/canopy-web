@@ -14,7 +14,7 @@ from apps.agents.models import AgentTask
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from .cards import _decided, outcome_line
+from .cards import _decided, needs_decision, outcome_line
 from .models import ApprovalDecision
 
 VIAS = ("web", "slack", "email", "push", "api")
@@ -37,6 +37,12 @@ def decide(task: AgentTask, user, decision: str, *, comment: str = "", via: str 
     agent = task.agent
     try:
         with transaction.atomic():
+            # A card is decided ONCE. The board lets anyone decline a task that is already in progress
+            # (cancelling running work), which is not what a second tap on a decided card means: after
+            # an approval that would flip it to "declined" under work already started.
+            locked = AgentTask.objects.select_for_update(of=("self",)).get(pk=task.pk)
+            if not needs_decision(locked):
+                raise ApprovalError(_already(locked, f"{locked.key} is not waiting on a decision"), 409)
             task, _row, _turns = services.act(
                 task, action=decision, comment=comment, by=user.email or user.get_username(), by_user=user,
                 actor_workspace_ids=wsvc.user_workspace_slugs(user),

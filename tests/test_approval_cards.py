@@ -170,6 +170,25 @@ def test_approving_starts_the_work_once_and_the_second_click_says_who_got_there_
     assert Turn.objects.filter(raised_from_task_id=task.pk).count() == 1
 
 
+def test_a_decided_card_cannot_be_decided_again_either_way(world):
+    """Found live: declining a card that was already approved went through (the board lets you decline
+    a task in progress), flipping it to 'declined' under work already started."""
+    approved = proposal(world)
+    decide(approved, world["alice"], "approve", via="slack")
+    for second in ("decline", "approve"):
+        with pytest.raises(ApprovalError) as e:
+            decide(approved, world["bo"], second)
+        assert e.value.status == 409 and "Approved by" in str(e.value) and "Slack" in str(e.value)
+    assert _client(world["bo"]).get(f"/api/approvals/{approved.key}").json()["state"] == "approved"
+    assert ApprovalDecision.objects.filter(task=approved).count() == 1
+    declined = proposal(world, idempotency_key="p-declined")
+    decide(declined, world["alice"], "decline")
+    with pytest.raises(ApprovalError) as e:
+        decide(declined, world["bo"], "approve")
+    assert e.value.status == 409
+    assert not Turn.objects.filter(raised_from_task_id=declined.pk).exists()
+
+
 def test_declining_runs_nothing_and_says_so(world):
     task = proposal(world)
     r = _client(world["alice"]).post(f"/api/approvals/{task.key}/decide",
