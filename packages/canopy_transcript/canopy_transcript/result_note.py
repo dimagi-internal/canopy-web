@@ -50,7 +50,9 @@ def cap(text: str, url: str = "", limit: int = MAX_CHARS) -> str:
 
     A closeout status line (`[closeout: <VERDICT>]`, canopy_transcript.closeout) is the
     LAST line of the reply and the one part of it a reader of the note acts on, so a cut
-    keeps it: the head is shortened instead, and the line follows the marker."""
+    keeps it: the head is shortened instead, and the line follows the marker. The same
+    goes for the runner's own reason a turn failed (`_runner_reason`), which wins over
+    a closeout line because it comes after it."""
     text = text or ""
     if len(text) <= limit:
         return text
@@ -58,8 +60,36 @@ def cap(text: str, url: str = "", limit: int = MAX_CHARS) -> str:
               else f" {ELLIPSIS} [truncated]")
     if len(marker) >= limit:  # a cap too small for the marker: the marker alone
         return marker.strip()[:limit]
-    _, line = find_closeout(text)
-    tail = f"\n\n{line}" if line and text.rstrip().endswith(line) else ""
+    tail = _runner_reason(text, limit // 2 - len(marker) - 1)
+    if not tail:
+        _, line = find_closeout(text)
+        tail = f"\n\n{line}" if line and text.rstrip().endswith(line) else ""
     if tail and len(marker) + len(tail) < limit // 2:
         return text[: limit - len(marker) - len(tail)].rstrip() + marker + tail
     return text[: limit - len(marker)].rstrip() + marker
+
+
+#: How the runner opens the paragraph it appends to a reply to say why the turn
+#: failed (cloud_runner: "[runner] out of Claude usage — …", "[runner] this box is
+#: not signed in …").
+RUNNER_PREFIX = "[runner] "
+
+
+def _runner_reason(text: str, room: int) -> str:
+    """The runner's closing `[runner] …` paragraph, as the tail a cut keeps ("" when
+    the reply does not end with one). Cut to `room` if it is longer.
+
+    Failure investigation 21 (turn c4dd7019, ACE in a chat on cloud-ec2-live,
+    2026-10-30): every Claude login on the box hit its cap mid-turn, and the runner
+    appended its "[runner] out of Claude usage" paragraph to ACE's long partial
+    reply. The cut kept the head of the reply and dropped that paragraph, so the
+    failure read as ACE narrating its work, and the debugger had no cause to go on."""
+    at = text.rfind("\n\n" + RUNNER_PREFIX)
+    if at < 0 or room <= 0:
+        return ""
+    tail = text[at:].rstrip()
+    if "\n\n" in tail[2:]:
+        return ""  # a mention earlier in the reply, not the paragraph that ends it
+    if len(tail) > room:
+        tail = tail[: room - 1].rstrip() + ELLIPSIS
+    return tail
