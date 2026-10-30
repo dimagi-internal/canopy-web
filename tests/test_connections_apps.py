@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
 from apps.agents.models import Agent
 from apps.connections import providers, services
@@ -520,44 +520,36 @@ def test_a_refresh_sends_the_secret_the_app_holds_under_the_lock(ws, user, eva, 
     assert fake.token_calls()[0][2]["client_secret"] == "shh-rotated"
 
 
-def test_deleting_a_workspace_records_its_connections_without_calling_the_provider(user, caplog):
-    caplog.set_level(logging.INFO, logger="apps.connections.services")
+def test_a_workspace_with_a_connection_app_cannot_be_deleted_from_under_it(user):
+    """PROTECT: a workspace delete never takes an app's connections without
+    `remove_app` revoking them first."""
+    from django.db.models import ProtectedError
     gone = Workspace.objects.create(slug="gone", display_name="G", created_by=user)
-    WorkspaceMembership.objects.create(workspace=gone, user=user, role=WorkspaceMembership.OWNER)
-    conn = _stored({"user": user}, user, app=sf_app(gone))
-    with FakeSF() as fake:
+    _stored({"user": user}, user, app=sf_app(gone))
+    with pytest.raises(ProtectedError), transaction.atomic():
         gone.delete()
-    assert fake.calls == []
-    assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
-    lines = [services.parse_log_line(r.getMessage()) for r in caplog.records]
-    hits = [p for k, p in lines if k == "disconnected"]
-    assert len(hits) == 1 and hits[0]["connection"] == str(conn.pk)
-    assert hits[0]["during"] == "app_deleted" and hits[0]["by"] == ""
+    assert Connection.objects.count() == 1
 
 
-def test_deleting_an_app_directly_is_an_event_for_an_agents_connection(ws, user, eva):
-    app = sf_app(ws)
-    conn = _stored({"agent": eva}, user, app=app)
-    with FakeSF() as fake:
-        app.delete()
-    assert fake.calls == []
-    ev = Event.objects.get(kind="connections.disconnected")
-    assert ev.workspace_id == "w" and ev.payload["connection"] == conn.pk
-    assert ev.payload["during"] == "app_deleted" and ev.payload["owner"] == "agent:eva"
-
-
-def test_the_workspace_delete_route_succeeds_with_connections(user):
+def test_the_workspace_delete_route_says_to_remove_its_connection_apps_first(user):
     from django.test import Client
 
     from apps.passkeys.testing import grant_step_up
     gone = Workspace.objects.create(slug="gone", display_name="G", created_by=user)
     WorkspaceMembership.objects.create(workspace=gone, user=user, role=WorkspaceMembership.OWNER)
-    _stored({"user": user}, user, app=sf_app(gone))
+    app = _stored({"user": user}, user, app=sf_app(gone)).app
     c = Client()
     c.force_login(user)
     grant_step_up(c)
-    with FakeSF():
-        assert c.delete("/api/workspaces/gone/").status_code == 204
+    r = c.delete("/api/workspaces/gone/")
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert "1 connection apps" in detail
+    assert "Remove its connection apps in Settings → Connections first." in detail
+    with FakeSF() as fake:
+        services.remove_app(app, by=user)
+    assert [u for _, u, _ in fake.calls if u == REVOKE_URL]     # removing the app revoked the grant
+    assert c.delete("/api/workspaces/gone/").status_code == 204
     assert not Workspace.objects.filter(slug="gone").exists() and not Connection.objects.exists()
 
 

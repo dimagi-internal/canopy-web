@@ -6,6 +6,9 @@ neither refresh nor be revoked, and no workspace app minted it, so it cannot be
 given the NOT NULL `Connection.app` 0005 adds. None exist in production; any
 elsewhere must be connected again once the workspace's app is set up.
 
+Rolling back does not bring them back (the reverse is a no-op): a rollback past
+here loses every connection.
+
 Its own migration, ahead of 0005's schema change to the same tables, because
 deleting rows other tables reference (ConnectionGrant -> Connection) in the same
 transaction as an ALTER fails on PostgreSQL ("pending trigger events").

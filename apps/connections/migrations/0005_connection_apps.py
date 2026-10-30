@@ -1,6 +1,13 @@
 """Per-workspace OAuth apps: `ConnectionApp`, and every `Connection` points at the app that minted it.
 
 `Connection.app` is NOT NULL with no default: 0004 emptied the table first.
+`ConnectionApp.workspace` is PROTECT (a workspace is deleted only once its apps
+are removed, which revokes their connections); `Connection.app` is CASCADE, for
+that removal's own delete.
+
+Rolling back loses connections. Reversing this re-adds the one-per-account
+constraints, which fail once the same account is connected through two apps,
+and 0004's reverse restores nothing: every connection must be made again.
 """
 
 import django.db.models.deletion
@@ -10,7 +17,6 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0106_credential_alert_context"),
         ("connections", "0004_delete_site_wide_connections"),
         ("workspaces", "0016_retire_system_accounts"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
@@ -61,7 +67,7 @@ class Migration(migrations.Migration):
             model_name="connectionapp",
             name="workspace",
             field=models.ForeignKey(
-                on_delete=django.db.models.deletion.CASCADE,
+                on_delete=django.db.models.deletion.PROTECT,
                 related_name="connection_apps",
                 to="workspaces.workspace",
             ),
@@ -70,7 +76,7 @@ class Migration(migrations.Migration):
             model_name="connection",
             name="app",
             field=models.ForeignKey(
-                on_delete=django.db.models.deletion.PROTECT,
+                on_delete=django.db.models.deletion.CASCADE,
                 related_name="connections",
                 to="connections.connectionapp",
             ),

@@ -523,11 +523,16 @@ def delete_workspace(request: HttpRequest, slug: str):
             ws.delete()
     except ProtectedError as e:
         held = Counter(obj._meta.verbose_name_plural for obj in e.protected_objects)
+        # A model whose rows must be removed through its own app (which may need to
+        # tell a provider, say) names how, as `workspace_delete_hint`: core cannot
+        # import the framework apps that own them.
+        hints = sorted({h for obj in e.protected_objects if (h := getattr(obj, "workspace_delete_hint", ""))})
         raise HttpError(
             409,
             f"workspace '{slug}' still holds "
             + ", ".join(f"{n} {what}" for what, n in sorted(held.items()))
-            + ". It is not empty, so it cannot be deleted.",
+            + ". It is not empty, so it cannot be deleted."
+            + "".join(f" {h}" for h in hints),
         ) from None
     return Status(204, None)
 

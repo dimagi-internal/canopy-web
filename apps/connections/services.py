@@ -53,7 +53,6 @@ state or a verifier.
 from __future__ import annotations
 
 import base64
-import dataclasses
 import hashlib
 import json
 import logging
@@ -325,20 +324,6 @@ def remove_app(app: ConnectionApp, *, by) -> None:
                summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
     record(subject, "app_removed", by=by, workspace=slug, client_id=client_id,
            summary=f"{_who(by) or 'someone'} removed {title} from {slug}")
-
-
-def app_deleted(app: ConnectionApp, *, workspace_going: bool = False) -> None:
-    """Record `disconnected` for each connection an app's deletion takes with it,
-    when the deletion bypassed `remove_app` (the workspace was deleted). No call
-    to the provider: this runs inside someone else's delete. When the app's
-    workspace is itself being deleted, a record that would be an Event there is
-    a log line instead: an Event written now would reference a deleted row."""
-    for conn in app.connections.select_related("agent__workspace").order_by("pk"):
-        subject = Subject.of(conn)
-        if workspace_going and subject.workspace is not None and subject.workspace.pk == app.workspace_id:
-            subject = dataclasses.replace(subject, workspace=None)
-        record(subject, "disconnected", during="app_deleted",
-               summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) went with its app")
 
 
 # ---- the audit trail and the log: one vocabulary ---------------------------------

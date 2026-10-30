@@ -27,13 +27,17 @@ from apps.common.encryption import decrypt_secret, encrypt_secret
 class ConnectionApp(models.Model):
     """One workspace's OAuth client for one provider.
 
-    Removed through `services.remove_app`, which revokes and records every
-    connection made with it first. A delete that bypasses it (the workspace's)
-    takes the connections with it (`Connection.app` is CASCADE), and
-    `signals.py` records each one as disconnected."""
+    Removed only through `services.remove_app`, which revokes and records every
+    connection made with it first. `workspace` is PROTECT so deleting a workspace
+    cannot bypass that: the workspace delete answers 409 until its admins have
+    removed its apps (`workspace_delete_hint` is what that 409 tells them)."""
+
+    # Read by the workspace delete route (core, which cannot import this app) to
+    # say what to do about the rows a PROTECT left in its way.
+    workspace_delete_hint = "Remove its connection apps in Settings → Connections first."
 
     workspace = models.ForeignKey(
-        "workspaces.Workspace", on_delete=models.CASCADE, related_name="connection_apps",
+        "workspaces.Workspace", on_delete=models.PROTECT, related_name="connection_apps",
     )
     provider = models.CharField(max_length=40)
     client_id = models.CharField(max_length=255)
@@ -87,8 +91,9 @@ class Connection(models.Model):
         related_name="connections",
     )
     # The workspace app that minted this grant; its credentials refresh and revoke it.
-    # CASCADE so a workspace can be deleted; `services.remove_app` is the way to
-    # remove an app on purpose (it revokes first).
+    # CASCADE for `services.remove_app`'s own delete, which has revoked and recorded
+    # each connection first (an app is never deleted any other way: its workspace FK
+    # is PROTECT).
     app = models.ForeignKey(ConnectionApp, on_delete=models.CASCADE, related_name="connections")
     provider = models.CharField(max_length=40)
     # The provider's stable id for the account (Salesforce: "<org id>/<user id>").
