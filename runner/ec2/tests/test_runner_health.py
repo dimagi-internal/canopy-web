@@ -268,6 +268,8 @@ def test_the_vault_probe_is_cached_but_not_forever(cloud_runner, monkeypatch, tm
     monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
     calls = []
     monkeypatch.setattr(cloud_runner, "_VAULT_PROBE_AT", {})
+    monkeypatch.setattr(cloud_runner, "_aws_proof_headers",
+                        lambda url: {cloud_runner.AWS_PROOF_HEADER: "p"})
     monkeypatch.setattr(cloud_runner, "_api",
                         lambda m, p, *a, **k: (calls.append(p), (200, {}))[1])
     cloud_runner._agent_env("hal"); cloud_runner._agent_env("hal")
