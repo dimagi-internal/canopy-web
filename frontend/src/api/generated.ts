@@ -40540,6 +40540,8 @@ export interface components {
              * @default
              */
             readonly turn_origin: string;
+            /** Turn Runner Name */
+            readonly turn_runner_name?: string | null;
             /**
              * Feed Status
              * @default
@@ -41392,6 +41394,8 @@ export interface components {
              * @default
              */
             readonly turn_origin: string;
+            /** Turn Runner Name */
+            readonly turn_runner_name?: string | null;
             /**
              * Feed Status
              * @default

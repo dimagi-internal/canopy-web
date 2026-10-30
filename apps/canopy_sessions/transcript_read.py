@@ -377,6 +377,10 @@ def with_driving_turn(sessions):
     return sessions.annotate(
         _turn_mode=Subquery(driving.values("turn_mode")[:1]),
         _turn_origin=Subquery(driving.values("origin")[:1]),
+        _turn_runner_name=Subquery(
+            staleness.driving_turns().exclude(claimed_by=None)
+            .order_by("-claimed_at").values("claimed_by__name")[:1]
+        ),
     )
 
 
