@@ -15,6 +15,8 @@ import re
 
 from django.http import HttpRequest
 
+from apps.passkeys.models import Passkey, UserVaultKeyset
+
 logger = logging.getLogger("canopy.vault")
 
 #: Best-effort names for common passkey providers, by AAGUID
@@ -62,8 +64,6 @@ def client_of(request: HttpRequest) -> dict[str, str]:
 def keyset_summary(user) -> dict[str, object]:
     """Seal kinds and passkey states for ``user`` — enough to see why an unlock
     cannot work (e.g. only a ``2skd`` passphrase seal, no ``prf`` seal)."""
-    from apps.passkeys.models import Passkey, UserVaultKeyset  # noqa: PLC0415
-
     ks = UserVaultKeyset.objects.filter(user=user).first()
     seals = list(ks.seals) if ks else []
     sealed = {s.get("cred") for s in seals}
