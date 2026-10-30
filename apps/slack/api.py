@@ -115,7 +115,7 @@ def _out(ws: Workspace) -> dict:
 def _allow_out(a: SlackChannelIngestAllow) -> dict:
     return {"id": str(a.pk), "agent": a.agent.slug, "channel": a.channel_id, "channel_name": a.channel_name,
             "follow": a.follow,
-            "review_sessions": a.review_sessions, "note": a.note, "added_by_email": getattr(a.added_by, "email", "") or "",
+            "review_sessions": a.review_sessions, "first_read_hours": a.first_read_hours, "note": a.note, "added_by_email": getattr(a.added_by, "email", "") or "",
             "added_at": a.added_at.isoformat() if a.added_at else ""}
 
 
@@ -195,7 +195,8 @@ def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackCha
         raise HttpError(404, f"agent '{payload.agent}' is not in '{ws.slug}'")
     try:
         ingest.allow(workspace=ws, agent=agent, channel=payload.channel, follow=payload.follow,
-                     note=payload.note, by=request.user, review_sessions=payload.review_sessions)
+                     note=payload.note, by=request.user, review_sessions=payload.review_sessions,
+                     first_read_hours=payload.first_read_hours)
     except ingest.IngestError as e:
         raise HttpError(e.status, str(e)) from e
     return _out(ws)

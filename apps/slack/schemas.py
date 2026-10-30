@@ -49,6 +49,8 @@ class SlackChannelAllowOut(StrictModel):
     follow: bool
     # Whether the agent also reviews the canopy sessions that live in this channel.
     review_sessions: bool
+    # One-time: the agent's first read-channel here is only the last N hours (null = whole channel).
+    first_read_hours: int | None = None
     note: str
     added_by_email: str
     added_at: str
@@ -61,6 +63,9 @@ class SlackChannelAllowIn(StrictModel):
     review_sessions: bool = Field(default=False, description=(
         "Also let the agent read the canopy sessions that live in this channel, read-only "
         "(what people shared there to be helped). Not a coaching grant: nothing outside the channel."))
+    first_read_hours: int | None = Field(default=None, ge=1, le=720, description=(
+        "One time: the agent's first `read-channel` here reads only the last N hours (plus newer replies to "
+        "older threads) as if an earlier read had ended then, not the whole channel. Cleared once used."))
     note: str = Field(default="", max_length=500, description="Why — shown on the settings page and in the log.")
 
 

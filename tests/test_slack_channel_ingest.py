@@ -356,11 +356,12 @@ def test_a_pending_request_can_be_withdrawn(pending, channel, hal_login, owen):
 
 # ---- the allow-list: an owner's explicit, standing permission --------------------
 
-def _allow(ws, *, follow=False, channel="#canopy-support", user=None, review_sessions=False):
+def _allow(ws, *, follow=False, channel="#canopy-support", user=None, review_sessions=False,
+           first_read_hours=None):
     return _link_client(user or _owner(ws)).post(
         f"/api/slack-config/{ws.slug}/channel-ingest/allowed",
         {"agent": "hal", "channel": channel, "follow": follow, "note": "AI champions",
-         "review_sessions": review_sessions},
+         "review_sessions": review_sessions, "first_read_hours": first_read_hours},
         content_type="application/json")
 
 
@@ -539,3 +540,56 @@ def test_allow_listing_can_also_make_the_agent_a_viewer_of_the_channels_sessions
     _allow(ws, review_sessions=True)
     _link_client(_owner(ws)).delete(f"/api/slack-config/{ws.slug}/channel-ingest/allowed/{entry['id']}")
     assert not reads(inside)                                # removing the entry takes it back
+
+
+def test_a_first_read_can_be_bounded_and_still_catches_old_threads_with_new_replies(
+        channel, installation, ws, hal, hal_login, linked, slack):
+    """`first_read_hours` is one-time: the first read starts as if an earlier read ended N hours ago
+    — new posts, and new replies to older threads WITH their opener — and later reads carry on from it."""
+    import time
+
+    now = time.time()
+    h = 3600
+
+    def ts(hours_ago):
+        return f"{now - hours_ago * h:.6f}"
+
+    channel.history = [  # newest first
+        {"ts": ts(1), "user": BOB, "text": "fresh post"},
+        {"ts": ts(30), "user": ALICE, "text": "thread begun inside the window", "reply_count": 1,
+         "latest_reply": ts(29)},
+        {"ts": ts(50), "user": BOB, "text": "old thread opener", "reply_count": 2, "latest_reply": ts(2)},
+        {"ts": ts(60), "user": ALICE, "text": "old and quiet"},
+        {"ts": ts(70), "user": BOB, "text": "old thread, no new replies", "reply_count": 1, "latest_reply": ts(69)},
+    ]
+    channel.replies = {
+        ts(30): [channel.history[1], {"ts": ts(29), "user": BOB, "text": "inside reply", "thread_ts": ts(30)}],
+        ts(50): [channel.history[2],
+                 {"ts": ts(49), "user": ALICE, "text": "old reply", "thread_ts": ts(50)},
+                 {"ts": ts(2), "user": ALICE, "text": "new reply to the old thread", "thread_ts": ts(50)}],
+        ts(70): [channel.history[4], {"ts": ts(69), "user": BOB, "text": "stale reply", "thread_ts": ts(70)}],
+    }
+    resp = _allow(ws, first_read_hours=36)
+    (entry,) = resp.json()["channel_ingest"]["allowed"]
+    assert entry["first_read_hours"] == 36
+
+    slack.ts_seq = ["1700000801.000100", "1700000801.500000", "1700000802.000100"]
+    assert "the last 36 hours" in _read_channel("what's new?")
+    row = _run(SlackChannelIngest.objects.get())
+    assert row.status == SlackChannelIngest.READY
+    (turn,) = _turns()
+    p = turn.prompt
+    for seen in ("fresh post", "thread begun inside the window", "inside reply",
+                 "new reply to the old thread", "old thread opener"):
+        assert seen in p, seen                     # the opener comes with its new reply
+    for unseen in ("old and quiet", "old reply", "stale reply", "old thread, no new replies"):
+        assert unseen not in p, unseen
+    assert p.index("old thread opener") < p.index("new reply to the old thread")
+    # The window was used once: the entry is back to "whole channel", and a second read is incremental.
+    (entry,) = _link_client(_owner(ws)).get(f"/api/slack-config/{ws.slug}").json()["channel_ingest"]["allowed"]
+    assert entry["first_read_hours"] is None
+    channel.history.insert(0, {"ts": ts(0.1), "user": BOB, "text": "just now"})
+    _read_channel("and now?")
+    _run(SlackChannelIngest.objects.get())
+    second = _turns()[-1]
+    assert "just now" in second.prompt and "fresh post" not in second.prompt

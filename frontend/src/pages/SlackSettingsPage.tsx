@@ -34,6 +34,7 @@ export function SlackSettingsPage(): JSX.Element {
   const [allowAgent, setAllowAgent] = useState('')
   const [allowNote, setAllowNote] = useState('')
   const [allowReview, setAllowReview] = useState(false)
+  const [allowFirstHours, setAllowFirstHours] = useState('')
 
   const load = useCallback(() => {
     getSlackConfig(workspace)
@@ -276,7 +277,7 @@ export function SlackSettingsPage(): JSX.Element {
               Add a channel and the agent that may read it. Nothing is read until someone types{' '}
               <code>/&lt;agent&gt; read-channel &lt;ask&gt;</code> in that channel: canopy then reads everything since
               the agent&apos;s last read there (all of it, the first time) and the agent answers in a thread. The agent
-              can&apos;t start a read itself. Tick the box to also let the agent read the canopy sessions that live in the
+              can&apos;t start a read itself. The optional first-read window makes the agent&apos;s first read only the last N hours (and newer replies to older threads), once, instead of the whole channel. Tick the box to also let the agent read the canopy sessions that live in the
               channel, read-only, so people who post there needn&apos;t each opt in to coaching; adding the same
               channel and agent again updates it. Removing a channel deletes what was read and takes the sessions
               back. Owners and admins can change this list.
@@ -291,6 +292,7 @@ export function SlackSettingsPage(): JSX.Element {
                       <b>#{a.channel_name || a.channel}</b> for <b>{a.agent}</b>
                       {a.follow ? ' — read and follow' : ''}
                       {a.review_sessions ? ' — and reviews the canopy sessions shared in it' : ''}
+                      {a.first_read_hours ? ` — first read: last ${a.first_read_hours}h` : ''}
                       <span className="block text-[11px] text-muted-foreground">
                         {a.note ? `${a.note} · ` : ''}added by {a.added_by_email || 'someone'}{' '}
                         {a.added_at ? relativeAge(a.added_at) : ''}
@@ -328,10 +330,12 @@ export function SlackSettingsPage(): JSX.Element {
                     follow: false,
                     note: allowNote.trim(),
                     review_sessions: allowReview,
+                    first_read_hours: allowFirstHours.trim() ? Number(allowFirstHours) : null,
                   })
                   setAllowChannel('')
                   setAllowNote('')
                   setAllowReview(false)
+                  setAllowFirstHours('')
                   return `${agent} may now read ${channel}${allowReview ? ' and review the canopy sessions shared in it' : ''}.`
                 })
               }}
@@ -356,6 +360,13 @@ export function SlackSettingsPage(): JSX.Element {
                 placeholder="why (optional)"
                 aria-label="Why"
                 className="w-48 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
+              />
+              <input
+                value={allowFirstHours}
+                onChange={(e) => setAllowFirstHours(e.target.value.replace(/\D/g, ''))}
+                placeholder="first read: last N hours (optional)"
+                aria-label="First read, last N hours"
+                className="w-56 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
               />
               <label className="flex items-center gap-1.5 text-[12px] text-foreground">
                 <input

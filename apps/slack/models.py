@@ -154,6 +154,10 @@ class SlackChannelIngestAllow(models.Model):
     #: Is the agent also a (read-only) participant of every Slack-bound session in this
     #: channel? `audience.sync` keeps it so, like the channel's people (never a sensitive one).
     review_sessions = models.BooleanField(default=False)
+    #: ONE-TIME: the agent's first `read-channel` here reads only the last N hours (and threads
+    #: with newer replies) as if an earlier read had ended then, instead of the whole channel.
+    #: Cleared once that first read starts; empty is the whole channel.
+    first_read_hours = models.PositiveIntegerField(null=True, blank=True)
     note = models.CharField(max_length=500, blank=True, default="")
     added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
                                  blank=True, related_name="+")

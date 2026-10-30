@@ -146,7 +146,7 @@ describe('SlackSettingsPage — reading whole channels', () => {
 
   it('an owner allow-lists a channel for one agent, and removes it', async () => {
     const entry = {
-      id: 'a1', agent: 'ada', channel: 'C1', channel_name: 'canopy-support', follow: false, review_sessions: false, note: 'champions',
+      id: 'a1', agent: 'ada', channel: 'C1', channel_name: 'canopy-support', follow: false, review_sessions: false, first_read_hours: null, note: 'champions',
       added_by_email: 'jj@dimagi.com', added_at: '',
     }
     vi.mocked(slack.getSlackConfig).mockResolvedValue({ ...base, channel_ingest: { enabled: false, allowed: [entry] } })
@@ -160,7 +160,7 @@ describe('SlackSettingsPage — reading whole channels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect((await screen.findByTestId('slack-note')).textContent).toContain('ada may now read #ai-champions.')
     expect(slack.allowSlackChannel).toHaveBeenCalledWith('connect', {
-      agent: 'ada', channel: '#ai-champions', follow: false, note: '', review_sessions: false,
+      agent: 'ada', channel: '#ai-champions', follow: false, note: '', review_sessions: false, first_read_hours: null,
     })
     fireEvent.change(screen.getByLabelText('Channel'), { target: { value: '#canopy-support' } })
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'trellis' } })
@@ -168,7 +168,7 @@ describe('SlackSettingsPage — reading whole channels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() =>
       expect(slack.allowSlackChannel).toHaveBeenLastCalledWith('connect', {
-        agent: 'trellis', channel: '#canopy-support', follow: false, note: '', review_sessions: true,
+        agent: 'trellis', channel: '#canopy-support', follow: false, note: '', review_sessions: true, first_read_hours: null,
       }),
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Remove #canopy-support for ada' }))

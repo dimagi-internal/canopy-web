@@ -19022,6 +19022,8 @@ export interface components {
             readonly follow: boolean;
             /** Review Sessions */
             readonly review_sessions: boolean;
+            /** First Read Hours */
+            readonly first_read_hours?: number | null;
             /** Note */
             readonly note: string;
             /** Added By Email */
@@ -19173,6 +19175,11 @@ export interface components {
              * @default false
              */
             readonly review_sessions: boolean;
+            /**
+             * First Read Hours
+             * @description One time: the agent's first `read-channel` here reads only the last N hours (plus newer replies to older threads) as if an earlier read had ended then, not the whole channel. Cleared once used.
+             */
+            readonly first_read_hours?: number | null;
             /**
              * Note
              * @description Why — shown on the settings page and in the log.
