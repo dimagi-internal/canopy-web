@@ -16,7 +16,7 @@ replaced the self-join of 2026-09-12).
 Elsewhere in this package: `links` (addresses under `/w/<ws>/`), `invites`,
 `login_gate` (who may sign in or create a workspace), `access_requests`,
 `notifications` (the shared email plumbing) and `vault` (the tenant's shared
-1Password vault).
+vault).
 """
 from __future__ import annotations
 
@@ -229,7 +229,8 @@ def _inherited_roles_of(direct: dict[int, dict[str, str]]) -> dict[int, dict[str
 def inherited_owner_slugs(user) -> set[str]:
     """Workspaces `user` OWNS by inheritance: descendants of a workspace they
     directly own."""
-    return {s for s, r in inherited_roles(user).items() if r == WorkspaceMembership.OWNER}
+    rank = WorkspaceMembership.ROLE_RANK
+    return {s for s, r in inherited_roles(user).items() if rank[r] >= rank[WorkspaceMembership.OWNER]}
 
 
 def user_workspace_slugs(user) -> set[str]:
@@ -295,8 +296,8 @@ def _uncapped_membership(user, workspace):
         .filter(user=user, workspace_id=workspace_id)
         .first()
     )
-    if row is not None and row.role == WorkspaceMembership.OWNER:
-        return row
+    if row is not None and row.role == WorkspaceMembership.SUPERUSER:
+        return row  # the top role: nothing inherited can outrank it
     # An owner or admin of any ancestor is an owner or admin here (see
     # `Workspace.parent`). This outranks a weaker DIRECT row — an org admin who
     # also holds `viewer` on a division is still its admin. The returned row is
@@ -737,7 +738,9 @@ def member_user_ids(ws) -> set[int]:
 
 def owner_user_ids(ws) -> set[int]:
     """User ids of everyone who OWNS `ws`: its direct owners plus the owners of
-    every ancestor."""
+    every ancestor. OWNER only, never SUPERUSER: this is who is TOLD things about
+    the workspace (pushes, the agent feed, owner notices), and a superuser holds
+    the same keys as oversight without the mail (`WorkspaceMembership.ROLE_RANK`)."""
     return {m.user_id for m in effective_memberships(ws) if m.role == WorkspaceMembership.OWNER}
 
 
@@ -1053,3 +1056,37 @@ def _grant(ws: Workspace, user, role: str, invited_by=None) -> WorkspaceMembersh
         m.role = role
         m.save(update_fields=["role"])
     return m
+
+
+def mail_recipients(users, ws) -> list:
+    """`users` minus the SUPERUSERS of `ws` (direct or inherited): a role's
+    fan-out — a blocking alert to everyone who could close it, an access request
+    to everyone who could approve it — reaches the owners and admins, never the
+    superusers, whose role is oversight. Unless that leaves nobody: then all of
+    `users`, so a fan-out may thin out but never reach no one."""
+    users = list(users)
+    quiet = {m.user_id for m in effective_memberships(ws) if m.role == WorkspaceMembership.SUPERUSER}
+    kept = [u for u in users if u.pk not in quiet]
+    return kept or users
+
+
+def held_slugs() -> set[str]:
+    """Every workspace on hold (`Workspace.held`) and every workspace below one:
+    what the claim refuses turns in. Empty — and one query — when nothing is held."""
+    held = set(Workspace.objects.filter(held=True).values_list("slug", flat=True))
+    if not held:
+        return set()
+    return held.union(*descendant_map(held).values())
+
+
+def held_by(slug: str) -> Workspace | None:
+    """The workspace whose hold covers `slug` — itself or its nearest held
+    ancestor — or None."""
+    ws = Workspace.objects.filter(slug=slug).first()
+    if ws is None:
+        return None
+    if ws.held:
+        return ws
+    ancestors = ws.ancestor_slugs()
+    held = {w.slug: w for w in Workspace.objects.filter(slug__in=ancestors, held=True)}
+    return next((held[a] for a in ancestors if a in held), None)

@@ -31,17 +31,9 @@ from .pat_rotation import CANOPY_PAT_REF
 
 logger = logging.getLogger(__name__)
 
-#: The secret fields of the response beside `values`. A scoped resolve
-#: (`?refs=`) returns each only when it is named; the read log names each one
-#: handed out, like a ref. A credential a person delegated to the agent is not one of
-#: them: it rides `delegated`, sealed to the machines that run the agent, and only a
-#: runner read proved by one of them gets it (`accounts.resolve_payload`).
-RESOLVE_SECRET_EXTRAS = ("op_sa_token",)
-
 #: Which of the agent-only kind (`authority`) live in the vault's `values`, by name:
 #: `CANOPY_PAT_REF` is the name the agent's login is actually stored under (minted,
-#: rotated); the two kebab names are older spellings some vaults still carry. The
-#: agent-only kinds that ride a field of their own are `authority.AGENT_ONLY_EXTRAS`.
+#: rotated); the two kebab names are older spellings some vaults still carry.
 AGENT_ONLY_REFS = frozenset({CANOPY_PAT_REF, "canopy-pat", "canopy-web-pat"})
 
 BEARER_REQUIRED = "bearer_required"
@@ -70,8 +62,6 @@ class Resolved:
     """The fields of `AgentCredentialsResolveOut`, and `via`: who read them."""
 
     values: dict[str, str]
-    op_vault: str
-    op_sa_token: str
     mailbox: str
     mailbox_backend: str
     google_account: Any
@@ -241,7 +231,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
 
     # Device proof (canopy-web#1538 Phase 1a). Verified whenever one is sent, so
     # the read log can name the box that proved itself; REQUIRED only when the
-    # agent asks for it and resolves from canopy-web.
+    # agent asks for it.
     device_key, refused, unrouted = device_key_from_proof(request, agent)
     # A runner token speaks for one box: a proof from some other box's key does
     # not go with it.
@@ -250,14 +240,10 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         return Refusal(FOREIGN_DEVICE_PROOF, f"the device proof is {device_key.runner.name}'s, not this "
                                              f"runner token's ({rtok.runner.name})")
     # A zero-knowledge agent ALWAYS needs one (canopy-web#1550): the wrap handed
-    # out is the proving device's, so there is nothing to give without it. Only
-    # while its secrets actually come from the canopy-web vault: an agent still on
-    # 1Password has none here to protect, and demanding a proof broke `canopy agent
-    # op-token` on every admin laptop without an approved key. Any ciphertext it
-    # does hold is useless without a device's own key, and a `zk1` value with no
-    # wrap is still the refusal below.
-    if (device_key is None and agent.credential_source == agent.CANOPY_WEB
-            and (agent.zk_enabled or agent.require_device_binding)):
+    # out is the proving device's, so there is nothing to give without it. Any
+    # ciphertext it does hold is useless without a device's own key, and a `zk1`
+    # value with no wrap is still the refusal below.
+    if device_key is None and (agent.zk_enabled or agent.require_device_binding):
         if unrouted is not None:
             # An APPROVED box that does not run this agent: a routing fact, not a
             # misused token, so the owner is not emailed (fizzy, canopy-web#1563).
@@ -291,19 +277,10 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
                            "an admin must grant it",
                            kv=agent.zk_kv, device_key=str(device_key.pk) if device_key else "")
     else:
-        # A legacy 1Password agent that has never stored a value here: there is
-        # nothing to hand out (a first stored value turns its vault on).
+        # An agent that has never stored a value here: there is nothing to hand out
+        # (a first stored value turns its vault on).
         values = {}
-    vault, op_token = services.resolve_agent_vault(agent)
-    if agent.credential_source == agent.CANOPY_WEB:
-        op_token = ""
-
     placement = authority.placement_of(via)
-
-    def extra(name: str) -> bool:
-        if name in authority.AGENT_ONLY_EXTRAS and not authority.hands_out(placement, authority.AGENT_ONLY):
-            return False
-        return wanted is None or name in wanted
 
     # A box that runs the agent, by its own proof: never an admin reading by hand (the
     # owner at their own laptop is an `admin` read, `_classify_read`).
@@ -327,8 +304,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         for layer in layers:
             layer["values"] = {k: v for k, v in layer["values"].items() if k not in AGENT_ONLY_REFS}
     out = Resolved(
-        values=values, op_vault=vault,
-        op_sa_token=op_token if extra("op_sa_token") else "",
+        values=values,
         mailbox=agent.email or "",
         mailbox_backend=mailbox_backend(agent),
         google_account=agent.google_identity(),
@@ -338,7 +314,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         agent_id=str(agent.pk) if agent.zk_enabled else "",
         vaults=layers,
     )
-    read = (list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)] + list(delegated)
+    read = (list(values) + list(delegated)
             + [f"{layer['name']}/{n}" for layer in layers for n in layer["values"]])
     runner = device_key.runner if device_key is not None else caller_runner(request)
     out.via = via = _classify_read(request, via, runner=runner, device_key=device_key, rtok=rtok)

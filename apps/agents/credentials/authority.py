@@ -14,8 +14,8 @@ Placements:
   the agent itself holds, and never a lent account.
 
 Kinds:
-- `agent_only`: the agent's canopy login and its 1Password service-account key. They
-  let the holder BE the agent, past the cap on what a person who started a turn may do.
+- `agent_only`: the agent's canopy login. It lets the holder BE the agent, past the cap
+  on what a person who started a turn may do.
 - `vault`: values in the agent's own vault. The agent's in every placement; who may
   read them at all is `access`'s and the vault's decision, not this module's.
 - `delegated`: a person's account lent to the agent (their GitHub). The agent's on a
@@ -34,12 +34,6 @@ MANAGE = "manage"
 AGENT_ONLY = "agent_only"
 VAULT = "vault"
 DELEGATED = "delegated"
-
-#: The names of the agent-only kind that live in the vault's `values`: the login is
-#: stored under `CANOPY_PAT_REF` (minted, rotated); the two kebab names are older
-#: spellings some vaults still carry. `op_sa_token` is the agent-only kind that rides a
-#: field of its own (`credential_resolve.RESOLVE_SECRET_EXTRAS`).
-AGENT_ONLY_EXTRAS = ("op_sa_token",)
 
 
 @dataclass(frozen=True)

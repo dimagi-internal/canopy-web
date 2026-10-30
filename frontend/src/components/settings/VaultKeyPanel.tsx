@@ -26,7 +26,7 @@ import { useHash } from '@/lib/useHash'
  * Your vault key (Canopy Vault zero-knowledge, canopy-web#1550): a key pair made
  * in this browser that zero-knowledge agents wrap their vault key to. Its
  * private half is kept only SEALED — by a passkey (its PRF extension), and/or
- * by a passphrase plus a Secret Key (1Password-style). canopy-web stores the
+ * by a passphrase plus a Secret Key. canopy-web stores the
  * seals and cannot open them; it never sees the passphrase or the Secret Key.
  */
 

@@ -53,7 +53,7 @@ from django.utils import timezone
 
 from apps.workspaces import permissions as perms
 
-from . import client
+from . import audience, client
 from .models import (
     SlackChannelIngest,
     SlackChannelIngestAllow,
@@ -227,9 +227,14 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
 
 # --- the allow-list ----------------------------------------------------------
 
-def allow(*, workspace, agent, channel: str, follow: bool, note: str, by) -> SlackChannelIngestAllow:
+def allow(*, workspace, agent, channel: str, follow: bool, note: str, by,
+          review_sessions: bool = False) -> SlackChannelIngestAllow:
     """An owner or admin allow-lists one channel for one agent. Reads nothing by itself:
-    the agent still asks (`request`), with a purpose, and the channel is told."""
+    the agent still asks (`request`), with a purpose, and the channel is told.
+
+    `review_sessions` also makes the agent a read-only participant of every Slack-bound canopy
+    session in the channel (`audience.sync`): what people shared there to be helped. Not a
+    sensitive session, and nothing outside the channel."""
     if agent.workspace_id != workspace.slug:
         raise IngestError(f"{agent.slug} is not an agent of '{workspace.slug}'", 404)
     if agent.is_own_login(by):
@@ -241,11 +246,16 @@ def allow(*, workspace, agent, channel: str, follow: bool, note: str, by) -> Sla
     entry, created = SlackChannelIngestAllow.objects.update_or_create(
         agent=agent, channel_id=channel_id,
         defaults={"workspace": workspace, "installation": link.installation, "channel_name": name,
-                  "follow": bool(follow), "note": (note or "").strip()[:500], "added_by": by})
+                  "follow": bool(follow), "review_sessions": bool(review_sessions),
+                  "note": (note or "").strip()[:500], "added_by": by})
+    audience.resync_channel(link.installation, channel_id)
     _event(workspace, "allowed", f"{_who(by)} allow-listed <#{channel_id}> for {agent.slug} to read whole"
-           f"{' and follow' if follow else ''}" + (f": {entry.note}" if entry.note else ""),
+           f"{' and follow' if follow else ''}"
+           f"{' and review the sessions shared in it' if review_sessions else ''}"
+           + (f": {entry.note}" if entry.note else ""),
            allowance=str(entry.pk), team=link.installation.team_id, channel=channel_id, agent=agent.slug,
-           user=getattr(by, "pk", None), follow=entry.follow, updated=not created)
+           user=getattr(by, "pk", None), follow=entry.follow, review_sessions=entry.review_sessions,
+           updated=not created)
     return entry
 
 
@@ -259,6 +269,9 @@ def disallow(entry: SlackChannelIngestAllow, *, by) -> int:
            f"allow-list" + (f"; {len(live)} read(s) revoked" if live else ""), allowance=str(entry.pk),
            team=entry.installation.team_id, channel=entry.channel_id, agent=entry.agent.slug,
            user=getattr(by, "pk", None), revoked=len(live))
+    entry.review_sessions = False
+    entry.save(update_fields=["review_sessions"])
+    audience.resync_channel(entry.installation, entry.channel_id)
     entry.delete()
     return len(live)
 

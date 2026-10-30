@@ -65,10 +65,8 @@ class AgentIn(StrictModel):
     # A model per CLI, e.g. {"codex": "gpt-6.1-sol"}; None = unchanged.
     cli_models: dict[CliName, Annotated[str, Field(max_length=64)]] | None = None
     runtime_secrets: list[str] | None = None
-    # WHERE each declared secret's value lives:
-    # {"gog-token": {"op": "op://Agent-Ace/gog-token/credential"}}. Without it
-    # the vault importer can only guess a convention, and a guess here resolves
-    # to the WRONG credential rather than failing (ace#2060).
+    # WHERE each declared secret's value lives: {"base-url": {"value": "https://..."}}
+    # for a literal, {"name": {"local_only": true}} for one minted per machine.
     runtime_sources: dict | None = None
     # Ordered runner-kind preference, e.g. ["cloud","emdash"]. None = leave unchanged.
     runner_preference: list[str] | None = None
@@ -184,7 +182,7 @@ class AgentSetupStepOut(StrictModel):
     detail: str
     # web: `href` is the control that does it. claude-code: `command` starts the session.
     # terminal: `command` is a shell command a person runs (one that needs their own
-    # access, e.g. 1Password rights) — not a Claude Code session.
+    # access) — not a Claude Code session.
     where: Literal["web", "claude-code", "terminal"]
     href: str = ""
     # What following `href` does, as a button label: "Add a GitHub token".
@@ -241,15 +239,6 @@ class RepositoryIn(StrictModel):
     repo_url: str = Field(min_length=1, max_length=300)
     # The branch its runners run; empty leaves it as it is.
     repo_ref: str = Field(default="", max_length=120)
-
-
-class CredentialSourceIn(StrictModel):
-    """Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
-
-    Its own endpoint, owner/admin only, for the same reason as TurnModeIn: the
-    agent-repo self-publish upsert must never be able to move its own secrets."""
-
-    credential_source: Literal["1password", "canopy-web"]
 
 
 class SlackEnabledIn(StrictModel):
@@ -576,20 +565,9 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
-    # Which backend `canopy cred` resolves this agent's secrets from (canopy#850).
-    # Owner/admin-set via PATCH /credential-source; absent from AgentIn so the
-    # self-publish upsert cannot move an agent's secrets.
-    credential_source: Literal["1password", "canopy-web"] = "1password"
-    # Canopy Vault device binding (canopy-web#1538): with credential_source
-    # canopy-web, resolve also demands a DPoP proof from an approved runner
-    # device key. Owner/admin-set via PATCH /device-binding.
+    # Canopy Vault device binding (canopy-web#1538): resolve also demands a DPoP
+    # proof from an approved runner device key. Owner/admin-set via PATCH /device-binding.
     require_device_binding: bool = False
-    # The INSTANCE's 1Password vault NAME (e.g. "Agent-Ace") — what a local
-    # install bound to this instance sets itself up from. A name, not a secret:
-    # the vault's service-account token (`op_sa_token_enc`) is never on this
-    # schema, and 1Password itself decides who can read the vault. "" = none
-    # recorded. Same visibility as the row (members of the agent's workspace).
-    op_vault: str = ""
     # The PLUGIN this instance runs, named exactly as the caller's
     # `canopy-agents` catalog names it (apps/plugins/services.py), so
     # `/plugin install <name>@canopy-agents` and `/<name>:setup` are right.
@@ -711,7 +689,7 @@ class AgentAccessRowOut(StrictModel):
     user_id: int
     email: str
     name: str
-    workspace_role: Literal["owner", "admin", "editor", "viewer"]
+    workspace_role: Literal["superuser", "owner", "admin", "editor", "viewer"]
     agent_role: Literal["owner", "admin", "member"]
     # Why they hold `agent_role`, in words: "Owns the workspace", "Made admin by …".
     basis: str
@@ -1958,26 +1936,6 @@ class SenderTrustOut(StrictModel):
     created_at: datetime
 
 
-class AgentVaultIn(StrictModel):
-    """Non-clobbering, like every other credential write here: a blank/omitted
-    service_key leaves the stored one alone, so editing the vault name does not
-    silently wipe the key."""
-
-    vault: str | None = None
-    service_key: str | None = None
-
-
-class AgentVaultOut(StrictModel):
-    vault: str = ""
-    key_set: bool = False
-    # How many declared refs canopy-web can actually LOCATE. Without this an
-    # import that returns "45 skipped" is unexplainable from the UI: the cause is
-    # always that the agent's source map was never declared on this deployment, and
-    # nothing on the screen could say so.
-    declared: int = 0
-    locatable: int = 0
-
-
 class CountOut(StrictModel):
     created: int = 0
     replaced: int = 0
@@ -2112,8 +2070,7 @@ class OwnPatRotateOut(StrictModel):
 
 
 class DeviceBindingIn(StrictModel):
-    """Require a device proof on resolve (only meaningful with credential_source
-    canopy-web). Owner/admin only, like CredentialSourceIn."""
+    """Require a device proof on resolve. Owner/admin only."""
 
     require_device_binding: bool
 
@@ -2131,7 +2088,6 @@ class AgentCredentialAccessOut(StrictModel):
     names the access to ask for."""
 
     agent: str
-    credential_source: Literal["1password", "canopy-web"]
     may_resolve: bool
     via: Literal["runner", "admin", "license"] | None = None
     reason: str = ""
@@ -2233,19 +2189,10 @@ class DelegatedEntryOut(StrictModel):
 class AgentCredentialsResolveOut(StrictModel):
     """PLAINTEXT, for a runner. The one route that returns values.
 
-    It carries the 1Password vault + service token as well, because the runner is
-    what resolves this agent's secrets — canopy-web only custodies the key. Both
-    ride this route rather than a new one so there is exactly ONE plaintext gate
-    to reason about, and one audit entry per fetch."""
+    There is exactly ONE plaintext gate to reason about, and one audit entry per
+    fetch."""
 
     values: dict[str, str] = Field(default_factory=dict)
-    # Which vault this agent's secrets live in. The runner used to DERIVE this as
-    # Agent-<Slug> in bash, which is fine until an agent's vault is named
-    # anything else and silently resolves nothing.
-    op_vault: str = ""
-    # Scoped to that vault. Falls back on the box to the runner-wide token when
-    # empty, so an agent with no key of its own keeps working exactly as before.
-    op_sa_token: str = ""
     # No GitHub token here: a token a person delegated is in `delegated` below, sealed
     # to the machines that run the agent.
     # THIS instance's mailbox (`Agent.email`), which the box sets Gmail up for.
@@ -2740,7 +2687,7 @@ class BootstrapReportIn(StrictModel):
     #: which would report a healthy agent as broken.
     turn_client: str = ""
     turn_ready: bool | None = None
-    #: Did the agent's secrets materialize (`op inject` of its .env.tpl)? None
+    #: Did the agent's secrets materialize (`canopy cred sync` writing its .env)? None
     #: from a box that did not say — never False.
     env_ok: bool | None = None
     detail: str = ""

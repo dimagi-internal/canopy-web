@@ -74,7 +74,7 @@ describe('GetStartedPage', () => {
     )
     expect(listAgents).not.toHaveBeenCalled()
     expect(screen.getByText(/read access to each agent's GitHub repo/)).toBeTruthy()
-    expect(screen.getByText(/access to the agent's vault/)).toBeTruthy()
+    expect(screen.getByText(/access to the agent's Canopy vault/)).toBeTruthy()
     expect(screen.queryByText(/with no logins/)).toBeNull()
   })
 
@@ -117,7 +117,7 @@ describe('GetStartedPage', () => {
 
   it('says agents run on your machine, set up from the agent vault', () => {
     renderPage()
-    expect(screen.getByText(/run on your machine, in your own Claude Code, set up from the agent's 1Password vault/)).toBeTruthy()
+    expect(screen.getByText(/run on your machine, in your own Claude Code, set up from the agent's Canopy vault/)).toBeTruthy()
     expect(screen.queryByText(/with your own logins/)).toBeNull()
   })
 

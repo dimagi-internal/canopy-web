@@ -11,7 +11,7 @@ from apps.common.schemas import StrictModel
 
 from .models import SLUG_PATTERN
 
-Role = Literal["owner", "admin", "editor", "viewer"]
+Role = Literal["superuser", "owner", "admin", "editor", "viewer"]
 
 
 class WorkspaceCreateIn(StrictModel):
@@ -516,22 +516,17 @@ class HealthStepOut(StrictModel):
 
 class VaultRefOut(StrictModel):
     name: str
-    status: Literal["stored", "literal", "local", "1password", "missing"]
+    status: Literal["stored", "literal", "local", "missing"]
 
 
 class AgentVaultHealthOut(StrictModel):
-    source: str
-    # canopy-web: every declared secret is stored here. moving: on canopy-web with
-    # some still only in 1Password or nowhere. 1password: resolves through op.
-    # none: declares no secrets and has no vault.
-    state: Literal["canopy-web", "moving", "1password", "none"]
+    # canopy-web: every declared secret is stored here. moving: some declared
+    # secret is stored nowhere yet.
+    state: Literal["canopy-web", "moving", "none"]
     declared: int
     refs: list[VaultRefOut]
     stored: list[str]
-    in_1password: list[str]
     missing: list[str]
-    op_vault: str
-    op_key_set: bool
     zero_knowledge: bool
     machines_waiting: list[str]
 
@@ -632,7 +627,6 @@ class HealthTotalsOut(StrictModel):
     used_30d: int = 0
     vault_canopy_web: int | None = None
     vault_moving: int | None = None
-    vault_1password: int | None = None
     vault_none: int | None = None
     runners: int
     runners_online: int

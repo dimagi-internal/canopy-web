@@ -47,23 +47,18 @@ servers twice under one `plugin.json` name. So:
   listed as `<name>--<owner>-<repo>[--<ref>]` and logged. Nothing is dropped.
 
 **A plugin is code; an instance is canopy-web's `Agent` record** (identity,
-workspace, 1Password vault). A local install is bound to **exactly one**
+workspace). A local install is bound to **exactly one**
 instance, chosen once at setup (the owner's explicit choice). Choosing it is the
 agent's own setup command's job (`/<plugin>:setup`, via the shared canopy setup
-step), not the catalog's. The setup reads the instance's vault from canopy-web
-rather than hardcoding `op://Agent-<Name>/…` or deriving it by convention:
+step), not the catalog's. The agent's secrets live in its Canopy vault, which the
+setup reaches through canopy-web; the catalog names no vault:
 
-- each catalog instance carries **`vault`**: `Agent.op_vault`, the 1Password
-  vault **name** (e.g. `Agent-Ace`), or `""` when none is recorded;
-- `GET /api/agents/` and `GET /api/agents/{slug}/` carry the same name as
-  `op_vault`, plus `plugin: {repo, name}` (the name this catalog uses; `null`
-  with no github.com repo), so a client can go agent → plugin and
-  plugin → instance → vault with the same names.
+- each catalog instance carries only `{agent, workspace}`;
+- `GET /api/agents/` and `GET /api/agents/{slug}/` carry
+  `plugin: {repo, name}` (the name this catalog uses; `null` with no github.com
+  repo), so a client can go agent → plugin and plugin → instance with the same names.
 
-The vault name is not a secret: its visibility is the agent row's (members of
-the agent's workspace), and 1Password itself decides who can read the vault.
-The vault's service-account token (`op_sa_token_enc`) is never in either
-response. Today every agent has exactly one instance.
+Today every agent has exactly one instance.
 
 `Agent` has no plugin-subdirectory field, so a plugin must sit at its repo's
 root (`.claude-plugin/plugin.json`); every fleet agent's does. A plugin nested

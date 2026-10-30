@@ -30,7 +30,7 @@ describe('workspaceRoles', () => {
     expect(mayManageMember('admin', 'admin')).toBe(false)
     expect(mayManageMember('admin', 'editor', 'admin')).toBe(false)
     expect(grantableRoles('admin')).toEqual(['viewer', 'editor'])
-    expect(grantableRoles('owner')).toEqual(['viewer', 'editor', 'admin', 'owner'])
+    expect(grantableRoles('owner')).toEqual(['viewer', 'editor', 'admin', 'owner', 'superuser'])
     expect(grantableRoles('editor')).toEqual([])
   })
 })

@@ -137,7 +137,8 @@ class UnclaimableTurnOut(Schema):
     # "config" = nothing declares this target (needs a fix); "offline" = something
     # does, but no runner is reachable right now (usually transient); "parked" =
     # every runner that could take it is paused (`reason` says by whom, until when);
-    # "hold" = the fleet is on hold; "agent_hold" = its agent is (Agent.held).
+    # "hold" = the fleet is on hold; "agent_hold" = its agent is (Agent.held);
+    # "workspace_hold" = its workspace, or one above it, is (Workspace.held).
     kind: str = "config"
     # Whether the caller may cancel it (POST /turns/{id}/cancel) — the fix the
     # warning offers in place.
@@ -721,6 +722,21 @@ class FleetHoldOut(Schema):
     # Whether the caller may use /fleet-stop: a superuser only, like the release —
     # it cuts people's work off mid-turn, so a named holder (an agent) may not.
     can_stop_running: bool = False
+
+
+class WorkspaceHoldOut(Schema):
+    # This workspace's own hold — or, when `held_by_workspace` names an ancestor,
+    # that ancestor's, which covers this one too (only its holder can release it).
+    workspace: str
+    held: bool
+    held_by_workspace: str = ""
+    note: str = ""
+    held_at: dt.datetime | None = None
+    held_by_email: str = ""
+    # Turns in this workspace (and below) waiting on the hold right now.
+    queued: int = 0
+    # Whether the caller holds `control` here: an owner or a superuser.
+    can_control: bool = False
 
 
 class FleetStopOut(Schema):

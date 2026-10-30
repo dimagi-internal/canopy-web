@@ -126,9 +126,9 @@ export function AgentZkSection({
   const current = state.wraps.filter((w) => w.kv === state.kv)
   return (
     <section id="cred-zk" className="mb-6" data-testid="agent-zk">
-      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Who can open these secrets
-      </h3>
+      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Key copies
+      </h4>
 
       {!state.enabled || state.kv === 0 ? (
         // Nothing to do here by hand: an agent with no key of its own yet (kv 0)

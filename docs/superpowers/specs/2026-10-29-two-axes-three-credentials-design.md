@@ -15,7 +15,7 @@
 
 | Kind | What it is | Runner | Direct |
 |---|---|---|---|
-| **Agent-only** | The agent's canopy login, its 1Password service-account key | The agent's | **Never leaves canopy** to a person's machine (`authority`) |
+| **Agent-only** | The agent's canopy login | The agent's | **Never leaves canopy** to a person's machine (`authority`) |
 | **Agent's vault secrets** | Values in the agent's own vault | The agent's | The agent's, as far as the person's role may read the vault. No extra step. |
 | **Delegated** | A person's account lent to the agent (their GitHub) | The agent's, sealed to the box | **The person's own.** The lent copy never travels; the person is already themselves, and canopy only mediates where it is asked to (below). |
 

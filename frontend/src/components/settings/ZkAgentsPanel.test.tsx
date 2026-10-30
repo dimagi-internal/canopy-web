@@ -20,15 +20,11 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-const cw = 'canopy-web'
-
 describe('ZkAgentsPanel', () => {
   it('shows each vault agent as private, names who is waiting, and has no buttons', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', credential_source: cw },
-      { slug: 'eva', name: 'Eva', credential_source: cw }, { slug: 'ada', name: 'Ada', credential_source: cw },
-      { slug: 'ace', name: 'ACE', credential_source: cw },
-      // A 1Password agent I administer: nothing of it lives here.
-      { slug: 'lex', name: 'lex', credential_source: '1password' }] })
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal' },
+      { slug: 'eva', name: 'Eva' }, { slug: 'ada', name: 'Ada' },
+      { slug: 'ace', name: 'ACE' }] })
     vault.getZkState.mockImplementation(async (slug: string) => {
       if (slug === 'ace') throw new Error('403') // not mine
       if (slug === 'hal') return { enabled: true, kv: 1, pending: [], sealed: [] }
@@ -42,14 +38,13 @@ describe('ZkAgentsPanel', () => {
     expect(screen.getByTestId('zk-agent-status-ada').textContent).toMatch(/^cloud-ec2-2 waiting — approve it under Your runners/)
     expect(screen.getByTestId('zk-agent-status-ada').querySelector('a')!.getAttribute('href')).toBe('/settings?device_key=dk#your-runners')
     expect(screen.queryByTestId('zk-agent-ace')).toBeNull()
-    expect(screen.queryByTestId('zk-agent-lex')).toBeNull()
     expect(screen.queryByRole('button')).toBeNull()
     expect(document.body.textContent).not.toMatch(/finish|\block\b|vault key|zero-knowledge/i)
   })
 
   it('says who can open each agent, in plain words', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', credential_source: cw },
-      { slug: 'eva', name: 'Eva', credential_source: cw }] })
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal' },
+      { slug: 'eva', name: 'Eva' }] })
     const w = (kind: string, target: string | null, label: string, current = true) => ({ kind, kv: 1, target, label, current })
     vault.getZkState.mockImplementation(async (slug: string) => slug === 'eva'
       ? { enabled: true, kv: 0, wraps: [], pending: [], sealed: [] }
@@ -73,8 +68,9 @@ describe('ZkAgentsPanel', () => {
     expect(screen.getByTestId('zk-agent-holders-eva').textContent).toBe(' — can be opened by: you and the runners you approve')
   })
 
-  it('says so when no agent keeps secrets here', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'lex', name: 'lex', credential_source: '1password' }] })
+  it('says so when no agent I administer keeps secrets here', async () => {
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'lex', name: 'lex' }] })
+    vault.getZkState.mockRejectedValue(new Error('403')) // not one I administer
     render(<ZkAgentsPanel />)
     expect(await screen.findByTestId('zk-agents-none')).toBeTruthy()
   })

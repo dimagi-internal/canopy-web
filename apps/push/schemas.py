@@ -1,8 +1,6 @@
 """Pydantic schemas for /api/push."""
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
@@ -26,16 +24,10 @@ class PushUnsubscribeIn(StrictModel):
     endpoint: str
 
 
-AlertMail = Literal["all", "assigned"]
-
-
 class NotificationPreferenceOut(StrictModel):
     session_idle_minutes: int
-    alert_mail: AlertMail = "all"
 
 
 class NotificationPreferenceIn(StrictModel):
-    # Each field is optional: send only what changes.
     # 0 = off. Capped at a day: past that "it went quiet" is no longer news.
-    session_idle_minutes: int | None = Field(default=None, ge=0, le=1440)
-    alert_mail: AlertMail | None = None
+    session_idle_minutes: int = Field(ge=0, le=1440)

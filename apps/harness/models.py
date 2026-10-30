@@ -1412,12 +1412,9 @@ class RunnerCredential(models.Model):
     now the agent OWNER's identity lent to that one agent (`AgentDelegation`),
     handed to one turn at a time.
 
-    NO 1PASSWORD KEY. There was one — a box-wide service-account token — and it
-    was staged into the runner's own environment, which every turn inherits: one
-    credential that reads EVERY agent's vault, handed to each of them. Every
-    secret now lives in a canopy vault (the agent's own, and workspace vaults
-    layered under it), opened with this box's device key; it holds no 1Password
-    key.
+    NO BOX-WIDE VAULT KEY. Every secret lives in a canopy vault (the agent's own,
+    and workspace vaults layered under it), opened with this box's device key; the
+    runner holds no credential that reads every agent's vault.
 
     The credentials themselves are `RunnerLogin` rows, one ordered list. This row
     is the bundle's stamp: `updated_at` moves on every change to that list, and a

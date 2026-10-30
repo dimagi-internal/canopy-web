@@ -104,7 +104,7 @@ Nothing deletes a copy of the vault key when someone stops being a member. Every
 
 "Holds a copy" is never itself a permission. A person who comes back opens the vault again with the copy they had. Copies are deleted only by the action that makes them useless: replacing a person's vault key or a machine's ECDH key (`zk.forget_member_wraps` / `forget_device_wraps`) or changing the vault key. A revoked device key is refused at every read. A copy made for someone who has since left still shows as not current (`rotation_recommended`), because it still opens the key it was made for.
 
-The vault key is **not** changed on removal: as in 1Password, the server stops serving the vault. "Change the key" (rotate), together with rotating the outside secrets, is the response when someone may have kept a copy — on an agent's vault page and a workspace vault's alike.
+The vault key is **not** changed on removal: the server simply stops serving the vault. "Change the key" (rotate), together with rotating the outside secrets, is the response when someone may have kept a copy — on an agent's vault page and a workspace vault's alike.
 
 ## Connect Google mailbox: the token is made on a runner
 

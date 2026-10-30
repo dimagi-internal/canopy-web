@@ -92,7 +92,7 @@ describe("why an idea was parked", () => {
 describe("a task's next step", () => {
   const agents = ['ace', 'echo', 'eva', 'hal']
   it('reads BLOCKED / Waiting on / [MANUAL as stuck, lightly de-jargoned', () => {
-    const t = nextStep({ status: 'in_progress', next_action: "BLOCKED on creds: ~/.chrome-sales/.sf-creds.json + .gws-sa-key.json must be provisioned on cloud-ec2-2 (Hal's 1Password SA can't see them). Deps already fixed." }, agents)
+    const t = nextStep({ status: 'in_progress', next_action: "BLOCKED on creds: ~/.chrome-sales/.sf-creds.json + .gws-sa-key.json must be provisioned on cloud-ec2-2 (Hal's service account can't see them). Deps already fixed." }, agents)
     expect(t).toMatchObject({ stuck: true, onYou: false })
     expect(t.text).toBe('The Salesforce credentials and the Google Drive key must be installed on the cloud runner. Dependencies already fixed.')
     expect(nextStep({ status: 'in_progress', next_action: 'waiting on Beth to fix the amount' }).stuck).toBe(true)

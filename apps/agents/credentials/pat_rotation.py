@@ -59,8 +59,8 @@ logger = logging.getLogger(__name__)
 #: runner writes each stored value out as the environment variable OF THAT NAME
 #: (`canopy cred sync`, which writes only stored values), and an agent's
 #: code reads its login from `CANOPY_WEB_PAT` — so that is the name, not the
-#: 1Password item name `canopy-pat` (`.env.tpl`: CANOPY_WEB_PAT=op://…/canopy-pat/…),
-#: which is not even a valid variable name and would be dropped on the way.
+#: older `canopy-pat`, which is not even a valid variable name and would be dropped on
+#: the way.
 CANOPY_PAT_REF = "CANOPY_WEB_PAT"
 OVERLAP = dt.timedelta(hours=24)
 MIN_DAYS, MAX_DAYS = 1, 365

@@ -19,8 +19,9 @@ export function ObjectPage({ title, context, status, subtitle, actions, tabs, ta
   subtitle?: ReactNode
   /** Links at the top right: "Live status →". */
   actions?: ReactNode
-  tabs: ObjectTab[]
-  tabsLabel: string
+  /** Omitted for an object whose page is one scroll of collapsible sections. */
+  tabs?: ObjectTab[]
+  tabsLabel?: string
   /** A tab that is a full-width map or table (the workspace's Topology). */
   wide?: boolean
   children: ReactNode
@@ -38,7 +39,7 @@ export function ObjectPage({ title, context, status, subtitle, actions, tabs, ta
         </div>
         {subtitle && <p className="mt-1 text-[13px] text-foreground-secondary">{subtitle}</p>}
       </header>
-      <ObjectTabs label={tabsLabel} tabs={tabs} />
+      {tabs && tabsLabel && <ObjectTabs label={tabsLabel} tabs={tabs} />}
       {children}
     </div>
   )

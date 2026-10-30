@@ -6,7 +6,7 @@
 # only (optionally) to drop a fetched binary into /usr/local/bin.
 #
 # Invoked from cloud_runner.py's main(), AFTER fetch_and_stage_credential() has
-# populated CANOPY_TOKEN / OP_SERVICE_ACCOUNT_TOKEN / the git credential store —
+# populated CANOPY_TOKEN / the git credential store —
 # deliberately NOT from cloud-init's ExecStartPre, which fires on every service
 # start before those credentials exist (a fresh pairing has none yet; the operator
 # stages them via wire.sh after the runner first appears in the fleet). Preparing the
@@ -241,7 +241,7 @@ step1_tooling() {
     ok "gog already on PATH ($(gog --version 2>/dev/null | head -1 || echo '?'))"
   fi
 
-  for bin in op gh claude git; do
+  for bin in gh claude git; do
     if command -v "$bin" >/dev/null 2>&1; then
       ok "$bin on PATH"
     else
@@ -557,8 +557,8 @@ step5_summary() {
 # Deliberately NOT a full bootstrap: cloning repos, re-filling each agent's env and
 # plugin installs are slow, and re-running them under a live agent is a way to break a
 # box that was working (`canopy agent prepare --credentials-only` skips them).
-# (A turn's `~/.<slug>/.env` does not need this: the runner refreshes it from the agent's
-# vault when it claims that agent's turn — `canopy cred sync`, via `_refresh_agent_env`.)
+# (A turn's env does not need this: the runner resolves it from the agent's Canopy vault
+# when it claims that agent's turn — `canopy cred env --runner`, via `_turn_values`.)
 CREDENTIALS_ONLY=0
 for _arg in "$@"; do
   case "$_arg" in

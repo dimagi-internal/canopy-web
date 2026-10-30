@@ -3,9 +3,6 @@
 # (or stdin) so they never land in shell history.
 #
 #   ./secrets.sh canopy path/to/pat.txt          # canopy-web PAT
-#   ./secrets.sh op path/to/sa-token.txt         # 1Password service-account token
-#                                                 # (wire.sh stages it into the runner's
-#                                                 # credential bundle for bootstrap_agents.sh)
 #   ./secrets.sh gog path/to/keyring-pw.txt      # password for gog's `file` keyring
 #                                                 # backend; without it every
 #                                                 # `gog auth tokens import` fails on a
@@ -24,9 +21,8 @@ AWS=(aws --profile "$PROFILE" --region "$REGION")
 kind="${1:-}"; src="${2:-}"
 case "$kind" in
   canopy) SECRET=canopy/cloud-runner/canopy-pat ;;
-  op)     SECRET=canopy/cloud-runner/op-service-account-token ;;
   gog)    SECRET=canopy/cloud-runner/gog-keyring-password ;;
-  *) echo "usage: ./secrets.sh {canopy|op|gog} <file|->" >&2; exit 1 ;;
+  *) echo "usage: ./secrets.sh {canopy|gog} <file|->" >&2; exit 1 ;;
 esac
 [[ -n "$src" ]] || { echo "give a file path or - for stdin" >&2; exit 1; }
 

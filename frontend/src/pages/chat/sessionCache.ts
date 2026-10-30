@@ -1,4 +1,4 @@
-import type { Message } from 'canopy-ui/chat'
+import { isUnconfirmed, type Message } from 'canopy-ui/chat'
 
 import type { ChatSession, ChatSessionDetail } from '@/api/chat'
 
@@ -35,10 +35,18 @@ export function rememberMeta(meta: ChatSessionDetail): void {
   remember(meta.id, Boolean(meta.sensitive), { meta: { ...meta, messages: [] } })
 }
 
-/** The transcript as the socket last held it. */
+/** The transcript as the socket last held it — less your own sends still
+ *  waiting to be confirmed. Only the socket that sent one can confirm it (its
+ *  receipt, or the HTTP resend); a copy restored into a NEW socket has nothing
+ *  that ever will, and the snapshot carries a pending row forever. Leave one
+ *  chat before its receipt and come back, and the line sat at the bottom saying
+ *  "Sending…" under the very reply it got. The server already has the send: its
+ *  queued list shows it while it waits, and the transcript once it lands. */
 export function rememberMessages(id: string, messages: Message[]): void {
   const k = known.get(id)
-  if (k && !k.sensitive) known.set(id, { ...k, messages })
+  if (k && !k.sensitive) {
+    known.set(id, { ...k, messages: messages.filter((m) => !(m.role === 'user' && isUnconfirmed(m))) })
+  }
 }
 
 /** True only for a chat known NOT to be private: it may open without the gate's read. */

@@ -540,7 +540,6 @@ export async function releaseFleetHold(): Promise<FleetHoldOut> {
 
 // Site operators — the superusers who hold the fleet controls (apps/system/operators.py).
 export type OperatorOut = components['schemas']['OperatorOut']
-export type AlertMail = OperatorOut['alert_mail']
 
 export async function listOperators(): Promise<OperatorOut[]> {
   return Array.from(unwrap(await apiV2.GET('/api/system/operators'), 'listOperators'))
@@ -550,19 +549,40 @@ export async function addOperator(email: string): Promise<OperatorOut> {
   return unwrap(await apiV2.POST('/api/system/operators', { body: { email } }), 'addOperator')
 }
 
-export async function setOperatorAlertMail(userId: number, alertMail: AlertMail): Promise<OperatorOut> {
-  return unwrap(
-    await apiV2.PATCH('/api/system/operators/{user_id}', {
-      params: { path: { user_id: userId } },
-      body: { alert_mail: alertMail },
-    }),
-    'setOperatorAlertMail',
-  )
-}
-
 export async function removeOperator(userId: number): Promise<void> {
   ensureOk(
     await apiV2.DELETE('/api/system/operators/{user_id}', { params: { path: { user_id: userId } } }),
     'removeOperator',
+  )
+}
+
+// The workspace controls — the fleet's hold and stop, for one workspace's tree.
+export type WorkspaceHoldOut = components['schemas']['WorkspaceHoldOut']
+
+export async function getWorkspaceHold(slug: string): Promise<WorkspaceHoldOut> {
+  return unwrap(
+    await apiV2.GET('/api/harness/workspaces/{slug}/hold', { params: { path: { slug } } }),
+    'getWorkspaceHold',
+  )
+}
+
+export async function holdWorkspace(slug: string, note = ''): Promise<WorkspaceHoldOut> {
+  return unwrap(
+    await apiV2.POST('/api/harness/workspaces/{slug}/hold', { params: { path: { slug } }, body: { note } }),
+    'holdWorkspace',
+  )
+}
+
+export async function releaseWorkspaceHold(slug: string): Promise<WorkspaceHoldOut> {
+  return unwrap(
+    await apiV2.POST('/api/harness/workspaces/{slug}/hold/release', { params: { path: { slug } } }),
+    'releaseWorkspaceHold',
+  )
+}
+
+export async function stopWorkspace(slug: string): Promise<FleetStopOut> {
+  return unwrap(
+    await apiV2.POST('/api/harness/workspaces/{slug}/stop', { params: { path: { slug } } }),
+    'stopWorkspace',
   )
 }

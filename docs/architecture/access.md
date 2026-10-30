@@ -31,7 +31,7 @@ credential follow from them, in ONE table (`credentials/authority.py`, asked by
 
 | Kind | On a runner | Direct |
 |---|---|---|
-| **Agent-only** (its canopy login, its 1Password key) | the agent's | never handed out |
+| **Agent-only** (its canopy login) | the agent's | never handed out |
 | **The agent's vault secrets** | the agent's | the agent's, as far as the person's role reads the vault |
 | **Delegated** (a person's lent account) | the agent's, sealed to the box | the person's own; the lent copy never travels |
 
@@ -97,16 +97,16 @@ for a touch. An `auto` turn may ask to act as the person to read only
     account", `POST /api/me/agent-login-requests/{id}/accept`; a token is refused). A new
     `Agent.email` unlinks the old account and derives the link again; an agent with no
     email has no login.
-  - **An agent's 1Password-held token is watched.** canopy cannot rotate a token it does
-    not store, so within 14 days of its expiry (with no automatic rotation) the agent's
-    admins get an alert naming how to re-mint it (`alerts_agent_token.py`).
+  - **An agent's token is watched.** With automatic rotation off nothing replaces it, so
+    within 14 days of its expiry the agent's admins get an alert naming how to turn
+    rotation on or give the agent a fresh login (`alerts_agent_token.py`).
   - **A runner never hands a turn its owner's token.** The cloud runner strips the
     box's `CANOPY_TOKEN` from every turn, agentless repo turns included
     (`cloud_runner._agent_env`).
 
 ## Workspace roles
 
-`viewer < editor < admin < owner` (`WorkspaceMembership.ROLE_RANK`). What each may
+`viewer < editor < admin < owner < superuser` (`WorkspaceMembership.ROLE_RANK`). What each may
 do is one table, `apps/workspaces/permissions.py`, keyed by capability; nothing
 outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.md`.
 
@@ -115,11 +115,12 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 | **viewer** | `read` | Reads the workspace; talks to an agent through what its interface offers members. |
 | **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **edits agents and dispatches turns to them** — those turns always run `manual`. |
 | **admin** | + `logs.read`, `members.manage`, `integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide` | **Runs the workspace**: every log, members below admin, the integrations, the default runner order, how long chat and turn content is kept, which turns are refused, and starting or declining a proposed project (beside that project's own owner). **Holds no agent keys** — a workspace admin is not an agent admin. |
-| **owner** | + `own` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is **every agent's admin**. |
+| **owner** | + `own`, `control` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is **every agent's admin**. Holds or stops all work in the workspace's tree. **Is told**: blocking alerts, access requests, owner notices. |
+| **superuser** | everything an owner holds | **Oversight**: an owner's keys, here and below, **without the owner's email** (`services.owner_user_ids` and `services.mail_recipients` leave superusers out — unless nobody else would be told). The workspace-level sibling of the system superuser (`User.is_superuser`), which holds the same two switches for the whole fleet and no workspace access. |
 
 **Workspace permissions** (the capability names): `read`, `content.write`,
 `agent.work`, `session.drive`, `events.write`, `logs.read`, `members.manage`,
-`integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide`, `own`.
+`integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide`, `own`, `control`.
 
 ## Getting into a workspace
 
@@ -491,10 +492,8 @@ direct.
   token — a turn of theirs that runner claimed. No turn, no secrets. A request naming
   that turn is a `license` read even from an agent admin or a runner owner. What it is
   handed is `authority`'s direct column: never the agent's canopy login (graded `system`,
-  past the editor tier's manual cap), the owner's GitHub delegation, lent or shared
-  credentials, or the agent's 1Password service-account key (`op_sa_token`), which reads
-  the whole vault, canopy login included — so a non-admin using a 1Password-backed
-  agent directly gets no secrets from it. Each read is logged with `via=license`,
+  past the editor tier's manual cap), the owner's GitHub delegation, or lent or shared
+  credentials. Each read is logged with `via=license`,
   the turn and the license. Secrets read this way reach the person's machine;
   nothing brokers each call through canopy-web.
 * **Reporting.** Only its initiator may renew, finish or append its transcript —
@@ -730,7 +729,7 @@ tool; and beside every delivered prompt — the runner leaves
   the GitHub token delegated to the agent (`agents.credentials.delegations.github_token_for_turn` → 409).
   The cloud runner builds its env from an allowlist (`_confined_env` in
   `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
-  turn) — no `CANOPY_TOKEN`, no agent `.env`, no 1Password key (it never calls
+  turn) — no `CANOPY_TOKEN`, no agent `.env`, no vault key (it never calls
   `credentials/resolve`), no chat key; gog's keyring password only when the
   capability's own bash rules run the mail path (`canopy email …` /
   `bin/<slug>-email`).

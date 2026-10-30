@@ -12,7 +12,7 @@ import { WorkspaceVaultsSection } from './WorkspaceVaultsSection'
 // Google OAuth clients), attached where it applies and reaching every agent below;
 // each AGENT'S OWN VAULT holds what only it uses; a RUNNER holds its own login.
 // All three are canopy vaults, zero-knowledge: canopy-web stores ciphertext and the
-// copies of each vault's key, never a password, and no 1Password key at all.
+// copies of each vault's key, never a password.
 
 export function WorkspaceSecretsPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()

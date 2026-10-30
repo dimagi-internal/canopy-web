@@ -8,6 +8,7 @@ import {
   createAppResourceUpdates,
   PlacementBanner,
   MenuPrompt,
+  turnPhase,
   useSessionSocket,
   type SecretRequestHost,
 } from 'canopy-ui/chat'
@@ -321,12 +322,17 @@ function ChatPageInner({
     </div>
   )
 
-  // undefined = no hook has reported for this session yet, so defer to the
-  // server's coarser flag rather than asserting idle.
-  const liveWorking =
-    socket.state.activity === undefined
-      ? undefined
-      : socket.state.activity === "working";
+  // The header says what the transcript's own bubble says: both read the kit's
+  // `turnPhase` (server turn status, then the hook, then `awaitingReply` for the
+  // instant after a send). The header used to derive its own from
+  // `awaitingReply` alone, so it could say "queued" over a turn the server had
+  // settled, with nothing on screen to correct it (2026-10-30).
+  const phase = turnPhase({
+    status: socket.state.turn_status,
+    activity: socket.state.activity,
+    awaitingReply: socket.awaitingReply,
+    replying: socket.state.messages.some((m) => m.role !== 'user' && m.status === 'streaming'),
+  });
   // The agent asked for a human and stopped — a permission prompt, or an idle
   // wait for input. It previously rendered as "running", which is the worst way
   // to get this wrong: you wait on an agent that is waiting on you.
@@ -336,30 +342,19 @@ function ChatPageInner({
   // agent's next row lands. Your answer is the event that ends the wait, and it
   // happened here, so it is shown here, as running.
   const answeredResuming = pendingAnswer !== null && !visibleMenu;
-  const liveBlocked = socket.state.activity === "blocked" && !answeredResuming;
-  // The window between pressing send and the agent actually starting: the turn
-  // is enqueued, a runner has to claim it and (on a laptop) drive it into
-  // emdash before Claude sees a prompt at all. NOTHING could report during it —
-  // `activity` waits on a UserPromptSubmit hook that cannot fire until the
-  // prompt lands, and `running` comes from the session report, which lags a
-  // cycle. So a phone send showed no feedback for seconds and then jumped
-  // straight to running, which reads as the app having ignored you.
-  //
-  // `awaitingReply` is set the instant you press send, client-side with no
-  // round trip, so it is the only thing that can answer immediately. Shown as
-  // "queued" rather than folded into "running" because the distinction is the
-  // useful part: queued means canopy has not started your turn yet, running
-  // means the agent is thinking. Confusing the two hides where the delay is.
-  const liveQueued = socket.awaitingReply;
+  const liveBlocked = phase === 'blocked' && !answeredResuming;
+  const liveWorking = phase === 'working';
+  const liveQueued = phase === 'queued';
   // `meta` is fetched ONCE per session id and never refreshed, and `running`
   // derives from a 120s window on the runner's last report — so this is a
   // PAGE-LOAD SNAPSHOT that can only decay. It used to outrank everything below
   // `blocked`, which quietly cost #490 its whole point: open a chat you were
   // just using and the header already said "running", so pressing send changed
   // nothing on screen and the "queued" branch was unreachable. Demoted to the
-  // last resort — consulted only while nothing live has spoken, and dropped for
-  // good once anything has.
-  const staleRunning = liveWorking === undefined && Boolean(meta?.running);
+  // last resort — consulted only while nothing live has spoken (no hook, no
+  // turn status), and dropped for good once anything has.
+  const staleRunning =
+    socket.state.activity === undefined && socket.state.turn_status == null && Boolean(meta?.running);
   const title = meta?.sensitive ? privateTitle(meta) : meta?.title?.trim() || 'Chat'
 
   // "with <agent>" / the project name / "no agent" — the same tag the Feed and

@@ -71,7 +71,7 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
             <Row label="With" value={s.agent_slug ? `agent ${s.agent_slug}` : s.project ? `repo ${s.project}` : "—"} />
             <Row label="Workspace" value={s.workspace} />
             <Row label="Status" value={s.status} />
-            <Row label="Origin" value={s.origin === "runner" ? "runner (discovered or dispatched)" : "web (started in canopy)"} />
+            <Row label="Origin" value={originText(s)} />
             <Row label="Mode" value={s.turn_mode ? `${s.turn_mode}, started by ${s.turn_origin || "?"}` : ""} />
             <Row label="Created" value={when(s.created_at)} />
             <Row label="Last activity" value={when(s.last_activity_at)} />
@@ -132,6 +132,8 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
                 <Row label="Last seen live" value={when(b.live_seen_at)} />
                 <Row label="Last interacted" value={when(b.last_interacted_at)} />
               </>
+            ) : s.turn_runner_name ? (
+              <Row label="Runner" value={`${s.turn_runner_name} · ran its turns, not bound to it`} />
             ) : (
               <p className="text-muted-foreground">No runner has backed this session yet.</p>
             )}
@@ -251,6 +253,15 @@ function Row({
 function when(iso: string | null | undefined): string {
   if (!iso) return "";
   return `${new Date(iso).toLocaleString()} (${relativeAge(iso)})`;
+}
+
+/** `origin` says which side created the row (canopy-web, or a runner that found it), not where
+ *  the conversation began: a Slack or email caller's session is a web row. */
+export function originText(s: { origin: string; turn_origin?: string }): string {
+  if (s.origin === "runner") return "runner (discovered or dispatched)";
+  if (s.turn_origin === "slack") return "web (opened from Slack)";
+  if (s.turn_origin === "email") return "web (opened from email)";
+  return "web (started in canopy)";
 }
 
 function str(v: unknown): string {

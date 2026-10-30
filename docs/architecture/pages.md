@@ -76,11 +76,15 @@ Every browser-facing address canopy-web serves. The SPA route table is
   retire). Reads `GET /api/harness/runners/{id}/`; a link naming another workspace
   forwards to the runner's own. `/supervisor?tab=runners&runner=<id>` (old mail and
   alerts) forwards here.
-- **`vaults/:vaultId/:tab`** — a workspace vault's one page (`pages/vault/`):
-  Overview (its key, made in the browser with a passkey touch, copies for whoever
-  waits, and what it serves — agents, a workspace and below, or a runner),
-  Members, Secrets (names only; a value is sealed in the browser). Settings →
-  Secrets lists the workspace's vaults and links here.
+- **`vaults/:vaultId`** (`/:tab` kept for old links) — a workspace vault's one page
+  (`pages/vault/`), drawn by the shared **`VaultView`**
+  (`components/vault/VaultView.tsx`, the same frame as an agent's vault): a summary
+  line (where it lives, secrets / people / machines, what needs you), then
+  collapsible sections — **Secrets** (names only; a value is sealed in the browser),
+  **Who can open them** (people with why each can, and the runners that read it) and
+  **Storage & key** (its key, made with a passkey touch, copies for whoever waits,
+  and what it serves). The old tab addresses open the section that tab became.
+  Settings → Secrets lists the workspace's vaults and links here.
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
   **Apps** (installed apps and the store, `/w/:workspace/apps`) are links;
@@ -206,18 +210,22 @@ Every browser-facing address canopy-web serves. The SPA route table is
     and what they can reach — `GET /api/agents/{slug}/access`; admins
     granted/revoked on the row); **Channels** (callers, Slack, email, Google
     account); **External accounts** (GitHub delegation, the
-    Google mailbox); **Security** — first its secrets: where they live, its
-    canopy login, and every secret in `VaultEditor`
+    Google mailbox); **Security** — first **Vault**: the shared `VaultView`
+    (`components/vault/`, adapter `pages/agents/AgentSecretsPanel.tsx`) — a summary
+    line, then **Secrets** (open; every secret in `VaultEditor`
     (`components/vault/VaultEditor.tsx`, a table you Change / Add / Reveal /
     Delete in place (a value can be a file from disk, e.g. a service-account
-    JSON), owner-agnostic so other vault pages can reuse it; Reveal decrypts locally with the person's vault key, and Save encrypts
-    locally once the agent has one; the 1Password vault +
-    service-account form shows only for an agent still on 1Password); then,
-    for its admins, who can open them: the vault's members
-    (`docs/architecture/vault.md`), Zero-knowledge — turn on / grant
-    pending / rotate / recover with code / turn off, every encryption in the
-    browser, the one-time recovery-code dialog, the stated trust caveat —
-    device keys, canopy-pat rotation, read alerts). The Google mint (`Connect the mailbox`)
+    JSON), owner-agnostic so other vault pages reuse it; Reveal decrypts locally with the person's vault key, and Save encrypts
+    locally once the agent has one), **Who can open them** (admins: the vault's
+    people with why each can — `docs/architecture/vault.md` — and the machines
+    with device binding), **Storage & key** (the Canopy vault, key copies, zero-knowledge grant / rotate / recover
+    with code, every encryption in the browser, the one-time recovery-code
+    dialog, the stated trust caveat) and, only when there are any, **Read
+    alerts**. Sections other than Secrets start closed, open by themselves when
+    something needs the reader, and open for an old `settings#cred-…` address.
+    Then **Agent security**, what is about the agent and not the vault: its
+    canopy login (made in one click, stored in the vault, with its renewal) and
+    the test vault key (`pages/agents/AgentSecurityPanel.tsx`). The Google mint (`Connect the mailbox`)
     asks for Gmail only when the agent's address is a Google mailbox; for a
     canopy-hosted address it asks for Drive, Docs, Sheets, Slides, Forms and
     Calendar. The consent must come from the agent's `google_account`, else
@@ -283,7 +291,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     with its sensitive data, and — only then — whether it can handle that data,
     with why not and a link to fix it (marked only when an offered agent cannot);
     the site's pages + scopes sit collapsed, for reference.
-  - **secrets** — the workspace's SHARED 1Password vault (what every agent here
+  - **secrets** — the workspace's SHARED vaults (what every agent here
     reads, e.g. the Google OAuth clients), and the one screen that states the
     credential model whole: an agent's own vault is on the agent (Settings →
     Security), a box's Claude login is on the runner (`/supervisor` →
@@ -393,7 +401,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/health`** — admin+ (`logs.read`, per descendant). What is not set up right
   across this workspace and every one below it (`GET /api/workspaces/{slug}/health`,
   `apps/agents/health.py`): every agent with its setup checklist (the SAME steps
-  as its Settings page), its vault state (canopy-web / moving / 1Password / none,
+  as its Settings page), its vault state (canopy-web / moving / none,
   `apps/agents/credentials/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
   each linking to the agent's page; who can use it (admins only, or the

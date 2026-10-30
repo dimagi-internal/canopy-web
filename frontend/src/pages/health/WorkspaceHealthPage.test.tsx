@@ -18,8 +18,8 @@ function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut
     active_sessions: 1, last_session_at: '2026-10-17T00:00:00Z',
     recent_sessions: [{ id: 's1', workspace: 'connect', title: `${slug} chat`, at: '2026-10-17T00:00:00Z', active: true }],
     last_turn_at: null, turns_30d: 0, done_30d: 0, failed_30d: 0, people_30d: 0, ran_on: [], left: 1,
-    vault: { source: 'canopy-web', state: 'moving', declared: 2, refs: [{ name: 'gh', status: 'stored' }, { name: 'old', status: '1password' }],
-      stored: ['gh'], in_1password: ['old'], missing: [], op_vault: '', op_key_set: false, zero_knowledge: true, machines_waiting: [] },
+    vault: { state: 'moving', declared: 2, refs: [{ name: 'gh', status: 'stored' }, { name: 'old', status: 'missing' }],
+      stored: ['gh'], missing: ['old'], zero_knowledge: true, machines_waiting: [] },
     steps: [step('repo', 'done'), step('vault', 'todo', '/w/connect/agents/x/settings#credentials')],
     ...over,
   }
@@ -34,7 +34,7 @@ const HEALTH: WorkspaceHealthOut = {
   agents: [agent('hal', { turns_30d: 6, done_30d: 4, failed_30d: 2, people_30d: 1,
     ran_on: [{ name: 'shayoni-win-cdp', kind: 'emdash', turns: 5 }, { name: 'cloud-ec2-2', kind: 'cloud', turns: 1 }] }),
     agent('eva', { can_fix: false, left: 1 }),
-    agent('ada', { left: 0, vault: { ...agent('ada').vault!, state: 'canopy-web', in_1password: [] } })],
+    agent('ada', { left: 0, vault: { ...agent('ada').vault!, state: 'canopy-web', missing: [] } })],
   runners: [{ id: '00000000-0000-0000-0000-000000000001', name: 'laptop', kind: 'emdash', location: 'local', status: 'online',
     ready: true, ready_note: '', paused: false, host: 'h', last_heartbeat_at: '2026-10-17T00:00:00Z', workspace: 'dimagi',
     in_tree: true, owner_email: 'jj@x.org', flags: [], agent_count: 2, directed: false, code_current: false, machine: '', serves: '',
@@ -42,7 +42,7 @@ const HEALTH: WorkspaceHealthOut = {
     status_note: 'emdash CDP unreachable on :9223', remedy: 'open Emdash CDP', code_sha: 'aaaa1111', expected_code_sha: 'bbbb2222',
     agents: [{ slug: 'hal', name: 'Hal', workspace: 'connect' }],
     problems: [{ name: 'disk', status: 'warn', detail: '90% full' }] }],
-  totals: { agents: 3, set_up: 1, needs_setup: 2, used_30d: 1, vault_canopy_web: 1, vault_moving: 2, vault_1password: 0, vault_none: 0, runners: 1, runners_online: 1 },
+  totals: { agents: 3, set_up: 1, needs_setup: 2, used_30d: 1, vault_canopy_web: 1, vault_moving: 2, vault_none: 0, runners: 1, runners_online: 1 },
 }
 
 // The page reads the table without the checklists (`setup: false`), then each
@@ -51,7 +51,7 @@ const TABLE: WorkspaceHealthOut = {
   ...HEALTH,
   agents: HEALTH.agents.map((a) => ({ ...a, steps: null, vault: null, left: null })),
   totals: { ...HEALTH.totals, set_up: null, needs_setup: null, vault_canopy_web: null, vault_moving: null,
-    vault_1password: null, vault_none: null },
+    vault_none: null },
 }
 const getWorkspaceHealth = vi.fn<(slug: string, opts?: { setup?: boolean }) => Promise<WorkspaceHealthOut>>(async () => TABLE)
 const getWorkspaceHealthSetup = vi.fn(async (_slug: string, names: readonly string[]) =>
@@ -141,7 +141,7 @@ describe('WorkspaceHealthPage', () => {
     await renderLoaded()
     fireEvent.click(await screen.findByText('HAL'))
     expect(screen.getByRole('link', { name: 'Fix vault' }).getAttribute('href')).toBe('/w/connect/agents/x/settings#credentials')
-    expect(screen.getByText('in 1Password')).toBeTruthy()
+    expect(screen.getByText('not stored anywhere')).toBeTruthy()
 
     fireEvent.click(screen.getByText('EVA'))
     // One agent open at a time, and EVA's fix is not the viewer's to follow.

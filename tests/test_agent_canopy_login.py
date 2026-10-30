@@ -1,8 +1,8 @@
-"""A new agent starts on the Canopy vault, and gets its canopy login in one click.
+"""A new agent is born private, and gets its canopy login in one click.
 
-Before: every new agent defaulted to 1Password, and its `canopy-pat` came only from a
-terminal command that writes into 1Password — so a family workspace with no 1Password
-had no way to give an agent a login at all (marshellis audit, 2026-10-18).
+Its `canopy-pat` login is stored in the Canopy vault from the browser, with no terminal
+command (marshellis audit, 2026-10-18: a family workspace had no other way to give an
+agent a login at all).
 
 Pinned here: the create default, `POST /canopy-login` storing the token SEALED and never
 returning it, its refusals, and the setup checklist step that points at it.
@@ -75,8 +75,7 @@ def _post(user, *, step_up=True):
     return c.post(URL, {}, content_type="application/json")
 
 
-def test_a_new_agent_starts_on_the_canopy_vault_born_private(agent):
-    assert agent.credential_source == Agent.CANOPY_WEB
+def test_a_new_agent_is_born_private(agent):
     assert (agent.zk_enabled, agent.zk_kv) == (True, 0)
 
 
@@ -101,13 +100,6 @@ def test_it_refuses_before_minting_when_nobody_could_open_it(owner, agent):
     assert not AgentCredential.objects.filter(agent=agent, name="CANOPY_WEB_PAT").exists()
 
 
-def test_a_1password_agent_is_pointed_at_its_vault(owner, agent):
-    _keyset(owner)
-    Agent.objects.filter(pk=agent.pk).update(credential_source=Agent.ONEPASSWORD)
-    resp = _post(owner)
-    assert resp.status_code == 409 and "1Password" in resp.json()["detail"]
-
-
 def test_a_browser_needs_a_fresh_passkey(owner, agent):
     _keyset(owner)
     resp = _post(owner, step_up=False)
@@ -117,7 +109,7 @@ def test_a_browser_needs_a_fresh_passkey(owner, agent):
 def test_the_checklist_has_a_step_for_it(owner, agent):
     step = next(s for s in setup.setup_steps(agent) if s["key"] == "canopy_login")
     assert step["status"] == setup.TODO and step["href"].endswith("#canopy-login")
-    assert "canopy agent vault" not in str(setup.setup_steps(agent))  # no 1Password command
+    assert "canopy agent vault" not in str(setup.setup_steps(agent))  # no terminal command
     _keyset(owner)
     assert _post(owner).status_code == 201
     agent.refresh_from_db()
@@ -125,21 +117,10 @@ def test_the_checklist_has_a_step_for_it(owner, agent):
     assert step["status"] == setup.DONE and "renews itself" in step["detail"]
 
 
-def test_switching_where_secrets_live_needs_a_fresh_passkey(owner, agent):
-    c = Client()
-    c.force_login(owner)
-    url = "/api/agents/scout/credential-source"
-    assert c.patch(url, {"credential_source": "1password"}, content_type="application/json").status_code == 403
-    grant_step_up(c)
-    assert c.patch(url, {"credential_source": "1password"}, content_type="application/json").status_code == 200
-    agent.refresh_from_db()
-    assert agent.credential_source == Agent.ONEPASSWORD
-
-
 def test_the_login_is_stored_under_the_variable_its_code_reads():
     """A runner writes each canopy-web value out as the environment variable of its
     own name, and an agent reads its login from CANOPY_WEB_PAT. So that is the name
-    the login lives under — `canopy-pat` (the 1Password item) would be dropped on
+    the login lives under — `canopy-pat` would be dropped on
     the way, and an agent already storing CANOPY_WEB_PAT had its login reported
     missing."""
     from apps.agents.credentials.pat_rotation import CANOPY_PAT_REF
@@ -147,7 +128,7 @@ def test_the_login_is_stored_under_the_variable_its_code_reads():
     assert CANOPY_PAT_REF == "CANOPY_WEB_PAT"
     owner = a_member()
     agent = Agent.objects.create(slug="vaulted", name="Vaulted", workspace=a_workspace(owner=owner),
-                                 owner=owner, credential_source=Agent.CANOPY_WEB,
+                                 owner=owner,
                                  runtime_secrets=["CANOPY_WEB_PAT"])
     AgentCredential.objects.create(agent=agent, name="CANOPY_WEB_PAT")
     step = next(s for s in setup.setup_steps(agent) if s["key"] == "canopy_login")

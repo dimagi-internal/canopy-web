@@ -26,6 +26,11 @@ session with is never touched, and nothing is removed when Slack could not answe
 (an error, a missing scope, or a list without the bot in it): unknown is not "gone".
 Never into a sensitive conversation (`ensure_participant` refuses one; this says
 so first, and leaves its people alone).
+
+**An agent the channel's admin gave the sessions to** (`SlackChannelIngestAllow.review_sessions`)
+joins as a VIEWER, the one agent login this ever adds: it reads the thread, it cannot write
+in it, and the owner sees it in the session's people. Turning the flag off, or removing the
+allow-list entry, takes it out again (`resync_channel`), whether or not Slack answers.
 """
 from __future__ import annotations
 
@@ -43,7 +48,7 @@ from apps.harness import sensitivity
 from apps.workspaces import services as wsvc
 
 from . import client
-from .models import SlackAudienceMember, SlackInstallation, SlackUserLink
+from .models import SlackAudienceMember, SlackChannelIngestAllow, SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +144,29 @@ def _people_of(workspace_id: str, user_ids: set[int]) -> set[int]:
     return {u.pk for u in users if workspace_id in roles.get(u.pk, {}) and u.pk not in bots}
 
 
+def review_agent_users(installation: SlackInstallation, channel_id: str, workspace_id: str) -> set[int]:
+    """The canopy logins of the agents (of `workspace_id`) an admin gave this channel's
+    sessions to review."""
+    return set(SlackChannelIngestAllow.objects.filter(
+        installation=installation, channel_id=channel_id, review_sessions=True,
+        agent__workspace_id=workspace_id, agent__user__isnull=False).values_list("agent__user_id", flat=True))
+
+
+def resync_channel(installation: SlackInstallation, channel_id: str) -> int:
+    """`sync` every Slack-bound session of one channel, however old — what an admin's change to
+    who reviews the channel applies to. Returns the sessions synced."""
+    n = 0
+    for session in Session.objects.filter(metadata__has_key=_SLACK_THREAD_KEY,
+                                          metadata__slack_team=installation.team_id,
+                                          metadata__slack_channel=channel_id).iterator():
+        try:
+            sync(session, installation)
+            n += 1
+        except Exception:  # noqa: BLE001 — one session must not stop the rest
+            logger.exception("slack audience: could not sync session %s", session.pk)
+    return n
+
+
 def sync(session: Session | None, installation: SlackInstallation | None, *, poster=None) -> None:
     """Bring `session`'s participants in step with its Slack conversation: the poster
     (who is plainly in it) and every linked member Slack lists join as editors; a
@@ -158,9 +186,20 @@ def sync(session: Session | None, installation: SlackInstallation | None, *, pos
     for uid, user in users.items():
         if ensure_participant(session, user, SessionParticipant.EDITOR) is not None:
             SlackAudienceMember.objects.get_or_create(session=session, user_id=uid)
+    # The agents given this channel's sessions: read-only participants, and out again the
+    # moment they are not (even when Slack could not list the channel).
+    reviewers = review_agent_users(installation, str(meta.get("slack_channel") or ""), session.workspace_id)
+    for user in get_user_model().objects.filter(pk__in=reviewers - present, is_active=True):
+        if ensure_participant(session, user, SessionParticipant.VIEWER) is not None:
+            SlackAudienceMember.objects.get_or_create(session=session, user_id=user.pk)
+    stale = set(Agent.objects.filter(user_id__in=held).values_list("user_id", flat=True)) - reviewers
+    if stale:
+        SessionParticipant.objects.filter(session=session, user_id__in=stale).exclude(
+            role=SessionParticipant.OWNER).delete()
+        SlackAudienceMember.objects.filter(session=session, user_id__in=stale).delete()
     if people is None:
         return
-    gone = held - people - ({poster.pk} if poster is not None else set())
+    gone = held - people - reviewers - ({poster.pk} if poster is not None else set())
     if gone:
         (SessionParticipant.objects.filter(session=session, user_id__in=gone)
          .exclude(role=SessionParticipant.OWNER).delete())

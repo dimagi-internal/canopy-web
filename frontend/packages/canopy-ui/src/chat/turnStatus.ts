@@ -55,6 +55,35 @@ export function agentHasFloor({
 }
 
 /**
+ * Where the conversation's turn stands, in one word — THE answer every surface
+ * shows: the header chip, the pending bubble and Stop. They used to each derive
+ * it (the header from `awaitingReply` alone, ignoring the server's status), so
+ * one screen could say "queued" in the header over a turn the server had
+ * settled, and a stale flag on either side lingered with nothing to correct it.
+ *
+ * `replying` is an assistant row streaming in now: the turn is plainly working
+ * whatever the other sources say.
+ */
+export type TurnPhase = "blocked" | "working" | "queued" | "idle";
+
+export function turnPhase({
+  status,
+  activity,
+  awaitingReply,
+  replying = false,
+}: {
+  status?: TurnStatus | null;
+  activity?: "working" | "idle" | "blocked";
+  awaitingReply?: boolean;
+  replying?: boolean;
+}): TurnPhase {
+  if (activity === "blocked") return "blocked";
+  if (replying) return "working";
+  if (!agentHasFloor({ status, activity, awaitingReply })) return "idle";
+  return status?.state === "working" || activity === "working" ? "working" : "queued";
+}
+
+/**
  * The label inside the pending bubble.
  *
  * "Queued" vs "Thinking" is the useful distinction — where the delay IS, not

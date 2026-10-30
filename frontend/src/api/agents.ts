@@ -658,22 +658,6 @@ export async function getGoogleDelegation(slug: string, id: string): Promise<Goo
   return unwrap(res, 'getGoogleDelegation')
 }
 
-export async function getAgentVault(slug: string) {
-  const res = await apiV2.GET('/api/agents/{slug}/vault', { params: { path: { slug } } })
-  return unwrap(res, 'getAgentVault')
-}
-
-/** Set the vault name and/or its service key. NON-CLOBBERING on the key:
- *  omitting it leaves the stored one alone, so renaming a vault cannot silently
- *  de-provision the agent. */
-export async function setAgentVault(slug: string, body: { vault?: string; service_key?: string }) {
-  const res = await apiV2.PUT('/api/agents/{slug}/vault', {
-    params: { path: { slug } },
-    body,
-  })
-  return unwrap(res, 'setAgentVault')
-}
-
 // ---- GitHub: the owner's identity, lent to one agent ------------------------
 
 export type AgentGitHubCheck = { repo: string; ok: boolean; detail: string }

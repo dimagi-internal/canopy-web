@@ -151,6 +151,9 @@ class SlackChannelIngestAllow(models.Model):
     channel_name = models.CharField(max_length=255, blank=True, default="")
     #: May the agent also keep following the channel, or only read it once?
     follow = models.BooleanField(default=False)
+    #: Is the agent also a (read-only) participant of every Slack-bound session in this
+    #: channel? `audience.sync` keeps it so, like the channel's people (never a sensitive one).
+    review_sessions = models.BooleanField(default=False)
     note = models.CharField(max_length=500, blank=True, default="")
     added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
                                  blank=True, related_name="+")

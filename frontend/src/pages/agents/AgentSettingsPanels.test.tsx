@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
+const { getAgentCredentialStatus, setAgentCredentials,
         deleteAgentCredential, startGoogleMint, revealZkValue, AgentApiError } = vi.hoisted(() => {
   class AgentApiError extends Error {
     status: number
@@ -19,8 +19,6 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
   }
   return {
     getAgentCredentialStatus: vi.fn(),
-    getAgentVault: vi.fn(),
-    setAgentVault: vi.fn(),
     setAgentCredentials: vi.fn(),
     deleteAgentCredential: vi.fn(),
     startGoogleMint: vi.fn(),
@@ -30,7 +28,7 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
 })
 
 vi.mock('@/api/agents', () => ({
-  getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
+  getAgentCredentialStatus, setAgentCredentials,
   deleteAgentCredential, startGoogleMint, AgentApiError, getGoogleMint: vi.fn(),
   // The GitHub section has its own tests; here it only has to not throw.
   getAgentGitHub: () => new Promise(() => {}),
@@ -46,7 +44,6 @@ const { getCredentialAlerts, getPatRotation, setPatRotation, rotatePatNow } = vi
 vi.mock('@/api/deviceKeys', () => ({
   getAgentDeviceKeys: () => Promise.resolve([]),
   setDeviceBinding: vi.fn(),
-  setCredentialSource: vi.fn(),
   giveCanopyLogin: vi.fn(),
   getCredentialReads: () => Promise.resolve([]),
   approveRunnerDeviceKey: vi.fn(),
@@ -76,15 +73,14 @@ const { AgentSecretsPanel } = await import('./AgentSecretsPanel')
 const { AgentAccountsPanel } = await import('./AgentAccountsPanel')
 const { AgentSecurityPanel } = await import('./AgentSecurityPanel')
 
-const AGENT = { slug: 'echo', workspace: 'connect', credential_source: 'canopy-web' }
-const ON_1PASSWORD = { ...AGENT, credential_source: '1password' }
+const AGENT = { slug: 'echo', workspace: 'connect' }
 
 const inRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 beforeEach(() => {
   getCredentialAlerts.mockResolvedValue([])
   getPatRotation.mockResolvedValue(ROTATION)
-  getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
+  getAgentCredentialStatus.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -123,20 +119,6 @@ describe('Security — its secrets', () => {
       'echo', { GOOGLE_PROVISIONER_KEY: '{\n  "type": "service_account"\n}' }))
   })
 
-  it('shows the 1Password form only to an agent still on 1Password', async () => {
-    getAgentCredentialStatus.mockResolvedValue([])
-    inRouter(<AgentSecretsPanel agent={AGENT} />)
-    await screen.findByTestId('vault-editor')
-    expect(screen.queryByTestId('agent-vault')).toBeNull()
-    cleanup()
-
-    inRouter(<AgentSecretsPanel agent={ON_1PASSWORD} />)
-    await waitFor(() => expect(screen.getByTestId('agent-vault')).toBeTruthy())
-    expect((screen.getByLabelText('Service key') as HTMLInputElement).type).toBe('password')
-    // …and it points at the workspace shared vault, the other level.
-    expect(screen.getByTestId('shared-vault-link').getAttribute('href')).toBe('/w/connect/settings/secrets')
-  })
-
   it('says what needs you: a declared key with no value, a stored one nothing declares', async () => {
     getAgentCredentialStatus.mockResolvedValue([
       { name: 'NOVA_API_KEY', declared: true, set: false, source: '', updated_at: null },
@@ -149,15 +131,6 @@ describe('Security — its secrets', () => {
     expect(summary.textContent).toContain('1 declared secret(s) have no value')
     expect(within(screen.getByTestId('vault-row-NOVA_API_KEY')).getByText('no value')).toBeTruthy()
     expect(within(screen.getByTestId('vault-row-OLD_TOKEN')).getByText('not declared')).toBeTruthy()
-  })
-
-  it('reads an unset key on a 1Password agent as coming from there, not missing', async () => {
-    getAgentCredentialStatus.mockResolvedValue([
-      { name: 'gog-token', declared: true, set: false, source: '1password', updated_at: null },
-    ])
-    inRouter(<AgentSecretsPanel agent={ON_1PASSWORD} />)
-    expect(within(await screen.findByTestId('vault-row-gog-token')).getByText('from 1Password')).toBeTruthy()
-    expect(screen.queryByTestId('agent-credentials-summary')).toBeNull()
   })
 
   it('reveals one stored value on demand, and hides it again', async () => {
@@ -220,7 +193,7 @@ describe('Security — its secrets', () => {
 describe('External accounts', () => {
   it('leads with a status list, the unconnected mailbox and its action on one line', async () => {
     // ada/echo/eva/hal on 2026-10-04: declared 0, mailbox set — and no button,
-    // so re-minting their mailbox needed a terminal and a 1Password write.
+    // so re-minting their mailbox needed a terminal and a hand-written secret.
     getAgentCredentialStatus.mockResolvedValue([])
     inRouter(<AgentAccountsPanel agent={{ ...AGENT, email: 'echo@dimagi-ai.com' }} />)
     const mailbox = await screen.findByTestId('credential-status-mailbox')
@@ -247,7 +220,7 @@ describe('External accounts', () => {
   })
 })
 
-describe('Security — who can open them', () => {
+describe('Security — about the agent', () => {
   it('turns canopy-login renewal on with the chosen period', async () => {
     setPatRotation.mockResolvedValue({ ...ROTATION, enabled: true, period_days: 14,
                                        next_due_at: '2026-11-01T00:00:00Z', enabled_by_email: 'jj@dimagi.com' })
@@ -266,7 +239,8 @@ describe('Security — who can open them', () => {
         runner: '', runner_name: '', turn_id: '', occurrences: 4, notified: true,
         created_at: '2026-10-16T00:00:00Z', last_seen_at: '2026-10-16T00:10:00Z' },
     ])
-    inRouter(<AgentSecurityPanel agent={AGENT} canEdit />)
+    getAgentCredentialStatus.mockResolvedValue([])
+    inRouter(<AgentSecretsPanel agent={AGENT} />)
     const section = await screen.findByTestId('agent-credential-alerts')
     expect(within(section).getByText('Read outside a turn')).toBeTruthy()
     expect(within(section).getByText('4×')).toBeTruthy()

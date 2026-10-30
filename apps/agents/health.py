@@ -189,7 +189,6 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
                 "needs_setup": sum(1 for r in rows if r["left"]),
                 "vault_canopy_web": states.count("canopy-web"),
                 "vault_moving": states.count("moving"),
-                "vault_1password": states.count("1password"),
                 "vault_none": states.count("none"),
             } if setup else {}),
             "runners": len(runners),

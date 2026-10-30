@@ -7,17 +7,15 @@ local sessions are all decisions that must stay with the owner.
 """
 from __future__ import annotations
 
-import importlib
 
 import pytest
 from canopy_sdk.keys import header_jwk
 from cryptography.hazmat.primitives.asymmetric import ec
-from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentCredential, AgentVaultWrap
+from apps.agents.models import Agent
 from apps.api import route_gates
 from apps.events.models import SettingChange
 from apps.harness import runner_auth
@@ -231,51 +229,11 @@ def test_retiring_a_linked_registration_makes_its_runner_shared(world):
             "after": {"private": False}} in row.changes
 
 
-# --- 1Password agents 0059 made zero-knowledge ----------------------------------------
+# --- a zero-knowledge agent demands a device proof ----------------------------------
 
-def test_migration_turns_zk_off_only_for_1password_agents_holding_nothing(world):
-    ws, jj = world["ws"], world["jj"]
-    Agent.objects.create(slug="bare", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
-                                credential_source=Agent.ONEPASSWORD)
-    holding = Agent.objects.create(slug="holding", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
-                                   credential_source=Agent.ONEPASSWORD)
-    AgentCredential.objects.create(agent=holding, name="x")
-    wrapped = Agent.objects.create(slug="wrapped", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
-                                   credential_source=Agent.ONEPASSWORD)
-    AgentVaultWrap.objects.create(agent=wrapped, kv=1, kind=AgentVaultWrap.RECOVERY, wrap={})
-    Agent.objects.create(slug="keyed", workspace=ws, owner=jj, zk_enabled=True, zk_kv=2,
-                                 credential_source=Agent.ONEPASSWORD)
-    Agent.objects.create(slug="vault", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
-                                 credential_source=Agent.CANOPY_WEB)
-    mig = importlib.import_module("apps.agents.migrations.0069_no_zk_for_1password_agents")
-    mig.forwards(django_apps, None)
-    flags = dict(Agent.objects.filter(slug__in=["bare", "holding", "wrapped", "keyed", "vault"])
-                 .values_list("slug", "zk_enabled"))
-    assert flags == {"bare": False, "holding": True, "wrapped": True, "keyed": True, "vault": True}
-
-
-def test_migration_moves_agents_with_no_1password_vault_onto_canopy_vault(world):
-    ws, jj = world["ws"], world["jj"]
-    Agent.objects.create(slug="novault", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD)
-    Agent.objects.create(slug="legacy", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD,
-                         op_vault="Agent-Legacy")
-    held = Agent.objects.create(slug="held", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD)
-    AgentCredential.objects.create(agent=held, name="x")
-    mig = importlib.import_module("apps.agents.migrations.0070_vaultless_agents_on_canopy_vault")
-    mig.forwards(django_apps, None)
-    rows = {a.slug: (a.credential_source, a.zk_enabled, a.zk_kv)
-            for a in Agent.objects.filter(slug__in=["novault", "legacy", "held"])}
-    assert rows["novault"] == (Agent.CANOPY_WEB, True, 0)
-    assert rows["legacy"][0] == Agent.ONEPASSWORD and rows["held"][0] == Agent.ONEPASSWORD
-
-
-def test_a_1password_agent_resolves_without_a_device_proof_even_if_zk_is_on(world):
+def test_a_zero_knowledge_agent_resolves_only_with_a_device_proof(world):
     hal = world["hal"]
-    Agent.objects.filter(pk=hal.pk).update(zk_enabled=True, zk_kv=0, credential_source=Agent.ONEPASSWORD)
-    res = _pat(world["jj"]).get("/api/agents/hal/credentials/resolve")
-    assert res.status_code == 200, res.content
-    # A canopy-web-vault agent still demands one.
-    Agent.objects.filter(pk=hal.pk).update(credential_source=Agent.CANOPY_WEB)
+    Agent.objects.filter(pk=hal.pk).update(zk_enabled=True, zk_kv=0)
     res = _pat(world["jj"]).get("/api/agents/hal/credentials/resolve")
     assert res.status_code == 401 and res.json()["error"] == "device_proof_required"
 

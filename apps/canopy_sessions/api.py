@@ -307,6 +307,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "agent_spoke_last": agent_spoke_last,
         "turn_mode": turn_mode,
         "turn_origin": turn_origin,
+        "turn_runner_name": getattr(session, "_turn_runner_name", None) or None,
         "feed_status": feed_status,
         "created_by": session.created_by.email if session.created_by_id else None,
         "provenance": provenance.public(session.provenance),
@@ -494,6 +495,7 @@ def _filtered_sessions(
     q: str = "", repo: str = "", branch: str = "", pr: str = "",
     since: dt.datetime | None = None,
     until: dt.datetime | None = None, runner: str = "", of_user: int | None = None,
+    slack_channel: str = "",
 ):
     """Every session the caller may see, narrowed by the list filters, with
     `_last_msg_at`, `_activity` (= `last_activity_at`, computed in SQL) and
@@ -562,6 +564,10 @@ def _filtered_sessions(
     # Only narrows what the caller may already read.
     if of_user is not None:
         rows = rows.filter(access.sessions_of_q([of_user]))
+    # The sessions that live in one Slack channel (its id), as the session's metadata names it.
+    # Only narrows what the caller may already read — a channel's reviewer lists its sessions so.
+    if slack_channel:
+        rows = rows.filter(metadata__slack_channel=slack_channel)
     # Free text over what a person reads off a card: the title, or the runner's
     # session_key (an emdash task name, or a cloud session's Claude UUID).
     if q:
@@ -606,7 +612,7 @@ def list_sessions(
     resource: str = "", page_path: str = "", reply: bool = False,
     session_key: str = "", q: str = "", repo: str = "", branch: str = "", pr: str = "",
     since: dt.datetime | None = None, until: dt.datetime | None = None, runner: str = "",
-    of_user: int | None = None,
+    of_user: int | None = None, slack_channel: str = "",
 ):
     """The sessions you can see: waiting on you first, then running, then most
     recent activity — at most `limit` (≤ 500) of them, with no paging.
@@ -618,7 +624,9 @@ def list_sessions(
     is on, by id or name — `?runner=<name>&state=active` is every open session on
     a box, what `POST /transfer-all` moves), `of_user` (one person's own sessions,
     by canopy user id: the chats they started and the runner sessions on their own
-    boxes — how a coach lists the sessions of someone who let it review them). To reach EVERY session
+    boxes — how a coach lists the sessions of someone who let it review them),
+    `slack_channel` (a Slack channel id: the sessions that live in it — how an agent
+    an admin gave that channel to lists what it may review). To reach EVERY session
     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
     """
     # The ONE unified list (Plan 4): every session the caller can see in their
@@ -638,6 +646,7 @@ def list_sessions(
         origin_key=origin_key, embed_app=embed_app, resource=resource,
         page_path=page_path, session_key=session_key, q=q, repo=repo,
         branch=branch, pr=pr, since=since, until=until, runner=runner, of_user=of_user,
+        slack_channel=slack_channel,
     ).order_by("-created_at")
 
     # Every row says which mode drove it — the list shows it on each card, so an
@@ -1295,6 +1304,9 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
     first_claimed = turns_qs.exclude(turn_mode="").order_by("created_at").first()
     session._turn_mode = first_claimed.turn_mode if first_claimed else ""
     session._turn_origin = first_claimed.origin if first_claimed else ""
+    newest_claimed = (turns_qs.exclude(claimed_by=None).select_related("claimed_by")
+                      .order_by("-claimed_at").first())
+    session._turn_runner_name = newest_claimed.claimed_by.name if newest_claimed else None
     turns = list(
         turns_qs.select_related(
             "agent", "chat_session", "claimed_by", "enqueued_by", "pinned_runner",

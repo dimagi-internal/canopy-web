@@ -788,7 +788,7 @@ def _disk_pct() -> float:
 
 
 # ── disk hygiene: the scratch turns leave behind ────────────────────────────────
-# cloud-ec2-2's root reached 100% on 2026-10-19 (1Password could not write its
+# cloud-ec2-2's root reached 100% on 2026-10-19 (a CLI could not write its
 # session file under /tmp; a turn crashed). Bootstrap's cache prune was not the
 # answer: agents' own scratch clones in /tmp (~3.4 GB, weeks old) and chat-session
 # worktrees under WORK_DIR/sessions were, and nothing ever removed either. So the
@@ -1610,19 +1610,11 @@ def _child_safe_env() -> dict:
 _TURN_ENV = threading.local()
 
 
-#: Per-agent 1Password keys, resolved from canopy-web and cached briefly. The
-#: cache keeps a turn from re-fetching on every claim; the TTL keeps a rotated
-#: or revoked key from living on this box longer than a few minutes.
-_AGENT_OP: dict[str, tuple[float, str]] = {}
-_AGENT_OP_TTL_SECONDS = float(os.environ.get("AGENT_OP_TTL_SECONDS", "300"))
-
-
-#: The 1Password vault each agent INSTANCE is bound to (`Agent.op_vault`), from
-#: the same resolve call as its key and cached with it. Agent `.env.tpl`s name it
-#: as `op://${AGENT_VAULT}/...` rather than hardcoding `Agent-<Slug>`, so an
-#: install binds to the instance's recorded vault (2026-10-14, canopy#899).
-#: Never derived from the slug: an agent with no recorded vault is unconfigured.
-_AGENT_VAULT: dict[str, str] = {}
+#: When each agent's vault was last probed (`_probe_agent_vault`). The cache keeps a
+#: turn from re-probing canopy-web on every claim; the short TTL keeps a vault grant
+#: (or its loss) from going unseen for more than a few minutes.
+_VAULT_PROBE_AT: dict[str, float] = {}
+_VAULT_PROBE_TTL_SECONDS = float(os.environ.get("AGENT_VAULT_PROBE_TTL_SECONDS", "300"))
 
 
 #: The vault value an agent's chrome-sales Salesforce credential (`.sf-creds.json`) comes
@@ -3594,7 +3586,7 @@ def secrets_off_disk() -> bool:
 
 
 #: slug -> (fetched_at, {NAME: value}) from `canopy cred env --print-json`. The same
-#: 5-minute TTL `cred sync` had, so a claim is not a 1Password read.
+#: 5-minute TTL `cred sync` had, so a claim is not a vault read.
 _TURN_VALUES: dict = {}
 _TURN_VALUES_LOCK = threading.Lock()
 #: Fields of /credentials/resolve the runner needs beside the env values, taken
@@ -3602,7 +3594,7 @@ _TURN_VALUES_LOCK = threading.Lock()
 #: keys, same names as the resolve response). canopy 0.2.736 prints only
 #: {agent, source, values}; until it adds these, a runner's own (proofless) resolve
 #: stands, which a device-bound or zero-knowledge agent refuses.
-RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "delegated")
+RESOLVE_EXTRAS = ("delegated",)
 #: slug -> why its env could not be had (the turn's failure note says it).
 _TURN_ENV_ERRORS: dict = {}
 
@@ -3640,15 +3632,7 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         hit = _TURN_VALUES.get(slug)
         if hit and now - hit[0] < _AGENT_ENV_TTL_SECONDS:
             return hit[1]
-    if not _has_env_source(slug):
-        # canopy's `_env_in_memory` "n/a": no template and no canopy-web values. An
-        # agent with nothing to resolve has an EMPTY env, not a failed one.
-        with _TURN_VALUES_LOCK:
-            _TURN_VALUES[slug] = (now, {})
-        _set_check(f"env.{slug}", "ok", "no env to resolve (no .env.tpl, not canopy-web-sourced)")
-        return {}
-    env = {k: v for k, v in _child_safe_env().items()
-           if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
+    env = _child_safe_env()
     env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
     if turn_id:
@@ -3678,29 +3662,11 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
     # vault), which a runner's own (proofless) resolve cannot attach.
     if isinstance(doc.get("delegated"), dict):
         _AGENT_DELEGATED[slug] = {str(k): str(v) for k, v in doc["delegated"].items() if v}
-    extras = {k: str(doc.get(k) or "") for k in RESOLVE_EXTRAS if k in doc and k != "delegated"}
-    if extras:
-        _AGENT_OP[slug] = (now, extras.get("op_sa_token", ""))
-        if "op_vault" in extras:
-            _AGENT_VAULT[slug] = extras["op_vault"].strip()
     with _TURN_VALUES_LOCK:
         _TURN_VALUES[slug] = (now, values)
     _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
                "held in memory")
     return values
-
-
-def _has_env_source(slug: str) -> bool:
-    """Does `slug` have an env to resolve: a `.env.tpl` in its clone, or canopy-web as
-    its credential source? Unknown (no clone yet, canopy-web unreachable) counts as
-    YES — a resolve that then fails fails the turn, rather than running it bare."""
-    clone = pathlib.Path(AGENT_ROOT) / slug
-    if (clone / ".env.tpl").is_file() or not (clone / ".git").is_dir():
-        return True
-    status, body = _api("GET", f"/{slug}/credentials/access", prefix="/api/agents")
-    if status != 200 or not isinstance(body, dict):
-        return True
-    return str(body.get("credential_source") or "") == "canopy-web"
 
 
 # ── backing off an agent whose credentials this box cannot resolve ──────────
@@ -3831,14 +3797,17 @@ def _known_agent_slugs() -> list[str]:
     return sorted(slugs)
 
 
-def _agent_op_token(slug: str) -> str:
-    """THIS agent's 1Password key, or "" — never another agent's, never a
-    box-wide one. canopy-web is the custodian (`Agent.op_sa_token_enc`)."""
-    hit = _AGENT_OP.get(slug)
+def _probe_agent_vault(slug: str) -> None:
+    """Probe THIS agent's `credentials/resolve` and raise the `zk.<slug>` health check.
+
+    Nothing from the response is kept: the values are opened by the canopy CLI on this
+    box (`canopy cred env --runner`), never here. The probe exists so a vault this box
+    cannot open (`zk_wrap_missing`) shows up on the health page instead of as a turn
+    that quietly runs without its credentials. Cached for `_VAULT_PROBE_TTL_SECONDS`."""
     now = time.time()
-    if hit and now - hit[0] < _AGENT_OP_TTL_SECONDS:
-        return hit[1]
-    token = ""
+    if now - _VAULT_PROBE_AT.get(slug, -1e18) < _VAULT_PROBE_TTL_SECONDS:
+        return
+    _VAULT_PROBE_AT[slug] = now
     # The turn this resolve is for, so canopy-web's read log names it (Canopy Vault,
     # canopy#946). Known when called from a turn's thread; an older canopy-web ignores it.
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
@@ -3855,116 +3824,26 @@ def _agent_op_token(slug: str) -> str:
                  f"admin to grant this runner's device ('Grant pending' on {slug}'s page)")
             _set_check(f"zk.{slug}", "fail", "zero-knowledge vault: this device is not "
                        "granted (zk_wrap_missing) — an admin must grant it")
-        elif status == 200 and isinstance(payload, dict):
-            if payload.get("zk"):
-                # Ciphertext only. This file never decrypts (stdlib-only): the canopy CLI
-                # on this box — `agent prepare --runner`, `cred sync` — unwraps with the
-                # box's ECDH key and writes the env, exactly as for a custodial agent.
-                _set_check(f"zk.{slug}", "ok", "zero-knowledge vault: values are opened "
-                           "by the canopy CLI on this box")
-            token = str(payload.get("op_sa_token") or "")
-            _AGENT_VAULT[slug] = str(payload.get("op_vault") or "").strip()
+        elif status == 200 and isinstance(payload, dict) and payload.get("zk"):
+            # Ciphertext only. This file never decrypts (stdlib-only): the canopy CLI
+            # on this box — `agent prepare --runner`, `cred sync` — unwraps with the
+            # box's ECDH key and writes the env, exactly as for a custodial agent.
+            _set_check(f"zk.{slug}", "ok", "zero-knowledge vault: values are opened "
+                       "by the canopy CLI on this box")
     except Exception as exc:  # noqa: BLE001
-        _log(f"warn: could not resolve {slug}'s 1Password key ({exc}); the turn runs without one")
-    _AGENT_OP[slug] = (now, token)
-    if not token:
-        _log(f"{slug}: no 1Password key registered in canopy-web — `op` is unavailable to this turn "
-             f"(register it: PUT /api/agents/{slug}/vault)")
-    return token
+        _log(f"warn: could not probe {slug}'s vault ({exc})")
 
 
-#: Re-reading each agent's `~/.<slug>/.env` from its vault when a turn is claimed.
-#: The vault is the one place a value lives: bootstrap used to be the ONLY writer
-#: of the file, so a value changed in 1Password reached no turn until the service
-#: restarted — cloud-ec2-2 kept ACE's old Drive root all day on 2026-10-12.
-#:
-#: Cheap by construction: at most once per TTL per agent, and the refresh is
-#: canopy's `canopy cred sync` — ONE `op vault get` per vault the template names,
-#: the full `op inject` only when that fingerprint or the template changed. The
-#: same command an agent session runs at start, so there is nothing to drift.
-_AGENT_ENV_AT: dict[str, float] = {}
+#: How long a resolved env stays fresh, and how long one `canopy cred` call may take.
 _AGENT_ENV_TTL_SECONDS = float(os.environ.get("AGENT_ENV_TTL_SECONDS", "300"))
 _AGENT_ENV_TIMEOUT_SECONDS = float(os.environ.get("AGENT_ENV_TIMEOUT_SECONDS", "30"))
-_AGENT_ENV_LOCKS: dict[str, threading.Lock] = {}
-_AGENT_ENV_LOCKS_GUARD = threading.Lock()
-
-#: Only the agent's key decides whose vault is read — never a personal `op`
-#: session or Connect server that happens to be in this process's environment.
-_OP_PERSONAL_ENV_PREFIXES = ("OP_SESSION_",)
-_OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
-
-
-def _refresh_agent_env_canopy(slug: str, op_token: str, vault: str) -> None:
-    """The claim-time refresh: canopy's `canopy cred sync` — the function every agent
-    session's start hook already runs, same fingerprint, same `.env.stamp` — given the
-    agent's own key and the vault this box was told, run from the agent's clone so it
-    finds the template there. This box kept its own copy until 2026-10-15; canopy holds
-    the one implementation now (docs/architecture/agent-setup-lifecycle.md)."""
-    env = {k: v for k, v in _child_safe_env().items()
-           if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
-    env.update(OP_SERVICE_ACCOUNT_TOKEN=op_token, AGENT_VAULT=vault, AGENT_SLUG=slug)
-    # The turn this sync is for, so the resolve it makes names it (canopy's cred_resolve
-    # reads CANOPY_TURN_ID). It lives in this thread's turn env, not the process's, so
-    # without this every claim-time sync read as a box outside a turn (canopy-web#1563).
-    turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
-    if turn_id:
-        env["CANOPY_TURN_ID"] = turn_id
-    try:
-        res = subprocess.run([_canopy_cli(), "cred", "sync", "--agent", slug, "--ttl", "0"],
-                             env=env, cwd=str(pathlib.Path(AGENT_ROOT) / slug),
-                             capture_output=True, text=True,
-                             timeout=_AGENT_ENV_TIMEOUT_SECONDS + 200)
-        said = " ".join((res.stderr or res.stdout or "").split())[:300]
-        err = "" if res.returncode == 0 else (said or f"canopy cred sync exited {res.returncode}")
-    except subprocess.TimeoutExpired:
-        err, said = "canopy cred sync did not finish in time", ""
-    except OSError as exc:
-        err, said = f"canopy could not run ({exc})", ""
-    out = pathlib.Path.home() / f".{slug}" / ".env"
-    if err:
-        _log(f"warn: {slug}: could not refresh {out} from its vault — this turn uses the "
-             f"existing file, which may be stale: {err}")
-        _set_check(f"env.{slug}", "warn",
-                   f"vault refresh failed; turns run on the last good {out}: {err}")
-        return
-    _set_check(f"env.{slug}", "ok", f"{out}: {said.removeprefix(f'[canopy cred] {slug}: ')}")
-
-
-def _refresh_agent_env(slug: str, op_token: str, vault: str = "") -> None:
-    """Bring `~/.<slug>/.env` up to date with the agent's vault, cheaply.
-
-    At most once per `_AGENT_ENV_TTL_SECONDS` per agent, timed from the last
-    ATTEMPT, so an unreachable 1Password costs one slow claim per TTL. The refresh
-    itself is canopy's `canopy cred sync` (`_refresh_agent_env_canopy`): re-inject
-    only when the vault or template changed, keep the last good file on failure,
-    report the `env.<slug>` health check. This box used to carry its own copy.
-    """
-    tpl = pathlib.Path(AGENT_ROOT) / slug / ".env.tpl"
-    if not op_token or not tpl.is_file():
-        return  # bootstrap already reports an unregistered or tpl-less agent
-    if not vault:
-        # A key with no recorded vault: the template's `${AGENT_VAULT}` has nothing
-        # to expand to, and deriving `Agent-<Slug>` is the fallback we removed
-        # (2026-10-14, canopy#899). Keep the last good file and say why.
-        _set_check(f"env.{slug}", "warn",
-                   f"canopy-web records no 1Password vault for {slug} "
-                   f"(PUT /api/agents/{slug}/vault) — .env not refreshed")
-        return
-    with _AGENT_ENV_LOCKS_GUARD:
-        lock = _AGENT_ENV_LOCKS.setdefault(slug, threading.Lock())
-    with lock:  # two turns of one agent claimed together probe once
-        now = time.time()
-        if now - _AGENT_ENV_AT.get(slug, 0.0) < _AGENT_ENV_TTL_SECONDS:
-            return
-        _AGENT_ENV_AT[slug] = now
-        _refresh_agent_env_canopy(slug, op_token, vault)
 
 
 def _agent_env(slug: str | None) -> dict:
     """The turn environment, with the agent's OWN `~/.<slug>/.env` layered on top.
 
-    `bootstrap_agents.sh` materializes that file with `op inject` (the fleet's
-    provisioning standard), but writing a file is not the same as exporting it:
+    `bootstrap_agents.sh` has the canopy CLI materialize that file from the agent's
+    Canopy vault, but writing a file is not the same as exporting it:
     nothing here ever sourced it, so an agent's own credentials — notably
     CANOPY_WEB_PAT, which `canopy_web.resolve_pat()` reads FIRST — never reached
     `claude -p`, and every agent silently fell back to the runner's ambient
@@ -3974,7 +3853,7 @@ def _agent_env(slug: str | None) -> dict:
     Deliberately layered UNDER the runner's own environment for the few keys the
     runner must control (CANOPY_BASE_URL, PATH), and
     OVER it for everything else the agent declares. Parsing is intentionally
-    minimal — `op inject` emits plain `KEY=value` lines; anything exotic (export
+    minimal — the canopy CLI emits plain `KEY=value` lines; anything exotic (export
     prefixes, shell interpolation) is not part of the format and is skipped
     rather than guessed at.
     """
@@ -3982,7 +3861,7 @@ def _agent_env(slug: str | None) -> dict:
     confined = getattr(_TURN_ENV, "confined", None)
     if confined is not None:
         # A caller's turn: an allowlist, not the layering below — no agent .env,
-        # no 1Password key (so no credentials/resolve call), no canopy PAT.
+        # no vault probe (so no credentials/resolve call), no canopy PAT.
         return _confined_env(slug, confined, extra)
     env = _child_safe_env()
     for key in _GITHUB_ENV_KEYS:
@@ -4007,22 +3886,9 @@ def _agent_env(slug: str | None) -> dict:
     # session had no canopy-web MCP at all (cloud-ec2-1, 2026-09-22). A slug is
     # not a secret; the helper reads the PAT from ~/.<slug>/.env itself.
     env["CANOPY_AGENT"] = slug
-    # The agent's OWN 1Password key, or none at all. Inheriting this process's
-    # would hand every agent a credential that reads every vault.
-    op_token = _agent_op_token(slug)
-    if op_token:
-        env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
-    else:
-        env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
-    # The instance's recorded vault, for anything in the turn that `op inject`s
-    # an agent template itself (2026-10-14, canopy#899). Not a secret. Unset,
-    # never derived, when canopy-web records none.
-    vault = _AGENT_VAULT.get(slug, "") if op_token else ""
+    # Raise the agent's `zk.<slug>` health check (a vault this box cannot open).
+    _probe_agent_vault(slug)
     env["AGENT_SLUG"] = slug
-    if vault:
-        env["AGENT_VAULT"] = vault
-    else:
-        env.pop("AGENT_VAULT", None)
     # chrome-sales in an agent turn acts in Salesforce only as the identity in its
     # `salesforce` vault value (a vault attached to the agent), never as whatever sits
     # in the box's ~/.chrome-sales/. None → no CHROME_SALES_HOME, and chrome-sales finds
@@ -4042,8 +3908,6 @@ def _agent_env(slug: str | None) -> dict:
         lines = [f"{k}={v}" for k, v in (_turn_values(slug) or {}).items()]
         env_file = pathlib.Path(str(extra.get("CANOPY_AGENT_ENV_FILE") or "(memory)"))
     else:
-        # The vault, not this box's last bootstrap, decides what the turn reads.
-        _refresh_agent_env(slug, op_token, vault)
         env_file = pathlib.Path.home() / f".{slug}" / ".env"
         try:
             lines = env_file.read_text().splitlines()
@@ -7570,7 +7434,7 @@ def bootstrap_agent_fleet() -> None:
 
     bootstrap_agents.sh clones PRIVATE per-agent repos (needs the GITHUB_TOKEN
     this process just staged into the git credential store) and runs `canopy
-    provision` (needs OP_SERVICE_ACCOUNT_TOKEN, which fetch_and_stage_credential
+    agent prepare` (needs the credential bundle fetch_and_stage_credential
     just put in os.environ). Neither exists until an operator has staged this
     runner's credential bundle via wire.sh — which can only happen AFTER the
     runner has paired and appeared in the fleet. An ExecStartPre fires on
@@ -9104,12 +8968,9 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             _CLAUDE_CREDS.extend(_cascade_from(cred))
             _apply_claude_credential(0)
             _log(f"claude credential cascade: {', '.join(c[0] for c in _CLAUDE_CREDS)}")
-            # There is no box-wide 1Password key any more, and canopy-web no
-            # longer serves one. A key here would be staged into this process's
-            # environment, which every turn inherits — one credential reading
-            # EVERY agent's vault, handed to each of them. A turn gets its own
-            # agent's key (`_agent_env`), and bootstrap reads each vault with
-            # the key for that vault.
+            # No box-wide vault key is staged here: it would sit in this process's
+            # environment, which every turn inherits. Each agent's values are
+            # opened per turn by the canopy CLI (`_turn_values`).
             _log("staged credential bundle from canopy-web (claude)")
             # Before the first ready heartbeat, so "ready" means a credential
             # answered. The box is not serving yet, so nothing waits on this; a
@@ -11401,7 +11262,7 @@ class ConfineError(RuntimeError):
 
 # What a confined session may inherit from this process. An ALLOWLIST, not a strip
 # list: this process holds the runner owner's canopy PAT (CANOPY_TOKEN), every
-# agent turn used to get its agent's 1Password key and its whole ~/.<slug>/.env
+# agent turn gets its agent's whole ~/.<slug>/.env
 # (CANOPY_WEB_PAT among it) and the owner's GitHub token — and profile_guard was the
 # only thing between a prompt-injected caller session and all of them. A variable
 # nobody listed here is one a confined session does not get.
@@ -11443,7 +11304,7 @@ def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
     """A caller's turn environment: the allowlist above, the mail keyring only if
     the capability sends mail, which agent and turn this is, and the per-turn
     pointers (CANOPY_PROFILE, CANOPY_CALLER, …). Never the agent's `.env`, never
-    its 1Password key, never a GitHub token, never this process's canopy PAT —
+    a GitHub token, never this process's canopy PAT —
     the session reaches canopy's MCP with its caller token, from its profile."""
     src = _child_safe_env()
     env = {k: v for k, v in src.items()

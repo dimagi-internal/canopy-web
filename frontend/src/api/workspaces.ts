@@ -254,14 +254,6 @@ export async function createWorkspace(
 }
 
 
-// --- the tenant's shared 1Password vault -------------------------------------
-// The TENANT half of the two-level credential model: this vault holds what every
-// agent in the workspace shares (the gog OAuth clients, the fleet GitHub token),
-// and canopy-web holds a service-account key scoped to it. An AGENT's own vault
-// and key live on the agent (see AgentVaultSection) — a key that read both would
-// undo the split that bounds a compromise to one agent.
-//
-// Owner-only on the server; the key is write-only and never comes back.
 export type RunnerTopologyOut = components['schemas']['RunnerTopologyOut']
 export type TopologyRunnerOut = components['schemas']['TopologyRunnerOut']
 export type TopologyAgentOut = components['schemas']['TopologyAgentOut']

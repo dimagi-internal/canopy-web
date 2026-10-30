@@ -15,6 +15,7 @@ from apps.agents.models import Agent, AgentAdmin, AgentCredential, AgentCredenti
 from apps.harness.models import Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 
@@ -38,7 +39,7 @@ def _bearer(user):
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
     jj = _user("jj")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
@@ -51,14 +52,14 @@ def world():
         WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
     agent = Agent.objects.create(
         slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["nova-api-key"],
-        # Who may read, not the device layer: a bearer-only read, which a canopy-vault
-        # agent would refuse without a device proof (tests/test_canopy_vault_zk.py).
-        credential_source=Agent.ONEPASSWORD, zk_enabled=True,
+        zk_enabled=True,
         interface={"version": 1, "full": ["member@dimagi.com"], "capabilities": {
             "ask": {"callers": ["member", "contact"], "tools": ["Read"]}}},
     )
     AgentCredential.objects.create(agent=agent, name="nova-api-key", value_zk=SECRET, kv=0)
     AgentAdmin.objects.create(agent=agent, user=sarvesh, granted_by=jj)
+    # Who may read, not the device layer (tests/test_canopy_vault_zk.py pins the proof).
+    accept_device_proof(monkeypatch)
     return {"agent": agent, "owner": jj, "aath": aath, "viewer": vic, "admin": sarvesh, "hal": hal}
 
 
@@ -228,17 +229,3 @@ def test_a_license_read_withholds_the_login_under_its_stored_name(world):
     assert _resolve(world["aath"], turn_id).json()["values"] == {"nova-api-key": SECRET}
     assert not AgentCredentialRead.objects.filter(name=CANOPY_PAT_REF, user=world["aath"]).exists()
     assert _resolve(world["owner"]).json()["values"][CANOPY_PAT_REF] == "zks1:agent-own-pat"
-
-
-def test_a_license_read_never_gets_the_agents_1password_key(world, monkeypatch):
-    """The service-account key reads the whole vault, the agent's canopy-pat included,
-    so handing it to a license holder would undo withholding that login."""
-    from apps.agents import api as agents_api
-
-    agent = world["agent"]
-    Agent.objects.filter(pk=agent.pk).update(credential_source=Agent.ONEPASSWORD)
-    monkeypatch.setattr(agents_api.services, "resolve_agent_vault", lambda a: ("Agent-ACE", "ops-sa-key"))
-    turn_id = _open(world["aath"]).json()["turn_id"]
-    body = _resolve(world["aath"], turn_id).json()
-    assert body["op_sa_token"] == "" and body["op_vault"] == "Agent-ACE"
-    assert _resolve(world["owner"]).json()["op_sa_token"] == "ops-sa-key"

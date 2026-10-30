@@ -5,7 +5,7 @@
 > turn mode — is defined once, with THE rule that decides an agent turn, in
 > [`access.md`](access.md). This page is about enforcement.
 
-There are five tiers. Each contains the one below it.
+There are six tiers. Each contains the one below it.
 
 | Tier | Enforced as | Can |
 |---|---|---|
@@ -13,10 +13,11 @@ There are five tiers. Each contains the one below it.
 | **Viewer** | workspace member, `viewer` | Interact with an agent through what its published interface offers members (none published → nothing): chat, answer a blocked question, approve or decline a task, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
 | **Editor** | workspace member, `editor` | Create and edit agents, run turns (the agent's whole profile, **always `manual`** unless you are its admin), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
 | **Admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
-| **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace. |
+| **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |
+| **Superuser** | workspace member, `superuser` | Everything an owner can do, in the workspace and every one below it, as oversight: none of the owner's email. Owners and superusers manage each other. The system superuser (`User.is_superuser`, Supervisor → Runners → System superusers) is the same idea for the whole fleet, with no workspace access. |
 
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
-(`apps/workspaces/models.py`) is `{viewer: 0, editor: 1, admin: 2, owner: 3}`.
+(`apps/workspaces/models.py`) is `{viewer: 0, editor: 1, admin: 2, owner: 3, superuser: 4}`.
 
 **What each role may DO lives in one table: `apps/workspaces/permissions.py`.** It maps every
 capability (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEGRATIONS`,
@@ -41,12 +42,13 @@ and can neither touch nor mint an admin or an owner. An admin is not an agent's 
 `Agent.is_admin` is the agent's owner, a workspace OWNER, or an explicit `AgentAdmin` grant —
 because running a workspace is not holding its agents' keys.
 
-## Workspaces nest — and only OWNER and ADMIN flow down
+## Workspaces nest — and only SUPERUSER, OWNER and ADMIN flow down
 
 A workspace may have a `parent` (`Workspace.parent`), so an org sits above its divisions:
 `dimagi` → `connect`, `strategy`, `operations`, `commcare`, `global-solutions`. The tree grants
-exactly this: **an owner of a workspace is an owner of every workspace below it, and an admin
-is an admin of every workspace below it** (`WorkspaceMembership.INHERITS_DOWN`). Nothing else is
+exactly this: **a superuser of a workspace is a superuser of every workspace below it, an owner
+of a workspace is an owner of every workspace below it, and an admin is an admin of
+every workspace below it** (`WorkspaceMembership.INHERITS_DOWN`). Nothing else is
 inherited. A parent's editors and viewers have no access to a child, and a child's members have
 none to its parent or siblings.
 
@@ -276,9 +278,7 @@ Deliberately off the ladder:
   resolving for a local Claude Code session. The audit event records which (`via: runner |
   admin`). A browser session only ever sees the masked status.
 - **`GET /{slug}/credentials/access`** (member, session or bearer) answers the same gate for
-  the caller without returning values: `{agent, credential_source, may_resolve, via, reason}`.
-- **`PATCH /{slug}/credential-source`** (`1password` | `canopy-web`) is agent-admin, like the
-  credentials and vault pointer it governs.
+  the caller without returning values: `{agent, may_resolve, via, reason, delegated_withheld}`.
 
 ### A view that judges many pairs reads once
 

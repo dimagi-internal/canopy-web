@@ -21,6 +21,7 @@ from apps.harness.models import PrivateRunner, Runner, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces import role_cap
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -29,7 +30,7 @@ SECRET = "zks1:hal-ciphertext"
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
     jj = User.objects.create_user("jj", "jj@dimagi.com")
     ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
@@ -38,13 +39,13 @@ def world():
     # No published interface: an editor gets the whole agent (manual), a viewer nothing.
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, turn_mode=Agent.AUTO,
                                runtime_secrets=["hal-key"],
-                               # Who may read, not the device layer: a bearer-only read,
-                               # which a canopy-vault agent would refuse without a proof.
-                               credential_source=Agent.ONEPASSWORD, zk_enabled=True)
+                               zk_enabled=True)
     AgentCredential.objects.create(agent=hal, name="hal-key", value_zk=SECRET, kv=0)
     box = Runner.objects.create(name="jj-mbp-cdp", kind=Runner.EMDASH, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                 capabilities={"agents": ["hal"], "sessions": True})
+    # Who may read, not the device layer (tests/test_canopy_vault_zk.py pins the proof).
+    accept_device_proof(monkeypatch, box)
     return {"ws": ws, "hal": hal, "jj": jj, "other": other, "box": box}
 
 

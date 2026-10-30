@@ -121,8 +121,7 @@ def fleet(client):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj,
-                                 runtime_secrets=["CANOPY_WEB_PAT", "gog-token"],
-                                 credential_source=Agent.CANOPY_WEB)
+                                 runtime_secrets=["CANOPY_WEB_PAT", "gog-token"])
     runner = Runner.objects.create(name="ec2-box", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                    capabilities={})

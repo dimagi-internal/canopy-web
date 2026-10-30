@@ -16,7 +16,7 @@ import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
 import type { SlashCommand } from "./slashCommands";
 import { type DraftStorage } from "./drafts";
-import { agentHasFloor as computeAgentHasFloor, composerPlaceholder, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
+import { composerPlaceholder, pendingLabel as computePendingLabel, turnNotice, turnPhase } from "./turnStatus";
 import { ContextMeter } from "./ContextMeter";
 import { useStickyBottom } from "./useStickyBottom";
 import { useNow } from "./useNow";
@@ -149,10 +149,15 @@ export function ChatPanel({
   // knows to show its "sent after the current reply" placeholder — Send
   // itself is never locked out by this any more (0.13): a send made while the
   // agent is replying is QUEUED, not blocked, and <QueuedRows> shows it landed.
+  //
+  // Never YOUR line. A pending user row is a send waiting for its receipt, not
+  // a reply under way — `awaitingReply` already covers that window. Counting it
+  // here meant one row that never got confirmed held "Queued… 22m · Stop" under
+  // a turn that had finished long ago, with no frame able to clear it.
   const inFlightMessage = useMemo(
     () =>
       state.messages.find(
-        (m) => m.status === "streaming" || m.status === "pending",
+        (m) => m.role !== "user" && (m.status === "streaming" || m.status === "pending"),
       ) ?? null,
     [state.messages],
   );
@@ -171,11 +176,16 @@ export function ChatPanel({
   // routed nowhere at all; `awaitingReply` still covers the instant between
   // pressing send and the first frame, which nothing server-side can.
   const status = state.turn_status ?? null;
-  const agentHasFloor = computeAgentHasFloor({
+  // ONE answer (`turnPhase`), the same the host's header reads — every flag
+  // below derives from it, never from `awaitingReply` on its own, which the
+  // server's status overrides once it has spoken.
+  const phase = turnPhase({
     status,
     activity: state.activity,
     awaitingReply,
+    replying: inFlightMessage != null,
   });
+  const agentHasFloor = phase === "working" || phase === "queued";
   const showPendingReply = inFlightMessage == null && agentHasFloor;
   // The live line (what it is doing, the clock, Stop) stays under the turn
   // until it ends — while the reply streams too. It is the chat's one Stop
@@ -226,15 +236,14 @@ export function ChatPanel({
     state.activity === "working" ||
     state.activity === "blocked" ||
     Boolean(status && (status.menu_pending || (!status.settled && !status.stuck)));
-  // Queued vs a runner has it: the server's `working` state, or the hook's
-  // word on a host with no status.
-  const pendingWorking = status ? status.state === "working" : state.activity === "working";
+  // Queued vs a runner has it.
+  const pendingWorking = phase === "working";
   const canStop = state.active_draft != null && !disabledReason;
   // The same answer the "Thinking…" bubble and the header give. Gating Stop
   // (and Esc) on a streaming ROW alone hid it for most of a runner turn:
   // that row only exists once the reply's first text does, so a turn busy
   // in tools had a bubble saying it was working and no way to stop it.
-  const isStreaming = inFlightMessage != null || awaitingReply || agentHasFloor;
+  const isStreaming = inFlightMessage != null || agentHasFloor;
 
   // ONE way to stop, whichever control asked — Esc in the composer or Stop on
   // the turn's live line — and one "stopping…" both of them show. A stop you
@@ -413,11 +422,11 @@ export function ChatPanel({
       editTarget({
         messages: shownMessages, queued: state.queued ?? [], currentUserId, currentContactId,
         canUnqueue: Boolean(onUnqueue),
-        settled: inFlightMessage == null && !agentHasFloor && !awaitingReply,
+        settled: inFlightMessage == null && !agentHasFloor,
         blocked: Boolean(disabledReason),
       }),
     [shownMessages, state.queued, currentUserId, currentContactId, onUnqueue, inFlightMessage,
-     agentHasFloor, awaitingReply, disabledReason],
+     agentHasFloor, disabledReason],
   );
   const editQueued = (q: QueuedMessage) => {
     onUnqueue?.(q.turn_id);

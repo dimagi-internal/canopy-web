@@ -52,7 +52,9 @@ export {
   composerPlaceholder,
   pendingLabel,
   turnNotice,
+  turnPhase,
   type TurnNotice,
+  type TurnPhase,
 } from "./turnStatus";
 
 // What a turn did: the live activity line, its to-do list, the fold line and
@@ -124,7 +126,7 @@ export { TypingRows } from "./TypingRows";
 export { PeerComposers } from "./PeerComposers";
 export { personColor, authorColor, initials, type PersonColor } from "./personColor";
 export { QueuedRows } from "./QueuedRows";
-export { isMine } from "./identity";
+export { isMine, isUnconfirmed } from "./identity";
 export { ConnectionStatus } from "./ConnectionStatus";
 export {
   PlacementBanner,

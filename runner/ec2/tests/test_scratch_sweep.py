@@ -1,6 +1,6 @@
 """A cloud runner clears the scratch its turns leave behind, on its own.
 
-cloud-ec2-2's root reached 100% on 2026-10-19 15:22 — 1Password could not write
+cloud-ec2-2's root reached 100% on 2026-10-19 15:22 — a CLI could not write
 its session file under /tmp, so ada's vault refresh failed and turn 86535ffc
 crashed. The caches bootstrap prunes were not the cause: /tmp held ~3.4 GB of
 week-old scratch clones agents made themselves (/tmp/tmp.*, /tmp/ada-*,

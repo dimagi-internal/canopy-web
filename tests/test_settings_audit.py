@@ -17,7 +17,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.events import audit
 from apps.events.models import SettingChange
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -88,13 +88,13 @@ def test_an_mcp_call_is_named_as_mcp():
 
 def test_secrets_in_the_body_are_withheld(fleet):
     browser = _session(fleet["jj"])
-    grant_step_up(browser)  # the service key is a secret
-    res = _put(browser, "/api/agents/ace/vault",
-               {"vault": "Agent-Ace", "service_key": "ops_SECRETVALUE"})
+    grant_step_up(browser)  # a credential value is a secret
+    give_vault_key(fleet["jj"])  # someone to seal it to
+    res = _put(browser, "/api/agents/ace/credentials", {"values": {"gog-token": "zks1:SECRETVALUE"}})
     assert res.status_code in (200, 201), res.content
-    [row] = SettingChange.objects.filter(operation="set_agent_vault")
-    assert "ops_SECRETVALUE" not in json.dumps(row.request)
-    assert row.request["body"]["service_key"] == audit.REDACTED
+    [row] = SettingChange.objects.filter(operation="set_agent_credentials")
+    assert "SECRETVALUE" not in json.dumps(row.request)
+    assert row.request["body"]["values"] == audit.REDACTED
 
 
 def test_redact_reaches_any_depth():

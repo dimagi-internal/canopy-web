@@ -11,7 +11,7 @@ import { CopyCommand } from './CopyCommand'
  *  (`GET /api/agents/{slug}/setup`) — this renders, it never decides. Steps done
  *  on the web link to the control; one done in Claude Code carries the command
  *  that starts that session, and one done in a terminal (it needs the person's
- *  own access, e.g. 1Password rights) carries that command. */
+ *  own access) carries that command. */
 export function AgentSetupChecklist({
   slug,
   hideWhenDone = false,

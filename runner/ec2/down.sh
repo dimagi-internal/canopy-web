@@ -229,7 +229,6 @@ if [[ "$PURGE" == "1" ]]; then
   # purge-then-rebuild exists to rule out. Kept in step with
   # secrets.sh/up.sh/_lib.sh/runner.cfn.yaml by tests/test_purge_secrets_is_complete.py.
   for s in canopy/cloud-runner/canopy-pat \
-           canopy/cloud-runner/op-service-account-token \
            canopy/cloud-runner/gog-keyring-password \
            canopy/cloud-runner/runner-seed \
            canopy/cloud-runner/runner-code \

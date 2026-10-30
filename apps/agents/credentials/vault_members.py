@@ -288,7 +288,7 @@ def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = MEMB
 def device_works_for_an_admin(vault: Vault | None, device_key) -> bool:
     """Does `device_key` work for an owner or admin of `vault`? Only such a machine is
     a keeper: the people who may change who is in a vault are the ones whose boxes
-    pass its key on, as in 1Password (an admin's client, or the bridge they run)."""
+    pass its key on (an admin's client, or the bridge they run)."""
     m = members(vault).get(person_of_device(device_key))
     return m is not None and is_admin(m.role)
 

@@ -7,7 +7,7 @@ vi.mock('@/api/chat', () => ({
   getSessionInfo: (...a: unknown[]) => getSessionInfo(...a),
 }))
 
-const { SessionInfoPanel, credentialText } = await import('./SessionInfoPanel')
+const { SessionInfoPanel, credentialText, originText } = await import('./SessionInfoPanel')
 
 const TURN = {
   id: 't-1',
@@ -116,6 +116,26 @@ describe('SessionInfoPanel', () => {
     expect(screen.getByTestId('session-info-raw').textContent).toContain('"thread_key": "dispatch-ace-b6b2806cd4bf"')
   })
 
+  it('names the box that ran a caller session which was never bound to one', async () => {
+    getSessionInfo.mockResolvedValue({
+      ...INFO,
+      binding: null,
+      session: { ...INFO.session, origin: 'web', turn_origin: 'slack', turn_runner_name: 'cloud-ec2-live' },
+    })
+    render(<SessionInfoPanel sessionId="s1" />)
+    await screen.findByTestId('session-info')
+    expect(screen.getByText('cloud-ec2-live · ran its turns, not bound to it')).toBeTruthy()
+    expect(screen.getByText('web (opened from Slack)')).toBeTruthy()
+    expect(screen.queryByText('No runner has backed this session yet.')).toBeNull()
+  })
+
+  it('still says no runner has backed a session nothing has claimed', async () => {
+    getSessionInfo.mockResolvedValue({ ...INFO, binding: null, session: { ...INFO.session, origin: 'web', turn_runner_name: null } })
+    render(<SessionInfoPanel sessionId="s1" />)
+    await screen.findByTestId('session-info')
+    expect(screen.getByText('No runner has backed this session yet.')).toBeTruthy()
+  })
+
   it('says why it could not load', async () => {
     getSessionInfo.mockRejectedValue(new Error('session not found'))
     render(<SessionInfoPanel sessionId="s1" />)
@@ -128,5 +148,14 @@ describe('credentialText', () => {
     expect(credentialText({ type: 'session', id: null, label: '' })).toBe('browser session')
     expect(credentialText({ type: 'pat', id: 47, label: 'x' })).toBe('pat · 47 · x')
     expect(credentialText(undefined)).toBe('')
+  })
+})
+
+describe('originText', () => {
+  it('says where a web row began, and calls a runner row discovered or dispatched', () => {
+    expect(originText({ origin: 'runner', turn_origin: 'api' })).toBe('runner (discovered or dispatched)')
+    expect(originText({ origin: 'web', turn_origin: 'slack' })).toBe('web (opened from Slack)')
+    expect(originText({ origin: 'web', turn_origin: 'email' })).toBe('web (opened from email)')
+    expect(originText({ origin: 'web', turn_origin: 'canopy_web_chat' })).toBe('web (started in canopy)')
   })
 })

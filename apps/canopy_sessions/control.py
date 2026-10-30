@@ -11,6 +11,7 @@ from django.db.models import Q
 
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
+from apps.harness.routing import turn_workspace_q
 
 from . import lifecycle, staleness
 from .models import RunnerBinding, Session
@@ -200,10 +201,11 @@ def stop_session(session: Session, *, by: str = "") -> str:
     return "session" if interrupt_session(session) == "sent" else ""
 
 
-def stop_everything(*, by: str = "") -> dict[str, int]:
-    """Stop ALL work running anywhere in the fleet — the fleet hold's "and stop what
-    is running" half. Returns `{"sessions": n, "turns": n}`: how many sessions a
-    stop reached and how many more executing turns were told to cancel.
+def stop_everything(*, by: str = "", workspaces: set[str] | None = None) -> dict[str, int]:
+    """Stop ALL work running anywhere in the fleet — or, given `workspaces`, in
+    those workspaces only (a workspace stop passes its tree). Returns
+    `{"sessions": n, "turns": n}`: how many sessions a stop reached and how many
+    more executing turns were told to cancel.
 
     Two passes, because work is reachable two ways (see `stop_session`):
 
@@ -221,6 +223,8 @@ def stop_everything(*, by: str = "") -> dict[str, int]:
     sessions = 0
     bindings = (RunnerBinding.objects.filter(runner__isnull=False)
                 .exclude(session_key="").select_related("runner", "session"))
+    if workspaces is not None:
+        bindings = bindings.filter(session__workspace_id__in=workspaces)
     for binding in bindings:
         if is_session_running(binding) and stop_session(binding.session, by=by):
             sessions += 1
@@ -228,6 +232,8 @@ def stop_everything(*, by: str = "") -> dict[str, int]:
     executing = (Turn.objects.filter(status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
                                      rides_turn__isnull=True)
                  .exclude(events__kind="cancel_requested"))
+    if workspaces is not None:
+        executing = executing.filter(turn_workspace_q(workspaces))
     for turn in executing:
         if harness_services.cancel_turn(turn, by=by) is not None:
             turns += 1

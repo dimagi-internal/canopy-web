@@ -11,17 +11,16 @@ import {
   type ZkTargetOut,
 } from '@/api/vault'
 import { Button } from 'canopy-ui/ui'
-import { Section } from '@/components/objectPage/settingsLayout'
+import { VaultMembers } from '@/components/vault/VaultMembers'
 import { storePlace } from '@/components/settings/machineText'
 import { runnerHref } from '@/lib/scopedLinks'
-import { VAULT_ROLE_LABEL } from '@/pages/agents/AgentVaultMembersSection'
 import {
   grantWorkspaceVaultPending, makeWorkspaceVaultKey, rotateWorkspaceVaultKey, sealWorkspaceVaultValue,
 } from '@/vault/operations'
-import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
 import type { VaultOutletContext } from './VaultPage'
 
-// A workspace vault's tabs (VaultPage.tsx). Who may change what is the server's rule
+// A workspace vault's three bodies — Storage & key (Overview), Who can open it (Members), Secrets —
+// drawn by VaultPage inside the shared VaultView as its sections (the old tab addresses still open them). Who may change what is the server's rule
 // for each route; a control is offered only to someone who manages the vault.
 
 const inputClass =
@@ -31,20 +30,18 @@ const buttonClass =
 const quietClass =
   'min-h-11 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-40 sm:min-h-0'
 
-export function managesVault(v: WorkspaceVaultOut): boolean {
-  return v.you === 'owner' || v.you === 'admin'
+/** A titled block inside one of the vault's sections. */
+function Sub({ id, title, children }: { id: string; title: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <div id={id} className="mb-5 scroll-mt-6">
+      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</h4>
+      {children}
+    </div>
+  )
 }
 
-/** Why someone is a member, in words. */
-export function sourceLabel(source: string): string {
-  if (source === 'direct') return 'Added by name'
-  const [kind, name] = source.split(':')
-  if (kind === 'workspace_owners') return `Owner of ${name}`
-  if (kind === 'workspace_admins') return `Admin of ${name}`
-  if (kind === 'attached') return `Full access to ${name}`
-  if (kind === 'agent') return `Full access to ${name}`
-  if (kind === 'license') return `Licensed to use ${name}`
-  return source
+export function managesVault(v: WorkspaceVaultOut): boolean {
+  return v.you === 'owner' || v.you === 'admin'
 }
 
 /** One write at a time, its error shown: the tabs' shared busy/error state. */
@@ -96,7 +93,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
 
   return (
     <div>
-      <Section id="key" title="Its key">
+      <Sub id="key" title="Its key">
         {v.kv === 0 ? (
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[12px]"
             data-testid="vault-no-key">
@@ -130,10 +127,9 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
             )}
           </div>
         )}
-        <VaultWaitingNote members={v.members} holders={v.holders} testId={`ws-vault-waiting-${v.vault_id}`} />
-      </Section>
+      </Sub>
 
-      <Section id="serves" title="Access">
+      <Sub id="serves" title="Access">
         <p className="mb-2 text-[12px] text-muted-foreground">
           The agents whose secrets this vault adds to. The runners that read it are on Members.
         </p>
@@ -174,7 +170,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
             <button type="submit" disabled={busy || !target.trim()} className={buttonClass}>Serve it</button>
           </form>
         )}
-      </Section>
+      </Sub>
       {errorLine}
     </div>
   )
@@ -184,54 +180,30 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
 export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
   const { busy, run, errorLine } = useRun(onChange)
   const manages = managesVault(v)
-  const [email, setEmail] = useState('')
   const runners = v.attachments.filter((a) => a.runner)
   return (
     <>
-    <Section id="members" title="Members">
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className="py-1 font-normal">Person</th><th className="py-1 font-normal">Role</th>
-            <th className="py-1 font-normal">Why</th><th />
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {v.members.map((m) => (
-            <tr key={m.user_id} data-testid={`ws-vault-member-${m.user_id}`}>
-              <td className="py-1.5 text-foreground">{m.email}</td>
-              <td className="py-1.5 text-muted-foreground">{VAULT_ROLE_LABEL[m.role] ?? m.role}</td>
-              <td className="py-1.5 text-muted-foreground">
-                {m.sources.map(sourceLabel).join(' · ')}
-                {memberWaiting(m, v.holders) && <span className="text-warning"> · {memberWaiting(m, v.holders)}</span>}
-              </td>
-              <td className="py-1.5 text-right">
-                {manages && m.sources.includes('direct') && (
-                  <button type="button" disabled={busy} data-testid={`ws-vault-remove-${m.user_id}`} className={quietClass}
-                    onClick={() => void run(() => removeWorkspaceVaultMember(v.vault_id, m.user_id))}>
-                    Remove
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {manages && (
-        <form className="mt-3 flex flex-wrap items-center gap-2" data-testid="ws-vault-add-member"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void run(() => addWorkspaceVaultMember(v.vault_id, email.trim(), 'member')).then((ok) => ok && setEmail(''))
-          }}>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="name@dimagi.com"
-            aria-label={`Add a person to ${v.name}`} className={inputClass} />
-          <button type="submit" disabled={busy || !email.trim()} className={buttonClass}>Add person</button>
-        </form>
-      )}
+    <Sub id="members" title="People">
+      <VaultMembers
+        label={v.name}
+        members={v.members}
+        holders={v.holders}
+        manages={manages}
+        busy={busy}
+        self={undefined}
+        ids={{
+          row: (id) => `ws-vault-member-${id}`,
+          remove: (id) => `ws-vault-remove-${id}`,
+          form: 'ws-vault-add-member',
+          waiting: `ws-vault-waiting-${v.vault_id}`,
+        }}
+        onAdd={(email) => run(() => addWorkspaceVaultMember(v.vault_id, email, 'member'))}
+        onRemove={(userId) => void run(() => removeWorkspaceVaultMember(v.vault_id, userId))}
+      />
       {errorLine}
-    </Section>
+    </Sub>
     {runners.length > 0 && (
-      <Section id="runners" title="Runners">
+      <Sub id="runners" title="Machines (runners)">
         <p className="mb-2 text-[12px] text-muted-foreground">
           Each reads its Claude credentials from this vault with its own copy of the vault&rsquo;s key, locked to a
           key that never leaves its hardware.
@@ -284,7 +256,7 @@ export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOut
             ))}
           </tbody>
         </table>
-      </Section>
+      </Sub>
     )}
     </>
   )
@@ -297,7 +269,7 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   return (
-    <Section id="secrets" title="Secrets">
+    <Sub id="secrets" title="Secrets">
       {v.secrets.length === 0 && <p className="text-[12px] text-muted-foreground">None yet.</p>}
       {v.secrets.length > 0 && (
         <table className="w-full text-[12px]" data-testid="ws-vault-secrets">
@@ -342,6 +314,6 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
         A value is encrypted in this browser under the vault&rsquo;s key; canopy-web stores only ciphertext and shows only names.
       </p>
       {errorLine}
-    </Section>
+    </Sub>
   )
 }

@@ -14,8 +14,7 @@ What these pin:
   listed under a qualified name, never dropped;
 - no identity is a 401 naming the header (never a sign-in redirect); a user
   with no memberships gets a valid, empty catalog;
-- each instance carries its 1Password vault NAME (`vault`), never the
-  service-account token;
+- each instance names only its agent and workspace (no vault, no key);
 - the retired per-workspace marketplace and archive URLs answer 410 with the
   new address.
 """
@@ -86,8 +85,7 @@ def fleet():
     dimagi = a_workspace("dimagi")
     connect = a_workspace("connect", parent=dimagi)
     family = a_workspace("family")
-    agent("ada", dimagi, description="Conducts the fleet", op_vault="Agent-Ada",
-          op_sa_token_enc="ENCRYPTED-SA-TOKEN")
+    agent("ada", dimagi, description="Conducts the fleet")
     agent("ace", connect)
     agent("echo", family)
     agent("nogit", dimagi, repo="")                                   # no repo: not listed
@@ -143,7 +141,7 @@ def test_entries_are_github_sources_fetched_with_the_users_own_git(fleet, raw):
         "name": "ada",
         "description": "Conducts the fleet",
         "source": {"source": "github", "repo": "dimagi-internal/ada"},
-        "metadata": {"instances": [{"agent": "ada", "workspace": "dimagi", "vault": "Agent-Ada"}]},
+        "metadata": {"instances": [{"agent": "ada", "workspace": "dimagi"}]},
     }
     assert plugins["ace"]["description"] == "Ace"   # falls back to the agent's name
     # No archive, no sha256, no entry version: Claude Code tracks the repo.
@@ -163,8 +161,8 @@ def test_two_instances_of_one_repo_are_one_plugin(raw):
     assert only["name"] == "ace"                      # the repo name, not a slug
     assert only["source"] == {"source": "github", "repo": "dimagi-internal/ace"}
     assert only["metadata"]["instances"] == [
-        {"agent": "ace", "workspace": "dimagi", "vault": ""},
-        {"agent": "ace-family", "workspace": "family", "vault": ""},
+        {"agent": "ace", "workspace": "dimagi"},
+        {"agent": "ace-family", "workspace": "family"},
     ]
 
 
@@ -259,12 +257,12 @@ def test_the_retired_per_workspace_urls_are_410_naming_the_new_catalog(fleet, pa
     assert "moved to one catalog" in body["detail"] and "/canopy:setup" in body["detail"]
 
 
-def test_an_instance_carries_its_vault_name_and_never_the_token(fleet):
+def test_an_instance_carries_no_vault(fleet):
     dimagi, _, _ = fleet
     pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
     wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
     resp = bearer(pat).get(URL)
     [ada] = [p for p in resp.json()["plugins"] if p["name"] == "ada"]
-    assert ada["metadata"]["instances"] == [{"agent": "ada", "workspace": "dimagi", "vault": "Agent-Ada"}]
+    assert ada["metadata"]["instances"] == [{"agent": "ada", "workspace": "dimagi"}]
     body = resp.content.decode()
-    assert "op_sa_token" not in body and "ENCRYPTED-SA-TOKEN" not in body
+    assert "op_sa_token" not in body and "vault" not in body

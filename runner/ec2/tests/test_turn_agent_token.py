@@ -81,8 +81,7 @@ def test_the_turn_login_wins_over_the_agents_stored_pat(cloud_runner, monkeypatc
     (tmp_path / "home" / ".eva").mkdir(parents=True)
     (tmp_path / "home" / ".eva" / ".env").write_text("CANOPY_WEB_PAT=stored-pat\n")
     monkeypatch.setattr(mod, "secrets_off_disk", lambda: False)
-    monkeypatch.setattr(mod, "_refresh_agent_env", lambda *a, **k: None)
-    monkeypatch.setattr(mod, "_agent_op_token", lambda slug: "")
+    monkeypatch.setattr(mod, "_probe_agent_vault", lambda slug: None)
     monkeypatch.setattr(mod, "_stage_salesforce", lambda slug: None)
     monkeypatch.setattr(mod, "_log", lambda m: None)
     mod._TURN_ENV.confined = None

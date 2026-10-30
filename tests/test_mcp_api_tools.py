@@ -367,7 +367,7 @@ def test_owner_actions_are_tools_too(db):
     tools = _tools()
     for name in ("transfer_owner", "grant_admin", "revoke_admin", "link_canopy_user",
                  "set_runner_flags", "publish_interface", "set_agent_credentials",
-                 "set_agent_vault", "create_invite", "set_member_role",
+                 "create_invite", "set_member_role",
                  "remove_member"):
         assert name in tools, name
     assert "create_token" not in tools

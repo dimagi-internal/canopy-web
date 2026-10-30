@@ -16,8 +16,7 @@ CREDS = json.dumps({"clientId": "PlatformCLI", "refreshToken": "r1", "instanceUr
 
 def _values(cloud_runner, monkeypatch, tmp_path, values):
     monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
-    monkeypatch.setattr(cloud_runner, "_AGENT_OP", {})
-    monkeypatch.setattr(cloud_runner, "_api", lambda m, p, *a, **k: (200, {"op_sa_token": ""}))
+    monkeypatch.setattr(cloud_runner, "_api", lambda m, p, *a, **k: (200, {}))
     monkeypatch.setattr(cloud_runner, "secrets_off_disk", lambda: True)
     monkeypatch.setattr(cloud_runner, "_turn_values", lambda slug, **k: dict(values))
 
