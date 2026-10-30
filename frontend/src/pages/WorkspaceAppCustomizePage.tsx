@@ -28,6 +28,9 @@ import {
   type AppVersionRow,
   type InstalledApp,
 } from '@/api/workspaceApps'
+import { listMembers, type MemberOut } from '@/api/workspaces'
+import { AddPeoplePicker, type Candidate } from '@/components/people/AddPeoplePicker'
+import { roleOptions } from '@/components/people/roles'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
@@ -621,12 +624,13 @@ function Settings({ m, busy, save }: { m: Manifest; busy: boolean; save: (ops: R
 
 function Maintainers({ workspace, app }: { workspace: string; app: InstalledApp }) {
   const [grants, setGrants] = useState<AppGrant[]>([])
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState('maintainer')
-  const [error, setError] = useState<string | null>(null)
+  // App roles go only to members of the workspace: pick from them, never type an address.
+  const [members, setMembers] = useState<MemberOut[] | null>(null)
   const load = useCallback(() => { listGrants(workspace, app.key).then(setGrants, () => setGrants([])) }, [workspace, app.key])
   useEffect(load, [load])
+  useEffect(() => { listMembers(workspace).then(setMembers, () => setMembers([])) }, [workspace])
   const roles = ['maintainer', ...Object.keys((app.manifest as { roles?: Record<string, unknown> } | null)?.roles ?? {})]
+  const candidates: Candidate[] = (members ?? []).map((m) => ({ user_id: m.user_id, email: m.email, display_name: m.email }))
   return (
     <Section title="Who has which role in this app">
       <p className="mb-2 text-sm text-muted-foreground">
@@ -643,17 +647,9 @@ function Maintainers({ workspace, app }: { workspace: string; app: InstalledApp 
         ))}
         {grants.length === 0 && <li className="py-1.5 text-muted-foreground">Nobody yet.</li>}
       </ul>
-      <div className="flex flex-wrap items-center gap-2">
-        <input className="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm" placeholder="person@dimagi.com or an agent's login"
-          value={email} onChange={(e) => setEmail(e.target.value)} />
-        <select className="rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-          {roles.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <button type="button" className={BTN} disabled={!email.trim()}
-          onClick={() => addGrant(workspace, app.key, email.trim(), role).then(() => { setEmail(''); setError(null); load() },
-            (e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>Give role</button>
-      </div>
-      {error && <div className="mt-2 text-sm text-destructive">{error}</div>}
+      <AddPeoplePicker candidates={candidates} loading={members === null} options={roleOptions(roles)} defaultRole="maintainer"
+        onAdd={(email, role) => addGrant(workspace, app.key, email, role).then(load)} />
+      <p className="mt-1 text-xs text-muted-foreground">Only members of this workspace are listed. Add someone to the workspace first to give them a role here.</p>
     </Section>
   )
 }
