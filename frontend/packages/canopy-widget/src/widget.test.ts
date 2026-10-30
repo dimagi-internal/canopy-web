@@ -234,6 +234,24 @@ describe('the credential path', () => {
     expect(allow).toEqual(['publickey-credentials-get', 'clipboard-write'])
   })
 
+  it('passes a shorter permission window from the host page URL to the frame', () => {
+    window.history.replaceState({}, '', '/?canopy_debug_window=30')
+    const { iframe } = widgetHarness()
+    window.history.replaceState({}, '', '/')
+    expect(iframe.src).toContain('&debug_window=30')
+  })
+
+  it.each(['soon', '-5', '30;x'])('ignores a debug window of %s', (value) => {
+    window.history.replaceState({}, '', `/?canopy_debug_window=${encodeURIComponent(value)}`)
+    const { iframe } = widgetHarness()
+    window.history.replaceState({}, '', '/')
+    expect(iframe.src).not.toContain('debug_window')
+  })
+
+  it('asks for no debug window by default', () => {
+    expect(widgetHarness().iframe.src).not.toContain('debug_window')
+  })
+
   it('never puts the token in the iframe URL', async () => {
     const { iframe, fromFrame } = widgetHarness()
     await fromFrame({ source: SOURCE, type: 'ready' })

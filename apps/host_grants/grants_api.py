@@ -47,6 +47,13 @@ from apps.tokens.models import HostGrant
 
 from . import host_grants
 
+
+class ConfirmIn(PasskeyAssertIn):
+    """The passkey assertion, and optionally a SHORTER window than the usual 30 minutes
+    (`host_grants.window_for`): for testing what a page does when its permission ends."""
+
+    window_seconds: int | None = None
+
 me_router = Router(auth=session_auth, tags=["host grants"])
 embed_grant_router = Router(auth=session_auth, tags=["host grants"])
 
@@ -193,12 +200,12 @@ def begin_confirm_host_grant(request: HttpRequest) -> PasskeyOptionsOut:
 @embed_grant_router.post("/host-grant/confirm/finish", response=PanelGrantOut,
                          summary="Confirm this page's act-as-you permission with my passkey")
 @gate("self", setting=True)
-def finish_confirm_host_grant(request: HttpRequest, payload: PasskeyAssertIn) -> PanelGrantOut:
+def finish_confirm_host_grant(request: HttpRequest, payload: ConfirmIn) -> PanelGrantOut:
     """Verify the passkey assertion and confirm the permission: from now, for 30
     minutes, the agent may act as you on this page."""
     stepup.require_a_person(request, "confirming an act-as-you permission")
     grant = _waiting_grant(request)
-    _confirm(request, grant, payload.credential)
+    _confirm(request, grant, payload.credential, payload.window_seconds)
     return PanelGrantOut(grant=_out(grant))
 
 
@@ -213,7 +220,7 @@ def _begin_confirm(request: HttpRequest, grant) -> PasskeyOptionsOut:
     return PasskeyOptionsOut(options=options)
 
 
-def _confirm(request: HttpRequest, grant, credential: dict) -> None:
+def _confirm(request: HttpRequest, grant, credential: dict, window_seconds: int | None = None) -> None:
     """Verify the assertion begun for `grant` and confirm it — the one confirm both
     the panel and the browser page run."""
     try:
@@ -222,7 +229,7 @@ def _confirm(request: HttpRequest, grant, credential: dict) -> None:
         raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION,
                            detail=str(exc)) from exc
     if grant.confirmed_at is None:
-        host_grants.confirm(grant)
+        host_grants.confirm(grant, window_seconds=window_seconds)
         audit.note_change(scope="host_grant",
                           before={"site": grant.app.name, "scope": grant.scope, "confirmed": False},
                           after={"site": grant.app.name, "scope": grant.scope, "confirmed": True,
@@ -284,9 +291,9 @@ def begin_confirm_my_host_grant(request: HttpRequest, grant_id: int) -> PasskeyO
                 summary="Confirm a page's act-as-you permission with my passkey, in my browser")
 @gate("self", setting=True)
 def finish_confirm_my_host_grant(request: HttpRequest, grant_id: int,
-                                 payload: PasskeyAssertIn) -> HostGrantOut:
+                                 payload: ConfirmIn) -> HostGrantOut:
     """Verify the passkey assertion and confirm the permission: from now, for 30
     minutes, the agent may act as you on that page. The page's panel sees it at once."""
     grant = _my_waiting_grant(request, grant_id)
-    _confirm(request, grant, payload.credential)
+    _confirm(request, grant, payload.credential, payload.window_seconds)
     return _out(grant)

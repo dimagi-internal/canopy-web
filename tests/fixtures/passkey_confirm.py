@@ -27,14 +27,15 @@ def begin(raw_token: str):
     return panel(raw_token).post("/api/embed/host-grant/confirm/begin", content_type="application/json")
 
 
-def finish(raw_token: str, credential: dict):
+def finish(raw_token: str, credential: dict, window_seconds: int | None = None):
+    body = {"credential": credential, **({"window_seconds": window_seconds} if window_seconds is not None else {})}
     return panel(raw_token).post("/api/embed/host-grant/confirm/finish",
-                                 data=json.dumps({"credential": credential}),
+                                 data=json.dumps(body),
                                  content_type="application/json")
 
 
-def confirm(raw_token: str, auth: SoftAuthenticator):
+def confirm(raw_token: str, auth: SoftAuthenticator, window_seconds: int | None = None):
     """The whole ceremony: begin, sign the challenge, finish. Returns finish's response."""
     started = begin(raw_token)
     assert started.status_code == 200, started.content
-    return finish(raw_token, auth.get(started.json()["options"]))
+    return finish(raw_token, auth.get(started.json()["options"]), window_seconds)

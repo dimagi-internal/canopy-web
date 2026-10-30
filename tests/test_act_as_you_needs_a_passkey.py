@@ -164,6 +164,35 @@ def test_a_passkey_assertion_confirms_the_grant_for_thirty_minutes_at_most(w):
     assert SettingChange.objects.filter(operation__icontains="finish_confirm_host_grant").exists()
 
 
+@pytest.mark.parametrize("asked,expected", [(30, 30), (1, host_grants.MIN_WINDOW_SECONDS), (0, host_grants.MIN_WINDOW_SECONDS)])
+def test_a_person_can_ask_for_a_shorter_window_to_test_its_end(w, asked, expected):
+    grant = sg.grant(w, confirmed_at=None, expires_at=timezone.now() + timedelta(hours=2))
+    auth = passkey_confirm.give_passkey(w["visitor"])
+    r = passkey_confirm.confirm(_panel_token(w, grant), auth, window_seconds=asked)
+    assert r.status_code == 200, r.content
+    grant.refresh_from_db()
+    assert grant.expires_at == grant.confirmed_at + timedelta(seconds=expected)
+
+
+@pytest.mark.parametrize("asked", [host_grants.CONFIRM_SECONDS, host_grants.CONFIRM_SECONDS * 4])
+def test_asking_for_a_longer_window_widens_nothing(w, asked):
+    grant = sg.grant(w, confirmed_at=None, expires_at=timezone.now() + timedelta(hours=5))
+    auth = passkey_confirm.give_passkey(w["visitor"])
+    passkey_confirm.confirm(_panel_token(w, grant), auth, window_seconds=asked)
+    grant.refresh_from_db()
+    assert grant.window_seconds is None
+    assert grant.expires_at == grant.confirmed_at + timedelta(seconds=host_grants.CONFIRM_SECONDS)
+
+
+def test_a_remint_keeps_the_short_window_it_inherits(w, redeemable):
+    now = timezone.now()
+    touched = now - timedelta(seconds=10)
+    sg.grant(w, confirmed_at=touched, window_seconds=30, expires_at=now + timedelta(minutes=10))
+    again = redeemable(w)
+    assert again.window_seconds == 30
+    assert again.expires_at == touched + timedelta(seconds=30)
+
+
 def test_confirming_never_outlives_the_hosts_own_token(w):
     end = timezone.now() + timedelta(minutes=5)
     grant = sg.grant(w, confirmed_at=None, expires_at=end)

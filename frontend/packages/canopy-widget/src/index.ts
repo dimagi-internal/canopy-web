@@ -62,6 +62,18 @@ export type { ActionSpec, PanelSession } from './protocol'
 export type { ThemeMode, WidgetTheme } from './theme'
 
 /** `window.localStorage`, or null where reaching for it throws. */
+/** `?canopy_debug_window=30` on the HOST page asks the panel for a 30-second permission
+ *  window instead of 30 minutes (the server only ever shortens it), so what happens when
+ *  it ends can be tested on any page, in production, without a deploy. Digits only. */
+function debugWindowParam(): string {
+  try {
+    const raw = new URLSearchParams(window.location.search).get('canopy_debug_window')
+    return raw && /^\d{1,6}$/.test(raw) ? `&debug_window=${raw}` : ''
+  } catch {
+    return ''
+  }
+}
+
 function safeLocalStorage(): Pick<Storage, 'getItem' | 'setItem'> | null {
   try {
     const store = globalThis.localStorage
@@ -271,7 +283,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     `${base}/embed/chat?app=${encodeURIComponent(options.app)}` +
     // A site name is unique only within a canopy tenant; the agent says whose.
     (options.agent ? `&agent=${encodeURIComponent(options.agent)}` : '') +
-    (theme.mode ? `&theme=${theme.mode}` : '')
+    (theme.mode ? `&theme=${theme.mode}` : '') +
+    debugWindowParam()
 
   let provider: ContextProvider | null = null
   // Replayed on init: a frame that mounts after the page declared its view must

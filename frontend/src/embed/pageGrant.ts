@@ -27,6 +27,17 @@ import type { CanopyClient } from 'canopy-client'
 import { credentialToJSON, toRequestOptions } from '../auth/webauthn'
 
 /** One live grant as canopy describes it (`HostGrantOut`). */
+/** A SHORTER window than the usual 30 minutes, asked for in the frame's own URL
+ *  (`debug_window=30`, which the widget copies from the host page's
+ *  `?canopy_debug_window=30`): for testing what a page does when its permission ends,
+ *  without waiting for it. The server only ever shortens (`host_grants.window_for`). */
+export function debugWindowSeconds(search: string = typeof location === 'undefined' ? '' : location.search): number | null {
+  const raw = new URLSearchParams(search).get('debug_window')
+  if (!raw || !/^\d{1,6}$/.test(raw)) return null
+  const n = Number(raw)
+  return n > 0 ? n : null
+}
+
 export interface PageGrantInfo {
   id: number
   site: string
@@ -153,7 +164,10 @@ export function createPageGrant(opts: {
       if (!credential) throw new Error('No passkey was used')
       const res = await rest.json<{ grant: PageGrantInfo | null }>(`${path}/confirm/finish`, {
         method: 'POST',
-        body: JSON.stringify({ credential: credentialToJSON(credential) }),
+        body: JSON.stringify({
+          credential: credentialToJSON(credential),
+          ...(debugWindowSeconds() ? { window_seconds: debugWindowSeconds() } : {}),
+        }),
       })
       current = res?.grant ?? null
       notify()

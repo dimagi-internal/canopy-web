@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createPageGrant, isNoGrant } from './pageGrant'
+import { createPageGrant, debugWindowSeconds, isNoGrant } from './pageGrant'
 
 const GRANT = { id: 1, site: 's', agent: '', agent_name: '', scope: 'x:read',
                 granted_at: '2026-10-26T15:00:00Z', expires_at: '2026-10-26T15:30:00Z',
@@ -97,5 +97,15 @@ describe('the panel act-as-you permission', () => {
   it('recognises a View refused for want of a grant', () => {
     expect(isNoGrant({ detail: 'no_grant: connect-labs has not…' })).toBe(true)
     expect(isNoGrant(new Error('not_allowed: no'))).toBe(false)
+  })
+})
+
+describe('asking for a shorter permission window (debug_window)', () => {
+  it('reads digits from the frame URL only', () => {
+    expect(debugWindowSeconds('?app=x&debug_window=30')).toBe(30)
+    expect(debugWindowSeconds('?debug_window=0')).toBeNull()
+    expect(debugWindowSeconds('?debug_window=soon')).toBeNull()
+    expect(debugWindowSeconds('?debug_window=-5')).toBeNull()
+    expect(debugWindowSeconds('?app=x')).toBeNull()
   })
 })
