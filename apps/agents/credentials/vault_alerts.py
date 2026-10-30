@@ -224,6 +224,9 @@ def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=Non
 
     now = timezone.now()
     context = request_context(request, turn_id) if request is not None else {}
+    software = runner_software(runner)
+    if software:
+        context["software"] = software
     with transaction.atomic():
         # Serialise per agent so two concurrent reads cannot both open an alert.
         Agent.objects.select_for_update().filter(pk=agent.pk).first()
@@ -287,6 +290,33 @@ def request_context(request, turn_id: str = "") -> dict:
     except Exception:  # noqa: BLE001 — context is an addition to the alert, never its failure
         logger.exception("vault alert context failed")
     return out
+
+
+def runner_software(runner) -> dict:
+    """What `runner` was running when the alert fired, and what canopy-web expected it
+    to run — so a stale box is visible in the alert itself (Jonathan, 2026-10-30, after
+    cloud-ec2-live kept refusing on 45-hour-old code: "make sure messages like this
+    include the canopy versions in case that's the source of the issue").
+    `{"reported": {name: version}, "expected": {name: version}, "stale": [names]}`;
+    {} with no runner. Best-effort, never raises."""
+    if runner is None:
+        return {}
+    from apps.harness import runner_refresh  # noqa: PLC0415 — agents→harness only here
+
+    out: dict = {}
+    try:
+        reported = runner_refresh.versions(runner)
+        expected = {"runner code": runner.expected_code_sha()[:12],
+                    "canopy": runner.expected_canopy_version()}
+        expected = {k: v for k, v in expected.items() if v}
+        stale = []
+        sha, want = runner.code_sha or "", runner.expected_code_sha()
+        if sha and want and sha != want:
+            stale.append("runner code")
+        out = {"reported": reported, "expected": expected, "stale": stale}
+    except Exception:  # noqa: BLE001 — an addition to the alert, never its failure
+        logger.exception("vault alert runner software failed")
+    return out if (out.get("reported") or out.get("expected")) else {}
 
 
 def turn_summary(turn_id: str) -> dict:
@@ -357,6 +387,18 @@ def context_lines(context: dict) -> list[str]:
         lines.append(f"Client: {client}")
     if context.get("claude_session"):
         lines.append(f"Claude session: {context['claude_session']}")
+    software = context.get("software") or {}
+    if software.get("reported"):
+        lines.append("Software on the box: " + ", ".join(
+            f"{k} {v}" for k, v in software["reported"].items()))
+    if software.get("expected"):
+        lines.append("Canopy expects: " + ", ".join(
+            f"{k} {v}" for k, v in software["expected"].items()))
+    if software.get("stale"):
+        lines.append("The box is NOT on the code Canopy expects ("
+                     + ", ".join(software["stale"])
+                     + "), so an old version may be the cause: check its update on the "
+                       "runner page.")
     return lines
 
 

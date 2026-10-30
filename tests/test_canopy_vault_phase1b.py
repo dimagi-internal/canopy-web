@@ -409,6 +409,33 @@ def test_a_refusal_on_a_runners_own_token_says_the_runner_asked_not_its_owner(fl
     assert "#cred-alerts" in msg.body and "#cred-device-keys" in msg.body
 
 
+def test_an_alert_names_the_boxs_software_and_says_when_it_is_stale(fleet, settings):
+    """A box on old code is the likeliest cause of a refusal, so the alert carries what
+    the box runs and what Canopy expects (Jonathan, 2026-10-30, cloud-ec2-live)."""
+    from apps.agents.credentials import vault_alerts
+
+    box = fleet["runner"]
+    box.code_version, box.code_sha = "0.9.1", "b30ccc1" + "0" * 33
+    box.save(update_fields=["code_version", "code_sha"])
+    settings.RUNNER_CLOUD_CODE_SHA = settings.RUNNER_CODE_SHA = "12b4818" + "0" * 33
+    alert = vault_alerts.raise_alert(fleet["agent"], "device-proof", detail="refused", runner=box)
+    sw = alert.context["software"]
+    assert sw["reported"]["runner code"] == "0.9.1 (b30ccc100000)"
+    assert sw["expected"]["runner code"] == "12b481800000" and sw["stale"] == ["runner code"]
+    body = mail.outbox[0].body
+    assert "Software on the box: runner code 0.9.1 (b30ccc100000)" in body
+    assert "Canopy expects: runner code 12b481800000" in body
+    assert "NOT on the code Canopy expects" in body
+
+    # Current box: versions shown, no stale line.
+    AgentCredentialAlert.objects.all().delete()
+    box.code_sha = settings.RUNNER_CODE_SHA
+    box.save(update_fields=["code_sha"])
+    alert = vault_alerts.raise_alert(fleet["agent"], "burst", detail="burst", runner=box)
+    assert alert.context["software"]["stale"] == []
+    assert "NOT on the code" not in mail.outbox[-1].body
+
+
 def test_a_debounced_repeat_keeps_who_asked(fleet, sts):
     first, second = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
     _resolve_described(fleet, first)
