@@ -123,10 +123,38 @@ def reach_facts(turn) -> tuple[dict, str]:
         state = AdmissionRule.OFFLINE
     else:
         state = reach.kind
-    detail = ("; ".join(claim.runner_situation(r) for r in reach.runners) + "."
-              if state in (AdmissionRule.PAUSED, AdmissionRule.OFFLINE) else "")
     waited = (timezone.now() - turn.created_at).total_seconds() / 3600
+    detail = ""
+    if state in (AdmissionRule.PAUSED, AdmissionRule.OFFLINE):
+        detail = "; ".join(claim.runner_situation(r) for r in reach.runners) + "."
+        if why := why_only_these(turn, reach.runners):
+            detail += f" {why}"
+        if waited >= 1:
+            detail += f" The turn waited {waited:.0f}h, since {turn.created_at.astimezone(dt.UTC):%b %-d %H:%M UTC}."
     return {"reach": state, "waited_hours": waited}, detail
+
+
+def why_only_these(turn, runners) -> str:
+    """Why the runners that could take this turn are not the agent's runner
+    order, when they are not: a reply in a conversation can only go to the box
+    its session lives on, and a pinned turn only to its pin. Without this the
+    notice names a laptop the owner never routed the agent to, and he is left
+    asking why the cloud was not tried."""
+    from apps.harness.models import Turn
+
+    turn = Turn.objects.select_related(
+        "pinned_runner", "chat_session__runner_binding__runner").get(pk=turn.pk)
+    names = {r.pk for r in runners}
+    binding = getattr(turn.chat_session, "runner_binding", None) if turn.chat_session_id else None
+    if binding is not None and binding.runner_id in names:
+        box = binding.runner.name
+        return (f"Only {box} could take it: this continues a conversation whose session lives "
+                f"on {box}, and a conversation's next message goes to the box that holds it, "
+                "whatever the agent's runner order says.")
+    if turn.pinned_runner_id in names:
+        box = turn.pinned_runner.name
+        return f"Only {box} could take it: the turn was pinned to {box} when it was sent."
+    return ""
 
 
 def decide(turn, agent, known: dict, rules: list[AdmissionRule] | None = None) -> AdmissionRule | None:

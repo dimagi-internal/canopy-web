@@ -174,3 +174,42 @@ def test_a_reach_rule_cannot_be_an_allow_or_narrowed_by_the_claiming_runner(flee
         with pytest.raises(ValidationError):
             AdmissionRule(workspace=fleet["ws"], reach=AdmissionRule.PAUSED, reason="x",
                           **bad).save()
+
+
+def test_a_reply_stuck_behind_the_box_its_conversation_lives_on_says_so(
+        fleet, django_capture_on_commit_callbacks):
+    """A Slack reply to ACE was rejected naming only a laptop, while ACE's runner
+    order was the cloud; the owner asked "should this have tried on the cloud
+    first?" (2026-10-30). The notice now says the conversation is bound there."""
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    box = fleet["box"]
+    cloud = enrolled(Runner.objects.create(
+        name="cloud-ec2-live", kind=Runner.CLOUD, owner=fleet["jj"], status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), capabilities=CAPS))
+    RunnerAssignment.objects.filter(agent=fleet["hal"]).delete()
+    RunnerAssignment.objects.create(agent=fleet["hal"], runner=cloud, rank=0)
+    box.last_heartbeat_at = timezone.now() - dt.timedelta(hours=72)
+    box.save(update_fields=["last_heartbeat_at"])
+    sess = Session.objects.create(agent=fleet["hal"], workspace=fleet["ws"], title="slack thread")
+    RunnerBinding.objects.create(session=sess, runner=box, session_key="k")
+    turn, _ = services.enqueue_turn(session=sess, origin=Turn.ORIGIN_API, prompt="hi",
+                                    idempotency_key="bound-1",
+                                    initiator=_initiator.system(via="test"))
+    Turn.objects.filter(pk=turn.pk).update(created_at=timezone.now() - dt.timedelta(hours=25))
+    turn.refresh_from_db()
+
+    _, detail = evaluate.reach_facts(turn)
+    assert "haldimagi-mbp-cdp has not been heard from since" in detail
+    assert "this continues a conversation whose session lives on haldimagi-mbp-cdp" in detail
+    assert "cloud-ec2-live" not in detail
+    assert "The turn waited 25h, since" in detail
+
+
+def test_an_unbound_turn_gets_no_binding_sentence(fleet):
+    box = fleet["box"]
+    box.last_heartbeat_at = timezone.now() - dt.timedelta(hours=30)
+    box.save(update_fields=["last_heartbeat_at"])
+    turn = _ask(fleet["hal"], key="unbound-1")
+    _, detail = evaluate.reach_facts(turn)
+    assert "has not been heard from since" in detail and "Only " not in detail
