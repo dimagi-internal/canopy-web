@@ -5722,6 +5722,90 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/credentials/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove one named secret */
+        readonly delete: operations["delete_agent_credential"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/{name}/reads": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who read this credential's value, from which box and turn
+         * @description The read log (canopy-web#1538), newest first. Never the value. The
+         *     agent's owner or an admin — the same people who may set the value.
+         */
+        readonly get: operations["agent_credential_reads"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/device-keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Runner device keys that could prove themselves for this agent
+         * @description Every device key on a runner this agent routes to or its owner owns —
+         *     the keys that may read its secrets once active. `can_manage`
+         *     says whether the caller may approve each (the runner's owner or an admin of
+         *     it; on a private runner, its owner alone).
+         */
+        readonly get: operations["agent_device_keys"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credential-alerts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read-anomaly alerts on this agent's secrets
+         * @description Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
+         *     someone not the owner or an admin, reads of undeclared refs, bursts, and
+         *     resolves refused for a bad or missing device proof. At most one per kind
+         *     per hour (`occurrences` counts the rest). The agent's owner or an admin.
+         */
+        readonly get: operations["agent_credential_alerts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/vault/zk": {
         readonly parameters: {
             readonly query?: never;
@@ -6168,90 +6252,6 @@ export interface paths {
          *     (`checked_by`), and this returns what they last found.
          */
         readonly post: operations["check_agent_github"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/credentials/{name}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        /** Remove one named secret */
-        readonly delete: operations["delete_agent_credential"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/credentials/{name}/reads": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Who read this credential's value, from which box and turn
-         * @description The read log (canopy-web#1538), newest first. Never the value. The
-         *     agent's owner or an admin — the same people who may set the value.
-         */
-        readonly get: operations["agent_credential_reads"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/device-keys": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Runner device keys that could prove themselves for this agent
-         * @description Every device key on a runner this agent routes to or its owner owns —
-         *     the keys that may read its secrets once active. `can_manage`
-         *     says whether the caller may approve each (the runner's owner or an admin of
-         *     it; on a private runner, its owner alone).
-         */
-        readonly get: operations["agent_device_keys"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/credential-alerts": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Read-anomaly alerts on this agent's secrets
-         * @description Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
-         *     someone not the owner or an admin, reads of undeclared refs, bursts, and
-         *     resolves refused for a bad or missing device proof. At most one per kind
-         *     per hour (`occurrences` counts the rest). The agent's owner or an admin.
-         */
-        readonly get: operations["agent_credential_alerts"];
-        readonly put?: never;
-        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -28070,6 +28070,262 @@ export interface components {
             readonly device_key: string;
         };
         /**
+         * AgentCredentialReadOut
+         * @description One read of a credential's value — who, which box, which turn, when.
+         */
+        readonly AgentCredentialReadOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * User Email
+             * @default
+             */
+            readonly user_email: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Via
+             * @default
+             */
+            readonly via: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * DeviceKeyAgentOut
+         * @description An agent a device key can open right now, for people to read.
+         */
+        readonly DeviceKeyAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * DeviceKeyVouchOut
+         * @description An agent whose vault the caller is a member of but does not manage, that
+         *     their own machine waits on: they sign for the machine (an endorsement) and a
+         *     keeper hands it the vault key (spec 2026-10-22 vault-access-follows-canopy-access §1).
+         */
+        readonly DeviceKeyVouchOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Agent Id */
+            readonly agent_id: string;
+        };
+        /**
+         * RunnerDeviceKeyOut
+         * @description A device key and its state. Public material only — there is no secret.
+         */
+        readonly RunnerDeviceKeyOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /**
+             * Runner Host
+             * @default
+             */
+            readonly runner_host: string;
+            /**
+             * Runner Kind
+             * @default
+             */
+            readonly runner_kind: string;
+            /** Jkt */
+            readonly jkt: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "secure-enclave" | "tpm" | "software" | "aws-iam";
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Role Arn
+             * @default
+             */
+            readonly role_arn: string;
+            /**
+             * Ecdh Jkt
+             * @default
+             */
+            readonly ecdh_jkt: string;
+            /**
+             * Ecdh Public Jwk
+             * @default {}
+             */
+            readonly ecdh_public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Reapproval
+             * @default false
+             */
+            readonly reapproval: boolean;
+            /**
+             * Ecdh Waiting
+             * @default false
+             */
+            readonly ecdh_waiting: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "active" | "revoked";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /**
+             * Approved By Email
+             * @default
+             */
+            readonly approved_by_email: string;
+            /** Revoked At */
+            readonly revoked_at?: string | null;
+            /** Last Used At */
+            readonly last_used_at?: string | null;
+            /**
+             * Can Manage
+             * @default false
+             */
+            readonly can_manage: boolean;
+            /**
+             * Zk Pending Agents
+             * @default []
+             */
+            readonly zk_pending_agents: readonly string[];
+            /**
+             * Zk Vouch Agents
+             * @default []
+             */
+            readonly zk_vouch_agents: readonly components["schemas"]["DeviceKeyVouchOut"][];
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+            /**
+             * Can Open
+             * @default []
+             */
+            readonly can_open: readonly components["schemas"]["DeviceKeyAgentOut"][];
+        };
+        /**
+         * AgentCredentialAlertOut
+         * @description A read of the agent's secrets that looked wrong (canopy-web#1549). At
+         *     most one per kind per hour; `occurrences` counts repeats inside it.
+         */
+        readonly AgentCredentialAlertOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "no-turn" | "no-turn-check" | "undeclared-ref" | "burst" | "device-proof" | "zk-wrap-missing";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Refs
+             * @default []
+             */
+            readonly refs: readonly string[];
+            /**
+             * User Email
+             * @default
+             */
+            readonly user_email: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Occurrences
+             * @default 1
+             */
+            readonly occurrences: number;
+            /**
+             * Context
+             * @default {}
+             */
+            readonly context: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Repeats
+             * @default []
+             */
+            readonly repeats: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Notified
+             * @default false
+             */
+            readonly notified: boolean;
+            /**
+             * Told With
+             * @default
+             */
+            readonly told_with: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             */
+            readonly last_seen_at: string;
+        };
+        /**
          * VaultKeeperPinsOut
          * @description The keepers' shared record of whose key they trusted: a `zk1` value under the
          *     vault key at `kv`, bound to the name `~keeper-pins`. Empty `value` until a keeper
@@ -28725,262 +28981,6 @@ export interface components {
         readonly AgentGitHubIn: {
             /** Token */
             readonly token: string;
-        };
-        /**
-         * AgentCredentialReadOut
-         * @description One read of a credential's value — who, which box, which turn, when.
-         */
-        readonly AgentCredentialReadOut: {
-            /** Name */
-            readonly name: string;
-            /**
-             * User Email
-             * @default
-             */
-            readonly user_email: string;
-            /**
-             * Runner
-             * @default
-             */
-            readonly runner: string;
-            /**
-             * Runner Name
-             * @default
-             */
-            readonly runner_name: string;
-            /**
-             * Via
-             * @default
-             */
-            readonly via: string;
-            /**
-             * Turn Id
-             * @default
-             */
-            readonly turn_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /**
-         * DeviceKeyAgentOut
-         * @description An agent a device key can open right now, for people to read.
-         */
-        readonly DeviceKeyAgentOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-        };
-        /**
-         * DeviceKeyVouchOut
-         * @description An agent whose vault the caller is a member of but does not manage, that
-         *     their own machine waits on: they sign for the machine (an endorsement) and a
-         *     keeper hands it the vault key (spec 2026-10-22 vault-access-follows-canopy-access §1).
-         */
-        readonly DeviceKeyVouchOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Agent Id */
-            readonly agent_id: string;
-        };
-        /**
-         * RunnerDeviceKeyOut
-         * @description A device key and its state. Public material only — there is no secret.
-         */
-        readonly RunnerDeviceKeyOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /**
-             * Runner
-             * Format: uuid
-             */
-            readonly runner: string;
-            /** Runner Name */
-            readonly runner_name: string;
-            /**
-             * Runner Host
-             * @default
-             */
-            readonly runner_host: string;
-            /**
-             * Runner Kind
-             * @default
-             */
-            readonly runner_kind: string;
-            /** Jkt */
-            readonly jkt: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "secure-enclave" | "tpm" | "software" | "aws-iam";
-            /**
-             * Label
-             * @default
-             */
-            readonly label: string;
-            /**
-             * Role Arn
-             * @default
-             */
-            readonly role_arn: string;
-            /**
-             * Ecdh Jkt
-             * @default
-             */
-            readonly ecdh_jkt: string;
-            /**
-             * Ecdh Public Jwk
-             * @default {}
-             */
-            readonly ecdh_public_jwk: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Reapproval
-             * @default false
-             */
-            readonly reapproval: boolean;
-            /**
-             * Ecdh Waiting
-             * @default false
-             */
-            readonly ecdh_waiting: boolean;
-            /**
-             * Status
-             * @enum {string}
-             */
-            readonly status: "pending" | "active" | "revoked";
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /** Approved At */
-            readonly approved_at?: string | null;
-            /**
-             * Approved By Email
-             * @default
-             */
-            readonly approved_by_email: string;
-            /** Revoked At */
-            readonly revoked_at?: string | null;
-            /** Last Used At */
-            readonly last_used_at?: string | null;
-            /**
-             * Can Manage
-             * @default false
-             */
-            readonly can_manage: boolean;
-            /**
-             * Zk Pending Agents
-             * @default []
-             */
-            readonly zk_pending_agents: readonly string[];
-            /**
-             * Zk Vouch Agents
-             * @default []
-             */
-            readonly zk_vouch_agents: readonly components["schemas"]["DeviceKeyVouchOut"][];
-            /**
-             * Ecdh Store
-             * @default
-             */
-            readonly ecdh_store: string;
-            /**
-             * Can Open
-             * @default []
-             */
-            readonly can_open: readonly components["schemas"]["DeviceKeyAgentOut"][];
-        };
-        /**
-         * AgentCredentialAlertOut
-         * @description A read of the agent's secrets that looked wrong (canopy-web#1549). At
-         *     most one per kind per hour; `occurrences` counts repeats inside it.
-         */
-        readonly AgentCredentialAlertOut: {
-            /** Id */
-            readonly id: number;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "no-turn" | "no-turn-check" | "undeclared-ref" | "burst" | "device-proof" | "zk-wrap-missing";
-            /**
-             * Detail
-             * @default
-             */
-            readonly detail: string;
-            /**
-             * Refs
-             * @default []
-             */
-            readonly refs: readonly string[];
-            /**
-             * User Email
-             * @default
-             */
-            readonly user_email: string;
-            /**
-             * Runner
-             * @default
-             */
-            readonly runner: string;
-            /**
-             * Runner Name
-             * @default
-             */
-            readonly runner_name: string;
-            /**
-             * Turn Id
-             * @default
-             */
-            readonly turn_id: string;
-            /**
-             * Occurrences
-             * @default 1
-             */
-            readonly occurrences: number;
-            /**
-             * Context
-             * @default {}
-             */
-            readonly context: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Repeats
-             * @default []
-             */
-            readonly repeats: readonly {
-                readonly [key: string]: unknown;
-            }[];
-            /**
-             * Notified
-             * @default false
-             */
-            readonly notified: boolean;
-            /**
-             * Told With
-             * @default
-             */
-            readonly told_with: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Last Seen At
-             * Format: date-time
-             */
-            readonly last_seen_at: string;
         };
         /** PatRotationEventOut */
         readonly PatRotationEventOut: {
@@ -52543,6 +52543,100 @@ export interface operations {
             };
         };
     };
+    readonly delete_agent_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_credential_reads: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialReadOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_device_keys: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDeviceKeyOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_credential_alerts: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialAlertOut"][];
+                };
+            };
+        };
+    };
     readonly get_agent_zk_state: {
         readonly parameters: {
             readonly query?: {
@@ -53100,100 +53194,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
-                };
-            };
-        };
-    };
-    readonly delete_agent_credential: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly name: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
-                };
-            };
-        };
-    };
-    readonly agent_credential_reads: {
-        readonly parameters: {
-            readonly query?: {
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly name: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["AgentCredentialReadOut"][];
-                };
-            };
-        };
-    };
-    readonly agent_device_keys: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["RunnerDeviceKeyOut"][];
-                };
-            };
-        };
-    };
-    readonly agent_credential_alerts: {
-        readonly parameters: {
-            readonly query?: {
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["AgentCredentialAlertOut"][];
                 };
             };
         };

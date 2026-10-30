@@ -3,8 +3,10 @@ workspace. This module holds the agent itself (create, read, move, delete, its
 identity, admins, licenses and settings) and its syncs and turns; the rest of
 the surface is split by subdomain into the `api_*.py` modules beside it:
 `api_routing` (which runners do its work), `api_skills`, `api_board` (projects,
-tasks, the action queue), `api_credentials` (secrets, vault, zero-knowledge,
-GitHub, PAT rotation) and `api_readiness`.
+tasks, the action queue), `api_credentials` (an agent's secrets and their resolve),
+`api_vault_zk`, `api_vault_members`, `api_secret_requests`, `api_sender_trust`, `api_github`
+and `api_pat_rotation` (the rest of its vault and identity; who may write the vault is
+`vault_gates`) and `api_readiness`.
 
 The turn routes stay HERE, on `turns_router`: `list_turns` shares its name with
 a harness view, so its operationId (= MCP tool name) is qualified by this
