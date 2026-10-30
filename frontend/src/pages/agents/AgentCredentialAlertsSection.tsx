@@ -7,11 +7,11 @@ import { relativeAge } from '@/lib/relativeAge'
 
 export const ALERT_LABEL: Record<AgentCredentialAlertOut['kind'], string> = {
   'no-turn': 'Read outside a turn',
-  'no-turn-check': 'Verification check outside a turn',
-  'undeclared-ref': 'Undeclared ref',
-  burst: 'Burst of reads',
-  'device-proof': 'Device proof refused',
-  'zk-wrap-missing': 'Device not granted the vault key',
+  'no-turn-check': 'Check run outside a turn',
+  'undeclared-ref': 'Asked for a secret it does not declare',
+  burst: 'Many reads at once',
+  'device-proof': 'A machine could not prove who it is',
+  'zk-wrap-missing': 'A machine is not approved for this vault yet',
 }
 
 export function AgentCredentialAlertsSection({ alerts }: { alerts: AgentCredentialAlertOut[] | null }) {

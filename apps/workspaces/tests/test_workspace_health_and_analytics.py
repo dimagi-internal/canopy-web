@@ -67,7 +67,7 @@ def test_vault_health_classifies_each_declared_secret(tree):
     vh = vault_health(tree["hal"])
     assert {r["name"]: r["status"] for r in vh["refs"]} == {
         "gh": "stored", "base-url": "literal", "old": "missing"}
-    assert vh["state"] == "moving"
+    assert vh["state"] == "missing"
     assert vh["missing"] == ["old"]
 
 
@@ -80,7 +80,7 @@ def test_the_vault_step_names_the_secrets_not_yet_stored(tree):
     AgentCredential.objects.create(agent=tree["hal"], name="old")
     step = next(s for s in setup_steps(tree["hal"]) if s["key"] == "vault")
     assert step["status"] == "done"
-    assert vault_health(tree["hal"])["state"] == "canopy-web"
+    assert vault_health(tree["hal"])["state"] == "complete"
 
 
 # ---- health -------------------------------------------------------------------
@@ -95,11 +95,11 @@ def test_owner_sees_every_agent_in_the_tree_with_its_checklist(tree):
     assert set(rows) == {"eva", "hal"}
     # The rows ARE the checklist: same keys, same order, same statuses.
     assert [s["key"] for s in rows["hal"]["steps"]] == [s["key"] for s in setup_steps(tree["hal"])]
-    assert rows["hal"]["vault"]["state"] == "moving"
+    assert rows["hal"]["vault"]["state"] == "missing"
     assert rows["hal"]["owner_email"] == "b@dimagi.com"
     # The CEO is a workspace owner, so an admin of every agent below.
     assert rows["hal"]["can_fix"] is True
-    assert body["totals"]["agents"] == 2 and body["totals"]["vault_moving"] == 1
+    assert body["totals"]["agents"] == 2 and body["totals"]["vault_missing"] == 1
 
 
 def test_health_reads_the_fleet_once_however_many_runners_hold_device_keys(tree):
@@ -145,7 +145,7 @@ def test_the_page_reads_the_table_first_and_each_checklist_after_as_one_read_has
     body = _get(tree["ceo"], "/api/workspaces/dimagi/health?setup=false").json()
     assert {a["slug"]: (a["steps"], a["vault"], a["left"]) for a in body["agents"]} == {
         "eva": (None, None, None), "hal": (None, None, None)}
-    assert body["totals"]["agents"] == 2 and body["totals"]["vault_moving"] is None
+    assert body["totals"]["agents"] == 2 and body["totals"]["vault_missing"] is None
     assert body["agents"][0]["can_fix"] is True
 
     r = _get(tree["ceo"], "/api/workspaces/dimagi/health/setup?agents=hal,eva")

@@ -186,7 +186,7 @@ export function DeviceKeysTable({
                     disabled={busy !== null}
                     className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
                   >
-                    Give access
+                    Confirm access
                   </button>
                 )}
                 {k.can_manage && (k.status === 'pending' || k.ecdh_waiting) && (

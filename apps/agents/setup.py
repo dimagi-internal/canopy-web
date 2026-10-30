@@ -12,9 +12,7 @@ the real check would be the "screen says fine, turn fails" bug this exists to pr
 
 `where` says which tool does it: "web" steps are a link to the control that does it;
 "claude-code" steps are judgment work — a persona, the first real skill — that happens in a
-session in the agent's repo, so the step carries the prompt that starts one; "terminal"
-steps need a person's own access that canopy-web does not hold, so the step carries the
-one command that does it.
+session in the agent's repo, so the step carries the prompt that starts one.
 """
 from __future__ import annotations
 
@@ -154,17 +152,8 @@ def _first_reason(detail: str, limit: int = 160) -> str:
     return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 
-def _vault(agent: Agent, settings: str, vh: dict | None = None, facts=None) -> dict:
-    """Where its secrets live — read from THE vault verdict (`vault_health`), so this
-    step and the workspace health dashboard cannot disagree. An agent resolving from
-    the canopy-web vault is judged by that vault (every declared secret stored, every
-    machine let in). `vh`: its `vault_health`, when the caller has read it already."""
-
-    return _canopy_vault(agent, settings, vh or vault_health(agent, facts), facts)
-
-
 def _canopy_login(agent: Agent, settings: str) -> dict | None:
-    """Its own canopy login (`canopy-pat`) — one click on its Credentials page makes it,
+    """Its own canopy login (`CANOPY_WEB_PAT`) — one click on its Security tab makes it,
     stores it sealed and turns on renewal."""
     has = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists()
     return _step(
@@ -176,8 +165,13 @@ def _canopy_login(agent: Agent, settings: str) -> dict | None:
         href=f"{settings}#canopy-login", action="See its login" if has else "Give it its canopy login")
 
 
-def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
+def _vault(agent: Agent, settings: str, vh: dict | None = None, facts=None) -> dict:
+    """Where its secrets live — read from THE vault verdict (`vault_health`), so this
+    step and the workspace health dashboard cannot disagree: every declared secret has
+    a value, and every machine that runs it can open them. `vh`: its `vault_health`,
+    when the caller has read it already."""
 
+    vh = vh or vault_health(agent, facts)
     title = "Give it a vault"
     if agent.zk_enabled:
 

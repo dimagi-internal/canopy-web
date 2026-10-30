@@ -48,7 +48,7 @@ def test_an_op_only_declaration_is_missing_not_an_error(fleet):
     agent = Agent.objects.get(slug="ace")
     assert vh.classify(agent, stored=set()) == {"old": "missing"}
     health = vh.vault_health(agent)
-    assert health["state"] == "moving" and health["missing"] == ["old"]
+    assert health["state"] == "missing" and health["missing"] == ["old"]
     assert "in_1password" not in health and "source" not in health
 
 

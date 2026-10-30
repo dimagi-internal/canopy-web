@@ -26,16 +26,15 @@ import { scopedPath } from '../../lib/scopedLinks'
 
 type AgentVault = AgentSetupHealthOut['vault']
 
-type Filter = 'all' | 'done' | 'used' | 'setup' | 'vault' | AgentVault['state']
+type Filter = 'all' | 'done' | 'used' | 'setup' | AgentVault['state']
 
 const FILTER_LABEL: Partial<Record<Filter, string>> = {
-  all: 'All', setup: 'Steps left', vault: 'Not on canopy-web vault',
+  all: 'All', setup: 'Steps left', missing: 'Secrets missing',
 }
 
 const VAULT_LABEL: Record<AgentVault['state'], { text: string; className: string }> = {
-  'canopy-web': { text: 'canopy-web', className: 'border-success/30 bg-success/10 text-success' },
-  moving: { text: 'Moving', className: 'border-warning/30 bg-warning/10 text-warning' },
-  none: { text: 'No secrets', className: 'border-border bg-card text-muted-foreground' },
+  complete: { text: 'All set', className: 'border-success/30 bg-success/10 text-success' },
+  missing: { text: 'Secrets missing', className: 'border-warning/30 bg-warning/10 text-warning' },
 }
 
 export function WorkspaceHealthPage(): JSX.Element {
@@ -68,9 +67,8 @@ export function withSetup(health: WorkspaceHealthOut, setup: Record<string, Agen
       ...health.totals,
       set_up: read.filter((a) => !a.left).length,
       needs_setup: read.filter((a) => a.left).length,
-      vault_canopy_web: vault('canopy-web'),
-      vault_moving: vault('moving'),
-      vault_none: vault('none'),
+      vault_complete: vault('complete'),
+      vault_missing: vault('missing'),
     },
   }
 }
@@ -101,9 +99,8 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
         <Tile label="Used, 30 days" value={t.used_30d} hint="a turn, chat or message" onClick={show('used')} />
         <Tile label="Fully set up" value={t.set_up} onClick={show('done')} />
         <Tile label="With steps left" value={t.needs_setup} onClick={show('setup')} />
-        <Tile label="On canopy-web vault" value={t.vault_canopy_web} onClick={show('canopy-web')} />
-        <Tile label="Moving" value={t.vault_moving} hint="some secrets elsewhere" onClick={show('moving')} />
-        <Tile label="No secrets" value={t.vault_none} onClick={show('none')} />
+        <Tile label="Secrets all set" value={t.vault_complete} onClick={show('complete')} />
+        <Tile label="Secrets missing" value={t.vault_missing} hint="a declared secret has no value" onClick={show('missing')} />
         <Tile label="Runners online" value={t.runners_online} hint={`of ${t.runners}`}
               onClick={() => document.getElementById('health-runners')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })} />
       </section>
@@ -131,7 +128,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
       <section aria-label="Agents" id="health-agents" className="scroll-mt-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h2 className="mr-2 text-[13px] font-semibold text-foreground">Agents</h2>
-          {(['all', 'setup', 'vault'] as const).map((f) => (
+          {(['all', 'setup', 'missing'] as const).map((f) => (
             <button key={f} type="button" onClick={() => setFilter(f)}
                     className={clsx('min-h-8 rounded-md border px-2.5 text-[12px]',
                       filter === f ? 'border-foreground/30 bg-muted text-foreground' : 'border-border text-muted-foreground hover:text-foreground')}>
@@ -278,7 +275,6 @@ function matches(a: AgentHealthOut, f: Filter): boolean {
   // A row whose checklist is not in yet matches no filter that reads it.
   if (f === 'done') return a.left === 0
   if (f === 'setup') return (a.left ?? 0) > 0
-  if (f === 'vault') return a.vault?.state === 'moving'
   return a.vault?.state === f
 }
 
@@ -339,7 +335,7 @@ function VaultBadge({ vault: v }: { vault: AgentVault }): JSX.Element {
   return (
     <span className="inline-flex items-center gap-1">
       <span className={clsx('rounded border px-1.5 py-0.5 text-[11px]', label.className)}>{label.text}</span>
-      {v.state === 'moving' && <span className="text-muted-foreground">{extra} to move</span>}
+      {v.state === 'missing' && <span className="text-muted-foreground">{extra} to add</span>}
       {v.machines_waiting.length > 0 && <span className="text-muted-foreground">{v.machines_waiting.length} machine waiting</span>}
     </span>
   )

@@ -6197,7 +6197,7 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
             env[AGENT_REPO_ENV] = str(body["repo"])
         return env
     _log(f"turn {turn_id[:8]}: no GitHub identity (HTTP {status}) — pushes and pull requests "
-         f"will fail; the agent's owner lends one at the agent's Settings → Credentials → GitHub")
+         f"will fail; the agent's owner lends one at the agent's Settings → External accounts → GitHub")
     return {"CANOPY_REQUESTED_BY": requested_by}
 
 

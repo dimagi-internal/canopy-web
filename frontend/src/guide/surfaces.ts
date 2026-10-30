@@ -343,7 +343,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/secrets',
     title: 'Secrets',
     audience: 'Workspace owner',
-    what: "Where this workspace's secrets live, stated whole. Workspace vaults: any number of zero-knowledge vaults this workspace shares with its agents, each read under an agent's own secrets, with its own members (the owners manage it; everyone with full access to an agent it serves can use it) and why each is one. An agent's own vault is on that agent, under Settings → Credentials, and a box's own login is on the runner.",
+    what: "Where this workspace's secrets live, stated whole. Workspace vaults: any number of zero-knowledge vaults this workspace shares with its agents, each read under an agent's own secrets, with its own members (the owners manage it; everyone with full access to an agent it serves can use it) and why each is one. An agent's own vault is on that agent, under Settings → Security, and a box's own login is on the runner.",
     actions: ['Make a workspace vault', 'Choose which agents or workspaces a vault serves', 'Add or remove a person from a vault', "Jump to an agent's own vault"],
   },
   {

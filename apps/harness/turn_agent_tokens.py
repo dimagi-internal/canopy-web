@@ -71,7 +71,7 @@ def refusal(turn: Turn) -> str:
         return "this turn runs as no agent"
     user = agent.user
     if user is None:
-        return f"{agent.slug} has no canopy login of its own (Settings → Credentials)"
+        return f"{agent.slug} has no canopy login of its own (Settings → Security → Canopy login)"
     if not user.is_active:
         return f"{agent.slug}'s canopy login is deactivated"
     return ""

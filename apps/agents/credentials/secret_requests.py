@@ -114,7 +114,7 @@ def create(agent, *, name: str, reason: str, user):
         raise RequestError(409, "contact_chat",
                            f"this chat is with a contact, who can't be asked for {agent.slug}'s secrets. "
                            f"Don't ask for {name} in the conversation; tell them it isn't set up yet, "
-                           f"and ask {owner} to store it from {agent.slug}'s Credentials page")
+                           f"and ask {owner} to store it from {agent.slug}'s Security tab")
     now = timezone.now()
     existing = (AgentSecretRequest.objects
                 .filter(agent=agent, name=name, session=session, status=AgentSecretRequest.OPEN,

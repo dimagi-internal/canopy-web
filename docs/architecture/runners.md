@@ -825,7 +825,7 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
 (`apps/agents/credentials/accounts.py`, `delegations.py`; spec
 `2026-10-26-delegated-credentials-in-the-vault-design.md`).
 
-- The owner or an admin pastes a fine-grained PAT on the agent's Settings → Credentials →
+- The owner or an admin pastes a fine-grained PAT on the agent's Settings → External accounts →
   GitHub (canopy pre-fills GitHub's creation form, `delegations.create_url`; GitHub has
   no API to mint one). Its repository selection IS the agent's scope. It is refused
   unless it can push and open a pull request on the agent's repo (`check_repo`: probes

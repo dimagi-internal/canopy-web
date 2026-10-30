@@ -49,7 +49,7 @@ export function WorkspaceSecretsPage(): JSX.Element {
         <p className="mt-1 max-w-2xl text-[12px] text-muted-foreground">
           An agent&rsquo;s own secrets — its canopy token, its mailbox token, anything only it uses —
           live in its own vault, so what one agent holds reaches no other. Set those on each agent,
-          under Settings → Credentials.
+          under Settings → Security.
         </p>
         {withVault.length === 0 ? (
           <p className="mt-2 text-[12px] text-muted-foreground">No agents in this workspace yet.</p>

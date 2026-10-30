@@ -46,7 +46,7 @@ export function AgentMailboxControl({ slug, workspace, canEdit }: {
   const status = (() => {
     if (box.kind === 'none') return <span className="text-muted-foreground">No address.</span>
     if (box.kind === 'google') {
-      return <span className="text-muted-foreground">Google mailbox — connect it under <a className="text-primary hover:underline" href="#credentials">Credentials</a>.</span>
+      return <span className="text-muted-foreground">Google mailbox — connect it under <a className="text-primary hover:underline" href="#cred-mailbox">External accounts</a>.</span>
     }
     if (box.live) return <span className="text-success" data-testid="mailbox-hosted-live">Canopy-hosted ✓ — nothing to sign in; mail to it is this agent&rsquo;s turn.</span>
     const why = box.route === 'taken' ? 'that address already goes somewhere else'

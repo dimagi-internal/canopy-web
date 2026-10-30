@@ -76,9 +76,6 @@ export function VaultPage(): JSX.Element {
     >
       <VaultView
         facts={{
-          where: 'Canopy vault',
-          encrypted: true,
-          keyVersion: vault.kv,
           secrets: vault.secrets.length,
           people: vault.members.length,
           machines: runners,

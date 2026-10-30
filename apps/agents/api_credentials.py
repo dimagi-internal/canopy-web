@@ -544,7 +544,7 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
     except secret_requests.RequestError as exc:
         raise _secret_request_problem(exc) from exc
     where = ("in this chat" if req.session_id else
-             f"on {agent.slug}'s Credentials page (this call was not made from one of its chats)")
+             f"on {agent.slug}'s Security tab (this call was not made from one of its chats)")
     return _secret_request_out(req, message=(
         f"Asked for {req.name}: a card to enter it is shown {where}. Its value is sealed in the "
         "person's browser and never reaches you or canopy. Do not ask for it in the conversation."))
@@ -555,7 +555,7 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
 @gate("agent-admin")  # names and reasons, never a value
 def list_agent_secret_requests(request: HttpRequest, slug: str) -> list[SecretRequestOut]:
     """The requests still waiting for an answer, newest first — what the agent's
-    Credentials page shows its admins, including a request made outside any of
+    Security tab shows its admins, including a request made outside any of
     its chats (`session_id` null), which no chat card carries."""
 
     agent = agent_for_admin(request, slug)

@@ -402,8 +402,8 @@ _WHY = {
                       "proof: if nobody was checking, treat it as a read outside a turn — "
                       "pause the box and revoke its token."),
     "undeclared-ref": ("Canopy watches for this because an agent should only ask for the "
-                       "secrets declared in its vault on Canopy. If the agent needs it, store it in the agent's "
-                       "vault (`canopy agent vault`), which declares it. If the agent "
+                       "secrets declared in its vault on Canopy. If the agent needs it, add it to the agent's "
+                       "vault (Settings → Security), which declares it. If the agent "
                        "should never use it, find out who asked."),
     "burst": ("Canopy watches for this because a normal turn reads an agent's secrets a "
               "few times, not dozens; a burst can mean a loop or someone harvesting them. "

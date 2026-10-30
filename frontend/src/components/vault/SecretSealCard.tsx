@@ -303,7 +303,7 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
               </button>
             </>
           ) : (
-            <div className="text-muted-foreground">Ask {slug}&apos;s owner to open its Credentials page once to confirm them.</div>
+            <div className="text-muted-foreground">Ask {slug}&apos;s owner to open its Security tab once to confirm them.</div>
           )}
           {verdict.sealTo.length > 0 && (
             <button type="button" onClick={() => void seal(verdict)}

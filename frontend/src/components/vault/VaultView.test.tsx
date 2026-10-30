@@ -8,7 +8,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import { VaultView, type VaultFacts } from './VaultView'
 
-const FACTS: VaultFacts = { where: 'Canopy vault', encrypted: true, secrets: 7, people: 3, machines: 2 }
+const FACTS: VaultFacts = { secrets: 7, people: 3, machines: 2 }
 const part = (name: string, over: Record<string, unknown> = {}) => ({ summary: `${name} summary`, body: <p>{name} body</p>, ...over })
 
 function view(facts = FACTS, over: Partial<Parameters<typeof VaultView>[0]> = {}, at = '/') {
@@ -25,7 +25,7 @@ describe('VaultView', () => {
   it('opens with one line saying what is in the vault and who can open it', () => {
     view()
     expect(screen.getByTestId('vault-summary').textContent)
-      .toBe('Canopy vault · encrypted, canopy-web can’t read it · 7 secrets · 3 people · 2 machines')
+      .toBe('Canopy vault · canopy-web can’t read it · 7 secrets · 3 people · 2 machines')
   })
 
   it('says what needs the reader, in the summary', () => {

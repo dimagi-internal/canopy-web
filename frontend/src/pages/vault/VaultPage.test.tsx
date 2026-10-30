@@ -48,7 +48,7 @@ describe('workspace vault page', () => {
   it('opens on a summary of what is in the vault and who can open it', async () => {
     show()
     expect((await screen.findByTestId('vault-summary')).textContent)
-      .toBe('Canopy vault · encrypted, canopy-web can’t read it · 2 secrets · 2 people · 1 machine')
+      .toBe('Canopy vault · canopy-web can’t read it · 2 secrets · 2 people · 1 machine')
     expect(screen.getByTestId('vault-section-secrets-summary').textContent).toBe('2 stored')
     expect(screen.getByTestId('vault-section-access-to-secrets-summary').textContent).toBe('2 people · 1 machine')
   })
