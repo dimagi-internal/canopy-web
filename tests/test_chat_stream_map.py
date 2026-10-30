@@ -108,6 +108,16 @@ def test_a_user_event_becomes_a_client_frame():
     assert frames[0]["data"]["turn_index"] == 64
 
 
+def test_a_web_send_echo_carries_its_client_id():
+    """The sender's browser knows its own line by this nonce; without it the
+    echo could only be matched on recent identical words (2026-10-30)."""
+    frames = turn_event_to_frames(
+        {"kind": "user", "seq": 5, "payload": {"text": "hi", "client_id": "c-1"}}, _rid)
+    assert frames[0]["data"]["client_id"] == "c-1"
+    plain = turn_event_to_frames({"kind": "user", "seq": 6, "payload": {"text": "typed in emdash"}}, _rid)
+    assert "client_id" not in plain[0]["data"]
+
+
 def test_a_user_event_carries_its_record_provenance():
     """A compaction summary is a `user` record nobody typed; its flags ride the
     live frame, as they ride a history row's `content["record"]`, so the client

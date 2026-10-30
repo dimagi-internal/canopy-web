@@ -1482,6 +1482,11 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
     # sent an unmarked line without waiting for a reload (stream_map's
     # kind=="user" branch reads this when its own marker-parse finds none).
     authors_by_index: dict[int, dict] = {}
+    # …and the send's nonce the row stored, so the sender's browser can know its
+    # own line by id rather than by guessing from its words (`chat.user_message`
+    # in canopy-ui's sessionReducer). A reload already had it; only the live
+    # frame did not, which is what left a send "Sending…" under its own reply.
+    client_ids_by_index: dict[int, str] = {}
     if chat_services.transcript_sourced(session):
         # BEFORE any write: if these ordinals index a different transcript than the
         # rows already held, the two would interleave (or the new one be silently
@@ -1533,13 +1538,14 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
             for e in events if e.index >= 0 and e.kind == "user"
         ]
         if user_indices:
-            authors_by_index = {
-                turn_index - index_offset: author
-                for turn_index, author in Message.objects.filter(
-                    session=session, turn_index__in=user_indices,
-                ).values_list("turn_index", "author")
-                if author
-            }
+            for turn_index, author, content in Message.objects.filter(
+                session=session, turn_index__in=user_indices,
+            ).values_list("turn_index", "author", "content"):
+                if author:
+                    authors_by_index[turn_index - index_offset] = author
+                client_id = (content or {}).get("client_id")
+                if isinstance(client_id, str) and client_id:
+                    client_ids_by_index[turn_index - index_offset] = client_id
     if not live:
         # Persisted above, but nobody is watching, so there is nothing to push.
         # The runner now tails EVERY session it backs so the durable record stops
@@ -1592,6 +1598,9 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
             author = authors_by_index.get(e.index)
             if author:
                 event_payload = {**(e.payload or {}), "author": author}
+            client_id = client_ids_by_index.get(e.index)
+            if client_id:
+                event_payload = {**(event_payload or {}), "client_id": client_id}
         groups.publish(sgroup, {
             "type": "chat.turn_event",
             "event": {"kind": e.kind, "seq": e.seq, "payload": event_payload},

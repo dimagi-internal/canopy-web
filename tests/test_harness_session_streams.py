@@ -188,6 +188,33 @@ def test_user_events_are_fanned_out_live(monkeypatch):
     assert [m["event"]["kind"] for m in published] == ["user"]
 
 
+def test_a_web_sends_live_echo_carries_its_client_id(monkeypatch):
+    """The row persist matched to the send stores the send's nonce; the live
+    frame carries it too, so the sender's browser confirms its own line by id
+    instead of by guessing from recent words (2026-10-30: a send left
+    "Sending…" under its own reply)."""
+    from django.utils import timezone
+
+    from apps.canopy_sessions import send as session_send
+    from apps.canopy_sessions import services as chat
+
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a",
+                               metadata={chat.TRANSCRIPT_SOURCED: True})
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1",
+                                 stream_desired=True)
+    _m, turn = session_send.send_message(session=s, text="ship it", user=user, client_id="c-42")
+    turn.claimed_at = timezone.now()
+    turn.save(update_fields=["claimed_at"])
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    _post_stream(c, runner, s, [
+        {"kind": "user", "seq": 70, "index": 70, "payload": {"text": "ship it"}},
+    ])
+    [frame] = [m for m in published if m["event"]["kind"] == "user"]
+    assert frame["event"]["payload"]["client_id"] == "c-42"
+
+
 def test_harness_markers_are_not_pushed_live_either(monkeypatch):
     """The noise filter used to live only on the durable path. Once user events
     started fanning out, a marker would appear live and then VANISH on reload —
