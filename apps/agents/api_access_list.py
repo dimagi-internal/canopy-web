@@ -29,6 +29,7 @@ from .schemas import (
     AccessLinePatch,
     AccessListOut,
     AccessRoleOut,
+    AgentDefaultsOut,
 )
 
 router = Router(tags=["agents"])
@@ -196,14 +197,16 @@ def _workspace_or_404(request: HttpRequest, slug: str) -> Workspace:
     return ws
 
 
-@defaults_router.get("/{slug}/agent-defaults", response=list[AccessLineOut],
+@defaults_router.get("/{slug}/agent-defaults", response=AgentDefaultsOut,
                      summary="The default access-list lines every agent in this workspace and below inherits")
 @gate("member")
-def list_agent_defaults(request: HttpRequest, slug: str) -> list[AccessLineOut]:
+def list_agent_defaults(request: HttpRequest, slug: str) -> AgentDefaultsOut:
     ws = _workspace_or_404(request, slug)
     manage = perms.can(request.user, ws, perms.MEMBERS_MANAGE)
-    return [_out(ln, can_edit=manage) for ln in
-            AgentGrant.objects.filter(workspace=ws).select_related("user", "granted_by")]
+    return AgentDefaultsOut(
+        lines=[_out(ln, can_edit=manage) for ln in
+               AgentGrant.objects.filter(workspace=ws).select_related("user", "granted_by")],
+        roles=_roles_out(), can_edit=manage, can_give_editor=perms.can(request.user, ws, perms.OWN))
 
 
 def _require_default_rights(request: HttpRequest, ws: Workspace, role: str) -> None:

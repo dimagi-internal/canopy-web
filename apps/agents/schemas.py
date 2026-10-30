@@ -707,6 +707,9 @@ class AgentAccessRowOut(StrictModel):
     # readers that have not moved.
     role: Literal["owner", "admin", "editor", "user", "viewer"] | None = None
     source: str = ""
+    # What put them there, in words ("Everyone in dimagi", "Anyone at @dimagi.com (verified)",
+    # "Owns the workspace"); "" when it is just the role the workspace gives an editor.
+    via: str = ""
 
 
 class AgentOutsiderRuleOut(StrictModel):
@@ -3585,3 +3588,12 @@ class AccessListOut(StrictModel):
 
 class AccessInheritIn(StrictModel):
     inherit: bool
+
+
+class AgentDefaultsOut(StrictModel):
+    """A workspace's default lines, the roles they can give, and what the caller may do."""
+
+    lines: list[AccessLineOut]
+    roles: list[AccessRoleOut]
+    can_edit: bool = False          # a workspace admin
+    can_give_editor: bool = False   # the workspace owner: a default that lets people run every agent
