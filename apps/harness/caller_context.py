@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from apps.agents.credentials import authority
 from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
@@ -641,15 +642,11 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
 
 def _authority(turn, agent) -> dict | None:
     """Whose identity this session acts under, and the one way to cross to the person's."""
-    from apps.agents.credentials import authority
-
-    from .turn_mode import for_turn
-
     if agent is None:
         return None
     placement = authority.DIRECT if turn.origin == Turn.ORIGIN_LOCAL else authority.RUNNER
-    resolved = for_turn(turn)
-    oversight = resolved.mode if resolved is not None else None
+    resolved = _turn_mode(turn)
+    oversight = resolved["mode"] if resolved is not None else None
     person = turn.initiator_user if turn.initiator_kind == who.USER else None
     asked = None
     if person is not None:
