@@ -15,6 +15,7 @@ import {
 import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { AccessLineForm } from './AccessLineForm'
+import { AccessMove } from './AccessMove'
 import { ADDABLE_ROLES, ADDRESS_ONLY_KINDS, ascending, canText, roleWord } from './accessWords'
 import { AgentAccessPeople } from './AgentAccessPeople'
 import { AgentAdmins } from './AgentAdmins'
@@ -100,10 +101,7 @@ export function AgentAccessList({
       </dl>
 
       {!data.uses_access_list && (
-        <p className="m-0 text-[12px] text-muted-foreground">
-          {agentName} has not moved onto this list yet: the rules it published before (see Doors) still let people in
-          too. A line here adds to them.
-        </p>
+        <AccessMove agentSlug={agentSlug} agentName={agentName} canEdit={data.can_edit} onMoved={load} />
       )}
 
       <div>

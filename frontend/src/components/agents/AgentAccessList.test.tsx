@@ -231,5 +231,6 @@ describe('AgentAccessList', () => {
     getAccessList.mockResolvedValue(LIST({ uses_access_list: false }))
     show()
     expect((await screen.findByText(/has not moved onto this list yet/)).textContent).toContain('see Doors')
+    expect(screen.getByRole('button', { name: 'See what moving would do' })).toBeTruthy()
   })
 })
