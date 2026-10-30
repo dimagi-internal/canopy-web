@@ -58,6 +58,11 @@ class Agent(models.Model):
     #: is its parsed, validated form — the one everything enforces.
     interface_source = models.TextField(blank=True, default="")
     interface_published_at = models.DateTimeField(null=True, blank=True)
+    #: Does this agent also take the access-list lines set on its workspace (and the
+    #: workspaces above it)? On by default: that is how a workspace-wide or Dimagi-wide
+    #: agent gets its audience from one place. An agent holding credentials people should
+    #: be named for (Hal, Eva) turns it off and lists its own. See `apps/agents/grants.py`.
+    inherit_workspace_defaults = models.BooleanField(default=True)
     interface_published_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
@@ -324,6 +329,88 @@ class AgentAdmin(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.user_id} admin of {self.agent_id}"
+
+
+class AgentGrant(models.Model):
+    """One line of an access list: `(who, role)`. See `apps/agents/grants.py`.
+
+    A line sits on ONE agent, or on a workspace (`agent` null) where every agent in that
+    workspace and below inherits it unless the agent opts out
+    (`Agent.inherit_workspace_defaults`). `who` is a person, everyone in a workspace
+    (optionally at least some workspace role there), or anyone whose address is at a
+    domain. The highest role among a person's matching lines wins.
+    """
+
+    PERSON, WORKSPACE, DOMAIN = "person", "workspace", "domain"
+    KIND_CHOICES = [(PERSON, "A person"), (WORKSPACE, "Everyone in a workspace"),
+                    (DOMAIN, "Anyone at an email domain")]
+
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.CASCADE,
+                              related_name="grants")
+    workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
+                                  on_delete=models.CASCADE, related_name="agent_default_grants",
+                                  help_text="Set instead of `agent`: a default for every agent here and below.")
+    kind = models.CharField(max_length=12, choices=KIND_CHOICES)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                             on_delete=models.CASCADE, related_name="+")
+    #: `kind=workspace`: the workspace whose people this names, and the lowest role there
+    #: that counts ("" = any member).
+    subject_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
+                                          on_delete=models.CASCADE, related_name="+")
+    at_least = models.CharField(max_length=12, blank=True, default="")
+    #: `kind=domain`: the exact domain ("" = any address), and whether THIS message must
+    #: prove the sender's address (mail that is DMARC-aligned or DKIM-signed by its own
+    #: From: domain; a signed-in request always does).
+    domain = models.CharField(max_length=253, blank=True, default="")
+    verified = models.BooleanField(default=True)
+    role = models.CharField(max_length=12)
+    #: Every turn this line lets someone start runs `manual`: an admin approves what goes
+    #: out. The editor lines migrated from "a workspace editor is an editor" keep it, so
+    #: dropping the gate is one visible edit per agent.
+    manual_only = models.BooleanField(default=False)
+    #: What the line is for, in the words of whoever added it.
+    note = models.CharField(max_length=300, blank=True, default="")
+    #: `kind + the subject`, e.g. `person:12`, `workspace:connect:editor`, `domain:dimagi.com`.
+    #: Computed on save; makes "one line per subject per scope" a plain unique constraint.
+    subject_key = models.CharField(max_length=300, editable=False)
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+",
+                                   help_text="Null for a line seeded by migration.")
+    granted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["granted_at", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(agent__isnull=False, workspace__isnull=True)
+                           | models.Q(agent__isnull=True, workspace__isnull=False)),
+                name="agent_grant_one_scope"),
+            models.UniqueConstraint(fields=["agent", "subject_key"],
+                                    condition=models.Q(agent__isnull=False),
+                                    name="uniq_agent_grant_subject"),
+            models.UniqueConstraint(fields=["workspace", "subject_key"],
+                                    condition=models.Q(workspace__isnull=False),
+                                    name="uniq_workspace_grant_subject"),
+        ]
+
+    @staticmethod
+    def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="") -> str:
+        if kind == AgentGrant.PERSON:
+            return f"person:{user_id}"
+        if kind == AgentGrant.WORKSPACE:
+            return f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}"
+        return f"domain:{(domain or '').lower()}"
+
+    def save(self, *args, **kwargs):
+        self.subject_key = self.key_of(
+            self.kind, user_id=self.user_id, subject_workspace=self.subject_workspace_id,
+            at_least=self.at_least, domain=self.domain)
+        if self.domain:
+            self.domain = self.domain.lower()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.subject_key} -> {self.role} on {self.agent_id or self.workspace_id}"
 
 
 class AgentLicense(models.Model):

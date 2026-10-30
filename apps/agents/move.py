@@ -70,6 +70,7 @@ from .agent_login import follow_agent
 from .models import (
     Agent,
     AgentAdmin,
+    AgentGrant,
     AgentProject,
     AgentSkill,
     AgentTask,
@@ -385,6 +386,23 @@ def _people(p: Plan, apply: bool) -> None:
         p.breaks("person_grants",
                  f"{grants} active person grant(s) to {p.agent.slug} reach '{p.source.slug}' "
                  f"and stop applying; each person grants again in '{p.dest.slug}'")
+
+
+@register
+def _access_list(p: Plan, apply: bool) -> None:
+    """The agent's access list. Its own lines are keyed by the agent, so they go with it
+    unchanged — but what they NAME does not: a line for "everyone in <source>" names
+    people in the old home, and the defaults it inherits are the new workspace's."""
+
+    own = AgentGrant.objects.filter(agent=p.agent)
+    p.moves("agents.AgentGrant", own.count(),
+            "the agent's own access-list lines stay on the agent; the workspace defaults it "
+            "inherits are the destination's from now on")
+    naming_source = own.filter(kind=AgentGrant.WORKSPACE, subject_workspace=p.source).count()
+    if naming_source:
+        p.breaks("access_list",
+                 f"{naming_source} access-list line(s) name everyone in '{p.source.slug}', which is no "
+                 f"longer the agent's home; review them on the agent's access list")
 
 
 @register

@@ -302,3 +302,20 @@ def test_every_agent_scoped_table_with_its_own_workspace_is_in_the_move(m):
                      if agent_scoped(model) and model._meta.label not in reported
                      and model._meta.label not in _NOT_THE_AGENTS)
     assert not missing, f"agent-scoped tables the move does not handle: {missing}"
+
+
+def test_the_access_list_stays_on_the_agent_and_a_line_naming_the_old_home_is_flagged(m):
+    from apps.agents import move
+    from apps.agents.models import AgentGrant
+
+    AgentGrant.objects.create(agent=m.agent, kind=AgentGrant.PERSON, user=m.editor, role="user")
+    AgentGrant.objects.create(agent=m.agent, kind=AgentGrant.WORKSPACE, subject_workspace=m.src,
+                              role="viewer")
+    stayer = Agent.objects.get(slug="stayer")
+    AgentGrant.objects.create(agent=stayer, kind=AgentGrant.PERSON, user=m.editor, role="user")
+
+    p = move.plan(m.agent, m.dst, by=m.owner)
+
+    assert p.counts["agents.AgentGrant"] == 2          # the other agent's line is not this move's
+    assert [b["kind"] for b in p.stops_working if b["kind"] == "access_list"] == ["access_list"]
+    assert "1 access-list line" in next(b["detail"] for b in p.stops_working if b["kind"] == "access_list")
