@@ -17,11 +17,14 @@ agent files when a person's yes is what lets it act.
 
 `cards.build(task)` renders the one card every channel shows — the ask, the person's own words
 (`human_why`, verbatim), the agent's reason, the exact plan, **what approving starts** (the
-`on_approve` turns, or the card's own turn), **what declining does**, links, who it was sent to and,
+`on_approve` turns, or the card's own turn), **what declining does**, links, who it was sent to and how (`Jonathan Jackson (push, slack)`) and,
 once decided, who decided it, through which door and what they said. Nothing is invented.
 
-An agent files a card by filing the task: `create_task` (or `propose_task`) with `status:
-suggested`, `human_why`, `plan`, `rationale` and `on_approve`. Nothing else to call.
+An agent files a card by filing the task **on its own route** — `create_tasks` (`POST
+/api/agents/{slug}/tasks/`, a list) — with `status: suggested`, `human_why`, `plan`, `rationale`
+and `on_approve`. (The workspace route `POST /api/tasks/` refuses `on_approve`: that is the agent's
+own work to declare.) To send it to one named person rather than the default recipients, set
+`waiting_on_email`. Nothing else to call; delivery follows the save.
 
 ## Who gets it (`deciders.for_task`)
 

@@ -118,6 +118,9 @@ def test_push_and_slack_reach_a_person_who_has_both_and_email_does_not(world, pu
     assert all(a["value"] == task.key for a in actions[:2])
     assert any("Add the membership" in str(b) for b in post["blocks"])      # the plan is IN the message
     assert not mailoutbox
+    # The card says who it reached and by which door, so "I never got it" can be answered.
+    assert _client(world["alice"]).get(f"/api/approvals/{task.key}").json()["sent_to"] == [
+        f"{world['alice'].get_full_name().strip() or world['alice'].email} (push, slack)"]
 
 
 def test_email_reaches_someone_neither_channel_does(world, pushes, mailoutbox):

@@ -27,10 +27,13 @@ LIST_MAX = 100
 
 
 def _card(task: AgentTask, viewer) -> dict:
-    sent = list(ApprovalDelivery.objects.filter(task=task).select_related("user")
-                .values_list("user__first_name", "user__last_name", "user__email").distinct())
-    names = sorted({(f"{f} {l}".strip() or e) for f, l, e in sent})
-    return cards.build(task, viewer=viewer, sent_to=names)
+    """The card, with who it reached and how (`Jonathan Jackson (slack, push)`)."""
+    by_person: dict[str, set[str]] = {}
+    for d in ApprovalDelivery.objects.filter(task=task).select_related("user"):
+        name = d.user.get_full_name().strip() or d.user.email
+        by_person.setdefault(name, set()).add(d.channel)
+    sent = [f"{name} ({', '.join(sorted(chans))})" for name, chans in sorted(by_person.items())]
+    return cards.build(task, viewer=viewer, sent_to=sent)
 
 
 @router.get("/", response=list[ApprovalCardOut], summary="The cards waiting on you")
