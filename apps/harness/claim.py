@@ -13,6 +13,7 @@ of `services.py`.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from dataclasses import dataclass
 
 from django.db import IntegrityError, transaction
@@ -31,6 +32,7 @@ from .models import (
     Runner,
     RunnerAssignment,
     Turn,
+    TurnEvent,
     WorkspaceRunnerOrder,
 )
 from .routing import (
@@ -64,6 +66,8 @@ from .routing import (
     turn_workspace_q,
 )
 from .turn_agent_tokens import revoke_stale
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LEASE_SECONDS = 900
 
@@ -728,6 +732,50 @@ def turn_workspace_slug(turn: Turn) -> str | None:
     return turn.workspace_id
 
 
+#: A runner's poll time is written at most this often: claiming is the hottest path in
+#: the system and a timestamp precise to the second is not worth a write per call.
+POLL_RECORD_EVERY_S = 15
+
+
+def _record_poll(runner: Runner) -> None:
+    """Note that `runner` asked for work just now. Never raises: observability must
+    not be able to stop a claim."""
+    try:
+        now = timezone.now()
+        last = runner.last_claim_poll_at
+        if last is None or (now - last).total_seconds() >= POLL_RECORD_EVERY_S:
+            Runner.objects.filter(pk=runner.pk).update(last_claim_poll_at=now)
+            runner.last_claim_poll_at = now
+    except Exception:  # noqa: BLE001
+        logger.exception("could not record claim poll for runner %s", runner.pk)
+
+
+#: Each distinct skip reason is said on a turn at most this often.
+SKIP_NOTE_EVERY = dt.timedelta(minutes=10)
+#: And a single claim call notes at most this many turns, so a deep queue costs a bounded amount.
+SKIP_NOTES_PER_CLAIM = 5
+
+
+def _note_skips(runner: Runner, skips: dict) -> None:
+    """Say, on each turn this box passed over, WHY — as a `waiting` event the turn's
+    own timeline shows. Throttled per (turn, box, reason). Never raises."""
+    if not skips:
+        return
+    try:
+        now = timezone.now()
+        for turn_id, why in list(skips.items())[:SKIP_NOTES_PER_CLAIM]:
+            recent = TurnEvent.objects.filter(turn_id=turn_id, kind="waiting",
+                                              ts__gte=now - SKIP_NOTE_EVERY).order_by("-seq")
+            if any((e.payload or {}).get("runner") == runner.name and (e.payload or {}).get("skipped") == why
+                   for e in recent[:20]):
+                continue
+            turn = Turn.objects.filter(pk=turn_id, status=Turn.QUEUED).first()
+            if turn is not None:
+                append_events(turn, [{"kind": "waiting", "payload": {"runner": runner.name, "skipped": why}}])
+    except Exception:  # noqa: BLE001
+        logger.exception("could not note skipped turns for runner %s", runner.pk)
+
+
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
                     exclude_slugs: list[str] | None = None, acts_as: str = "") -> Turn | None:
     """`acts_as`: the lower mode the runner claims in (role_cap) — stamped on a turn
@@ -739,6 +787,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # finished for SWEEP_STALE_S (the clock is not keeping up), so normally it is
     # one cache read and no AWS call rides the claim. It never raises.
     _capability_sweep()
+    _record_poll(runner)
     from apps.workspaces import role_cap
 
     runner_cap = role_cap.cap_from(acts_as)
@@ -909,10 +958,15 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     from apps.agents.services import runner_may_hold_agent
 
     trusted: dict[int, bool] = {}
+    # Why each candidate this box passed over was passed over, said on the turn
+    # (`_note_skips`) so "queued, no runner has claimed it" never again has to be
+    # debugged from outside (2026-10-30: five silent hours).
+    skips: dict = {}
     for turn in candidates:
         # Above the pin on purpose, like profile_q: a pin is a placement, never a
         # way past what the conversation's host requires of the box.
         if not rr.satisfies(my_flags, rr.requirements_of(turn)):
+            skips[turn.pk] = "its conversation needs runner flags this box does not have"
             continue
         # An agent turn runs AS the agent: its prompt, its caller's token, its
         # owner's GitHub identity. Only a box whose owner is one of the agent's
@@ -925,6 +979,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             if held.id not in trusted:
                 trusted[held.id] = runner_may_hold_agent(runner, held)
             if not trusted[held.id]:
+                skips[turn.pk] = (f"this box's owner is not an admin of {held.slug}, and only a box owned "
+                                  f"by one of an agent's admins may run its turns")
                 continue
         # What it serves on its machine, above the pin and the binding like the hold:
         # an agent's runner runs only turns that act as its agent (none of a repo's or an
@@ -932,26 +988,34 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # runner of the machine — a pinned or bound turn would otherwise hand it the
         # agent's secrets (`device_keys.runner_serves_agent`).
         if turn_serves_refusal(runner, turn):
+            skips[turn.pk] = "this box is dedicated to a different agent or repo"
             continue
         # The agent CLI it runs on (`clis.choose`), above the pin like the hold: a
         # pin cannot put a turn on a CLI the box lacks, or a caller's turn on one
         # that cannot confine it.
         cli = clis.choose(turn, runner, reports=reports)
         if cli is None:
+            skips[turn.pk] = ("no agent CLI on this box can run it (not signed in, or it cannot confine "
+                              "a caller's turn)")
             continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not kind_allows(runner, turn.routing):
+                skips[turn.pk] = f"its routing ({turn.routing}) does not allow a {runner.kind} runner"
                 continue
             if turn.agent_id:
                 if not assignment_allows(runner, turn, defaults, priorities, now):
+                    skips[turn.pk] = (f"this box is not in {turn.agent.slug}'s runner order for "
+                                      f"{turn.origin} turns, or a better-ranked runner is still available")
                     continue
             if is_repo_turn(turn) and not repo_order_allows(runner, turn, orders, now):
+                skips[turn.pk] = "the workspace's runner order does not offer this repo turn to this box"
                 continue
             # An unbound project chat: a box with its repo, that the workspace's
             # order shares or the chatting person administers (spec 2026-10-19).
             if is_project_session_turn(turn) and not project_session_allows(
                     runner, turn, orders, now, admins=admins):
+                skips[turn.pk] = "the workspace's runner order does not offer this project chat to this box"
                 continue
             if turn.chat_session_id:
                 sess = turn.chat_session
@@ -961,6 +1025,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     if not assignment_allows_for_agent(
                         runner, sess.agent_id, turn, defaults, priorities, now
                     ):
+                        skips[turn.pk] = (f"this box is not in {sess.agent.slug}'s runner order for "
+                                          f"{turn.origin} turns, or a better-ranked runner is still available")
                         continue
         # The mode is decided HERE, once, from the same rules that just routed
         # the turn (apps/harness/turn_mode.py), and stamped so a rule edited
@@ -1035,7 +1101,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                 **_routing_basis(turn, runner, priorities),
                 **({"rides_turn": str(rides)} if rides else {}),
             }}])
+            _note_skips(runner, skips)
             return turn
+    _note_skips(runner, skips)
     return None
 
 
