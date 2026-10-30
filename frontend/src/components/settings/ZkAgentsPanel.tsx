@@ -3,6 +3,7 @@ import { listAgents } from '@/api/agents'
 import { listRunnerDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { getZkState, type ZkStateOut } from '@/api/vault'
 import { AuthContext } from '@/auth/AuthProvider'
+import { scopedPath } from '@/lib/scopedLinks'
 import { machineShortName } from './machineText'
 
 /**
@@ -18,6 +19,7 @@ import { machineShortName } from './machineText'
 
 interface AgentRow {
   slug: string
+  workspace: string | null | undefined
   name: string
   zk: ZkStateOut
 }
@@ -69,7 +71,7 @@ async function findAgents(): Promise<AgentRow[]> {
   const agents = (await listAgents({ limit: 200 })).items
   const rows = await Promise.all(agents.map(async (a): Promise<AgentRow | null> => {
     try {
-      return { slug: a.slug, name: a.name || a.slug, zk: await getZkState(a.slug) } // refuses unless you administer it
+      return { slug: a.slug, workspace: a.workspace, name: a.name || a.slug, zk: await getZkState(a.slug) } // refuses unless you administer it
     } catch {
       return null
     }
@@ -105,7 +107,7 @@ export function ZkAgentsPanel() {
             <li key={r.slug} className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                 data-testid={`zk-agent-${r.slug}`}>
               <p className="min-w-0">
-                <a href={`/agents/${r.slug}/settings#cred-zk`} className="font-medium text-foreground hover:underline">{r.name}</a>
+                <a href={r.workspace ? scopedPath(r.workspace, `/agents/${r.slug}/settings#cred-zk`) : `/agents/${r.slug}/settings#cred-zk`} className="font-medium text-foreground hover:underline">{r.name}</a>
                 <span className="text-muted-foreground" data-testid={`zk-agent-holders-${r.slug}`}>
                   {' — can be opened by: '}{openedBy(r.zk, me, keys)}
                 </span>

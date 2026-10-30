@@ -10,7 +10,7 @@ import { relativeAge } from '@/lib/relativeAge'
  * paste (or load a file), Save. Reveal and Delete sit on the same row.
  *
  * It knows nothing about WHOSE vault it is. The page that owns the vault (an
- * agent's Secrets tab today) loads the rows and hands in the four operations;
+ * agent's Security tab today) loads the rows and hands in the four operations;
  * how a value is stored — sealed in this browser, or posted behind a passkey
  * step-up — is the caller's business, so the same table can sit on any page
  * that holds secrets.

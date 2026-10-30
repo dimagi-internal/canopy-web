@@ -17,7 +17,6 @@ export type AgentSkillOut = Schemas['AgentSkillOut']
 export type AgentTaskLink = Schemas['AgentTaskLink']
 export type TaskOut = Schemas['AgentTaskOut']
 export type TaskDetailOut = Schemas['AgentTaskDetailOut']
-export type TaskActionOut = Schemas['AgentTaskActionOut']
 export type TaskAction = Schemas['AgentTaskActionIn']['action']
 export type TaskStatus = TaskOut['status']
 export type ProjectOut = Schemas['AgentProjectOut']
@@ -244,11 +243,6 @@ export async function listMyTasks(
   return Array.from(unwrap(res, 'listMyTasks')) as TaskOut[]
 }
 
-export async function listFleetTasks(f: TaskFilters & { agent?: string } = {}): Promise<TaskOut[]> {
-  const res = await apiV2.GET('/api/tasks/', { params: { query: definedOnly(f) } })
-  return Array.from(unwrap(res, 'listFleetTasks')) as TaskOut[]
-}
-
 export async function getTask(slug: string, ref: string): Promise<TaskDetailOut> {
   const res = await apiV2.GET('/api/agents/{slug}/tasks/{ref}/', {
     params: { path: { slug, ref } },
@@ -274,18 +268,6 @@ export async function actOnTask(
   return unwrap(res, 'actOnTask') as ActResult
 }
 
-export async function patchTask(
-  slug: string,
-  ref: string,
-  body: Schemas['AgentTaskPatch'],
-): Promise<TaskOut> {
-  const res = await apiV2.PATCH('/api/agents/{slug}/tasks/{ref}/', {
-    params: { path: { slug, ref } },
-    body,
-  })
-  return unwrap(res, 'patchTask') as TaskOut
-}
-
 export async function listProjects(slug: string, status?: string): Promise<ProjectOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/projects/', {
     params: { path: { slug }, query: status ? { status } : {} },
@@ -309,20 +291,6 @@ export async function listAgentRoster(): Promise<AgentRosterRow[]> {
   return Array.from(unwrap(res, 'listAgentRoster')) as AgentRosterRow[]
 }
 
-// Every project across the agents the caller can see (one workspace on a tenant
-// page). `status` defaults to active on the server; '' asks for all.
-export async function listFleetProjects(status = ''): Promise<ProjectOut[]> {
-  const res = await apiV2.GET('/api/projects/', { params: { query: { status } } })
-  return Array.from(unwrap(res, 'listFleetProjects')) as ProjectOut[]
-}
-
-// `workspace` pins the read: the flat list 422s for someone whose workspaces
-// span more than one organisation.
-export async function listWorkspaceProjects(workspace?: string): Promise<ProjectOut[]> {
-  const res = await apiV2.GET('/api/workspace-projects/', { params: { query: {} }, ...pin(workspace) })
-  return Array.from(unwrap(res, 'listWorkspaceProjects')) as ProjectOut[]
-}
-
 export type McpServerOut = Schemas['McpServerOut']
 
 /** The MCP servers a person could add: workspace projects serving their own tools, in
@@ -330,22 +298,6 @@ export type McpServerOut = Schemas['McpServerOut']
 export async function listMcpServers(workspace: string): Promise<McpServerOut[]> {
   const res = await apiV2.GET('/api/mcp-servers/', pin(workspace))
   return Array.from(unwrap(res, 'listMcpServers')) as McpServerOut[]
-}
-
-/** One workspace project by its address, `<workspace>/<handle>`. */
-export async function getWorkspaceProject(workspace: string, handle: string): Promise<ProjectDetailOut> {
-  const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/', {
-    params: { path: { workspace, handle } },
-  })
-  return unwrap(res, 'getWorkspaceProject') as ProjectDetailOut
-}
-
-/** A project's ideas (people's wants, not its tasks) and its contributors. */
-export async function getProjectIdeas(slug: string, ref: string): Promise<ProjectIdeasOut> {
-  const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/contributors/', {
-    params: { path: { slug, ref } },
-  })
-  return unwrap(res, 'getProjectIdeas') as ProjectIdeasOut
 }
 
 /** A project as a teammate sees it: what it is, where it stands, its ideas and people. */
@@ -377,14 +329,6 @@ export async function getContributorPage(
   return unwrap(res, 'getContributorPage') as ContributorPageOut
 }
 
-/** Delete a contributor's page (the person, the agent's admins, or its writer). */
-export async function deleteContributorPage(slug: string, ref: string, person: string): Promise<void> {
-  const res = await apiV2.DELETE('/api/agents/{slug}/projects/{ref}/contributors/{person}/summary/', {
-    params: { path: { slug, ref, person } },
-  })
-  if (res.error !== undefined) unwrap(res, 'deleteContributorPage')
-}
-
 export async function createProject(
   slug: string,
   body: { name: string; outcome: string },
@@ -408,33 +352,6 @@ export async function createProject(
     },
   })
   return unwrap(res, 'createProject') as ProjectOut
-}
-
-export async function patchProject(
-  slug: string,
-  ref: string,
-  body: Schemas['AgentProjectPatch'],
-): Promise<ProjectOut> {
-  const res = await apiV2.PATCH('/api/agents/{slug}/projects/{ref}/', {
-    params: { path: { slug, ref } },
-    body,
-  })
-  return unwrap(res, 'patchProject') as ProjectOut
-}
-
-/** At most `limit` rows (server default 200). Unfiltered, the server puts the
- *  pending rows first, so a short page is "the whole queue + recent history". */
-export async function listTaskActions(
-  slug: string,
-  opts: { status?: 'pending' | 'applied'; limit?: number } = {},
-): Promise<TaskActionOut[]> {
-  const query: { status?: string; limit?: number } = {}
-  if (opts.status) query.status = opts.status
-  if (opts.limit) query.limit = opts.limit
-  const res = await apiV2.GET('/api/agents/{slug}/actions/', {
-    params: { path: { slug }, query },
-  })
-  return Array.from(unwrap(res, 'listTaskActions')) as TaskActionOut[]
 }
 
 // The ordered runner-assignment API (the routing-matrix UI's read/write

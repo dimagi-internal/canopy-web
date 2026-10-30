@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { getTestVaultKey, setTestVaultKey, type TestVaultKeyOut } from '@/api/vault'
+import { LoadFailed } from '@/components/vault/LoadFailed'
 import { relativeAge } from '@/lib/relativeAge'
 
 // An agent login's TEST vault key (apps/agents/credentials/login_test_key.py): off by
@@ -12,18 +13,20 @@ import { relativeAge } from '@/lib/relativeAge'
 export function AgentTestVaultKeySection({ slug, canEdit }: { slug: string; canEdit: boolean }) {
   const [state, setState] = useState<TestVaultKeyOut | null>(null)
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     if (!canEdit) return
-    getTestVaultKey(slug).then((s) => !cancelled && setState(s), () => !cancelled && setState(null))
+    getTestVaultKey(slug).then((s) => !cancelled && setState(s), () => !cancelled && setFailed(true))
     return () => {
       cancelled = true
     }
   }, [slug, canEdit])
 
-  if (!canEdit || state === null) return null
+  if (!canEdit) return null
+  if (state === null) return failed ? <LoadFailed what="the test vault key" /> : null
 
   const toggle = async () => {
     const next = !state.enabled

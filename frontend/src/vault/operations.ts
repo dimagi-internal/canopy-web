@@ -257,18 +257,6 @@ export async function prepareRecoveryCode(me: Unlocked): Promise<PreparedRecover
   }
 }
 
-/** Before a flow that would hand out a per-agent code: make sure the person
- *  has their ONE recovery code instead — shown via `confirm` (which resolves
- *  once they kept it) and stored. A no-op when they already have one, or when
- *  this unlock did not open the scalar (the flow then falls back to a code for
- *  that agent). */
-export async function ensureRecoveryCode(me: Unlocked, confirm: (code: string) => Promise<void>): Promise<void> {
-  if (!me.scalar || hasRecoveryCode(await getKeyset())) return
-  const prepared = await prepareRecoveryCode(me)
-  await confirm(prepared.code)
-  await prepared.commit()
-}
-
 /**
  * Does this recovery code open your key? Opened here, in the browser, and then
  * thrown away — nothing is saved or sent. `'malformed'` is a typo the parser
@@ -486,11 +474,6 @@ export async function settleSealed(slug: string, vk: Uint8Array, me: Unlocked): 
     // zk_value_changed (minted again meanwhile) or any hiccup: the next touch settles it
     return 0
   }
-}
-
-export interface RecoveryOut {
-  /** Shown ONCE: the only copy anywhere. */
-  code: string
 }
 
 async function freshRecovery(vk: Uint8Array, agentId: string, kv: number): Promise<{ wrap: ZkWrapIn; code: string }> {

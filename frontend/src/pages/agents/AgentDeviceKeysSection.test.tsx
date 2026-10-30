@@ -32,6 +32,14 @@ describe('AgentDeviceKeysSection', () => {
     expect((await screen.findByTestId('no-active-device-key')).textContent).toContain('No approved machine yet')
   })
 
+  it('says it could not load, rather than claiming no machine is approved', async () => {
+    getAgentDeviceKeys.mockRejectedValue(new Error('500'))
+    render(<AgentDeviceKeysSection slug="echo" canEdit />)
+    expect((await screen.findByTestId('load-failed')).textContent).toContain('the machines')
+    expect(screen.queryByTestId('no-active-device-key')).toBeNull()
+    expect(screen.queryByTestId('keys-table')).toBeNull()
+  })
+
   it('is for admins only', () => {
     render(<AgentDeviceKeysSection slug="echo" canEdit={false} />)
     expect(screen.queryByTestId('agent-device-keys')).toBeNull()

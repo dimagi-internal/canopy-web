@@ -71,9 +71,9 @@ export function VaultView({
     <div data-testid="vault-view">
       <VaultSummary facts={facts} />
       <div className="mt-2">
-        <VaultSection id="secrets" title="Secrets" {...rest(secrets)}>{secrets.body}</VaultSection>
-        <VaultSection id="access-to-secrets" title="Who can open them" {...rest(access)}>{access.body}</VaultSection>
-        <VaultSection id="vault-storage" title="Storage & key" {...rest(storage)}>{storage.body}</VaultSection>
+        <VaultSection id="secrets" title="Secrets" {...sectionProps(secrets)}>{secrets.body}</VaultSection>
+        <VaultSection id="access-to-secrets" title="Who can open them" {...sectionProps(access)}>{access.body}</VaultSection>
+        <VaultSection id="vault-storage" title="Storage & key" {...sectionProps(storage)}>{storage.body}</VaultSection>
         {children}
       </div>
     </div>
@@ -81,7 +81,7 @@ export function VaultView({
 }
 
 /** A part's section props: everything but the body, which is the section's children. */
-function rest(part: VaultPart) {
+function sectionProps(part: VaultPart) {
   const { summary, tone, anchors, defaultOpen } = part
   return { summary, tone, anchors, defaultOpen }
 }

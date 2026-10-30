@@ -6,6 +6,7 @@ import {
   setVaultAgentLink,
   type VaultMembersOut,
 } from '@/api/vault'
+import { LoadFailed } from '@/components/vault/LoadFailed'
 import { VaultMembers } from '@/components/vault/VaultMembers'
 
 // Who may open this agent's vault (spec 2026-10-22-vault-access-follows-canopy-
@@ -17,17 +18,22 @@ import { VaultMembers } from '@/components/vault/VaultMembers'
 export function AgentVaultMembersSection({
   slug,
   onLoaded,
+  canEdit = true,
 }: {
   slug: string
+  /** Only a vault's admins read who is in it; anyone else is told so by the page. */
+  canEdit?: boolean
   /** Told the members once they are read (and after each change), for the vault's summary. */
   onLoaded?: (state: VaultMembersOut | null) => void
 }) {
   const [state, setState] = useState<VaultMembersOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
+    if (!canEdit) return
     getVaultMembers(slug)
       .then((s) => {
         if (cancelled) return
@@ -36,6 +42,7 @@ export function AgentVaultMembersSection({
       })
       .catch(() => {
         if (cancelled) return
+        setFailed(true)
         setState(null)
         onLoaded?.(null)
       })
@@ -43,9 +50,9 @@ export function AgentVaultMembersSection({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug])
+  }, [slug, canEdit])
 
-  if (state === null) return null
+  if (state === null) return failed ? <LoadFailed what="who is in this vault" /> : null
   const manages = state.you === 'owner' || state.you === 'admin'
 
   const run = async (fn: () => Promise<VaultMembersOut>) => {

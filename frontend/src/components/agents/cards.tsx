@@ -40,15 +40,6 @@ export function CountStat({ value, label }: { value: number; label: string }) {
   )
 }
 
-export function SectionHeading({ label, count }: { label: string; count?: number }) {
-  return (
-    <div className="flex items-baseline gap-2 mb-3 mt-8 first:mt-0">
-      <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-primary">{label}</h2>
-      {count !== undefined && <span className="text-[11px] text-muted-foreground">{count}</span>}
-    </div>
-  )
-}
-
 // "work: C+" → an outlined badge. Generic so any grade dimension renders.
 function GradeBadge({ dimension, grade }: { dimension: string; grade: string }) {
   return (

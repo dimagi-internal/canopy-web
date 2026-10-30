@@ -85,7 +85,7 @@ export function VaultMembers({
             <th className="py-1 font-normal">Person</th>
             <th className="py-1 font-normal">Role</th>
             <th className="py-1 font-normal">Why they can</th>
-            <th />
+            <th><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">

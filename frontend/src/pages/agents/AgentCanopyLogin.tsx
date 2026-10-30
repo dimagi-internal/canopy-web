@@ -6,9 +6,10 @@ import {
   getPatRotation, giveCanopyLogin, rotatePatNow, setPatRotation, type PatRotationOut,
 } from '@/api/deviceKeys'
 import { getKeyset } from '@/api/vault'
+import { RecoveryCodeBox } from '@/components/vault/RecoveryCodeBox'
 import { relativeAge } from '@/lib/relativeAge'
 import { prepareRecoveryCode, vaultKeyForFlow, type PreparedRecovery } from '@/vault/operations'
-import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
+import { browserSupportsPrf, keyFlowError } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 /**
@@ -43,14 +44,13 @@ export function AgentCanopyLogin({
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [code, setCode] = useState<PreparedRecovery | null>(null)
-  const [saved, setSaved] = useState(false)
   const { prompt, element } = useUnlockPrompt()
 
   useEffect(() => {
     let cancelled = false
     getAgentCredentialStatus(slug).then(
       (rows) => !cancelled && setHasLogin(rows.some((r) => r.name === CANOPY_LOGIN_REF && r.set)),
-      () => undefined,
+      () => !cancelled && setError('Could not read whether it has a canopy login — reload the page.'),
     )
     if (canEdit) getPatRotation(slug).then((r) => !cancelled && setRotation(r), () => undefined)
     return () => {
@@ -58,10 +58,7 @@ export function AgentCanopyLogin({
     }
   }, [slug, canEdit, reloadKey])
 
-  const fail = (e: unknown, fallback: string) =>
-    setError(e instanceof PrfUnsupportedError ? USE_A_PASSPHRASE
-      : e instanceof Error && e.name === 'NotAllowedError' ? 'The passkey prompt was dismissed.'
-        : e instanceof Error ? e.message : fallback)
+  const fail = (e: unknown, fallback: string) => setError(keyFlowError(e, fallback))
 
   const run = async (fn: () => Promise<void>, fallback: string) => {
     setBusy(true)
@@ -94,7 +91,6 @@ export function AgentCanopyLogin({
         setError('This browser’s passkey can’t hold your key. Set it up with a passphrase under Settings → Security → You, then come back.')
         return
       }
-      setSaved(false)
       setCode(await prepareRecoveryCode(got.me))
       return // continues in keepCode, once the code is saved
     }
@@ -118,17 +114,6 @@ export function AgentCanopyLogin({
     // Renewing is the graceful way; with it off, making one afresh is the same thing.
     if (rotation?.enabled) void run(async () => { setRotation(await rotatePatNow(slug)); onChanged?.() }, 'Could not make a new login.')
     else void give()
-  }
-
-  const download = () => {
-    if (!code) return
-    const text = `Canopy recovery code\n\n${code.code}\n\nIf you lose your passkey, this code gets you back into your agents' secrets. Keep it offline.\n`
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'canopy-recovery-code.txt'
-    a.click()
-    URL.revokeObjectURL(url)
   }
 
   const last = rotation?.history[0]
@@ -187,25 +172,18 @@ export function AgentCanopyLogin({
       )}
 
       {code && (
-        <div role="dialog" aria-label="Recovery code" data-testid="canopy-login-code"
-             className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
-          <p className="font-medium text-foreground">Your recovery code — shown once</p>
-          <p className="text-muted-foreground">
-            Your key is set up. If you lose your passkey, this code gets you back into your agents’ secrets. canopy-web
-            doesn’t keep a copy — save it in your password manager.
-          </p>
-          <code className="block select-all break-all font-mono text-foreground">{code.code}</code>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={download}>Download</Button>
-            <label className="flex items-center gap-1 text-foreground">
-              <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} data-testid="canopy-login-saved" />
-              I have saved it
-            </label>
-            <Button size="sm" disabled={!saved || busy} onClick={() => void keepCode()} data-testid="canopy-login-continue">
-              Continue
-            </Button>
-          </div>
-        </div>
+        <RecoveryCodeBox
+          testId="canopy-login-code" savedTestId="canopy-login-saved" continueTestId="canopy-login-continue"
+          title="Your recovery code — shown once"
+          code={code.code}
+          filename="canopy-recovery-code.txt"
+          fileText={`Canopy recovery code\n\n${code.code}\n\nIf you lose your passkey, this code gets you back into your agents' secrets. Keep it offline.\n`}
+          busy={busy}
+          onContinue={() => void keepCode()}
+        >
+          Your key is set up. If you lose your passkey, this code gets you back into your agents’ secrets. canopy-web
+          doesn’t keep a copy — save it in your password manager.
+        </RecoveryCodeBox>
       )}
 
       {note && <p className="text-[12px] text-success" data-testid="canopy-login-note">{note}</p>}
