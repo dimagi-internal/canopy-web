@@ -48,13 +48,17 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 //   Roles              — owner, its canopy user, roles, who runs it locally
 //   Channels           — callers, Slack, email, Google account
 //   External accounts  — GitHub, its Google mailbox
-//   Security           — its secrets (the vault), then who and what can open them
+//   Security           — its vault (secrets, who can open them, storage and key), then its canopy login
 export function AgentSettingsSection() {
   const { agent, hold, setHold } = useOutletContext<AgentOutletContext>()
   const { tab } = useParams()
   const { hash, search, key } = useLocation()
   const navigate = useNavigate()
   const isAdmin = agent.is_admin ?? false
+  // Where its secrets live, and a counter the login bumps so the vault's table re-reads.
+  const [source, setSource] = useState<string | null>(agent.credential_source ?? null)
+  useEffect(() => setSource(agent.credential_source ?? null), [agent.credential_source])
+  const [vaultVersion, setVaultVersion] = useState(0)
   const admins = `${agent.name}'s admins`
   // Routing writes are gated on agent.work (their @gate): workspace editors.
   const canRoute = roleAllows(useWorkspaceRole(agent.workspace), 'agent.work')
@@ -312,15 +316,25 @@ export function AgentSettingsSection() {
         </Section>
       )}
 
-      {/* Its secrets first — changing a key is what people come here for —
-          then who and what can open them. */}
+      {/* The vault first — changing a key is what people come here for — drawn
+          by the shared VaultView; then what is about the agent itself. */}
       {current === 'security' && (
         <>
-          <Section id="secrets" title="Secrets">
-            <AgentSecretsPanel agent={agent} canEdit={isAdmin} />
+          <Section id="vault" title="Vault">
+            <AgentSecretsPanel
+              agent={{ ...agent, credential_source: source }}
+              canEdit={isAdmin}
+              reloadKey={vaultVersion}
+              onSourceChange={setSource}
+            />
           </Section>
-          <Section id="access-to-secrets" title="Who can open them">
-            <AgentSecurityPanel agent={agent} canEdit={isAdmin} />
+          <Section id="agent-security" title="Agent security">
+            <AgentSecurityPanel
+              agent={{ ...agent, credential_source: source }}
+              canEdit={isAdmin}
+              reloadKey={vaultVersion}
+              onChanged={() => setVaultVersion((v) => v + 1)}
+            />
           </Section>
         </>
       )}

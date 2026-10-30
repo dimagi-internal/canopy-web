@@ -17,8 +17,7 @@ export const ALERT_LABEL: Record<AgentCredentialAlertOut['kind'], string> = {
 export function AgentCredentialAlertsSection({ alerts }: { alerts: AgentCredentialAlertOut[] | null }) {
   if (!alerts || alerts.length === 0) return null
   return (
-    <section id="cred-alerts" className="mb-6" data-testid="agent-credential-alerts">
-      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-warning">Read alerts</h3>
+    <section id="cred-alerts" data-testid="agent-credential-alerts">
       <AlertRows alerts={alerts} />
     </section>
   )

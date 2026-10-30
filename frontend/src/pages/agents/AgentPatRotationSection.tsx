@@ -48,9 +48,9 @@ export function AgentPatRotationSection({ slug, canEdit }: { slug: string; canEd
   const last = state.history[0]
   return (
     <section id="cred-pat-rotation" className="mb-6" data-testid="agent-pat-rotation">
-      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Canopy login rotation
-      </h3>
+      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Renewal
+      </h4>
       <div className="flex flex-wrap items-center gap-2 text-[12px] text-foreground">
         <label className="flex items-center gap-2">
           <input

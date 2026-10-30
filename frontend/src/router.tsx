@@ -64,7 +64,7 @@ import { ProjectRefRedirect } from './pages/work/ProjectRefRedirect'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
-import { VaultPage, VaultTabRoute } from './pages/vault/VaultPage'
+import { VaultPage } from './pages/vault/VaultPage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
 import StoryboardPage from './pages/StoryboardPage'
@@ -475,15 +475,10 @@ export const routeTable: RouteObject[] = [
           { path: ':tab', element: <RunnerTabRoute /> },
         ],
       },
-      // A workspace vault's one page: its key, what it serves, members, secrets.
-      {
-        path: '/w/:workspace/vaults/:vaultId',
-        element: <VaultPage />,
-        children: [
-          { index: true, element: <Navigate to="overview" replace /> },
-          { path: ':tab', element: <VaultTabRoute /> },
-        ],
-      },
+      // A workspace vault's one page: the shared vault view. `:tab` (the old tab
+      // address) opens the section that tab became.
+      { path: '/w/:workspace/vaults/:vaultId', element: <VaultPage /> },
+      { path: '/w/:workspace/vaults/:vaultId/:tab', element: <VaultPage /> },
       { path: '/w/:workspace/threads/:id', element: <LazySection><ThreadPage /></LazySection> },
       {
         path: '/w/:workspace/agents/:slug',
