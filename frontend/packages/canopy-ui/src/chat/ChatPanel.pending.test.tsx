@@ -103,6 +103,16 @@ describe("the pending-reply row", () => {
     expect(screen.getByTestId("pending-reply")).not.toBeNull();
   });
 
+  it("is not held up by your own line still waiting for its receipt", () => {
+    // 2026-10-30: one user row left `pending` (never confirmed) sat under a turn
+    // that had ended 20 minutes earlier, and read as "Queued… 22m · Stop". A
+    // send in its window is `awaitingReply`'s job; the row alone is not a turn.
+    const reply = message({ id: "m2", turn_index: 2, role: "assistant", plaintext: "done" });
+    const mine = message({ id: "local:x", turn_index: 3, plaintext: "again", status: "pending" });
+    panel({ state: state({ messages: [reply, mine] }), awaitingReply: false });
+    expect(screen.queryByTestId("pending-reply")).toBeNull();
+  });
+
   it("withdraws when the agent is BLOCKED on you", () => {
     // The worst way to get this wrong: waiting on an agent that is waiting on
     // you. `blocked` must never render as work in progress.

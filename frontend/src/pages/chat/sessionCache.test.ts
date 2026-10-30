@@ -31,14 +31,27 @@ describe('sessionCache', () => {
     expect(knownNotPrivate('s1')).toBe(true)
     expect(cachedMeta('s1')?.title).toBe('T')
     expect(cachedMeta('s1')?.messages).toEqual([])
-    expect(cachedMessages('s1')).toBe(msgs)
+    expect(cachedMessages('s1')).toEqual(msgs)
+  })
+
+  it('leaves out your own sends still waiting to be confirmed', () => {
+    // Nothing in a later socket can confirm them, so a restored copy said
+    // "Sending…" forever under the reply it got (2026-10-30).
+    const waiting = [
+      ...msgs,
+      { id: 'local:1', turn_index: 2, role: 'user', plaintext: 'again', status: 'pending' },
+      { id: 'transient:2', turn_index: 3, role: 'user', plaintext: 'more', status: 'complete' },
+    ] as unknown as Message[]
+    rememberMeta(detail())
+    rememberMessages('s1', waiting)
+    expect(cachedMessages('s1')?.map((m) => m.id)).toEqual(['t1'])
   })
 
   it('a list read keeps what an earlier open cached', () => {
     rememberMeta(detail())
     rememberMessages('s1', msgs)
     rememberListed([{ id: 's1', sensitive: false }])
-    expect(cachedMessages('s1')).toBe(msgs)
+    expect(cachedMessages('s1')).toEqual(msgs)
   })
 
   it('keeps nothing of a private conversation but that it is private', () => {

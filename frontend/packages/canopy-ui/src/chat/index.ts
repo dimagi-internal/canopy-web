@@ -124,7 +124,7 @@ export { TypingRows } from "./TypingRows";
 export { PeerComposers } from "./PeerComposers";
 export { personColor, authorColor, initials, type PersonColor } from "./personColor";
 export { QueuedRows } from "./QueuedRows";
-export { isMine } from "./identity";
+export { isMine, isUnconfirmed } from "./identity";
 export { ConnectionStatus } from "./ConnectionStatus";
 export {
   PlacementBanner,
