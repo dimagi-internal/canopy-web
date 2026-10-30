@@ -168,7 +168,11 @@ def test_workspace_defaults_belong_to_workspace_admins_and_editor_defaults_to_it
     everyone = {"kind": "workspace", "role": "editor", "workspace": "dimagi", "at_least": "editor"}
     assert _post(w, "rootadmin", everyone, url).status_code == 403          # an admin cannot hand out editor
     assert _post(w, "boss", everyone, url).status_code == 201               # the owner can
-    assert len(_c(w["boss"]).get(url).json()) == 2
+    got = _c(w["boss"]).get(url).json()
+    assert len(got["lines"]) == 2 and (got["can_edit"], got["can_give_editor"]) == (True, True)
+    assert [r["role"] for r in got["roles"]] == list(roles.LADDER)
+    got = _c(w["rootadmin"]).get(url).json()
+    assert (got["can_edit"], got["can_give_editor"]) == (True, False)
 
 
 def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):

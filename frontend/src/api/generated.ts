@@ -25211,6 +25211,11 @@ export interface components {
              * @default
              */
             readonly source: string;
+            /**
+             * Via
+             * @default
+             */
+            readonly via: string;
         };
         /** AgentOutsiderRuleOut */
         readonly AgentOutsiderRuleOut: {
@@ -26000,6 +26005,26 @@ export interface components {
         readonly AccessInheritIn: {
             /** Inherit */
             readonly inherit: boolean;
+        };
+        /**
+         * AgentDefaultsOut
+         * @description A workspace's default lines, the roles they can give, and what the caller may do.
+         */
+        readonly AgentDefaultsOut: {
+            /** Lines */
+            readonly lines: readonly components["schemas"]["AccessLineOut"][];
+            /** Roles */
+            readonly roles: readonly components["schemas"]["AccessRoleOut"][];
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+            /**
+             * Can Give Editor
+             * @default false
+             */
+            readonly can_give_editor: boolean;
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
@@ -51704,7 +51729,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AccessLineOut"][];
+                    readonly "application/json": components["schemas"]["AgentDefaultsOut"];
                 };
             };
         };

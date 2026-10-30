@@ -82,6 +82,9 @@ class Decision:
     # WHERE the role came from: `owner` | `admin` | `system` | `workspace-editor` (the
     # implicit rule) | `rule:<full rule>` | `door:<name>` | `session` | `list:<line>`.
     source: str = ""
+    # `source` in words, for a person to read: the access-list line's `who` ("Anyone at
+    # @dimagi.com (verified)"); "" for the older rules, which have their own words.
+    via: str = ""
 
     @property
     def stamp(self) -> str | None:
@@ -337,19 +340,21 @@ def _with_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
         # An `admin` line is read as `editor` here: what makes someone an agent admin is
         # still `Agent.is_admin` (owner, workspace owner, `AgentAdmin`), not a list line.
         listed = Decision(d.role, FULL, None, False, False, got.manual_only, got.basis,
-                          agent_role=roles.EDITOR, source=f"list:{got.lines[0].subject_key}")
+                          agent_role=roles.EDITOR, source=f"list:{got.lines[0].subject_key}",
+                          via=grants.describe(got.lines[0]))
     else:
         name, _cap = _door_for(agent, iface, got.role, capability, turn)
         if name is None:
             return d
         listed = Decision(d.role, CONFINED, name, False, False, False, f"capability:{name}",
-                          agent_role=got.role, source=f"list:{got.lines[0].subject_key}")
+                          agent_role=got.role, source=f"list:{got.lines[0].subject_key}",
+                          via=grants.describe(got.lines[0]))
     if _ACCESS_ORDER[listed.access] > _ACCESS_ORDER[d.access]:
         return listed
     if listed.access == d.access == FULL and d.manual_only and not listed.manual_only:
         return listed      # the list names them without the gate the implicit editor rule puts on
     if listed.access == d.access == CONFINED and roles.rank(listed.agent_role) > roles.rank(d.agent_role):
-        return replace(d, agent_role=listed.agent_role, source=listed.source)
+        return replace(d, agent_role=listed.agent_role, source=listed.source, via=listed.via)
     return d
 
 
@@ -552,6 +557,8 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
             "may_request_auto": may_auto,
             "role": d.agent_role if role == MEMBER else role,
             "source": d.source if role == MEMBER else role,
+            "via": (d.via or ("The role this workspace gives an editor" if d.source == "workspace-editor" else ""))
+            if role == MEMBER else basis,
         })
     rank = {OWNER: 0, ADMIN: 1, MEMBER: 2}
     rows.sort(key=lambda r: (rank[r["agent_role"]], (r["email"] or "").lower()))
