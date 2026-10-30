@@ -832,6 +832,10 @@ class HostGrant(models.Model):
     #: When the person confirmed this page's permission with their passkey. Null =
     #: not confirmed: the gateway and Views refuse it as if there were none.
     confirmed_at = models.DateTimeField(null=True, blank=True)
+    #: How long that confirmation lasts when the person asked for LESS than the usual
+    #: 30 minutes (`host_grants.confirm`, a debugging aid: see how a page behaves when
+    #: its window ends without waiting for it). Null = the usual window.
+    window_seconds = models.PositiveIntegerField(null=True, blank=True)
     #: When an agent's turn first needed this unconfirmed permission (`host_grants.ask`).
     #: The panel asks the person for their passkey only then, never merely because
     #: they sent: most turns never act as them.

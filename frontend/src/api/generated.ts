@@ -20642,12 +20642,18 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
-        /** PasskeyAssertIn */
-        readonly PasskeyAssertIn: {
+        /**
+         * ConfirmIn
+         * @description The passkey assertion, and optionally a SHORTER window than the usual 30 minutes
+         *     (`host_grants.window_for`): for testing what a page does when its permission ends.
+         */
+        readonly ConfirmIn: {
             /** Credential */
             readonly credential: {
                 readonly [key: string]: unknown;
             };
+            /** Window Seconds */
+            readonly window_seconds?: number | null;
         };
         /**
          * MyDelegatedCredentialOut
@@ -31551,6 +31557,13 @@ export interface components {
             readonly browser: boolean;
             /** Window Seconds */
             readonly window_seconds: number;
+        };
+        /** PasskeyAssertIn */
+        readonly PasskeyAssertIn: {
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
         };
         /** VaultSetupOut */
         readonly VaultSetupOut: {
@@ -46958,7 +46971,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["PasskeyAssertIn"];
+                readonly "application/json": components["schemas"]["ConfirmIn"];
             };
         };
         readonly responses: {
@@ -47068,7 +47081,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["PasskeyAssertIn"];
+                readonly "application/json": components["schemas"]["ConfirmIn"];
             };
         };
         readonly responses: {

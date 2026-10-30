@@ -43,8 +43,6 @@ from django.core.cache import cache
 from django.db import models
 from django.utils import timezone
 
-from apps.tokens.debug_lifetime import debug_shortened
-
 from . import client_identity, outbound
 
 log = logging.getLogger(__name__)
@@ -68,8 +66,26 @@ METADATA_CACHE_SECONDS = 600
 MAX_ID_JAG_BYTES = contract.MAX_JWT_BYTES
 
 #: How long one passkey confirmation lets an agent act as the person on a page.
-#: ``CANOPY_HOST_GRANT_CONFIRM_SECONDS`` shortens it for debugging (`debug_shortened`).
-CONFIRM_SECONDS = debug_shortened(30 * 60, "CANOPY_HOST_GRANT_CONFIRM_SECONDS")
+CONFIRM_SECONDS = 30 * 60
+#: The shortest window a person may ask for (`window_for`).
+MIN_WINDOW_SECONDS = 5
+
+
+def window_for(asked: int | None) -> int | None:
+    """The confirmation window a person asked for, or None for the usual one.
+
+    A debugging aid: a person testing what a page does when its permission ends can
+    ask for a shorter window at the passkey touch instead of waiting half an hour. It
+    can only SHORTEN (an ask at or above `CONFIRM_SECONDS` is the usual window, and
+    reads as None) and not below `MIN_WINDOW_SECONDS`, so asking widens nothing.
+    """
+    if asked is None or asked >= CONFIRM_SECONDS:
+        return None
+    return max(MIN_WINDOW_SECONDS, asked)
+
+
+def _window(window_seconds: int | None) -> timedelta:
+    return timedelta(seconds=window_seconds or CONFIRM_SECONDS)
 
 #: A refusal with a stable `code`. The message never contains a credential. The
 #: SDK's class, so a refusal from `consumer.check_id_jag` is this type.
@@ -254,7 +270,8 @@ def _inherit(grant) -> None:
             grant.requested_reason = asked.requested_reason
         return
     grant.confirmed_at = held.confirmed_at
-    grant.expires_at = min(grant.expires_at, held.confirmed_at + timedelta(seconds=CONFIRM_SECONDS))
+    grant.window_seconds = held.window_seconds
+    grant.expires_at = min(grant.expires_at, held.confirmed_at + _window(held.window_seconds))
 
 
 #: The longest reason an agent can put in front of the person.
@@ -272,13 +289,15 @@ def ask(grant, reason: str = "") -> int:
     return rows.update(requested_reason=" ".join(str(reason or "").split())[:MAX_REASON])
 
 
-def confirm(grant, *, now=None) -> None:
+def confirm(grant, *, now=None, window_seconds: int | None = None) -> None:
     """The person just confirmed `grant` with their passkey: usable from now, for
-    `CONFIRM_SECONDS` at most (never past the host token's own end)."""
+    `CONFIRM_SECONDS` at most (never past the host token's own end). `window_seconds`
+    is a shorter window the person asked for (`window_for`)."""
     now = now or timezone.now()
     grant.confirmed_at = now
-    grant.expires_at = min(grant.expires_at, now + timedelta(seconds=CONFIRM_SECONDS))
-    grant.save(update_fields=["confirmed_at", "expires_at", "updated_at"])
+    grant.window_seconds = window_for(window_seconds)
+    grant.expires_at = min(grant.expires_at, now + _window(grant.window_seconds))
+    grant.save(update_fields=["confirmed_at", "window_seconds", "expires_at", "updated_at"])
 
 
 #: Why `lookup` found no grant: the person has none this conversation may use, the
