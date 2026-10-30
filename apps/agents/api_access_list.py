@@ -195,7 +195,7 @@ def set_inherit_workspace_defaults(request: HttpRequest, slug: str, payload: Acc
 def _conversion_out(conv: convert_access.Conversion) -> AccessConversionOut:
     return AccessConversionOut(
         already=conv.already, ok=conv.ok or conv.already, probed=conv.probed,
-        lines=[AccessConversionLineOut(who=ln.describe().split(" -> ")[0], role=ln.role, manual_only=ln.manual_only)
+        lines=[AccessConversionLineOut(who=ln.who(), role=ln.role, manual_only=ln.manual_only)
                for ln in conv.lines],
         unsupported=conv.unsupported, differences=[str(d) for d in conv.differences])
 
