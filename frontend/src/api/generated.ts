@@ -25242,7 +25242,7 @@ export interface components {
              */
             readonly may_request_auto: boolean;
             /** Role */
-            readonly role?: ("owner" | "admin" | "editor" | "user" | "viewer") | null;
+            readonly role?: ("owner" | "admin" | "editor" | "user" | "viewer" | "system") | null;
             /**
              * Source
              * @default

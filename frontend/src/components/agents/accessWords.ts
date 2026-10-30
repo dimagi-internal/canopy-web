@@ -46,6 +46,7 @@ export function canText(role: string, roles: readonly AccessRoleOut[]): string {
 export function roleWord(role: string | null | undefined): string {
   if (!role) return 'No access'
   if (role === 'admin') return 'Agent admin'
+  if (role === 'system') return 'The agent itself'
   return role.charAt(0).toUpperCase() + role.slice(1)
 }
 
