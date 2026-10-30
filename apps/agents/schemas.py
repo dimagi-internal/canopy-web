@@ -701,6 +701,12 @@ class AgentAccessRowOut(StrictModel):
     manual_only: bool = False
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False
+    # WHERE they stand on the agent's role ladder (owner | admin | editor | user | viewer;
+    # null when the agent lets them in nowhere) and what put them there (see
+    # `AccessListOut`). `agent_role` above is the older three-word view and stays for
+    # readers that have not moved.
+    role: Literal["owner", "admin", "editor", "user", "viewer"] | None = None
+    source: str = ""
 
 
 class AgentOutsiderRuleOut(StrictModel):

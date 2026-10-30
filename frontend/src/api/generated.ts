@@ -25204,6 +25204,13 @@ export interface components {
              * @default false
              */
             readonly may_request_auto: boolean;
+            /** Role */
+            readonly role?: ("owner" | "admin" | "editor" | "user" | "viewer") | null;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
         };
         /** AgentOutsiderRuleOut */
         readonly AgentOutsiderRuleOut: {

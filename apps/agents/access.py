@@ -550,6 +550,8 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
             "full_rule": rule,
             "manual_only": manual_only,
             "may_request_auto": may_auto,
+            "role": d.agent_role if role == MEMBER else role,
+            "source": d.source if role == MEMBER else role,
         })
     rank = {OWNER: 0, ADMIN: 1, MEMBER: 2}
     rows.sort(key=lambda r: (rank[r["agent_role"]], (r["email"] or "").lower()))

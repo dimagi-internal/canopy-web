@@ -185,6 +185,9 @@ def test_the_roster_shows_what_the_list_gives(w):
     _line(w, roles.USER, kind=G.PERSON, user=w["vw"])
     row = next(r for r in access.roster(w["agent"]) if r["user_id"] == w["vw"].pk)
     assert row["access"] == access.CONFINED and row["capabilities"] == ["ask", "canopy"]
+    assert (row["role"], row["source"]) == (roles.USER, f"list:person:{w['vw'].pk}")
+    rows = {r["user_id"]: r for r in access.roster(w["agent"])}
+    assert (rows[w["owner"].pk]["role"], rows[w["owner"].pk]["source"]) == (roles.OWNER, roles.OWNER)
 
 
 def test_the_envelope_tells_an_agent_the_role_and_why(w):
