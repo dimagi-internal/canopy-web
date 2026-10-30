@@ -53,6 +53,7 @@ state or a verifier.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import logging
@@ -103,8 +104,9 @@ class ConnectionError(Exception):  # shadows the builtin inside this module only
     routes map it to a response in one place (`problems.problem_for`):
     `not_configured`, `not_connected`, `reconnect_required`, `ambiguous`,
     `insufficient_scope`, `provider_error`, `provider_unavailable`, `bad_state`,
-    `own_connection`, `not_grantable`, `client_id_locked` (an app's client id
-    cannot change while connections use it), `invalid_app` (an app's settings
+    `own_connection`, `not_grantable`, `app_locked` (an app's client id, or an
+    option naming its authorization server, cannot change while connections
+    use it), `invalid_app` (an app's settings
     were refused; the message says why), `wrong_account` (the provider signed
     in an account this owner must not connect)."""
 
@@ -191,14 +193,18 @@ def app_for(workspace, provider: str) -> ConnectionApp:
     return app
 
 
+def _readable_slugs(user) -> set[str]:
+    """The workspaces `user` can read: THE rule for whose apps a person may use
+    and whose connections still hand them a token (`workspaces` decides membership)."""
+    return {slug for slug, role in workspaces.member_roles(user).items() if perms.role_allows(role, perms.READ)}
+
+
 def apps_for_person(user, provider: str) -> list[ConnectionApp]:
     """The set-up apps for `provider` in every workspace `user` can read, by workspace."""
     if provider not in providers.CLASSES:
         return []
-    readable = [slug for slug, role in workspaces.member_roles(user).items()
-                if perms.role_allows(role, perms.READ)]
     rows = (ConnectionApp.objects.select_related("workspace")
-            .filter(provider=provider, workspace_id__in=readable).order_by("workspace_id"))
+            .filter(provider=provider, workspace_id__in=_readable_slugs(user)).order_by("workspace_id"))
     return [a for a in rows if providers.for_app(a).is_configured()]
 
 
@@ -211,11 +217,15 @@ def configure_app(workspace, provider: str, *, client_id: str, client_secret: st
     """Create or update the workspace's app for `provider`.
 
     A blank `client_secret` on an update keeps the stored one (rotating it is
-    sending a new one; existing connections then refresh with it). The client id
-    cannot change while connections were made with the app (`client_id_locked`):
-    their grants belong to the old client, so switching means removing the app,
-    which disconnects them. Settings the provider refuses are `invalid_app`.
-    Callers check who may do this; records `app_configured` (never the secret)."""
+    sending a new one; existing connections then refresh with it), except with
+    a new client id, which needs its own secret. `options` are merged over the
+    stored ones, so an update that leaves one out keeps it. While connections
+    were made with the app, neither the client id nor an option that names the
+    authorization server (`Provider.locked_options`; Salesforce's login host)
+    may change (`app_locked`): their grants belong to that client at that
+    server, so switching means removing the app, which disconnects them.
+    Settings the provider refuses are `invalid_app`. Callers check who may do
+    this; records `app_configured` (never the secret)."""
     cls = providers.get_class(provider)
     client_id = (client_id or "").strip()
     client_secret = (client_secret or "").strip()
@@ -225,44 +235,95 @@ def configure_app(workspace, provider: str, *, client_id: str, client_secret: st
     unknown = sorted(chosen - set(cls.scope_choices))
     if unknown:
         raise ConnectionError("invalid_app", f"{cls.title} offers no scope {', '.join(unknown)}")
-    try:
-        cleaned = cls.clean_options(options or {})
-    except ValueError as e:
-        raise ConnectionError("invalid_app", str(e)) from None
     slug = _slug(workspace)
-    with transaction.atomic():
-        app = ConnectionApp.objects.select_for_update().filter(workspace_id=slug, provider=provider).first()
-        if app is None:
-            if not client_secret:
-                raise ConnectionError("invalid_app", "A client secret is required")
-            app = ConnectionApp(workspace_id=slug, provider=provider)
-        elif client_id != app.client_id and app.connections.exists():
-            raise ConnectionError("client_id_locked",
-                                  "remove the app (which disconnects its connections) to change its client id")
-        app.client_id = client_id
-        if client_secret:
-            app.client_secret = client_secret
-        app.options = cleaned
-        app.scopes = " ".join(s for s in cls.scope_choices if s in chosen)
-        app.configured_by = by
-        app.save()
+    # Two first saves at once (a double-clicked Save): no row exists for either to
+    # lock, so the loser's insert hits the unique constraint; it retries as an update.
+    for attempt in range(2):
+        try:
+            with transaction.atomic():
+                app = _save_app(cls, slug, client_id, client_secret, options or {}, chosen, by)
+            break
+        except IntegrityError:
+            if attempt:
+                raise
     app = ConnectionApp.objects.select_related("workspace").get(pk=app.pk)
     record(_app_subject(app), "app_configured", by=by, workspace=app.workspace_id, client_id=app.client_id,
            summary=f"{_who(by) or 'someone'} configured {cls.title} for {app.workspace_id}")
     return app
 
 
+def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> ConnectionApp:
+    """`configure_app`'s write, inside its transaction, under the app row's lock."""
+    app = ConnectionApp.objects.select_for_update().filter(workspace_id=slug, provider=cls.name).first()
+    try:
+        cleaned = cls.clean_options({**(app.options if app is not None else {}), **options})
+    except ValueError as e:
+        raise ConnectionError("invalid_app", str(e)) from None
+    if app is None:
+        if not client_secret:
+            raise ConnectionError("invalid_app", "A client secret is required")
+        app = ConnectionApp(workspace_id=slug, provider=cls.name)
+    else:
+        if client_id != app.client_id and not client_secret:
+            raise ConnectionError("invalid_app", "A new client id needs its client secret")
+        changed = [name for name in cls.locked_options if cleaned.get(name) != app.options.get(name)]
+        if (client_id != app.client_id or changed) and app.connections.exists():
+            what = "client id" if client_id != app.client_id else ", ".join(changed)
+            raise ConnectionError("app_locked", f"accounts are connected with this app: remove it (which "
+                                                f"disconnects them) to change its {what}")
+    app.client_id = client_id
+    if client_secret:
+        app.client_secret = client_secret
+    app.options = cleaned
+    app.scopes = " ".join(s for s in cls.scope_choices if s in chosen)
+    app.configured_by = by
+    app.save()
+    return app
+
+
 def remove_app(app: ConnectionApp, *, by) -> None:
     """Disconnect every connection made with `app` (each revoked best effort and
-    recorded as `disconnected` by `by`), then delete the app."""
+    recorded as `disconnected` by `by`), then delete the app.
+
+    A connect that commits while this runs is caught too: the app row is locked
+    for the delete, and whatever connections it holds then are deleted with it
+    and revoked afterwards, outside the transaction."""
+    # Revokes run in this request, one at a time (each bounded by HTTP_TIMEOUT):
+    # fine for a workspace's handful of connections; a route that may face
+    # hundreds should budget for it rather than parallelise blindly.
     for conn in list(app.connections.select_related("app__workspace", "agent__workspace").order_by("pk")):
         disconnect(conn, by=by)
     subject = _app_subject(app)
     title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
     client_id, slug = app.client_id, app.workspace_id
-    app.delete()
+    late: list[tuple[Subject, str]] = []
+    with transaction.atomic():
+        locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk).first()
+        if locked is not None:
+            for conn in locked.connections.select_related("agent__workspace").order_by("pk"):
+                late.append((Subject.of(conn), _refresh_token_of(conn, Subject.of(conn))))
+                conn.delete()
+            locked.delete()
+    for late_subject, refresh in late:
+        _revoke(app, late_subject, refresh)
+        record(late_subject, "disconnected", by=by,
+               summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
     record(subject, "app_removed", by=by, workspace=slug, client_id=client_id,
            summary=f"{_who(by) or 'someone'} removed {title} from {slug}")
+
+
+def app_deleted(app: ConnectionApp, *, workspace_going: bool = False) -> None:
+    """Record `disconnected` for each connection an app's deletion takes with it,
+    when the deletion bypassed `remove_app` (the workspace was deleted). No call
+    to the provider: this runs inside someone else's delete. When the app's
+    workspace is itself being deleted, a record that would be an Event there is
+    a log line instead: an Event written now would reference a deleted row."""
+    for conn in app.connections.select_related("agent__workspace").order_by("pk"):
+        subject = Subject.of(conn)
+        if workspace_going and subject.workspace is not None and subject.workspace.pk == app.workspace_id:
+            subject = dataclasses.replace(subject, workspace=None)
+        record(subject, "disconnected", during="app_deleted",
+               summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) went with its app")
 
 
 # ---- the audit trail and the log: one vocabulary ---------------------------------
@@ -381,6 +442,7 @@ def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, retur
     while len(pending) >= MAX_PENDING:
         pending.pop(next(iter(pending)))
     pending[state] = {"app": app.pk, "provider": app.provider, "workspace": app.workspace_id,
+                      "client_id": app.client_id,
                       "owner_kind": kind, "owner_id": owner_id, "verifier": verifier, "return_to": return_to}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
     owner_obj = (Agent if kind == "agent" else get_user_model()).objects.filter(pk=owner_id).first()
@@ -434,8 +496,10 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         raise ConnectionError("bad_state", "start the connection again")
     app = (ConnectionApp.objects.select_related("workspace")
            .filter(pk=parked.get("app"), provider=provider, workspace_id=parked["workspace"]).first())
-    if app is None:  # removed between begin and complete
-        raise ConnectionError("bad_state", "that app no longer exists")
+    # Removed, or given another client, between begin and complete: the code was
+    # issued to a client this app no longer is.
+    if app is None or app.client_id != parked.get("client_id"):
+        raise ConnectionError("bad_state", "that app has changed; start the connection again")
 
     p = _configured(app)
     if parked["owner_kind"] == "agent":
@@ -484,13 +548,18 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "refresh_failed_at": None,
         "connected_by": by,
     }
-    try:
-        with transaction.atomic():
-            conn, _ = Connection.objects.update_or_create(**lookup, defaults=defaults)
-    except IntegrityError:
-        # A concurrent completion for the same account inserted the row between
-        # our lookup and insert. It exists now: update it with this grant.
-        with transaction.atomic():
+    with transaction.atomic():
+        # The app row, locked, is still the client that issued this grant: a client
+        # id change or a removal that committed during the exchange refuses it
+        # (and either one, waiting on this lock, sees the new connection).
+        if not ConnectionApp.objects.select_for_update().filter(pk=app.pk, client_id=parked["client_id"]).exists():
+            raise ConnectionError("bad_state", "that app has changed; start the connection again")
+        try:
+            with transaction.atomic():
+                conn, _ = Connection.objects.update_or_create(**lookup, defaults=defaults)
+        except IntegrityError:
+            # A concurrent completion for the same account inserted the row between
+            # our lookup and insert. It exists now: update it with this grant.
             conn = Connection.objects.select_for_update().get(**lookup)
             for k, v in defaults.items():
                 setattr(conn, k, v)
@@ -547,13 +616,15 @@ def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MAR
         Connection.objects.filter(pk=conn.pk).update(last_used_at=conn.last_used_at)
         return _handout(conn, cached, refreshed=False)
 
-    p = _configured(conn.app)
+    p = _configured(conn.app)  # checked before the lock; rebuilt from the locked read below
     rejected: providers.ProviderError | None = None
     failed: tuple[str, providers.ProviderError] | None = None
     with transaction.atomic():
         # Re-read under the lock: another process may have refreshed (or had its
         # refresh rejected) while this one waited.
         conn = Connection.objects.select_for_update(of=("self",)).select_related("app__workspace").get(pk=conn.pk)
+        # The app as it is now: a secret rotated while this waited is the one to send.
+        p = _configured(conn.app)
         if conn.needs_reconnect:
             raise ReconnectRequired(f"reconnect {conn.provider}")
         cached = "" if refresh else _cached_token(conn, min_life)
@@ -632,20 +703,29 @@ def disconnect(conn: Connection, *, by) -> None:
     holding the grant, and deleting it does that whatever the provider says.
     """
     subject = Subject.of(conn)
-    refresh = ""
-    try:
-        refresh = decrypt_secret(conn.refresh_token_enc)
-    except Exception:  # noqa: BLE001 - an unreadable token cannot be revoked; still delete
-        record(subject, "revoke_failed", warn=True, error="undecryptable")
-    if refresh:
-        try:
-            providers.for_app(conn.app).revoke(refresh)
-        except Exception as e:  # noqa: BLE001
-            record(subject, "revoke_failed", warn=True,
-                   error=getattr(e, "code", "") or type(e).__name__)
+    _revoke(conn.app, subject, _refresh_token_of(conn, subject))
     conn.delete()
     record(subject, "disconnected", by=by,
            summary=f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
+
+
+def _refresh_token_of(conn: Connection, subject: Subject) -> str:
+    """The plaintext refresh token, or "" (recorded) when it cannot be read."""
+    try:
+        return decrypt_secret(conn.refresh_token_enc)
+    except Exception:  # noqa: BLE001 - an unreadable token cannot be revoked; still delete
+        record(subject, "revoke_failed", warn=True, error="undecryptable")
+        return ""
+
+
+def _revoke(app: ConnectionApp, subject: Subject, refresh: str) -> None:
+    """Revoke `refresh` with `app`'s client, best effort: a failure is a log line."""
+    if not refresh:
+        return
+    try:
+        providers.for_app(app).revoke(refresh)
+    except Exception as e:  # noqa: BLE001
+        record(subject, "revoke_failed", warn=True, error=getattr(e, "code", "") or type(e).__name__)
 
 
 # ---- which connection an agent uses; grants ----------------------------------
@@ -674,8 +754,7 @@ def connection_for_agent(agent, provider: str) -> Connection:
 def person_connections(user, provider: str, *, workspace: str | None = None) -> list[Connection]:
     """The person's own connections for `provider` that are usable: made with an
     app in a workspace they can still read (and in `workspace`, when given)."""
-    readable = {slug for slug, role in workspaces.member_roles(user).items()
-                if perms.role_allows(role, perms.READ)}
+    readable = _readable_slugs(user)
     if workspace is not None:
         readable &= {workspace}
     return list(connections_for(("user", user.pk)).filter(provider=provider, app__workspace_id__in=readable)

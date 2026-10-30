@@ -27,8 +27,10 @@ from apps.common.encryption import decrypt_secret, encrypt_secret
 class ConnectionApp(models.Model):
     """One workspace's OAuth client for one provider.
 
-    Removed only through `services.remove_app`, which disconnects every
-    connection made with it first (`Connection.app` is PROTECT)."""
+    Removed through `services.remove_app`, which revokes and records every
+    connection made with it first. A delete that bypasses it (the workspace's)
+    takes the connections with it (`Connection.app` is CASCADE), and
+    `signals.py` records each one as disconnected."""
 
     workspace = models.ForeignKey(
         "workspaces.Workspace", on_delete=models.CASCADE, related_name="connection_apps",
@@ -85,7 +87,9 @@ class Connection(models.Model):
         related_name="connections",
     )
     # The workspace app that minted this grant; its credentials refresh and revoke it.
-    app = models.ForeignKey(ConnectionApp, on_delete=models.PROTECT, related_name="connections")
+    # CASCADE so a workspace can be deleted; `services.remove_app` is the way to
+    # remove an app on purpose (it revokes first).
+    app = models.ForeignKey(ConnectionApp, on_delete=models.CASCADE, related_name="connections")
     provider = models.CharField(max_length=40)
     # The provider's stable id for the account (Salesforce: "<org id>/<user id>").
     account_id = models.CharField(max_length=255)

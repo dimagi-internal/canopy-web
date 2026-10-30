@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 
 from apps.agents.models import Agent
 from apps.connections import providers, services
@@ -114,7 +115,7 @@ def test_the_client_id_is_locked_while_connections_use_it(ws, user, eva):
     _stored({"agent": eva}, user, app=app)
     with pytest.raises(services.ConnectionError) as e:
         _configure(ws, user, client_id="3MVG-third", client_secret="new")
-    assert e.value.code == "client_id_locked"
+    assert e.value.code == "app_locked"
     app.refresh_from_db()
     assert app.client_id == "3MVG-other" and app.client_secret == "shh"   # nothing half-applied
     assert problem_for(e.value, title="Salesforce", owner="Your").status_code == 409
@@ -380,3 +381,176 @@ def test_apps_for_person_are_the_set_up_ones_they_can_read(ws, ws2, user):
     b.save()
     assert services.apps_for_person(user, "salesforce") == [a]
     assert services.apps_for_person(user, "nope") == []
+
+
+# ---- fix round 1 -------------------------------------------------------------------
+
+def test_the_login_host_is_locked_while_connections_use_it(ws, user, eva):
+    app = _configure(ws, user)
+    _configure(ws, user, client_secret="", options={"login_url": "https://test.salesforce.com"})  # none yet
+    _configure(ws, user, client_secret="", options={"login_url": "https://login.salesforce.com"})
+    _stored({"agent": eva}, user, app=app)
+    with pytest.raises(services.ConnectionError) as e:
+        _configure(ws, user, client_secret="", options={"login_url": "https://test.salesforce.com"})
+    assert e.value.code == "app_locked" and "login_url" in str(e.value)
+    app.refresh_from_db()
+    assert app.options["login_url"] == "https://login.salesforce.com"
+    # An option that does not name the server may still change.
+    _configure(ws, user, client_secret="", options={"access_token_seconds": 900})
+    app.refresh_from_db()
+    assert app.options == {"login_url": "https://login.salesforce.com", "access_token_seconds": 900}
+
+
+def test_an_update_that_omits_options_keeps_the_stored_ones(ws, user):
+    _configure(ws, user, options={"login_url": "https://test.salesforce.com", "access_token_seconds": 900})
+    app = _configure(ws, user, client_secret="", options={})
+    assert app.options == {"login_url": "https://test.salesforce.com", "access_token_seconds": 900}
+    app = _configure(ws, user, client_secret="", options=None)
+    assert app.options["login_url"] == "https://test.salesforce.com"
+
+
+def test_a_new_client_id_needs_its_secret(ws, user):
+    _configure(ws, user)
+    with pytest.raises(services.ConnectionError) as e:
+        _configure(ws, user, client_id="3MVG-new", client_secret="")
+    assert e.value.code == "invalid_app"
+    app = ConnectionApp.objects.get()
+    assert (app.client_id, app.client_secret) == ("3MVG-client", "shh")
+
+
+def test_two_first_saves_at_once_end_as_one_app(ws, user, monkeypatch):
+    """The other request's insert committed after our lock found no row: our insert
+    collides with it, and the retry updates it instead of failing."""
+    sf_app(ws, client_id="theirs", secret="their-secret")
+    real, calls = services._save_app, []
+
+    def racing(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            raise IntegrityError("duplicate key connectionapp_unique_workspace_provider")
+        return real(*args)
+    monkeypatch.setattr(services, "_save_app", racing)
+    app = _configure(ws, user, client_id="ours", client_secret="our-secret")
+    assert len(calls) == 2 and ConnectionApp.objects.count() == 1
+    app.refresh_from_db()
+    assert (app.client_id, app.client_secret) == ("ours", "our-secret")
+
+
+def test_a_client_id_change_between_the_legs_is_bad_state(ws, user):
+    app = sf_app(ws)
+    session = {}
+    state = _flow(session, app, ("user", user.pk))["state"][0]
+    sf_app(ws, client_id="3MVG-other", secret="other")
+    with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:
+        services.complete(session, provider="salesforce", workspace=ws, code="c", state=state,
+                          redirect_uri=REDIRECT, by=user)
+    assert e.value.code == "bad_state" and fake.calls == []
+
+
+def test_a_client_id_change_during_the_exchange_stores_nothing(ws, user):
+    """The app changed client after the exchange began: the grant belongs to the old
+    client, so it is refused under the app row's lock rather than stored."""
+    app = sf_app(ws)
+    session = {}
+    state = _flow(session, app, ("user", user.pk))["state"][0]
+    with FakeSF() as fake:
+        real_post = fake.post
+
+        def post(url, **kw):
+            ConnectionApp.objects.filter(pk=app.pk).update(client_id="3MVG-other")
+            return real_post(url, **kw)
+        with mock.patch("apps.connections.providers.base.requests.post", post), \
+                pytest.raises(services.ConnectionError) as e:
+            services.complete(session, provider="salesforce", workspace=ws, code="c", state=state,
+                              redirect_uri=REDIRECT, by=user)
+    assert e.value.code == "bad_state"
+    assert not Connection.objects.exists()
+
+
+def test_remove_catches_a_connection_made_while_it_ran(ws, user, eva, monkeypatch):
+    app = _configure(ws, user)
+    _stored({"agent": eva}, user, app=app, refresh="5Aep_first")
+    real = services.disconnect
+
+    def racing(conn, *, by):
+        real(conn, by=by)
+        # Another request's connect commits now, after the snapshot was taken.
+        _stored({"user": user}, user, app=app, refresh="5Aep_late")
+    monkeypatch.setattr(services, "disconnect", racing)
+    with FakeSF() as fake:
+        services.remove_app(app, by=user)
+    revoked = [c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL]
+    assert revoked == ["5Aep_first", "5Aep_late"]
+    assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
+
+
+def test_late_connections_are_recorded_as_disconnected_by_the_admin(ws, user, eva, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    app = _configure(ws, user)
+    monkeypatch.setattr(services, "disconnect", lambda conn, *, by: None)   # the snapshot "misses" them
+    _stored({"user": user}, user, app=app)
+    with FakeSF():
+        services.remove_app(app, by=user)
+    lines = [services.parse_log_line(r.getMessage()) for r in caplog.records]
+    assert ("disconnected", f"user:{user.pk}", "jj@dimagi.com") in [
+        (k, p.get("owner"), p.get("by")) for k, p in lines]
+
+
+def test_a_refresh_sends_the_secret_the_app_holds_under_the_lock(ws, user, eva, monkeypatch):
+    app = sf_app(ws)
+    conn = _stored({"agent": eva}, user, app=app, access="")
+    real, seen = services._cached_token, {"n": 0}
+
+    def rotating(c, min_life):
+        seen["n"] += 1
+        if seen["n"] == 1:   # rotated while this caller waited for the lock
+            fresh = ConnectionApp.objects.get(pk=app.pk)
+            fresh.client_secret = "shh-rotated"
+            fresh.save()
+            return ""
+        return real(c, min_life)
+    monkeypatch.setattr(services, "_cached_token", rotating)
+    with FakeSF() as fake:
+        services.access_token_for(conn)
+    assert fake.token_calls()[0][2]["client_secret"] == "shh-rotated"
+
+
+def test_deleting_a_workspace_records_its_connections_without_calling_the_provider(user, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    gone = Workspace.objects.create(slug="gone", display_name="G", created_by=user)
+    WorkspaceMembership.objects.create(workspace=gone, user=user, role=WorkspaceMembership.OWNER)
+    conn = _stored({"user": user}, user, app=sf_app(gone))
+    with FakeSF() as fake:
+        gone.delete()
+    assert fake.calls == []
+    assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
+    lines = [services.parse_log_line(r.getMessage()) for r in caplog.records]
+    hits = [p for k, p in lines if k == "disconnected"]
+    assert len(hits) == 1 and hits[0]["connection"] == str(conn.pk)
+    assert hits[0]["during"] == "app_deleted" and hits[0]["by"] == ""
+
+
+def test_deleting_an_app_directly_is_an_event_for_an_agents_connection(ws, user, eva):
+    app = sf_app(ws)
+    conn = _stored({"agent": eva}, user, app=app)
+    with FakeSF() as fake:
+        app.delete()
+    assert fake.calls == []
+    ev = Event.objects.get(kind="connections.disconnected")
+    assert ev.workspace_id == "w" and ev.payload["connection"] == conn.pk
+    assert ev.payload["during"] == "app_deleted" and ev.payload["owner"] == "agent:eva"
+
+
+def test_the_workspace_delete_route_succeeds_with_connections(user):
+    from django.test import Client
+
+    from apps.passkeys.testing import grant_step_up
+    gone = Workspace.objects.create(slug="gone", display_name="G", created_by=user)
+    WorkspaceMembership.objects.create(workspace=gone, user=user, role=WorkspaceMembership.OWNER)
+    _stored({"user": user}, user, app=sf_app(gone))
+    c = Client()
+    c.force_login(user)
+    grant_step_up(c)
+    with FakeSF():
+        assert c.delete("/api/workspaces/gone/").status_code == 204
+    assert not Workspace.objects.filter(slug="gone").exists() and not Connection.objects.exists()

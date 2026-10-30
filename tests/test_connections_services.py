@@ -293,13 +293,14 @@ def test_identity_allows_salesforce_hosts(id_url):
     assert ident.account_id == "00Dorg/005user"
 
 
-def test_identity_allows_the_apps_login_host():
-    # Saved options only allow Salesforce hosts; the check still trusts whatever the app holds.
+def test_identity_refuses_a_non_salesforce_login_host_even_if_an_app_holds_one():
+    # Saved options only allow Salesforce hosts; a row that bypassed that gets no exception.
     app = ConnectionApp(provider="salesforce", options={"login_url": "https://sso.dimagi.example"})
     token = TokenResponse(access_token="tok", refresh_token="", expires_at=None,
                           instance_url="", raw={"id": "https://sso.dimagi.example/id/00D/005"})
-    with FakeSF():
-        assert providers.for_app(app).identity(token).label == "jj@dimagi.com"
+    with FakeSF() as fake, pytest.raises(providers.ProviderError):
+        providers.for_app(app).identity(token)
+    assert fake.calls == []
 
 
 # ---- access_token_for --------------------------------------------------------

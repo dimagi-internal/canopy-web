@@ -6,3 +6,6 @@ class ConnectionsConfig(AppConfig):
     name = "apps.connections"
     label = "connections"
     verbose_name = "Connections"
+
+    def ready(self) -> None:
+        from . import signals  # noqa: F401, PLC0415 - registers the receivers; models must be loaded first

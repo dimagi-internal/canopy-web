@@ -7,7 +7,6 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import ProtectedError
 
 from apps.agents.models import Agent
 from apps.connections import providers
@@ -128,10 +127,14 @@ def test_one_app_per_workspace_and_provider(ws, app):
         ConnectionApp.objects.create(workspace=ws, provider="salesforce", client_id="other")
 
 
-def test_an_app_with_connections_cannot_be_deleted_directly(user, app):
+def test_deleting_an_app_takes_its_connections_and_grants(user, agent, app):
+    owned = _conn(agent=agent, connected_by=user)
+    owned.save()
     _conn(user=user, connected_by=user).save()
-    with pytest.raises(ProtectedError):
-        app.delete()
+    echo = Agent.objects.create(slug="echo", name="Echo", workspace=agent.workspace)
+    ConnectionGrant(connection=owned, agent=echo, granted_by=user).save()
+    app.delete()
+    assert not Connection.objects.exists() and not ConnectionGrant.objects.exists()
 
 
 def test_the_same_account_through_two_workspaces_apps_is_two_rows(user):

@@ -100,15 +100,25 @@ class FakeSF:
 
 # ---- workspaces and their apps ---------------------------------------------------
 
-def sf_app(workspace, *, provider="salesforce", client_id=CLIENT_ID, secret=CLIENT_SECRET, **options):
-    """The workspace's app for `provider`, created set up (as a row: no audit
-    record, so a suite's Event assertions are untouched). `options` override the
-    Salesforce defaults; for another provider they are the whole options."""
+def sf_app(workspace, *, provider="salesforce", client_id=None, secret=None, **options):
+    """The workspace's app for `provider`, set up (as a row: no audit record, so a
+    suite's Event assertions are untouched). Created when missing; an existing
+    one is updated with whatever is passed. `options` override the Salesforce
+    defaults; for another provider they are the whole options."""
     app = ConnectionApp.objects.filter(workspace=workspace, provider=provider).first()
     if app is None:
-        app = ConnectionApp(workspace=workspace, provider=provider, client_id=client_id,
+        app = ConnectionApp(workspace=workspace, provider=provider, client_id=client_id or CLIENT_ID,
                             options={**SF_OPTIONS, **options} if provider == "salesforce" else options)
+        app.client_secret = CLIENT_SECRET if secret is None else secret
+        app.save()
+        return app
+    if client_id is not None:
+        app.client_id = client_id
+    if secret is not None:
         app.client_secret = secret
+    if options:
+        app.options = {**app.options, **options}
+    if client_id is not None or secret is not None or options:
         app.save()
     return app
 

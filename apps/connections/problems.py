@@ -15,7 +15,7 @@ from . import services
 # not the caller.
 _PROBLEMS: dict[str, tuple[int, str]] = {
     "invalid_app": (400, "Invalid app settings"),
-    "client_id_locked": (409, "Client id in use"),
+    "app_locked": (409, "App in use"),
     "wrong_account": (409, "Wrong account"),
     "not_configured": (409, "Not set up"),
     "not_connected": (409, "Not connected"),
@@ -37,8 +37,8 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, **memb
     status, heading = _PROBLEMS.get(exc.code, (502, "Provider error"))
     detail = {
         "not_configured": f"{title} is not set up for this workspace.",
-        "client_id_locked": f"Accounts are connected with this {title} client id; remove the app (which "
-                            "disconnects them) to switch to another.",
+        "app_locked": f"Accounts are connected with this {title} app, so its client id and login host "
+                      "cannot change; remove the app (which disconnects them) to switch.",
         "wrong_account": f"That {title} account is not one {owner.lower() if owner == 'Your' else owner} "
                          "connection may use; sign in with the right account.",
         "not_connected": f"{owner} {title} is not connected.",

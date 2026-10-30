@@ -50,6 +50,9 @@ class SalesforceProvider(Provider):
                     default=default_access_token_seconds),
     )
 
+    # A grant's refresh token is only good at the login host that issued it.
+    locked_options = ("login_url",)
+
     @classmethod
     def clean_options(cls, raw):
         cleaned = super().clean_options(raw)
@@ -92,13 +95,11 @@ class SalesforceProvider(Provider):
         host = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or not host:
             return False
-        if host.endswith(SALESFORCE_HOST_SUFFIXES):
-            return True
-        return host == (urlparse(self._base).hostname or "").lower()
+        # Every login host an app may save is itself a Salesforce host.
+        return host.endswith(SALESFORCE_HOST_SUFFIXES)
 
     def identity(self, token: TokenResponse) -> Identity:
-        # The bearer token goes only to a Salesforce host (or the configured login
-        # host, for a My Domain / custom login URL), never wherever `id` points.
+        # The bearer token goes only to a Salesforce host, never wherever `id` points.
         id_url = str(token.raw.get("id") or "")
         if not self._identity_host_ok(id_url):
             raise ProviderError("Salesforce identity URL is not a Salesforce host")

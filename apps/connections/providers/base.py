@@ -19,7 +19,9 @@ What a provider declares, and where providers differ:
   ("Read mail"). Chosen ones are asked for and required on top of `scopes`.
 - `option_fields` and `clean_options(raw)`: the provider's own settings
   (Salesforce: its login host and the access-token lifetime), validated when an
-  admin saves the app. Without a client id and secret the app is "not set up"
+  admin saves the app. `locked_options` names the ones that identify the
+  authorization server (Salesforce: `login_url`), locked like the client id
+  while connections exist. Without a client id and secret the app is "not set up"
   (`is_configured`), a state the UI shows rather than an error.
 - Endpoints: `authorize_url_base()`, `token_url()`, `revoke_url()` ("" when the
   provider has no revocation endpoint).
@@ -135,6 +137,9 @@ class Provider:
     # Extra scopes a workspace may choose, scope -> what to call it in the UI.
     scope_choices: ClassVar[Mapping[str, str]] = {}
     option_fields: ClassVar[tuple[OptionField, ...]] = ()
+    # Options that say WHICH authorization server the client belongs to: like the
+    # client id, they cannot change while connections were made with the app.
+    locked_options: ClassVar[tuple[str, ...]] = ()
     # A granted scope that includes others (Salesforce: `full` includes `api`), so a
     # grant naming the broader one is not refused for lacking the narrower.
     scope_implies: ClassVar[Mapping[str, tuple[str, ...]]] = {}
