@@ -169,6 +169,7 @@ def refresh(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "RUNNER_INSTANCE", "")
     monkeypatch.setattr(cloud_runner, "_stop", False)
     monkeypatch.setattr(cloud_runner, "_EXIT_FOR_REFRESH", False)
+    monkeypatch.delenv("CANOPY_RUNNER_SUPERVISED", raising=False)
     calls = []
     monkeypatch.setattr(cloud_runner.subprocess, "run",
                         lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
@@ -183,9 +184,34 @@ def test_an_operator_request_restarts_an_idle_box(refresh):
     assert calls == [["sudo", "-n", "systemctl", "restart", "canopy-runner.service"]]
 
 
-def test_never_mid_turn(refresh, monkeypatch):
+def test_an_unsupervised_box_never_restarts_mid_turn(refresh, monkeypatch):
     cr, calls = refresh
     monkeypatch.setattr(cr, "_in_flight_ids", lambda: ["t1"])
+    assert cr.maybe_self_refresh(True, now=2000.0) is False and calls == []
+
+
+def test_a_supervised_box_refreshes_mid_turn_by_handing_off(refresh, monkeypatch):
+    # cloud-ec2-live, 2026-10-28 → 10-30: a refresh that waited for an idle box sat
+    # 45 hours behind chats. A supervisor can carry every turn to the next daemon.
+    cr, calls = refresh
+    monkeypatch.setattr(cr, "_in_flight_ids", lambda: ["t1", "t2"])
+    monkeypatch.setenv("CANOPY_RUNNER_SUPERVISED", "1")
+    monkeypatch.setattr(cr, "ADOPT_TURNS", True)
+    monkeypatch.setattr(cr, "_adoptable_in_flight", lambda: (2, 0))
+    signals = []
+    monkeypatch.setattr(cr.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    assert cr.maybe_self_refresh(True, now=2000.0) is True
+    assert signals == [(cr.os.getppid(), cr.signal.SIGHUP)] and calls == []
+    assert cr._refresh_floor_until() == 2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS
+
+
+def test_a_pinned_turn_still_waits(refresh, monkeypatch):
+    cr, calls = refresh
+    monkeypatch.setattr(cr, "_in_flight_ids", lambda: ["t1"])
+    monkeypatch.setenv("CANOPY_RUNNER_SUPERVISED", "1")
+    monkeypatch.setattr(cr, "ADOPT_TURNS", True)
+    monkeypatch.setattr(cr, "_adoptable_in_flight", lambda: (1, 1))
+    monkeypatch.setattr(cr.os, "kill", lambda *a: pytest.fail("signalled"))
     assert cr.maybe_self_refresh(True, now=2000.0) is False and calls == []
 
 
