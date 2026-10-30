@@ -52,7 +52,9 @@ export {
   composerPlaceholder,
   pendingLabel,
   turnNotice,
+  turnPhase,
   type TurnNotice,
+  type TurnPhase,
 } from "./turnStatus";
 
 // What a turn did: the live activity line, its to-do list, the fold line and
