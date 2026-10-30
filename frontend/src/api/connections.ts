@@ -2,8 +2,9 @@
 // (and what to call them) comes from the API's `providers`, never from here.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
-// `/auth/connections/<provider>/start/` (a link for a person, a form POST for an
-// agent) — the provider's consent screen has to be shown by the provider — and
+// `/auth/connections/<provider>/<workspace>/start/` — the workspace whose app (OAuth
+// client) it connects with, from the provider row — (a link for a person, a form
+// POST for an agent) — the provider's consent screen has to be shown by the provider — and
 // it returns to `return_to` with
 // `?connection=<provider>&status=connected|error&reason=<code>`.
 //
@@ -69,14 +70,27 @@ export async function revokeConnectionGrant(slug: string, id: number, other: str
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an
  *  AGENT's is a form POST to this, CSRF-checked — the server refuses a GET that
  *  names an agent, so a link cannot attach an admin's own provider login to it. */
-export function connectionStartAction(provider: string): string {
+export function connectionStartAction(provider: string, workspace: string): string {
   const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-  return `${base}/auth/connections/${encodeURIComponent(provider)}/start/`
+  return `${base}/auth/connections/${encodeURIComponent(provider)}/${encodeURIComponent(workspace)}/start/`
 }
 
 /** The full-page navigation that starts a PERSON's connect. `returnTo` is a router
  *  path (the server adds the deployment prefix when it sends the browser back). */
-export function connectionStartPath(provider: string, returnTo: string): string {
+export function connectionStartPath(provider: string, workspace: string, returnTo: string): string {
   const q = new URLSearchParams({ return_to: returnTo })
-  return `${connectionStartAction(provider)}?${q.toString()}`
+  return `${connectionStartAction(provider, workspace)}?${q.toString()}`
+}
+
+/** The connections listed under provider row `p`: those made in its workspace, and
+ *  (on the provider's first row) any whose workspace has no row of its own, so a
+ *  connection is never hidden and never listed twice. */
+export function connectionsUnder(
+  p: ProviderOut, providers: readonly ProviderOut[], connections: readonly ConnectionOut[],
+): ConnectionOut[] {
+  const rows = providers.filter((r) => r.name === p.name)
+  const listed = new Set(rows.map((r) => r.workspace))
+  const first = rows[0] === p
+  return connections.filter((c) => c.provider === p.name
+    && (c.workspace === p.workspace || (first && !listed.has(c.workspace))))
 }

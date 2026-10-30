@@ -140,13 +140,14 @@ def eva(user, ws):
 
 
 def _connect(client, **agent):
-    start = reverse("connections_start", args=["acme"])
+    start = reverse("connections_start", args=["acme", "w"])
     params = {"return_to": "/settings", **agent}
     resp = client.post(start, params) if agent else client.get(start, params)
     assert resp.status_code == 302, resp.content
     authorize = urlparse(resp["Location"])
     query = {k: v[0] for k, v in parse_qs(authorize.query).items()}
-    landed = client.get(reverse("connections_callback", args=["acme"]), {"code": "acme-code", "state": query["state"]})
+    landed = client.get(reverse("connections_callback", args=["acme", "w"]),
+                        {"code": "acme-code", "state": query["state"]})
     return authorize, query, landed
 
 
@@ -154,7 +155,8 @@ def test_a_person_connects_lists_and_fetches_a_token(acme, user, ws):
     client = Client()
     client.force_login(user)
     listed = client.get("/api/connections/").json()
-    assert {"name": "acme", "title": "Acme Books", "configured": True} in listed["providers"]
+    assert {"name": "acme", "title": "Acme Books", "workspace": "w", "workspace_name": "W",
+            "configured": True} in listed["providers"]
 
     authorize, query, landed = _connect(client)
     assert f"{authorize.scheme}://{authorize.netloc}{authorize.path}" == AUTHORIZE
@@ -214,7 +216,7 @@ def test_an_agent_connects_and_its_turn_lists_and_fetches_the_token(acme, user, 
 def test_an_unregistered_provider_is_404_everywhere(user):
     client = Client()
     client.force_login(user)
-    assert client.get(reverse("connections_start", args=["nope"])).status_code == 404
+    assert client.get(reverse("connections_start", args=["nope", "w"])).status_code == 404
     raw, _ = PersonalToken.create_for_user(user=user, label="cli")
     assert Client(HTTP_AUTHORIZATION=f"Bearer {raw}").post("/api/me/connections/nope/token").status_code == 404
 

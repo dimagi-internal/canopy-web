@@ -15,10 +15,10 @@ vi.mock('@/api/agents', () => ({ listAgents: m.listAgents }))
 
 import { AgentConnectionsPanel } from './AgentConnectionsPanel'
 
-const PROVIDER = { name: 'salesforce', title: 'Salesforce', configured: true }
+const PROVIDER = { name: 'salesforce', title: 'Salesforce', workspace: 'w', workspace_name: 'W', configured: true }
 function conn(over: Record<string, unknown> = {}) {
   return {
-    id: 3, provider: 'salesforce', title: 'Salesforce', account_label: 'eva@dimagi-ai.com',
+    id: 3, provider: 'salesforce', title: 'Salesforce', account_label: 'eva@dimagi-ai.com', workspace: 'w', workspace_name: 'W',
     instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false,
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
     granted_from: null, shared_with: [], ...over,
@@ -42,7 +42,7 @@ describe('AgentConnectionsPanel', () => {
     const btn = await screen.findByRole('button', { name: 'Connect Salesforce' })
     const form = btn.closest('form') as HTMLFormElement
     expect(form.getAttribute('method')).toBe('post')
-    expect(form.getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/start\/$/)
+    expect(form.getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/w\/start\/$/)
     const field = (n: string) => (form.querySelector(`input[name="${n}"]`) as HTMLInputElement).value
     expect(field('return_to')).toBe('/agents/eva/settings/accounts')
     expect(field('agent')).toBe('eva')

@@ -389,11 +389,12 @@ export interface paths {
         };
         /**
          * My connections
-         * @description The services canopy can connect to, and the accounts I have connected.
+         * @description The services I can connect to, and the accounts I have connected.
          *
-         *     Never calls the provider, so it is cheap to read on every visit to Settings.
-         *     Whether a grant still works shows as `needs_reconnect`, which the next real
-         *     use of it keeps up to date.
+         *     A provider lists once per workspace of mine that has set it up (connect with
+         *     that workspace's app), or once as not set up. Never calls the provider, so
+         *     it is cheap to read on every visit to Settings. Whether a grant still works
+         *     shows as `needs_reconnect`, which the next real use of it keeps up to date.
          */
         readonly get: operations["my_connections"];
         readonly put?: never;
@@ -441,10 +442,13 @@ export interface paths {
          *     command line. Needs a personal access token sent as a bearer: a browser
          *     session, an MCP call, an OAuth connector's token and a conversation's caller
          *     token are all refused (403 `token_route_needs_pat`), so neither a stolen
-         *     cookie nor a model holding my token can pull a provider token. 409 when I
-         *     have not connected, or must reconnect (`connect_url`, an absolute URL, says
-         *     where). `?refresh=true` forces a new token even when the cached one looks
-         *     fresh (for a CLI whose token the provider already rejected).
+         *     cookie nor a model holding my token can pull a provider token. Only a
+         *     connection made in a workspace I am still a member of counts; `?workspace=`
+         *     picks one when I connected in several (409 `ambiguous` lists them in
+         *     `workspaces`). 409 when I have not connected, or must reconnect
+         *     (`connect_url`, an absolute URL, says where). `?refresh=true` forces a new
+         *     token even when the cached one looks fresh (for a CLI whose token the
+         *     provider already rejected).
          */
         readonly post: operations["my_connection_token"];
         readonly delete?: never;
@@ -6241,7 +6245,8 @@ export interface paths {
         /**
          * An agent's connections, its own and shared with it
          * @description What this agent can act as: connections it owns, and ones another agent
-         *     shares with it (`granted_from` names the owner). Only the agent's admins can see them.
+         *     shares with it (`granted_from` names the owner), and the providers its own
+         *     workspace has set up, which are what it connects with. Only the agent's admins can see them.
          */
         readonly get: operations["agent_connections"];
         readonly put?: never;
@@ -9358,6 +9363,63 @@ export interface paths {
          */
         readonly post: operations["test_connected_app"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{workspace}/connection-apps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A workspace's connection apps
+         * @description The OAuth client this workspace uses for each provider people and agents
+         *     connect to (Salesforce, ...), set up or not: its client id, whether a secret
+         *     is saved (never the secret), its settings and chosen scopes, the callback URL
+         *     to register at the provider, and how many connections it holds. Workspace
+         *     admins only.
+         */
+        readonly get: operations["list_connection_apps"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{workspace}/connection-apps/{provider}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set up or change a workspace's connection app
+         * @description Save this workspace's OAuth client for `provider`. A blank `client_secret`
+         *     keeps the saved one; send a new one to rotate it (existing connections keep
+         *     working). `options` merge over the saved settings; `scopes` replaces the
+         *     chosen list. While accounts are connected with the app, its client id (and,
+         *     for Salesforce, its login host) cannot change: 409 `app_locked`; remove the
+         *     app to switch. 400 `invalid_app` says what was refused. From a browser this
+         *     needs a fresh passkey check. Workspace admins only.
+         */
+        readonly put: operations["configure_connection_app"];
+        readonly post?: never;
+        /**
+         * Remove a workspace's connection app
+         * @description Remove this workspace's OAuth client for `provider`. Every account
+         *     connected with it is disconnected (each revoked at the provider) — people's
+         *     and agents'. Removing an app that is not set up is harmless. From a browser
+         *     this needs a fresh passkey check. Workspace admins only.
+         */
+        readonly delete: operations["remove_connection_app"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17864,6 +17926,16 @@ export interface components {
              */
             readonly title: string;
             /**
+             * Workspace
+             * @description The workspace whose app made this connection.
+             */
+            readonly workspace: string;
+            /**
+             * Workspace Name
+             * @description That workspace's display name.
+             */
+            readonly workspace_name: string;
+            /**
              * Account Label
              * @description Which account this is (e.g. a Salesforce username).
              */
@@ -17926,8 +17998,20 @@ export interface components {
              */
             readonly title: string;
             /**
+             * Workspace
+             * @description The workspace whose app this row connects with: the `{workspace}` in `/auth/connections/{provider}/{workspace}/start/`. Empty on a person's row for a provider no workspace of theirs has set up.
+             * @default
+             */
+            readonly workspace: string;
+            /**
+             * Workspace Name
+             * @description That workspace's display name.
+             * @default
+             */
+            readonly workspace_name: string;
+            /**
              * Configured
-             * @description Whether this deployment has credentials for the provider. False is a real state, not an error: the UI says 'not set up' instead of offering a button that cannot work.
+             * @description Whether the workspace has an app (client id and secret) for the provider. False is a real state, not an error: the UI says 'not set up' instead of offering a button that cannot work.
              */
             readonly configured: boolean;
         };
@@ -34163,6 +34247,140 @@ export interface components {
             /** Live Probe Ok */
             readonly live_probe_ok: boolean | null;
         };
+        /** ConnectionAppOut */
+        readonly ConnectionAppOut: {
+            /**
+             * Provider
+             * @description The provider's key, e.g. `salesforce`.
+             */
+            readonly provider: string;
+            /**
+             * Title
+             * @description The provider's display name.
+             */
+            readonly title: string;
+            /**
+             * Configured
+             * @description A client id and secret are saved, so people and agents can connect.
+             */
+            readonly configured: boolean;
+            /**
+             * Client Id
+             * @description The OAuth client id (public); empty when nothing is saved.
+             */
+            readonly client_id: string;
+            /**
+             * Has Secret
+             * @description A client secret is saved. The secret itself is never returned.
+             */
+            readonly has_secret: boolean;
+            /**
+             * Options
+             * @description The provider's own settings, as saved (see `option_fields`).
+             */
+            readonly options?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Scopes
+             * @description Extra scopes chosen from `scope_choices`, asked for on every connect.
+             */
+            readonly scopes?: readonly string[];
+            /**
+             * Scope Choices
+             * @description Extra scopes this provider offers.
+             */
+            readonly scope_choices?: readonly components["schemas"]["ScopeChoiceOut"][];
+            /**
+             * Option Fields
+             * @description The settings this provider takes.
+             */
+            readonly option_fields?: readonly components["schemas"]["OptionFieldOut"][];
+            /**
+             * Callback Url
+             * @description Register this as the callback (redirect) URL of the OAuth client at the provider.
+             */
+            readonly callback_url: string;
+            /**
+             * Connection Count
+             * @description Connections made with this app; removing it disconnects them.
+             */
+            readonly connection_count: number;
+            /** Updated At */
+            readonly updated_at?: string | null;
+            /**
+             * Configured By Email
+             * @description Who last saved it; empty if unknown.
+             * @default
+             */
+            readonly configured_by_email: string;
+        };
+        /** ConnectionAppsOut */
+        readonly ConnectionAppsOut: {
+            /**
+             * Apps
+             * @description One row per provider, set up or not.
+             */
+            readonly apps: readonly components["schemas"]["ConnectionAppOut"][];
+        };
+        /** OptionFieldOut */
+        readonly OptionFieldOut: {
+            /**
+             * Name
+             * @description The key in `options`.
+             */
+            readonly name: string;
+            /** Label */
+            readonly label: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "url" | "int" | "text";
+            /** Required */
+            readonly required: boolean;
+            /** Default */
+            readonly default?: string | number | null;
+        };
+        /** ScopeChoiceOut */
+        readonly ScopeChoiceOut: {
+            /**
+             * Scope
+             * @description The scope as the provider names it.
+             */
+            readonly scope: string;
+            /**
+             * Label
+             * @description What it allows, in words.
+             */
+            readonly label: string;
+        };
+        /** ConnectionAppIn */
+        readonly ConnectionAppIn: {
+            /**
+             * Client Id
+             * @description The OAuth client id (consumer key) from the provider.
+             */
+            readonly client_id: string;
+            /**
+             * Client Secret
+             * @description The client secret. Blank keeps the saved one (send a new one to rotate it); required the first time and with a new client id.
+             * @default
+             */
+            readonly client_secret: string;
+            /**
+             * Options
+             * @description The provider's settings (`option_fields`), merged over the saved ones.
+             */
+            readonly options?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Scopes
+             * @description The full list of extra scopes, from `scope_choices`; replaces the saved list.
+             */
+            readonly scopes?: readonly string[];
+        };
         /** AgentFitOut */
         readonly AgentFitOut: {
             /** Slug */
@@ -44414,6 +44632,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly refresh?: boolean;
+                readonly workspace?: string | null;
             };
             readonly header?: never;
             readonly path: {
@@ -56813,6 +57032,76 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ConnectionTestOut"];
                 };
+            };
+        };
+    };
+    readonly list_connection_apps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionAppsOut"];
+                };
+            };
+        };
+    };
+    readonly configure_connection_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionAppIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionAppOut"];
+                };
+            };
+        };
+    };
+    readonly remove_connection_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

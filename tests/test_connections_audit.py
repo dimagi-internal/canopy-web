@@ -49,12 +49,12 @@ BASE_KEYS = ("connection", "provider", "owner", "account_label", "by")
 
 
 def _connect_in_browser(client, secrets, **agent):
-    start = reverse("connections_start", args=["salesforce"])
+    start = reverse("connections_start", args=["salesforce", "w"])
     resp = client.post(start, agent) if agent else client.get(start)
     state = parse_qs(urlparse(resp["Location"]).query)["state"][0]
     secrets += [state, client.session[services.SESSION_KEY][state]["verifier"]]
     with FakeSF():
-        landed = client.get(reverse("connections_callback", args=["salesforce"]),
+        landed = client.get(reverse("connections_callback", args=["salesforce", "w"]),
                             {"code": "c0de-secret", "state": state})
     assert "status=connected" in landed["Location"]
 
@@ -82,14 +82,14 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     browser.force_login(user)
 
     # Connects that fail: the provider refused at authorize; then no refresh token.
-    start = reverse("connections_start", args=["salesforce"])
+    start = reverse("connections_start", args=["salesforce", "w"])
     state = parse_qs(urlparse(browser.get(start)["Location"]).query)["state"][0]
     secrets.append(state)
-    browser.get(reverse("connections_callback", args=["salesforce"]), {"error": "server_error", "state": state})
+    browser.get(reverse("connections_callback", args=["salesforce", "w"]), {"error": "server_error", "state": state})
     state = parse_qs(urlparse(browser.get(start)["Location"]).query)["state"][0]
     secrets += [state, browser.session[services.SESSION_KEY][state]["verifier"]]
     with FakeSF(token=[_resp(body=_token_body(refresh_token=None))]):
-        browser.get(reverse("connections_callback", args=["salesforce"]), {"code": "c0de-secret", "state": state})
+        browser.get(reverse("connections_callback", args=["salesforce", "w"]), {"code": "c0de-secret", "state": state})
 
     # A person: connect, a cached and a refreshed (rotating) CLI token, disconnect.
     _connect_in_browser(browser, secrets)

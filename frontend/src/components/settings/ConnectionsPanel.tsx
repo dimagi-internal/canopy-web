@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import {
+  connectionsUnder,
   connectionStartPath,
   disconnectMine,
   listMyConnections,
@@ -62,10 +63,10 @@ export function ConnectionsPanel() {
       {error && <p className="text-[13px] text-destructive">{error}</p>}
       {data.providers.map((p) => (
         <ProviderRow
-          key={p.name}
+          key={`${p.name}:${p.workspace ?? ''}`}
           provider={p}
-          rows={data.connections.filter((c) => c.provider === p.name)}
-          connectHref={connectionStartPath(p.name, pathname)}
+          rows={connectionsUnder(p, data.providers, data.connections)}
+          connectHref={connectionStartPath(p.name, p.workspace ?? '', pathname)}
           busy={busy}
           onDisconnect={disconnect}
         />

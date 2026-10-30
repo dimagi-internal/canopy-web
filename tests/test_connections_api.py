@@ -75,7 +75,8 @@ def test_list_shows_providers_and_only_my_connections(client, user, other):
     mine = _stored({"user": user}, user)
     _stored({"user": other}, other)
     body = client.get("/api/connections/").json()
-    assert body["providers"] == [{"name": "salesforce", "title": "Salesforce", "configured": True}]
+    assert body["providers"] == [{"name": "salesforce", "title": "Salesforce", "workspace": "jj-home",
+                                  "workspace_name": "jj", "configured": True}]
     assert [c["id"] for c in body["connections"]] == [mine.pk]
     c = body["connections"][0]
     assert c["provider"] == "salesforce" and c["account_label"] == "jj@dimagi.com"
@@ -258,10 +259,11 @@ def test_token_with_a_pat_returns_the_token(user):
 
 
 def test_token_not_connected_is_409_with_connect_url(user):
+    sf_app(home(user))
     resp = _token(user)
     assert resp.status_code == 409
     assert resp.json()["error"] == "not_connected"
-    assert resp.json()["connect_url"] == "http://testserver/auth/connections/salesforce/start/"
+    assert resp.json()["connect_url"] == "http://testserver/auth/connections/salesforce/jj-home/start/"
 
 
 def test_token_never_falls_back_to_an_agents_connection(user, eva):
@@ -275,7 +277,7 @@ def test_token_reconnect_required_is_409_and_stamps(user):
         resp = _token(user)
     assert resp.status_code == 409
     assert resp.json()["error"] == "reconnect_required"
-    assert resp.json()["connect_url"] == "http://testserver/auth/connections/salesforce/start/"
+    assert resp.json()["connect_url"] == "http://testserver/auth/connections/salesforce/jj-home/start/"
     conn.refresh_from_db()
     assert conn.refresh_failed_at is not None  # the stamp survived the 409
 

@@ -81,7 +81,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
       {data.providers.map((p) => {
         const rows = data.connections.filter((c) => c.provider === p.name)
         const own = rows.filter((c) => !c.granted_from)
-        const start = { action: connectionStartAction(p.name), returnTo: pathname, agent: agent.slug }
+        const start = { action: connectionStartAction(p.name, p.workspace ?? ''), returnTo: pathname, agent: agent.slug }
         return (
           <div key={p.name} className="space-y-2" data-testid={`agent-connection-provider-${p.name}`}>
             <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">{p.title}</p>

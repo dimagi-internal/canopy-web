@@ -199,6 +199,12 @@ def _readable_slugs(user) -> set[str]:
     return {slug for slug, role in workspaces.member_roles(user).items() if perms.role_allows(role, perms.READ)}
 
 
+def person_may_use(user, workspace) -> bool:
+    """Whether `user` may connect with, and use connections from, the apps of
+    `workspace` (a `Workspace` or slug): they can read it."""
+    return _slug(workspace) in _readable_slugs(user)
+
+
 def apps_for_person(user, provider: str) -> list[ConnectionApp]:
     """The set-up apps for `provider` in every workspace `user` can read, by workspace."""
     if provider not in providers.CLASSES:

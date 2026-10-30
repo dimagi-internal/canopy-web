@@ -1,10 +1,12 @@
-"""The JSON half of connections: status, disconnect, sharing, and my CLI token.
+"""The JSON half of connections: a workspace's apps, status, disconnect, sharing,
+and my CLI token.
 
 Errors from the service layer become responses in one place, `problem_for`.
 
-Three routers, because the URLs live under three prefixes (see `apps/api/api.py`):
+Four routers, because the URLs live under four prefixes (see `apps/api/api.py`):
 `router` at `/connections` (a person's own), `agents_router` at `/agents`
-(an agent's, admin-only) and `me_router` at `/me/connections` (the CLI token).
+(an agent's, admin-only), `me_router` at `/me/connections` (the CLI token) and
+`workspaces_router` at `/workspaces` (a workspace's apps, its admins').
 The browser legs of connecting are bare views (`views.py`).
 """
 from __future__ import annotations
@@ -23,25 +25,45 @@ from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.passkeys import stepup
 from apps.tokens import kinds
+from apps.workspaces import permissions as perms
+from apps.workspaces.gates import workspace_for
 
 from . import providers, services
-from .models import Connection, ConnectionGrant
+from .models import Connection, ConnectionApp, ConnectionGrant
 from .problems import problem_for
-from .schemas import AccessTokenOut, ConnectionOut, ConnectionsOut, ProviderOut
+from .schemas import (
+    AccessTokenOut,
+    ConnectionAppIn,
+    ConnectionAppOut,
+    ConnectionAppsOut,
+    ConnectionOut,
+    ConnectionsOut,
+    OptionFieldOut,
+    ProviderOut,
+    ScopeChoiceOut,
+)
 
 router = Router(auth=session_auth, tags=["connections"])
 agents_router = Router(auth=session_auth, tags=["connections"])
 me_router = Router(auth=session_auth, tags=["connections"])
+workspaces_router = Router(auth=session_auth, tags=["connections"])
 
 
 def _person_provider_rows(user) -> list[ProviderOut]:
-    # Configured: set up in some workspace this person can read.
-    return [ProviderOut(name=c.name, title=c.title, configured=bool(services.apps_for_person(user, c.name)))
-            for c in providers.CLASSES.values()]
+    # One row per (workspace I can read with the provider set up, provider); a
+    # provider set up nowhere of mine still lists once, unconfigured.
+    rows = []
+    for c in providers.CLASSES.values():
+        found = services.apps_for_person(user, c.name)
+        rows += [ProviderOut(name=c.name, title=c.title, workspace=a.workspace_id,
+                             workspace_name=a.workspace.display_name, configured=True) for a in found]
+        if not found:
+            rows.append(ProviderOut(name=c.name, title=c.title, configured=False))
+    return rows
 
 
 def _agent_provider_rows(agent: Agent) -> list[ProviderOut]:
-    # Configured: set up in the agent's own workspace, whose app it connects with.
+    # The agent's own workspace's apps, set up or not: the only ones it connects with.
     rows = []
     for c in providers.CLASSES.values():
         try:
@@ -50,7 +72,8 @@ def _agent_provider_rows(agent: Agent) -> list[ProviderOut]:
             configured = False
         else:
             configured = True
-        rows.append(ProviderOut(name=c.name, title=c.title, configured=configured))
+        rows.append(ProviderOut(name=c.name, title=c.title, workspace=agent.workspace_id,
+                                workspace_name=agent.workspace.display_name, configured=configured))
     return rows
 
 
@@ -62,6 +85,7 @@ def _title(provider: str) -> str:
 def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
+        workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
@@ -74,9 +98,13 @@ def _out(conn: Connection, *, granted_from: str | None = None) -> ConnectionOut:
     )
 
 
-def _connect_url(request: HttpRequest, provider: str) -> str:
+def _start_url(request: HttpRequest, provider: str, workspace: str) -> str:
     # Absolute: the CLI prints it for a person to open, far from any page.
-    return request.build_absolute_uri(reverse("connections_start", args=[provider]))
+    return request.build_absolute_uri(reverse("connections_start", args=[provider, workspace]))
+
+
+def _callback_url(request: HttpRequest, provider: str, workspace: str) -> str:
+    return request.build_absolute_uri(reverse("connections_callback", args=[provider, workspace]))
 
 
 def _provider_or_404(provider: str) -> type[providers.Provider]:
@@ -91,12 +119,14 @@ def _provider_or_404(provider: str) -> type[providers.Provider]:
 @router.get("/", response=ConnectionsOut, summary="My connections")
 @gate("self")
 def my_connections(request: HttpRequest) -> ConnectionsOut:
-    """The services canopy can connect to, and the accounts I have connected.
+    """The services I can connect to, and the accounts I have connected.
 
-    Never calls the provider, so it is cheap to read on every visit to Settings.
-    Whether a grant still works shows as `needs_reconnect`, which the next real
-    use of it keeps up to date."""
-    rows = services.connections_for(("user", request.user.pk)).select_related("connected_by")
+    A provider lists once per workspace of mine that has set it up (connect with
+    that workspace's app), or once as not set up. Never calls the provider, so
+    it is cheap to read on every visit to Settings. Whether a grant still works
+    shows as `needs_reconnect`, which the next real use of it keeps up to date."""
+    rows = (services.connections_for(("user", request.user.pk))
+            .select_related("connected_by", "app__workspace"))
     return ConnectionsOut(providers=_person_provider_rows(request.user), connections=[_out(c) for c in rows])
 
 
@@ -118,10 +148,13 @@ def disconnect_mine(request: HttpRequest, connection_id: int) -> Status:
 @gate("agent-admin")
 def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     """What this agent can act as: connections it owns, and ones another agent
-    shares with it (`granted_from` names the owner). Only the agent's admins can see them."""
+    shares with it (`granted_from` names the owner), and the providers its own
+    workspace has set up, which are what it connects with. Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
-    own = services.connections_for(("agent", agent.pk)).select_related("connected_by").prefetch_related("grants__agent")
-    granted = (Connection.objects.filter(grants__agent=agent).select_related("connected_by", "agent")
+    own = (services.connections_for(("agent", agent.pk)).select_related("connected_by", "app__workspace")
+           .prefetch_related("grants__agent"))
+    granted = (Connection.objects.filter(grants__agent=agent)
+               .select_related("connected_by", "agent", "app__workspace")
                .order_by("provider", "account_label", "pk").distinct())
     return ConnectionsOut(
         providers=_agent_provider_rows(agent),
@@ -234,18 +267,50 @@ def _plain_pat(request: HttpRequest) -> bool:
     return kind is not None and kind.name == kinds.PAT
 
 
+def _token_problem_members(request: HttpRequest, exc: services.ConnectionError, provider: str,
+                           workspace: str | None, conn: Connection | None) -> dict:
+    """`connect_url` (and, when it is ambiguous, `workspaces` and `accounts`) for
+    a 409 that a person fixes by connecting: the start URL of the workspace in
+    question — the connection's, the one asked for, or the only one set up —
+    else Settings, where they choose."""
+    user = request.user
+    members: dict = {}
+    if exc.code not in ("not_connected", "reconnect_required", "ambiguous"):
+        return members
+    where: list[str] = []
+    if conn is not None:
+        where = [conn.app.workspace_id]
+    elif exc.code == "ambiguous":
+        rows = services.person_connections(user, provider, workspace=workspace)
+        where = sorted({c.app.workspace_id for c in rows})
+        members["workspaces"] = where
+        members["accounts"] = [c.account_label for c in rows]
+    else:
+        where = [a.workspace_id for a in services.apps_for_person(user, provider)
+                 if workspace is None or a.workspace_id == workspace]
+        if len(where) > 1:
+            members["workspaces"] = where
+    members["connect_url"] = (_start_url(request, provider, where[0]) if len(where) == 1
+                              else request.build_absolute_uri("/settings/connections"))
+    return members
+
+
 @me_router.post("/{provider}/token", response=AccessTokenOut,
                 summary="A fresh access token for my own connection (CLI)")
 @gate("self", kind="ephemeral-credential", step_up="a person's own token for their own CLI; PAT only")
-def my_connection_token(request: HttpRequest, provider: str, refresh: bool = False) -> AccessTokenOut:
+def my_connection_token(request: HttpRequest, provider: str, refresh: bool = False,
+                        workspace: str | None = None) -> AccessTokenOut:
     """Mint a short-lived access token for the account I connected, for my own
     command line. Needs a personal access token sent as a bearer: a browser
     session, an MCP call, an OAuth connector's token and a conversation's caller
     token are all refused (403 `token_route_needs_pat`), so neither a stolen
-    cookie nor a model holding my token can pull a provider token. 409 when I
-    have not connected, or must reconnect (`connect_url`, an absolute URL, says
-    where). `?refresh=true` forces a new token even when the cached one looks
-    fresh (for a CLI whose token the provider already rejected)."""
+    cookie nor a model holding my token can pull a provider token. Only a
+    connection made in a workspace I am still a member of counts; `?workspace=`
+    picks one when I connected in several (409 `ambiguous` lists them in
+    `workspaces`). 409 when I have not connected, or must reconnect
+    (`connect_url`, an absolute URL, says where). `?refresh=true` forces a new
+    token even when the cached one looks fresh (for a CLI whose token the
+    provider already rejected)."""
     if not _plain_pat(request):
         raise ProblemError(403, "A personal access token is required",
                            detail="Use the CLI (`canopy login`) to fetch your own token.",
@@ -253,15 +318,100 @@ def my_connection_token(request: HttpRequest, provider: str, refresh: bool = Fal
     p = _provider_or_404(provider)
     # No outer transaction: a refresh rejection stamps the row, and that stamp
     # must survive the exception turned into a 409 below.
+    conn = None
     try:
-        conn = services.connection_for_person(request.user, provider)
+        conn = services.connection_for_person(request.user, provider, workspace=workspace or None)
         token = services.issue_token(conn, to="cli", by=request.user, refresh=refresh)
     except services.ConnectionError as exc:
-        members = {}
-        if exc.code in ("not_connected", "reconnect_required", "ambiguous"):
-            members["connect_url"] = _connect_url(request, provider)
-        if exc.code == "ambiguous":
-            members["accounts"] = [c.account_label for c in services.person_connections(request.user, provider)]
+        members = _token_problem_members(request, exc, provider, workspace or None, conn)
         raise problem_for(exc, title=p.title, owner="Your", **members) from None
     return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
                           expires_at=token.expires_at, account_label=token.account_label)
+
+
+# ---- a workspace's apps ----------------------------------------------------------
+
+def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
+             app: ConnectionApp | None) -> ConnectionAppOut:
+    # Never the secret: `has_secret` only.
+    return ConnectionAppOut(
+        provider=cls.name, title=cls.title,
+        configured=app is not None and providers.for_app(app).is_configured(),
+        client_id=app.client_id if app is not None else "",
+        has_secret=bool(app is not None and app.client_secret_enc),
+        options=dict(app.options) if app is not None else {},
+        scopes=list(app.extra_scopes) if app is not None else [],
+        scope_choices=[ScopeChoiceOut(scope=k, label=v) for k, v in cls.scope_choices.items()],
+        option_fields=[OptionFieldOut(name=f.name, label=f.label, kind=f.kind, required=f.required,
+                                      default=f.default) for f in cls.option_fields],
+        callback_url=_callback_url(request, cls.name, slug),
+        connection_count=app.connections.count() if app is not None else 0,
+        updated_at=app.updated_at if app is not None else None,
+        configured_by_email=((app.configured_by.email or app.configured_by.get_username())
+                             if app is not None and app.configured_by is not None else ""),
+    )
+
+
+def _app_row(slug: str, provider: str) -> ConnectionApp | None:
+    return (ConnectionApp.objects.select_related("configured_by")
+            .filter(workspace_id=slug, provider=provider).first())
+
+
+@workspaces_router.get("/{workspace}/connection-apps", response=ConnectionAppsOut,
+                       summary="A workspace's connection apps")
+@gate("integrations")
+def list_connection_apps(request: HttpRequest, workspace: str) -> ConnectionAppsOut:
+    """The OAuth client this workspace uses for each provider people and agents
+    connect to (Salesforce, ...), set up or not: its client id, whether a secret
+    is saved (never the secret), its settings and chosen scopes, the callback URL
+    to register at the provider, and how many connections it holds. Workspace
+    admins only."""
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
+    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by").filter(workspace=ws)}
+    return ConnectionAppsOut(apps=[_app_out(request, ws.slug, c, rows.get(c.name))
+                                   for c in providers.CLASSES.values()])
+
+
+@workspaces_router.put("/{workspace}/connection-apps/{provider}", response=ConnectionAppOut,
+                       summary="Set up or change a workspace's connection app")
+@gate("integrations", setting=True, step_up=True)
+def configure_connection_app(request: HttpRequest, workspace: str, provider: str,
+                             payload: ConnectionAppIn) -> ConnectionAppOut:
+    """Save this workspace's OAuth client for `provider`. A blank `client_secret`
+    keeps the saved one; send a new one to rotate it (existing connections keep
+    working). `options` merge over the saved settings; `scopes` replaces the
+    chosen list. While accounts are connected with the app, its client id (and,
+    for Salesforce, its login host) cannot change: 409 `app_locked`; remove the
+    app to switch. 400 `invalid_app` says what was refused. From a browser this
+    needs a fresh passkey check. Workspace admins only."""
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
+    # After the permission check: a non-admin gets 404/403, never a step-up prompt.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    cls = _provider_or_404(provider)
+    try:
+        app = services.configure_app(ws, cls.name, client_id=payload.client_id,
+                                     client_secret=payload.client_secret, options=payload.options,
+                                     scopes=payload.scopes, by=request.user)
+    except services.ConnectionError as exc:
+        raise problem_for(exc, title=cls.title, owner="This workspace's") from None
+    return _app_out(request, ws.slug, cls, app)
+
+
+@workspaces_router.delete("/{workspace}/connection-apps/{provider}", response={204: None},
+                          summary="Remove a workspace's connection app")
+@gate("integrations", setting=True, step_up=True)
+def remove_connection_app(request: HttpRequest, workspace: str, provider: str) -> Status:
+    """Remove this workspace's OAuth client for `provider`. Every account
+    connected with it is disconnected (each revoked at the provider) — people's
+    and agents'. Removing an app that is not set up is harmless. From a browser
+    this needs a fresh passkey check. Workspace admins only."""
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
+    # After the permission check: a non-admin gets 404/403, never a step-up prompt.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    cls = _provider_or_404(provider)
+    app = _app_row(ws.slug, cls.name)
+    if app is not None:
+        services.remove_app(app, by=request.user)
+    return Status(204, None)
