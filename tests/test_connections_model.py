@@ -157,4 +157,4 @@ def test_salesforce_authorize_url_shape(app):
     assert q["state"] == "st8"
     assert q["code_challenge"] == "chal"
     assert q["code_challenge_method"] == "S256"
-    assert q["scope"] == "api refresh_token"
+    assert q["scope"] == "api refresh_token id"

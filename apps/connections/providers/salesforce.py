@@ -34,7 +34,8 @@ MIN_ACCESS_TOKEN_SECONDS, MAX_ACCESS_TOKEN_SECONDS = 300, 86400
 class SalesforceProvider(Provider):
     name = "salesforce"
     title = "Salesforce"
-    scopes = ("api", "refresh_token")
+    # `id` lets the identity URL (who signed in) answer; `api` alone may not.
+    scopes = ("api", "refresh_token", "id")
     # Salesforce names what it granted in `scope` ("refresh_token api", plus any
     # the Connected App adds); without both, canopy can neither call nor refresh.
     required_scopes = ("api", "refresh_token")
