@@ -476,7 +476,11 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   )
   // A sensitive conversation is read with the visitor's own vault key, which a
   // passkey can unlock in the frame (canopy's origin) only if the page delegates it.
-  iframe.setAttribute('allow', 'publickey-credentials-get')
+  //
+  // clipboard-write: a cross-origin frame is refused navigator.clipboard.writeText
+  // unless the embedding page delegates it, so the chat's Copy buttons failed
+  // silently on every host page (Labs' "Ask an agent", reported 2026-10-30).
+  iframe.setAttribute('allow', 'publickey-credentials-get; clipboard-write')
   panel.appendChild(iframe)
   root.appendChild(panel)
 
