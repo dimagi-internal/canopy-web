@@ -137,8 +137,8 @@ def test_a_non_member_gets_404_not_a_reason(cs):
 def test_access_for_an_admin_says_admin(cs):
     res = _session(cs["admin"]).get("/api/agents/csbot/credentials/access")
     assert res.status_code == 200
-    assert res.json() == {"agent": "csbot", "may_resolve": True, "via": "admin",
-                          "reason": "", "delegated_withheld": []}
+    assert res.json() == {"agent": "csbot", "credential_source": "canopy-web", "may_resolve": True,
+                          "via": "admin", "reason": "", "delegated_withheld": []}
 
 
 def test_access_for_a_runner_pair_says_runner_over_bearer(cs):
@@ -149,7 +149,8 @@ def test_access_for_a_runner_pair_says_runner_over_bearer(cs):
 
 def test_access_for_a_member_says_no_and_why(cs):
     body = _session(cs["editor"]).get("/api/agents/csbot/credentials/access").json()
-    assert "credential_source" not in body
+    # Constant, kept for cloud runners older than 80986da7 (see AgentCredentialAccessOut).
+    assert body["credential_source"] == "canopy-web"
     assert body["may_resolve"] is False and body["via"] is None
     assert "admin" in body["reason"]
     assert SECRET not in str(body)
