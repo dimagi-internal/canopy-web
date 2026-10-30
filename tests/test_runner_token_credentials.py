@@ -19,7 +19,8 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentCredentialRead
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
-from tests.fixtures.aws_proof import HTU, RESOLVE, _active_role, _bind, _proof
+from tests.fixtures.aws_proof import HTU, RESOLVE, _active_role, _proof
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("fresh_cache")]
 
@@ -39,7 +40,6 @@ def _get(path, token, **headers):
 
 
 def test_the_token_stages_an_agent_its_box_serves(fleet, sts):  # noqa: F811 — fixtures
-    _bind(fleet)
     _active_role(fleet, sts)
     raw = _runner_token(fleet)
 
@@ -55,7 +55,7 @@ def test_the_token_stages_an_agent_its_box_serves(fleet, sts):  # noqa: F811 —
     assert AgentCredentialRead.objects.get(name="CANOPY_WEB_PAT").runner_id == fleet["runner"].pk
 
 
-def test_the_token_reads_nothing_its_box_does_not_serve(fleet, sts):  # noqa: F811 — fixtures
+def test_the_token_reads_nothing_its_box_does_not_serve(fleet, sts, monkeypatch):  # noqa: F811 — fixtures
     """The owner administers Ada too, but this box does not run her."""
     _active_role(fleet, sts)
     Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["user"],
@@ -68,7 +68,9 @@ def test_the_token_reads_nothing_its_box_does_not_serve(fleet, sts):  # noqa: F8
     res = _get("/api/agents/ada/credentials/resolve", raw,
                HTTP_X_CANOPY_AWS_PROOF=_proof("http://testserver/api/agents/ada/credentials/resolve"))
     assert res.status_code == 403
-    # The owner's PAT is unchanged: an admin still resolves for a direct session.
+    # The owner's PAT is unchanged: an admin still resolves for a direct session (from a
+    # machine that proves itself, as every read must).
+    accept_device_proof(monkeypatch)
     assert _get("/api/agents/ada/credentials/resolve", fleet["pat"]).status_code == 200
 
 

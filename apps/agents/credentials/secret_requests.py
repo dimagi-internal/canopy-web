@@ -104,9 +104,6 @@ def create(agent, *, name: str, reason: str, user):
 
     if not (agent.is_admin(user) or agent.is_own_login(user)):
         raise RequestError(403, "forbidden", f"only {agent.slug} itself or its admins may ask for its secrets")
-    if not agent.zk_enabled:
-        raise RequestError(409, "zk_not_enabled",
-                           f"{agent.slug}'s secrets are not zero-knowledge: store them from its Credentials page")
     name = _declared(agent, name)
     session = _session_of_caller(agent)
     if session is not None and session.contact_id:

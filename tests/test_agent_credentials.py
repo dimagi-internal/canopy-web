@@ -86,7 +86,7 @@ def test_the_stored_column_is_ciphertext_not_plaintext(fleet):
     row = AgentCredential.objects.get(agent=fleet["agent"], name="nova-api-key")
     assert row.value_zk.startswith("zks1:") and SECRET not in row.value_zk
     fleet["agent"].refresh_from_db()
-    assert fleet["agent"].zk_enabled and fleet["agent"].zk_kv == 0
+    assert fleet["agent"].zk_kv == 0
 
 
 def test_a_write_with_nobody_to_seal_to_stores_nothing(fleet):
@@ -98,7 +98,7 @@ def test_a_write_with_nobody_to_seal_to_stores_nothing(fleet):
     assert res.status_code == 409 and res.json()["error"] == "zk_no_recipients"
     assert not AgentCredential.objects.filter(agent=fleet["agent"]).exists()
     fleet["agent"].refresh_from_db()
-    assert not fleet["agent"].zk_enabled
+    assert fleet["agent"].zk_kv == 0
 
 
 def test_no_browser_route_returns_a_value(fleet):

@@ -189,7 +189,7 @@ def devices_waiting(agent, keys) -> set:
     from .zk_seal import sealed_targets  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
 
     keys = [k for k in keys if k.ecdh_jkt]
-    if not agent.zk_enabled or not keys:
+    if not keys:
         return set()
     if agent.zk_kv == 0:
         stored = [sealed_targets(v) for v in AgentCredential.objects.filter(agent=agent)
@@ -228,17 +228,12 @@ def _locked(agent):
     return Agent.objects.select_for_update().get(pk=agent.pk)
 
 
-def _require_enabled(agent) -> None:
-    if not agent.zk_enabled:
-        raise ZkError(409, "zk_not_enabled", f"{agent.slug} is not zero-knowledge")
-
-
 def _store(agent) -> "engine.Store":
     """The agent's vault, for the rules in `vault_engine`: its rows live on the agent."""
 
     def save_kv(kv: int) -> None:
-        agent.zk_enabled, agent.zk_kv = True, kv
-        agent.save(update_fields=["zk_enabled", "zk_kv", "updated_at"])
+        agent.zk_kv = kv
+        agent.save(update_fields=["zk_kv", "updated_at"])
 
     return engine.Store(
         label=agent.slug, kv=agent.zk_kv,
@@ -246,7 +241,6 @@ def _store(agent) -> "engine.Store":
         eligible_devices=lambda: eligible_device_keys(agent),
         eligible_members=lambda: eligible_members(agent),
         lock=lambda: _store(_locked(agent)), save_kv=save_kv,
-        require_enabled=lambda: _require_enabled(agent),
         # A browser may seal a value to its recipients before the vault key exists.
         accepts_sealed=True,
         device_scope=f"on a runner {agent.slug} routes to, working for a member of {agent.slug}'s vault",
@@ -305,14 +299,14 @@ def forget_member_wraps(user) -> int:
 def pending_targets(agent) -> list[dict]:
     """Eligible principals with no wrap at the current kv: who a member should
     grant to next. Before enable, every eligible principal (what enable wraps to)."""
-    return engine.pending_targets(_store(agent), has_key=agent.zk_enabled)
+    return engine.pending_targets(_store(agent), has_key=True)
 
 
 def copies(agent) -> tuple[set[int], list[str]]:
     """Who holds the agent's CURRENT vault key and may pass it on now: the members with
     a copy, and the names of the machines (keepers) that hold one, serve the agent and
     work for a member. Empty before the vault has a key."""
-    if not agent.zk_enabled or not agent.zk_kv:
+    if not agent.zk_kv:
         return set(), []
     members = vault_members.agent_member_ids(agent)
     rows = list(AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind__in=["member", "device"])
@@ -331,7 +325,7 @@ def state(agent, *, include_values: bool = False) -> dict:
 
     wraps = engine.wrap_rows(_store(agent))
     out = {
-        "agent": agent.slug, "agent_id": str(agent.pk), "enabled": agent.zk_enabled,
+        "agent": agent.slug, "agent_id": str(agent.pk), "enabled": True,  # every agent is; kept for older clients
         "kv": agent.zk_kv, "wraps": wraps, "pending": pending_targets(agent),
         "rotation_recommended": engine.rotation_recommended(wraps),
         "values": None,

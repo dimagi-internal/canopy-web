@@ -322,12 +322,13 @@ def _status(agent):
 
 def test_a_new_agent_has_everything_but_its_repo_left_to_do(editor, ws):
     steps = setup_steps(_agent(ws, editor))
-    assert [s["key"] for s in steps] == ["repo", "github", "mailbox", "vault", "canopy_login", "runner",
+    assert [s["key"] for s in steps] == ["repo", "github", "vault", "canopy_login", "mailbox", "runner",
                                          "job", "first_turn"]
     assert {s["key"]: s["status"] for s in steps} == {
         "repo": "done", "github": "todo", "mailbox": "todo", "canopy_login": "todo",
-        # Declares no secret, and (not zero-knowledge) has no vault to open: nothing to do.
-        "vault": "done",
+        # Nobody can open its vault yet (no vault key, no approved machine), so no secret
+        # can be stored, Google's included.
+        "vault": "todo",
         "runner": "todo", "job": "todo", "first_turn": "todo"}
     job = next(s for s in steps if s["key"] == "job")
     assert job["where"] == "claude-code"
@@ -443,7 +444,9 @@ def test_the_vault_step_lists_the_declared_secrets_not_yet_stored(editor, ws):
     """Done means every declared secret is in canopy-web; the agent's own login has its own
     step, so it is never reported here as well. The checklist has no 1Password vault step."""
     from apps.agents.models import AgentCredential
+    from apps.passkeys.models import UserVaultKeyset
 
+    UserVaultKeyset.objects.create(user=editor, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
     agent = _agent(ws, editor, runtime_secrets=["CANOPY_WEB_PAT", "gog-token", "api-key"])
     vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
     assert vault["status"] == "todo" and vault["href"].endswith("#credentials")
@@ -510,15 +513,10 @@ def test_the_runner_step_offers_pairing_to_whoever_could_hold_the_agent(editor, 
     assert next(s for s in setup_steps(agent, viewer_is_admin=True) if s["key"] == "runner")["links"] == []
 
 
-def _zk_agent(ws, owner):
-    """A new agent as creation makes it: zero-knowledge, on the canopy-web vault, at kv 0."""
-    return _agent(ws, owner, zk_enabled=True, zk_kv=0)
-
-
-def test_a_zero_knowledge_agent_sets_up_its_vault_before_google(editor, ws):
+def test_an_agent_sets_up_its_vault_before_google(editor, ws):
     """Connecting Google seals the token to whoever can open the vault; with nobody yet
     the mint ends in `zk-no-recipients`. So the vault comes first."""
-    steps = setup_steps(_zk_agent(ws, editor))
+    steps = setup_steps(_agent(ws, editor))
     assert [s["key"] for s in steps] == ["repo", "github", "vault", "canopy_login", "mailbox", "runner",
                                          "job", "first_turn"]
 
@@ -526,7 +524,7 @@ def test_a_zero_knowledge_agent_sets_up_its_vault_before_google(editor, ws):
 def test_a_vault_nobody_can_open_is_not_done(editor, ws):
     from apps.passkeys.models import UserVaultKeyset
 
-    agent = _zk_agent(ws, editor)
+    agent = _agent(ws, editor)
     vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
     assert vault["status"] == "todo"
     assert vault["href"] == "/settings#vault-key" and vault["action"] == "Set up your vault key"
@@ -540,16 +538,10 @@ def test_a_vault_nobody_can_open_is_not_done(editor, ws):
 def test_a_vault_open_only_to_a_non_admin_still_has_nobody(editor, ws):
     from apps.passkeys.models import UserVaultKeyset
 
-    agent = _zk_agent(ws, editor)
+    agent = _agent(ws, editor)
     viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
     UserVaultKeyset.objects.create(user=viewer, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
     assert _status(agent)["vault"] == "todo"
-
-
-def test_an_agent_that_is_not_zero_knowledge_keeps_google_before_its_vault(editor, ws):
-    agent = _agent(ws, editor)
-    keys = [s["key"] for s in setup_steps(agent)]
-    assert keys.index("mailbox") < keys.index("vault")
 
 
 def test_the_runner_step_is_only_for_running_on_its_own(editor, ws):

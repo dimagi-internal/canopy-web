@@ -173,17 +173,15 @@ def _vault(agent: Agent, settings: str, vh: dict | None = None, facts=None) -> d
 
     vh = vh or vault_health(agent, facts)
     title = "Give it a vault"
-    if agent.zk_enabled:
-
-        if not zk_seal.has_recipients(agent, facts):
-            # Every value is sealed to the vault's readers (its approved runners'
-            # device keys, its admins' vault keys). With none, nothing can be stored —
-            # connecting Google ends in `zk-no-recipients` — so this comes first.
-            return _step("vault", title, TODO,
-                         "Nobody can open its vault yet, so it cannot store a secret — Google "
-                         "included. Set up your vault key with a passkey (or approve one of its "
-                         "runners' device keys) first.",
-                         href="/settings#vault-key", action="Set up your vault key")
+    if not zk_seal.has_recipients(agent, facts):
+        # Every value is sealed to the vault's readers (its approved runners'
+        # device keys, its admins' vault keys). With none, nothing can be stored —
+        # connecting Google ends in `zk-no-recipients` — so this comes first.
+        return _step("vault", title, TODO,
+                     "Nobody can open its vault yet, so it cannot store a secret — Google "
+                     "included. Set up your vault key with a passkey (or approve one of its "
+                     "runners' device keys) first.",
+                     href="/settings#vault-key", action="Set up your vault key")
     # Its canopy login has its own step (and button); listing it here too would be
     # one missing thing reported twice.
     vh = {**vh, "missing": [n for n in vh["missing"] if n != CANOPY_PAT_REF]}
@@ -351,10 +349,8 @@ def setup_steps(agent: Agent, *, viewer_is_admin: bool = False, vault_state: dic
     repo = delegations.agent_repo(agent)
     mailbox = _mailbox(agent, settings)
     vault = [_vault(agent, settings, vault_state, facts), *[s for s in [_canopy_login(agent, settings)] if s]]
-    # A zero-knowledge agent on the canopy-web vault seals what Google hands back to
-    # whoever can open its vault, so the vault comes first; otherwise the mint fails
-    # with `zk-no-recipients`.
-    zk_first = agent.zk_enabled
+    # The vault comes first: Google's token is sealed to whoever can open it, and with
+    # no one the mint fails with `zk-no-recipients`.
     return [
         _step("repo", "Give it a repository", DONE if agent.repo_url else TODO,
               f"Code lives in {repo or agent.repo_url}." if agent.repo_url else
@@ -365,7 +361,8 @@ def setup_steps(agent: Agent, *, viewer_is_admin: bool = False, vault_state: dic
               href=agent.repo_url or f"{settings}#repository",
               action="Open on GitHub" if agent.repo_url else "Set its repository"),
         _github(agent, settings),
-        *([*vault, mailbox] if zk_first else [mailbox, *vault]),
+        *vault,
+        mailbox,
         _runner(agent, settings, viewer_is_admin, facts),
         _job(agent),
         _first_turn(agent, base),

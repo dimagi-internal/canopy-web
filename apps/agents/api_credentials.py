@@ -407,7 +407,7 @@ def _vault_out(vault, user) -> VaultMembersOut:
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
         you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
-        holders={"has_key": bool(vault.agent.zk_enabled and vault.agent.zk_kv),
+        holders={"has_key": bool(vault.agent.zk_kv),
                  "people": vault_members.granters(ms, held), "keepers": keepers})
 
 
@@ -615,8 +615,6 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
         req = _secret_request(request, slug, secret_request) if secret_request else None
         if req is None or not secret_requests.live(req) or not secret_requests.may_answer(req, request.user):
             raise HttpError(403, "only the agent's admins, or someone answering its open request")
-    if not agent.zk_enabled:
-        raise zk_problem(zk_endorse.ZkError(409, "zk_not_enabled", f"{agent.slug} is not zero-knowledge"))
     return ZkRecipientsOut(
         agent=agent.slug, agent_id=str(agent.pk), kv=agent.zk_kv,
         recipients=zk_endorse.recipients(agent), endorsements=zk_endorse.endorsements(agent),
@@ -834,7 +832,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
     it; on a private runner, its owner alone)."""
 
     agent = agent_for_admin(request, slug)
-    vault = [agent] if agent.zk_enabled else []
+    vault = [agent]
     out = []
     for k in device_keys.keys_for_agent(agent):
         row = key_out(k, can_manage=may_trust_device_keys(request.user, k.runner))

@@ -151,5 +151,3 @@ def _active_role(fleet, sts):
     return body
 
 
-def _bind(fleet):
-    Agent.objects.filter(pk=fleet["agent"].pk).update(zk_enabled=True)

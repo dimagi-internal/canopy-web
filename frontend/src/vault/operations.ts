@@ -501,20 +501,6 @@ async function freshRecovery(vk: Uint8Array, agentId: string, kv: number): Promi
 
 // ---- the agent flows ------------------------------------------------------------------------
 
-/**
- * Create the agent's first vault key, step by step: generate VK; open each
- * value sealed to me (`zks1`, stored before the key existed); encrypt them; wrap VK
- * for me, every eligible device and recovery; then hand the recovery code to
- * `confirm` — which shows it once and resolves when the person has kept it —
- * and only then call enable.
- */
-export async function turnOnZk(slug: string, storedNames: string[],
-                               confirm: (code: string) => Promise<void>, unlock?: Unlock): Promise<ZkStateOut> {
-  const ready = await prepareTurnOnZk(slug, storedNames, unlock)
-  if (ready.code) await confirm(ready.code)
-  return ready.commit()
-}
-
 /** Everything turning ZK on needs, done but not yet sent: the recovery code
  *  to show, and `commit` to enable once it has been kept. Several agents can be
  *  prepared, their codes shown together, then committed. */
@@ -532,7 +518,7 @@ export async function prepareTurnOnZk(slug: string, storedNames: string[], unloc
   // An agent born zero-knowledge (kv 0) has only sealed values and no vault
   // key yet: this creates it, opening each sealed value with my keyset.
   const state = await getZkState(slug, true)
-  if (state.enabled && state.kv !== 0) throw new Error('Zero-knowledge is already on for this agent.')
+  if (state.kv !== 0) throw new Error('Zero-knowledge is already on for this agent.')
   const kv = 1
   const vk = randomBytes(32)
   let me: Unlocked | null = null
@@ -685,7 +671,7 @@ export async function giveAccess(slug: string, unlockOnce: Unlock): Promise<ZkSt
   let opened: Promise<Unlocked> | null = null
   const unlock: Unlock = () => (opened = opened ?? unlockOnce())
   const state = await getZkState(slug, true)
-  if (state.enabled && state.kv === 0) {
+  if (state.kv === 0) {
     const names = Object.keys(state.values ?? {})
     const ready = await prepareTurnOnZk(slug, names, unlock, { personRecovery: true })
     await ready.commit()

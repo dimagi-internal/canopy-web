@@ -185,7 +185,7 @@ export function AgentHowItRuns({
     routes.push({ id, name: rule.runner_name, online: box?.status === 'online', ready: Boolean(box?.ready),
                   why: rule.actor ? `${rule.source}: ${rule.actor}` : rule.source || 'rule' })
   }
-  const zkOn = Boolean(zk?.enabled)
+  const zkOn = Boolean(zk)
   const pendingGrants = zkOn ? routes.filter((r) => vaultReach(r.id, zk!, agentKeys ?? []) === 'grant-pending').length : 0
   const enabledSchedules = (schedules ?? []).filter((s) => s.enabled).length
 

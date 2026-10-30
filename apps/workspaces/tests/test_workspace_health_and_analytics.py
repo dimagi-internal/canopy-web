@@ -72,6 +72,7 @@ def test_vault_health_classifies_each_declared_secret(tree):
 
 
 def test_the_vault_step_names_the_secrets_not_yet_stored(tree):
+    _keyset(tree["ceo"])  # someone can open its vault, so a secret could be stored
     step = next(s for s in setup_steps(tree["hal"]) if s["key"] == "vault")
     assert step["status"] == "todo"
     assert "not stored anywhere: old" in step["detail"]
@@ -113,8 +114,6 @@ def test_health_reads_the_fleet_once_however_many_runners_hold_device_keys(tree)
 
     from apps.harness.models import Runner, RunnerDeviceKey, WorkspaceRunnerOrder
 
-    Agent.objects.filter(pk__in=[tree["hal"].pk, tree["eva"].pk]).update(
-        zk_enabled=True)
 
     def add_runner(n):
         r = Runner.objects.create(name=f"box-{n}", kind=Runner.CLOUD, host=f"box-{n}", owner=tree["ceo"],
@@ -540,7 +539,7 @@ def test_health_does_not_ask_about_every_vault_key_in_the_system(tree):
     `is_admin` of every keyset holder in the system made the health page's queries grow
     with keysets × agents; the cheap check is two queries per agent whatever the count."""
     for slug in ("zk1", "zk2", "zk3"):
-        Agent.objects.create(slug=slug, name=slug, workspace_id="connect", owner=tree["builder"], zk_enabled=True, zk_kv=0)
+        Agent.objects.create(slug=slug, name=slug, workspace_id="connect", owner=tree["builder"])
     before = _health_queries(tree["ceo"])
     for i in range(8):  # vault keys held by people who administer none of these agents
         _keyset(_user(f"stranger{i}@dimagi.com"))
@@ -550,7 +549,7 @@ def test_health_does_not_ask_about_every_vault_key_in_the_system(tree):
 def test_has_recipients_matches_recipients_for(tree):
     from apps.agents.credentials import zk_seal
 
-    agent = Agent.objects.create(slug="zk", name="zk", workspace_id="connect", owner=tree["builder"], zk_enabled=True, zk_kv=0)
+    agent = Agent.objects.create(slug="zk", name="zk", workspace_id="connect", owner=tree["builder"])
     _keyset(tree["staff"])  # an editor of the parent: not an admin of the agent
     assert zk_seal.has_recipients(agent) is False and zk_seal.recipients_for(agent) == []
     _keyset(tree["ceo"])  # owner of the parent workspace: an admin by inheritance

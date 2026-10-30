@@ -138,11 +138,10 @@ def _aid(f) -> str:
     return str(f.agent.pk)
 
 
-def _legacy(f) -> None:
-    """Make eva a legacy agent that never stored a value here: the one kind that is not
-    zero-knowledge."""
+def _keyless(f) -> None:
+    """Make eva an agent with no vault key and nothing stored: how a new one starts."""
     AgentCredential.objects.filter(agent=f.agent).delete()
-    Agent.objects.filter(pk=f.agent.pk).update(zk_enabled=False, zk_kv=0)
+    Agent.objects.filter(pk=f.agent.pk).update(zk_kv=0)
 
 
 def device_wrap(f, kv=1, vk=None, key=None, ecdh=None) -> dict:
@@ -540,18 +539,11 @@ def test_storing_a_value_declares_its_name(fleet):
 
 
 def test_before_enable_every_eligible_principal_is_pending(fleet):
-    _legacy(fleet)
+    _keyless(fleet)
     state = fleet.client.get(ZK).json()
-    assert not state["enabled"]
     assert sorted((p["kind"], p["target"]) for p in state["pending"]) == sorted(
         [("device", str(fleet.device.pk)), ("member", str(fleet.user.pk))])
 
-
-def test_values_put_refuses_an_agent_that_is_not_zk(fleet):
-    _legacy(fleet)
-    res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": zk_values(fleet, {"a": "b"})},
-                           content_type="application/json")
-    assert res.status_code == 409 and res.json()["error"] == "zk_not_enabled"
 
 
 def test_grant_pending_devices_and_members(fleet):
@@ -701,8 +693,8 @@ def test_the_key_list_says_which_machine_what_it_can_open_and_where_its_key_live
     def row():
         return fleet.client.get("/api/runner-device-keys/").json()[0]
 
-    _legacy(fleet)
-    assert row()["can_open"] == []  # not zero-knowledge: nothing to open
+    _keyless(fleet)
+    assert row()["can_open"] == [{"slug": "eva", "name": "Eva"}]  # no vault key yet: sealed to it as values arrive
     assert row()["runner_kind"] == "cloud" and row()["runner_host"] == ""
     assert _enable(fleet).status_code == 200
     assert row()["can_open"] == [{"slug": "eva", "name": "Eva"}]
@@ -839,7 +831,7 @@ def test_enable_and_rotate_refuse_an_unsettled_value(fleet):
 
 def test_sealing_with_nobody_to_read_it_is_refused(fleet):
     agent = _agent(fleet)
-    Agent.objects.filter(pk=agent.pk).update(zk_enabled=True, zk_kv=0)
+    Agent.objects.filter(pk=agent.pk).update(zk_kv=0)
     RunnerDeviceKey.objects.all().delete()
     UserVaultKeyset.objects.all().delete()
     with pytest.raises(zk.ZkError) as exc:
@@ -856,18 +848,18 @@ def _upsert(slug, ws, owner):
 
 def test_every_new_agent_is_born_zk_with_or_without_a_vault_key(fleet):
     born = _upsert("newbie", fleet.ws, fleet.user)
-    assert born.zk_enabled and born.zk_kv == 0
+    assert born.zk_kv == 0
     other = get_user_model().objects.create_user(username="nokey", email="nokey@dimagi.com")
     nokey = _upsert("plain", fleet.ws, other)
-    assert nokey.zk_enabled and nokey.zk_kv == 0
-    # An existing agent is never switched by an upsert.
-    _legacy(fleet)
+    assert nokey.zk_kv == 0
+    # An existing agent's vault key is never touched by an upsert.
+    assert _enable(fleet).status_code == 200
     _upsert("eva", fleet.ws, fleet.user)
-    assert not _agent(fleet).zk_enabled
+    assert _agent(fleet).zk_kv == 1
 
 
 def test_kv0_seals_every_write_then_enable_creates_the_vault_key(fleet):
-    Agent.objects.filter(pk=fleet.agent.pk).update(zk_enabled=True, zk_kv=0)
+    Agent.objects.filter(pk=fleet.agent.pk).update(zk_kv=0)
     AgentCredential.objects.all().delete()
     # A plain write (the canopy CLI's custodial import) is sealed, not refused.
     res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"kindora": "kin"}},
@@ -890,7 +882,7 @@ def test_kv0_seals_every_write_then_enable_creates_the_vault_key(fleet):
     res = _enable(fleet, values=zk_values(fleet, {"kindora": plain}))
     assert res.status_code == 200, res.content
     agent = _agent(fleet)
-    assert agent.zk_enabled and agent.zk_kv == 1 and _stored("kindora").startswith("zk1:")
+    assert agent.zk_kv == 1 and _stored("kindora").startswith("zk1:")
 
 
 # ---- canopy-pat rotation on a ZK agent -------------------------------------------------
@@ -957,7 +949,7 @@ def test_approving_a_key_covers_a_born_agent_whose_sealed_values_it_cannot_read(
     touch creates the vault key; a value already sealed to the key is not."""
     sign, ecdh = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
     key = _register(fleet, sign, ecdh)
-    Agent.objects.filter(pk=fleet.agent.pk).update(zk_enabled=True, zk_kv=0)
+    Agent.objects.filter(pk=fleet.agent.pk).update(zk_kv=0)
     AgentCredential.objects.filter(agent=fleet.agent).delete()
     old = zk_seal.seal_to("v", agent_id=str(fleet.agent.pk), name="kindora", kv=0,
                           recipients=[("device", fleet.device.ecdh_jkt, fleet.device.ecdh_public_jwk)])
@@ -1106,7 +1098,7 @@ def test_disable_is_gone(fleet):
     assert _enable(fleet).status_code == 200
     res = fleet.client.post(f"{ZK}/disable", data={"values": []}, content_type="application/json")
     assert res.status_code in (404, 405)
-    assert _agent(fleet).zk_enabled
+    assert _agent(fleet).zk_kv == 1
 
 
 def test_migration_restores_a_key_sent_back_to_pending_by_its_ecdh_key(fleet):

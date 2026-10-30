@@ -19,6 +19,7 @@ from apps.inbound.signals import _mailbox_for
 from apps.mail import agent_mail, domains, parse, ses
 from apps.mail.models import MailDomain, MailMessage, MailRoute, MailThread
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.device_proof import accept_device_proof
 
 pytestmark = pytest.mark.django_db
 FIX = Path(__file__).parent / "fixtures" / "mail"
@@ -207,7 +208,8 @@ def _bearer(user) -> Client:
     return c
 
 
-def test_credentials_resolve_names_the_google_account(w):
+def test_credentials_resolve_names_the_google_account(w, monkeypatch):
+    accept_device_proof(monkeypatch)
     nova = Agent.objects.create(slug="nova", name="Nova", workspace=w.ws, owner=w.owner,
                                 email="nova@dimagi.ai", google_account="nova@dimagi-ai.com")
     _route(w, "nova", agent=nova)

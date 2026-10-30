@@ -131,7 +131,7 @@ export function AgentSecretsPanel({
   const byName = new Map(rows.map((r) => [r.name, r]))
 
   const save = async (name: string, value: string) => {
-    if (zk?.enabled) {
+    if (zk) {
       await setZkValue(agent.slug, name, value, unlock)
       setRows(await getAgentCredentialStatus(agent.slug))
     } else {
@@ -175,7 +175,7 @@ export function AgentSecretsPanel({
           anchors: ['credentials'],
           body: (
             <>
-              {canEdit && zk?.enabled && <OpenSecretRequests slug={agent.slug} onStored={reload} />}
+              {canEdit && zk && <OpenSecretRequests slug={agent.slug} onStored={reload} />}
 
               {/* Whether this tab wants anything from the reader. */}
               {secretsAttention && (
@@ -193,7 +193,7 @@ export function AgentSecretsPanel({
                 onReveal={reveal}
                 onDelete={remove}
                 describeError={reason}
-                badge={zk?.enabled ? <EncryptedBadge /> : undefined}
+                badge={zk ? <EncryptedBadge /> : undefined}
                 usage={(e) => {
                   const row = byName.get(e.name)
                   return row?.set && canEdit ? <CredentialReadHistory slug={agent.slug} row={row} alerts={alerts} /> : null
@@ -236,7 +236,7 @@ export function AgentSecretsPanel({
           ),
         }}
         storage={{
-          summary: zk?.enabled && zk.kv > 0 ? 'key and recovery' : 'key not made yet',
+          summary: zk && zk.kv > 0 ? 'key and recovery' : 'key not made yet',
           tone: canEdit && (waiting > 0 || rotate) ? 'attention' : 'quiet',
           anchors: ['cred-zk', 'cred-vault', 'secrets-home'],
           defaultOpen: false,

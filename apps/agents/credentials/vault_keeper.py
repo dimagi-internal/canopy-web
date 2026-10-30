@@ -54,7 +54,7 @@ def _held(runner) -> list[AgentVaultWrap]:
     a member's machine reads the vault but is no keeper."""
     return [w for w in (AgentVaultWrap.objects
                         .filter(kind=AgentVaultWrap.DEVICE, device_key__runner=runner,
-                                device_key__status=RunnerDeviceKey.ACTIVE, agent__zk_enabled=True)
+                                device_key__status=RunnerDeviceKey.ACTIVE)
                         .select_related("agent", "device_key__runner"))
             if w.kv == w.agent.zk_kv
             and vault_members.device_works_for_an_admin(vault_members.vault_for_agent(w.agent), w.device_key)

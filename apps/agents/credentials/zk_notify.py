@@ -83,7 +83,7 @@ class _Waiting:
 
 
 def _vaults():
-    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gte=1).select_related("workspace"):
+    for agent in Agent.objects.filter(zk_kv__gte=1).select_related("workspace"):
         yield _Waiting(agent.slug, agent.zk_kv, _link(agent), {"agent": agent},
                        partial(zk.pending_targets, agent), partial(holders, agent),
                        lambda uid, a=agent: AgentVaultWrap.objects.filter(

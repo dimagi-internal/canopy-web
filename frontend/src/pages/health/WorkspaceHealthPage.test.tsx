@@ -19,7 +19,7 @@ function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut
     recent_sessions: [{ id: 's1', workspace: 'connect', title: `${slug} chat`, at: '2026-10-17T00:00:00Z', active: true }],
     last_turn_at: null, turns_30d: 0, done_30d: 0, failed_30d: 0, people_30d: 0, ran_on: [], left: 1,
     vault: { state: 'missing', declared: 2, refs: [{ name: 'gh', status: 'stored' }, { name: 'old', status: 'missing' }],
-      stored: ['gh'], missing: ['old'], zero_knowledge: true, machines_waiting: [] },
+      stored: ['gh'], missing: ['old'], machines_waiting: [] },
     steps: [step('repo', 'done'), step('vault', 'todo', '/w/connect/agents/x/settings#credentials')],
     ...over,
   }

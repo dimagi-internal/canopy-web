@@ -49,23 +49,16 @@ export function AgentZkSection({
   canEdit,
   onState,
   onChanged,
-  unlock: unlockProp,
-  unlockElement,
 }: {
   slug: string
-  /** Credentials stored in canopy-web right now (no longer needed here: nothing is turned on by hand). */
-  storedNames?: string[]
   canEdit: boolean
   /** Reports the state up, so Save/Reveal on the rows can go zero-knowledge. */
   onState?: (s: ZkStateOut | null) => void
   /** The credential rows changed (enable, rotate, turn off). */
   onChanged?: () => void
-  /** The panel's shared unlock (one prompt for the whole page), if any. */
-  unlock?: Unlock
-  unlockElement?: React.ReactNode
 }) {
   const own = useUnlockPrompt()
-  const unlock: Unlock = unlockProp ?? (() => unlockVaultKey(own.prompt))
+  const unlock: Unlock = () => unlockVaultKey(own.prompt)
   const [state, setState] = useState<ZkStateOut | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -130,7 +123,7 @@ export function AgentZkSection({
         Who holds a key to this vault
       </h4>
 
-      {!state.enabled || state.kv === 0 ? (
+      {state.kv === 0 ? (
         // Nothing to do here by hand: an agent with no key of its own yet (kv 0)
         // has each secret sealed to you and its approved machines as it arrives,
         // and approving a new machine gives it access (canopy-web#1550).
@@ -256,7 +249,7 @@ export function AgentZkSection({
         </div>
       )}
 
-      {unlockProp ? unlockElement : own.element}
+      {own.element}
       {error && <p className="mt-2 text-[12px] text-destructive" data-testid="zk-error">{error}</p>}
       <details className="mt-2 text-[11px] text-muted-foreground">
         <summary className="cursor-pointer">How this is protected</summary>

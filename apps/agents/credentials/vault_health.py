@@ -57,9 +57,6 @@ def machine_keys_waiting(agent: Agent, facts=None) -> dict[str, str]:
     """Runners that would run this agent but cannot open its zero-knowledge
     values yet (`zk.device_waits`), or whose new ECDH key awaits approval, by name →
     the device key a member's passkey touch lets in. `facts`: `device_keys.serving_facts`."""
-    if not agent.zk_enabled:
-        return {}
-
     facts = facts or device_keys.serving_facts([agent])
     eligible = zk.eligible_device_keys(agent, facts)
     blocked = zk.devices_waiting(agent, eligible)
@@ -85,6 +82,5 @@ def vault_health(agent: Agent, facts=None) -> dict:
         "refs": [{"name": n, "status": c} for n, c in refs.items()],
         "stored": by_class.get(STORED, []),
         "missing": by_class.get(MISSING, []),
-        "zero_knowledge": agent.zk_enabled,
         "machines_waiting": machines_waiting(agent, facts),
     }
