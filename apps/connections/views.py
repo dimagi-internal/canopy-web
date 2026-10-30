@@ -87,6 +87,10 @@ def _land(request: HttpRequest, return_to: str, provider: str, status: str, reas
     url = f"{request.META.get('SCRIPT_NAME', '')}{parts.path}?{urlencode(params)}"
     if parts.fragment:
         url += f"#{parts.fragment}"
+    # Already same-site by construction; re-checked on the final URL, where CodeQL
+    # can see the guard (it loses _safe_return_to through urlsplit).
+    if not url_has_allowed_host_and_scheme(url, allowed_hosts=set(), require_https=True):
+        url = DEFAULT_RETURN
     return HttpResponseRedirect(url)
 
 

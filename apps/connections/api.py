@@ -423,8 +423,9 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
     chosen list. While accounts are connected with the app, its client id and
     its `locked_options` (Salesforce: its login URL) cannot change: 409
     `app_locked`; remove the app to switch. Adding a scope does not change
-    existing connections: each lists it in `missing_scopes` until reconnected. 400 `invalid_app` says what was refused. From a browser this
-    needs a fresh passkey check. Workspace admins only."""
+    existing connections: each lists it in `missing_scopes` until reconnected.
+    400 `invalid_app` says what was refused. From a browser this needs a fresh
+    passkey check. Workspace admins only."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     # After the permission check: a non-admin gets 404/403, never a step-up prompt.
     if stepup.is_browser(request):
