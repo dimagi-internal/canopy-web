@@ -25,6 +25,7 @@ the host-grant chain is in [`sdk/python/README.md` § Host grant contract v1](..
 - Rows carrying a tenant FK: `agents`, `agent_runs`, and the product roots `walkthroughs`,
   `reviews`, `shareouts` (plus storyboards, issues, sessions, events …). Authenticated lists
   filter by `wsvc.request_workspace_slugs(request)` (the read scope).
+- **`ConnectionApp` (`apps/connections`) belongs to a workspace**: the OAuth client a workspace admin sets up for a provider (one per workspace and provider; its secret is encrypted in the DB). A `Connection` goes through one app, and a person's connection is usable only while they are a member (read) of that app's workspace — leaving the workspace ends its use (`not_connected`), it is not deleted. An agent uses its own workspace's apps. → [`vault.md`](vault.md) § OAuth connections are server-held.
 - **`Agent.workspace` is NOT NULL** (`agents/0013`). This is a security invariant: a nullable
   tenant FK invites `if row.workspace_id and <membership check>`, which reads a NULL tenant as
   *allow*. Don't re-nullable it, and never write a NULL-means-allow leg in any tenancy
