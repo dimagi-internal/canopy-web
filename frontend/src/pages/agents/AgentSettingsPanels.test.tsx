@@ -43,7 +43,6 @@ const { getCredentialAlerts, getPatRotation, setPatRotation, rotatePatNow } = vi
 }))
 vi.mock('@/api/deviceKeys', () => ({
   getAgentDeviceKeys: () => Promise.resolve([]),
-  setDeviceBinding: vi.fn(),
   giveCanopyLogin: vi.fn(),
   getCredentialReads: () => Promise.resolve([]),
   approveRunnerDeviceKey: vi.fn(),

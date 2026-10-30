@@ -98,7 +98,8 @@ def _resolve(fleet, proof=None, path=RESOLVE):
 
 
 def _bind(fleet, on=True):
-    Agent.objects.filter(pk=fleet["agent"].pk).update(require_device_binding=on)
+    """A zero-knowledge agent: its read always needs a device proof."""
+    Agent.objects.filter(pk=fleet["agent"].pk).update(zk_enabled=on)
 
 
 # ---- registration ----------------------------------------------------------------
@@ -390,20 +391,6 @@ def test_someone_elses_laptop_reading_outside_a_turn_still_alerts(fleet):
 
 
 # ---- the agent setting, read log and agent views --------------------------------------
-
-def test_device_binding_is_admin_settable_and_shown(fleet):
-    res = fleet["client"].patch("/api/agents/eva/device-binding",
-                                data={"require_device_binding": True},
-                                content_type="application/json")
-    assert res.status_code == 200 and res.json()["require_device_binding"] is True
-    viewer = get_user_model().objects.create_user(username="v", email="v@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=fleet["ws"], user=viewer,
-                                       role=WorkspaceMembership.VIEWER)
-    c = Client()
-    c.force_login(viewer)
-    assert c.patch("/api/agents/eva/device-binding", data={"require_device_binding": False},
-                   content_type="application/json").status_code in (403, 404)
-
 
 def test_read_history_and_last_read_on_status(fleet):
     _active_key(fleet)  # a zero-knowledge agent's resolve always needs a device proof

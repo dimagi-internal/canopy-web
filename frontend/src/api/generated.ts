@@ -4834,29 +4834,6 @@ export interface paths {
         readonly patch: operations["set_agent_clis"];
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/device-binding": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Require a runner device proof to resolve this agent's secrets
-         * @description Canopy Vault (canopy-web#1538). When on, `GET /credentials/resolve` answers 401
-         *     `{"error": "device_proof_required"}` unless the request carries a DPoP proof
-         *     from an ACTIVE runner device key on a runner this agent routes to, or one
-         *     owned by the agent's owner. Owner or admin only.
-         */
-        readonly patch: operations["set_device_binding"];
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/slack": {
         readonly parameters: {
             readonly query?: never;
@@ -5566,8 +5543,7 @@ export interface paths {
          *     box that runs it reading with its own device proof — never to an admin or a
          *     license holder.
          *
-         *     **Device proof.** With either
-         *     `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
+         *     **Device proof.** With zero-knowledge on (every agent that holds a value), the request must also carry a `DPoP` header: an RFC 9449
          *     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
          *     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
          *     an ACTIVE runner device key on a runner this agent routes to or one its
@@ -6121,7 +6097,7 @@ export interface paths {
         /**
          * Runner device keys that could prove themselves for this agent
          * @description Every device key on a runner this agent routes to or its owner owns —
-         *     the keys `require_device_binding` would accept once active. `can_manage`
+         *     the keys that may read its secrets once active. `can_manage`
          *     says whether the caller may approve each (the runner's owner or an admin of
          *     it; on a private runner, its owner alone).
          */
@@ -24483,11 +24459,6 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
-            /**
-             * Require Device Binding
-             * @default false
-             */
-            readonly require_device_binding: boolean;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
         };
         /**
@@ -24816,11 +24787,6 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
-            /**
-             * Require Device Binding
-             * @default false
-             */
-            readonly require_device_binding: boolean;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             /**
@@ -25282,14 +25248,6 @@ export interface components {
             readonly cli_models?: {
                 readonly [key: string]: string;
             } | null;
-        };
-        /**
-         * DeviceBindingIn
-         * @description Require a device proof on resolve. Owner/admin only.
-         */
-        readonly DeviceBindingIn: {
-            /** Require Device Binding */
-            readonly require_device_binding: boolean;
         };
         /**
          * SlackEnabledOut
@@ -50946,32 +50904,6 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["AgentClisIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentDetailOut"];
-                };
-            };
-        };
-    };
-    readonly set_device_binding: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["DeviceBindingIn"];
             };
         };
         readonly responses: {

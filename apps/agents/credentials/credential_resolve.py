@@ -230,8 +230,8 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         return Refusal(NO_ACCESS, reason)
 
     # Device proof (canopy-web#1538 Phase 1a). Verified whenever one is sent, so
-    # the read log can name the box that proved itself; REQUIRED only when the
-    # agent asks for it.
+    # the read log can name the box that proved itself; REQUIRED for a zero-knowledge
+    # agent (below), which is every agent that holds a value.
     device_key, refused, unrouted = device_key_from_proof(request, agent)
     # A runner token speaks for one box: a proof from some other box's key does
     # not go with it.
@@ -243,7 +243,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     # out is the proving device's, so there is nothing to give without it. Any
     # ciphertext it does hold is useless without a device's own key, and a `zk1`
     # value with no wrap is still the refusal below.
-    if device_key is None and (agent.zk_enabled or agent.require_device_binding):
+    if device_key is None and agent.zk_enabled:
         if unrouted is not None:
             # An APPROVED box that does not run this agent: a routing fact, not a
             # misused token, so the owner is not emailed (fizzy, canopy-web#1563).

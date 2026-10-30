@@ -489,9 +489,8 @@ def test_zk_resolve_hands_out_ciphertext_and_the_devices_wrap(fleet):
     assert set(_resolve(fleet, refs="kindora").json()["values"]) == {"kindora"}
 
 
-def test_zk_resolve_needs_a_device_proof_even_without_device_binding(fleet):
+def test_zk_resolve_needs_a_device_proof(fleet):
     assert _enable(fleet).status_code == 200
-    assert not Agent.objects.get(pk=fleet.agent.pk).require_device_binding
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
     assert res.status_code == 401 and res.json()["error"] == "device_proof_required"
     assert res.json()["reason"] == "no_valid_proof"

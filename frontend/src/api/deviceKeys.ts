@@ -1,5 +1,5 @@
-// Canopy Vault (canopy-web#1538 Phase 1a): runner device keys, the agent's
-// device-binding switch, and the credential read log. Its own module so the
+// Canopy Vault (canopy-web#1538 Phase 1a): runner device keys — the machines that can read
+// an agent's secrets — and the credential read log. Its own module so the
 // pages that show these can be tested without dragging in ./agents or ./harness.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
@@ -39,14 +39,6 @@ export async function revokeRunnerDeviceKey(id: string): Promise<RunnerDeviceKey
     params: { path: { key_id: id } },
   })
   return unwrap(res, 'revokeRunnerDeviceKey') as RunnerDeviceKeyOut
-}
-
-export async function setDeviceBinding(slug: string, on: boolean): Promise<boolean> {
-  const res = await apiV2.PATCH('/api/agents/{slug}/device-binding', {
-    params: { path: { slug } },
-    body: { require_device_binding: on },
-  })
-  return Boolean(unwrap(res, 'setDeviceBinding').require_device_binding)
 }
 
 /** One credential's read history, newest first — never the value. */

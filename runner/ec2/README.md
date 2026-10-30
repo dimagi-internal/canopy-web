@@ -422,7 +422,7 @@ so nothing else has to change once the value is there.
 
 ## Device binding: the box's instance role (Canopy Vault, #1549)
 
-An agent with `require_device_binding` has its credentials resolved only for a request
+An agent's credentials are resolved only for a request
 carrying a proof from an APPROVED device key of a runner it routes to. An EC2 box has no
 Secure Enclave or TPM, so its key is its **instance role** (`kind=aws-iam`, the HashiCorp
 Vault AWS-auth pattern):

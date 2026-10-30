@@ -58,7 +58,6 @@ export function AgentSecretsPanel({
     slug: string
     name?: string
     email?: string | null
-    require_device_binding?: boolean | null
   }
   canEdit?: boolean
   /** Bumped by the page when something outside changed a secret (a new canopy login). */
@@ -229,7 +228,6 @@ export function AgentSecretsPanel({
               <AgentVaultMembersSection slug={agent.slug} onLoaded={setMembers} />
               <AgentDeviceKeysSection
                 slug={agent.slug}
-                requireDeviceBinding={agent.require_device_binding}
                 canEdit={canEdit}
                 onLoaded={setMachines}
               />

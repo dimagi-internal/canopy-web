@@ -152,4 +152,4 @@ def _active_role(fleet, sts):
 
 
 def _bind(fleet):
-    Agent.objects.filter(pk=fleet["agent"].pk).update(require_device_binding=True)
+    Agent.objects.filter(pk=fleet["agent"].pk).update(zk_enabled=True)

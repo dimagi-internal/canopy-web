@@ -565,9 +565,6 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
-    # Canopy Vault device binding (canopy-web#1538): resolve also demands a DPoP
-    # proof from an approved runner device key. Owner/admin-set via PATCH /device-binding.
-    require_device_binding: bool = False
     # The PLUGIN this instance runs, named exactly as the caller's
     # `canopy-agents` catalog names it (apps/plugins/services.py), so
     # `/plugin install <name>@canopy-agents` and `/<name>:setup` are right.
@@ -2071,12 +2068,6 @@ class OwnPatRotateOut(StrictModel):
     rotated_at: dt.datetime
     old_token_revoked_after: dt.datetime | None = None
     detail: str
-
-
-class DeviceBindingIn(StrictModel):
-    """Require a device proof on resolve. Owner/admin only."""
-
-    require_device_binding: bool
 
 
 class AgentCredentialAccessOut(StrictModel):

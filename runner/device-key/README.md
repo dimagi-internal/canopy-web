@@ -1,8 +1,8 @@
 # canopy-device-key (Secure Enclave device key)
 
 A tiny Swift CLI that holds this Mac's **device key** for Canopy Vault
-(dimagi-internal/canopy#946, canopy-web#1538). canopy-web can require that an agent's
-credentials be read only from an approved device (`Agent.require_device_binding`); the
+(dimagi-internal/canopy#946, canopy-web#1538). canopy-web hands an agent's
+credentials only to an approved device (a zero-knowledge read needs its proof); the
 proof is an RFC 9449 DPoP JWS on `GET /credentials/resolve`, signed by this key.
 
 ```

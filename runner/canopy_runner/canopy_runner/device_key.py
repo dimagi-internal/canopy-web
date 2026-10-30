@@ -1,7 +1,7 @@
 """Enroll this machine's device key at runner start (Canopy Vault, dimagi-internal/canopy#946).
 
 canopy-web can hand an agent's credentials only to an APPROVED device
-(`Agent.require_device_binding`, canopy-web#1538). The key and its enrollment live in
+(zero-knowledge reads need a device proof, canopy-web#1538). The key and its enrollment live in
 canopy — `canopy vault device --enroll` makes the key (the Secure Enclave via
 `~/.canopy/bin/canopy-device-key`, built by install-runner.sh, on a Mac; the TPM through
 the "Microsoft Platform Crypto Provider" on Windows, canopy-web#1549; a software key where
