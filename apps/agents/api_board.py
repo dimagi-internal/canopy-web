@@ -27,6 +27,7 @@ from . import engagement, ideas, participants, proposals, services, work
 from .gates import (
     agent_for_read,
     agent_for_work,
+    agent_in_project_tree,
     check_task_visible,
     may_edit_project,
     project_or_404,
@@ -224,7 +225,7 @@ def apply_project_patch(request: HttpRequest, project, data: dict):
                 project = services.set_steward(project, agent_for_work(request, steward) if steward else None)
             if members is not None:
                 project = services.set_member_agents(
-                    project, [agent_for_read(request, m.strip(), honor_pin=False) for m in members if m.strip()])
+                    project, [agent_in_project_tree(project, m.strip()) for m in members if m.strip()])
             project = services.patch_project(project, data)
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc

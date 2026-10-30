@@ -1077,6 +1077,28 @@ class WorkspaceProjectIn(AgentProjectIn):
     member_agents: list[str] = Field(default_factory=list, max_length=50)
 
 
+class ProjectShareIn(StrictModel):
+    #: The workspace to share the project with (and the ones below it): one of
+    #: the project's own tree, not its workspace or one above it.
+    workspace: str = Field(min_length=1, max_length=100)
+
+
+class ProjectShareOut(StrictModel):
+    workspace: str
+    added_by: str | None = None
+    created_at: dt.datetime
+    #: The project's agents that are members through this share: of that workspace
+    #: or below it, and not of the project's own side.
+    member_agents: list[str] = Field(default_factory=list)
+
+
+class ProjectShareRemovedOut(StrictModel):
+    workspace: str
+    #: Member agents taken off the project because the share was all that let them
+    #: work on it (never its lead agent).
+    removed_agents: list[str] = Field(default_factory=list)
+
+
 class KbUploadOut(StrictModel):
     """Where to PUT a kb.sqlite.gz (straight to storage, never through canopy),
     then name `key` to `POST …/kb/publish`."""
@@ -1275,6 +1297,12 @@ class AgentProjectOut(StrictModel):
     #: The agents working on it, its lead agent among them.
     member_agents: list[str] = Field(default_factory=list,
                                      validation_alias=AliasChoices("member_slugs", "member_agents"))
+    #: The workspaces of its tree it is shared with: open to them and the
+    #: workspaces below them (`/shares/`).
+    shared_with: list[str] = Field(default_factory=list)
+    #: True on a row of a list that the reader sees only because it is shared
+    #: with their workspace.
+    shared_in: bool = False
     #: How to name it anywhere: `<workspace>/<handle>`.
     address: str = ""
     #: Its one page.

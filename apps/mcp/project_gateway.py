@@ -64,12 +64,13 @@ INSTRUCTIONS = (
 def _openable(user, query: str = "") -> list:
     """Projects `user` may open that carry something, by address."""
     from apps.agents.models import AgentProject  # noqa: PLC0415 — models: imported before apps load
+    from apps.agents import services  # noqa: PLC0415 — models: imported before apps load
     from apps.workspaces import services as wsvc  # noqa: PLC0415 — models: imported before apps load
 
     if user is None:
         return []
     slugs = wsvc.user_workspace_slugs(user)
-    qs = (AgentProject.objects.filter(Q(workspace_id__in=slugs) | Q(agent__workspace_id__in=slugs))
+    qs = (AgentProject.objects.filter(Q(workspace_id__in=slugs) | Q(agent__workspace_id__in=slugs) | services.shared_with_q(slugs))
           .filter(served__isnull=False).exclude(status=AgentProject.ARCHIVED).distinct()
           .select_related("agent", "workspace").prefetch_related("served").order_by("workspace_id", "handle"))
     words = [w for w in (query or "").lower().split() if w]

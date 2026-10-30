@@ -8031,6 +8031,58 @@ export interface paths {
         readonly patch: operations["patch_workspace_project"];
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/shares/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the workspaces a project is shared with, and the agents that joined through each
+         * @description A share opens the project to a workspace of its own tree and the workspaces below it:
+         *     their members can read it (its page, tasks and the skills and knowledge it serves) and
+         *     their agents can join it as member agents and be assigned its tasks. Never across
+         *     organisations. Each row lists the project's member agents that are members only through it.
+         */
+        readonly get: operations["list_project_shares"];
+        readonly put?: never;
+        /**
+         * Share a project with another workspace of its tree (and the ones below it)
+         * @description Needs the editor role in the project's workspace. `workspace` must be in the project's own
+         *     organisation and neither the project's workspace nor one above it (422); sharing again
+         *     changes nothing. Sharing lets that side read the project and its agents join it; it does not
+         *     let them lead it.
+         */
+        readonly post: operations["add_project_share"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/shares/{share_workspace}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop sharing a project with a workspace; agents that joined only through it are removed
+         * @description Needs the editor role in the project's workspace. Member agents that no longer qualify
+         *     (they belonged to that workspace or below it, with no other share to cover them) are taken
+         *     off the project and listed in `removed_agents`; its lead agent is never removed.
+         */
+        readonly delete: operations["remove_project_share"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-projects/{workspace}/{handle}/kb/upload": {
         readonly parameters: {
             readonly query?: never;
@@ -26456,6 +26508,13 @@ export interface components {
             readonly steward_slug?: string | null;
             /** Member Agents */
             readonly member_agents?: readonly string[];
+            /** Shared With */
+            readonly shared_with?: readonly string[];
+            /**
+             * Shared In
+             * @default false
+             */
+            readonly shared_in: boolean;
             /**
              * Address
              * @default
@@ -26672,6 +26731,13 @@ export interface components {
             readonly steward_slug?: string | null;
             /** Member Agents */
             readonly member_agents?: readonly string[];
+            /** Shared With */
+            readonly shared_with?: readonly string[];
+            /**
+             * Shared In
+             * @default false
+             */
+            readonly shared_in: boolean;
             /**
              * Address
              * @default
@@ -31953,6 +32019,32 @@ export interface components {
             readonly published_at?: string | null;
             /** Bytes */
             readonly bytes?: number | null;
+        };
+        /** ProjectShareOut */
+        readonly ProjectShareOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Added By */
+            readonly added_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Member Agents */
+            readonly member_agents?: readonly string[];
+        };
+        /** ProjectShareIn */
+        readonly ProjectShareIn: {
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /** ProjectShareRemovedOut */
+        readonly ProjectShareRemovedOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Removed Agents */
+            readonly removed_agents?: readonly string[];
         };
         /**
          * KbUploadOut
@@ -55553,6 +55645,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_shares: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectShareOut"][];
+                };
+            };
+        };
+    };
+    readonly add_project_share: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectShareOut"];
+                };
+            };
+        };
+    };
+    readonly remove_project_share: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly share_workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectShareRemovedOut"];
                 };
             };
         };

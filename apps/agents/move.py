@@ -32,6 +32,10 @@ What does NOT move, deliberately, and is reported as `left_behind`:
 What REFUSES the move: a project of ANOTHER workspace the agent leads (an org's
 agent leading a division's project). It stays there, and its lead agent must be
 in its workspace or one above it, so the move waits until each one is handed on.
+A project it only WORKS on (a member agent) does not refuse the move: the ones it
+could no longer join from its new home (not its own side of the tree, not shared
+with it) are dropped and reported in `stops_working`, as a task it can no longer
+hold is.
 
 Tasks and projects are the workspace's, so they move only as the agent's board
 did: the projects it leads there (with their tasks) and its own loose tasks,
@@ -348,8 +352,13 @@ def _work(p: Plan, apply: bool) -> None:
             "re-homed under new keys (their old keys still find them)")
     staying = (AgentTask.objects.filter(agent=agent, workspace_id=source, project__isnull=False)
                .exclude(project__in=projects))
-    in_tree = source == p.dest.slug or source in p.dest.ancestor_slugs()
-    if staying.exists() and not in_tree:
+    # A task it keeps is one in a project it can still join from the new home
+    # (its own side of the tree, or a workspace the project is shared with).
+    after = _as_moved(agent, p.dest)
+    cannot = [pr for pr in AgentProject.objects.filter(pk__in=staying.values("project_id"))
+              if not services.may_join_workspace_project(after, pr)]
+    staying = staying.filter(project__in=cannot)
+    if staying.exists():
         p.breaks("tasks_unassigned", f"{staying.count()} task(s) it is assigned in projects that stay in "
                                      f"'{source}' are unassigned: it can no longer work there")
     if not apply:
@@ -360,8 +369,36 @@ def _work(p: Plan, apply: bool) -> None:
             p.dest.slug, project.name), p.dest.slug)
     for task in loose:
         work.rehome(task, p.dest.slug)
-    if not in_tree:
-        staying.update(agent=None)
+    staying.update(agent=None)
+
+
+def _as_moved(agent, dest):
+    """A copy of `agent` as it will be once in `dest`, for asking what it may do there."""
+    after = copy.copy(agent)
+    after.workspace, after.workspace_id = dest, dest.slug
+    return after
+
+
+@register
+def _project_memberships(p: Plan, apply: bool) -> None:
+    """Projects it WORKS on (never leads: those block the move or move with it) that it
+    could no longer join from the new home are dropped, and reported, rather than left
+    as a membership the rules no longer allow. Same as a task it can no longer hold
+    (`_work`) and a vault attachment (`_vault_attachments`): the move goes ahead and
+    says what stopped working. A project shared with the new home keeps it."""
+
+    agent = p.agent
+    after = _as_moved(agent, p.dest)
+    gone = [pr for pr in (AgentProject.objects.filter(member_agents=agent).exclude(agent=agent)
+                          .select_related("workspace", "agent"))
+            if not services.may_join_workspace_project(after, pr)]
+    if gone:
+        p.breaks("project_memberships",
+                 f"{agent.slug} stops working on {len(gone)} project(s) it cannot join from "
+                 f"'{p.dest.slug}': " + ", ".join(pr.address for pr in gone))
+        if apply:
+            for pr in gone:
+                pr.member_agents.remove(agent)
 
 
 @register

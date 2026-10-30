@@ -37,6 +37,7 @@ from .models import (
     AgentTask,
     AgentTaskAction,
     AgentTaskHumanWhy,
+    ProjectShare,
 )
 
 _VALID_TASK_STATUS = set(AgentTask.CATEGORY)
@@ -461,6 +462,11 @@ def get_project(agent: Agent, ref: str):
         if ws:
             if ws in lineage or may_hold_workspace_project(agent, ws):
                 project = get_workspace_project(ws, handle)
+            else:
+                # a project of another workspace of the tree, shared with the agent's
+                shared = get_workspace_project(ws, handle)
+                if shared is not None and may_join_workspace_project(agent, shared):
+                    project = shared
         else:
             for slug in lineage:
                 project = get_workspace_project(slug, handle)
@@ -481,6 +487,133 @@ def may_hold_workspace_project(steward: Agent, workspace_slug: str) -> bool:
     return ws is not None and steward.workspace_id in ws.ancestor_slugs()
 
 
+# ---- sharing a project across its workspace tree ----
+#
+# A project belongs to one workspace. Sharing it with another workspace of the
+# SAME tree (`ProjectShare`) opens it to that workspace's members and agents and
+# to the ones below: its members may read it, and its agents may join it and be
+# assigned its tasks. Leading it stays with the workspace's own side
+# (`may_hold_workspace_project`). Nothing is ever shared across organisations.
+
+
+def project_share_slugs(project: AgentProject) -> set[str]:
+    """The workspaces `project` is shared with (not the ones below them)."""
+    if project.pk is None:
+        return set()
+    return {sh.workspace_id for sh in project.shares.all()}
+
+
+def project_reader_slugs(project: AgentProject) -> set[str]:
+    """Every workspace whose members may read `project`: its own, its lead
+    agent's, and the shared ones with everything below them."""
+    out = {project.workspace_id}
+    if project.agent_id:
+        out.add(project.agent.workspace_id)
+    shares = project_share_slugs(project)
+    if shares:
+        out |= shares | wsvc.descendant_slugs(shares)
+    return out
+
+
+def shared_with_q(slugs, prefix: str = ""):
+    """Projects shared with a workspace in `slugs` or above one of them (a share
+    covers the workspaces below it): the rows `slugs`' members may read through
+    a share. `prefix` reaches the project from another model."""
+    return Q(**{f"{prefix}shares__workspace_id__in": list(wsvc.with_ancestors(slugs))})
+
+
+def may_join_workspace_project(agent: Agent, project: AgentProject) -> bool:
+    """May `agent` work on `project` (be a member, be assigned its tasks)? The
+    rule for leading it (`may_hold_workspace_project`), or: the project is shared
+    with the agent's workspace or one above it, in the project's own tree."""
+    if may_hold_workspace_project(agent, project.workspace_id):
+        return True
+    shares = project_share_slugs(project)
+    if not shares:
+        return False
+    home = {agent.workspace_id, *agent.workspace.ancestor_slugs()}
+    if not (home & shares):
+        return False
+    # the hard invariant, asked again here rather than trusted from write time
+    roots = wsvc.tree_roots({agent.workspace_id, project.workspace_id})
+    return roots[agent.workspace_id] == roots[project.workspace_id]
+
+
+def mark_shared_in(projects: list, slugs) -> list:
+    """Flag the rows of a list that `slugs` reach only through a share."""
+    own = set(slugs)
+    for p in projects:
+        p._shared_in = not (p.workspace_id in own or (p.agent_id and p.agent.workspace_id in own))
+    return projects
+
+
+def share_project(project: AgentProject, workspace_slug: str, *, by=None) -> ProjectShare:
+    """Share `project` with a workspace of its tree (and those below it).
+    422 unless that workspace is in the project's own organisation and is
+    neither the project's workspace nor one above it (those reach it already).
+    Sharing again is a no-op."""
+    slug = (workspace_slug or "").strip()
+    ws = Workspace.objects.filter(slug=slug).first()
+    if ws is None:
+        raise ProjectScopeError(f"no workspace '{slug}'", 404)
+    roots = wsvc.tree_roots({ws.slug, project.workspace_id})
+    if roots[ws.slug] != roots[project.workspace_id]:
+        raise ProjectScopeError(f"'{slug}' is not in the same organisation as '{project.workspace_id}': "
+                                "a project is never shared across organisations")
+    if slug == project.workspace_id or slug in project.workspace.ancestor_slugs():
+        raise ProjectScopeError(f"'{slug}' already reaches '{project.address}': it is the project's "
+                                "workspace or above it")
+    share, _ = ProjectShare.objects.get_or_create(
+        project=project, workspace=ws,
+        defaults={"added_by": by if getattr(by, "is_authenticated", False) else None})
+    return share
+
+
+def members_through_share(project: AgentProject, share_slug: str) -> list[Agent]:
+    """The project's member agents (never the lead) that belong to `share_slug`
+    or a workspace below it and are members only because of a share."""
+    out = []
+    below = {share_slug} | wsvc.descendant_slugs({share_slug})
+    for a in project.member_agents.select_related("workspace"):
+        if a.pk != project.agent_id and a.workspace_id in below \
+                and not may_hold_workspace_project(a, project.workspace_id):
+            out.append(a)
+    return out
+
+
+def unshare_project(project: AgentProject, workspace_slug: str) -> list[str]:
+    """End a share. Member agents who no longer qualify are removed (never the
+    lead agent); returns their slugs."""
+    slug = (workspace_slug or "").strip()
+    share = project.shares.filter(workspace_id=slug).first()
+    if share is None:
+        raise ProjectScopeError(f"'{project.address}' is not shared with '{slug}'", 404)
+    with transaction.atomic():
+        share.delete()
+        project.__dict__.pop("_prefetched_objects_cache", None)
+        removed = [a for a in project.member_agents.select_related("workspace")
+                   if a.pk != project.agent_id and not may_join_workspace_project(a, project)]
+        if removed:
+            project.member_agents.remove(*removed)
+    return sorted(a.slug for a in removed)
+
+
+def prune_cross_tree_shares(workspace: Workspace) -> int:
+    """After `workspace` (and so its subtree) changed parent: delete the shares
+    that now straddle two organisations. Returns how many."""
+    if not ProjectShare.objects.exists():
+        return 0
+    affected = {workspace.slug} | wsvc.descendant_slugs({workspace.slug})
+    rows = list(ProjectShare.objects.filter(Q(workspace_id__in=affected) | Q(project__workspace_id__in=affected))
+                .select_related("project"))
+    if not rows:
+        return 0
+    roots = wsvc.tree_roots({r.workspace_id for r in rows} | {r.project.workspace_id for r in rows})
+    gone = [r.pk for r in rows if roots[r.workspace_id] != roots[r.project.workspace_id]]
+    ProjectShare.objects.filter(pk__in=gone).delete()
+    return len(gone)
+
+
 class ProjectScopeError(ValueError):
     """A project write that cannot be done, with its HTTP status."""
 
@@ -496,13 +629,18 @@ def get_workspace_project(workspace_slug: str, handle: str):
 
 def workspace_projects(workspace_slugs, status: str = "", steward_workspaces=()) -> list:
     """Owned by any of `workspace_slugs` — or led from any of
-    `steward_workspaces` (a parent's agent leading a division's project)."""
-    qs = (AgentProject.objects.select_related("agent", "owner_user", "workspace")
+    `steward_workspaces` (a parent's agent leading a division's project) — or
+    shared with one of them (or an ancestor of one: a share covers what is below
+    it); those carry `shared_in`."""
+    workspace_slugs, steward_workspaces = set(workspace_slugs), set(steward_workspaces)
+    qs = (AgentProject.objects.select_related("agent", "owner_user", "workspace").prefetch_related("shares")
           .filter(Q(workspace_id__in=list(workspace_slugs))
-                  | Q(agent__workspace_id__in=list(steward_workspaces))))
+                  | Q(agent__workspace_id__in=list(steward_workspaces))
+                  | shared_with_q(workspace_slugs)).distinct())
     if status:
         qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
-    return list(qs.order_by("workspace_id", "handle"))
+    return mark_shared_in(list(qs.order_by("workspace_id", "handle")),
+                          workspace_slugs | steward_workspaces)
 
 
 def _clean_handle(handle: str) -> str:
@@ -552,7 +690,27 @@ def promote_project(project: AgentProject, handle: str, workspace: str = "") -> 
     # A task lives where its project does.
     for task in project.tasks.exclude(workspace_id=workspace):
         work.rehome(task, workspace)
+    _settle_shares(project)
     return project
+
+
+def _settle_shares(project: AgentProject) -> None:
+    """After a project changed workspace: drop the shares that no longer make
+    sense there (another organisation, or the project's own workspace or one above
+    it), then the member agents that no longer qualify — never the lead agent."""
+    project.__dict__.pop("_prefetched_objects_cache", None)
+    project.refresh_from_db(fields=["workspace"])
+    above = {project.workspace_id, *project.workspace.ancestor_slugs()}
+    shares = list(project.shares.all())
+    if shares:
+        roots = wsvc.tree_roots({sh.workspace_id for sh in shares} | {project.workspace_id})
+        stale = [sh.pk for sh in shares
+                 if sh.workspace_id in above or roots[sh.workspace_id] != roots[project.workspace_id]]
+        ProjectShare.objects.filter(pk__in=stale).delete()
+    drop = [a for a in project.member_agents.select_related("workspace")
+            if a.pk != project.agent_id and not may_join_workspace_project(a, project)]
+    if drop:
+        project.member_agents.remove(*drop)
 
 
 def set_steward(project: AgentProject, steward: Agent | None) -> AgentProject:
@@ -576,9 +734,9 @@ def set_steward(project: AgentProject, steward: Agent | None) -> AgentProject:
 def set_member_agents(project: AgentProject, agents: list[Agent]) -> AgentProject:
     """Replace the agents working on it. Its lead agent stays one."""
     for a in agents:
-        if not may_hold_workspace_project(a, project.workspace_id):
-            raise ProjectScopeError(f"'{a.slug}' is not an agent of '{project.workspace_id}' "
-                                    "or of a workspace above it")
+        if not may_join_workspace_project(a, project):
+            raise ProjectScopeError(f"'{a.slug}' is not an agent of '{project.workspace_id}', of a "
+                                    "workspace above it, or of one the project is shared with")
     keep = {a.pk for a in agents}
     if project.agent_id:
         keep.add(project.agent_id)
@@ -896,10 +1054,12 @@ class AssigneeError(ValueError):
     or one outside the task's workspace."""
 
 
-def resolve_assignee(workspace_slug: str, value: str) -> tuple[Agent | None, object | None]:
+def resolve_assignee(workspace_slug: str, value: str,
+                     project: AgentProject | None = None) -> tuple[Agent | None, object | None]:
     """`(agent, user)` from an assignee string: `""` (nobody), a member's email,
     or an agent's slug (`agent:<slug>` or bare). An agent must belong to the
-    workspace or one above it; a person must be a member."""
+    workspace or one above it, or — for a task in `project` — be one the project
+    is shared with; a person must be a member."""
     value = (value or "").strip()
     if not value:
         return None, None
@@ -907,7 +1067,8 @@ def resolve_assignee(workspace_slug: str, value: str) -> tuple[Agent | None, obj
         return None, _workspace_member(workspace_slug, value, instead="assigned")
     slug = value.removeprefix("agent:").strip()
     agent = Agent.objects.filter(slug=slug).first()
-    if agent is None or not may_hold_workspace_project(agent, workspace_slug):
+    if agent is None or not (may_hold_workspace_project(agent, workspace_slug)
+                             or (project is not None and may_join_workspace_project(agent, project))):
         raise AssigneeError(f"no agent '{slug}' can be assigned work in {workspace_slug}")
     return agent, None
 
@@ -981,7 +1142,7 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
         waiting_on = _workspace_member(ws, p["waiting_on_email"], instead="assigned") \
             if p.get("waiting_on_email") else None
         if "assignee" in p and p["assignee"] is not None:
-            assignee_agent, assignee_user = resolve_assignee(ws, p["assignee"])
+            assignee_agent, assignee_user = resolve_assignee(ws, p["assignee"], project)
         else:
             assignee_agent, assignee_user = (agent if via_agent else None), None
         kind = _kind(p.get("kind"))
@@ -1142,7 +1303,7 @@ def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTa
         task.waiting_on_user = _workspace_member(task.workspace_id, data["waiting_on_email"],
                                                  instead="assigned")
     if "assignee" in data and data["assignee"] is not None:
-        task.agent, task.assignee_user = resolve_assignee(task.workspace_id, data["assignee"])
+        task.agent, task.assignee_user = resolve_assignee(task.workspace_id, data["assignee"], task.project)
     if data.get("position") is not None:
         task.rank = float(data["position"])
     if data.get("rank") is not None:

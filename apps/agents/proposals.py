@@ -150,7 +150,7 @@ def _sync_plan(agent: Agent, project: AgentProject, plan: list[str]) -> None:
 def _add_member(project: AgentProject, agent: Agent) -> str:
     """Make `agent` one of the project's agents, where it may work in its
     workspace; returns the project ref to file its task under ("" when not)."""
-    if services.may_hold_workspace_project(agent, project.workspace_id):
+    if services.may_join_workspace_project(agent, project):
         project.member_agents.add(agent)
         return project.address
     return ""

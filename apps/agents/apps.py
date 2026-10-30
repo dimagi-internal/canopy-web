@@ -14,11 +14,17 @@ class AgentsConfig(AppConfig):
         from apps.common import ticks
 
         from .credentials import pat_rotation
+        from apps.workspaces.models import Workspace  # noqa: PLC0415 — ready(): models load only after the app registry
+
         from .models import Agent  # noqa: PLC0415 — ready(): models load only after the app registry
 
         # Every agent has its own vault from the moment it exists, linked to the
         # agent (credentials.vault_members) — made here so no read path writes.
         post_save.connect(_make_vault, sender=Agent, dispatch_uid="agents.make_vault")
+
+        # A project is never shared across organisations: moving a workspace under
+        # another parent ends the shares that would now straddle two trees.
+        post_save.connect(_prune_shares, sender=Workspace, dispatch_uid="agents.prune_shares")
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
@@ -29,6 +35,13 @@ def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
         from .credentials import vault_members  # noqa: PLC0415 — a signal handler: imported once the app is ready
 
         vault_members.vault_for_agent(instance)
+
+
+def _prune_shares(sender, instance, created, raw=False, **kwargs) -> None:
+    if not created and not raw:
+        from . import services  # noqa: PLC0415 — a signal handler: imported once the app is ready
+
+        services.prune_cross_tree_shares(instance)
 
 
 def _zk_notify() -> None:

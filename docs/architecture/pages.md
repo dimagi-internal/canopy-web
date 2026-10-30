@@ -129,7 +129,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   agents, dates, priority), its latest update with Post update and drafts to
   publish, milestones with progress, the scope-versus-done graph, its tasks, its
   dynamic views drawn in their sandboxes (the first three; hidden while there are
-  none and the viewer cannot make one), then its proposal card, proposed tasks,
+  none and the viewer cannot make one), its toolbox, and **Shared with** (`ProjectShares.tsx`: the other
+  workspaces of its tree it is open to and the agents that joined through each; an
+  editor adds one from the tree or stops sharing), then its proposal card, proposed tasks,
   ideas and people, check-ins and recent turns.
 - **`/views`** (+ `/:id`) — the workspace's dynamic views, generated screens over
   its data, each drawn in a sandbox (`DynamicViewsPage.tsx`, `DynamicViewPage.tsx`;

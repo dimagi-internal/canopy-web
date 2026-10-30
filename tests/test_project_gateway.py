@@ -8,22 +8,16 @@ every knowledge-base call names its project, since MCP 2026-07-28 keeps no sessi
 """
 from __future__ import annotations
 
-import json
 
-import httpx2
 import pytest
-from asgiref.sync import async_to_sync
 from django.contrib.auth.models import User
-from starlette.applications import Starlette
-from starlette.routing import Mount
 
 from apps.agents.models import AgentProject, AgentTask, ProjectService
 from apps.harness.dispatch import task_turn_prompt
-from apps.mcp.project_gateway import gateway_mcp, kb_tool_specs
-from apps.mcp.projects import ProjectMcpDispatch, project_mcp
-from apps.tokens.models import PersonalToken
+from apps.mcp.project_gateway import kb_tool_specs
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures import kb as kb_fixtures
+from tests.fixtures.project_gateway import _text, _token, run_sessions
 
 # Committed, not rolled back: a knowledge-base call runs on a worker thread with its own
 # DB connection (projects.off_the_shared_thread), which must see the test's rows.
@@ -31,8 +25,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 s3, world = kb_fixtures.s3, kb_fixtures.world
 
-BASE = "https://canopy.test"
-URL = "/api/mcp/projects/"
 GATEWAY_TOOLS = {"projects", "open_project", "project_skill"}
 KB_TOOLS = {s["name"] for s in kb_tool_specs()}
 ALL_TOOLS = GATEWAY_TOOLS | KB_TOOLS
@@ -42,11 +34,6 @@ def _publish(world, s3, tmp_path):
     kb_fixtures.full(world, s3, tmp_path, kb_fixtures.bundle(tmp_path, "bundle", kb_fixtures.ITEMS))
 
 
-def _token(user):
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
-
-
 def _reader():
     reader = User.objects.create_user("ace-human", "c@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=reader, workspace=Workspace.objects.get(slug="connect"),
@@ -54,54 +41,8 @@ def _reader():
     return reader
 
 
-def _messages(r) -> list[dict]:
-    """The JSON-RPC messages of one response, an SSE stream or a JSON body."""
-    if r.headers.get("content-type", "").startswith("application/json"):
-        return [r.json()]
-    return [json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:") and line[5:].strip()]
-
-
-def run_sessions(token: str, script):
-    """Run `script(new_session)` against the projects connection; `new_session()`
-    opens an MCP session and returns `call(method, params) -> (result, messages)`."""
-    inner = gateway_mcp.http_app(path="/", transport="streamable-http")
-    projects_app = project_mcp.http_app(path="/", transport="streamable-http")
-    app = Starlette(routes=[Mount("/api/mcp/projects", app=ProjectMcpDispatch(projects_app, gateway=inner))])
-    headers = {"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {token}"}
-
-    async def main():
-        async with inner.router.lifespan_context(inner):
-            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=BASE) as c:
-                ids = iter(range(1, 10_000))
-
-                async def new_session():
-                    r = await c.post(URL, headers=headers, json={
-                        "jsonrpc": "2.0", "id": next(ids), "method": "initialize",
-                        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
-                                   "clientInfo": {"name": "test", "version": "1"}}})
-                    assert r.status_code == 200, r.text
-                    sid = r.headers["mcp-session-id"]
-                    h = {**headers, "mcp-session-id": sid}
-                    await c.post(URL, headers=h, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
-
-                    async def call(method, params=None):
-                        r = await c.post(URL, headers=h, json={"jsonrpc": "2.0", "id": next(ids),
-                                                              "method": method, "params": params or {}})
-                        msgs = _messages(r)
-                        reply = next(m for m in msgs if "id" in m)
-                        return reply.get("result") or reply.get("error"), msgs
-                    return call
-
-                return await script(new_session)
-    return async_to_sync(main)()
-
-
 def _names(result) -> set[str]:
     return {t["name"] for t in result["tools"]}
-
-
-def _text(result) -> str:
-    return result["content"][0]["text"]
 
 
 def test_one_fixed_set_of_tools_reads_any_projects_knowledge_base(world, s3, tmp_path):
