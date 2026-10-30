@@ -34,8 +34,9 @@ Access to an agent was decided by four stacked things that each used the word "m
 **Access list** — the one place that says who has which role on an agent. A **line** is `(who, role)`. `who` is one of:
 
 * a **person**;
-* **everyone in a workspace** (optionally "at least editor" there). Reads the person's effective role in that workspace, so a parent's owners and admins count as they do everywhere else;
-* **contacts**: people who are not in canopy as members and reach the agent by email or Slack, optionally "verified, at domain D".
+* **everyone in a workspace** (optionally "at least editor" there, optionally only those whose address is at a domain). Reads the person's effective role in that workspace, so a parent's owners and admins count as they do everywhere else;
+* **anyone at a domain**, member or not, "verified" by default: the Dimagi-wide line. A signed-in request, an aligned email and a Slack full-member all count as verified;
+* **a known contact** (an emailer, a Slack member outside the workspace, a widget visitor who may have no address), optionally at a domain and/or verified. The line that lets a site's visitors through to a door.
 
 The highest role among a person's matching lines wins. Implicit lines, shown in the list but not editable there: the agent's owner → owner, the agent's workspace owners → admin, explicit admins → admin.
 
@@ -70,6 +71,8 @@ Existing behaviour is preserved at cutover by translating, not by reinterpreting
 * each door's `callers` become lines (or, when they repeat the agent's other lines, nothing) and the door keeps only `role`;
 * `editors: confined` is the absence of the editor line;
 * `Agent.owner` and `AgentAdmin` stay the stores of owner and admin for now and appear as implicit lines.
+
+`Agent.uses_access_list` marks an agent whose access is the list alone: until it is set the old rules still apply beside the list; `convert_access` sets it once every probe answers as before. The last step deletes the old rules and the flag.
 
 `manual_only` is a flag on the line so that dropping the gate is one visible change per agent, not a code change. A parity test runs the old table and the new resolver over every (role × interface × door) cell of `tests/test_access_matrix.py` and requires the same answer.
 
