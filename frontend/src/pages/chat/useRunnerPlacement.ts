@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { PlacementRunner } from 'canopy-ui/chat'
 
-import { ChatApiError, getSession, placeTurn, type ChatSessionDetail } from '@/api/chat'
+import { ChatApiError, getSession, placeTurn, transferSession, type ChatSessionDetail } from '@/api/chat'
 import { listRunners, recentRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
@@ -189,6 +189,26 @@ export function useRunnerPlacement(
       .finally(() => setPlacing(false))
   }, [boundRunner, begin, placementFail, setMeta])
 
+  // With a message waiting, re-pin it. With none — the composer is locked while
+  // the bound runner is down, so usually none — `place` has nothing to move and
+  // 404s, which left the banner's own "Continue on…" a dead end beside a
+  // composer that says to use it. Move the whole session instead (`transfer`),
+  // then re-read it so the banner and composer follow it to the new runner.
+  const transferTo = useCallback(
+    (runnerId: string) =>
+      transferSession(sessionId, runnerId).then((res) => {
+        if (res.status === 'pending') {
+          const who = res.approvers?.length ? ` — waiting for ${res.approvers.join(', ')} to approve` : ''
+          setPlaceInfo(`Asked to move this session${who}.`)
+          return
+        }
+        setPlaceInfo(`Moved to ${res.runner}.`)
+        refreshFleet()
+        return getSession(sessionId).then((m) => setMeta((prev) => withFreshLiveness(prev, m)))
+      }),
+    [sessionId, refreshFleet, setMeta],
+  )
+
   const continueOn = useCallback(
     (runnerId: string) => {
       if (!runnerId) return
@@ -198,10 +218,14 @@ export function useRunnerPlacement(
           setPlaceInfo('Placed — the new runner will pick it up shortly.')
           refreshFleet()
         })
+        .catch((err) => {
+          if (err instanceof ChatApiError && err.status === 404) return transferTo(runnerId)
+          throw err
+        })
         .catch(placementFail)
         .finally(() => setPlacing(false))
     },
-    [sessionId, begin, placementFail, refreshFleet],
+    [sessionId, begin, placementFail, refreshFleet, transferTo],
   )
 
   return {
