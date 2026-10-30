@@ -19,7 +19,7 @@
 "apps/agent_runs/documents.py" = ["PLC0415"]  # 6
 "apps/agent_runs/resolver.py" = ["PLC0415"]  # 2
 "apps/agent_runs/stores.py" = ["PLC0415"]  # 15
-"apps/agents/access.py" = ["PLC0415"]  # 4
+"apps/agents/access.py" = ["PLC0415"]  # 3
 "apps/agents/api.py" = ["PLC0415"]  # 6
 "apps/agents/api_board.py" = ["PLC0415"]  # 1
 "apps/agents/api_credentials.py" = ["PLC0415"]  # 2
@@ -156,6 +156,7 @@
 "apps/harness/initiator.py" = ["PLC0415"]  # 1
 "apps/harness/ledger.py" = ["PLC0415"]  # 4
 "apps/harness/local.py" = ["PLC0415"]  # 4
+"apps/harness/machine_pairing.py" = ["PLC0415"]  # 4
 "apps/harness/models.py" = ["PLC0415"]  # 2
 "apps/harness/owner_ask.py" = ["PLC0415"]  # 1
 "apps/harness/provenance.py" = ["PLC0415"]  # 1
@@ -178,7 +179,6 @@
 "apps/harness/turn_gates.py" = ["PLC0415"]  # 1
 "apps/harness/turn_mode.py" = ["PLC0415"]  # 8
 "apps/harness/turn_status.py" = ["PLC0415"]  # 8
-"apps/harness/machine_pairing.py" = ["PLC0415"]  # 4
 "apps/harness/views.py" = ["PLC0415"]  # 6
 "apps/host_grants/client_identity.py" = ["PLC0415"]  # 3
 "apps/host_grants/host_gateway.py" = ["PLC0415"]  # 23

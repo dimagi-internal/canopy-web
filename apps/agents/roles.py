@@ -9,6 +9,9 @@ These are AGENT roles; a workspace has its own (`apps/workspaces/permissions.py`
 from __future__ import annotations
 
 OWNER, ADMIN, EDITOR, USER, VIEWER = "owner", "admin", "editor", "user", "viewer"
+#: Not a person and not on the ladder: canopy itself, the agent's own login, an approved
+#: task's dispatch. It may do what an admin may.
+SYSTEM = "system"
 
 #: Strongest first. `system` (canopy itself, the agent's own login) is not a person and
 #: has no place on this ladder.

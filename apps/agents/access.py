@@ -34,18 +34,21 @@ The tiers, strongest first:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+
+from django.contrib.auth import get_user_model
 
 from apps.contacts.models import Contact
-from apps.harness import actors, routing
+from apps.harness import actors, routing, turn_asker
 from apps.harness import caller_context as cc
-from apps.harness import turn_asker
 from apps.harness import initiator as initiator_mod
 from apps.harness.caller_context import is_verified
 from apps.harness.runners import can_administer_runner
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
+from . import grants, roles
 from . import interface as iface_mod
 from .models import AgentAdmin
 
@@ -72,6 +75,13 @@ class Decision:
     basis: str
     # For `none`: what was refused and what the asker CAN do instead.
     reason: str = ""
+    # The asker's place on the role ladder (`roles.py`): owner | admin | editor | user |
+    # viewer | system, or None when refused. `role` above is the older relationship word
+    # (owner | admin | member | contact | system), kept until its readers move.
+    agent_role: str | None = None
+    # WHERE the role came from: `owner` | `admin` | `system` | `workspace-editor` (the
+    # implicit rule) | `rule:<full rule>` | `door:<name>` | `session` | `list:<line>`.
+    source: str = ""
 
     @property
     def stamp(self) -> str | None:
@@ -92,6 +102,11 @@ class Standing:
 
     role: str | None
     granted: bool | None = None
+    #: Their effective role in EVERY workspace, when the caller read them in bulk
+    #: (`wsvc.member_roles_of`) — what an access-list line naming another workspace asks.
+    roles: Mapping[str, str] | None = None
+    #: The agent's access list, when the caller read it in bulk (`Standings`).
+    lines: list | None = None
 
 
 def standing_of(user, agent) -> Standing:
@@ -111,12 +126,15 @@ class Standings:
 
     def __init__(self, users, agents) -> None:
         self._roles = wsvc.member_roles_of(users)
+        self._lines = grants.lines_for_many(agents)
         self.grants: dict[int, dict[int, AgentAdmin]] = {a.pk: {} for a in agents}
         for g in AgentAdmin.objects.filter(agent__in=self.grants).select_related("granted_by"):
             self.grants[g.agent_id][g.user_id] = g
 
     def of(self, user, agent) -> Standing:
-        return Standing(self._roles[user.pk].get(agent.workspace_id), user.pk in self.grants[agent.pk])
+        mine = self._roles[user.pk]
+        return Standing(mine.get(agent.workspace_id), user.pk in self.grants[agent.pk], mine,
+                        self._lines[agent.pk])
 
     def is_admin(self, user, agent) -> bool:
         """`agent.is_admin(user)`, from what was read."""
@@ -161,7 +179,7 @@ def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> st
 
 
 def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-           turn=None, standing: Standing | None = None) -> Decision:
+           turn=None, standing: Standing | None = None, lines=None) -> Decision:
     """THE rule: what `who` (a canopy User, a Contact, or None) may make `agent` do.
 
     The decision table (`_decide`), then the sensitive-data rule over it
@@ -170,10 +188,18 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
     everyone — owner, admin and canopy included.
 
     `standing` is what the database says about a canopy user and this agent, when
-    the caller read it in bulk (`Standings`); else it is read here.
+    the caller read it in bulk (`Standings`); else it is read here. `lines` is the
+    agent's access list (`grants.lines_for`) when the caller already read it.
+
+    The tiers above are the rules an agent was published with. The access list
+    (`grants.py`) is the other way in: whatever it gives the asker is merged with them,
+    and the more permissive answer stands, so an agent with an empty list decides
+    exactly as before.
     """
-    decision = _decide(agent, who, verified=verified, origin=origin, capability=capability,
-                       turn=turn, st=standing)
+    decision = _stamp(agent, _decide(agent, who, verified=verified, origin=origin,
+                                     capability=capability, turn=turn, st=standing))
+    decision = _with_access_list(agent, decision, who, verified=verified, capability=capability,
+                                 turn=turn, standing=standing, lines=lines)
     return _sensitive_rule(agent, decision, capability=capability, turn=turn)
 
 
@@ -225,15 +251,99 @@ def _sensitive_rule(agent, d: Decision, *, capability: str | None, turn) -> Deci
     if door is None and not sensitive:
         return d
     if door is not None and d.access == FULL:
-        return Decision(d.role, CONFINED, door, d.may_request_auto, d.may_pin_runner,
-                        d.manual_only, f"sensitive:{door}")
+        return replace(d, access=CONFINED, capability=door, basis=f"sensitive:{door}")
     if d.access == NONE or not sensitive:
         return d
     if door is not None and d.access == CONFINED and d.capability == door:
         return d
     you = "" if door is None else f" that is open to you ('{door}' does not list you)"
-    return Decision(d.role, NONE, None, False, False, False, "refused",
-                    SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
+    return replace(d, access=NONE, capability=None, may_request_auto=False, may_pin_runner=False,
+                   manual_only=False, basis="refused", agent_role=None, source="",
+                   reason=SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
+
+
+def _stamp(agent, d: Decision) -> Decision:
+    """Name where the rules an agent was published with put `d` on the role ladder."""
+    if d.role == OWNER:
+        return replace(d, agent_role=roles.OWNER, source="owner")
+    if d.role == ADMIN:
+        return replace(d, agent_role=roles.ADMIN, source="admin")
+    if d.role == SYSTEM:
+        return replace(d, agent_role=roles.SYSTEM, source="system")
+    if d.access == FULL:
+        what = d.basis.split(":", 1)[0]
+        return replace(d, agent_role=roles.EDITOR,
+                       source={"full": f"rule:{d.basis.partition(':')[2]}", "editor": "workspace-editor",
+                               "session": "session"}.get(what, what))
+    if d.access == CONFINED:
+        cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(d.capability) or {}
+        return replace(d, agent_role=iface_mod.door_role(cap), source=f"door:{d.capability}")
+    return d
+
+
+def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.Asker:
+    """The asker as the access list sees them: a canopy user, or a contact known by address."""
+    user = contact = None
+    if turn is not None:
+        user = turn.initiator_user if turn.initiator_kind == initiator_mod.USER else None
+        contact = turn.initiator_contact if turn.initiator_kind == initiator_mod.CONTACT else None
+        verified = is_verified(turn)
+    elif isinstance(who, get_user_model()):
+        user = who
+    elif isinstance(who, Contact):
+        contact = who
+    email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
+    return grants.Asker(user=user, email=email, verified=bool(verified),
+                        workspace_roles=getattr(standing, "roles", None))
+
+
+def _door_for(agent, iface: dict, asker_role: str, capability, turn):
+    """The door a viewer or user is confined to: the one named, else the page's or the
+    site's, else `ask` — the same order as always — among doors their role can open."""
+    def opens(cap):
+        return iface_mod.role_opens(asker_role, cap)
+
+    name = capability
+    if name is None and turn is not None:
+        name = iface_mod._page_capability(turn, iface, set(), opens) \
+            or iface_mod._site_capability(turn, iface, set(), opens)
+    name = name or iface_mod.ASK
+    cap = (iface.get("capabilities") or {}).get(name)
+    return (name, cap) if cap and opens(cap) else (None, None)
+
+
+_ACCESS_ORDER = {NONE: 0, CONFINED: 1, FULL: 2}
+
+
+def _with_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
+                      standing: Standing | None, lines) -> Decision:
+    """Merge what the access list gives the asker into `d`; the more permissive answer
+    stands. An owner, admin or canopy itself already has everything."""
+    if d.role in (OWNER, ADMIN, SYSTEM):
+        return d
+    asker = _asker_of(who, turn, verified, standing)
+    got = grants.resolve(agent, asker, lines if lines is not None else getattr(standing, "lines", None))
+    if got.role is None:
+        return d
+    iface = getattr(agent, "interface", None) or {}
+    if roles.allows(got.role, roles.RUN):
+        # An `admin` line is read as `editor` here: what makes someone an agent admin is
+        # still `Agent.is_admin` (owner, workspace owner, `AgentAdmin`), not a list line.
+        listed = Decision(d.role, FULL, None, False, False, got.manual_only, got.basis,
+                          agent_role=roles.EDITOR, source=f"list:{got.lines[0].subject_key}")
+    else:
+        name, _cap = _door_for(agent, iface, got.role, capability, turn)
+        if name is None:
+            return d
+        listed = Decision(d.role, CONFINED, name, False, False, False, f"capability:{name}",
+                          agent_role=got.role, source=f"list:{got.lines[0].subject_key}")
+    if _ACCESS_ORDER[listed.access] > _ACCESS_ORDER[d.access]:
+        return listed
+    if listed.access == d.access == FULL and d.manual_only and not listed.manual_only:
+        return listed      # the list names them without the gate the implicit editor rule puts on
+    if listed.access == d.access == CONFINED and roles.rank(listed.agent_role) > roles.rank(d.agent_role):
+        return replace(d, agent_role=listed.agent_role, source=listed.source)
+    return d
 
 
 def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
@@ -255,8 +365,6 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
         user = turn.initiator_user if turn.initiator_kind == initiator_mod.USER else None
         classes = iface_mod.caller_classes(turn, rel)
     else:
-        from django.contrib.auth import get_user_model
-
         if isinstance(who, get_user_model()):
             user = who
             st = st or standing_of(user, agent)
@@ -381,14 +489,15 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
         members = wsvc.effective_memberships(agent.workspace_id)
     if standings is None:
         standings = Standings([m.user for m in members], [agent])
-    grants = standings.grants[agent.pk]
+    admin_grants = standings.grants[agent.pk]
+    lines = standings._lines[agent.pk]
     rows = []
     # Everyone in the workspace as the authorizer sees them — owners of an
     # ancestor workspace included, since they are owners (and so admins) here.
 
     for m in members:
         user = m.user
-        grant = grants.get(user.pk)
+        grant = admin_grants.get(user.pk)
         if agent.owner_id == user.pk:
             role, basis = OWNER, "Owns this agent"
         elif perms.role_allows(m.role, perms.OWN):
@@ -400,9 +509,13 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
         else:
             role, basis = MEMBER, "Workspace member"
         if role == MEMBER:
-            d = decide(agent, user, verified=True, origin="canopy_web", standing=standings.of(user, agent))
+            d = decide(agent, user, verified=True, origin="canopy_web", standing=standings.of(user, agent),
+                       lines=lines)
             iface = agent.interface or {}
-            if d.access == CONFINED:
+            if d.access == CONFINED and d.source.startswith("list:"):
+                caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
+                              if iface_mod.role_opens(d.agent_role, c))
+            elif d.access == CONFINED:
                 # Every door listed for them, not just the free-form one.
                 caps = _offered(iface_mod._expand("member", user.email or "", True), iface)
             else:

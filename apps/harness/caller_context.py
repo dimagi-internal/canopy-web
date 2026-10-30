@@ -371,7 +371,12 @@ def build(turn, *, reader_user=None) -> dict:
         # no-interface (a turn with no agent).
         # `full:contact@dimagi.com:verified` is canopy granting domain-wide access —
         # what `canopy caller tier` reads instead of an allowlist in the repo.
-        "granted_by": _granted_by(turn, agent),
+        # `role`: WHERE the asker stands on the agent's role ladder (owner | admin | editor |
+        # user | viewer | system; null when refused) and `source`: WHY (owner | admin | system |
+        # workspace-editor | rule:<full rule> | door:<name> | list:<access-list line>) —
+        # what an agent reads to say "you are a viewer here because ..." instead of
+        # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
+        **_grant(turn, agent),
         "capability": _profile(agent, turn.capability),
         # manual | auto for THIS turn, and why (apps/harness/turn_mode.py). What
         # `canopy agent mode --caller <path>` reads in preference to the agent-wide
@@ -670,12 +675,12 @@ def _turn_mode(turn) -> dict | None:
     return None if resolved is None else {"mode": resolved.mode, "basis": resolved.basis}
 
 
-def _granted_by(turn, agent) -> str:
+def _grant(turn, agent) -> dict:
     if agent is None:
-        return "no-interface"
-    from apps.agents.interface import granted_by
+        return {"granted_by": "no-interface", "role": None, "source": ""}
+    from apps.agents.interface import grant_facts
 
-    return granted_by(turn, agent)
+    return grant_facts(turn, agent)
 
 
 def _profile(agent, capability: str):
