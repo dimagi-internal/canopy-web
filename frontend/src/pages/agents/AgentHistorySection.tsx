@@ -1,5 +1,5 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useOutletContext, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { getSkillHistory, syncSkillHistory, type SkillHistoryOut } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { WorkbenchSkeleton } from 'canopy-ui'
@@ -11,85 +11,9 @@ import { SkillHistoryChart } from './skillHistory/SkillHistoryChart'
 import { SkillHistoryLanes } from './skillHistory/SkillHistoryLanes'
 import { SkillHistoryPanel } from './skillHistory/SkillHistoryPanel'
 import { buildModel, dayOf, fmtDay, isoOf, panelAt, scopeNames, tilesAt, totalsAt, type Selection } from './skillHistory/model'
+import { CredentialNotice, PlayIcon, PauseIcon, ChevronLeftIcon, ChevronRightIcon } from './HistoryParts'
 
 const FULL_SHA = /^[0-9a-f]{7,64}$/i
-
-/** Why there is no (fresh) history, and who can do something about it. The
- *  credential is the agent OWNER's, so the copy names them, offers Connect only
- *  to them, and links GitHub's installation screen when the repo isn't granted. */
-function CredentialNotice({ h }: { h: SkillHistoryOut }) {
-  const owner = h.owner_name || 'The agent owner'
-  const ownerPossessive = h.owner_name ? `${h.owner_name}’s` : 'the agent owner’s'
-  const ownerPossessiveStart = h.owner_name ? `${h.owner_name}’s` : 'The agent owner’s'
-  let body: ReactNode = null
-  switch (h.credential_state) {
-    case 'no_repo':
-      body = 'This agent has no repository configured, so there is no history to read.'
-      break
-    case 'no_owner':
-      body = <>History reads through the agent owner’s GitHub connection, and this agent has no owner. A workspace owner can assign one on <Link to="../overview" className="underline">Overview</Link>.</>
-      break
-    case 'owner_not_connected':
-      body = h.viewer_is_owner
-        ? <>History reads through your GitHub connection, and you haven’t connected GitHub. <Link to="/settings" className="underline">Connect GitHub</Link></>
-        : <>History reads through {ownerPossessive} GitHub connection. {owner} hasn’t connected GitHub, and needs to connect it in their canopy settings.</>
-      break
-    case 'repo_not_granted':
-      body = (
-        <>
-          {h.viewer_is_owner ? 'Your' : ownerPossessiveStart} GitHub connection can’t reach{' '}
-          <span className="font-mono">{h.repo_url || 'this agent’s repository'}</span>.
-          {' '}{h.viewer_is_owner ? 'You can add it' : `${owner} can add it`} on GitHub’s installation screen.
-          {h.install_url && (
-            <>
-              {' '}
-              <a href={h.install_url} target="_blank" rel="noreferrer" className="underline">Choose repositories on GitHub</a>
-            </>
-          )}
-        </>
-      )
-      break
-    default:
-      return null
-  }
-  return (
-    <p role="status" className="m-0 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
-      {body}
-    </p>
-  )
-}
-
-// Small inline stroke icons — not text glyphs (▶/❚❚ render as emoji on some
-// platforms, and this app forbids emoji in UI copy).
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-      <path d="M7 4.5v15l13-7.5z" />
-    </svg>
-  )
-}
-function PauseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-      <rect x="6" y="4.5" width="4.5" height="15" />
-      <rect x="13.5" y="4.5" width="4.5" height="15" />
-    </svg>
-  )
-}
-function ChevronLeftIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="15 6 9 12 15 18" />
-    </svg>
-  )
-}
-function ChevronRightIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="9 6 15 12 9 18" />
-    </svg>
-  )
-}
 
 const LOAD_ERROR_COPY = "Couldn't load this agent's history."
 const SYNC_ERROR_COPY = 'Sync failed. Try again in a moment.'
