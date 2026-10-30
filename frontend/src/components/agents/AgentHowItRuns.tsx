@@ -292,7 +292,7 @@ export function AgentHowItRuns({
           {' · '}
           <a href="#routing" className="text-primary hover:underline">Routing</a>
           {' · '}
-          <a href="#credentials" className="text-primary hover:underline">Credentials</a>
+          <a href="#secrets" className="text-primary hover:underline">Security</a>
         </p>
       </Card>
     </div>

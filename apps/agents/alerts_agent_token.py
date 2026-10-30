@@ -63,7 +63,7 @@ def reconcile(now) -> list[Raise]:
             title=f"{agent.name or agent.slug}'s canopy login expires {when:%Y-%m-%d}",
             url=settings_path(agent.workspace_id, agent.slug),
             scopes=(f"agent:{agent.slug}", f"workspace:{agent.workspace_id}"),
-            body=("Nothing rotates it. Turn on automatic rotation under Settings → Credentials, "
+            body=("Nothing rotates it. Turn on automatic rotation under Settings → Security → Canopy login, "
                   "or give the agent a fresh login there."),
             fingerprint=f"{when:%Y-%m-%d}",
         ))

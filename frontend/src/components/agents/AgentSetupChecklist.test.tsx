@@ -64,14 +64,14 @@ describe('AgentSetupChecklist', () => {
     expect(screen.queryByTestId('agent-setup-checklist')).toBeNull()
   })
 
-  it('labels a terminal step and hands over its command', async () => {
+  it('labels a Claude Code step and hands over its command', async () => {
     setupMock.mockResolvedValue([
-      step('vault', 'todo', { where: 'terminal', command: 'canopy agent vault --slug scout --workspace scouts' }),
+      step('persona', 'todo', { where: 'claude-code', command: 'cd ~/emdash-projects/scout && claude "write its persona"' }),
     ])
     mount()
-    expect(await screen.findByText('canopy agent vault --slug scout --workspace scouts')).toBeTruthy()
-    expect(screen.getByText('in a terminal')).toBeTruthy()
-    expect(screen.queryByText('in Claude Code')).toBeNull()
+    expect(await screen.findByText('cd ~/emdash-projects/scout && claude "write its persona"')).toBeTruthy()
+    expect(screen.getByText(/in Claude Code/)).toBeTruthy()
+    expect(screen.queryByText('in a terminal')).toBeNull()
   })
 
   it('offers a step’s further links beside its main one', async () => {

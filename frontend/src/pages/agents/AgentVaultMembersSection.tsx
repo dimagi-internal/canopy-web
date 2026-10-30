@@ -97,7 +97,7 @@ export function AgentVaultMembersSection({
           <button type="button" disabled={busy} data-testid="vault-toggle-link"
                   onClick={() => void run(() => setVaultAgentLink(slug, !state.agent_link.linked))}
                   className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0">
-            {state.agent_link.linked ? 'Stop following this agent’s access' : 'Follow this agent’s access'}
+            {state.agent_link.linked ? 'Stop including everyone with access to the agent' : 'Include everyone with access to the agent'}
           </button>
         }
       />

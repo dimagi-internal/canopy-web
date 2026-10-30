@@ -220,16 +220,10 @@ describe('External accounts', () => {
 })
 
 describe('Security — about the agent', () => {
-  it('turns canopy-login renewal on with the chosen period', async () => {
-    setPatRotation.mockResolvedValue({ ...ROTATION, enabled: true, period_days: 14,
-                                       next_due_at: '2026-11-01T00:00:00Z', enabled_by_email: 'jj@dimagi.com' })
+  it('shows the canopy login and a closed test vault key', async () => {
     inRouter(<AgentSecurityPanel agent={AGENT} canEdit />)
-    const days = (await screen.findByTestId('pat-rotation-days')) as HTMLInputElement
-    fireEvent.change(days, { target: { value: '14' } })
-    fireEvent.click(screen.getByTestId('pat-rotation-enabled'))
-    await waitFor(() => expect(setPatRotation).toHaveBeenCalledWith('echo', true, 14))
-    await waitFor(() =>
-      expect(screen.getByTestId('pat-rotation-summary').textContent).toContain('on by jj@dimagi.com'))
+    expect(await screen.findByTestId('agent-canopy-login')).toBeTruthy()
+    expect(screen.getByTestId('vault-section-agent-test-key').getAttribute('aria-expanded')).toBe('false')
   })
 
   it('lists read alerts', async () => {

@@ -22,7 +22,7 @@ const TONE: Record<string, { dot: string; text: string }> = {
 }
 
 // A check that names an agent (`github.<slug>`: the owner has not lent it a
-// GitHub token) is fixed on that agent's Settings → Credentials, so the row
+// GitHub token) is fixed on that agent's Settings → External accounts, so the row
 // links there. The agent's workspace comes from the host, which already holds
 // the agents; without it the row stays text, since the bare /agents/<slug>
 // redirect would land in whatever workspace is active rather than the agent's.
@@ -30,7 +30,7 @@ export function fixHref(checkName: string, agentWorkspace: (slug: string) => str
   const m = /^github\.(.+)$/.exec(checkName)
   if (!m) return null
   const ws = agentWorkspace(m[1])
-  return ws ? scopedPath(ws, `/agents/${m[1]}/settings#credentials`) : null
+  return ws ? scopedPath(ws, `/agents/${m[1]}/settings#cred-github`) : null
 }
 
 export function RunnerHealth({

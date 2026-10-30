@@ -5820,7 +5820,7 @@ export interface paths {
         /**
          * This agent's open secret requests (never a value)
          * @description The requests still waiting for an answer, newest first — what the agent's
-         *     Credentials page shows its admins, including a request made outside any of
+         *     Security tab shows its admins, including a request made outside any of
          *     its chats (`session_id` null), which no chat card carries.
          */
         readonly get: operations["list_agent_secret_requests"];
@@ -28779,7 +28779,7 @@ export interface components {
              * Where
              * @enum {string}
              */
-            readonly where: "web" | "claude-code" | "terminal";
+            readonly where: "web" | "claude-code";
             /**
              * Href
              * @default
@@ -33164,7 +33164,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            readonly state: "canopy-web" | "moving" | "none";
+            readonly state: "complete" | "missing";
             /** Declared */
             readonly declared: number;
             /** Refs */
@@ -33218,7 +33218,7 @@ export interface components {
              * Where
              * @enum {string}
              */
-            readonly where: "web" | "claude-code" | "terminal";
+            readonly where: "web" | "claude-code";
             /**
              * Href
              * @default
@@ -33258,12 +33258,10 @@ export interface components {
              * @default 0
              */
             readonly used_30d: number;
-            /** Vault Canopy Web */
-            readonly vault_canopy_web?: number | null;
-            /** Vault Moving */
-            readonly vault_moving?: number | null;
-            /** Vault None */
-            readonly vault_none?: number | null;
+            /** Vault Complete */
+            readonly vault_complete?: number | null;
+            /** Vault Missing */
+            readonly vault_missing?: number | null;
             /** Runners */
             readonly runners: number;
             /** Runners Online */

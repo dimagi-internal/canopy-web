@@ -140,7 +140,7 @@ export function GitHubPanel() {
         <p className="mt-1 text-sm text-muted-foreground">
           Lets canopy read your agents&apos; repositories — their skill history. An agent&apos;s
           own pushes and pull requests use the token you lend it on the agent&apos;s Settings →
-          Credentials → GitHub, not this connection.
+          External accounts → GitHub, not this connection.
         </p>
       </div>
 

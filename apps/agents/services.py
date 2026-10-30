@@ -1744,7 +1744,7 @@ def declare_credential_names(agent, names) -> list[str]:
     Called when the agent's owner or an admin stores a value: someone who may
     write the list anyway is not widening anything by naming a secret, and a
     stored-but-undeclared value is one the agent's scoped reads never get —
-    the Credentials page showed it "not declared" with no way to fix it there."""
+    the Security tab showed it "not declared" with no way to fix it there."""
     current = [str(n) for n in (agent.runtime_secrets or [])]
     known = set(current) | {str(n) for n in (agent.runtime_sources or {})}
     added = sorted({str(n).strip() for n in names if str(n).strip()} - known)

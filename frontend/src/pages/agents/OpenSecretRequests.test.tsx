@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// What an agent asked for and nobody answered, on its Credentials page.
+// What an agent asked for and nobody answered, on its Security tab.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'

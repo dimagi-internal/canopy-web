@@ -452,7 +452,7 @@ def readiness(agent: Agent) -> tuple[str, str]:
     if not st["set"]:
         return "fail", st.get("error") or (
             f"neither owner {st['owner_email'] or '(none)'} nor an admin has delegated {agent.slug} "
-            f"a GitHub token — /agents/{agent.slug}/settings → Credentials → GitHub")
+            f"a GitHub token — /agents/{agent.slug}/settings → External accounts → GitHub")
     if st["expired"]:
         return "fail", f"GitHub says the token expired {st['expires_at']:%Y-%m-%d} — replace it"
     if st["error"]:
@@ -530,7 +530,7 @@ def github_token_for_turn(turn) -> dict:
             raise DelegationError(
                 f"{entry.delegated_by.email if entry.delegated_by_id else 'its person'} is no longer an "
                 f"admin of {agent.slug}, so the GitHub token they delegated is not used — delegate one "
-                f"at /agents/{agent.slug}/settings → Credentials → GitHub")
+                f"at /agents/{agent.slug}/settings → External accounts → GitHub")
         ident = entry.identity or {}
         return _issued(turn, agent, token="", login=ident.get("login", ""), user_id=ident.get("user_id", 0),
                        name=ident.get("name", ""), expires_at=entry.provider_expires_at,
@@ -540,7 +540,7 @@ def github_token_for_turn(turn) -> dict:
         who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
         raise DelegationError(
             f"neither {agent.slug}'s owner {who} nor an admin has delegated it a GitHub identity — "
-            f"add a token at /agents/{agent.slug}/settings → Credentials → GitHub")
+            f"add a token at /agents/{agent.slug}/settings → External accounts → GitHub")
     meta = row.meta or {}
     return _issued(turn, agent, token=decrypt_secret(row.secret_enc), login=meta.get("login", ""),
                    user_id=meta.get("user_id", 0), name=meta.get("name", ""), expires_at=row.expires_at,

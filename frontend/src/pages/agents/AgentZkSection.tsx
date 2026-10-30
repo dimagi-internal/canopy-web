@@ -127,7 +127,7 @@ export function AgentZkSection({
   return (
     <section id="cred-zk" className="mb-6" data-testid="agent-zk">
       <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Key copies
+        Who holds a key to this vault
       </h4>
 
       {!state.enabled || state.kv === 0 ? (
@@ -190,12 +190,12 @@ export function AgentZkSection({
                     onClick={() => void run('rotate the vault key',
                       () => rotateVaultKey(slug, confirmCode(state.kv + 1), unlock), true)}
                     className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0">
-              Change the key
+              Change the key (lock out removed people)
             </button>
             {current.some((w) => w.kind === 'recovery') && <button type="button" disabled={busy !== null} data-testid="zk-recover"
                     onClick={() => setRecovering((v) => !v)}
                     className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0">
-              Recover with code
+              Restore access with a recovery code
             </button>}
           </div>
           {recovering && (
@@ -258,7 +258,10 @@ export function AgentZkSection({
 
       {unlockProp ? unlockElement : own.element}
       {error && <p className="mt-2 text-[12px] text-destructive" data-testid="zk-error">{error}</p>}
-      <p className="mt-2 text-[11px] text-muted-foreground" data-testid="zk-trust-caveat">{ZK_TRUST_CAVEAT}</p>
+      <details className="mt-2 text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer">How this is protected</summary>
+        <p className="mt-1" data-testid="zk-trust-caveat">{ZK_TRUST_CAVEAT}</p>
+      </details>
     </section>
   )
 }

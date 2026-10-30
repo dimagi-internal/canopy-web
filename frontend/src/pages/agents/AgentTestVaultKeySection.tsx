@@ -55,10 +55,8 @@ export function AgentTestVaultKeySection({ slug, canEdit }: { slug: string; canE
         Let {who} hold a test vault key
       </label>
       <p className="mt-1 text-[11px] text-muted-foreground">
-        For testing only. A harness signed in as this agent can then read the private conversations it is in
-        itself — and nothing else: the key is never given any vault, cannot vouch for a machine, and is shown
-        as an &ldquo;agent test key&rdquo; wherever keys are listed. It is made with a passphrase as that
-        login. Turning this off deletes the key.
+        For testing: a test harness signed in as this agent can then read the private conversations it is in,
+        and nothing else. Turning this off deletes the key.
       </p>
       <p className="mt-1 text-[11px] text-muted-foreground" data-testid="test-vault-key-summary">
         {!state.login_email

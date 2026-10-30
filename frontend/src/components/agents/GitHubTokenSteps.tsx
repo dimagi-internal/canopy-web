@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 
 /** How to make the fine-grained token an agent acts on GitHub with — shared by
  *  the create page (where the same token also pushes the scaffold) and the
- *  agent's Credentials → GitHub. `tokenUrl` is GitHub's form, filled in by the
+ *  agent's External accounts → GitHub. `tokenUrl` is GitHub's form, filled in by the
  *  server (`delegations.token_form_url`); GitHub cannot pre-pick repositories,
  *  so steps 2–3 say what to choose. */
 export function GitHubTokenSteps({ tokenUrl, repo }: { tokenUrl: string; repo: string }): JSX.Element {

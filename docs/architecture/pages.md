@@ -223,9 +223,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
     dialog, the stated trust caveat) and, only when there are any, **Read
     alerts**. Sections other than Secrets start closed, open by themselves when
     something needs the reader, and open for an old `settings#cred-…` address.
-    Then **Agent security**, what is about the agent and not the vault: its
-    canopy login (made in one click, stored in the vault, with its renewal) and
-    the test vault key (`pages/agents/AgentSecurityPanel.tsx`). The Google mint (`Connect the mailbox`)
+    Then **Canopy login**, what is about the agent and not the vault: its own
+    sign-in to canopy (made in one click, stored in the vault; renews itself, with
+    one button to make a new one now) and, closed, the test vault key
+    (`pages/agents/AgentCanopyLogin.tsx`, `AgentSecurityPanel.tsx`). The Google mint (`Connect the mailbox`)
     asks for Gmail only when the agent's address is a Google mailbox; for a
     canopy-hosted address it asks for Drive, Docs, Sheets, Slides, Forms and
     Calendar. The consent must come from the agent's `google_account`, else

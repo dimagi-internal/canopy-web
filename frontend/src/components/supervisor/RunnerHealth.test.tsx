@@ -112,14 +112,14 @@ describe('a check that names an agent links to its fix', () => {
     },
   }
 
-  it("goes to the agent's own Settings → Credentials, in the agent's workspace", async () => {
+  it("goes to the agent's own Settings → External accounts, in the agent's workspace", async () => {
     const { MemoryRouter } = await import('react-router-dom')
     render(
       <MemoryRouter>
         <RunnerHealth runner={runner(lent as Partial<RunnerOut>)} agentWorkspace={(s) => (s === 'ace' ? 'connect' : undefined)} />
       </MemoryRouter>,
     )
-    expect(screen.getByTestId('runner-health-fix-github.ace').getAttribute('href')).toBe('/w/connect/agents/ace/settings#credentials')
+    expect(screen.getByTestId('runner-health-fix-github.ace').getAttribute('href')).toBe('/w/connect/agents/ace/settings#cred-github')
     // A passing check has nothing to fix.
     expect(screen.queryByTestId('runner-health-fix-github.ada')).toBeNull()
   })

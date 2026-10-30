@@ -504,7 +504,7 @@ class HealthStepOut(StrictModel):
     title: str
     status: Literal["done", "todo", "waiting", "optional"]
     detail: str
-    where: Literal["web", "claude-code", "terminal"]
+    where: Literal["web", "claude-code"]
     href: str = ""
     action: str = ""
     command: str = ""
@@ -520,9 +520,9 @@ class VaultRefOut(StrictModel):
 
 
 class AgentVaultHealthOut(StrictModel):
-    # canopy-web: every declared secret is stored here. moving: some declared
-    # secret is stored nowhere yet.
-    state: Literal["canopy-web", "moving", "none"]
+    # complete: every declared secret has a value (or is a plain value / minted per
+    # machine). missing: some declared secret has no value yet.
+    state: Literal["complete", "missing"]
     declared: int
     refs: list[VaultRefOut]
     stored: list[str]
@@ -625,9 +625,8 @@ class HealthTotalsOut(StrictModel):
     needs_setup: int | None = None
     # Agents anyone used in the last 30 days (a turn, or a person's chat or message).
     used_30d: int = 0
-    vault_canopy_web: int | None = None
-    vault_moving: int | None = None
-    vault_none: int | None = None
+    vault_complete: int | None = None
+    vault_missing: int | None = None
     runners: int
     runners_online: int
 

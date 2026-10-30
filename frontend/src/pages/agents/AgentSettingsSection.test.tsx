@@ -109,7 +109,7 @@ describe('AgentSettingsSection', () => {
     expect(await within(region('Vault')).findByTestId('vault-row-CANOPY_PAT')).toBeTruthy()
     expect(within(region('Vault')).getByTestId('vault-summary').textContent).toContain('1 secret')
     expect(within(region('Vault')).getByTestId('vault-section-access-to-secrets')).toBeTruthy()
-    expect(region('Agent security')).toBeTruthy()
+    expect(region('Canopy login')).toBeTruthy()
   })
 
   it('forwards an old anchor to the tab that holds it, keeping query and anchor', async () => {

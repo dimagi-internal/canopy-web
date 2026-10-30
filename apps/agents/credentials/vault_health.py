@@ -27,7 +27,7 @@ from . import zk
 STORED, LITERAL, LOCAL, MISSING = "stored", "literal", "local", "missing"
 
 #: The agent's own vault state, in the words the dashboard shows.
-MOVED, MOVING = "canopy-web", "moving"
+COMPLETE, INCOMPLETE = "complete", "missing"
 
 
 def classify(agent: Agent, stored: set[str] | None = None) -> dict[str, str]:
@@ -78,7 +78,7 @@ def vault_health(agent: Agent, facts=None) -> dict:
     by_class: dict[str, list[str]] = {}
     for name, cls in refs.items():
         by_class.setdefault(cls, []).append(name)
-    state = MOVING if by_class.get(MISSING) else MOVED
+    state = INCOMPLETE if by_class.get(MISSING) else COMPLETE
     return {
         "state": state,
         "declared": len(refs),

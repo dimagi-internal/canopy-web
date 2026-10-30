@@ -157,7 +157,7 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | a Claude credential in the new box's vault | `wire.sh` (waits for a probe) | the box's Credentials tab (`wire.sh` prints it): Make its key, then + Token / + API key |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
 | operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
-| per agent: GitHub delegation (owner's token) | `wire.sh` | agent Settings → Credentials → GitHub (the owner) |
+| per agent: GitHub delegation (owner's token) | `wire.sh` | agent Settings → External accounts → GitHub (the owner) |
 
 ## Where secrets live, and which key reads them
 
@@ -193,7 +193,7 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `canopy.cli` | the canopy CLI did not run (fail) or is behind the marketplace plugin (warn) — Refresh |
 | `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — the runner sweeps scratch and prunes caches on its own at its next idle moment; a fail that stays is not scratch: grow `VolumeSize` (see "Disk") |
 | `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR/sessions` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
-| `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → Credentials → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
+| `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → External accounts → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
 | `env.<slug>` | the agent's `~/.<slug>/.env` could not be resolved from its Canopy vault when a turn was claimed (the CLI's reason in the detail) — turns run on the last good values, which may be stale. Fix the vault; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
 
 Per-agent results (mailbox, secrets from the Canopy vault — `env_ok`, with the CLI's own
@@ -463,7 +463,7 @@ whatever canopy-web has recorded for that agent or workspace — it is never der
 from the slug, so an agent with no vault is simply not provisioned.
 **GitHub is not in any vault.** A box holds no GitHub credential: an agent's
 GitHub identity is its OWNER's, lent to that one agent (`AgentDelegation`, set on
-the agent's Settings → Credentials → GitHub). Each turn asks canopy-web for it
+the agent's Settings → External accounts → GitHub). Each turn asks canopy-web for it
 (`POST /api/harness/runners/{id}/turns/{id}/github-token`) and it lives only in
 that turn's environment; bootstrap uses the same token for that agent's private
 clones. `bootstrap_agents.sh` reads each agent's own
@@ -477,8 +477,8 @@ it can come from either of two places — both equally valid, because the fleet'
 Google OAuth clients are one app (`canopy` = Desktop, `canopy-web` = Web; a token
 under either serves every turn, canopy `agent_email.FLEET_CLIENTS`):
 
-- **Browser (no terminal):** the agent's Settings → Credentials
-  (`/w/<ws>/agents/<slug>/settings#credentials`) → **Connect Google mailbox**, as the
+- **Browser (no terminal):** the agent's Settings → External accounts
+  (`/w/<ws>/agents/<slug>/settings#cred-mailbox`) → **Connect Google mailbox**, as the
   agent's owner or an admin, signing in as the agent's mailbox. Mints under
   `canopy-web`; one of the agent's online runners exchanges the code and stores the
   token encrypted in the agent's vault, so canopy-web never sees it

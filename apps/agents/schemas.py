@@ -181,9 +181,7 @@ class AgentSetupStepOut(StrictModel):
     status: Literal["done", "todo", "waiting", "optional"]
     detail: str
     # web: `href` is the control that does it. claude-code: `command` starts the session.
-    # terminal: `command` is a shell command a person runs (one that needs their own
-    # access) — not a Claude Code session.
-    where: Literal["web", "claude-code", "terminal"]
+    where: Literal["web", "claude-code"]
     href: str = ""
     # What following `href` does, as a button label: "Add a GitHub token".
     action: str = ""

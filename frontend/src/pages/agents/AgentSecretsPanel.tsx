@@ -17,7 +17,6 @@ import { VaultSection } from '@/components/vault/VaultSection'
 import { VaultView } from '@/components/vault/VaultView'
 import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
-import { AgentSecretsHomeSection } from '@/pages/agents/AgentSecretsHomeSection'
 import { AgentVaultMembersSection } from '@/pages/agents/AgentVaultMembersSection'
 import { AgentZkSection } from '@/pages/agents/AgentZkSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
@@ -147,7 +146,6 @@ export function AgentSecretsPanel({
   const rotate = Boolean(zk?.rotation_recommended)
   const secretsAttention = sec.orphans.length > 0 || missing > 0
   const activeMachines = machines?.filter((k) => k.status === 'active').length
-  const where = 'Canopy vault'
   const attention = [
     secretsAttention && [
       sec.orphans.length > 0 && `${sec.orphans.length} stored secret${sec.orphans.length === 1 ? '' : 's'} nothing declares`,
@@ -162,8 +160,6 @@ export function AgentSecretsPanel({
     <div data-testid="agent-secrets">
       <VaultView
         facts={{
-          where,
-          encrypted: true,
           secrets: stored,
           people: canEdit ? members?.members.length : undefined,
           machines: canEdit ? activeMachines : undefined,
@@ -240,19 +236,12 @@ export function AgentSecretsPanel({
           ),
         }}
         storage={{
-          summary: [where, zk?.enabled && zk.kv > 0 ? `key version ${zk.kv}` : null].filter(Boolean).join(' · '),
+          summary: zk?.enabled && zk.kv > 0 ? 'key and recovery' : 'key not made yet',
           tone: canEdit && (waiting > 0 || rotate) ? 'attention' : 'quiet',
           anchors: ['cred-zk', 'cred-vault', 'secrets-home'],
           defaultOpen: false,
           body: (
             <>
-              <AgentSecretsHomeSection
-                slug={agent.slug}
-                storedNames={rows.filter((r) => r.set).map((r) => r.name)}
-                canEdit={canEdit}
-                onChanged={reload}
-                show="source"
-              />
               <AgentZkSection slug={agent.slug} canEdit={canEdit} onState={setZk} onChanged={reload} />
             </>
           ),

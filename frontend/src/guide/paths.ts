@@ -117,7 +117,7 @@ export const USER_ROLES: UserRole[] = [
       'Everything an administrator does, plus making admins and owners, Slack, connected '
       + 'sites, secrets. Secrets has the SHARED vault every agent here reads (the '
       + 'Google OAuth clients, the GitHub token); an agent\'s OWN vault sits on the agent, '
-      + 'under Settings → Credentials. Both are owner-only: they are the keys a runner '
+      + 'under Settings → Security. Both are owner-only: they are the keys a runner '
       + 'resolves everything else from.',
   },
 ]

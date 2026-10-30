@@ -67,6 +67,6 @@ describe('RunnersTable checks and detail', () => {
     const fixes = screen.getAllByText('Fix →').map((a) => a.getAttribute('href'))
     // The sign-in is fixed on the runner, the agent's token on the agent; an
     // agent outside this tree (ace) has nowhere to link.
-    expect(fixes).toEqual(['/w/dimagi/runners/cloud-ec2-2', '/w/dimagi/agents/jarvis/settings#credentials'])
+    expect(fixes).toEqual(['/w/dimagi/runners/cloud-ec2-2', '/w/dimagi/agents/jarvis/settings#cred-github'])
   })
 })

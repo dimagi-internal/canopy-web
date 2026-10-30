@@ -325,7 +325,7 @@ export function AgentSettingsSection() {
               reloadKey={vaultVersion}
             />
           </Section>
-          <Section id="agent-security" title="Agent security">
+          <Section id="canopy-login-section" title="Canopy login">
             <AgentSecurityPanel
               agent={agent}
               canEdit={isAdmin}

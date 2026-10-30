@@ -10,8 +10,7 @@ import { CopyCommand } from './CopyCommand'
 /** The steps left before an agent can do its job, as the server computes them
  *  (`GET /api/agents/{slug}/setup`) — this renders, it never decides. Steps done
  *  on the web link to the control; one done in Claude Code carries the command
- *  that starts that session, and one done in a terminal (it needs the person's
- *  own access) carries that command. */
+ *  that starts that session. */
 export function AgentSetupChecklist({
   slug,
   hideWhenDone = false,
@@ -125,7 +124,7 @@ export function SetupSteps({ steps, canFix = true, extra }: {
               {step.where !== 'web' && (
                 <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
                   <Terminal className="h-3 w-3" aria-hidden="true" />{' '}
-                  {step.where === 'claude-code' ? 'in Claude Code' : 'in a terminal'}
+                  in Claude Code
                 </span>
               )}
             </div>

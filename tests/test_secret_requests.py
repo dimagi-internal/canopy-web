@@ -232,7 +232,7 @@ def test_a_contacts_chat_is_never_asked_for_a_secret(f):
     f.session.save(update_fields=["contact"])
     res = _ask(f)
     assert res.status_code == 409 and res.json()["error"] == "contact_chat"
-    assert "jj@dimagi.com" in res.json()["detail"] and "Credentials page" in res.json()["detail"]
+    assert "jj@dimagi.com" in res.json()["detail"] and "Security tab" in res.json()["detail"]
     assert not AgentSecretRequest.objects.exists()
 
 

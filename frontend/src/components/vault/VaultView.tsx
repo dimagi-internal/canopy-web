@@ -8,7 +8,7 @@ import { VaultSection, type VaultTone } from '@/components/vault/VaultSection'
 //
 //   Secrets            — what it holds
 //   Who can open them  — the people, and the machines
-//   Storage & key      — where it lives, its key and recovery (rarely touched)
+//   Storage & key      — its key and recovery (rarely touched)
 //
 // The page that owns the vault supplies each section's body and a one-line summary
 // (its adapter); this decides the frame, the order and what opens by itself. Anything
@@ -16,11 +16,6 @@ import { VaultSection, type VaultTone } from '@/components/vault/VaultSection'
 // `children`, as more `VaultSection`s, or beside the vault, not inside it.
 
 export interface VaultFacts {
-  /** Where it lives, e.g. "Canopy vault". */
-  where: string
-  /** Sealed so canopy-web cannot read it. */
-  encrypted?: boolean
-  keyVersion?: number
   secrets?: number
   people?: number
   machines?: number
@@ -40,8 +35,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 export function VaultSummary({ facts }: { facts: VaultFacts }) {
   const parts = [
-    facts.where,
-    facts.encrypted ? 'encrypted, canopy-web can’t read it' : null,
+    'Canopy vault',
+    'canopy-web can’t read it',
     facts.secrets !== undefined ? plural(facts.secrets, 'secret') : null,
     facts.people !== undefined ? plural(facts.people, 'person', 'people') : null,
     facts.machines !== undefined ? plural(facts.machines, 'machine') : null,
