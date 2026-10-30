@@ -7,12 +7,10 @@ import pytest
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import services
-from apps.harness import claim, ledger, drills
+from apps.harness import claim, drills, ledger, services
+from apps.harness import initiator as _initiator
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.testing import a_member, a_workspace, enrolled
-
-from apps.harness import initiator as _initiator
 
 # Queued by canopy itself: these tests are about the queue, not about who asked.
 _BY_CANOPY = _initiator.system(via="test")
@@ -61,18 +59,17 @@ def test_enqueue_second_key_queues_behind():
     assert Turn.objects.filter(agent=a).count() == 2
 
 
-def test_claim_serializes_execution_per_agent():
+def test_claim_does_not_serialize_execution_per_agent():
+    """A second queued turn of the same agent is claimed while the first is still executing."""
     a = _agent()
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="slack", idempotency_key="k2")
     r = _runner(a)
     first = claim.claim_next_turn(r)
     assert first is not None
-    # second queued turn must NOT be claimed while the first is executing
-    assert claim.claim_next_turn(r) is None
-    services.finish_turn(first, status="done")
     second = claim.claim_next_turn(r)
-    assert second is not None and second.idempotency_key == "k2"
+    assert second is not None and second.pk != first.pk
+    assert {first.idempotency_key, second.idempotency_key} == {"k1", "k2"}
 
 
 def test_claim_excludes_paused_agents():

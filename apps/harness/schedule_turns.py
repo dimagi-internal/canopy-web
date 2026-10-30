@@ -242,7 +242,7 @@ def release_stale_occurrence_turns(schedule, *, now: dt.datetime | None = None) 
     """Release this schedule's turns that have HELD the agent past grace_minutes.
 
     This is what keeps a forgotten session from wedging the agent: an executing
-    turn holds one_executing_turn_per_agent, and the runner's heartbeat keeps
+    turn occupies a runner, and the runner's heartbeat keeps
     renewing its lease for as long as the emdash session is open, so the ordinary
     lease sweep never rescues it.
 

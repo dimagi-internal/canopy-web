@@ -19,12 +19,11 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
+from apps.harness import claim, ledger, routing
+from apps.harness import initiator as _initiator
 from apps.harness import services as harness
-from apps.harness import ledger, claim, routing
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-
-from apps.harness import initiator as _initiator
 
 # Queued by canopy itself: these tests are about the queue, not about who asked.
 _BY_CANOPY = _initiator.system(via="test")
@@ -302,7 +301,8 @@ def test_a_follow_up_behind_a_running_message_is_queued_behind_until_it_ends(mon
     assert claim.claim_next_turn(runner) == follow_up
 
 
-def test_an_agent_turn_behind_the_agents_running_turn_is_queued_behind():
+def test_an_agent_turn_is_not_queued_behind_the_agents_running_turn():
+    """An agent is not a lane: the next turn is picked up at once, beside the running one."""
     from apps.harness import turn_status as ts
 
     user, ws, agent, _session = _ctx()
@@ -314,10 +314,7 @@ def test_an_agent_turn_behind_the_agents_running_turn_is_queued_behind():
                                      idempotency_key="a2", prompt="two")
 
     st = ts.resolve(second)
-    assert st.state == ts.QUEUED_BEHIND and st.behind == "agent"
-    assert claim.claim_next_turn(runner) is None
-    harness.finish_turn(first, status=Turn.DONE)
-    assert ts.resolve(second).state == ts.PICKING_UP
+    assert st.state == ts.PICKING_UP and st.behind is None
     assert claim.claim_next_turn(runner) == second
 
 

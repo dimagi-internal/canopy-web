@@ -514,7 +514,10 @@ In order, each a hard stop:
    may raise a standing manual to auto, then admission rejects
    (`apps/admission`, see `access.md` → "Admission rules"), then the conditional
    update to CLAIMED inside its own `transaction.atomic()` (an `IntegrityError` from
-   `one_executing_turn_per_agent` means another box won). The claim event records
+   `one_executing_turn_per_session` means another box won that conversation). **An agent
+   is not a lane:** any number of one agent's turns may be executing at once, each on
+   its own worktree; only a CONVERSATION serializes (the rule removed 2026-10-30 once held
+   a dispatch for 5 h behind one 9 h ACE turn). The claim event records
    why (`_routing_basis`: pin / actor / source / default).
 
 `claim.turn_reach` and `unclaimable_queued_turns` explain a stuck turn from the
@@ -798,8 +801,7 @@ right to it (`triggers.refusal`) is not fired — it is consumed (`last_slot`), 
   same transaction (`OneOffSlotMismatch` otherwise).
 - **Grace release:** an EXECUTING occurrence held past `grace_minutes` (anchored on
   `claimed_at` — held time, not owed time) is finished MISSED, because an abandoned
-  session holds `one_executing_turn_per_agent` forever (its heartbeat keeps renewing
-  the lease). Runs on the off-request queue sweeps (every 15 s), not the fire tick
+  session would occupy a runner forever (its heartbeat keeps renewing the lease). Runs on the off-request queue sweeps (every 15 s), not the fire tick
   (a weekly fire tick could never honour a short grace).
 - **Late slots:** a queued slot turn not started within `LATE_SLOT_WINDOW_MINUTES`
   (30) of its slot is skipped as MISSED with no nag; `always_run` and one-offs are
@@ -1323,3 +1325,15 @@ server reads the note as `Runner.signed_out`: `claim_next_turn` refuses the box
 could take, admission rules treat it as offline, and the session list carries
 `runner_signed_out` for `/ide`. Other not-ready notes (no Claude desktop CLI, which
 falls back to emdash) still claim.
+
+## Why is my turn still queued?
+
+A QUEUED turn explains itself. `Runner.last_claim_poll_at` records when a runner last ASKED FOR
+WORK (distinct from its heartbeat — a laptop's daemon can heartbeat for hours while the app that
+takes turns is asleep); `claim._note_skips` records on the turn why a box passed it over; and the
+`harness.note_waiting_turns` tick (`apps/harness/waiting.py`) writes one plain sentence per turn
+queued past two minutes (a hold; the turn ahead in its conversation; "online but has not asked for
+work for 5h16m"; offline / paused / signed-out runners; unroutable). They are `waiting` events on
+the turn — `GET /api/harness/turns/{id}/events`, or `canopy agent turns --slug <agent>`, which
+prints the newest under each queued turn. They are their own event kind so Slack and chat status
+reactions to `status` rows are not triggered.

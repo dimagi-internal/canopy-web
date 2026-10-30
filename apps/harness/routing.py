@@ -799,32 +799,13 @@ def project_session_waits_why(turn: Turn, orders: dict) -> str:
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
 
 
-def busy_agent_ids():
-    """Agents with an executing turn — `claim_next_turn` claims none of their
-    queued turns. A subquery, not a list.
-
-    `agent__isnull=False` is load-bearing: a PROJECT turn has agent_id NULL, so
-    without it one executing repo turn injected a NULL into the IN-list and
-    every queued AGENT turn evaluated `agent_id IN (…, NULL)` -> NULL -> got
-    wrongly excluded. Not "that agent is busy": the runner claimed NOTHING AT
-    ALL while any project turn ran. Observed on the cloud runner — a drill sat
-    QUEUED and pinned for 40+ minutes while the runner was online and
-    heartbeating and POST /claim returned 204, because two canopy-web project
-    turns happened to be executing.
-    """
-    # A LOCAL turn (a person's own session on their private runner) never holds the
-    # agent: it is excluded from `one_executing_turn_per_agent` for the same reason.
-    return (Turn.objects.filter(status__in=EXECUTING, agent__isnull=False)
-            .exclude(origin=Turn.ORIGIN_LOCAL).values("agent_id"))
-
-
 def busy_session_ids():
     """Chat sessions with an executing turn. A session serializes like an agent:
     never claim a session that already has an executing turn
     (one_executing_turn_per_session would reject the claim anyway).
 
     `chat_session__isnull=False` is load-bearing for the same reason as
-    `busy_agent_ids`: executing agent/project turns (chat_session_id NULL) would
+    the agent lane this once sat beside: executing agent/project turns (chat_session_id NULL) would
     inject a NULL into the IN-list, and every queued SESSION turn would then
     evaluate `id IN (…, NULL)` -> NULL -> get wrongly excluded whenever any
     agent turn is running.
@@ -891,12 +872,12 @@ def ridable_sessions(runner: Runner) -> dict:
 def blocking_turn(turn: Turn) -> Turn | None:
     """The executing turn this QUEUED turn is waiting behind, or None.
 
-    The question `claim_next_turn` answers with `busy_session_ids` /
-    `busy_agent_ids`, asked of one turn — so "queued behind the current turn"
-    in the status line and "not claimable" in the claim cannot drift apart
-    (`tests/test_turn_status.py` pins the two together). Its session's executing
-    turn first: that is the one a person can see ("the previous message in this
-    thread").
+    The question `claim_next_turn` answers with `busy_session_ids`, asked of one
+    turn — so "queued behind the current turn" in the status line and "not
+    claimable" in the claim cannot drift apart (`tests/test_turn_status.py` pins
+    the two together). That is the turn executing in its session: the one a person
+    can see ("the previous message in this thread"). An AGENT is never what a turn
+    waits behind: any number of an agent's turns run at once.
     """
     if turn.status != Turn.QUEUED:
         return None
@@ -908,15 +889,6 @@ def blocking_turn(turn: Turn) -> Turn | None:
             # Not blocked when it can be delivered into the running turn: the
             # runner holding it will claim it on its next tick.
             return None if may_ride(turn, held) else held
-    if turn.agent_id:
-        return executing.filter(agent_id=turn.agent_id).exclude(origin=Turn.ORIGIN_LOCAL).first()
-    return None
-    qs = Turn.objects.select_related("claimed_by")
-    if turn.chat_session_id and Turn.objects.filter(
-            pk=turn.pk, chat_session_id__in=busy_session_ids()).exists():
-        return qs.filter(status__in=EXECUTING, chat_session_id=turn.chat_session_id).first()
-    if turn.agent_id and Turn.objects.filter(pk=turn.pk, agent_id__in=busy_agent_ids()).exists():
-        return qs.filter(status__in=EXECUTING, agent_id=turn.agent_id).first()
     return None
 
 
