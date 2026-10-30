@@ -279,7 +279,7 @@ def test_chosen_scopes_are_requested_and_required(ws, user, monkeypatch):
                                  scopes=["web", "chatter_api"], by=user)
     assert app.scopes == "chatter_api web"                           # the menu's order
     p = providers.for_app(app)
-    assert p.requested_scopes() == ("api", "refresh_token", "chatter_api", "web")
+    assert p.requested_scopes() == ("api", "refresh_token", "id", "chatter_api", "web")
     assert p.missing_scopes(("api", "refresh_token", "web")) == ("chatter_api",)
     assert p.missing_scopes(()) == ()                                 # unsaid: what was asked
     session = {}

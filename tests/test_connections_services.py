@@ -111,7 +111,7 @@ def test_begin_parks_state_and_pkce(user):
     q = parse_qs(urlparse(url).query)
     assert url.startswith("https://login.salesforce.com/services/oauth2/authorize?")
     assert q["code_challenge_method"] == ["S256"]
-    assert q["scope"] == ["api refresh_token"]
+    assert q["scope"] == ["api refresh_token id"]
     assert q["redirect_uri"] == [REDIRECT]
     state = q["state"][0]
     parked = session[services.SESSION_KEY][state]
@@ -658,7 +658,7 @@ def test_complete_stores_the_granted_scopes(user):
 
 def test_complete_without_a_scope_answer_stores_what_was_asked(user):
     conn = _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope=None))]))
-    assert conn.scopes == "api refresh_token"
+    assert conn.scopes == "api refresh_token id"
 
 
 def test_complete_refuses_a_grant_missing_a_required_scope(user, caplog):
