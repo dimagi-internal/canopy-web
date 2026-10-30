@@ -526,6 +526,11 @@ class SessionOut(Schema):
     # hold back work an agent did on its own, and the list label each card.
     turn_mode: str = ""
     turn_origin: str = ""
+    # The box that claimed the newest turn driving this session; None before any
+    # claim. A caller's confined turn is never bound to its box (the cloud runner
+    # skips record-session so nothing resumes into it), so such a session has no
+    # `runner_name`: a list reads this instead of printing a placeholder.
+    turn_runner_name: str | None = None
     # Is this session on the CALLER's supervisor feed — feed-only (`?reply=true`).
     # "waiting" = it is; "not_yours" / "parked" / "auto" = waiting, but held back
     # (someone else's runner, a paused/offline runner, an agent's own run); "" =

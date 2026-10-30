@@ -266,7 +266,9 @@ export function IdeTree({
                       data-testid={s.runner_signed_out ? `ide-runner-signed-out-${s.id}` : undefined}
                     >
                       {s.runner_signed_out && '⚠ '}
-                      {s.runner_name ?? (s.requested_runner_name ? `→ ${s.requested_runner_name}` : 'web')}
+                      {s.runner_name ??
+                        s.turn_runner_name ??
+                        (s.requested_runner_name ? `→ ${s.requested_runner_name}` : 'web')}
                     </span>
                     <ModeTag mode={sessionMode(s)} />
                     <span

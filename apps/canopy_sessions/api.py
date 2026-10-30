@@ -307,6 +307,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "agent_spoke_last": agent_spoke_last,
         "turn_mode": turn_mode,
         "turn_origin": turn_origin,
+        "turn_runner_name": getattr(session, "_turn_runner_name", None) or None,
         "feed_status": feed_status,
         "created_by": session.created_by.email if session.created_by_id else None,
         "provenance": provenance.public(session.provenance),
@@ -1303,6 +1304,9 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
     first_claimed = turns_qs.exclude(turn_mode="").order_by("created_at").first()
     session._turn_mode = first_claimed.turn_mode if first_claimed else ""
     session._turn_origin = first_claimed.origin if first_claimed else ""
+    newest_claimed = (turns_qs.exclude(claimed_by=None).select_related("claimed_by")
+                      .order_by("-claimed_at").first())
+    session._turn_runner_name = newest_claimed.claimed_by.name if newest_claimed else None
     turns = list(
         turns_qs.select_related(
             "agent", "chat_session", "claimed_by", "enqueued_by", "pinned_runner",
