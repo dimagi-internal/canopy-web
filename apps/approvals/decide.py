@@ -14,6 +14,7 @@ from apps.agents.models import AgentTask
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
+from .cards import _decided, outcome_line
 from .models import ApprovalDecision
 
 VIAS = ("web", "slack", "email", "push", "api")
@@ -54,7 +55,5 @@ def decide(task: AgentTask, user, decision: str, *, comment: str = "", via: str 
 
 
 def _already(task: AgentTask, fallback: str) -> str:
-    from .cards import _decided, outcome_line
-
     decided = _decided(AgentTask.objects.get(pk=task.pk))
     return f"Already decided. {outcome_line({'decided': decided})}" if decided else fallback

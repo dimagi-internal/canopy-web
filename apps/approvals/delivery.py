@@ -14,6 +14,7 @@ from importlib import import_module
 from django.utils import timezone
 
 from apps.agents.models import AgentTask
+from apps.push.models import NotificationPreference
 
 from . import cards, deciders
 from .models import ApprovalDelivery
@@ -39,8 +40,6 @@ def _send(channel: str, task, user, card: dict) -> dict | None:
 
 
 def wants(user) -> bool:
-    from apps.push.models import NotificationPreference
-
     pref = NotificationPreference.objects.filter(user=user).first()
     return pref is None or pref.approval_cards
 

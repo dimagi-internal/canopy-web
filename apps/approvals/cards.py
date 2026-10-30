@@ -11,9 +11,8 @@ import re
 from django.utils import timezone
 
 from apps.agents.models import AgentTask, AgentTaskAction
+from apps.workspaces import permissions as perms
 from apps.workspaces.links import scoped_path
-
-from .models import ApprovalDecision
 
 OPEN, APPROVED, DECLINED, CLOSED = "open", "approved", "declined", "closed"
 _BULLET = re.compile(r"^\s*(?:[-*•]+|\d+[.)])\s*")
@@ -83,8 +82,6 @@ def state_of(task: AgentTask, decided: dict | None) -> str:
 
 def build(task: AgentTask, *, viewer=None, sent_to=None) -> dict:
     """The card as a dict matching `ApprovalCardOut`. `viewer` fills `can_decide`."""
-    from apps.workspaces import permissions as perms
-
     decided = _decided(task)
     state = state_of(task, decided)
     open_ask = task.ask_kind == AgentTask.ASK_REVIEW and task.ask_is_open

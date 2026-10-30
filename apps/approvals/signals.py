@@ -1,6 +1,8 @@
 """Wiring only: a task that needs a decision is delivered on commit; a decision settles the copies."""
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -24,8 +26,6 @@ def _action_saved(sender, instance: AgentTaskAction, **kwargs) -> None:
 
 
 def _settle_safely(task_id: int) -> None:
-    import logging
-
     try:
         delivery.settle(task_id)
     except Exception:  # noqa: BLE001

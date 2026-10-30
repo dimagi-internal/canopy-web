@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from django.contrib.auth import get_user_model
 
+from apps.agents import proposals
 from apps.agents.models import Agent, AgentTask
 from apps.workspaces import services as wsvc
 
@@ -25,8 +26,6 @@ def _people(ids) -> list:
 
 
 def for_task(task: AgentTask) -> list:
-    from apps.agents import proposals
-
     named = _people([task.waiting_on_user_id, task.assignee_user_id])
     if named:
         return named[:MAX_DECIDERS]

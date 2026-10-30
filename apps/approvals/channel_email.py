@@ -9,8 +9,6 @@ from django.conf import settings
 
 from apps.workspaces.notifications import _button, _send
 
-from . import cards
-
 
 def _abs(path: str) -> str:
     return f"{settings.CANOPY_PUBLIC_BASE_URL.rstrip('/')}{path}"

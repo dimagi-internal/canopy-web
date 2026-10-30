@@ -10,9 +10,15 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.http import HttpResponse
 
-from . import client
+from apps.agents import work
+from apps.approvals.cards import outcome_line
+from apps.approvals.decide import ApprovalError, decide
+from apps.approvals.models import ApprovalDelivery
+
+from . import client, services
 from .models import SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
@@ -27,8 +33,6 @@ def _clip(text: str, n: int = _TEXT_MAX) -> str:
 
 
 def _abs(path: str) -> str:
-    from django.conf import settings
-
     return f"{settings.CANOPY_PUBLIC_BASE_URL.rstrip('/')}{path}"
 
 
@@ -68,9 +72,7 @@ def blocks_for(card: dict, *, settled: str = "") -> tuple[str, list[dict]]:
 
 
 def _installation(task) -> SlackInstallation | None:
-    from .services import installation_for_workspace
-
-    return installation_for_workspace(task.workspace_id)
+    return services.installation_for_workspace(task.workspace_id)
 
 
 def send(task, user, card: dict) -> dict | None:
@@ -91,8 +93,6 @@ def send(task, user, card: dict) -> dict | None:
 
 
 def settle(delivery, card: dict) -> None:
-    from apps.approvals.cards import outcome_line
-
     ref = delivery.ref or {}
     inst = SlackInstallation.objects.filter(team_id=ref.get("team", "")).first()
     if inst is None or not ref.get("ts"):
@@ -104,12 +104,6 @@ def settle(delivery, card: dict) -> None:
 def handle_click(payload: dict, action: dict) -> HttpResponse:
     """Approve / Decline on a card DM. Answers 200 whatever happens (Slack retries otherwise);
     a refusal is said to the person, privately, in the DM."""
-    from apps.agents import work
-    from apps.approvals.decide import ApprovalError, decide
-    from apps.approvals.models import ApprovalDelivery
-
-    from . import services
-
     installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
     if installation is None:
         return HttpResponse(status=200)

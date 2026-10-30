@@ -6,9 +6,9 @@ class ApprovalsConfig(AppConfig):
     name = "apps.approvals"
 
     def ready(self) -> None:
-        from apps.common import ticks
+        from apps.common import ticks  # noqa: PLC0415 — ready(): the app registry is loaded
 
-        from . import signals  # noqa: F401  — registers the receivers
+        from . import signals  # noqa: F401, PLC0415 — registers the receivers
 
         # The backstop: a card whose delivery was lost (a restart between the commit and the
         # send) is delivered within a minute. New cards are delivered on commit, not here.
@@ -16,6 +16,6 @@ class ApprovalsConfig(AppConfig):
 
 
 def _backstop() -> None:
-    from .delivery import deliver_missed
+    from .delivery import deliver_missed  # noqa: PLC0415 — models are not importable at module load
 
     deliver_missed()

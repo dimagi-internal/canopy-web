@@ -21,7 +21,6 @@ from apps.approvals.models import ApprovalDecision, ApprovalDelivery
 from apps.harness.models import Turn
 from apps.push.models import NotificationPreference
 from apps.slack import approvals as slack_cards
-from apps.slack.models import SlackUserLink
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_user
