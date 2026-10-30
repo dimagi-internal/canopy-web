@@ -34,11 +34,6 @@ def endorse_msg(agent_id, kind: str, target: str, key_jkt: str) -> str:
     return f"canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
 
 
-def _public_key(jwk: dict) -> ec.EllipticCurvePublicKey:
-    x, y = b64u_bytes(jwk.get("x", ""), "x"), b64u_bytes(jwk.get("y", ""), "y")
-    return ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + x + y)
-
-
 def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser_jwk: dict) -> bool:
     """Is `sig` the endorser's §7 signature over this (agent, kind, target, key)?"""
     try:
@@ -46,7 +41,7 @@ def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser
         if len(raw) != 64:
             return False
         der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
-        _public_key(endorser_jwk).verify(der, endorse_msg(agent_id, kind, target, key_jkt).encode(),
+        zk.public_key(endorser_jwk).verify(der, endorse_msg(agent_id, kind, target, key_jkt).encode(),
                                          ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError, ZkError):
         return False

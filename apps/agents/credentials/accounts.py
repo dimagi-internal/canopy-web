@@ -71,12 +71,6 @@ def refuse_delegated_names(agent, names) -> None:
                       "can replace it, and nobody can read it")
 
 
-def own_entries(agent):
-    """The agent's own entries: everything a vault-key write covers and a member may read."""
-    return AgentCredential.objects.filter(agent=agent).exclude(
-        pk__in=delegated_entries(agent).values("pk"))
-
-
 # ---- the machines that may open a delegated entry --------------------------------
 
 def delegated_devices(agent, person, facts=None) -> list:
@@ -141,9 +135,10 @@ def session_until(entry):
     if not raw:
         return None
     try:
-        return dt.datetime.fromisoformat(str(raw))
+        when = dt.datetime.fromisoformat(str(raw))
     except ValueError:
         return dt.datetime.min.replace(tzinfo=dt.timezone.utc)  # unreadable: treat as ended
+    return when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)
 
 
 def session_ended(entry, now=None) -> bool:

@@ -373,4 +373,4 @@ def _record_read(request: HttpRequest, agent, *, via: str, runner, wanted, value
             workspace=agent.workspace,
         )
     except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
-        pass
+        logger.exception("credential read audit failed for %s", agent.slug)

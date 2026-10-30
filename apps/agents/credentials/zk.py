@@ -26,6 +26,7 @@ import base64
 import binascii
 import re
 
+from cryptography.hazmat.primitives.asymmetric import ec
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -70,6 +71,12 @@ def b64u_bytes(value, what: str) -> bytes:
         return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     except (binascii.Error, ValueError) as exc:
         raise _shape(f"{what} must be base64url without padding") from exc
+
+
+def public_key(jwk: dict) -> ec.EllipticCurvePublicKey:
+    """The P-256 public key a `{x, y}` JWK names (the one reading, for sealing and endorsing)."""
+    x, y = b64u_bytes(jwk.get("x", ""), "x"), b64u_bytes(jwk.get("y", ""), "y")
+    return ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + x + y)
 
 
 def _exact(value, n: int, what: str) -> None:
@@ -207,20 +214,11 @@ def eligible_members(agent) -> list:
                 .select_related("user"))
 
 
-def _wrap_key(w) -> tuple:
-    return engine.wrap_key(w)
-
-
 def has_recovery_seal(user_id) -> bool:
     """The person keeps ONE recovery code for their vault key (§4c)."""
 
     ks = UserVaultKeyset.objects.filter(user_id=user_id).first()
     return bool(ks) and any(s.get("alg") == "recovery" for s in ks.seals)
-
-
-def value_digest(value_zk: str) -> str:
-    """What a compare-and-swap `expect` names: hex SHA-256 of the stored text."""
-    return engine.value_digest(value_zk)
 
 
 def _locked(agent):

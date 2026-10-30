@@ -197,7 +197,7 @@ def _rotate_locked(agent, *, now, trigger: str, actor, presented_token_id=None):
     raw, new = PersonalToken.create_for_user(
         user=agent.user, label=f"{agent.slug} agent (rotated {now:%Y-%m-%d})"[:100],
         ttl_days=services.agent_token_ttl_days())
-    services.set_agent_credentials(agent, {CANOPY_PAT_REF: raw}, user=actor, minted=True)
+    services.set_agent_credentials(agent, {CANOPY_PAT_REF: raw}, user=actor)
     revoke_after = None
     if old is not None:
         revoke_after = now + OVERLAP
