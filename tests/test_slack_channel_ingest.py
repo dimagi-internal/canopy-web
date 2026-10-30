@@ -494,9 +494,9 @@ def test_moving_the_agent_drops_its_allow_list(allowed, channel, ws, hal):
     assert not SlackChannelIngestAllow.objects.exists()
 
 
-def test_allow_listing_can_also_give_the_agent_the_channels_sessions(channel, installation, ws, hal, hal_login, owen):
-    """`review_sessions` is the admin's one switch: the agent's own login then reads the sessions
-    that live in that channel (and only that channel) until the entry is removed."""
+def test_allow_listing_can_also_make_the_agent_a_viewer_of_the_channels_sessions(channel, installation, ws, hal, hal_login, owen):
+    """`review_sessions` is the admin's one switch: the agent's login joins, read-only, the Slack-bound
+    sessions of that channel (and only that channel) until it is switched off or the entry removed."""
     from apps.canopy_sessions.models import Session
 
     def reads(session):
@@ -506,7 +506,7 @@ def test_allow_listing_can_also_give_the_agent_the_channels_sessions(channel, in
 
     poster = a_user("ana@dimagi.com")
     wsvc.ensure_member(ws, poster, WorkspaceMembership.EDITOR)
-    meta = {"slack_team": installation.team_id, "slack_channel": CHAN}
+    meta = {"slack_thread": "t", "slack_team": installation.team_id, "slack_channel": CHAN}
     inside = Session.objects.create(workspace=ws, created_by=poster, metadata=meta)
     sealed = Session.objects.create(workspace=ws, created_by=poster,
                                     metadata={**meta, "runner_requirements": ["sensitive_data"]})
@@ -527,6 +527,12 @@ def test_allow_listing_can_also_give_the_agent_the_channels_sessions(channel, in
     listed.force_login(hal_login)
     ids = [r["id"] for r in listed.get(f"/api/canopy-sessions/?slack_channel={CHAN}&state=all").json()]
     assert ids == [str(inside.pk)]
+    from apps.canopy_sessions.models import SessionParticipant
+    assert SessionParticipant.objects.get(session=inside, user=hal_login).role == SessionParticipant.VIEWER
+    assert Client().get(f"/api/canopy-sessions/{inside.pk}").status_code in (401, 403, 404)
+    writer = Client()
+    writer.force_login(hal_login)
+    assert writer.post(f"/api/canopy-sessions/{inside.pk}/archive").status_code in (403, 404, 405)
 
     assert _allow(ws).status_code == 200                    # switched off on the same entry
     assert not reads(inside)

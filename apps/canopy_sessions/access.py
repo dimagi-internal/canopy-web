@@ -14,7 +14,7 @@ someone merely for being in the same workspace:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of eight legs** (`visible_session_q`): you created it; you were
+* **Then one of seven legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
   run; you are an agent's own login and its person let that agent review
@@ -22,9 +22,7 @@ someone merely for being in the same workspace:
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`); or its box owner shared their laptop sessions
   in this project's repo with the project's team and you are on it
-  (`ProjectSessionShare`, read + write + pull); or you are an agent's own login and
-  an admin gave that agent one Slack channel's sessions to review
-  (`SessionChannelReview`, read-only, never a sensitive one).
+  (`ProjectSessionShare`, read + write + pull).
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
@@ -92,7 +90,6 @@ from .models import (
     RunnerBinding,
     Session,
     SessionParticipant,
-    SessionChannelReview,
     SessionReviewGrant,
 )
 
@@ -103,7 +100,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Eight ways in, and no ninth:
+    Seven ways in, and no eighth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -146,12 +143,6 @@ def visible_session_q(user) -> Q:
        never an agent's own login. The person's explicit, revocable choice, per
        project; you work in it as an editor and may pull. Never a sensitive one,
        never an agent's own work.
-    8. you are an agent's own login and an owner or admin of the agent's workspace
-       gave that agent the sessions of one Slack channel to review
-       (`SessionChannelReview`): sessions in the agent's workspace whose metadata
-       names that channel. READ-ONLY (`role_for` gives a viewer), never a sensitive
-       one, never a contact's, and nothing outside the channel; revoking it drops
-       the next read.
 
     **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
@@ -170,7 +161,6 @@ def visible_session_q(user) -> Q:
         | _review_grant_q(user)
         | _runner_admin_q(user)
         | _project_share_q(user)
-        | _channel_review_q(user)
     )
 
 
@@ -282,19 +272,6 @@ def _review_grant_q(user) -> Q:
     return sessions_of_q(granters) & Q(contact__isnull=True) & _not_sensitive_q()
 
 
-def _channel_review_q(user) -> Q:
-    """Leg 8: the sessions living in the Slack channels an admin gave the agent
-    whose own login `user` is to review. Empty for anyone else."""
-    if not getattr(user, "is_authenticated", False):
-        return Q(pk__in=[])
-    rows = (SessionChannelReview.objects.filter(agent__user=user, revoked_at__isnull=True)
-            .values_list("agent__workspace_id", "slack_team", "channel_id"))
-    q = Q(pk__in=[])
-    for workspace_id, team, channel in rows:
-        q |= Q(workspace_id=workspace_id, metadata__slack_team=team, metadata__slack_channel=channel)
-    return q & Q(contact__isnull=True) & _not_sensitive_q()
-
-
 def _agent_admin_q(user) -> Q:
     """Sessions whose agent `user` is an admin of. The same three ways in as
     `Agent.is_admin`; `tests/test_session_acl.py` checks the two agree.
@@ -340,7 +317,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the eight legs.
+    """Every session `user` may read — the tenant gate AND the seven legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.
