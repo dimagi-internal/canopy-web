@@ -27,7 +27,7 @@ const PROVIDER = { name: 'salesforce', title: 'Salesforce', workspace: 'w', work
 function conn(over: Record<string, unknown> = {}) {
   return {
     id: 3, provider: 'salesforce', title: 'Salesforce', account_label: 'eva@dimagi-ai.com', workspace: 'w', workspace_name: 'W',
-    instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false,
+    instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false, usable: true, missing_scopes: [],
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
     granted_from: null, shared_with: [], ...over,
   }
@@ -152,5 +152,69 @@ describe('AgentConnectionsPanel', () => {
     )
     expect(await screen.findByText('Connecting the service failed. Try again.')).toBeTruthy()
     expect(screen.queryByText(/evil|money/)).toBeNull()
+  })
+
+  it('names the wrong_account refusal (an admin signed in as themselves for the agent)', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    render(
+      <MemoryRouter initialEntries={['/x?connection=salesforce&status=error&reason=wrong_account']}>
+        <AgentConnectionsPanel agent={{ slug: 'eva' }} />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText(/^Salesforce was signed in with an account this connection may not use — sign in as the agent’s own account/)).toBeTruthy()
+    expect(screen.queryByText(/failed\. Try again/)).toBeNull()
+  })
+
+  it('reconnects to the connection’s own workspace, not the provider row’s', async () => {
+    document.cookie = 'csrftoken=tok123'
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ workspace: 'w', needs_reconnect: true })],
+    })
+    render(
+      <MemoryRouter initialEntries={['/a']}>
+        <AgentConnectionsPanel agent={{ slug: 'eva', workspace: 'elsewhere' }} />
+      </MemoryRouter>,
+    )
+    const btn = await screen.findByRole('button', { name: 'Reconnect' })
+    expect((btn.closest('form') as HTMLFormElement).getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/w\/start\/$/)
+  })
+
+  it('shows a connection made before a move with Disconnect only, and offers Connect here', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [{ ...PROVIDER, workspace: 'x', workspace_name: 'X' }],
+      connections: [conn({ usable: false, needs_reconnect: true, workspace: 'dimagi', workspace_name: 'Dimagi', shared_with: ['echo'] })],
+    })
+    show()
+    expect(await screen.findByText('Made in Dimagi before the move — disconnect it and connect here.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy()
+    const connect = screen.getByRole('button', { name: 'Connect Salesforce' })
+    expect((connect.closest('form') as HTMLFormElement).getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/x\/start\/$/)
+  })
+
+  it('says when a shared connection stopped because its owner moved', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ id: 9, granted_from: 'hal', usable: false, workspace: 'dimagi', workspace_name: 'Dimagi' })],
+    })
+    show()
+    expect(await screen.findByText('hal is no longer in Dimagi, where this was made, so it no longer works.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop using' })).toBeTruthy()
+  })
+
+  it('prompts to reconnect for a scope the app added since', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [
+        conn({ missing_scopes: [{ scope: 's', label: 'Send mail' }] }),
+        conn({ id: 9, granted_from: 'hal', missing_scopes: [{ scope: 's', label: 'Send mail' }] }),
+      ],
+    })
+    show()
+    expect(await screen.findByText('Reconnect to allow: Send mail')).toBeTruthy()
+    expect(screen.getByText('Its owner must reconnect to allow: Send mail')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Reconnect' })).toHaveLength(1)
   })
 })

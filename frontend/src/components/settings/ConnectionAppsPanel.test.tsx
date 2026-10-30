@@ -26,7 +26,7 @@ const CAL_READ = 'https://www.googleapis.com/auth/calendar.readonly'
 
 const SALESFORCE = {
   provider: 'salesforce', title: 'Salesforce', configured: true, client_id: 'sf-client', has_secret: true,
-  options: { login_url: 'https://dimagi.my.salesforce.com' }, scopes: [], scope_choices: [],
+  options: { login_url: 'https://dimagi.my.salesforce.com' }, scopes: [], scope_choices: [], locked_options: ['login_url'],
   option_fields: [
     { name: 'login_url', label: 'Login URL', kind: 'url', required: true, default: null },
     { name: 'access_token_seconds', label: 'Access token lifetime (seconds)', kind: 'int', required: false, default: 1800 },
@@ -36,7 +36,7 @@ const SALESFORCE = {
 }
 const GOOGLE = {
   provider: 'google', title: 'Google', configured: false, client_id: '', has_secret: false,
-  options: {}, scopes: [GMAIL_READ],
+  options: {}, scopes: [GMAIL_READ], locked_options: [],
   scope_choices: [{ scope: GMAIL_READ, label: 'Read mail' }, { scope: CAL_READ, label: 'Read calendars' }],
   option_fields: [{ name: 'allowed_domains', label: 'Allowed domains', kind: 'text', required: false, default: null }],
   callback_url: 'https://canopy.example/auth/connections/google/w/callback/',
@@ -134,8 +134,20 @@ describe('ConnectionAppsPanel', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Save Salesforce' }))
     expect(await screen.findByText(
-      'Disconnect its 3 connections (Remove) before changing the client ID or login URL.',
+      'Disconnect its 3 connections (Remove) before changing the client ID or Login URL.',
     )).toBeTruthy()
+  })
+
+  it('names only the locked settings the API lists: Google has none', async () => {
+    m.listConnectionApps.mockResolvedValue([SALESFORCE, { ...GOOGLE, configured: true, client_id: 'g', connection_count: 2 }])
+    m.configureConnectionApp.mockRejectedValue(new ApiError(409, 'App in use', { error: 'app_locked', detail: 'x' }))
+    show()
+    await screen.findByTestId('connection-app-google')
+    fireEvent.change(document.getElementById('connection-app-google-client-id') as HTMLInputElement, {
+      target: { value: 'other-client' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Google' }))
+    expect(await screen.findByText('Disconnect its 2 connections (Remove) before changing the client ID.')).toBeTruthy()
   })
 
   it('confirms Remove with the number of connections it disconnects, and does nothing when declined', async () => {

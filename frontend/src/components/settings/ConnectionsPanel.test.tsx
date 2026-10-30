@@ -19,7 +19,7 @@ const PROVIDER = { name: 'salesforce', title: 'Salesforce', workspace: 'w', work
 function conn(over: Record<string, unknown> = {}) {
   return {
     id: 7, provider: 'salesforce', title: 'Salesforce', account_label: 'jj@dimagi.com', workspace: 'w', workspace_name: 'W',
-    instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false,
+    instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false, usable: true, missing_scopes: [],
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
     granted_from: null, ...over,
   }
@@ -74,6 +74,43 @@ describe('ConnectionsPanel', () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     at('/settings?connection=salesforce&status=error&reason=access_denied')
     expect(await screen.findByText(/Salesforce was not approved/)).toBeTruthy()
+  })
+
+  it('names the wrong_account refusal instead of a generic failure', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    at('/settings?connection=salesforce&status=error&reason=wrong_account')
+    expect(await screen.findByText(
+      'Salesforce was signed in with an account this connection may not use — sign in as the agent’s own account, or one in the workspace’s allowed domains.',
+    )).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/failed\. Try again/)
+  })
+
+  it('words forbidden neutrally: it is also what someone who left the workspace sees', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    at('/settings?connection=salesforce&status=error&reason=forbidden')
+    expect(await screen.findByText('Salesforce is no longer allowed for this account or workspace.')).toBeTruthy()
+  })
+
+  it('shows a connection in a workspace I left as not working, with Disconnect only', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ usable: false, needs_reconnect: true, workspace: 'old', workspace_name: 'Old Co' })],
+    })
+    at('/settings')
+    expect(await screen.findByText(/You are no longer in Old Co/)).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Reconnect' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy()
+  })
+
+  it('prompts to reconnect for a scope the app added since', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ missing_scopes: [{ scope: 'https://www.googleapis.com/auth/gmail.send', label: 'Send mail' }] })],
+    })
+    at('/settings')
+    expect(await screen.findByText('Reconnect to allow: Send mail')).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Reconnect' }) as HTMLAnchorElement
+    expect(a.getAttribute('href')).toContain('/auth/connections/salesforce/w/start/')
   })
 
   it('renders whatever providers the API lists, with no API host for a fixed-host one', async () => {

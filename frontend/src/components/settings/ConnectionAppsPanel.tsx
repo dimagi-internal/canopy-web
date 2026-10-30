@@ -136,7 +136,9 @@ function AppCard({
   const p = app.provider
   const fields = app.option_fields ?? []
   const choices = app.scope_choices ?? []
-  const hasLoginUrl = fields.some((f) => f.name === 'login_url')
+  // The settings that, like the client ID, cannot change while connections use the
+  // app (Salesforce's login URL): named by the API, labelled from the fields.
+  const locked = (app.locked_options ?? []).map((n) => fields.find((f) => f.name === n)?.label ?? n)
   const copy = PROVIDER_COPY[p]
   const id = (what: string) => `connection-app-${p}-${what}`
 
@@ -162,7 +164,7 @@ function AppCard({
       setNote({ tone: 'ok', text: 'Saved.' })
     } catch (err) {
       const text = err instanceof ApiError && err.code === 'app_locked'
-        ? `Disconnect its ${plural(app.connection_count, 'connection')} (Remove) before changing the client ID${hasLoginUrl ? ' or login URL' : ''}.`
+        ? `Disconnect its ${plural(app.connection_count, 'connection')} (Remove) before changing the client ID${locked.length ? ` or ${locked.join(', ')}` : ''}.`
         : err instanceof Error ? err.message : 'Could not save the app.'
       setNote({ tone: 'error', text })
     } finally {
