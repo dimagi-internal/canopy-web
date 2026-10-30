@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { UnlockAsk, UnlockChoice, UnlockPrompt } from './operations'
 
 /**
@@ -10,14 +10,10 @@ import type { UnlockAsk, UnlockChoice, UnlockPrompt } from './operations'
  */
 export function useUnlockPrompt(): { prompt: UnlockPrompt; element: ReactNode } {
   const [ask, setAsk] = useState<UnlockAsk | null>(null)
-  const [passphrase, setPassphrase] = useState('')
-  const [secretKey, setSecretKey] = useState('')
   const pending = useRef<{ resolve: (c: UnlockChoice) => void; reject: (e: Error) => void } | null>(null)
 
   const prompt = useCallback<UnlockPrompt>((a) => new Promise<UnlockChoice>((resolve, reject) => {
     pending.current = { resolve, reject }
-    setPassphrase('')
-    setSecretKey('')
     setAsk(a)
   }), [])
 
@@ -25,26 +21,39 @@ export function useUnlockPrompt(): { prompt: UnlockPrompt; element: ReactNode } 
     const p = pending.current
     pending.current = null
     setAsk(null)
-    setPassphrase('')
-    setSecretKey('')
     if (choice) p?.resolve(choice)
     else p?.reject(new Error('Unlock cancelled — nothing was changed.'))
   }
 
-  const element = ask && (
+  return { prompt, element: ask && <UnlockForm ask={ask} onFinish={finish} /> }
+}
+
+/** The form itself. It scrolls into view and takes focus when it appears, because it renders
+ *  inline (where the page put it), which may be far from the button that asked. The passphrase
+ *  lives in this component's state and goes nowhere but the `onFinish` call. */
+function UnlockForm({ ask, onFinish }: { ask: UnlockAsk; onFinish: (choice: UnlockChoice | null) => void }) {
+  const [passphrase, setPassphrase] = useState('')
+  const [secretKey, setSecretKey] = useState('')
+  const form = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    form.current?.scrollIntoView?.({ block: 'nearest' })
+    form.current?.querySelector<HTMLElement>('button, input')?.focus()
+  }, [])
+  return (
     <form
+      ref={form}
       role="dialog"
       aria-label="Unlock your vault key"
       className="mt-3 space-y-2 rounded-lg border border-border bg-card p-3 text-[12px]"
       data-testid="vault-unlock"
       onSubmit={(e) => {
         e.preventDefault()
-        finish({ method: 'passphrase', passphrase, secretKey: secretKey.trim() || undefined })
+        onFinish({ method: 'passphrase', passphrase, secretKey: secretKey.trim() || undefined })
       }}
     >
       <p className="font-medium text-foreground">Unlock your vault key</p>
       {ask.passkey && (
-        <button type="button" onClick={() => finish({ method: 'passkey' })} data-testid="vault-unlock-passkey"
+        <button type="button" onClick={() => onFinish({ method: 'passkey' })} data-testid="vault-unlock-passkey"
                 className="min-h-11 rounded-md bg-primary px-3 py-1 font-medium text-primary-foreground sm:min-h-0">
           Use my passkey
         </button>
@@ -66,9 +75,8 @@ export function useUnlockPrompt(): { prompt: UnlockPrompt; element: ReactNode } 
           </button>
         </div>
       )}
-      <button type="button" onClick={() => finish(null)}
+      <button type="button" onClick={() => onFinish(null)}
               className="text-muted-foreground hover:text-foreground">Cancel</button>
     </form>
   )
-  return { prompt, element }
 }
