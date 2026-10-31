@@ -83,6 +83,19 @@ test.describe('chat with a runner', () => {
     await expect(page.getByRole('button', { name: /^stop/i })).toHaveCount(0)
   })
 
+  test('Stop ends a turn that would otherwise never finish', async ({ page }) => {
+    const id = await newSession(page)
+    await page.goto(sessionUrl(id))
+    await expect(page.getByTestId('composer')).toBeVisible()
+    await sendFromComposer(page, 'e2e:hang')
+
+    await expect(page.getByTestId('pending-reply')).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Stop' }).click()
+    await expect(page.getByTestId('pending-reply')).toHaveCount(0, { timeout: 15_000 })
+    const detail = await api(page, 'GET', `/api/canopy-sessions/${id}`)
+    expect(detail.turn_status.settled).toBe(true)
+  })
+
   test('watching a long turn keeps the view at the newest row', async ({ page }) => {
     const id = await newSession(page)
     await page.goto(sessionUrl(id))

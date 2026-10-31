@@ -11,7 +11,7 @@ What the agent does is chosen by the message the browser sends:
     hello                 one tool call, then "echo: hello"
     e2e:tools N           N tool calls, then a reply (a tool-heavy turn)
     e2e:slow N            N tool calls one second apart (watch a turn live)
-    e2e:hang              one tool call, then never finish (until stopped)
+    e2e:hang              one tool call, then wait until a person stops it
     e2e:fail              one tool call, then the turn fails
     e2e:newfile           the conversation continues in a NEW transcript file,
                           as after a failover or /clear (a new ordinal epoch)
@@ -111,6 +111,7 @@ class FakeRunner:
         self.conversations: dict[str, Conversation] = {}
         self.active: set[str] = set()
         self.stopped: set[str] = set()
+        self.turn_of_session: dict[str, str] = {}
 
     # --- the protocol -----------------------------------------------------
 
@@ -135,6 +136,7 @@ class FakeRunner:
             self.client.finish(tid, note="fake runner: not a chat turn", status="failed")
             return
         thread_key = ref.get("thread_key") or session_id
+        self.turn_of_session[session_id] = tid
         prompt = (turn.get("prompt") or "").strip().splitlines()[-1:] or [""]
         text = prompt[0]
         convo = self.conversations.get(session_id)
@@ -188,6 +190,13 @@ class FakeRunner:
             log("claimed", turn["id"], (turn.get("prompt") or "")[-60:])
             self.active.add(turn["id"])
             threading.Thread(target=self._run, args=(turn,), daemon=True).start()
+        # A person's Stop: the durable record, drained here as the real runners do.
+        for stop in self.client.sync_session_interrupts(self.runner_id):
+            tid = self.turn_of_session.get(stop["session_id"])
+            if tid:
+                self.stopped.add(tid)
+            self.client.post_session_interrupt_result(self.runner_id, stop["session_id"],
+                                                      stop["interrupt_id"], "interrupted")
         for tid in list(self.active):
             try:
                 if self.client.get_turn(tid).get("status") in ("cancelled", "cancelling"):
