@@ -32,6 +32,7 @@ export const KIND_LABEL: Record<string, string> = {
   device_key_pending: 'Device key',
   agent_cant_run: 'Agent routing',
   agent_token_expiring: 'Agent login',
+  approval_request: 'Approval',
   canopy_projects_off: 'Opted-in repos',
   trigger_stopped: 'Triggers',
   transfer_left_open: 'Transfers',
