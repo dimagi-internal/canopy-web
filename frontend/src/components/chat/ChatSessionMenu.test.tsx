@@ -243,3 +243,21 @@ describe('ChatSessionMenu — Copy join link', () => {
     expect(screen.queryByTestId('copy-join-link')).toBeNull()
   })
 })
+
+describe('ChatSessionMenu — Tool calls', () => {
+  it('expands or collapses every tool call from the menu', async () => {
+    const onToolRowsChange = vi.fn()
+    render(<ChatSessionMenu {...baseProps({ toolRows: 'default', onToolRowsChange })} />)
+    await openMenu()
+    expect(screen.getByRole('menuitemradio', { name: 'As left' }).getAttribute('aria-checked'))
+      .toBe('true')
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Expand all' }))
+    expect(onToolRowsChange).toHaveBeenCalledWith('all')
+  })
+
+  it('is hidden when the host offers no choice', async () => {
+    render(<ChatSessionMenu {...baseProps()} />)
+    await openMenu()
+    expect(screen.queryByText('Tool calls')).toBeNull()
+  })
+})

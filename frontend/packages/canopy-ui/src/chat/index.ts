@@ -111,7 +111,7 @@ export {
 export { ChatPanel, editTarget, type ChatPanelProps } from "./ChatPanel";
 export { toolCopyText, type MessageActionsHost } from "./messageActions";
 export { MenuPrompt, type MenuPromptProps } from "./MenuPrompt";
-export { MessageList } from "./MessageList";
+export { MessageList, type ToolRowsView } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
 export { ToolCallPair } from "./ToolCallPair";
 export { REFERENCE_MIME, SendBox, type PendingAttachment } from "./SendBox";
