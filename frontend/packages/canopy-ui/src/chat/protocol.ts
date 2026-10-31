@@ -153,6 +153,12 @@ export interface CancelledSend {
   sent_at: string;
   /** Who withdrew it; "" when nobody recorded it. */
   cancelled_by: string;
+  /** How its turn ended: `cancelled` (withdrawn or stopped), or `failed`, `lost`,
+   *  `missed` or `done` for one that never reached the agent. Absent on an older
+   *  server, which listed only cancelled sends. */
+  state?: string;
+  /** The runner's note on a send that was not delivered; "" otherwise. */
+  detail?: string;
 }
 
 export interface Participant {
@@ -262,9 +268,9 @@ export interface TurnStatus {
    *  blocked on a question is still RUNNING as far as the turn is concerned. */
   menu_pending: boolean;
   /** For `queued_behind`: what it waits behind — `session` (the previous
-   *  message in this conversation) or `agent` (another turn of the same
-   *  agent). Absent on an older server. */
-  behind?: "session" | "agent" | null;
+   *  message in this conversation), `agent` (another turn of the same agent) or
+   *  `transfer` (the session is moving to another runner). Absent on an older server. */
+  behind?: "session" | "agent" | "transfer" | null;
   /** Why a `failed` turn failed, in the runner's words; or why a `cancelled`
    *  one was never run (an admission rule rejected it). Null otherwise, and
    *  for a turn someone stopped. Absent on an older server. */
