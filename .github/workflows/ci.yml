@@ -775,6 +775,66 @@ jobs:
   # Two shards: vitest's cost on a 4-vCPU runner is per-file setup (a fresh
   # jsdom + module graph for each of ~350 files), not the tests, so it was the
   # queue's longest job (~3–5 min). Shard 1 also builds the SPA and the site.
+  # ── Browser suite: chat with a runner ─────────────────────────────────
+  #
+  # A real browser against the real API on Postgres, with `e2e/fake_runner.py`
+  # answering every send as a production runner does (the real runner client,
+  # a real Claude transcript, rows shipped with canopy_transcript). It covers
+  # what unit tests cannot see: the reply arriving once and in order, the view
+  # at the newest row, a finished turn that stops saying it is working, history
+  # that survives a dropped connection. Not yet behind a required gate.
+  test-e2e-chat:
+    name: Browser suite (chat)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: canopy_e2e
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Run the chat browser suite
+        working-directory: frontend
+        env:
+          E2E_DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
+        run: npx playwright test e2e/chat-runner.spec.ts --project=desktop
+
+      - name: Keep the traces of a failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-chat-traces
+          path: frontend/test-results/
+          retention-days: 7
+
   test-frontend:
     name: Frontend tests (${{ matrix.shard }}/2)
     if: github.event_name != 'pull_request'
