@@ -14613,6 +14613,27 @@ export interface paths {
         readonly patch: operations["set_preferences"];
         readonly trace?: never;
     };
+    readonly "/api/approvals/kinds": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The kinds of request that can be filed
+         * @description Every kind: its key, who can approve it, what the handler does, and the JSON schema of its
+         *     params. A request must name one of these; there is no free-form request.
+         */
+        readonly get: operations["list_approval_kinds"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/approvals/": {
         readonly parameters: {
             readonly query?: never;
@@ -14621,21 +14642,26 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The cards waiting on you
-         * @description Proposals waiting on a yes or no from YOU: the people a card is sent to
-         *     (`deciders.for_task`) see it here. Anyone else in the workspace can still open a card by
-         *     its key and decide it, as on the board.
+         * Requests waiting on you
+         * @description Requests in your workspaces that YOU could approve. `status=all` also lists decided ones you
+         *     could have approved; `scope` narrows to one (`workspace:dimagi`, `agent:hal`).
          */
-        readonly get: operations["my_cards"];
+        readonly get: operations["list_approvals"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * File a request
+         * @description File a request of one kind. 422 says what is wrong with the kind or params, or that nobody can
+         *     approve it. Replaying `idempotency_key` returns the original (200). The preview people read is
+         *     rendered from `params`; your `reason` and `evidence` are shown as yours.
+         */
+        readonly post: operations["file_approval"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/approvals/{key}": {
+    readonly "/api/approvals/{approval_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14643,12 +14669,12 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * One card, with everything needed to decide it
-         * @description The card for task `key`: the ask, the person's words verbatim, the agent's reason, the exact
-         *     plan, what approving starts and what declining does, who it was sent to and — once decided —
-         *     who decided it, how, and what they said. 404 for a task in a workspace you are not in.
+         * One request, with everything needed to decide it
+         * @description The server-rendered preview of what approving will do, the requester's own words apart from it,
+         *     who it was sent to and how, and — once decided — who decided it, through which door, and what
+         *     happened. 404 for a request in a workspace you are not in.
          */
-        readonly get: operations["get_card"];
+        readonly get: operations["get_approval"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -14657,7 +14683,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/approvals/{key}/decide": {
+    readonly "/api/approvals/{approval_id}/decide": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14667,12 +14693,29 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Approve or decline a card
-         * @description Approve (starts the turns the card names, once) or decline (nothing runs). 409 with who got
-         *     there first when it is already decided — never a second run. 403 when the board itself
-         *     would refuse you (a project decision card is the project owner's).
+         * Approve or decline a request
+         * @description Approve (runs the kind's handler as you, once) or decline (nothing happens). A request is
+         *     decided once: a second decision is a 409 naming who got there first. 403 when you do not hold
+         *     the authority the kind needs. An approval whose handler refuses comes back `failed` with the reason.
          */
-        readonly post: operations["decide_card"];
+        readonly post: operations["decide_approval"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/approvals/{approval_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw a request */
+        readonly post: operations["cancel_approval"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -40767,75 +40810,90 @@ export interface components {
             /** Approval Cards */
             readonly approval_cards?: boolean | null;
         };
-        /** ApprovalCardOut */
-        readonly ApprovalCardOut: {
+        /** ApprovalKindOut */
+        readonly ApprovalKindOut: {
             /** Key */
             readonly key: string;
+            /** Label */
+            readonly label: string;
+            /** Needs */
+            readonly needs: string;
+            /** Does */
+            readonly does: string;
+            /** Params Schema */
+            readonly params_schema: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** ApprovalCardOut */
+        readonly ApprovalCardOut: {
+            /** Id */
+            readonly id: number;
+            /** Key */
+            readonly key: string;
+            /** Kind */
+            readonly kind: string;
+            /** Kind Label */
+            readonly kind_label: string;
+            /** Needs */
+            readonly needs: string;
             /** Title */
             readonly title: string;
+            /** Summary */
+            readonly summary: string;
             /**
-             * State
+             * Status
              * @enum {string}
              */
-            readonly state: "open" | "approved" | "declined" | "closed";
+            readonly status: "pending" | "done" | "failed" | "declined" | "cancelled" | "expired";
             /** Workspace */
             readonly workspace: string;
             /** Url */
             readonly url: string;
-            /** Agent Slug */
-            readonly agent_slug: string;
-            /** Agent Name */
-            readonly agent_name: string;
-            /** Filed By */
-            readonly filed_by: string;
-            /** Summary */
-            readonly summary: string;
+            /** Requested By */
+            readonly requested_by: string;
+            /** Reason */
+            readonly reason: string;
             /** Evidence */
             readonly evidence: readonly components["schemas"]["ApprovalEvidenceOut"][];
-            /** Rationale */
-            readonly rationale: string;
             /** Plan */
             readonly plan: readonly string[];
-            /** Will Run */
-            readonly will_run: readonly components["schemas"]["ApprovalWillRunOut"][];
             /** If Declined */
             readonly if_declined: string;
-            /** Links */
-            readonly links: readonly components["schemas"]["ApprovalLinkOut"][];
             /** Source Url */
             readonly source_url: string;
-            /** Priority */
-            readonly priority: number;
-            /** Confidence */
-            readonly confidence: string;
             /**
              * Created At
              * Format: date-time
              */
             readonly created_at: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
             /** Sent To */
             readonly sent_to: readonly string[];
             readonly decided?: components["schemas"]["ApprovalDecidedOut"] | null;
+            /** Outcome */
+            readonly outcome: string;
+            /** Result */
+            readonly result: {
+                readonly [key: string]: unknown;
+            };
+            /** Error */
+            readonly error: string;
             /** Can Decide */
             readonly can_decide: boolean;
+            /** History */
+            readonly history: readonly components["schemas"]["ApprovalHistoryOut"][];
         };
         /** ApprovalDecidedOut */
         readonly ApprovalDecidedOut: {
-            /**
-             * Decision
-             * @enum {string}
-             */
-            readonly decision: "approve" | "decline" | "other";
             /** By */
             readonly by: string;
             /** Via */
             readonly via: string;
             /** At */
             readonly at?: string | null;
-            /**
-             * Comment
-             * @default
-             */
+            /** Comment */
             readonly comment: string;
         };
         /** ApprovalEvidenceOut */
@@ -40844,27 +40902,80 @@ export interface components {
             readonly quote: string;
             /** Who */
             readonly who: string;
+            /** Source Url */
+            readonly source_url: string;
+        };
+        /** ApprovalHistoryOut */
+        readonly ApprovalHistoryOut: {
+            /** Kind */
+            readonly kind: string;
+            /** By */
+            readonly by: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+        };
+        /** ApprovalEvidenceIn */
+        readonly ApprovalEvidenceIn: {
+            /** Quote */
+            readonly quote: string;
+            /**
+             * Who
+             * @default
+             */
+            readonly who: string;
             /**
              * Source Url
              * @default
              */
             readonly source_url: string;
-            /** Said At */
-            readonly said_at?: string | null;
         };
-        /** ApprovalLinkOut */
-        readonly ApprovalLinkOut: {
-            /** Label */
-            readonly label: string;
-            /** Url */
-            readonly url: string;
-        };
-        /** ApprovalWillRunOut */
-        readonly ApprovalWillRunOut: {
-            /** Agent */
-            readonly agent: string;
-            /** Prompt */
-            readonly prompt: string;
+        /** ApprovalFileIn */
+        readonly ApprovalFileIn: {
+            /**
+             * Kind
+             * @description One of GET /api/approvals/kinds, e.g. `workspace.member.add`.
+             */
+            readonly kind: string;
+            /**
+             * Params
+             * @description That kind's typed params (see its `params_schema`).
+             */
+            readonly params: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Reason
+             * @description Why you are asking, in your own words. Shown as yours, apart from the preview.
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Evidence
+             * @description What a person actually said, verbatim.
+             */
+            readonly evidence?: readonly components["schemas"]["ApprovalEvidenceIn"][];
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /**
+             * For Email
+             * @description Send it to this one person (they must be able to approve it).
+             * @default
+             */
+            readonly for_email: string;
+            /** Expires In Hours */
+            readonly expires_in_hours?: number | null;
+            /**
+             * Idempotency Key
+             * @description A replay with the same key returns the original request.
+             * @default
+             */
+            readonly idempotency_key: string;
         };
         /** ApprovalDecideIn */
         readonly ApprovalDecideIn: {
@@ -63526,9 +63637,32 @@ export interface operations {
             };
         };
     };
-    readonly my_cards: {
+    readonly list_approval_kinds: {
         readonly parameters: {
             readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ApprovalKindOut"][];
+                };
+            };
+        };
+    };
+    readonly list_approvals: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+                readonly scope?: string;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -63546,12 +63680,45 @@ export interface operations {
             };
         };
     };
-    readonly get_card: {
+    readonly file_approval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ApprovalFileIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovalCardOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovalCardOut"];
+                };
+            };
+        };
+    };
+    readonly get_approval: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly key: string;
+                readonly approval_id: number;
             };
             readonly cookie?: never;
         };
@@ -63568,12 +63735,12 @@ export interface operations {
             };
         };
     };
-    readonly decide_card: {
+    readonly decide_approval: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly key: string;
+                readonly approval_id: number;
             };
             readonly cookie?: never;
         };
@@ -63582,6 +63749,28 @@ export interface operations {
                 readonly "application/json": components["schemas"]["ApprovalDecideIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ApprovalCardOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_approval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly approval_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

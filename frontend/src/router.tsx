@@ -431,7 +431,7 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/tasks', element: <TasksPage /> },
       { path: '/w/:workspace/tasks/:taskKey', element: <TaskPage /> },
       // A proposal waiting on a yes or no, with everything needed to decide it (the push, Slack and email link here).
-      { path: '/w/:workspace/approvals/:taskKey', element: <ApprovalPage /> },
+      { path: '/w/:workspace/approvals/:approvalId', element: <ApprovalPage /> },
       { path: '/w/:workspace/triage', element: <TriagePage /> },
       // Every project in the workspace, one row each; each opens its one page.
       { path: '/w/:workspace/projects', element: <ProjectsPage /> },

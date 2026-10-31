@@ -1,19 +1,25 @@
 import { useEffect, useState, type JSX } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
-import { decideApproval, getApprovalCard, type ApprovalCard } from '@/api/approvals'
+import { decideApproval, getApproval, type ApprovalCard } from '@/api/approvals'
 
-const OUTCOME = { approved: 'Approved', declined: 'Declined', closed: 'Closed' } as const
+const OUTCOME: Record<ApprovalCard['status'], string> = {
+  pending: 'Waiting',
+  done: 'Approved and done',
+  failed: 'Approved, but it could not be done',
+  declined: 'Declined',
+  cancelled: 'Withdrawn',
+  expired: 'Expired',
+}
 
 /**
- * One approval card (`/w/:workspace/approvals/:taskKey`) — the page a push, a Slack message and an
- * email all open. Everything needed to decide is on it, above the buttons: who asks, what, the
- * person's own words, the plan, what approving starts and what declining does. `?do=approve` or
- * `?do=decline` (the email's buttons) pre-selects the choice and asks for one more tap — a link
- * never decides by itself.
+ * One approval request (`/w/:workspace/approvals/:id`) — the page a push, a Slack message, an email and
+ * an alert all open. What approving WILL DO is the server's rendering of the request's typed params
+ * and sits first; the requester's own words are kept apart and labelled as theirs. `?do=approve|decline`
+ * (the email's buttons) pre-selects the choice and asks for one more tap — a link never decides by itself.
  */
 export function ApprovalPage(): JSX.Element | null {
-  const { taskKey } = useParams()
+  const { approvalId } = useParams()
   const [search] = useSearchParams()
   const chosen = search.get('do') === 'approve' || search.get('do') === 'decline' ? search.get('do') : null
   const [card, setCard] = useState<ApprovalCard | null>(null)
@@ -22,17 +28,17 @@ export function ApprovalPage(): JSX.Element | null {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (!taskKey) return
+    if (!approvalId) return
     let cancelled = false
-    getApprovalCard(taskKey)
+    getApproval(approvalId)
       .then((c) => !cancelled && setCard(c))
-      .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : 'Could not load the card'))
+      .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : 'Could not load the request'))
     return () => {
       cancelled = true
     }
-  }, [taskKey])
+  }, [approvalId])
 
-  if (!taskKey) return null
+  if (!approvalId) return null
   if (error && !card) return <p className="max-w-2xl text-sm text-destructive">{error}</p>
   if (!card) return <div className="h-40 max-w-2xl animate-pulse rounded-lg bg-muted" />
 
@@ -40,34 +46,57 @@ export function ApprovalPage(): JSX.Element | null {
     setBusy(true)
     setError(null)
     try {
-      setCard(await decideApproval(card.key, decision, comment.trim()))
+      setCard(await decideApproval(card.id, decision, comment.trim()))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong')
       // Someone else may have decided first: show what happened.
-      getApprovalCard(card.key).then(setCard).catch(() => undefined)
+      getApproval(card.id).then(setCard).catch(() => undefined)
     } finally {
       setBusy(false)
     }
   }
 
-  const who = card.agent_name || card.agent_slug || card.filed_by || 'An agent'
   return (
     <div className="max-w-2xl space-y-4" data-testid="approval-card">
-      <section className="rounded-lg border border-border bg-card p-5" aria-label="The proposal">
-        <p className="text-[12px] text-muted-foreground">{who} is asking you to decide</p>
+      <section className="rounded-lg border border-border bg-card p-5" aria-label="The request">
+        <p className="text-[12px] text-muted-foreground" data-testid="approval-kind">
+          {card.kind_label} · asked by {card.requested_by || 'someone'}
+        </p>
         <h1 className="mt-1 text-lg font-semibold text-foreground">{card.title}</h1>
-        {card.summary && <p className="mt-2 text-[14px] text-foreground whitespace-pre-wrap">{card.summary}</p>}
 
-        {card.evidence.length > 0 && (
-          <div className="mt-4 space-y-2" data-testid="approval-evidence">
+        <div className="mt-4" data-testid="approval-plan">
+          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+            If you approve, this happens
+          </h2>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-[13px] text-foreground">
+            {card.plan.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ol>
+          <p className="mt-2 text-[12px] text-muted-foreground">
+            This is exactly what runs — canopy does it as you, with no agent involved
+            {card.kind === 'agent.run_turns' ? ', except this kind, which starts the turns listed' : ''}.
+          </p>
+        </div>
+
+        <div className="mt-3" data-testid="approval-if-decline">
+          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+            If you decline
+          </h2>
+          <p className="mt-1 text-[13px] text-foreground">{card.if_declined}</p>
+        </div>
+
+        {(card.reason || card.evidence.length > 0) && (
+          <div className="mt-5 rounded-md border border-border bg-muted/40 p-3" data-testid="approval-theirs">
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
-              What they said
+              In {card.requested_by || 'their'} own words
             </h2>
+            {card.reason && <p className="mt-1 text-[13px] text-foreground whitespace-pre-wrap">{card.reason}</p>}
             {card.evidence.map((e, i) => (
-              <blockquote key={i} className="border-l-2 border-border pl-3 text-[13px] text-foreground">
+              <blockquote key={i} className="mt-2 border-l-2 border-border pl-3 text-[13px] text-foreground">
                 <span className="whitespace-pre-wrap">{e.quote}</span>
                 <footer className="mt-0.5 text-[12px] text-muted-foreground">
-                  {e.who}
+                  {e.who || 'someone'}
                   {e.source_url && (
                     <>
                       {' · '}
@@ -82,82 +111,29 @@ export function ApprovalPage(): JSX.Element | null {
           </div>
         )}
 
-        {card.rationale && (
-          <div className="mt-4">
-            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">Why</h2>
-            <p className="mt-1 text-[13px] text-foreground whitespace-pre-wrap">{card.rationale}</p>
-          </div>
-        )}
-
-        {card.plan.length > 0 && (
-          <div className="mt-4" data-testid="approval-plan">
-            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
-              What will be done
-            </h2>
-            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-[13px] text-foreground">
-              {card.plan.map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ol>
-          </div>
-        )}
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div data-testid="approval-if-approve">
-            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
-              If you approve
-            </h2>
-            {card.will_run.length === 0 ? (
-              <p className="mt-1 text-[13px] text-foreground">It moves to In progress.</p>
-            ) : (
-              <ul className="mt-1 space-y-1 text-[13px] text-foreground">
-                {card.will_run.map((w, i) => (
-                  <li key={i}>
-                    <span className="font-mono text-[12px]">{w.agent}</span> starts: {w.prompt}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div data-testid="approval-if-decline">
-            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
-              If you decline
-            </h2>
-            <p className="mt-1 text-[13px] text-foreground">{card.if_declined}</p>
-          </div>
-        </div>
-
-        {(card.links.length > 0 || card.source_url) && (
-          <p className="mt-4 flex flex-wrap gap-x-3 text-[12px]">
-            {card.source_url && (
-              <a href={card.source_url} className="text-primary hover:underline" target="_blank" rel="noreferrer">
-                Where it came from
-              </a>
-            )}
-            {card.links.map((l) => (
-              <a key={l.url} href={l.url} className="text-primary hover:underline" target="_blank" rel="noreferrer">
-                {l.label}
-              </a>
-            ))}
-          </p>
-        )}
-        {card.sent_to.length > 0 && (
-          <p className="mt-3 text-[11px] text-muted-foreground">Sent to {card.sent_to.join(', ')}.</p>
-        )}
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Needs {card.needs}.
+          {card.sent_to.length > 0 && <> Sent to {card.sent_to.join(', ')}.</>}
+        </p>
       </section>
 
-      {card.state === 'open' ? (
+      {card.status === 'pending' ? (
         <section className="rounded-lg border border-border bg-card p-4" aria-label="Decide">
           {chosen && (
             <p className="mb-2 text-[13px] text-foreground" data-testid="approval-confirm">
               You chose to <b>{chosen}</b> this. Tap {chosen === 'approve' ? 'Approve' : 'Decline'} to confirm.
             </p>
           )}
+          {!card.can_decide && (
+            <p className="mb-2 text-[13px] text-muted-foreground" data-testid="approval-cannot">
+              You can look, but this needs {card.needs}.
+            </p>
+          )}
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="A note for the agent (optional)"
-            aria-label="A note for the agent"
+            placeholder="A note (optional)"
+            aria-label="A note"
             rows={2}
             className="w-full rounded-md border border-input bg-input px-2 py-1.5 text-[13px] text-foreground"
           />
@@ -183,16 +159,18 @@ export function ApprovalPage(): JSX.Element | null {
         </section>
       ) : (
         <section className="rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="approval-outcome">
-          <b>{OUTCOME[card.state]}</b>
-          {card.decided && (
-            <>
-              {' '}
-              by {card.decided.by}
-              {card.decided.via ? ` via ${card.decided.via}` : ''}.
-              {card.decided.comment && <span className="block text-muted-foreground">“{card.decided.comment}”</span>}
-            </>
-          )}
+          <b>{OUTCOME[card.status]}</b> — {card.outcome}
+          {card.decided?.comment && <span className="block text-muted-foreground">“{card.decided.comment}”</span>}
+          {card.status === 'failed' && <p className="mt-1 text-destructive">{card.error}</p>}
           {error && <p className="mt-2 text-destructive">{error}</p>}
+          <ol className="mt-3 space-y-0.5 text-[12px] text-muted-foreground" data-testid="approval-history">
+            {card.history.map((h, i) => (
+              <li key={i}>
+                {h.kind}
+                {h.by ? ` · ${h.by}` : ''}
+              </li>
+            ))}
+          </ol>
         </section>
       )}
     </div>
