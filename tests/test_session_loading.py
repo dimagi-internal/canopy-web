@@ -46,6 +46,38 @@ def test_tail_short_session_has_no_more():
     assert oldest == 0
 
 
+def _tool_heavy(asks: int, tools_per_turn: int) -> Session:
+    """`asks` turns, each a person's message, `tools_per_turn` tool rows and a reply."""
+    s = _session_with(0)
+    i = 0
+    for _ in range(asks):
+        rows = [Message.USER] + [Message.TOOL_USE] * tools_per_turn + [Message.ASSISTANT]
+        for role in rows:
+            Message.objects.create(session=s, turn_index=i, role=role, plaintext=f"m{i}")
+            i += 1
+    return s
+
+
+def test_tail_reaches_back_to_the_persons_last_few_messages():
+    """A tool-heavy turn fills 60 rows on its own; the open still shows what was asked."""
+    s = _tool_heavy(asks=5, tools_per_turn=40)        # 42 rows a turn
+    msgs, has_more, _ = transcript_read.tail_messages(s)
+    assert sum(m.role == Message.USER for m in msgs) == transcript_read.SESSION_TAIL_ASKS
+    assert msgs[0].role == Message.USER and has_more is True
+
+
+def test_tail_reach_is_capped():
+    s = _tool_heavy(asks=3, tools_per_turn=200)
+    msgs, _, _ = transcript_read.tail_messages(s)
+    assert len(msgs) == transcript_read.SESSION_TAIL_MAX
+
+
+def test_an_explicit_limit_is_exact():
+    s = _tool_heavy(asks=5, tools_per_turn=40)
+    msgs, _, _ = transcript_read.tail_messages(s, limit=10)
+    assert len(msgs) == 10
+
+
 def test_tail_empty_session():
     s = _session_with(0)
     msgs, has_more, oldest = transcript_read.tail_messages(s)
