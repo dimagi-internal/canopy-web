@@ -49,7 +49,10 @@ approved/declined, executed/failed, cancelled, expired), returned as `history`.
 
 ## Who is told, and how (`delivery.deliver`)
 
-The people who could approve it (capped at 5), or the one named. Once per person per channel, on
+The people **accountable** for it, not everyone who could approve it (`Kind.recipients`): by default the
+workspace's own admins and owners (Connect's admins, not the parent organisation's owners reaching it by
+inheritance), for the agent kinds the agent's owner and admins; capped at 5, or the one named by
+`for_email`. Anyone else who holds the authority still sees it in `GET /api/approvals/` and can decide it. Once per person per channel, on
 commit of the filing; a 60-second backstop (`approvals.backstop`) delivers any pending request from
 the last 6 hours nobody was told about, and expires the ones nobody decided.
 

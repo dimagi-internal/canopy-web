@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 
 class KindError(ValueError):
@@ -68,6 +68,17 @@ class Kind:
 
     def execute(self, user, p, request) -> dict:  # pragma: no cover — abstract
         raise NotImplementedError
+
+    def recipients(self, p, d: Described) -> list:
+        """Who is TOLD: the people accountable for this, not everyone who could approve it.
+
+        By default the workspace's own (direct) members who hold the authority — Connect's admins, not
+        the parent organisation's owners reaching it by inheritance — and only if there are none, all
+        who could approve. A kind with a better answer (an agent's owner) overrides this."""
+        approvers = self.approvers(p, d)
+        direct = set(WorkspaceMembership.objects.filter(
+            workspace_id=d.workspace, user__in=approvers).values_list("user_id", flat=True))
+        return [u for u in approvers if u.pk in direct] or approvers
 
     def approvers(self, p, d: Described) -> list:
         """The people who could approve it, strongest authority first."""

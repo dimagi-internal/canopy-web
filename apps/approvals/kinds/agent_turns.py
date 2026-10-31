@@ -17,6 +17,7 @@ from apps.harness.dispatch_marker import stamp_dispatched
 from apps.workspaces import permissions as perms
 
 from . import Described, Kind, KindError, register
+from .agent_admin import agent_recipients
 
 MAX_PROMPTS = 3
 
@@ -57,6 +58,10 @@ class AgentRunTurns(Kind):
 
     def may_approve(self, user, p: Params, d: Described) -> bool:
         return perms.can(user, d.workspace, perms.AGENT_WORK)
+
+    def recipients(self, p: Params, d: Described) -> list:
+        # Anyone who can start the agent may approve, but only its owner and admins are TOLD.
+        return agent_recipients(self._agent(p.agent), self.approvers(p, d))
 
     def execute(self, user, p: Params, request) -> dict:
         agent = self._agent(p.agent)
