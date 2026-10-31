@@ -278,17 +278,14 @@ def test_field_encryption_key_is_its_own_generated_secret_in_the_task():
     assert {"Name": "FIELD_ENCRYPTION_KEY", "ValueFrom": {"Ref": "FieldEncryptionKey"}} in container["Secrets"]
 
 
-def test_the_retired_vault_kms_key_is_deleted_not_retained_when_it_leaves_the_template():
-    """Nothing encrypts under this key now (an agent's vault is zero-knowledge). It is on only where
-    a deploy turned it on, the task is no longer told about it, and when it is taken out of the
-    template CloudFormation must schedule its deletion rather than leave it behind — the policy
-    that applies is the one in the template being replaced, so it is `Delete` before the removal."""
+def test_the_retired_vault_kms_key_is_gone_from_the_stack():
+    """Nothing encrypts under the Canopy Vault envelope key now (an agent's vault is zero-knowledge),
+    so the stack neither creates it, nor passes it to the task, nor has a switch for it. (Its removal
+    scheduled the live key for deletion: the policy had been set to Delete the deploy before.)"""
     t = _template()
-    assert t["Parameters"]["EnableVaultKms"]["Default"] == "false"
-    for name in ("VaultKmsKey", "VaultKmsAlias"):
-        assert t["Resources"][name]["Condition"] == "VaultKmsEnabled"
-    key = t["Resources"]["VaultKmsKey"]
-    assert key["DeletionPolicy"] == "Delete" and key["UpdateReplacePolicy"] == "Delete"
+    assert "EnableVaultKms" not in t.get("Parameters", {})
+    assert not t.get("Conditions")
+    assert not [n for n in t["Resources"] if "Kms" in n]
     env = t["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
     assert not any("VAULT_KMS_KEY_ID" in str(e) for e in env)
 
