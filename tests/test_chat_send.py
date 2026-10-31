@@ -7,6 +7,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
+from apps.canopy_sessions import placement as session_placement
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
@@ -178,7 +179,7 @@ def test_place_repins_queued_turn():
     _msg, turn = session_send.send_message(session=session, text="hi", user=user, client_id="c3")
     # Placed by r2's owner: choosing a box for a project chat needs you to
     # administer it (`may_place`).
-    session_send.place_queued_turn(session=session, placement=str(r2.id), user=user)
+    session_placement.place_queued_turn(session=session, placement=str(r2.id), user=user)
     turn.refresh_from_db()
     assert turn.pinned_runner_id == r2.id
 
@@ -189,7 +190,7 @@ def test_place_wait_requires_bound_runner():
     session = Session.objects.create(workspace=ws, project="canopy-web")
     session_send.send_message(session=session, text="hi", user=user, client_id="c4")
     with pytest.raises(ValueError):
-        session_send.place_queued_turn(session=session, placement="wait")
+        session_placement.place_queued_turn(session=session, placement="wait")
 
 
 def test_place_unknown_runner_raises_value_error():
@@ -198,7 +199,7 @@ def test_place_unknown_runner_raises_value_error():
     session = Session.objects.create(workspace=ws, project="canopy-web")
     session_send.send_message(session=session, text="hi", user=user, client_id="c5")
     with pytest.raises(ValueError):
-        session_send.place_queued_turn(session=session, placement=str(uuid.uuid4()))
+        session_placement.place_queued_turn(session=session, placement=str(uuid.uuid4()))
 
 
 def test_place_no_queued_turn_raises_lookup_error():
@@ -206,7 +207,7 @@ def test_place_no_queued_turn_raises_lookup_error():
     ws = Workspace.objects.create(slug="w-place-empty", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     with pytest.raises(LookupError):
-        session_send.place_queued_turn(session=session, placement="wait")
+        session_placement.place_queued_turn(session=session, placement="wait")
 
 
 def test_send_placement_unknown_runner_raises_value_error():
@@ -259,7 +260,7 @@ def test_place_malformed_runner_id_raises_value_error():
     session = Session.objects.create(workspace=ws, project="canopy-web")
     session_send.send_message(session=session, text="hi", user=user, client_id="c11")
     with pytest.raises(ValueError):
-        session_send.place_queued_turn(session=session, placement="banana")
+        session_placement.place_queued_turn(session=session, placement="banana")
 
 
 def test_send_placement_sessions_incapable_runner_raises_value_error():
@@ -297,7 +298,7 @@ def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
     original_pin = turn.pinned_runner_id
 
     with pytest.raises(ValueError):
-        session_send.place_queued_turn(session=session, placement=str(foreign_runner.id))
+        session_placement.place_queued_turn(session=session, placement=str(foreign_runner.id))
 
     turn.refresh_from_db()
     assert turn.pinned_runner_id == original_pin

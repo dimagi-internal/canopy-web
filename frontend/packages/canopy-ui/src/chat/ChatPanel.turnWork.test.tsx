@@ -182,6 +182,20 @@ describe("jump to latest", () => {
     expect(screen.queryByTestId("jump-to-latest")).toBeNull();
   });
 
+  it("says nothing is new when only the turn's state changed (a runner claimed the send)", () => {
+    const s = state({ turn_status: status({ state: "done", settled: true }) });
+    const view = panel(s);
+    scrolledUp(screen.getByTestId("chat-scroll"));
+    view.rerender(
+      <ChatPanel
+        state={{ ...s, turn_status: status({ state: "picking_up" }) }}
+        connected currentUserId={ME}
+        onSend={vi.fn()} onStop={vi.fn()} onUpdateDraft={vi.fn()} onDiscard={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("jump-to-latest").textContent).toBe("Jump to latest");
+  });
+
   // Reading just above the bottom while a reply streams in: the first pixels
   // of a scroll-up must already stop the view following, or each new chunk
   // snaps the reader back down before they get anywhere.

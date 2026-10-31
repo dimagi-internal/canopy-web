@@ -746,6 +746,9 @@ def _report_sweep(cfg: Config, client: Client) -> None:
     _step("stream sync", streams.sync_session_streams, cfg, client)
     _step("menu answers", streams.drain_menu_answers, cfg, client)
     _step("closes", streams.drain_closes, cfg, client)
+    # The durable record of a stop, for one whose frame never arrived; the Escape
+    # is the "session interrupts" step's, ahead of the next session report.
+    _step("session interrupt records", session_interrupt.pull, cfg, client, cfg.runner_id)
     # A transfer off this box: pack the session's work, close its task once the
     # target has it (transfer.py). Here, above the pause gate, like closes.
     _step("handoffs", transfer.drain, cfg, client)
@@ -1257,7 +1260,8 @@ def make_control_handler(cfg: Config, waker, client=None):
             # is delivered and so owns nothing for a turn-cancel to find.
             # Only marks it due: pressing Escape is a CDP round trip, and this thread
             # also carries cancel, wake and menu_answer.
-            session_interrupt.ring(str(msg["session_key"]), str(msg.get("session_id") or ""))
+            session_interrupt.ring(str(msg["session_key"]), str(msg.get("session_id") or ""),
+                                   str(msg.get("interrupt_id") or ""))
             waker.event.set()
         elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
             # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it

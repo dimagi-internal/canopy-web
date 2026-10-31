@@ -6,8 +6,10 @@ import {
   pairToolMessages,
   toolDiffStats,
   toolDisplayName,
+  toolFailed,
   toolPreview,
 } from "./pairToolMessages";
+import { runHasError } from "./groupToolRuns";
 
 let seq = 0;
 function msg(
@@ -400,5 +402,80 @@ describe("stale pending rows", () => {
     const done: Message = { ...pendingUse("t9"), content: { id: "t9", name: "Bash" } }
     const rows = pairToolMessages([done, resultFor("t9"), text("a")])
     expect(rows.filter((r) => r.kind === "tool_pair")).toHaveLength(1)
+  })
+})
+
+describe("stale pending rows in a live turn", () => {
+  const pendingUse = (id: string): Message => ({
+    id: "seq:-1", turn_index: -1, role: "tool_use",
+    content: { id, name: "Bash", status: "pending" }, plaintext: "",
+    status: "complete", error_detail: null, started_at: null, completed_at: null,
+    created_at: "",
+  })
+  const person: Message = {
+    id: "u1", turn_index: 1, role: "user", content: {}, plaintext: "go",
+    status: "complete", error_detail: null, started_at: null, completed_at: null, created_at: "",
+  }
+
+  it("keeps a parallel call A while its turn is live, though call B arrived after it", () => {
+    const rows = pairToolMessages([person, pendingUse("A"), pendingUse("B")], { live: true })
+    expect(rows.filter((r) => r.kind === "tool_pair")).toHaveLength(2)
+  })
+
+  it("drops it once the turn is over", () => {
+    const rows = pairToolMessages([person, pendingUse("A"), pendingUse("B")], { live: false })
+    expect(rows.filter((r) => r.kind === "tool_pair")).toHaveLength(1)
+  })
+
+  it("drops a pending row from before the last person line even while live", () => {
+    const rows = pairToolMessages([pendingUse("A"), person], { live: true })
+    expect(rows.filter((r) => r.kind === "tool_pair")).toHaveLength(0)
+  })
+})
+
+describe("row keys", () => {
+  const base = {
+    status: "complete" as const, error_detail: null, started_at: null, completed_at: null, created_at: "", plaintext: "",
+  }
+
+  it("keys a person's line by its client_id, so its receipt (local id → server id) keeps the key", () => {
+    const before = pairToolMessages([{ ...base, id: "local:c1", turn_index: 1, role: "user", content: { client_id: "c1" } }])
+    const after = pairToolMessages([{ ...base, id: "981", turn_index: 1, role: "user", content: { client_id: "c1" } }])
+    expect(before[0].key).toBe(after[0].key)
+  })
+
+  it("keys a tool call by its tool_use id, so the durable row superseding the live one keeps the key", () => {
+    const live = pairToolMessages([{ ...base, id: "seq:-1", turn_index: -1, role: "tool_use", content: { id: "tu1", name: "Bash" } }])
+    const durable = pairToolMessages([{ ...base, id: "4417", turn_index: 30, role: "tool_use", content: { id: "tu1", name: "Bash" } }])
+    expect(live[0].key).toBe(durable[0].key)
+  })
+
+  it("keeps keys unique among several id-less live rows", () => {
+    const row = { ...base, id: "seq:-1", turn_index: -1, role: "tool_use" as const, content: { name: "Bash" } }
+    const rows = pairToolMessages([row, { ...row }, { ...row }])
+    expect(new Set(rows.map((r) => r.key)).size).toBe(3)
+  })
+})
+
+describe("toolFailed", () => {
+  const use: Message = {
+    id: "u", turn_index: 1, role: "tool_use", content: { id: "t", name: "Bash" }, plaintext: "",
+    status: "complete", error_detail: null, started_at: null, completed_at: null, created_at: "",
+  }
+  const result = (over: Partial<Message>): Message => ({ ...use, id: "r", role: "tool_result", content: { tool_use_id: "t" }, ...over })
+
+  it("is one rule: status, is_error, or an error opening the text", () => {
+    expect(toolFailed(use, null)).toBe(false)
+    expect(toolFailed(use, result({}))).toBe(false)
+    expect(toolFailed(use, result({ status: "error" }))).toBe(true)
+    expect(toolFailed({ ...use, status: "error" }, result({}))).toBe(true)
+    expect(toolFailed(use, result({ content: { tool_use_id: "t", is_error: true } }))).toBe(true)
+    expect(toolFailed(use, result({ plaintext: "Traceback (most recent call last)" }))).toBe(true)
+  })
+
+  it("is what the badge and a run's error flag both say", () => {
+    const failed = result({ content: { tool_use_id: "t", is_error: true } })
+    expect(deriveToolStatus(use, failed).kind).toBe("error")
+    expect(runHasError([{ kind: "tool_pair", use, result: failed, key: "k" }])).toBe(true)
   })
 })

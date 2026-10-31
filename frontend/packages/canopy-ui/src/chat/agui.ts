@@ -66,6 +66,38 @@ function ordinal(value: unknown): number | undefined {
  * updated yet — which, for a 0.x protocol, is a matter of when rather than if.
  */
 export function fromAgui(frame: AguiFrame): WsEvent[] {
+  return decode(sharedCalls, frame);
+}
+
+/** A call's head, held until its arguments arrive on a later event. */
+type PendingCalls = Map<
+  string,
+  {
+    name: string;
+    parentMessageId: string;
+    turnIndex: number | undefined;
+    block?: Record<string, unknown>;
+  }
+>;
+
+/**
+ * A decoder for ONE stream. A tool call's arguments arrive on a later event
+ * than its name, so the head of a call is held until they do — and that
+ * pairing belongs to the connection it arrived on. Each socket takes its own,
+ * so two chats open at once, or a reconnect, never complete each other's
+ * half-read calls (the ids are per stream).
+ */
+export interface AguiDecoder {
+  decode: (frame: AguiFrame) => WsEvent[];
+  reset: () => void;
+}
+
+export function createAguiDecoder(): AguiDecoder {
+  const calls: PendingCalls = new Map();
+  return { decode: (frame) => decode(calls, frame), reset: () => calls.clear() };
+}
+
+function decode(pendingCalls: PendingCalls, frame: AguiFrame): WsEvent[] {
   const type = typeof frame.type === "string" ? frame.type : "";
   const m = meta(frame);
 
@@ -271,23 +303,13 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
   }
 }
 
-/** Arguments arrive on a later event than the tool's name, so the head of a
- *  call is held until they do. Module-level because a socket is a stream and
- *  the pairing spans events; `resetAguiState` exists so a test — and a
- *  reconnect — can start from nothing rather than inheriting a half-read call
- *  from the connection before. */
-const pendingCalls = new Map<
-  string,
-  {
-    name: string;
-    parentMessageId: string;
-    turnIndex: number | undefined;
-    block?: Record<string, unknown>;
-  }
->();
+/** The pending calls behind the module-level `fromAgui`, for a caller that
+ *  decodes one stream at a time; `createAguiDecoder` gives each stream its own. */
+const sharedCalls: PendingCalls = new Map();
 
+/** Start `fromAgui` from nothing rather than inheriting a half-read call. */
 export function resetAguiState(): void {
-  pendingCalls.clear();
+  sharedCalls.clear();
 }
 
 /** An AG-UI interrupt back into canopy's menu shape.

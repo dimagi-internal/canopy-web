@@ -40,6 +40,7 @@ import { LIST_LIMIT, POLL_MS, useIdeData } from './useIdeData'
 import { RAIL_DEFAULT, clampRail, useIdePrefs } from './useIdePrefs'
 import {
   DEFAULT_FILTERS,
+  IDE_STATES,
   NO_RUNNER,
   buildTree,
   childLinks,
@@ -194,8 +195,8 @@ export function IdePage() {
   // The agent panel's close review reads what is on screen, as you.
   useCloseReview(shown, state)
   const totals = useMemo(() => {
-    const t: Record<IdeState, number> = { running: 0, input: 0, idle: 0 }
-    for (const f of tree) for (const k of Object.keys(t) as IdeState[]) t[k] += f.counts[k]
+    const t: Record<IdeState, number> = { running: 0, input: 0, held: 0, idle: 0 }
+    for (const f of tree) for (const k of IDE_STATES) t[k] += f.counts[k]
     return t
   }, [tree])
 
@@ -211,7 +212,7 @@ export function IdePage() {
       const alreadySolo = !f.hiddenRunners.includes(key) && others.every((k) => f.hiddenRunners.includes(k))
       return { ...f, hiddenRunners: alreadySolo ? [] : others }
     })
-  const toggleState = (k: IdeState) => setFilters((f) => ({ ...f, states: { ...f.states, [k]: !f.states[k] } }))
+  const toggleState = (k: IdeState) => setFilters((f) => ({ ...f, states: { ...f.states, [k]: f.states[k] === false } }))
   const toggleMode = (k: IdeMode) => setFilters((f) => ({ ...f, modes: { ...f.modes, [k]: !f.modes[k] } }))
   const toggleLinks = (sessionId: string) =>
     setCollapsedLinks((prev) => {
@@ -365,17 +366,17 @@ export function IdePage() {
         </span>
         {/* The totals ARE the state filters: a count struck through is hidden. */}
         <div className="flex min-w-0 items-center gap-0.5">
-          {(['running', 'input', 'idle'] as IdeState[]).map((k) => (
+          {IDE_STATES.map((k) => (
             <button
               key={k}
               type="button"
-              aria-pressed={filters.states[k]}
+              aria-pressed={filters.states[k] !== false}
               onClick={() => toggleState(k)}
               data-testid={`ide-state-${k}`}
-              title={`${filters.states[k] ? 'Hide' : 'Show'} ${STATE_LABEL[k]} sessions`}
+              title={`${filters.states[k] !== false ? 'Hide' : 'Show'} ${STATE_LABEL[k]} sessions`}
               className={clsx(
                 'inline-flex items-center gap-1 whitespace-nowrap rounded px-1 py-0.5 text-[11px] tabular-nums hover:bg-muted',
-                filters.states[k]
+                filters.states[k] !== false
                   ? 'text-foreground-secondary'
                   : 'text-muted-foreground line-through decoration-muted-foreground/50',
               )}

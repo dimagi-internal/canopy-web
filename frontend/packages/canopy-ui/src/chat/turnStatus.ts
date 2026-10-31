@@ -56,13 +56,12 @@ export function agentHasFloor({
 
 /**
  * Where the conversation's turn stands, in one word — THE answer every surface
- * shows: the header chip, the pending bubble and Stop. They used to each derive
- * it (the header from `awaitingReply` alone, ignoring the server's status), so
- * one screen could say "queued" in the header over a turn the server had
- * settled, and a stale flag on either side lingered with nothing to correct it.
+ * shows: the header chip, the pending bubble and Stop (`turnView` calls it for
+ * all of them).
  *
- * `replying` is an assistant row streaming in now: the turn is plainly working
- * whatever the other sources say.
+ * `replying` is an assistant row streaming in now (`inFlightRow`, which already
+ * discounts a row the server's settled status has outlived): the turn is
+ * plainly working whatever the other sources say.
  */
 export type TurnPhase = "blocked" | "working" | "queued" | "idle";
 
@@ -101,8 +100,8 @@ export function pendingLabel({
     return status.claimed_by ? `Thinking on ${status.claimed_by}…` : "Thinking…";
   }
   if (status?.state === "queued_behind") {
-    // A live runner will take it, but only once the turn ahead ends — saying
-    // "picking this up" made a follow-up sent mid-turn look lost (#1147).
+    // A live runner will take it, but only once the turn ahead ends: "picking
+    // this up" would make a follow-up sent mid-turn look lost.
     const [first] = status.runners;
     const ahead = status.behind === "session" ? "the previous message" : "the agent's current turn";
     return first ? `Queued behind ${ahead} on ${first}…` : `Queued behind ${ahead}…`;
@@ -167,9 +166,9 @@ function waited(ms: number): string {
 
 /**
  * A working turn nothing has come back from in a while — in facts, not a verdict:
- * who took it, and for how long it has been quiet. On 2026-10-17 a box whose
- * token had been revoked claimed four turns and could report nothing; each one
- * read "Thinking on cloud-ec2-2…" until its lease ran out.
+ * who took it, and for how long it has been quiet. A box that claims a turn and
+ * then cannot report (a revoked token, say) would otherwise read "Thinking on
+ * <box>…" until its lease ran out.
  *
  * "Back" is the newer of the server's `last_progress_at` (a ledger event) and the
  * newest message on screen, so a transcript row that streamed in counts too.
@@ -296,7 +295,7 @@ export function turnNotice(
  *
  * Says what will actually happen to the next message, from the server's
  * answer (`turn_status.midturn`): on a laptop runner a follow-up is typed into
- * the running session and the agent reads it mid-turn (canopy-web#1153);
+ * the running session and the agent reads it mid-turn;
  * elsewhere it waits, and the reason it waits decides the words.
  */
 export function composerPlaceholder(status?: TurnStatus | null): string | null {

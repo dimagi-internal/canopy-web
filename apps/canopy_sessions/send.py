@@ -16,9 +16,17 @@ from apps.harness import sensitivity
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
-from . import authorship, conversation_keys, private_attachments, services, transcript_ingest, transcript_read
+from . import (
+    authorship,
+    control,
+    conversation_keys,
+    private_attachments,
+    services,
+    transcript_ingest,
+    transcript_read,
+)
 from . import placement as session_placement
-from .models import Message, RunnerBinding, Session
+from .models import Message, Session
 
 
 def _contact_of(initiator):
@@ -164,9 +172,13 @@ def send_message(
 ) -> tuple[Message, Turn]:
     """`_send_message`, plus the `chat.message` analytics fact — once per send,
     whichever of its two paths (ledger or transcript-sourced) carried it, and never
-    for a retried send that collapsed onto an existing turn."""
+    for a retried send that collapsed onto an existing turn. An archived session
+    is unarchived first (`control.unarchive_session`)."""
     from apps.events import activity
 
+    # A send into an archived session brings it back: the turn it starts is one
+    # somebody is waiting on, and it must be where they can see it answered.
+    control.unarchive_session(session, user=user, reason="sent to")
     message, turn = _send_message(
         session=session, text=text, user=user, client_id=client_id, placement=placement,
         origin=origin, initiator=initiator, origin_ref=origin_ref, capability=capability,
@@ -435,33 +447,51 @@ def queued_messages(session: Session) -> list[dict]:
     return out
 
 
-CANCELLED_SENDS_LIMIT = 50
+ENDED_SENDS_LIMIT = 50
+#: How long a DONE send's own transcript row may take to land before the send is
+#: listed as never delivered: the runner ships the row with the turn's transcript,
+#: which can trail the turn's end by a report or two.
+DONE_LANDING_GRACE = _dt.timedelta(minutes=2)
+#: The final states a send can end in without its words reaching the transcript.
+UNLANDED_STATES = (Turn.CANCELLED, Turn.FAILED, Turn.LOST, Turn.MISSED, Turn.DONE)
 
 
-def cancelled_sends(session: Session) -> list[dict]:
-    """Human sends withdrawn (or stopped) before the agent read them, newest last.
+def ended_sends(session: Session) -> list[dict]:
+    """Human sends whose turn ended without their words reaching the transcript,
+    newest last — withdrawn or stopped (CANCELLED), or never delivered (FAILED,
+    LOST, MISSED, or DONE with no row carrying its turn id).
 
-    A cancelled send never lands in the transcript, and `queued_messages` stops
-    listing it the moment its turn is terminal, so without this the words simply
-    vanish from the conversation — or, worse, linger in a client as an optimistic
-    row that sorts to the tail and looks live (canopy-web#2092). Each entry carries
-    `sent_at` so a client places it where it was sent, and `cancelled_by` so it
-    can say who withdrew it.
+    `queued_messages` stops listing a send the moment its turn is terminal, so
+    without this the words vanish from the conversation. Each entry carries
+    `sent_at` so a client places it where it was sent, `state` (the turn's final
+    status) so it can say what happened, `cancelled_by` for a withdrawn one, and
+    `detail` (the runner's note) for one that was not delivered.
 
-    Bounded to the most recent `CANCELLED_SENDS_LIMIT` cancelled turns; a turn whose
-    prompt was wiped (a sensitive conversation) has no words to show and is skipped."""
+    A DONE send counts only once `DONE_LANDING_GRACE` has passed since it ended,
+    only where this session's rows do carry turn ids (another send's row has
+    landed with one), and never for a slash command, which is typed unmarked.
+    Bounded to the newest `ENDED_SENDS_LIMIT`; a turn whose prompt was wiped (a
+    sensitive conversation) has no words to show and is skipped."""
     turns = list(
         Turn.objects.select_related("initiator_user", "initiator_contact")
-        .filter(chat_session=session, status=Turn.CANCELLED)
+        .filter(chat_session=session, status__in=UNLANDED_STATES)
         .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
         .exclude(prompt="")
-        .order_by("-created_at")[:CANCELLED_SENDS_LIMIT]
+        .order_by("-created_at")[:ENDED_SENDS_LIMIT]
     )
     turns = [t for t in turns if authorship.is_chat_send(t)]
     if not turns:
         return []
     landed = set(Message.objects.filter(session=session, source_turn_id__in=[t.pk for t in turns])
                  .values_list("source_turn_id", flat=True))
+    done_unlanded = [t.pk for t in turns if t.status == Turn.DONE and t.pk not in landed]
+    if done_unlanded:
+        cutoff = timezone.now() - DONE_LANDING_GRACE
+        marked = (Message.objects.filter(session=session, source_turn_id__isnull=False)
+                  .exclude(source_turn_id__in=done_unlanded).exists())
+        turns = [t for t in turns if t.status != Turn.DONE or (
+            marked and t.finished_at is not None and t.finished_at <= cutoff
+            and not (t.prompt or "").lstrip().startswith("/"))]
     out = []
     for t in reversed(turns):
         if t.pk in landed:
@@ -472,7 +502,10 @@ def cancelled_sends(session: Session) -> list[dict]:
             "author": authorship.author_of(t),
             "text": t.prompt or "",
             "sent_at": t.created_at.isoformat(),
-            "cancelled_by": harness_services.stopped_by(t),
+            "state": t.status,
+            "cancelled_by": harness_services.stopped_by(t) if t.status == Turn.CANCELLED else "",
+            "detail": ((t.result_note or "").strip()[:300]
+                       if t.status in (Turn.FAILED, Turn.LOST, Turn.MISSED) else ""),
         })
     return out
 
@@ -509,111 +542,6 @@ def unqueue_send(session: Session, turn_id, user, *, by: str = "") -> bool:
     sid = session.pk
     transaction.on_commit(lambda: publish_queued(sid))
     return True
-
-
-def place_queued_turn(*, session: Session, placement: str, user=None) -> Turn:
-    """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
-    directed-placement decision (vs `_resolve_placement`, which only applies to
-    a turn being newly enqueued). `placement` is "wait" (pin to the session's
-    currently bound runner) or a runner UUID string.
-
-    Raises LookupError if there is no queued turn to place (-> 404), or
-    ValueError for an unresolvable placement (-> 422): "wait" with no bound
-    runner, an unknown/retired runner id, or a box `user` may not choose
-    (`may_place`).
-    """
-    turn = (
-        Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
-        .order_by("created_at")
-        .first()
-    )
-    if turn is None:
-        raise LookupError("no queued turn to place")
-    if placement == "wait":
-        binding = getattr(session, "runner_binding", None)
-        if not (binding and binding.runner_id):
-            raise ValueError("session has no bound runner to wait for")
-        turn.pinned_runner_id = binding.runner_id
-    else:
-        runner = session_placement._placeable_runner(session, placement)
-        if runner is None:
-            raise session_placement._placement_refused(session, placement, "unknown runner")
-        if not session_placement.may_place(user, session, runner):
-            raise session_placement._placement_forbidden(session, runner)
-        turn.pinned_runner = runner
-    turn.save(update_fields=["pinned_runner"])
-    return turn
-
-
-def available_cloud_runner(session: Session, user=None):
-    """An ONLINE, session-capable cloud runner this session could be placed on,
-    or None. Same `_placeable_runner` gate as every other placement, so the
-    answer is never a box that would leave the turn pinned and unclaimable — and
-    one `user` (who sent it) may place it on (`may_place`), so the offer is never
-    one the click refuses. A
-    directed-only box (a test box) is never offered unasked: it takes work only
-    when someone chooses it (the pickers still list it)."""
-    from apps.harness.models import Runner
-
-    for runner in (Runner.objects.filter(kind=Runner.CLOUD, owner__isnull=False)
-                   .exclude(status=Runner.RETIRED).order_by("name")):
-        if runner.live_status != Runner.ONLINE or runner.directed_only():
-            continue
-        if (session_placement._placeable_runner(session, str(runner.id)) is not None
-                and session_placement.may_place(user, session, runner)):
-            return runner
-    return None
-
-
-MOVE_BRIEF = (
-    "{source} was offline with {n} message(s) waiting in this conversation, so it was "
-    "moved here. Those messages arrive as the next turn(s) — answer them once you have "
-    "checked the state above."
-)
-
-
-def move_queued_turns(*, session: Session, placement: str, user=None, initiator=None) -> list[Turn]:
-    """Send a session's QUEUED turns to another runner — the "its box is offline,
-    run it somewhere else" move. Returns the turns moved.
-
-    Two cases, because a session that already lives on a box cannot simply have
-    its next turn pinned elsewhere (that is `place_queued_turn`, and the
-    `transfer_session` docstring records what it cost when done by hand):
-
-    * **Unbound** (a new conversation whose first message never got picked up):
-      nothing exists on any box yet, so pinning the waiting turns is the whole
-      move, and `requested_runner_id` makes later sends follow.
-    * **Bound** to another box: a real transfer, carrying the history and a
-      handoff turn. The handoff must run BEFORE the waiting messages — the new
-      box is cold, and answering them first is answering blind — and claiming
-      is ordered by `created_at`, so the handoff is stamped just ahead of them.
-
-    Raises like `transfer_session`: ValueError (bad target), LookupError
-    (nothing queued), RuntimeError (a turn is still executing).
-    """
-    target = session_placement._placeable_runner(session, placement)
-    if target is None:
-        raise session_placement._placement_refused(session, placement, "unknown runner")
-    if not session_placement.may_place(user, session, target):
-        raise session_placement._placement_forbidden(session, target)
-    queued = list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at"))
-    if not queued:
-        raise LookupError("no queued turn to move")
-    binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
-    if binding is not None and binding.runner_id and binding.runner_id != target.id:
-        _binding, handoff = session_placement.transfer_session(
-            session=session, placement=str(target.id),
-            brief=MOVE_BRIEF.format(source=binding.runner.name, n=len(queued)),
-            user=user, initiator=initiator,
-        )
-        Turn.objects.filter(pk=handoff.pk).update(
-            created_at=queued[0].created_at - _dt.timedelta(milliseconds=1))
-    else:
-        services._merge_metadata(session, {"requested_runner_id": str(target.id)})
-    Turn.objects.filter(pk__in=[t.pk for t in queued], status=Turn.QUEUED).update(pinned_runner=target)
-    for t in queued:
-        t.refresh_from_db()
-    return [t for t in queued if t.pinned_runner_id == target.id]
 
 
 def _send_transcript_sourced_message(

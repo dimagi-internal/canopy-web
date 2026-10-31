@@ -43,6 +43,13 @@ _ROLE_FOR_KIND = {
 # detail to it. 3x holds the conversational density roughly where it was.
 SESSION_TAIL_DEFAULT = 60
 SCROLLBACK_PAGE_DEFAULT = 50
+# Rows still count tool calls, and an agent's turn can be 50 of them: on labs
+# (2026-10-31) a 60-row tail of an Ada session held 4 of its replies and none of
+# the person's messages — one turn, with no sign of what was asked. So the
+# default tail also reaches back to the start of the person's last few messages,
+# up to a ceiling that keeps a tool-heavy session's open from shipping megabytes.
+SESSION_TAIL_ASKS = 3
+SESSION_TAIL_MAX = 300
 
 
 def tail_messages(session: Session, limit: int | None = None):
@@ -50,8 +57,16 @@ def tail_messages(session: Session, limit: int | None = None):
 
     Returns (messages, has_more_before, oldest_loaded_turn_index). This is what
     a client gets by default — enough to continue, never the whole history.
+    The default reaches back to the person's last `SESSION_TAIL_ASKS` messages
+    too, at most `SESSION_TAIL_MAX` rows; an explicit `limit` is exact.
     """
-    limit = SESSION_TAIL_DEFAULT if limit is None else limit
+    if limit is None:
+        limit = SESSION_TAIL_DEFAULT
+        asks = (session.messages.filter(role=Message.USER)
+                .order_by("-turn_index").values_list("turn_index", flat=True)[:SESSION_TAIL_ASKS])
+        if asks:
+            reach = session.messages.filter(turn_index__gte=list(asks)[-1]).count()
+            limit = max(limit, min(reach, SESSION_TAIL_MAX))
     newest_first = list(session.messages.order_by("-turn_index")[:limit])
     messages = list(reversed(newest_first))
     if not messages:
@@ -361,37 +376,22 @@ def with_last_reply(sessions):
 
 
 def with_driving_turn(sessions):
-    """`sessions` annotated with `_turn_mode` / `_turn_origin`: the mode and origin
-    of the FIRST claimed turn that drove each one — the session's mode is fixed
-    when it starts (apps/harness/turn_mode.py), so the feed's "did the agent do
-    this on its own?" and the list's mode badge read how it started, not
-    whoever replied last.
-
-    A turn drives a session two ways: a chat send carries the session itself
-    (`chat_session`), and an agent turn the runner opened a session for carries
-    that session's key (`Turn.session_key`, the same value as the binding's) —
-    which is how a scheduled or email turn's session is found, since it was never
-    a chat. Unclaimed turns have no mode yet ("" until claim), so they say nothing.
-    """
-    driving = staleness.driving_turns().exclude(turn_mode="").order_by("created_at")
+    """`sessions` annotated with `_turn_mode` / `_turn_origin` / `_turn_by_agent`:
+    the mode, origin and starter of the FIRST claimed turn that drove each one
+    (`staleness.first_driving_turn`). A session's mode is fixed when it starts
+    (apps/harness/turn_mode.py), so the feed's "did it run on its own?"
+    (`staleness.ran_on_its_own`) and the list's mode badge read how it started,
+    not whoever replied last. `_turn_runner_name` is the runner that claimed its
+    newest turn."""
+    first = staleness.first_driving_turn()
     return sessions.annotate(
-        _turn_mode=Subquery(driving.values("turn_mode")[:1]),
-        _turn_origin=Subquery(driving.values("origin")[:1]),
+        _turn_mode=Subquery(first.values("turn_mode")[:1]),
+        _turn_origin=Subquery(first.values("origin")[:1]),
+        _turn_by_agent=Subquery(first.values("_by_agent")[:1]),
         _turn_runner_name=Subquery(
             staleness.driving_turns().exclude(claimed_by=None)
             .order_by("-claimed_at").values("claimed_by__name")[:1]
         ),
-    )
-
-
-def with_open_turn(sessions):
-    """`sessions` annotated with `_turn_open`: a turn that drives each one is
-    queued or in flight (`Turn.NON_TERMINAL`). The feed's evidence that a session
-    on a paused/offline runner is genuinely held up (`feed.status`)."""
-    from django.db.models import Exists
-
-    return sessions.annotate(
-        _turn_open=Exists(staleness.driving_turns().filter(status__in=Turn.NON_TERMINAL)),
     )
 
 

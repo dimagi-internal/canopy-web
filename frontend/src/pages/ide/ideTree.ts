@@ -14,6 +14,7 @@
  */
 
 import { scopedPath } from '@/lib/scopedLinks'
+import { sessionDisplay } from '@/components/sessions/sessionDisplay'
 
 export type IdeSession = {
   id: string
@@ -24,6 +25,12 @@ export type IdeSession = {
   turn_mode?: string
   runner_id?: string | null
   runner_name?: string | null
+  /** The bound runner's liveness (`SessionOut.runner_online` / `runner_status`):
+   *  a session behind an offline or paused runner is `held`. */
+  runner_online?: boolean | null
+  runner_status?: string | null
+  turn_runner_name?: string | null
+  requested_runner_name?: string | null
   /** The bound runner is online but Claude is not signed in on it. */
   runner_signed_out?: boolean
   agent_slug?: string | null
@@ -39,8 +46,12 @@ export type IdeSession = {
   last_activity_at: string
 }
 
-/** What a session is doing right now, as reported — one of three, never inferred. */
-export type IdeState = 'running' | 'input' | 'idle'
+/** What a session is doing right now, as reported, never inferred: `held`
+ *  behind an offline or paused runner, waiting for `input`, `running`, `idle`. */
+export type IdeState = 'held' | 'running' | 'input' | 'idle'
+
+/** Every state, in the order the state filters show them. */
+export const IDE_STATES: readonly IdeState[] = ['running', 'input', 'held', 'idle']
 
 /** The mode its driving turn ran in; `none` when no turn has been claimed yet
  *  (a session started by hand in emdash has no canopy turn behind it). */
@@ -62,19 +73,18 @@ export type IdeFilters = {
 
 export const DEFAULT_FILTERS: IdeFilters = {
   hiddenRunners: [],
-  states: { running: true, input: true, idle: true },
+  states: { running: true, input: true, held: true, idle: true },
   modes: { manual: true, auto: true, none: true },
   archived: false,
   mineOnly: false,
   query: '',
 }
 
+/** The session's state in the shared precedence (`sessionDisplay`): held by a
+ *  parked runner, then a pending question, then running, then idle. */
 export function sessionState(s: IdeSession): IdeState {
-  // A pending question outranks `running`: the engine is parked on it, which
-  // is exactly what the runner reports when it says the session awaits input.
-  if (s.waiting_on_you) return 'input'
-  if (s.running) return 'running'
-  return 'idle'
+  const { tone } = sessionDisplay(s)
+  return tone === 'asking' ? 'input' : tone
 }
 
 export function sessionMode(s: IdeSession): IdeMode {
@@ -95,7 +105,9 @@ export function matches(s: IdeSession, f: IdeFilters): boolean {
   if (!f.archived && s.status === 'archived') return false
   if (f.mineOnly && !s.started_by_you) return false
   if (f.hiddenRunners.includes(runnerKey(s))) return false
-  if (!f.states[sessionState(s)]) return false
+  // Only an explicit `false` hides a state, so a filter saved before a state
+  // existed still shows it.
+  if (f.states[sessionState(s)] === false) return false
   if (!f.modes[sessionMode(s)]) return false
   const q = f.query.trim().toLowerCase()
   if (q && !`${s.title} ${folderKey(s)} ${s.runner_name ?? ''}`.toLowerCase().includes(q)) return false
@@ -131,7 +143,7 @@ export function buildTree<T extends IdeSession>(
   }
   const folders = [...byKey.entries()].map(([key, list]) => {
     const rows = [...list].sort(byNewest)
-    const counts: Record<IdeState, number> = { running: 0, input: 0, idle: 0 }
+    const counts: Record<IdeState, number> = { running: 0, input: 0, held: 0, idle: 0 }
     for (const r of rows) counts[sessionState(r)] += 1
     return {
       key,

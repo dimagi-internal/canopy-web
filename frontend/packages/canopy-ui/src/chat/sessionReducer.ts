@@ -1,5 +1,6 @@
 import type { Draft, Message, MessageAuthor, QueuedMessage, SessionState, WsEvent } from "./protocol";
 import { isUnconfirmed, sameAuthor } from "./identity";
+import { prependHistory } from "./history";
 
 // Pure reducer for SessionState — extracted from useSessionSocket so it
 // can be unit-tested without WebSocket plumbing. Side-effect events
@@ -46,11 +47,7 @@ export function comparableText(text: string): string {
 /**
  * Every frame `sessionReducer` handles. The socket hook hands the reducer ONLY
  * these, and gives anything else to `onUnknownEvent`, so a frame missing from
- * here is a frame the reducer never sees. That happened: from #775
- * (2026-09-13) the hook kept its own hand-written list, which lacked every
- * `draft.*` and `presence.*` frame and `session.turn_status`. Your own line did
- * not appear when you sent it (`draft.committed`), and the co-edited draft,
- * the presence roster and the live turn status all went quiet, with no error.
+ * here is a frame the reducer never sees, silently.
  * `sessionReducer.events.test.ts` fails if this and the switch below differ.
  */
 export const REDUCER_EVENTS: ReadonlySet<string> = new Set([
@@ -77,8 +74,14 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
   }
   switch (frame.event) {
     case "session.state": {
-      const messages = keepUnechoedSends(prev.messages, frame.data.messages, frame.data.queued);
-      return messages === frame.data.messages ? frame.data : { ...frame.data, messages };
+      const carried = keepUnechoedSends(prev.messages, frame.data.messages, frame.data.queued);
+      const { messages, hasMoreBefore } = keepLoadedHistory(prev, frame.data, carried);
+      if (messages === frame.data.messages && hasMoreBefore === frame.data.has_more_before) return frame.data;
+      return {
+        ...frame.data,
+        messages,
+        ...(hasMoreBefore !== undefined ? { has_more_before: hasMoreBefore } : {}),
+      };
     }
 
     case "chat.stream_start": {
@@ -120,7 +123,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       //
       // A `blocked` frame that carries no menu does NOT, and that asymmetry is
       // load-bearing. The hook path reports `blocked` without one on purpose
-      // (#510 — reading the screen stole emdash's focus), so treating a bare
+      // (reading the screen steals emdash's focus), so treating a bare
       // `blocked` as a retraction would erase every menu the snapshot and the
       // session report supply, which is now all of them.
       if (frame.data.state !== "blocked") {
@@ -292,9 +295,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       };
 
     case "chat.stream_error":
-      // NOTE: backend emits chat.stream_error with detail="cancelled"
-      // for stop-driven cancellation; there's no separate
-      // chat.stream_cancelled event in practice. Distinguished by detail.
+      // A stop-driven cancellation arrives as `chat.stream_error` with
+      // detail "cancelled"; `chat.stream_cancelled` (below) is the server's
+      // frame for a stream it abandoned part-way.
       return {
         ...prev,
         messages: prev.messages.map((m) =>
@@ -460,26 +463,24 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       return { ...prev, queued: frame.data.queued, cancelled: frame.data.cancelled ?? prev.cancelled };
 
     case "draft.committed": {
-      // The sender already shows its line (a pending row stamped with this
-      // client_id, see `withPendingSend`). Confirm it rather than add a second.
+      // Every one of the author's sockets hears this. The draft is spent in
+      // all of them: the server starts a new empty one, and leaving the sent
+      // text in a box lets Enter send the same turn again.
+      const clearedDraft = prev.active_draft ? { ...prev.active_draft, body: "" } : prev.active_draft;
       const cid = frame.data.client_id;
+      // The tab that sent it shows its line already (a pending row stamped
+      // with this client_id, see `withPendingSend`): confirm it.
       if (cid && prev.messages.some((m) => m.content?.client_id === cid)) {
-        return {
-          ...markSendDelivered(prev, cid, frame.data.user_message_id),
-          active_draft: prev.active_draft ? { ...prev.active_draft, body: "" } : prev.active_draft,
-        };
+        return { ...markSendDelivered(prev, cid, frame.data.user_message_id), active_draft: clearedDraft };
       }
-      // Insert the optimistic USER message from the draft body that's about
-      // to be cleared. The assistant reply is NOT inserted here — canopy's
-      // draft.committed carries no assistant id; `chat.stream_start` upserts
-      // that row when the reply begins.
-      //
-      // Also clear active_draft.body here. The server creates a new empty
-      // draft with last_editor=sender, so the follow-up draft.updated hits
-      // the "keep local body" branch above and would otherwise leave the
-      // just-sent text in the textarea — which lets Enter re-send the same
-      // turn repeatedly.
+      // Another tab of the same author: it never held the words (its own box
+      // may say anything, or nothing), so it adds no row. The line arrives
+      // with the transcript's echo like anyone else's.
+      if (cid) return { ...prev, active_draft: clearedDraft };
+      // A send with no client id (a server that predates it): the only copy
+      // of the words is the draft being cleared, so show it from there.
       const prevDraftBody = prev.active_draft?.body ?? "";
+      if (!prevDraftBody.trim()) return { ...prev, active_draft: clearedDraft };
       const maxTurnIndex = prev.messages.reduce(
         (acc, msg) => Math.max(acc, msg.turn_index),
         0,
@@ -589,21 +590,22 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
 
 
 // ---------------------------------------------------------------------------
-// A send the SENDER is waiting to hear back about.
+// A send the SENDER is waiting to hear back about — every send, socket or HTTP,
+// goes through these three.
 //
 // Your line goes on screen the moment you press send, as "pending", stamped
 // with the send's client_id. It becomes "complete" on the server's receipt
-// (`draft.committed` carrying that id), or when an HTTP resend succeeds, or when
-// the transcript echoes it back. If none of those happen it becomes "error",
-// and the words stay on screen. Before this the composer cleared on send and
-// nothing showed the line until the agent read it, so a send lost on a dead
-// socket simply vanished (2026-09-23).
+// (`draft.committed` carrying that id), when an HTTP send or resend succeeds,
+// or when the transcript echoes it back. If none of those happen it becomes
+// "error", and the words stay on screen.
 // ---------------------------------------------------------------------------
 
 export function withPendingSend(
   prev: SessionState,
   { clientId, text }: { clientId: string; text: string },
 ): SessionState {
+  // Once per send: a host that reports the same send twice gets one row.
+  if (prev.messages.some((m) => m.content?.client_id === clientId)) return prev;
   const nowIso = new Date().toISOString();
   const row: Message = {
     id: `local:${clientId}`,
@@ -698,4 +700,35 @@ function keepUnechoedSends(
   if (carried.length === 0) return snapshot;
   const top = snapshot.reduce((acc, m) => Math.max(acc, m.turn_index), 0);
   return [...snapshot, ...carried.map((m, i) => ({ ...m, turn_index: top + 1 + i }))];
+}
+
+/** Older history this tab had loaded, kept across a snapshot.
+ *
+ *  A snapshot is only the TAIL, and it replaces the list — so a reconnect threw
+ *  away everything "Load all messages" had brought in. Rows below the
+ *  snapshot's oldest (`oldest_loaded_turn_index`, else its lowest ordinal) are
+ *  kept and merged in as a scroll-back page would be (`prependHistory`) — but
+ *  only when what this tab holds reaches the snapshot (some row is in both).
+ *  When it does not, so much happened while away that keeping the old rows
+ *  would leave a hole in the middle, so they go, and the server holds more
+ *  before the tail again.
+ *
+ *  `hasMoreBefore` follows the rows: the kept older rows' own answer when they
+ *  are kept, `true` when they are dropped, else the snapshot's. Undefined when
+ *  nothing says (a server that does not send `has_more_before`). */
+function keepLoadedHistory(
+  prev: SessionState,
+  snapshot: SessionState,
+  messages: Message[],
+): { messages: Message[]; hasMoreBefore: boolean | undefined } {
+  const fromServer = snapshot.has_more_before;
+  if (snapshot.messages.length === 0) return { messages, hasMoreBefore: fromServer };
+  const lowest =
+    snapshot.oldest_loaded_turn_index ??
+    snapshot.messages.reduce((acc, m) => Math.min(acc, m.turn_index), Infinity);
+  const older = prev.messages.filter((m) => m.turn_index < lowest && m.turn_index >= 0 && !isUnconfirmed(m));
+  if (older.length === 0) return { messages, hasMoreBefore: fromServer ?? prev.has_more_before };
+  const ids = new Set(snapshot.messages.map((m) => m.id));
+  if (!prev.messages.some((m) => ids.has(m.id))) return { messages, hasMoreBefore: true };
+  return { messages: prependHistory(messages, older), hasMoreBefore: prev.has_more_before ?? fromServer };
 }

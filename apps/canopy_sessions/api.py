@@ -53,6 +53,7 @@ from . import (
     secrets,
     serializers,
     services,
+    session_state,
     slash_commands,
     staleness,
     status_feed,
@@ -197,7 +198,9 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     if not (agent_spoke_last or waiting_on_you):
         last_reply = ""
     runner = binding.runner if (binding and binding.runner_id) else None
-    running = transcript_read.is_session_running(binding)
+    # What it is doing right now — the one resolver (`session_state`), which a
+    # cloud session's in-flight turn answers as well as a laptop's engine flag.
+    running = session_state.is_running(session, binding)
     turn_mode = getattr(session, "_turn_mode", None) or ""
     turn_origin = getattr(session, "_turn_origin", None) or ""
     # The supervisor feed's verdict for THIS caller — the one rule, which the
@@ -205,8 +208,8 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     feed_status = (
         feed.status(
             viewer, session, waiting_on_you=waiting_on_you, agent_spoke_last=agent_spoke_last,
-            running=running, turn_mode=turn_mode, turn_origin=turn_origin,
-            turn_open=bool(getattr(session, "_turn_open", False)),
+            running=running, auto=feed.ran_on_its_own(session),
+            turn_open=session_state.turn_open(session),
         )
         if reply and viewer is not None
         else ""
@@ -383,9 +386,10 @@ def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool 
 
 def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dict:
     session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
-    if session.status != status:
-        session.status = status
-        session.save(update_fields=["status", "updated_at"])
+    if status == Session.ARCHIVED:
+        control.archive_session(session, by=control.person_name(request.user), user=request.user)
+    else:
+        control.unarchive_session(session, user=request.user)
     return _out(session)
 
 
@@ -652,9 +656,9 @@ def list_sessions(
 
     # Every row says which mode drove it — the list shows it on each card, so an
     # auto session that just ran and a manual one waiting on you can be told apart.
-    rows = transcript_read.with_driving_turn(rows)
+    rows = session_state.with_state(transcript_read.with_driving_turn(rows))
     if reply:
-        rows = transcript_read.with_open_turn(transcript_read.with_last_reply(rows))
+        rows = transcript_read.with_last_reply(rows)
     out = [_out(s, reply=reply, viewer=request.user) for s in _mark_people_in(rows, request.user)]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both
@@ -742,7 +746,7 @@ def search_sessions(
         at, sid = _decode_cursor(cursor)
         rows = rows.filter(Q(_activity__lt=at) | Q(_activity=at, id__lt=sid))
     limit = clamp_limit(limit)
-    rows = transcript_read.with_driving_turn(rows.order_by("-_activity", "-id"))
+    rows = session_state.with_state(transcript_read.with_driving_turn(rows.order_by("-_activity", "-id")))
     page = list(rows[: limit + 1])
     more = len(page) > limit
     page = page[:limit]
@@ -1289,22 +1293,12 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
     that backs it, and the turns that drove it — each with who asked, through
     which credential and client, in which mode and on which runner. Readable by
     anyone who can read the session; turn content you may not read is blanked."""
-    from django.db.models import Q
-
     from apps.harness import turn_access
-    from apps.harness.models import Turn
 
     session = _session_or_404(request, session_id)
     binding = getattr(session, "runner_binding", None)
-    # The same two ways a turn drives a session as `staleness.driving_turns`,
-    # for one session rather than under a queryset.
-    driving = Q(chat_session=session)
-    if session.agent_id and binding is not None and binding.session_key:
-        driving |= Q(agent_id=session.agent_id, session_key=binding.session_key)
-    turns_qs = Turn.objects.filter(driving)
-    first_claimed = turns_qs.exclude(turn_mode="").order_by("created_at").first()
-    session._turn_mode = first_claimed.turn_mode if first_claimed else ""
-    session._turn_origin = first_claimed.origin if first_claimed else ""
+    turns_qs = staleness.driving_turns_of(session)
+    session._turn_mode, session._turn_origin, session._turn_by_agent = feed.driving_turn(session)
     newest_claimed = (turns_qs.exclude(claimed_by=None).select_related("claimed_by")
                       .order_by("-claimed_at").first())
     session._turn_runner_name = newest_claimed.claimed_by.name if newest_claimed else None
@@ -1429,8 +1423,10 @@ def list_human_inputs(
 @gate("session-acl", kind="conversation")  # write
 def archive_session(request: HttpRequest, session_id: uuid.UUID):
     """Retire a session by hand. The escape hatch for a web chat — no runner will ever
-    report it archived — and for force-retiring a row without touching emdash.
-    Idempotent, and never destructive: /unarchive brings it straight back."""
+    report it archived — and for retiring a row without touching emdash (that is
+    `/close`). Its queued and running turns are cancelled, and its runner's next
+    report does not revive it while the task stays open. Idempotent, and never
+    destructive: /unarchive brings it straight back, and so does sending to it."""
     return _set_status(request, session_id, Session.ARCHIVED)
 
 
@@ -1787,7 +1783,7 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     # on create / `placement` on send, which only apply to a turn at enqueue time).
     session = _session_or_404(request, session_id, write=True)
     try:
-        turn = cs_send.place_queued_turn(session=session, placement=payload.placement,
+        turn = placement.place_queued_turn(session=session, placement=payload.placement,
                                           user=request.user)
     except LookupError as exc:
         raise HttpError(404, str(exc))

@@ -74,10 +74,10 @@ def test_a_sensitive_runner_is(fleet):
 
 def test_available_cloud_runner_skips_a_ordinary_box(fleet):
     s = _sensitive_session(fleet)
-    assert session_send.available_cloud_runner(s, user=fleet["user"]) is None
+    assert session_placement.available_cloud_runner(s, user=fleet["user"]) is None
     RunnerFlag.objects.create(runner=fleet["cloud"], flag="sensitive_data")
     _reports_sensitive(fleet["cloud"])
-    assert session_send.available_cloud_runner(s, user=fleet["user"]).id == fleet["cloud"].id
+    assert session_placement.available_cloud_runner(s, user=fleet["user"]).id == fleet["cloud"].id
 
 
 def test_sending_with_an_explicit_ordinary_placement_is_refused(fleet):
@@ -106,10 +106,10 @@ def test_placing_on_a_real_but_ordinary_runner_says_sensitive_is_why(fleet, move
                                           placement=laptop)
         elif move == "place":
             Turn.objects.create(chat_session=s, prompt="hi", status=Turn.QUEUED)
-            session_send.place_queued_turn(session=s, placement=laptop)
+            session_placement.place_queued_turn(session=s, placement=laptop)
         elif move == "move":
             Turn.objects.create(chat_session=s, prompt="hi", status=Turn.QUEUED)
-            session_send.move_queued_turns(session=s, placement=laptop)
+            session_placement.move_queued_turns(session=s, placement=laptop)
         else:
             RunnerBinding.objects.create(session=s, runner=fleet["cloud"])
             session_placement.transfer_session(session=s, placement=laptop, brief="b")

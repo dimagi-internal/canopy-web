@@ -156,8 +156,8 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         line = (f":hourglass: Queued — {agent} is still finishing the previous message in this "
                 f"thread on {_runner_names(st.runners)}, and this one runs next.")
     elif st.state == ts.QUEUED_BEHIND:
-        line = (f":hourglass: Queued — {agent} is busy with another turn on "
-                f"{_runner_names(st.runners)}; this one runs when it finishes.")
+        line = (f":hourglass: Queued — this conversation is moving to {_runner_names(st.runners)}; "
+                f"this one runs there once its work has been handed over.")
     elif st.state == ts.PICKING_UP and st.pinned:
         line = f":hourglass_flowing_sand: Sent to *{st.runners[0]}* — {agent} will pick this up there."
     elif st.state == ts.PICKING_UP:

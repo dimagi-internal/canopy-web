@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import lifecycle
-from apps.canopy_sessions.models import Message, RunnerBinding, Session
+from apps.canopy_sessions.models import Message, RunnerBinding, Session, SessionHandoff
 from apps.canopy_sessions.staleness import active
 from apps.workspaces import services as wsvc
 
@@ -384,6 +384,12 @@ def record_session(
             )
             if binding is None:
                 binding = RunnerBinding(session=session)
+        elif binding.runner_id != runner.id and _moving_off(binding, runner):
+            # This box transferred the session away and the transfer has not
+            # started on the target yet: the binding stays the target's.
+            logger.info("runner %s recorded session %s it is transferring away; left on %s",
+                        runner.name, binding.session_id, binding.runner_id)
+            return binding
         binding.thread_key = thread_key
         binding.runner = runner
         binding.host = runner.host
@@ -436,6 +442,13 @@ def record_session(
         if (cli := _reported_cli(turn, binding.session, runner)):
             clis.pin_conversation([binding.session_id], cli)
     return binding
+
+
+def _moving_off(binding, runner: Runner) -> bool:
+    """`runner` is the source of a transfer of this binding's session that has not
+    started on its target yet (`routing.transfer_held_q`)."""
+    return (SessionHandoff.objects.filter(session_id=binding.session_id, source_runner=runner)
+            .filter(Q(settled_at__isnull=True) | Q(turn__status=Turn.QUEUED)).exists())
 
 
 def _reported_cli(turn, session, runner: Runner) -> str:
@@ -1036,13 +1049,18 @@ def replace_reported_sessions(
     # A revival is also flagged, because the report cannot tell a REOPENED task
     # from a new task that reused a closed one's name — only the transcript the
     # next ship carries can (canopy_sessions.services.fork_if_name_reused).
+    #
+    # Not one a person archived by hand while the task stays open
+    # (`Session.HAND_ARCHIVED_KEY`): that archive is about the row, not the task, and
+    # holds until the task drops out of a report (below) or someone sends to it.
+    HAND_ARCHIVED_KEY = Session.HAND_ARCHIVED_KEY
     if touched_ids:
         from apps.canopy_sessions.transcript_ingest import REOPENED_KEY
 
         with transaction.atomic(), lifecycle.acting(by=runner, reason="reported open again"):
             for revived in Session.objects.select_for_update().filter(
                 runner_binding__id__in=touched_ids, status=Session.ARCHIVED,
-            ):
+            ).exclude(metadata__has_key=HAND_ARCHIVED_KEY):
                 revived.metadata = {**(revived.metadata or {}), REOPENED_KEY: True}
                 revived.status = Session.ACTIVE
                 revived.save(update_fields=["metadata", "status", "updated_at"])
@@ -1080,6 +1098,14 @@ def replace_reported_sessions(
     # is un-archived above on the very next report.
     RunnerBinding.objects.filter(id__in=touched_ids).exclude(missed_reports=0).update(missed_reports=0)
     if complete:
+        # A hand archive outlives the task it was taken against: once the task is
+        # gone, its coming back is a reopen, which revives the session as any other.
+        for released in (Session.objects.filter(runner_binding__runner=runner,
+                                                metadata__has_key=HAND_ARCHIVED_KEY)
+                         .exclude(runner_binding__id__in=touched_ids)):
+            released.metadata = {k: v for k, v in (released.metadata or {}).items()
+                                 if k != HAND_ARCHIVED_KEY}
+            released.save(update_fields=["metadata", "updated_at"])
         missing = (RunnerBinding.objects.filter(runner=runner)
                    .exclude(session_key="").exclude(id__in=touched_ids)
                    .exclude(session__status=Session.ARCHIVED))

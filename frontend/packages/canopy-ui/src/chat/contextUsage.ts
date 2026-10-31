@@ -39,7 +39,10 @@ function usageOf(m: Message): ContextUsage | null {
   return { context_tokens: u.context_tokens, model: typeof u.model === "string" ? u.model : "" };
 }
 
-/** A `user` row Claude Code wrote when it compacted (`content.record.compact_summary`). */
+/** A `user` row Claude Code wrote, not a person: the summary it leaves when it
+ *  compacts the conversation (`content.record.compact_summary`; the runner
+ *  keeps the transcript record's own flags on the row). THE check — the
+ *  transcript, the turn segmentation and "Edit and resend" all ask it. */
 export function isCompactionSummary(m: Message): boolean {
   const record = m.content?.record as Record<string, unknown> | undefined;
   return m.role === "user" && Boolean(record?.compact_summary);
