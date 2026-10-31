@@ -140,9 +140,7 @@ def why_only_these(turn, runners) -> str:
     its session lives on, and a pinned turn only to its pin. Without this the
     notice names a laptop the owner never routed the agent to, and he is left
     asking why the cloud was not tried."""
-    from apps.harness.models import Turn
-
-    turn = Turn.objects.select_related(
+    turn = type(turn).objects.select_related(
         "pinned_runner", "chat_session__runner_binding__runner").get(pk=turn.pk)
     names = {r.pk for r in runners}
     binding = getattr(turn.chat_session, "runner_binding", None) if turn.chat_session_id else None

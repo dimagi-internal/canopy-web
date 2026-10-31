@@ -21,6 +21,7 @@ from django.utils import timezone
 from apps.admission import evaluate
 from apps.admission.models import AdmissionNotice, AdmissionRule
 from apps.agents.models import Agent
+from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import initiator as _initiator
 from apps.harness import services, turn_status
 from apps.harness import claim
@@ -181,8 +182,6 @@ def test_a_reply_stuck_behind_the_box_its_conversation_lives_on_says_so(
     """A Slack reply to ACE was rejected naming only a laptop, while ACE's runner
     order was the cloud; the owner asked "should this have tried on the cloud
     first?" (2026-10-30). The notice now says the conversation is bound there."""
-    from apps.canopy_sessions.models import RunnerBinding, Session
-
     box = fleet["box"]
     cloud = enrolled(Runner.objects.create(
         name="cloud-ec2-live", kind=Runner.CLOUD, owner=fleet["jj"], status=Runner.ONLINE,
