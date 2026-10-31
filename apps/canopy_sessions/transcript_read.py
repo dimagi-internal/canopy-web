@@ -43,6 +43,13 @@ _ROLE_FOR_KIND = {
 # detail to it. 3x holds the conversational density roughly where it was.
 SESSION_TAIL_DEFAULT = 60
 SCROLLBACK_PAGE_DEFAULT = 50
+# Rows still count tool calls, and an agent's turn can be 50 of them: on labs
+# (2026-10-31) a 60-row tail of an Ada session held 4 of its replies and none of
+# the person's messages — one turn, with no sign of what was asked. So the
+# default tail also reaches back to the start of the person's last few messages,
+# up to a ceiling that keeps a tool-heavy session's open from shipping megabytes.
+SESSION_TAIL_ASKS = 3
+SESSION_TAIL_MAX = 300
 
 
 def tail_messages(session: Session, limit: int | None = None):
@@ -50,8 +57,16 @@ def tail_messages(session: Session, limit: int | None = None):
 
     Returns (messages, has_more_before, oldest_loaded_turn_index). This is what
     a client gets by default — enough to continue, never the whole history.
+    The default reaches back to the person's last `SESSION_TAIL_ASKS` messages
+    too, at most `SESSION_TAIL_MAX` rows; an explicit `limit` is exact.
     """
-    limit = SESSION_TAIL_DEFAULT if limit is None else limit
+    if limit is None:
+        limit = SESSION_TAIL_DEFAULT
+        asks = (session.messages.filter(role=Message.USER)
+                .order_by("-turn_index").values_list("turn_index", flat=True)[:SESSION_TAIL_ASKS])
+        if asks:
+            reach = session.messages.filter(turn_index__gte=list(asks)[-1]).count()
+            limit = max(limit, min(reach, SESSION_TAIL_MAX))
     newest_first = list(session.messages.order_by("-turn_index")[:limit])
     messages = list(reversed(newest_first))
     if not messages:
