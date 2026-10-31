@@ -27,6 +27,13 @@ def _agent(slug: str) -> Agent:
     return agent
 
 
+
+def agent_recipients(agent, approvers: list) -> list:
+    """An agent's owner and admins who can approve; if none, all who can."""
+    accountable = {agent.owner_id, *AgentAdmin.objects.filter(agent=agent).values_list("user_id", flat=True)}
+    return [u for u in approvers if u.pk in accountable] or approvers
+
+
 @register
 class AgentAdminAdd(Kind):
     slug = "agent.admin.add"
@@ -47,6 +54,9 @@ class AgentAdminAdd(Kind):
             plan=[f"{email} becomes an admin of the agent {name} ({agent.workspace_id})",
                   "They must already be a member of that workspace"],
             scopes=[f"agent:{agent.slug}", f"workspace:{agent.workspace_id}"], about_email=email)
+
+    def recipients(self, p: Params, d: Described) -> list:
+        return agent_recipients(_agent(p.agent), self.approvers(p, d))
 
     def may_approve(self, user, p: Params, d: Described) -> bool:
         agent = _agent(p.agent)

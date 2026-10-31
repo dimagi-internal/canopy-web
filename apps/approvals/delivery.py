@@ -45,11 +45,12 @@ def wants(user) -> bool:
 
 
 def recipients(req: ApprovalRequest) -> list:
-    """Who is told: the person it was routed to, else everyone who could approve it (capped)."""
+    """Who is told: the person it was routed to, else the people accountable for it (the kind decides
+    who; see `Kind.recipients`), capped. Others who could approve it still see it in their lists."""
     if req.for_user_id:
         return [req.for_user]
     k, p = kinds.parse(req.kind, req.params)
-    return k.approvers(p, k.describe(p))[:MAX_RECIPIENTS]
+    return k.recipients(p, k.describe(p))[:MAX_RECIPIENTS]
 
 
 def deliver(request_id: int) -> dict[str, int]:

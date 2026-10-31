@@ -271,6 +271,27 @@ def test_it_reaches_only_people_who_could_approve_by_push_and_slack_then_email_i
     assert any("(push, slack)" in s for s in got)
 
 
+def test_the_people_told_are_the_accountable_ones_not_everyone_who_could_approve(world, pushes, installation, slack,
+                                                                                  linked, mailoutbox):
+    """Found live: a test request to start an agent went to four unrelated editors, and a role change in
+    Connect to the parent organisation's admin. Told = the workspace's OWN admins, or the agent's
+    owner/admins; everyone else who can approve only sees it in their list."""
+    # Dimagi's admin reaches Connect only by inheritance; Ada is Connect's own admin.
+    parent_admin = a_user("parent.admin@dimagi.com")
+    wsvc.ensure_member(world["ws"], parent_admin, WorkspaceMembership.ADMIN)
+    card = file(world)
+    told = {d.user.email for d in ApprovalDelivery.objects.filter(request_id=card["id"])}
+    assert "ada.admin@dimagi.com" in told and "parent.admin@dimagi.com" not in told
+    assert _client(parent_admin).get(f"/api/approvals/{card['id']}").json()["can_decide"] in (True, False)
+    # An agent's work goes to its owner, not to every editor who could start it.
+    editor = a_user("some.editor@dimagi.com")
+    wsvc.ensure_member(world["ws"], editor, WorkspaceMembership.EDITOR)
+    run = file(world, {"kind": "agent.run_turns", "params": {"agent": "hal", "prompts": ["Say ack"]}})
+    told = {d.user.email for d in ApprovalDelivery.objects.filter(request_id=run["id"])}
+    assert told and told <= {"alice@dimagi.com"} and "some.editor@dimagi.com" not in told
+    assert _client(editor).get(f"/api/approvals/{run['id']}").json()["can_decide"] is True   # may act, not told
+
+
 def test_it_can_be_routed_to_one_person_and_a_person_can_opt_out(world, pushes, mailoutbox):
     card = file(world, {**ADD, "for_email": "ada.admin@dimagi.com", "idempotency_key": "r"})
     assert {d.user.email for d in ApprovalDelivery.objects.filter(request_id=card["id"])} == {"ada.admin@dimagi.com"}
