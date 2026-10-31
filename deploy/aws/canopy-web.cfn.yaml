@@ -196,8 +196,13 @@ Resources:
   VaultKmsKey:
     Type: AWS::KMS::Key
     Condition: VaultKmsEnabled
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
+    # Retired: nothing encrypts under this key any more (an agent's vault is zero-knowledge; its
+    # custodial values were dropped by migration 0101). It was Retain; it is Delete so the NEXT
+    # change — taking the key out of this template — schedules its deletion (30 days to cancel)
+    # instead of leaving it behind. A policy change must be deployed BEFORE the resource is removed:
+    # CloudFormation applies the policy of the template being replaced.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       Description: canopy-web Canopy Vault — envelope key for AgentCredential values
       EnableKeyRotation: true
@@ -584,14 +589,6 @@ Resources:
             # reports disabled and the frontend mounts nothing. Registering the
             # credential in the admin is what actually turns the widget on, and
             # revoking it turns it off again without a deploy.
-            #
-            # Canopy Vault KMS envelope (apps/common/kms_envelope.py): present
-            # only when EnableVaultKms=true. Unset = AgentCredential values stay
-            # Fernet, exactly as before.
-            - !If
-              - VaultKmsEnabled
-              - { Name: VAULT_KMS_KEY_ID, Value: !GetAtt VaultKmsKey.Arn }
-              - !Ref AWS::NoValue
           Secrets:
             # Name MUST be SECRET_KEY — that's what config/settings/base.py reads.
             # (It was DJANGO_SECRET_KEY, which nothing read, so prod silently fell

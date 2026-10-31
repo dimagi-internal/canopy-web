@@ -278,18 +278,19 @@ def test_field_encryption_key_is_its_own_generated_secret_in_the_task():
     assert {"Name": "FIELD_ENCRYPTION_KEY", "ValueFrom": {"Ref": "FieldEncryptionKey"}} in container["Secrets"]
 
 
-def test_vault_kms_is_off_by_default_and_fully_conditional():
+def test_the_retired_vault_kms_key_is_deleted_not_retained_when_it_leaves_the_template():
+    """Nothing encrypts under this key now (an agent's vault is zero-knowledge). It is on only where
+    a deploy turned it on, the task is no longer told about it, and when it is taken out of the
+    template CloudFormation must schedule its deletion rather than leave it behind — the policy
+    that applies is the one in the template being replaced, so it is `Delete` before the removal."""
     t = _template()
     assert t["Parameters"]["EnableVaultKms"]["Default"] == "false"
     for name in ("VaultKmsKey", "VaultKmsAlias"):
         assert t["Resources"][name]["Condition"] == "VaultKmsEnabled"
-    stmts = {s["Sid"]: s for s in t["Resources"]["VaultKmsKey"]["Properties"]["KeyPolicy"]["Statement"]}
-    assert stmts["TaskRoleEnvelopeEncryption"]["Principal"] == {"AWS": {"Ref": "TaskRoleArn"}}
-    assert set(stmts["TaskRoleEnvelopeEncryption"]["Action"]) == {"kms:GenerateDataKey", "kms:Decrypt"}
+    key = t["Resources"]["VaultKmsKey"]
+    assert key["DeletionPolicy"] == "Delete" and key["UpdateReplacePolicy"] == "Delete"
     env = t["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
-    conditional = [e for e in env if "If" in e]
-    assert conditional and conditional[0]["If"][0] == "VaultKmsEnabled"
-    assert conditional[0]["If"][1]["Name"] == "VAULT_KMS_KEY_ID"
+    assert not any("VAULT_KMS_KEY_ID" in str(e) for e in env)
 
 
 def test_deploy_role_carries_the_kms_grants_the_key_needs():
