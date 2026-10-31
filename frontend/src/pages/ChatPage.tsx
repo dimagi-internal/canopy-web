@@ -29,6 +29,7 @@ import {
   type JoinRequest,
 } from '@/api/chat'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
+import { SlackThreadChip } from '@/components/chat/SlackThreadChip'
 import { MessageContextMenu } from '@/components/chat/MessageContextMenu'
 import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
@@ -497,6 +498,13 @@ function ChatPageInner({
         <ChatPanel
           state={panelState}
           connected={socket.connected}
+          statusSlot={meta?.slack ? (
+            <SlackThreadChip
+              thread={meta.slack}
+              onDetach={canDetachSlack ? () => void actions.detachSlack() : undefined}
+              detaching={actions.detachingSlack}
+            />
+          ) : undefined}
           currentUserId={socket.state.current_user_id}
           onSend={(body) => {
             // The server consumes whatever the session is holding, so the chips

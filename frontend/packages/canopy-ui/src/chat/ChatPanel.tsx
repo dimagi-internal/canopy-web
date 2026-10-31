@@ -72,6 +72,8 @@ export interface ChatPanelProps {
   disabledReason?: string;
   /** Rendered at the top of the scroll container (e.g. a "Load earlier" button / offline banner). */
   historySlot?: ReactNode;
+  /** The host's own chips beside the connection chip in the header (e.g. the Slack thread). */
+  statusSlot?: ReactNode;
   /** The host's own controls beside Send (`SendBox.actions`). */
   composerActions?: ReactNode;
   /** Persist the half-typed composer body under this key (the session id) so
@@ -132,6 +134,7 @@ export function ChatPanel({
   emptyState,
   disabledReason,
   historySlot,
+  statusSlot,
   composerActions,
   draftPersistKey,
   draftStorage,
@@ -308,6 +311,7 @@ export function ChatPanel({
     <div className="flex h-full flex-col" onKeyDown={onPanelKeyDown}>
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
         <ConnectionStatus connected={connected} />
+        {statusSlot}
         <button
           type="button"
           onClick={() => setFinding((f) => !f)}
