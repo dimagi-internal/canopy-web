@@ -28,7 +28,7 @@ class Params(StrictModel):
 
 @register
 class AgentRunTurns(Kind):
-    key = "agent.run_turns"
+    slug = "agent.run_turns"
     label = "Let an agent do some work"
     params_model = Params
     needs = "anyone who can start turns for the agent (an editor of its workspace)"

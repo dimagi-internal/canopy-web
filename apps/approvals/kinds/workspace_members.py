@@ -54,7 +54,7 @@ def _may_manage(user, slug: str, target_role: str | None, new_role: str) -> bool
 
 @register
 class WorkspaceMemberAdd(Kind):
-    key = "workspace.member.add"
+    slug = "workspace.member.add"
     label = "Add someone to a workspace"
     params_model = AddParams
     needs = "an admin or owner of the workspace (only an owner can add an admin or owner)"
@@ -97,7 +97,7 @@ class WorkspaceMemberAdd(Kind):
 
 @register
 class WorkspaceMemberSetRole(Kind):
-    key = "workspace.member.set_role"
+    slug = "workspace.member.set_role"
     label = "Change a member's role in a workspace"
     params_model = SetRoleParams
     needs = "an admin or owner of the workspace (only an owner can touch an admin or owner)"

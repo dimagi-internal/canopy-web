@@ -29,7 +29,7 @@ def _agent(slug: str) -> Agent:
 
 @register
 class AgentAdminAdd(Kind):
-    key = "agent.admin.add"
+    slug = "agent.admin.add"
     label = "Make someone an admin of an agent"
     params_model = Params
     needs = "the agent's owner, or an owner of its workspace"

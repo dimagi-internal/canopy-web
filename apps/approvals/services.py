@@ -76,14 +76,14 @@ def create(*, kind: str, params: dict, requested_by_agent=None, requested_by_use
     try:
         with transaction.atomic():
             req = ApprovalRequest.objects.create(
-                workspace_id=described.workspace, kind=k.key, params=p.model_dump(), title=described.title[:300],
+                workspace_id=described.workspace, kind=k.slug, params=p.model_dump(), title=described.title[:300],
                 summary=described.summary, plan=described.plan, if_declined=IF_DECLINED, scopes=described.scopes,
                 reason=(reason or "").strip()[:REASON_MAX], evidence=_evidence(evidence),
                 source_url=(source_url or "")[:500], requested_by_agent=requested_by_agent,
                 requested_by_user=requested_by_user, for_user=for_user, expires_at=timezone.now() + ttl,
                 idempotency_key=idempotency_key or None)
             _event(req, ApprovalEvent.CREATED, requested_by_user,
-                   request_kind=k.key, by_agent=getattr(requested_by_agent, "slug", None))
+                   request_kind=k.slug, by_agent=getattr(requested_by_agent, "slug", None))
             pk = req.pk
             transaction.on_commit(lambda: _after_create(pk))
     except IntegrityError:

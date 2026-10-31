@@ -7,7 +7,7 @@ model is involved in approving. A new kind is a new module here, registered with
 
     @register
     class WorkspaceMemberAdd(Kind):
-        key = "workspace.member.add"
+        slug = "workspace.member.add"
         label = "Add someone to a workspace"
         params_model = Params
         needs = "an admin or owner of the workspace"
@@ -52,7 +52,7 @@ class Described:
 class Kind:
     """Subclass, set the class attributes, implement the three methods, and `@register`."""
 
-    key: str = ""
+    slug: str = ""
     label: str = ""
     params_model: type[BaseModel] = BaseModel
     #: In words: who can approve this ("an admin or owner of the workspace").
@@ -90,9 +90,9 @@ REGISTRY: dict[str, Kind] = {}
 
 def register(cls):
     kind = cls()
-    if not kind.key or kind.key in REGISTRY:
-        raise RuntimeError(f"approval kind {kind.key!r} is empty or registered twice")
-    REGISTRY[kind.key] = kind
+    if not kind.slug or kind.slug in REGISTRY:
+        raise RuntimeError(f"approval kind {kind.slug!r} is empty or registered twice")
+    REGISTRY[kind.slug] = kind
     return cls
 
 
@@ -117,9 +117,9 @@ def parse(key: str, params: dict):
 
 def catalog() -> list[dict]:
     _load()
-    return [{"key": k.key, "label": k.label, "needs": k.needs, "does": k.does,
+    return [{"key": k.slug, "label": k.label, "needs": k.needs, "does": k.does,
              "params_schema": k.params_model.model_json_schema()}
-            for k in sorted(REGISTRY.values(), key=lambda k: k.key)]
+            for k in sorted(REGISTRY.values(), key=lambda k: k.slug)]
 
 
 def user_by_email(email: str):
