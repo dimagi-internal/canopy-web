@@ -11,6 +11,7 @@ import {
   turnPhase,
   useSessionSocket,
   type SecretRequestHost,
+  type ToolRowsView,
 } from 'canopy-ui/chat'
 import { renderChatMarkdown } from '@/components/chat/renderChatMarkdown'
 import { SecretSealCard } from '@/components/vault/SecretSealCard'
@@ -107,6 +108,8 @@ function ChatPageInner({
   const appUpdates = useMemo(() => createAppResourceUpdates(), [])
   // Whether the conversation key is open in this tab: a View loads again when it opens.
   const [keyOpen, setKeyOpen] = useState(false)
+  // Every tool call open or closed at once, chosen from the ⋯ menu.
+  const [toolRows, setToolRows] = useState<ToolRowsView>('default')
   const appHost = useMemo(
     () => sealedAppHost(appHostFor(id, appUpdates), () => sealedKeyRef.current, keyOpen), [id, appUpdates, keyOpen])
   // The agent asked for one of its secrets: a card that seals it in this
@@ -493,6 +496,8 @@ function ChatPageInner({
               onMove={actions.canMove ? actions.moveToWorkspace : undefined}
               // Memory is off in a private conversation (the server refuses it too).
               memory={meta?.sensitive ? null : memory}
+              toolRows={toolRows}
+              onToolRowsChange={setToolRows}
             />
           )}
         </div>
@@ -574,6 +579,7 @@ function ChatPageInner({
           slashCommands={slashCommands}
           // Copy is the kit's; Fork from here runs here (and opens the fork).
           messageActions={fork.messageActions}
+          toolRows={toolRows}
           emptyState={emptyState}
           composerActions={<CanopyAIButton />}
           historySlot={historySlot}

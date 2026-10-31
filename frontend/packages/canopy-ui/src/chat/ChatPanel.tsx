@@ -6,7 +6,7 @@ import type {
 } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
-import { MessageList } from "./MessageList";
+import { MessageList, type ToolRowsView } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
 import { withCancelledSends } from "./cancelledSends";
 import { isMine, isUnconfirmed } from "./identity";
@@ -91,6 +91,8 @@ export interface ChatPanelProps {
   /** Per-message actions the host runs (Fork from here). Copy is always on;
    *  Edit and resend is the panel's own, offered on your last line. */
   messageActions?: MessageActionsHost;
+  /** Open or close every tool row at once (see `MessageList.toolRows`). */
+  toolRows?: ToolRowsView;
 }
 
 /**
@@ -136,6 +138,7 @@ export function ChatPanel({
   slashCommands,
   runnerModel,
   messageActions,
+  toolRows,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -513,6 +516,7 @@ export function ChatPanel({
             currentContactId={currentContactId}
             cancellable={cancellable}
             onCancelQueued={onUnqueue}
+            toolRows={toolRows}
           />
         </SubagentsContext.Provider>
         <QueuedRows

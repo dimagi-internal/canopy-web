@@ -1,8 +1,7 @@
-import { useContext, useMemo, useState, type ReactNode } from "react";
-import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2 } from "lucide-react";
+import { useContext, useMemo, type ReactNode } from "react";
+import { ChevronRight, Loader2 } from "lucide-react";
 
 import type { Message } from "./protocol";
-import { Button } from "../ui/button";
 import type { RenderMarkdown } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
@@ -75,15 +74,13 @@ interface Props {
    *  Cancel (`onCancelQueued`). */
   cancellable?: Map<string, string>;
   onCancelQueued?: (turnId: string) => void;
+  /** Every tool row open (`all`) or closed (`none`) at once; `default` (or
+   *  omitted) leaves each row to its own toggle. The host offers the choice —
+   *  canopy's session ⋯ menu. */
+  toolRows?: ToolRowsView;
 }
 
-// Show the bulk expand/collapse toolbar once a session has more than this
-// many tool rows. Below that, the per-row toggle is enough.
-const TOOLBAR_THRESHOLD = 5;
-// The toolbar's height: a pinned to-do list sits just beneath it.
-const TOOLBAR_HEIGHT_PX = 37;
-
-type BulkState = "default" | "all" | "none";
+export type ToolRowsView = "default" | "all" | "none";
 
 /** One tool row — a `TodoWrite` as its checklist, anything else as itself. */
 function ToolRow({
@@ -115,6 +112,7 @@ export function MessageList({
   currentContactId,
   cancellable,
   onCancelQueued,
+  toolRows = "default",
 }: Props) {
   const secretHost = useSecretRequestHost();
   const subagents = useContext(SubagentsContext);
@@ -124,15 +122,6 @@ export function MessageList({
   // row (groupToolRuns): an agent mid-task emits long stretches of them, and
   // one row each pushes the prose you actually read off the screen.
   const turns = useMemo(() => segmentTurns(paired), [paired]);
-  const toolPairCount = useMemo(
-    () => paired.filter((r) => r.kind === "tool_pair").length,
-    [paired],
-  );
-  // ``default`` = each <details> uses its own native state (collapsed
-  // initially, user can toggle individually). The bulk toggles flip
-  // every row open or closed at once. Reverting to "default" hands
-  // control back to per-row state.
-  const [bulkState, setBulkState] = useState<BulkState>("default");
   // The newest View opens expanded and every earlier one collapsed.
   const latestApp = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -146,8 +135,7 @@ export function MessageList({
     return <>{emptyState ?? null}</>;
   }
   const forceToolOpen =
-    bulkState === "all" ? true : bulkState === "none" ? false : undefined;
-  const showToolbar = toolPairCount > TOOLBAR_THRESHOLD;
+    toolRows === "all" ? true : toolRows === "none" ? false : undefined;
   const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
   const lastUserAt =
     lastTurn?.user?.kind === "message" ? lastTurn.user.message.created_at : null;
@@ -250,30 +238,6 @@ export function MessageList({
   return (
     <LatestAppViewContext.Provider value={latestApp}>
     <div className="flex flex-col">
-      {showToolbar && (
-        <div className="sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-border bg-background/80 px-4 py-1.5 backdrop-blur">
-          <Button
-            variant={bulkState === "all" ? "secondary" : "ghost"}
-            size="xs"
-            onClick={() => setBulkState(bulkState === "all" ? "default" : "all")}
-            aria-pressed={bulkState === "all"}
-          >
-            <ChevronsUpDown className="h-3 w-3" />
-            Expand all
-          </Button>
-          <Button
-            variant={bulkState === "none" ? "secondary" : "ghost"}
-            size="xs"
-            onClick={() =>
-              setBulkState(bulkState === "none" ? "default" : "none")
-            }
-            aria-pressed={bulkState === "none"}
-          >
-            <ChevronsDownUp className="h-3 w-3" />
-            Collapse all
-          </Button>
-        </div>
-      )}
       <div className="flex flex-col gap-2 p-4">
         {turns.map((turn, i) => {
           // Running = the caller says so (the server's turn status), or one of
@@ -308,11 +272,7 @@ export function MessageList({
                   {/* The turn's plan at the top of its work — pinned while it
                       runs, so the list stays in view as the work scrolls. */}
                   {todos && turn.user && (
-                    <TodoChecklist
-                      todos={todos}
-                      pinned={live}
-                      topOffset={showToolbar ? TOOLBAR_HEIGHT_PX : 0}
-                    />
+                    <TodoChecklist todos={todos} pinned={live} />
                   )}
                   {renderRows(turn.body)}
                 </>

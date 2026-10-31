@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "canopy-ui/ui";
-import type { TypingVisibility } from "canopy-ui/chat";
+import type { ToolRowsView, TypingVisibility } from "canopy-ui/chat";
 import { copyText } from "canopy-ui/lib";
 import { scopedPath } from "@/lib/scopedLinks";
 import { openInSlackApp } from "@/lib/slackLinks";
@@ -51,6 +51,9 @@ import { SessionInfoPanel } from "./SessionInfoPanel";
  * link" sits with them too: the chat's workspace address, which a teammate opens
  * to join live. The link is no grant — People decides who it lets in.
  *
+ * Opening or closing every tool call at once lives here too: it was a bar
+ * pinned above the transcript that took a row on a phone and was never used.
+ *
  * Ordered by how often each is used. Close is last and set apart, because it
  * is the one that cannot be undone (it deletes the emdash task).
  */
@@ -82,6 +85,8 @@ export function ChatSessionMenu({
   moveTargets,
   onMove,
   memory,
+  toolRows,
+  onToolRowsChange,
 }: {
   sessionId: string;
   /** The agent this chat is with: Share secret offers its vault for a declared name. */
@@ -122,6 +127,9 @@ export function ChatSessionMenu({
   onMove?: (workspace: string) => Promise<void>;
   /** Agent memory for this session; null/undefined hides the item. */
   memory?: SessionMemoryControl | null;
+  /** Every tool call open, closed, or each as you left it; both omitted hides the section. */
+  toolRows?: ToolRowsView;
+  onToolRowsChange?: (view: ToolRowsView) => void;
 }) {
   const [panel, setPanel] = useState<"people" | "info" | "slack" | "secret" | "move" | "memory" | null>(null);
   const [copied, setCopied] = useState<"yes" | "blocked" | null>(null);
@@ -257,6 +265,22 @@ export function ChatSessionMenu({
           <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
             {resetting ? "Resetting…" : "Reset from transcript"}
           </DropdownMenuItem>
+          {toolRows != null && onToolRowsChange != null && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
+                Tool calls
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={toolRows}
+                onValueChange={(value) => onToolRowsChange(value as ToolRowsView)}
+              >
+                <DropdownMenuRadioItem value="default" data-testid="tool-rows-default">As left</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="all" data-testid="tool-rows-all">Expand all</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="none" data-testid="tool-rows-none">Collapse all</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </>
+          )}
           {(showLoadAll || showLoadFull) && <DropdownMenuSeparator />}
           {showLoadAll && (
             <DropdownMenuItem inset disabled={loadingAll} onClick={onLoadAll} data-testid="menu-load-all">
