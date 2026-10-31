@@ -125,13 +125,37 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
             _add(out, m.user, OWNER if m.role == "owner" else link.role, source)
 
 
+def vault_tree(vault: Vault) -> set[str]:
+    """The workspaces a workspace vault may serve: its own and every one below it."""
+    return {vault.workspace_id} | wsvc.descendant_slugs({vault.workspace_id})
+
+
+def project_agents(vault: Vault, project, tree: set[str] | None = None) -> tuple[list[Agent], list[Agent]]:
+    """`(served, not served)` among the project's CURRENT member agents, asked fresh on
+    every call (nothing is stored, so leaving the project, or a share that ends, stops
+    the service at the next question). An agent is served only if its workspace lies in
+    the vault's tree; and nobody is, while the project itself has left that tree."""
+    tree = vault_tree(vault) if tree is None else tree
+    members = list(project.member_agents.select_related("workspace").order_by("slug"))
+    if project.workspace_id not in tree:
+        return [], members
+    return ([a for a in members if a.workspace_id in tree],
+            [a for a in members if a.workspace_id not in tree])
+
+
 def attached_agents(vault: Vault) -> list[Agent]:
-    """Every agent a WORKSPACE vault serves: its direct attachments, and every agent in
-    an attached workspace or below it."""
-    rows = list(VaultAttachment.objects.filter(vault=vault))
+    """Every agent a WORKSPACE vault serves: its direct attachments, every agent in
+    an attached workspace or below it, and the member agents of an attached project
+    that lie in the vault's tree (`project_agents`)."""
+    rows = list(VaultAttachment.objects.filter(vault=vault).select_related("project"))
     ids = {r.agent_id for r in rows if r.agent_id}
     roots = {r.workspace_id for r in rows if r.workspace_id}
     tree = roots | wsvc.descendant_slugs(roots) if roots else set()
+    projects = [r.project for r in rows if r.project_id]
+    if projects:
+        vtree = vault_tree(vault)
+        for project in projects:
+            ids |= {a.pk for a in project_agents(vault, project, vtree)[0]}
     return list(Agent.objects.filter(Q(pk__in=ids) | Q(workspace_id__in=tree)).select_related("workspace"))
 
 

@@ -49,6 +49,23 @@ describe('vault page', () => {
     expect(serves.textContent).not.toContain('cloud-ec2-2')
   })
 
+  it('says which of a project\u2019s member agents it serves and which it cannot, and attaches "project:ws/handle"', async () => {
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
+    api.attachWorkspaceVault.mockResolvedValue(SHARED)
+    render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [
+      { id: 5, agent: null, workspace: null, project: 'dimagi/canopy-support', served: ['ada', 'hal'], not_served: ['lab'],
+        project_outside_tree: false },
+    ] })} /></MemoryRouter>)
+    const row = screen.getByTestId('ws-vault-project-5').textContent
+    expect(screen.getByTestId('ws-vault-serves').textContent).toContain('member agents of project dimagi/canopy-support')
+    expect(row).toContain('serves ada, hal')
+    expect(row).toContain("not served (outside the vault's tree): lab")
+    fireEvent.change(screen.getByLabelText('Serve an agent, workspace or project from Shared'),
+      { target: { value: 'project:dimagi/canopy-support' } })
+    fireEvent.submit(screen.getByTestId('ws-vault-attach'))
+    await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { project: 'dimagi/canopy-support' }))
+  })
+
   it('lists its runners under Members: where each key lives, its access, and Give access for that runner only', async () => {
     const waiting = [
       { kind: 'device', target: 'k2', public_jwk: {}, runner: 'r2', runner_name: 'demo-a' },
@@ -86,7 +103,7 @@ describe('vault page', () => {
     api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
     api.attachWorkspaceVault.mockResolvedValue(SHARED)
     render(<MemoryRouter><VaultOverviewTab {...ctx()} /></MemoryRouter>)
-    const input = screen.getByLabelText('Serve an agent or workspace from Shared')
+    const input = screen.getByLabelText('Serve an agent, workspace or project from Shared')
     fireEvent.change(input, { target: { value: 'workspace:connect' } })
     fireEvent.submit(screen.getByTestId('ws-vault-attach'))
     await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { workspace: 'connect' }))

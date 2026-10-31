@@ -156,7 +156,7 @@ export async function deleteWorkspaceVaultSecret(vaultId: string, name: string):
     params: { path: { vault_id: vaultId, name } } }), 'Could not delete the secret')
 }
 
-export async function attachWorkspaceVault(vaultId: string, to: { agent?: string; workspace?: string; runner?: string }):
+export async function attachWorkspaceVault(vaultId: string, to: { agent?: string; workspace?: string; project?: string; runner?: string }):
     Promise<WorkspaceVaultOut> {
   return need<WorkspaceVaultOut>(await apiV2.POST('/api/vaults/{vault_id}/attachments', {
     params: { path: { vault_id: vaultId } }, body: to }), 'Could not attach the vault')

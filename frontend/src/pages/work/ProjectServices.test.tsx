@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
 const addProjectService = vi.fn()
 const removeProjectService = vi.fn()
@@ -31,6 +32,22 @@ const skill = {
 function detail(over: Record<string, unknown> = {}) {
   return { may_edit: true, services: [mcp, skill], ...over } as never
 }
+
+describe('ProjectServices vaults', () => {
+  it('names the vaults the project carries, read-only, with who they serve', () => {
+    const vaults = [{
+      vault_id: 'v1', workspace: 'dimagi', name: 'Google', secrets: ['GOOGLE_PROVISIONER_KEY'], served: ['ada'],
+      not_served: ['lab'], project_outside_tree: false,
+    }]
+    render(<MemoryRouter><ProjectServices detail={detail({ may_edit: false, services: [], vaults })} workspace="dimagi"
+      handle="canopy-support" onChanged={() => {}} /></MemoryRouter>)
+    const box = screen.getByTestId('project-vaults').textContent
+    expect(box).toContain('Google')
+    expect(box).toContain('GOOGLE_PROVISIONER_KEY')
+    expect(box).toContain('serves ada')
+    expect(box).toContain('not served (outside the vault’s tree): lab')
+  })
+})
 
 describe('ProjectServices', () => {
   it('says how each thing reaches Claude, and how to open the project', () => {

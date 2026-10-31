@@ -14,7 +14,9 @@ import {
   type ProjectService,
   type ProjectServiceKind,
 } from '@/api/work'
+import { Link } from 'react-router-dom'
 import { Section } from '@/components/objectPage/settingsLayout'
+import { vaultHref } from '@/lib/scopedLinks'
 
 const KIND_LABEL: Record<string, string> = {
   kb: 'Knowledge base',
@@ -90,6 +92,7 @@ export function ProjectServices({
   onChanged: () => void
 }): JSX.Element | null {
   const services = detail.services ?? []
+  const vaults = detail.vaults ?? []
   const [kind, setKind] = useState<ProjectServiceKind>('skill')
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -97,7 +100,7 @@ export function ProjectServices({
   const [instructions, setInstructions] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  if (!services.length && !detail.may_edit) return null
+  if (!services.length && !vaults.length && !detail.may_edit) return null
 
   const isSkill = kind === 'skill'
   const ready = name.trim() && (isSkill ? instructions.trim() || url.trim() : url.trim())
@@ -190,6 +193,29 @@ export function ProjectServices({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {vaults.length > 0 && (
+        <div className="mb-3 rounded-lg border border-border bg-card px-3 py-2 text-[13px]" data-testid="project-vaults">
+          <div className="font-medium text-foreground">Vaults</div>
+          <p className="text-[12px] text-muted-foreground">
+            Secrets this project&apos;s skills may need. Each member agent in the vault&apos;s workspace tree reads them in its
+            turns; joining the project gives them, leaving takes them away. Names only.
+          </p>
+          <ul className="mt-1 space-y-1">
+            {vaults.map((v) => (
+              <li key={v.vault_id} data-testid={`project-vault-${v.vault_id}`}>
+                <Link to={vaultHref(v.workspace, v.vault_id)} className="text-primary hover:underline">{v.name}</Link>
+                <span className="text-muted-foreground">
+                  {' '}— {v.secrets.length ? v.secrets.join(', ') : 'no secrets yet'}; serves{' '}
+                  {v.served.length ? v.served.join(', ') : 'no agent'}
+                  {v.project_outside_tree
+                    ? '; the project is outside the vault’s workspace tree, so it serves nobody'
+                    : v.not_served.length ? `; not served (outside the vault’s tree): ${v.not_served.join(', ')}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {detail.may_edit && (

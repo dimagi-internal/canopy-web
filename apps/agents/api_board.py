@@ -24,6 +24,7 @@ from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
 
 from . import engagement, ideas, participants, proposals, services, work
+from .credentials import workspace_vaults
 from .gates import (
     agent_for_read,
     agent_for_work,
@@ -55,6 +56,7 @@ from .schemas import (
     ProjectProgressOut,
     ProjectServiceOut,
     ProjectUpdateOut,
+    ProjectVaultOut,
     ProposedTaskOut,
     TurnBriefOut,
 )
@@ -173,6 +175,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
                         .select_related("author_user", "author_agent")] if editable else []),
         may_edit=editable,
         services=[ProjectServiceOut(**row) for row in work.services_of(project, origin=base_url())],
+        vaults=[ProjectVaultOut(**row) for row in workspace_vaults.project_vaults(project, request.user)],
     )
 
 

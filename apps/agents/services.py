@@ -691,7 +691,17 @@ def promote_project(project: AgentProject, handle: str, workspace: str = "") -> 
     for task in project.tasks.exclude(workspace_id=workspace):
         work.rehome(task, workspace)
     _settle_shares(project)
+    _settle_vault_attachments(project)
     return project
+
+
+def _settle_vault_attachments(project: AgentProject) -> None:
+    """After a project changed workspace: a workspace vault serves its members only while the
+    project's workspace lies in the vault's tree, so an attachment the new home no longer
+    satisfies is dropped (the same rule `workspace_vaults.attach` enforces)."""
+    for att in project.vault_attachments.select_related("vault"):
+        if project.workspace_id not in {att.vault.workspace_id} | wsvc.descendant_slugs({att.vault.workspace_id}):
+            att.delete()
 
 
 def _settle_shares(project: AgentProject) -> None:

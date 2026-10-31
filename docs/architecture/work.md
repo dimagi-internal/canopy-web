@@ -47,6 +47,8 @@ A project can serve things to its workspace — `ProjectService` rows, one per t
 - `skill` — a Claude Code **skill**: its `instructions` (its SKILL.md body), written on the project page or published by the lead agent; `url` is where it came from, optional when the instructions are there.
 - `plugin` — a Claude Code **plugin** (a repository URL), listed with the line that adds it.
 
+A skill that needs a secret uses the project's **vault**: a workspace vault attached to the project (`VaultAttachment.project`) is read in the turns of every member agent that lies in the vault's workspace tree, layered under the agent's own values, with no per-agent attachment (`docs/architecture/vault.md` § Workspace vaults). The project's detail (`vaults`) lists the vaults by name, the secret names and who they serve, never a value.
+
 `…/workspace-projects/<ws>/<handle>/services/` lists, adds, changes and removes them (a knowledge base is not removed there). Design record: the spec's "What a project serves to the workspace" and "Opening a project".
 
 ## A project's toolbox reaches a session only when the work asks
