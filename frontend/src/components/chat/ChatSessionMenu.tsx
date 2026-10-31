@@ -17,13 +17,22 @@ import {
 import type { ToolRowsView, TypingVisibility } from "canopy-ui/chat";
 import { copyText } from "canopy-ui/lib";
 import { scopedPath } from "@/lib/scopedLinks";
-import { openInSlackApp } from "@/lib/slackLinks";
+import { SlackThreadMenuItems, type SlackThread } from "./SlackThreadMenuItems";
 import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
 import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
 import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryControl } from "./SessionMemoryToggles";
 import { SessionInfoPanel } from "./SessionInfoPanel";
+
+/** A section heading in the menu: small caps, so it reads as a heading above its items. */
+function MenuSection({ children }: { children: React.ReactNode }) {
+  return (
+    <DropdownMenuLabel className="pl-8 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </DropdownMenuLabel>
+  );
+}
 
 /**
  * Everything you can DO to a chat, behind one button.
@@ -54,8 +63,9 @@ import { SessionInfoPanel } from "./SessionInfoPanel";
  * Opening or closing every tool call at once lives here too: it was a bar
  * pinned above the transcript that took a row on a phone and was never used.
  *
- * Ordered by how often each is used. Close is last and set apart, because it
- * is the one that cannot be undone (it deletes the emdash task).
+ * Grouped under headings (see the comment in the menu); the last two items,
+ * set apart, cannot be undone — Reset replaces the transcript, Close deletes
+ * the emdash task.
  */
 export function ChatSessionMenu({
   sessionId,
@@ -115,7 +125,7 @@ export function ChatSessionMenu({
   typingVisibility?: TypingVisibility;
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
   /** The Slack thread this session is connected to, or null/undefined when none. */
-  slackThread?: { channel: string; url?: string; app_url?: string } | null;
+  slackThread?: SlackThread | null;
   /** Disconnect from that thread. Omitted for someone who can't act in the session. */
   onDetachSlack?: () => void;
   detachingSlack?: boolean;
@@ -154,31 +164,40 @@ export function ChatSessionMenu({
           <MoreHorizontal className="h-4 w-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60">
-          {notifyEveryCompletion !== undefined && (
-            <DropdownMenuCheckboxItem
-              data-testid="notify-every-completion"
-              checked={notifyEveryCompletion}
-              onCheckedChange={() => onToggleNotify()}
-            >
-              Notify on every reply
-            </DropdownMenuCheckboxItem>
-          )}
-          {typingVisibility != null && onTypingVisibilityChange != null && (
+          {/* Sections, top to bottom: how you hear about and appear in this chat; the
+              conversation itself; Slack; how the transcript is drawn; then the two that can't be
+              undone (Reset, Close), set apart and unheaded. A new item goes in the section it is about, not at the end. */}
+          {(notifyEveryCompletion !== undefined || (typingVisibility != null && onTypingVisibilityChange != null)) && (
             <>
-              <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
-                Others see while you type
-              </DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={typingVisibility}
-                onValueChange={(value) => onTypingVisibilityChange(value as TypingVisibility)}
-              >
-                <DropdownMenuRadioItem value="live">My text</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="typing">Typing…</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="hidden">Nothing</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
+              <MenuSection>Your settings</MenuSection>
+              {notifyEveryCompletion !== undefined && (
+                <DropdownMenuCheckboxItem
+                  data-testid="notify-every-completion"
+                  checked={notifyEveryCompletion}
+                  onCheckedChange={() => onToggleNotify()}
+                >
+                  Notify on every reply
+                </DropdownMenuCheckboxItem>
+              )}
+              {typingVisibility != null && onTypingVisibilityChange != null && (
+                <>
+                  <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
+                    Others see while you type
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={typingVisibility}
+                    onValueChange={(value) => onTypingVisibilityChange(value as TypingVisibility)}
+                  >
+                    <DropdownMenuRadioItem value="live">My text</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="typing">Typing…</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="hidden">Nothing</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </>
+              )}
               <DropdownMenuSeparator />
             </>
           )}
+          <MenuSection>Conversation</MenuSection>
           <DropdownMenuItem inset onClick={() => setPanel("people")}>People…</DropdownMenuItem>
           {joinUrl && (
             <DropdownMenuItem
@@ -210,51 +229,7 @@ export function ChatSessionMenu({
               </span>
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            inset
-            disabled={Boolean(shareDisabledReason)}
-            title={shareDisabledReason || undefined}
-            onClick={() => setPanel("slack")}
-          >
-            Share to Slack…
-          </DropdownMenuItem>
-          {slackThread && (
-            <>
-              {slackThread.app_url && (
-                <DropdownMenuItem
-                  inset
-                  data-testid="slack-thread-app-link"
-                  onClick={() => openInSlackApp(slackThread.app_url!)}
-                >
-                  Open Slack thread
-                </DropdownMenuItem>
-              )}
-              {slackThread.url && (
-                <DropdownMenuItem
-                  inset
-                  data-testid="slack-thread-link"
-                  onClick={() => window.open(slackThread.url, "_blank", "noopener,noreferrer")}
-                >
-                  {slackThread.app_url ? "Open Slack thread in the browser" : "Open Slack thread"}
-                </DropdownMenuItem>
-              )}
-              {onDetachSlack && (
-                <DropdownMenuItem
-                  inset
-                  data-testid="detach-slack"
-                  disabled={detachingSlack}
-                  onClick={onDetachSlack}
-                >
-                  {detachingSlack ? "Disconnecting…" : "Disconnect from Slack"}
-                </DropdownMenuItem>
-              )}
-            </>
-          )}
-          <DropdownMenuItem
-            inset
-            data-testid="share-secret"
-            onClick={() => setPanel("secret")}
-          >
+          <DropdownMenuItem inset data-testid="share-secret" onClick={() => setPanel("secret")}>
             Secrets…
           </DropdownMenuItem>
           {canMove && (
@@ -262,12 +237,28 @@ export function ChatSessionMenu({
               Move to workspace…
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
-            {resetting ? "Resetting…" : "Reset from transcript"}
+          <DropdownMenuSeparator />
+          <MenuSection>{slackThread ? `Slack · ${slackThread.channel}` : "Slack"}</MenuSection>
+          {slackThread && (
+            <SlackThreadMenuItems thread={slackThread} onDetach={onDetachSlack} detaching={detachingSlack} />
+          )}
+          <DropdownMenuItem
+            inset
+            data-testid="connect-slack"
+            disabled={Boolean(shareDisabledReason)}
+            title={shareDisabledReason || undefined}
+            onClick={() => setPanel("slack")}
+          >
+            {slackThread ? "Share to another channel…" : "Connect to Slack…"}
           </DropdownMenuItem>
-          {toolRows != null && onToolRowsChange != null && (
+          {((toolRows != null && onToolRowsChange != null) || showLoadAll || showLoadFull) && (
             <>
               <DropdownMenuSeparator />
+              <MenuSection>View</MenuSection>
+            </>
+          )}
+          {toolRows != null && onToolRowsChange != null && (
+            <>
               <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
                 Tool calls
               </DropdownMenuLabel>
@@ -281,7 +272,6 @@ export function ChatSessionMenu({
               </DropdownMenuRadioGroup>
             </>
           )}
-          {(showLoadAll || showLoadFull) && <DropdownMenuSeparator />}
           {showLoadAll && (
             <DropdownMenuItem inset disabled={loadingAll} onClick={onLoadAll} data-testid="menu-load-all">
               {loadingAll ? "Loading…" : "Load all messages"}
@@ -293,6 +283,9 @@ export function ChatSessionMenu({
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
+          <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
+            {resetting ? "Resetting…" : "Reset from transcript"}
+          </DropdownMenuItem>
           <DropdownMenuItem
             inset
             disabled={closing}
@@ -317,7 +310,7 @@ export function ChatSessionMenu({
                 ? "Secrets"
                 : panel === "move"
                   ? "Move to workspace"
-                  : "Share to Slack"}
+                  : "Connect to Slack"}
           </DialogTitle>
           {panel === "secret" && (
             <ShareSecretForm sessionId={sessionId} agentSlug={agentSlug} onDone={() => setPanel(null)} />
