@@ -83,9 +83,8 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
     ),
 )
 def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
-    """A token held the old way is re-probed now. One delegated into the vault cannot be:
-    canopy-web cannot open it, so the machines that run the agent probe it and report
-    (`checked_by`), and this returns what they last found."""
+    """canopy-web cannot open a delegated token, so it cannot probe it: the machines that run
+    the agent do, and report (`checked_by`). This returns what they last found."""
     agent = agent_for_read(request, slug)
     delegations.check_github(agent)
     return _github_out(request, agent)

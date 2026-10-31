@@ -29,13 +29,11 @@ from unittest import mock
 import pytest
 from canopy_sdk.jose import make_dpop_proof
 from django.contrib.auth.models import User
-from django.core.management import call_command
 from django.test import Client
 from django.utils import timezone
 
 from apps.agents.credentials import accounts, delegations, vault_engine
-from apps.agents.models import Agent, AgentAdmin, AgentCredential, AgentDelegation
-from apps.common.encryption import encrypt_secret
+from apps.agents.models import Agent, AgentAdmin, AgentCredential
 from apps.harness import drills, services
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.passkeys.testing import grant_step_up
@@ -174,7 +172,6 @@ def test_the_owner_delegates_a_working_token_sealed_to_the_machines_that_run_the
     assert entry.provider_expires_at == dt.datetime(2026, 12, 1, 10, 0, tzinfo=dt.UTC)
     assert accounts.label(entry, agent) == (
         "GitHub · delegated by Olive · GitHub says it expires 1 Dec 2026")
-    assert not AgentDelegation.objects.exists()
 
 
 def test_a_token_is_refused_when_no_machine_that_runs_the_agent_can_open_it(agent, owner, github):
@@ -618,42 +615,6 @@ def test_canopy_sets_no_expiry_of_its_own(agent, owner, github, runner, machine)
     r = _as_runner(runner).post(_token_url(runner, turn))
     assert r.status_code == 200 and r.json()["delegated"] == "github-token"
     assert "GitHub says the token expired" in delegations.readiness(agent)[1]
-
-
-def test_a_token_still_held_the_old_way_serves_until_it_is_moved(agent, owner, runner, machine):
-    AgentDelegation.objects.create(user=owner, agent=agent, service=AgentDelegation.GITHUB,
-                                   secret_enc=encrypt_secret("github_pat_old"),
-                                   meta={"login": "olive", "user_id": 4242, "name": "Olive Owner"})
-    r = _as_runner(runner).post(_token_url(runner, _turn(agent, runner=runner)))
-    assert r.status_code == 200 and r.json()["token"] == "github_pat_old" and r.json()["delegated"] == ""
-
-
-def test_moving_old_tokens_into_the_vault(agent, owner, runner, machine, capsys):
-    key, _, ecdh = machine
-    old = AgentDelegation.objects.create(user=owner, agent=agent, service=AgentDelegation.GITHUB,
-                                         secret_enc=encrypt_secret("github_pat_old"),
-                                         meta={"login": "olive", "user_id": 4242, "name": "Olive Owner",
-                                               "checks": [{"repo": "dimagi-internal/echo", "ok": True,
-                                                           "detail": "can push"}]})
-    call_command("move_delegations_to_vault")
-    assert "would move, sealed to cloud-ec2-1" in capsys.readouterr().out
-    assert AgentDelegation.objects.filter(pk=old.pk).exists()
-    call_command("move_delegations_to_vault", "--apply")
-    assert "moved, sealed to cloud-ec2-1" in capsys.readouterr().out
-    assert not AgentDelegation.objects.exists()
-    entry = delegations.github_entry(agent)
-    assert entry.delegated_by == owner and entry.identity["login"] == "olive"
-    assert opened(entry, ecdh, key) == "github_pat_old"
-    r = _as_runner(runner).post(_token_url(runner, _turn(agent, runner=runner)))
-    assert r.json()["token"] == "" and r.json()["delegated"] == "github-token"
-
-
-def test_an_agent_no_machine_can_open_one_for_keeps_its_old_token(agent, owner, capsys):
-    AgentDelegation.objects.create(user=owner, agent=agent, service=AgentDelegation.GITHUB,
-                                   secret_enc=encrypt_secret("github_pat_old"), meta={"login": "olive"})
-    call_command("move_delegations_to_vault", "--apply")
-    assert "KEPT" in capsys.readouterr().out
-    assert AgentDelegation.objects.exists() and delegations.github_entry(agent) is None
 
 
 def test_a_callers_confined_turn_is_never_given_the_owners_identity(agent, owner, github, runner, machine):

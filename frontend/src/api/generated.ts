@@ -6224,9 +6224,8 @@ export interface paths {
         readonly put?: never;
         /**
          * Re-check this agent's GitHub token against GitHub
-         * @description A token held the old way is re-probed now. One delegated into the vault cannot be:
-         *     canopy-web cannot open it, so the machines that run the agent probe it and report
-         *     (`checked_by`), and this returns what they last found.
+         * @description canopy-web cannot open a delegated token, so it cannot probe it: the machines that run
+         *     the agent do, and report (`checked_by`). This returns what they last found.
          */
         readonly post: operations["check_agent_github"];
         readonly delete?: never;
@@ -37467,7 +37466,7 @@ export interface components {
          * @description One turn's GitHub identity, and where its token is. A token a person delegated to
          *     the agent is in the agent's vault, sealed to the machines that run it: `token` is ""
          *     and `delegated` names the vault entry the box opens from its own resolve of `agent`.
-         *     One still held the old way comes in `token`, for that turn's environment only.
+         *     (`token` is always "" now; older runners still read it.)
          */
         readonly TurnGitHubTokenOut: {
             /**
