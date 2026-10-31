@@ -184,7 +184,9 @@ class FakeRunner:
     # --- the loop ---------------------------------------------------------
 
     def tick(self) -> None:
-        self.client.heartbeat(self.runner_id, sorted(self.active), host="e2e-fake-runner")
+        reply = self.client.heartbeat(self.runner_id, sorted(self.active), host="e2e-fake-runner")
+        # A stopped turn comes back on the heartbeat, as it does for the real runners.
+        self.stopped.update((reply or {}).get("cancel_turn_ids") or [])
         turn = self.client.claim(self.runner_id)
         if turn and turn.get("id"):
             log("claimed", turn["id"], (turn.get("prompt") or "")[-60:])
@@ -197,12 +199,6 @@ class FakeRunner:
                 self.stopped.add(tid)
             self.client.post_session_interrupt_result(self.runner_id, stop["session_id"],
                                                       stop["interrupt_id"], "interrupted")
-        for tid in list(self.active):
-            try:
-                if self.client.get_turn(tid).get("status") in ("cancelled", "cancelling"):
-                    self.stopped.add(tid)
-            except Exception:  # noqa: BLE001
-                pass
 
     def _run(self, turn: dict) -> None:
         try:
