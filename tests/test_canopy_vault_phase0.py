@@ -290,15 +290,14 @@ def test_the_retired_vault_kms_key_is_gone_from_the_stack():
     assert not any("VAULT_KMS_KEY_ID" in str(e) for e in env)
 
 
-def test_deploy_role_carries_the_kms_grants_the_key_needs():
+def test_no_deploy_role_holds_kms_grants_now_that_the_vault_key_is_gone():
+    """The Canopy Vault envelope key is retired, so the deploy role no longer manages KMS keys
+    (it held `VaultKmsKeyManagement`, tag-scoped, only for that key)."""
     from deploy.aws import deploy_roles as dr
-    from deploy.aws import preflight as pf
 
-    pol = dr.policy_for("canopy-web", dr.APPS["canopy-web"])
-    granted = {a for s in pol["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
-    for rtype in ("AWS::KMS::Key", "AWS::KMS::Alias"):
-        for action in pf.actions_for(rtype, "Add") + pf.actions_for(rtype, "Modify"):
-            assert action in granted, f"{rtype} needs {action}"
-    # Only canopy-web gets them.
-    other = dr.policy_for("ace-web", dr.APPS["ace-web"])
-    assert not any("Kms" in s["Sid"] for s in other["Statement"])
+    for app, cfg in dr.APPS.items():
+        pol = dr.policy_for(app, cfg)
+        assert not any("Kms" in s["Sid"] for s in pol["Statement"]), app
+        granted = {a for s in pol["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
+        assert not {a for a in granted if a.startswith("kms:")}, app
+
