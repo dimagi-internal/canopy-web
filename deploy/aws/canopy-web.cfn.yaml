@@ -63,19 +63,6 @@ Parameters:
   MailEventsTopicArn:
     Type: String
     Default: ""
-  # Canopy Vault KMS envelope encryption for AgentCredential values
-  # (apps/common/kms_envelope.py, canopy-web#1538). OFF by default. The deploy
-  # role holds no kms:* until a human applies deploy_roles.py's
-  # `VaultKmsKeyManagement` statements — flipping this first fails the deploy at
-  # the preflight (or, without it, mid-rollout: the 2026-09-13 incident shape).
-  # Order: apply deploy_roles.py → deploy with EnableVaultKms=true → done.
-  EnableVaultKms:
-    Type: String
-    Default: "false"
-    AllowedValues: ["true", "false"]
-
-Conditions:
-  VaultKmsEnabled: !Equals [!Ref EnableVaultKms, "true"]
 
 Resources:
   EcrRepo:
@@ -187,52 +174,6 @@ Resources:
     Properties:
       Name: canopy-web/field-encryption-key
       GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true }
-
-  # --- Canopy Vault KMS key (only when EnableVaultKms=true) ---
-  # Access by KEY POLICY, the AttachmentsBucketPolicy pattern: the task role
-  # reaches this stack only as a parameter. The account-root statement is the
-  # standard one that delegates key administration to IAM (without it the key
-  # is unmanageable and CloudFormation refuses the lockout).
-  VaultKmsKey:
-    Type: AWS::KMS::Key
-    Condition: VaultKmsEnabled
-    # Retired: nothing encrypts under this key any more (an agent's vault is zero-knowledge; its
-    # custodial values were dropped by migration 0101). It was Retain; it is Delete so the NEXT
-    # change — taking the key out of this template — schedules its deletion (30 days to cancel)
-    # instead of leaving it behind. A policy change must be deployed BEFORE the resource is removed:
-    # CloudFormation applies the policy of the template being replaced.
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      Description: canopy-web Canopy Vault — envelope key for AgentCredential values
-      EnableKeyRotation: true
-      Tags:
-        - { Key: canopy-app, Value: canopy-web }
-        # Added to the live key outside the template (the account's `app` cost tag);
-        # declared so the template describes it and a deploy keeps it.
-        - { Key: app, Value: canopy-web }
-      KeyPolicy:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: AccountAdministersViaIam
-            Effect: Allow
-            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
-            Action: kms:*
-            Resource: "*"
-          - Sid: TaskRoleEnvelopeEncryption
-            Effect: Allow
-            Principal: { AWS: !Ref TaskRoleArn }
-            Action:
-              - kms:GenerateDataKey
-              - kms:Decrypt
-            Resource: "*"
-
-  VaultKmsAlias:
-    Type: AWS::KMS::Alias
-    Condition: VaultKmsEnabled
-    Properties:
-      AliasName: alias/canopy-web-vault
-      TargetKeyId: !Ref VaultKmsKey
 
   DatabaseUrl:
     Type: AWS::SecretsManager::Secret
