@@ -19,6 +19,7 @@ from apps.realtime.groups import chat_user_group, session_group
 from . import access, agui, attach, conversation_keys, doors, drafts, presence, serializers, services, stream_map
 from . import control as chat_control
 from . import send as chat_send
+from . import session_state
 from . import transcript_ingest as chat_transcript_ingest
 from . import transcript_read as chat_transcript_read
 from .models import Draft, Message, Session, SessionParticipant
@@ -758,6 +759,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         except (Session.DoesNotExist, ValueError):
             return None
 
+    def _activity(self) -> str | None:
+        """`session_state.activity`, or None when it cannot be read: a snapshot
+        that cannot say what the agent is doing must still deliver the conversation."""
+        try:
+            return session_state.activity(self.session)
+        except Exception:  # noqa: BLE001 — never fail a connect over the activity line
+            log.exception("could not derive activity for session %s", self.session.pk)
+            return None
+
     @database_sync_to_async
     def _snapshot(self):
         parts = [serializers.participant_dto(p)
@@ -832,7 +842,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 draft_words=self._draft_words,
                 messages=messages,
                 queued=chat_send.queued_messages(self.session),
-                cancelled=chat_send.cancelled_sends(self.session),
+                cancelled=chat_send.ended_sends(self.session),
+                activity=self._activity(),
             ),
         }
 

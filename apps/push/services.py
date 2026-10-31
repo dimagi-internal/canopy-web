@@ -258,7 +258,7 @@ def can_open(user, session) -> bool:
     return can_read(user, session)
 
 
-def _question_audience(session, *, turn_mode: str, turn_origin: str):
+def _question_audience(session, *, auto: bool):
     """Who should be told this session is waiting, or None.
 
     In order: whoever started the chat; the agent's owner; the human who PAIRED
@@ -290,7 +290,7 @@ def _question_audience(session, *, turn_mode: str, turn_origin: str):
         if (
             user is not None
             and can_open(user, session)
-            and not feed.held(user, session, turn_mode=turn_mode, turn_origin=turn_origin)
+            and not feed.held(user, session, auto=auto)
         ):
             return user
     return None
@@ -330,8 +330,7 @@ def notify_session_question(session, menu: dict) -> int:
         return 0
     from apps.canopy_sessions import feed
 
-    turn_mode, turn_origin = feed.driving_turn(session)
-    user = _question_audience(session, turn_mode=turn_mode, turn_origin=turn_origin)
+    user = _question_audience(session, auto=feed.ran_on_its_own(session))
     if user is None:
         return 0
     question = str(menu.get("question") or "").strip() or "a question"
@@ -387,15 +386,15 @@ def _finish_audience(turn: Turn):
     from apps.canopy_sessions import feed
 
     session = turn.chat_session
-    mode, origin = turn.turn_mode, turn.origin
+    auto = feed.turn_ran_on_its_own(session, turn)
     for user in (turn.initiator_user, turn.enqueued_by):
         if (
             user is not None
             and can_open(user, session)
-            and not feed.held(user, session, turn_mode=mode, turn_origin=origin)
+            and not feed.held(user, session, auto=auto)
         ):
             return user
-    return _question_audience(session, turn_mode=mode, turn_origin=origin)
+    return _question_audience(session, auto=auto)
 
 
 def _finish_body(session: Session, turn: Turn) -> str:

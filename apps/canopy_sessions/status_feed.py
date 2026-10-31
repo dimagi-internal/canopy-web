@@ -24,6 +24,9 @@ import logging
 
 from apps.realtime.groups import publish, session_group
 
+from . import session_state
+from .models import Session
+
 logger = logging.getLogger(__name__)
 
 #: At most one fleet-wide sweep this often, across every web worker (a cache
@@ -74,9 +77,34 @@ def publish_for_turn(turn) -> None:
         return
     publish(session_group(turn.chat_session_id),
             {"type": "session.turn_status", "status": payload})
+    if payload.get("settled"):
+        _publish_idle(turn.chat_session_id)
     from .queued_feed import publish_queued
 
     publish_queued(turn.chat_session_id)
+
+
+def _publish_idle(session_id) -> None:
+    """Say `idle` on the session's activity channel once its turn has settled and
+    the session resolver agrees nothing is running (`session_state.activity`).
+
+    The runner's live `session.activity` frames open and close "working", and they
+    are never stored, so one that is missed leaves a watching client saying
+    working. This closes it from the turn's own end. Never says `working`: the
+    runner's frames are faster at that, and a laptop's engine flag lags the turn.
+    """
+    try:
+        session = Session.objects.select_related("runner_binding__runner").get(pk=session_id)
+        if session_state.activity(session) != session_state.IDLE:
+            return
+    except Exception:  # noqa: BLE001 — never break an append over the activity line
+        logger.exception("could not derive activity for session %s", session_id)
+        return
+    publish(session_group(session_id), {
+        "type": "chat.turn_event",
+        "event": {"kind": "activity:idle", "seq": -1, "payload": {}},
+        "turn_id": None,
+    })
 
 
 def publish_for_session(session_id) -> None:

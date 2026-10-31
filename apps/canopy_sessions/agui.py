@@ -482,13 +482,26 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     # blocks ride verbatim). The price is the message text travelling twice on
     # connect, once per audience; a lossy snapshot is the worse trade.
     if event == "session.state":
-        return [
+        out: list[E.BaseEvent] = [
             E.MessagesSnapshotEvent(
                 type=E.EventType.MESSAGES_SNAPSHOT,
                 messages=[m for m in (_agui_message(row) for row in data.get("messages") or []) if m],
                 metadata=_verbatim(frame),
             ),
         ]
+        # What the agent is doing now (`session_state.activity`), as the same
+        # ACTIVITY_SNAPSHOT a live `session.activity` frame becomes, AFTER the
+        # messages: a client that missed the live frame that ended a run is
+        # corrected by its next connect instead of drawing "working" forever.
+        if data.get("activity"):
+            out.append(E.ActivitySnapshotEvent(
+                type=E.EventType.ACTIVITY_SNAPSHOT,
+                message_id=thread_id,
+                activity_type=ACTIVITY_TYPE,
+                content={"state": data["activity"]},
+                replace=True,
+            ))
+        return out
 
     # canopy asking the PAGE to run something (`page_actions.py`). The host↔frame
     # contract, not the agent↔UI one — but the frame IS the client reading this

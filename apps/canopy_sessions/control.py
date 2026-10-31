@@ -1,8 +1,15 @@
 """Controlling a live session: answering an agent's dialog, interrupting,
-stopping and cancelling its turns, and closing it.
+stopping and cancelling its turns, archiving and closing it.
+
+Every verb a runner must carry out is a durable row on the session's
+RunnerBinding (`pending_answer`, `pending_interrupt`, `close_requested`) that the
+runner drains on its poll tick; the control frame published beside it only
+rings the doorbell. Turn-shaped work is reached through its turns
+(`cancel_session_turns`), which the runner learns of from its heartbeat.
 """
 from __future__ import annotations
 
+import datetime as dt
 import time
 import uuid
 
@@ -13,9 +20,13 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 from apps.harness.routing import turn_workspace_q
 
-from . import lifecycle, staleness
+from . import lifecycle, session_state, staleness
 from .models import RunnerBinding, Session
-from .transcript_read import is_session_running
+
+#: How long a recorded stop stays on offer to its runner. A stop is about the work
+#: running when it was asked; one that has waited longer than this would land on
+#: whatever the session is doing since.
+INTERRUPT_TTL = dt.timedelta(minutes=2)
 
 
 def answer_menu(*, session: Session, option: int | None,
@@ -81,21 +92,15 @@ def answer_menu(*, session: Session, option: int | None,
 
 
 def interrupt_session(session: Session) -> str:
-    """Stop whatever this session's agent is doing, by interrupting its TERMINAL.
+    """Stop whatever this session's agent is doing, by interrupting its session on
+    the runner — the stop for work no Turn owns (an agent, board or scheduled turn
+    goes terminal the moment its prompt is delivered, and the agent works on).
+    Addressed like `answer_menu`: the binding's `session_key`, the runner owning
+    the keystroke.
 
-    The turn-shaped stop (`cancel_session_turns` below) can only reach work a
-    non-terminal Turn still owns, which in practice means chat. An agent, board or
-    scheduled turn is fire-and-continue: `execute_turn` finishes it the moment the
-    prompt is delivered (runner execute.py), so seconds later the agent is working
-    hard on a turn that is already DONE, and a stop keyed on turns finds nothing to
-    cancel and silently does nothing.
-
-    But the work is not turn-shaped, it is SESSION-shaped, and canopy already knows
-    the session: `harness.session_sync.record_session` gives every agent/project/phone
-    thread a durable Session plus a RunnerBinding carrying `session_key` — the very
-    same binding `answer_menu` above uses to press a key into that terminal. So
-    stopping is addressed exactly like answering: name the session, let the runner
-    own the keystroke.
+    Recorded as `RunnerBinding.pending_interrupt` before the frame is published,
+    so a frame lost on a down control channel costs the runner a poll tick, not
+    the stop (`GET /runners/{id}/session-interrupts`).
 
     Returns "sent" | "unavailable" | "unbound", mirroring `answer_menu`'s refusal
     shape rather than raising — a session can go idle between a thumb reaching the
@@ -104,18 +109,32 @@ def interrupt_session(session: Session) -> str:
     binding = getattr(session, "runner_binding", None)
     if binding is None or binding.runner_id is None or not binding.session_key:
         return "unbound"
-    # Same reasoning as answer_menu: pause stops STARTING work, never finishing it,
-    # and an agent mid-turn is work already running. Reachable, not available.
+    # Reachable, not available: pause stops STARTING work, never finishing it, and
+    # an agent mid-turn is work already running.
     if not binding.runner.is_reachable:
         return "unavailable"
+    interrupt_id = str(uuid.uuid4())
+    binding.pending_interrupt = {"id": interrupt_id, "at": time.time()}
+    binding.save(update_fields=["pending_interrupt"])
 
     from apps.realtime import groups
     groups.publish(groups.runner_group(binding.runner_id), {
         "type": "runner.session_interrupt",
         "session_id": str(session.id),
         "session_key": binding.session_key,
+        "interrupt_id": interrupt_id,
     })
     return "sent"
+
+
+def interrupt_live(pending: dict | None, now: float | None = None) -> bool:
+    """Is this recorded stop (`RunnerBinding.pending_interrupt`) still on offer?"""
+    if not isinstance(pending, dict) or not pending.get("id"):
+        return False
+    at = pending.get("at")
+    if not isinstance(at, (int, float)):
+        return False
+    return ((now if now is not None else time.time()) - at) <= INTERRUPT_TTL.total_seconds()
 
 
 def person_name(user) -> str:
@@ -128,27 +147,18 @@ def person_name(user) -> str:
 def cancel_session_turns(session: Session, *, by: str = "") -> bool:
     """Cancel every non-terminal turn on a session. Returns whether anything moved.
 
-    ALL non-terminal turns, not just the newest: a mid-reply send queues a second
-    turn behind the one still running, so both must be reached — the running one
-    gets cancel_requested, the queued one is finished CANCELLED.
+    ALL of them, not just the newest: a mid-reply send queues a second turn behind
+    the running one, so the running one gets cancel_requested and the queued one is
+    finished CANCELLED. (Not `any(cancel_turn(t) ...)`, which would stop at the
+    first.)
 
-    Deliberately NOT `any(cancel_turn(t) for t in turns)`: any() short-circuits on
-    the first truthy result and would skip every turn after it.
-
-    "On a session" means two things, and this used to see only the first:
-
-    * a CHAT turn names its session (`chat_session`);
-    * an AGENT or PROJECT turn names no session (the target is agent XOR project
-      XOR chat_session) — it is tied to one by the key its runner stamped on it
-      (`stamp_turn_session`), the same key the session's RunnerBinding carries.
-
-    On a laptop the second kind is terminal seconds after delivery, so missing it
-    cost nothing. On a CLOUD runner it stays RUNNING for the whole of the work —
-    and a stop that cannot see it found "nothing to cancel" and fell through to a
-    session interrupt the cloud runner never acted on (cloud-ec2-2, 2026-10-17:
-    stopped twice, closed once, ran 23 more minutes). Matched on the binding's
-    runner and the session's own target too, because a laptop's key is an emdash
-    task name and those are unique per project only.
+    "On a session" covers both shapes of turn: a CHAT turn names its session
+    (`chat_session`); an AGENT or PROJECT turn names none and is tied to it by the
+    key its runner stamped on it (`stamp_turn_session`), the binding's
+    `session_key` — matched on the binding's runner and the session's own target
+    too, because a laptop's key is an emdash task name, unique per project only.
+    On a cloud runner such a turn stays RUNNING for the whole of the work, so this
+    is how a stop reaches it.
     """
     from apps.harness import services as harness_services
     from apps.harness.models import Turn
@@ -174,27 +184,21 @@ def cancel_session_turns(session: Session, *, by: str = "") -> bool:
 
 
 def stop_session(session: Session, *, by: str = "") -> str:
-    """Stop this session, by whichever route actually owns the running work.
-    Returns WHICH route fired: "turns" | "session" | "".
+    """Stop this session, by whichever route owns the running work. Returns WHICH
+    route fired: "turns" | "session" | "".
 
-    TURNS FIRST. A chat reply is owned by a live Turn: cancelling it records the
-    intent, reaches a queued turn behind the running one, and lets the runner's
-    bridge interrupt and finish it. So is ANY turn a cloud runner is executing —
-    agent and project turns included, found by the session key the runner stamped
-    on them (`cancel_session_turns`) — and the cloud runner stops its process and
-    finishes it CANCELLED.
+    TURNS FIRST (`cancel_session_turns`): a chat reply, and any turn a cloud runner
+    is executing, is owned by a live Turn; cancelling it records the intent,
+    reaches a queued turn behind it, and the runner finishes it CANCELLED.
 
-    THEN THE SESSION. If no turn moved, the work is not turn-shaped — the normal
-    state of an agent, board, scheduled or project turn, which goes terminal the
-    moment its prompt is delivered — so stop it as a session (`interrupt_session`).
+    THEN THE SESSION (`interrupt_session`), when no turn moved: the work is not
+    turn-shaped (an agent, board, scheduled or project turn on a laptop, terminal
+    once its prompt is delivered). Never both: a chat turn's cancel already
+    interrupts the same session, and a second interrupt could land after the agent
+    moved on.
 
-    Deliberately not both: a chat turn's cancel already interrupts the same session
-    through the bridge, and a second interrupt could land after the agent moved on.
-
-    The ONE stop. The web UI (the session websocket), REST/MCP
-    (`POST /canopy-sessions/{id}/stop`), a contact's stop and Slack's all call this; REST used to stop at the
-    turns, so a stop from MCP or a script did nothing to a working agent
-    (canopy-web#1226).
+    The one stop: the session socket, REST/MCP (`POST /canopy-sessions/{id}/stop`),
+    a contact's stop and Slack's all call this.
     """
     if cancel_session_turns(session, by=by):
         return "turns"
@@ -209,16 +213,15 @@ def stop_everything(*, by: str = "", workspaces: set[str] | None = None) -> dict
 
     Two passes, because work is reachable two ways (see `stop_session`):
 
-    * every session the engine says is working right now (`is_session_running`) gets
-      THE one stop, `stop_session` — turns first, else the terminal;
+    * every bound session that is running right now (`session_state.is_running`)
+      gets THE one stop, `stop_session` — turns first, else the session;
     * then every turn still executing that no stop has reached yet (no
-      `cancel_requested` in its ledger) gets `cancel_turn` — the cloud turn whose
+      `cancel_requested` in its ledger) gets `cancel_turn` — a cloud turn whose
       session never bound, a turn on a runner that stopped reporting.
 
     Queued turns are left alone: under the hold they are the list of what tried to
     start, and the release is what runs them. A rider is reached through the turn it
-    rides. Nothing here closes or archives a session — a stopped session keeps its
-    transcript and can be picked up again; closing would destroy it.
+    rides. Nothing here closes or archives a session.
     """
     sessions = 0
     bindings = (RunnerBinding.objects.filter(runner__isnull=False)
@@ -226,7 +229,7 @@ def stop_everything(*, by: str = "", workspaces: set[str] | None = None) -> dict
     if workspaces is not None:
         bindings = bindings.filter(session__workspace_id__in=workspaces)
     for binding in bindings:
-        if is_session_running(binding) and stop_session(binding.session, by=by):
+        if session_state.is_running(binding.session, binding) and stop_session(binding.session, by=by):
             sessions += 1
     turns = 0
     executing = (Turn.objects.filter(status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
@@ -243,15 +246,10 @@ def stop_everything(*, by: str = "", workspaces: set[str] | None = None) -> dict
 def is_runner_reported(binding) -> bool:
     """Is a runner CURRENTLY reporting an emdash task for this session?
 
-    The one question `close_session` branches on, observed rather than inferred.
-    `Runner.kind` would answer "what program is this" — a different question, and
-    already deprecated as a behavioural input. `live_seen_at` and `session_key`
-    cannot answer it at all: `record_session` is called by BOTH runners and stamps
-    both, with the cloud runner writing a Claude session id where the laptop writes
-    an emdash task name. Hence `reported_at`, which only the report loop writes.
-
-    Read against the same `stale_cutoff()` the session list uses, so "reported"
-    and "live" can never drift into meaning different windows.
+    The one question `close_session` branches on, observed rather than inferred:
+    `reported_at`, which only the wholesale report loop writes (`record_session`,
+    called by both runners, stamps `live_seen_at` and `session_key` instead), read
+    against the same `stale_cutoff()` the session list uses.
     """
     if binding is None or binding.runner_id is None or not binding.session_key:
         return False
@@ -266,50 +264,37 @@ def close_session(*, session: Session) -> str:
 
     Two branches on one question — see `is_runner_reported`.
 
-    REPORTED (a laptop's emdash task): cancel the turns, then relay a close and
-    write NOTHING to the session. The emdash task is the truth for a local session,
-    and `replace_reported_sessions` un-archives anything re-reported as open, so a
-    status write here would be undone within ~10s anyway. The runner deletes the
-    task and puts its name in the `archived:` closing signal on its next report;
-    that is what retires the row.
+    REPORTED (a laptop's emdash task): cancel the turns, record and relay a close,
+    and write nothing to the session. The emdash task is the truth for a local
+    session: the runner deletes it, and its absence from the next report (or its
+    name in the report's `archived` list) retires the row.
 
-    UNREPORTED (a cloud session, a web chat that never bound): no emdash task exists
-    on a box, but a cloud turn may still be RUNNING there. Cancel the turns — that
-    stops a running cloud turn (its runner is told on the socket and on its next
-    heartbeat, and finishes it CANCELLED) and keeps a queued one from waking it —
-    then archive, done. It sticks, because nothing will ever report it back.
+    UNREPORTED (a cloud session, a web chat that never bound): cancel the turns —
+    which stops a running cloud turn and keeps a queued one from waking it — then
+    archive. It sticks, because nothing will ever report it back.
 
     A refusal is a returned reason, never a raise: a session can go stale between
-    the phone rendering the list and a thumb reaching it, which is ordinary rather
-    than a client error. `unavailable` deliberately does NOT queue — a close that
-    sits until a box returns is indistinguishable from one that worked.
+    the phone rendering the list and a thumb reaching it. `unavailable` does NOT
+    queue — a close that sits until a box returns is indistinguishable from one
+    that worked.
     """
     if session.status == Session.ARCHIVED:
         return "already_closed"
 
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     if is_runner_reported(binding):
-        # `is_reachable`, not ONLINE/DEGRADED: a close FINISHES work, and a paused
-        # daemon keeps its poll loop (`_report_sweep` drains closes above the pause
-        # gate). Refusing it made a switch off a rate-limited box unpause that box
-        # just to close its sessions (2026-10-23, haldimagi-mbp-cdp).
+        # `is_reachable`, not ONLINE: a close FINISHES work, and a paused daemon
+        # keeps its poll loop (`_report_sweep` drains closes above the pause gate).
         if not binding.runner.is_reachable:
             return "unavailable"
-        # Cancel BEFORE relaying. Deleting the emdash task kills the process the
-        # turn runs in, so a live turn would otherwise stay EXECUTING with nobody
-        # left to finish it — held until the lease sweep. Cancelling first also means the ledger
-        # records a cancellation rather than a turn that merely stops emitting.
+        # Cancel BEFORE relaying: deleting the emdash task kills the process the
+        # turn runs in, which would leave a live turn EXECUTING with nobody to
+        # finish it, and the ledger records a cancellation rather than silence.
         cancel_session_turns(session)
-        # Record BEFORE relaying, for the same reason `answer_menu` does: the frame
-        # is the doorbell and this is what survives the channel being down. Without
-        # it a lost frame leaves the emdash task open and the session active
-        # forever — and `/close`'s own fallback ("the task's plain absence from the
-        # following report retires it anyway") assumes the runner deleted the task,
-        # which never happened. Verified 2026-08-01: the API answered
-        # `{"ok":true,"closing":true}` and the runner logged nothing at all.
+        # Record BEFORE relaying: the frame is the doorbell, `close_requested` is
+        # what the runner drains (`GET /runners/{id}/closes`). A new request (the
+        # Retry beside "Close failed: ...") starts clean.
         binding.close_requested = True
-        # A new request (the Retry next to "Close failed: …") starts clean: the
-        # runner reports again if this attempt fails too.
         binding.close_error = ""
         binding.close_error_at = None
         binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
@@ -337,6 +322,36 @@ def close_session(*, session: Session) -> str:
 
     transaction.on_commit(lambda: fire_sessions_closed([session.pk]))
     return "closed"
+
+
+def archive_session(session: Session, *, by: str = "", user=None) -> None:
+    """Retire a session by hand, without touching its runner's task (that is
+    `close_session`). Its open turns are cancelled the way a close cancels them
+    (`cancel_session_turns`) — an archived session is one nobody is watching, so
+    nothing may keep running or wake up in it — and it is marked
+    `Session.HAND_ARCHIVED_KEY` so a laptop's next report does not bring it straight back.
+    Idempotent."""
+    cancel_session_turns(session, by=by)
+    if session.status == Session.ARCHIVED:
+        return
+    session.status = Session.ARCHIVED
+    session.metadata = {**(session.metadata or {}), Session.HAND_ARCHIVED_KEY: True}
+    with lifecycle.acting(by=user, reason="archived by hand"):
+        session.save(update_fields=["status", "metadata", "updated_at"])
+
+
+def unarchive_session(session: Session, *, user=None, reason: str = "unarchived") -> bool:
+    """Bring an archived session back (the WRITTEN half of `state=active`; a
+    runner session past the liveness window stays out until it is reported).
+    Returns whether anything changed."""
+    held = Session.HAND_ARCHIVED_KEY in (session.metadata or {})
+    if session.status != Session.ARCHIVED and not held:
+        return False
+    session.status = Session.ACTIVE
+    session.metadata = {k: v for k, v in (session.metadata or {}).items() if k != Session.HAND_ARCHIVED_KEY}
+    with lifecycle.acting(by=user, reason=reason):
+        session.save(update_fields=["status", "metadata", "updated_at"])
+    return True
 
 
 def close_agent_sessions(agent) -> dict[str, int]:

@@ -11,15 +11,14 @@ from apps.attention import types as att
 from apps.attention.types import AttentionRow
 from apps.workspaces.links import scoped_path
 
-from . import feed
-from . import transcript_read
+from . import feed, session_state, transcript_read
 from .api import _filtered_sessions, _out
 
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:
     # `_filtered_sessions` scopes by the request's read rule — the same slugs.
     rows = transcript_read.with_driving_turn(_filtered_sessions(request, state="active"))
-    rows = transcript_read.with_open_turn(transcript_read.with_last_reply(rows))
+    rows = session_state.with_state(transcript_read.with_last_reply(rows))
     out = []
     for s in rows:
         row = _out(s, reply=True, viewer=request.user)
@@ -73,7 +72,7 @@ def _state(viewer, session, row) -> tuple[str, str] | None:
         # The feed's own ownership rule (`feed.held`): a colleague's session on
         # their box is theirs to watch. An agent's own auto run counts — yours to
         # see moving, just not to answer.
-        held = feed.held(viewer, session, turn_mode=row["turn_mode"], turn_origin=getattr(session, "_turn_origin", "") or "")
+        held = feed.held(viewer, session, auto=feed.ran_on_its_own(session))
         if held == "":
             return att.RUNNING, "Running"
         if held == feed.AUTO:

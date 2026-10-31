@@ -13181,6 +13181,51 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/session-interrupts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Session Interrupts
+         * @description Stops a person asked of a session on this runner that it has not carried
+         *     out yet. The `session_interrupt` control frame is the doorbell; this is the
+         *     record, drained on the poll tick, so a frame lost while the control channel
+         *     was down costs a tick rather than the stop. A request older than
+         *     `control.INTERRUPT_TTL` is not offered.
+         */
+        readonly get: operations["list_session_interrupts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/session-interrupt-result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Session Interrupt Result
+         * @description The runner reports what became of a stop, which retires it. Matched on
+         *     `interrupt_id`, so a result for a stop since replaced leaves the newer one.
+         */
+        readonly post: operations["post_session_interrupt_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/session-menu": {
         readonly parameters: {
             readonly query?: never;
@@ -15334,8 +15379,10 @@ export interface paths {
         /**
          * Archive a session
          * @description Retire a session by hand. The escape hatch for a web chat — no runner will ever
-         *     report it archived — and for force-retiring a row without touching emdash.
-         *     Idempotent, and never destructive: /unarchive brings it straight back.
+         *     report it archived — and for retiring a row without touching emdash (that is
+         *     `/close`). Its queued and running turns are cancelled, and its runner's next
+         *     report does not revive it while the task stays open. Idempotent, and never
+         *     destructive: /unarchive brings it straight back, and so does sending to it.
          */
         readonly post: operations["archive_session"];
         readonly delete?: never;
@@ -39119,6 +39166,43 @@ export interface components {
              */
             readonly outcome: string;
         };
+        /** SessionInterruptOut */
+        readonly SessionInterruptOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Session Key */
+            readonly session_key: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /** Interrupt Id */
+            readonly interrupt_id: string;
+        };
+        /** SessionInterruptSyncOut */
+        readonly SessionInterruptSyncOut: {
+            /**
+             * Interrupts
+             * @default []
+             */
+            readonly interrupts: readonly components["schemas"]["SessionInterruptOut"][];
+        };
+        /** SessionInterruptResultIn */
+        readonly SessionInterruptResultIn: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Interrupt Id */
+            readonly interrupt_id: string;
+            /**
+             * Outcome
+             * @default
+             */
+            readonly outcome: string;
+        };
         /** SessionMenuOut */
         readonly SessionMenuOut: {
             /** Ok */
@@ -61996,6 +62080,54 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["MenuAnswerResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MenuAnswerResultOut"];
+                };
+            };
+        };
+    };
+    readonly list_session_interrupts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionInterruptSyncOut"];
+                };
+            };
+        };
+    };
+    readonly post_session_interrupt_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionInterruptResultIn"];
             };
         };
         readonly responses: {

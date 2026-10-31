@@ -21,7 +21,7 @@ import uuid
 
 from . import access
 from . import control
-from . import transcript_read
+from . import session_state, transcript_read
 from .models import Session
 
 #: A proposal's quote and reason, as shown in the panel.
@@ -47,7 +47,7 @@ def _readable(user, ids: list[uuid.UUID]) -> dict[uuid.UUID, Session]:
     rows = (access.readable_sessions(user).filter(pk__in=ids)
             .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
             .annotate(_last_msg_at=transcript_read.last_message_at()))
-    rows = transcript_read.with_open_turn(transcript_read.with_last_reply(transcript_read.with_driving_turn(rows)))
+    rows = session_state.with_state(transcript_read.with_last_reply(transcript_read.with_driving_turn(rows)))
     return {s.pk: s for s in rows}
 
 

@@ -18,6 +18,11 @@ from django.db import models
 class Session(models.Model):
     ACTIVE, ARCHIVED = "active", "archived"
     STATUS_CHOICES = [(ACTIVE, "Active"), (ARCHIVED, "Archived")]
+    #: `metadata` key: a person archived this session by hand
+    #: (`control.archive_session`). The runner's wholesale report does not revive
+    #: it while it keeps reporting the task; the task dropping out of a complete
+    #: report, an unarchive, or a send into the session clears it.
+    HAND_ARCHIVED_KEY = "archived_by_hand"
 
     # Provenance: was the session started in-app (web) or discovered on a
     # runner (runner)? Independent of which runner backs it.
@@ -655,6 +660,14 @@ class RunnerBinding(models.Model):
     # into a session that has moved on: the runner echoes the id back and the
     # server clears only that one.
     pending_answer = models.JSONField(null=True, blank=True, default=None)
+
+    # A stop asked of this session that its runner has not carried out yet:
+    # {"id": str, "at": epoch seconds}. `control.interrupt_session` writes it
+    # beside the `runner.session_interrupt` frame (the doorbell); the runner drains
+    # it on its poll tick (`GET /runners/{id}/session-interrupts`) and retires it by
+    # id (`POST .../session-interrupt-result`). Older than `control.INTERRUPT_TTL`
+    # it is no longer offered: a stop is about the work running when it was asked.
+    pending_interrupt = models.JSONField(null=True, blank=True, default=None)
 
     # A close the runner has not carried out yet — same reasoning as
     # `pending_answer`, for the other verb that only ever existed as a WS frame.

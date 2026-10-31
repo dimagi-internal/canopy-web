@@ -1,33 +1,19 @@
 """What is happening with one ask, right now — the one answer every channel renders.
 
-The failure this exists for is silence, and it was never Slack's failure alone: a
-person who sent something and sees nothing cannot tell "a runner is working on
-it" from "nothing will ever pick this up", whether they are reading a Slack
-thread, a canopy chat page, or an agent embedded in somebody else's product.
+`derive` turns a `Turn` plus `claim.turn_reach` into one of the states below;
+`resolve` gathers those inputs itself. Slack renders the result to mrkdwn and a
+button (`apps/slack/status.py`), the session socket to a frame the shared chat
+kit draws (`canopy_sessions.status_feed`); a new channel renders a status rather
+than inventing one, and may collapse states only from the full set.
 
-`apps/slack/status.py` answered it first and answered it well — states derived
-from the `Turn` plus `turn_reach`, including the three no client can infer for
-itself: its runner is offline, no runner is set up for this agent, its runner
-went offline mid-turn. But it answered INSIDE the Slack app, so the web guessed
-at a thinner version client-side (one boolean, plus a by-name match against the
-fleet list that fails open whenever `GET /runners/` omits a retired runner) and
-the embedded widget did not answer it at all.
+The states are the ones a PERSON distinguishes, which is why "queued" is five of
+them: the wait looks the same, but the remedy differs — wait (for a runner, or for
+the turn ahead), open the laptop, sign the CLI in on the box, or fix the agent's
+routing.
 
-So the derivation lives here, beside `turn_reach`, and each channel renders it:
-Slack to mrkdwn and a button, the session socket to a frame the shared chat kit
-draws. A new channel renders a status rather than inventing one — which is the
-whole test of whether this is the right seam.
-
-**The states are the ones a PERSON distinguishes**, which is why "queued" is
-three of them. The wait looks identical in all three; what you should do about
-it does not — wait, go open your laptop, or go fix the agent's routing. A
-channel is free to collapse them (Slack's native indicator has only three
-levels) but it must collapse from the full set rather than from a guess.
-
-Deliberately NOT a model or a column. The answer is a function of rows that
-already exist and change on their own clock (`Turn.status`, the runner's
-heartbeat); persisting it would create a second source of truth that goes stale
-exactly when the runner dies — which is the one case it has to get right.
+Not a model or a column: the answer is a function of rows that change on their
+own clock (`Turn.status`, the runner's heartbeat), and a stored copy would go
+stale exactly when a runner dies.
 """
 from __future__ import annotations
 
@@ -40,19 +26,17 @@ from .models import Turn
 #: Queued, and a live runner is going to take it. The only queued state that
 #: resolves itself.
 PICKING_UP = "picking_up"
-#: Queued, a live runner will take it — but not until the turn ahead of it ends:
-#: its conversation's previous message, or its agent's current turn, is still
-#: executing (`services.blocking_turn`, the claim's own busy rule). Resolves on
-#: its own, like PICKING_UP; saying "picking this up" instead made a follow-up
-#: sent mid-turn look lost (canopy-web#1147).
+#: Queued, a live runner will take it — but not until what is ahead of it ends:
+#: its conversation's previous message is still executing, or its session is
+#: mid-transfer (`routing.blocking_turn` / `transfer_holding`, the claim's own
+#: rules). Resolves on its own, like PICKING_UP.
 QUEUED_BEHIND = "queued_behind"
 #: Queued, its runner is offline. Resolves when a human opens the laptop — or
 #: when the ask is moved to a runner that is up.
 WAITING_RUNNER = "waiting_runner"
-#: Queued, its runner is online — but Claude is not signed in on it
-#: (`Runner.signed_out`), so it claims nothing. Resolves when a person signs in
-#: on that machine, or the ask is moved. Before this it read PICKING_UP, and the
-#: box answered each message with "Not logged in · Please run /login".
+#: Queued, its runner is online — but the agent CLI it needs is not signed in on
+#: it (`Runner.signed_out`, `clis.reported`), so it claims nothing. Resolves when
+#: a person signs in on that machine, or the ask is moved.
 SIGNED_OUT = "signed_out"
 #: Queued, and nothing is set up that could ever take it. Never resolves on its
 #: own; the agent's routing has to be fixed.
@@ -122,12 +106,9 @@ class TurnStatus:
     #: collapsing them would draw a spinner over a dialog nobody has answered,
     #: which is the exact lie a status exists to stop.
     menu_pending: bool = False
-    #: WHY a failed ask failed, in the runner's words (its `result_note`). Only
-    #: for FAILED: that is the one state whose cause cannot be inferred from the
-    #: state itself — "failed" covers an undelivered message, a stop that did
-    #: not take and a create that never rendered, and each wants a different
-    #: fix. Without it the chat said a bare "Could not finish." over a note that
-    #: spelled out exactly what to do (2026-09-27, eva's idm-talk).
+    #: WHY a failed ask failed, in the runner's words (its `result_note`) — for
+    #: FAILED, the one state whose cause cannot be inferred from the state itself
+    #: — or, for CANCELLED, the admission rule that rejected it (`rejection`).
     detail: str | None = None
     #: When the turn reached a terminal state. Lets a client tell a failure that
     #: is still the conversation's last word from one the session has since
@@ -139,7 +120,8 @@ class TurnStatus:
     #: runner would take the turn without it (`Reach.blocked_by_requirements`).
     requires: tuple[str, ...] = ()
     #: For QUEUED_BEHIND: what holds it — "session" (the previous message in
-    #: this conversation) or "agent" (another turn of the same agent).
+    #: this conversation, a transfer's turn included) or "transfer" (the session
+    #: is moving to another box and its source is still packing the work).
     behind: str | None = None
     #: For WAITING_RUNNER: its runners are not asleep but PAUSED — somebody
     #: decided (`claim.Reach` PARKED). `held_until` is when the first resumes on
@@ -149,13 +131,11 @@ class TurnStatus:
     #: For WORKING: when its runner took it, and when anything last came back from
     #: it (a ledger event — reply text, a tool call — or the claim itself). Facts,
     #: not a verdict: the client says "nothing back from cloud-ec2-2 for 6m" once
-    #: it has been quiet a while, because a box that claimed a turn and then went
-    #: silent drew "Thinking…" for as long as its lease lived (2026-10-17: its
-    #: token was revoked, so every report it made was refused).
+    #: it has been quiet for QUIET_AFTER_SECONDS (`quiet_since`).
     claimed_at: datetime | None = None
     last_progress_at: datetime | None = None
     #: For WORKING: would a follow-up sent NOW be typed into the running turn
-    #: (`routing.may_ride`, canopy-web#1153) rather than wait for it to end?
+    #: (`routing.may_ride`) rather than wait for it to end?
     #: `midturn_blocked` says why not, when it would not: "runner" (the box
     #: holding the turn does not deliver mid-turn — the cloud runner), "dialog"
     #: (the agent is on a question; a follow-up waits for the answer) or
@@ -254,10 +234,9 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
     does not pay again and a test can drive all thirteen states without a fleet.
     Use `resolve` to gather the inputs first.
 
-    Precedence is load-bearing and matches the order the Slack line has always
-    used: queued-ness first (it is the only state `reach` speaks to), then a
-    dead holder (which outranks anything the turn itself claims, because the
-    turn cannot know), then what the turn says.
+    Precedence is load-bearing: queued-ness first (it is the only state `reach`
+    speaks to), then a dead holder (which outranks anything the turn itself
+    claims, because the turn cannot know), then what the turn says.
     """
     from . import claim
     from . import runner_requirements as rr
@@ -272,16 +251,16 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
     pinned = False
     behind = None
     ahead = getattr(reach, "behind", None)
+    moving = getattr(reach, "transfer", False)
     if turn.status == Turn.QUEUED:
-        if ahead is not None and reach.kind == claim.LIVE:
-            # A live runner WILL take it — once the turn ahead ends. Named by
-            # the runner holding that turn, which is where it will run.
+        if (ahead is not None or moving) and reach.kind == claim.LIVE:
+            # A live runner WILL take it — once what is ahead ends. Named by the
+            # runner holding that turn, which is where it will run.
             state = QUEUED_BEHIND
-            runners = ((ahead.claimed_by.name,) if ahead.claimed_by_id
+            runners = ((ahead.claimed_by.name,) if ahead is not None and ahead.claimed_by_id
                        else tuple(r.name for r in reach.runners))
             pinned = bool(turn.pinned_runner_id)
-            same_session = turn.chat_session_id and ahead.chat_session_id == turn.chat_session_id
-            behind = "session" if same_session else "agent"
+            behind = "session" if ahead is not None else "transfer"
         elif turn.pinned_runner_id and reach is not None and reach.kind == claim.LIVE:
             state, runners, pinned = PICKING_UP, (turn.pinned_runner.name,), True
         elif reach is not None and reach.kind == claim.LIVE:
@@ -337,20 +316,14 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
 
 
 def waiting_behind(turn: Turn) -> list[Turn]:
-    """Queued turns that may be QUEUED_BEHIND this one: same conversation, or
-    same agent. When this turn moves — above all when it ends — their status
-    lines must be re-said, because nothing about THEM changed and so nothing
-    else would re-render them until a channel's sweep came round."""
-    from django.db.models import Q
-
-    q = Q()
-    if turn.chat_session_id:
-        q |= Q(chat_session_id=turn.chat_session_id)
-    if turn.agent_id:
-        q |= Q(agent_id=turn.agent_id)
-    if not q:
+    """Queued turns that may be QUEUED_BEHIND this one: the rest of its
+    conversation's queue. When this turn moves — above all when it ends — their
+    status lines must be re-said, because nothing about THEM changed and so
+    nothing else would re-render them until a channel's sweep came round."""
+    if not turn.chat_session_id:
         return []
-    return list(Turn.objects.filter(q, status=Turn.QUEUED).exclude(pk=turn.pk))
+    return list(Turn.objects.filter(chat_session_id=turn.chat_session_id, status=Turn.QUEUED)
+                .exclude(pk=turn.pk))
 
 
 def reach_and_cloud(turn: Turn):
@@ -360,16 +333,15 @@ def reach_and_cloud(turn: Turn):
     mid-turn, or lost while still the conversation's last word.
 
     Imports inside the function: `canopy_sessions` imports harness at module
-    level, and both are framework, so the dependency only works one way at
-    import time.
+    level, so the dependency only works one way at import time.
     """
-    from apps.canopy_sessions import send as session_send
+    from apps.canopy_sessions import placement as session_placement
 
     from . import claim
 
     if turn.status != Turn.QUEUED:
         if turn.chat_session_id and (runner_gone(turn) or movable_lost(turn)):
-            return None, session_send.available_cloud_runner(turn.chat_session,
+            return None, session_placement.available_cloud_runner(turn.chat_session,
                                                                   user=turn.enqueued_by)
         return None, None
     reach = claim.turn_reach(turn)
@@ -378,7 +350,7 @@ def reach_and_cloud(turn: Turn):
     # click re-checks the clicker (`services.may_place`).
     cloud = None
     if reach.kind != claim.LIVE and turn.chat_session_id:
-        cloud = session_send.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)
+        cloud = session_placement.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)
     return reach, cloud
 
 
@@ -412,7 +384,7 @@ def midturn_of(turn: Turn, *, menu_pending: bool) -> tuple[bool, str | None]:
     failed) cannot be asked, and a send almost never has them."""
     from . import routing  # noqa: PLC0415 — routing imports canopy_sessions, which imports this module
 
-    holder =turn.rides_turn if turn.rides_turn_id else turn
+    holder = turn.rides_turn if turn.rides_turn_id else turn
     if holder is None or holder.status not in (Turn.CLAIMED, Turn.RUNNING) or not turn.chat_session_id:
         return False, None
     if holder.capability:
