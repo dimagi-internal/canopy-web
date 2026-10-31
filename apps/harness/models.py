@@ -1405,7 +1405,7 @@ class RunnerCredential(models.Model):
     (`GH_TOKEN` in the runner's environment plus a global `~/.git-credentials`),
     so every agent on the box pushed as whoever made it, with whatever it could
     do; it could push branches and could not open pull requests (#747). GitHub is
-    now the agent OWNER's identity lent to that one agent (`AgentDelegation`),
+    now a person's identity lent to that one agent (delegated in its vault),
     handed to one turn at a time.
 
     NO BOX-WIDE VAULT KEY. Every secret lives in a canopy vault (the agent's own,

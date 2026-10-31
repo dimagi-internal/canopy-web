@@ -492,8 +492,7 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
                 "kind": "agent.github.issued",
                 "level": "info",
                 "key": f"{agent.slug}:{turn.pk}",
-                "summary": (f"{agent.slug}: GitHub identity for one turn on {runner.name}"
-                            + ("" if issued["delegated"] else " (token issued the old way)")),
+                "summary": f"{agent.slug}: GitHub identity for one turn on {runner.name}",
                 "payload": {"agent": agent.slug, "turn": str(turn.pk),
                             "runner": str(runner.pk), "as": issued["github_login"],
                             "delegated": issued["delegated"]},

@@ -2773,7 +2773,7 @@ class SkillHistoryOut(StrictModel):
     skills: list[SkillHistorySkillOut]
 
 
-# ---- GitHub: the owner's identity, lent to one agent (AgentDelegation) ----
+# ---- GitHub: a person's identity, lent to one agent (a delegated vault entry) ----
 class AgentGitHubIn(StrictModel):
     token: str
 
@@ -2814,7 +2814,7 @@ class AgentGitHubOut(StrictModel):
     #: set in Django admin.
     identity_for_repos: list[str] = Field(default_factory=list)
     #: The token is a credential delegated to the agent, in its vault: sealed to the
-    #: machines that run it and readable by no person (false: still held the old way).
+    #: machines that run it and readable by no person. Always true now; kept for older clients.
     in_vault: bool = False
     #: "GitHub · delegated by Jonathan Jackson · GitHub says it expires 12 Jan 2027".
     account_label: str = ""

@@ -20,7 +20,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentAdmin, AgentDelegation
+from apps.agents.models import Agent, AgentAdmin, AgentCredential
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import SessionParticipant
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment
@@ -89,17 +89,6 @@ def test_an_ex_member_owner_messaging_the_agent_is_a_contact(life):
     assert cc.relationship_for_user(leaver, agent) == cc.CONTACT
 
 
-def test_an_ex_member_owners_github_token_is_not_lent(life):
-    from apps.agents.credentials import delegations
-
-    agent, leaver = life["agent"], life["leaver"]
-    AgentDelegation.objects.create(user=leaver, agent=agent, service=AgentDelegation.GITHUB,
-                                   secret_enc="x")
-    assert delegations.delegation_for(agent) is not None
-    WorkspaceMembership.objects.filter(workspace=life["ws"], user=leaver).delete()
-    assert delegations.delegation_for(agent) is None
-
-
 def test_an_ex_member_owner_is_not_pushed_the_workspace_owners_are(life):
     from apps.push import services as push
 
@@ -115,8 +104,8 @@ def test_removal_sweeps_every_grant_the_membership_carried(life):
     ws, leaver, agent = life["ws"], life["leaver"], life["agent"]
     other = Agent.objects.create(slug="lifebot2", name="Life 2", workspace=ws)
     AgentAdmin.objects.create(agent=other, user=leaver)
-    AgentDelegation.objects.create(user=leaver, agent=agent, service=AgentDelegation.GITHUB,
-                                   secret_enc="x")
+    AgentCredential.objects.create(agent=agent, name="github-token", account="delegated", provider="github",
+                                   delegated_by=leaver, value_zk="zks1:x", kv=0)
     box = _runner(leaver, "leaver-box")
     RunnerAdmin.objects.create(runner=_runner(life["owner"], "owner-box"), user=leaver)
     RunnerAssignment.objects.create(agent=other, runner=box, rank=0)
@@ -127,7 +116,7 @@ def test_removal_sweeps_every_grant_the_membership_carried(life):
     _remove(life)
 
     assert not AgentAdmin.objects.filter(user=leaver).exists()
-    assert not AgentDelegation.objects.filter(user=leaver).exists()
+    assert not AgentCredential.objects.filter(delegated_by=leaver).exists()
     assert not RunnerAdmin.objects.filter(user=leaver).exists()
     assert not RunnerAssignment.objects.filter(runner=box).exists()
     assert not SessionParticipant.objects.filter(user=leaver).exists()

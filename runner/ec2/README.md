@@ -462,7 +462,7 @@ only about naming. An agent's values are named entries in its own Canopy vault
 whatever canopy-web has recorded for that agent or workspace — it is never derived
 from the slug, so an agent with no vault is simply not provisioned.
 **GitHub is not in any vault.** A box holds no GitHub credential: an agent's
-GitHub identity is its OWNER's, lent to that one agent (`AgentDelegation`, set on
+GitHub identity is its OWNER's, lent to that one agent (a credential delegated in its vault, set on
 the agent's Settings → External accounts → GitHub). Each turn asks canopy-web for it
 (`POST /api/harness/runners/{id}/turns/{id}/github-token`) and it lives only in
 that turn's environment; bootstrap uses the same token for that agent's private

@@ -845,8 +845,7 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
   `Requested-by:` trailer, and `delegated: "github-token"` with the `agent` whose vault
   holds it — no token. The cloud runner opens it from its OWN resolve of that agent
   (`delegated` field, opened by the canopy CLI with the box's key;
-  `cloud_runner._delegated_value`). A token still held the old way (`AgentDelegation`,
-  until `manage.py move_delegations_to_vault --apply`) comes in `token`, as before.
+  `cloud_runner._delegated_value`). `token` is always empty now (older runners still read it).
 - **Checked by the boxes.** canopy-web cannot open it, so a box that does probes it at
   most every six hours (`cloud_runner.probe_github_token`) and reports
   `POST /api/harness/runners/{rid}/delegated-checks`; a failed probe turns `github.<slug>`
