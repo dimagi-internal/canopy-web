@@ -191,6 +191,11 @@ export function MessageItem({
   // own treatment — in the agent's `bg-muted` it read as the agent talking.
   const cancelled = message.role === "user" && message.content?.cancelled === true;
   const cancelledBy = typeof message.content?.cancelled_by === "string" ? message.content.cancelled_by : "";
+  // A send whose turn ended without reaching the agent (failed, lost), not one
+  // somebody withdrew.
+  const undelivered = cancelled && message.content?.undelivered === true;
+  const undeliveredDetail =
+    typeof message.content?.undelivered_detail === "string" ? message.content.undelivered_detail : "";
   const bubbleClass =
     cancelled
       ? `${otherAuthor ? "mr-auto" : "ml-auto"} border border-dashed border-border bg-muted/40 text-muted-foreground`
@@ -263,7 +268,9 @@ export function MessageItem({
           never looks like it vanished; flagged plainly if it did not go. */}
       {cancelled && (
         <div data-testid="message-cancelled" className="mt-1 text-[11px]">
-          Cancelled{cancelledBy ? ` by ${cancelledBy}` : ""} — the agent never read this
+          {undelivered
+            ? `Not delivered — the agent never read this${undeliveredDetail ? ` (${undeliveredDetail})` : ""}`
+            : `Cancelled${cancelledBy ? ` by ${cancelledBy}` : ""} — the agent never read this`}
         </div>
       )}
       {message.role === "user" && isPending && (

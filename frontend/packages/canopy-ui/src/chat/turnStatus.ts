@@ -103,7 +103,10 @@ export function pendingLabel({
     // A live runner will take it, but only once the turn ahead ends: "picking
     // this up" would make a follow-up sent mid-turn look lost.
     const [first] = status.runners;
-    const ahead = status.behind === "session" ? "the previous message" : "the agent's current turn";
+    const ahead =
+      status.behind === "session" ? "the previous message"
+      : status.behind === "transfer" ? "the move to this runner"
+      : "the agent's current turn";
     return first ? `Queued behind ${ahead} on ${first}…` : `Queued behind ${ahead}…`;
   }
   if (status?.state === "picking_up") {

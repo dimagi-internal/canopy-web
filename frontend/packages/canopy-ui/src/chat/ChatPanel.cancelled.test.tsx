@@ -56,4 +56,16 @@ describe("a cancelled send", () => {
     const texts = screen.getAllByText(/message A|message B|reply to B/).map((e) => e.textContent);
     expect(texts).toEqual(["message A", "message B", "reply to B"]);
   });
+
+  it("says a send that failed was not delivered, with the runner's reason", () => {
+    const failed: CancelledSend = { ...cancelledA, cancelled_by: "", state: "failed", detail: "runner went away" };
+    const state = { messages: transcript, cancelled: [failed], active_draft: null, participants: [],
+      presence_user_ids: [1], current_user_id: 1 } as unknown as SessionState;
+    render(<ChatPanel connected currentUserId={1} onSend={() => undefined} onStop={() => undefined}
+      onUpdateDraft={() => undefined} onDiscard={() => undefined} state={state} />);
+    const label = screen.getByTestId("message-cancelled");
+    expect(label.textContent).toContain("Not delivered");
+    expect(label.textContent).toContain("runner went away");
+    expect(label.textContent).not.toContain("Cancelled");
+  });
 });
