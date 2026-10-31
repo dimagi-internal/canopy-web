@@ -1871,6 +1871,8 @@ class AgentProjectDetailOut(AgentProjectOut):
     may_edit: bool = False
     #: What it serves to the workspace.
     services: list[ProjectServiceOut] = Field(default_factory=list)
+    #: The workspace vaults attached to it, only those in a workspace the reader belongs to.
+    vaults: list[ProjectVaultOut] = Field(default_factory=list)
 
 
 # ---- shared ----
@@ -2376,11 +2378,22 @@ class VaultHoldersOut(StrictModel):
 class VaultAttachmentOut(StrictModel):
     id: int
     #: Exactly one: the agent it serves, the workspace whose agents (and those below) it
-    #: serves, or the cloud runner whose own Claude credentials it holds (its id).
+    #: serves, the project whose member agents it serves, or the cloud runner whose own
+    #: Claude credentials it holds (its id).
     agent: str | None = None
     workspace: str | None = None
     runner: str | None = None
     runner_name: str | None = None
+    #: A project's address, `<workspace>/<handle>`: the vault serves its CURRENT member
+    #: agents that lie in the vault's tree.
+    project: str | None = None
+    #: A project's member agents (slugs) the vault serves now ...
+    served: list[str] = []
+    #: ... and the ones it does not, because they lie outside the vault's tree (an agent of
+    #: a sibling workspace that joined through a share).
+    not_served: list[str] = []
+    #: The project itself lies outside the vault's tree now, so it serves nobody.
+    project_outside_tree: bool = False
     #: A runner's standing: "has" a copy of the vault's key, is "waiting" for one (a
     #: holder's passkey gives it), or "none" (no approved key it could hold one with).
     #: "" when it is not a runner, or the vault has no key yet.
@@ -2411,6 +2424,8 @@ class VaultCreateIn(StrictModel):
 class VaultAttachIn(StrictModel):
     agent: str | None = None
     workspace: str | None = None
+    #: A project's address, `<workspace>/<handle>`.
+    project: str | None = None
     #: A cloud runner's id: the vault then holds that box's Claude credentials.
     runner: str | None = None
 
@@ -3486,6 +3501,22 @@ class ProjectServiceOut(StrictModel):
     #: A skill's instructions: what an agent reads when it uses the skill.
     instructions: str = ""
     updated_at: dt.datetime
+
+
+class ProjectVaultOut(StrictModel):
+    """A workspace vault attached to a project: names only, never a value. Its member agents
+    that lie in the vault's tree read it in their turns."""
+
+    vault_id: str
+    workspace: str
+    name: str
+    #: Secret NAMES the vault holds.
+    secrets: list[str] = []
+    #: Member agents served now, and member agents not served (outside the vault's tree).
+    served: list[str] = []
+    not_served: list[str] = []
+    #: The project itself lies outside the vault's tree, so it serves nobody.
+    project_outside_tree: bool = False
 
 
 class ProjectServiceIn(StrictModel):

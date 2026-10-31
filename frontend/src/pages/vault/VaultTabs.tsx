@@ -140,9 +140,13 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
               {served.map((a) => (
                 <tr key={a.id}>
                   <td className="py-1.5 text-foreground">
-                    {a.agent ? `agent ${a.agent}` : `every agent in ${a.workspace} and below`}
+                    {a.project
+                      ? `member agents of project ${a.project}`
+                      : a.agent ? `agent ${a.agent}` : `every agent in ${a.workspace} and below`}
                   </td>
-                  <td className="py-1.5 text-muted-foreground">layered under each agent’s own secrets</td>
+                  <td className="py-1.5 text-muted-foreground" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>
+                    {a.project ? projectServing(a) : 'layered under each agent’s own secrets'}
+                  </td>
                   <td className="py-1.5 text-right">
                     {manages && (
                       <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
@@ -161,12 +165,14 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
             onSubmit={(e) => {
               e.preventDefault()
               const t = target.trim()
-              // "workspace:<slug>" serves a workspace and below; anything else is an agent.
-              const to = t.startsWith('workspace:') ? { workspace: t.slice(10) } : { agent: t }
+              // "workspace:<slug>" serves a workspace and below, "project:<workspace>/<handle>" a
+              // project's member agents; anything else is an agent.
+              const to = t.startsWith('workspace:') ? { workspace: t.slice(10) }
+                : t.startsWith('project:') ? { project: t.slice(8) } : { agent: t }
               void run(() => attachWorkspaceVault(v.vault_id, to)).then((ok) => ok && setTarget(''))
             }}>
-            <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="agent slug, or workspace:slug"
-              aria-label={`Serve an agent or workspace from ${v.name}`} className={inputClass} />
+            <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="agent slug, workspace:slug or project:workspace/handle"
+              aria-label={`Serve an agent, workspace or project from ${v.name}`} className={inputClass} />
             <button type="submit" disabled={busy || !target.trim()} className={buttonClass}>Serve it</button>
           </form>
         )}
@@ -174,6 +180,17 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
       {errorLine}
     </div>
   )
+}
+
+/** What a project attachment serves right now: its member agents in the vault's tree, and those it cannot. */
+function projectServing(a: WorkspaceVaultOut['attachments'][number]): string {
+  const served = a.served ?? []
+  const notServed = a.not_served ?? []
+  const first = served.length ? `serves ${served.join(', ')}` : 'serves no agent now'
+  const rest = a.project_outside_tree
+    ? `; the project itself is outside this vault's workspace tree, so none of ${notServed.join(', ') || 'its agents'} is served`
+    : notServed.length ? `; not served (outside the vault's tree): ${notServed.join(', ')}` : ''
+  return first + rest
 }
 
 /** Who can open it: the people, and why each is one; the runners, and where each one's key lives. */

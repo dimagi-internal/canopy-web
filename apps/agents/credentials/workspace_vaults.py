@@ -9,8 +9,9 @@ for either with the same code, and a copy made for one can never open the other.
 
 * **Who may open it** is its membership (`vault_members`): by default the workspace's
   owners (`owner`) and everyone with full access to an agent it is attached to (`member`).
-* **Which agents it serves** are its attachments: one agent, or every agent in a
-  workspace and below it. A turn reads every vault attached to its agent, layered under
+* **Which agents it serves** are its attachments: one agent, every agent in a
+  workspace and below it, or every current member agent of a project that lie in the
+  vault's tree. A turn reads every vault attached to its agent, layered under
   the agent's own vault (`layers_for`).
 * **Who may hold its key:** a member with a vault key of their own; a machine whose
   person is a member AND that serves an agent the vault is attached to — or that is a
@@ -61,23 +62,26 @@ def create(workspace, name: str, *, by) -> Vault:
 
 
 def attach(vault: Vault, *, agent: Agent | None = None, workspace=None, runner: Runner | None = None,
-           by=None) -> VaultAttachment:
-    """Serve one agent, every agent in `workspace` and below, or one cloud runner. None
-    may lie outside the vault's own workspace tree below it, and a runner must share an
+           project=None, by=None) -> VaultAttachment:
+    """Serve one agent, every agent in `workspace` and below, every current member agent
+    of `project`, or one cloud runner. None may lie outside the vault's own workspace tree
+    below it (a project: its own workspace must lie in it), and a runner must share an
     isolation boundary with every runner the vault already serves."""
-    allowed = {vault.workspace_id} | wsvc.descendant_slugs({vault.workspace_id})
-    if sum(x is not None for x in (agent, workspace, runner)) != 1:
-        raise ZkError(422, "vault_bad_attachment", "attach to exactly one agent, workspace or runner")
+    allowed = vault_members.vault_tree(vault)
+    if sum(x is not None for x in (agent, workspace, runner, project)) != 1:
+        raise ZkError(422, "vault_bad_attachment", "attach to exactly one agent, workspace, project or runner")
     if runner is not None:
         _check_runner(vault, runner, allowed)
         where = runner.workspace_id
+    elif project is not None:
+        where = project.workspace_id
     else:
         where = agent.workspace_id if agent is not None else workspace.slug
     if where not in allowed:
         raise ZkError(422, "vault_bad_attachment",
                       f"{where} is not {vault.workspace_id} or a workspace below it")
     row, _ = VaultAttachment.objects.get_or_create(vault=vault, agent=agent, workspace=workspace,
-                                                   runner=runner, defaults={"created_by": by})
+                                                   runner=runner, project=project, defaults={"created_by": by})
     return row
 
 
@@ -182,14 +186,20 @@ def create_for_runner(runner: Runner, *, by) -> Vault:
 def layers_for(agent: Agent) -> list[Vault]:
     """The workspace vaults a turn of `agent` reads, in layering order (a later layer
     wins a name clash): vaults attached to a workspace above-or-at the agent's, root
-    first; then vaults attached to the agent itself, oldest first. The agent's own
-    vault is the top layer, outside this list."""
+    first; then vaults attached to a project the agent is a member of, oldest first;
+    then vaults attached to the agent itself, oldest first. The agent's own
+    vault is the top layer, outside this list.
+
+    A project's vault counts only while the agent is a member NOW, and only when both the
+    agent and the project lie in the vault's tree (`vault_members.project_agents`)."""
     if not agent.workspace_id:
         return []
     chain = [agent.workspace_id] + list(agent.workspace.ancestor_slugs())  # nearest first
     depth = {slug: i for i, slug in enumerate(chain)}
     by_tree = (VaultAttachment.objects.filter(workspace_id__in=chain, vault__kind=Vault.WORKSPACE)
                .select_related("vault"))
+    by_project = (VaultAttachment.objects.filter(project__member_agents=agent, vault__kind=Vault.WORKSPACE)
+                  .select_related("vault", "project").order_by("created_at", "pk"))
     direct = (VaultAttachment.objects.filter(agent=agent, vault__kind=Vault.WORKSPACE)
               .select_related("vault").order_by("created_at"))
     out, seen = [], set()
@@ -197,10 +207,33 @@ def layers_for(agent: Agent) -> list[Vault]:
         if a.vault_id not in seen:
             seen.add(a.vault_id)
             out.append(a.vault)
+    trees: dict[str, set[str]] = {}
+    for a in by_project:
+        tree = trees.setdefault(a.vault.workspace_id, vault_members.vault_tree(a.vault))
+        if a.vault_id not in seen and agent.workspace_id in tree and a.project.workspace_id in tree:
+            seen.add(a.vault_id)
+            out.append(a.vault)
     for a in direct:
         if a.vault_id not in seen:
             seen.add(a.vault_id)
             out.append(a.vault)
+    return out
+
+
+def project_vaults(project, user) -> list[dict]:
+    """The workspace vaults attached to `project` that `user` may know exist (they belong
+    to the vault's workspace), as `ProjectVaultOut` rows: names only, never a value."""
+    out = []
+    for a in (VaultAttachment.objects.filter(project=project, vault__kind=Vault.WORKSPACE)
+              .select_related("vault__workspace").order_by("created_at", "pk")):
+        v = a.vault
+        if not getattr(user, "is_authenticated", False) or wsvc.membership(user, v.workspace) is None:
+            continue
+        served, unserved = vault_members.project_agents(v, project)
+        out.append({"vault_id": str(v.pk), "workspace": v.workspace_id, "name": v.name,
+                    "secrets": sorted(VaultSecret.objects.filter(vault=v).values_list("name", flat=True)),
+                    "served": [x.slug for x in served], "not_served": [x.slug for x in unserved],
+                    "project_outside_tree": project.workspace_id not in vault_members.vault_tree(v)})
     return out
 
 

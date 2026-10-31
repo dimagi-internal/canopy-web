@@ -324,7 +324,8 @@ def _vault(p: Plan, apply: bool) -> None:
 @register
 def _vault_attachments(p: Plan, apply: bool) -> None:
     """Workspace vaults attached to this agent serve it only inside their own tree: an
-    attachment whose vault's tree does not hold the destination is dropped."""
+    attachment whose vault's tree does not hold the destination is dropped. One attached to
+    a project it works on is reported the same way (it stops by itself)."""
 
     rows = list(VaultAttachment.objects.filter(agent=p.agent).select_related("vault"))
     gone = [a for a in rows
@@ -335,6 +336,15 @@ def _vault_attachments(p: Plan, apply: bool) -> None:
                                      + ", ".join(f"{a.vault.workspace_id}/{a.vault.name}" for a in gone))
         if apply:
             VaultAttachment.objects.filter(pk__in=[a.pk for a in gone]).delete()
+    # A vault attached to a project it works on serves it while it is a member and in the
+    # vault's tree. Nothing is stored for it, so there is nothing to delete: it simply stops.
+    through = [a for a in (VaultAttachment.objects.filter(project__member_agents=p.agent)
+                           .select_related("vault", "project"))
+               if p.dest.slug not in {a.vault.workspace_id} | wsvc.descendant_slugs({a.vault.workspace_id})]
+    if through:
+        p.breaks("workspace_vaults_through_projects",
+                 f"{len(through)} workspace vault(s) stop serving {p.agent.slug} through the project(s) it works on: "
+                 + ", ".join(f"{a.vault.workspace_id}/{a.vault.name} (via {a.project.address})" for a in through))
 
 
 @register

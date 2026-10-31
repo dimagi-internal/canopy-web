@@ -11,7 +11,7 @@ import { vaultHref } from '@/lib/scopedLinks'
 function serves(v: WorkspaceVaultOut): string {
   if (v.attachments.length === 0) return 'nothing yet'
   return v.attachments
-    .map((a) => (a.runner ? `runner ${a.runner_name ?? a.runner}` : a.agent ? a.agent : `every agent in ${a.workspace} and below`))
+    .map((a) => (a.runner ? `runner ${a.runner_name ?? a.runner}` : a.project ? `project ${a.project}` : a.agent ? a.agent : `every agent in ${a.workspace} and below`))
     .join('; ')
 }
 

@@ -29,6 +29,7 @@ from apps.workspaces.models import Workspace
 
 from .credentials import vault_keeper, vault_members, workspace_vaults
 from .credentials.zk import ZkError
+from .gates import project_ws_or_404
 from .models import Agent, Vault, VaultAttachment, VaultSecret
 from .route_refusals import zk_problem
 from .schemas import (
@@ -76,7 +77,7 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
     held, keepers = workspace_vaults.copies(v)
-    attached = list(VaultAttachment.objects.filter(vault=v).select_related("agent", "runner"))
+    attached = list(VaultAttachment.objects.filter(vault=v).select_related("agent", "runner", "project"))
     # A runner it serves is a member at the hardware level: say where its key lives and
     # whether it holds a copy of the vault's key, is waiting for one, or cannot have one yet.
     runner_ids = [a.runner_id for a in attached if a.runner_id]
@@ -84,6 +85,15 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
                if v.kv and runner_ids else set())
     places = dict(RunnerDeviceKey.objects.filter(runner_id__in=runner_ids, status=RunnerDeviceKey.ACTIVE)
                   .exclude(ecdh_jkt="").values_list("runner_id", "ecdh_store"))
+
+    tree = vault_members.vault_tree(v)
+
+    def project_row(a) -> dict:
+        if not a.project_id:
+            return {}
+        served, unserved = vault_members.project_agents(v, a.project, tree)
+        return {"project": a.project.address, "served": [x.slug for x in served],
+                "not_served": [x.slug for x in unserved], "project_outside_tree": a.project.workspace_id not in tree}
 
     def access(a) -> str:
         if not v.kv:
@@ -99,7 +109,8 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
                       "runner": str(a.runner_id) if a.runner_id else None,
                       "runner_name": a.runner.name if a.runner_id else None,
                       "access": access(a) if a.runner_id else "",
-                      "key_place": places.get(a.runner_id, "") if a.runner_id else ""}
+                      "key_place": places.get(a.runner_id, "") if a.runner_id else "",
+                      **project_row(a)}
                      for a in attached],
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
@@ -192,11 +203,14 @@ def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, use
 
 
 @router.post("/vaults/{vault_id}/attachments", response=WorkspaceVaultOut,
-             summary="Serve an agent, every agent in a workspace and below, or a cloud runner from a vault")
+             summary="Serve an agent, a workspace's agents, a project's member agents or a cloud runner from a vault")
 @gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: VaultAttachIn):
-    """`{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
-    a cloud runner whose Claude credentials the vault then holds. A runner needs the
+    """`{agent}`, `{workspace}` (the vault's own workspace or one below it), `{project}`
+    (`<workspace>/<handle>`, in the vault's tree: every current member agent in that tree is
+    served, and joining or leaving the project changes it) or `{runner}`:
+    a cloud runner whose Claude credentials the vault then holds. A project needs the caller
+    to be an editor of the project's workspace too. A runner needs the
     caller to administer it too, and must share an isolation boundary with every runner
     the vault already serves (422 `vault_crosses_isolation`). Attaching makes the box
     eligible for a copy of the key; a holder still has to grant it one."""
@@ -206,16 +220,32 @@ def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: V
     runner = _administered_runner(request, payload.runner) if payload.runner else None
     if (payload.agent and agent is None) or (payload.workspace and ws is None):
         raise ProblemError(404, "Not found", detail="no such agent or workspace", type_=TYPE_NOT_FOUND)
+    project = _editable_project(request, payload.project) if payload.project else None
     # An attached agent reads the vault's secrets in its turns, layered under its own, and everyone
     # with full access to it joins the vault. A vault's manager may share the vault with an agent
     # only if they administer that agent; to anyone else it is as if the agent did not exist.
     if agent is not None and not agent.is_admin(request.user):
         raise ProblemError(404, "Not found", detail="no such agent or workspace", type_=TYPE_NOT_FOUND)
     try:
-        workspace_vaults.attach(v, agent=agent, workspace=ws, runner=runner, by=request.user)
+        workspace_vaults.attach(v, agent=agent, workspace=ws, runner=runner, project=project, by=request.user)
     except ZkError as exc:
         raise _problem(exc) from exc
     return _out(v, request.user)
+
+
+def _editable_project(request: HttpRequest, address: str):
+    """The project named `<workspace>/<handle>` that the caller may read AND edit as an editor
+    of its workspace; else 404, as for an agent they do not administer. Attaching hands the
+    vault to every present and future member agent, so the project's lead or a working agent's
+    login is not enough (as for sharing a project)."""
+    ws, _, handle = (address or "").strip().partition("/")
+    try:
+        project = project_ws_or_404(request, ws, handle)
+    except HttpError:
+        project = None
+    if project is None or not perms.can(request.user, project.workspace_id, perms.AGENT_WORK):
+        raise ProblemError(404, "Not found", detail="no such project you may edit", type_=TYPE_NOT_FOUND)
+    return project
 
 
 def _administered_runner(request: HttpRequest, runner_id: str) -> Runner:

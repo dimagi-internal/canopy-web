@@ -10776,9 +10776,12 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Serve an agent, every agent in a workspace and below, or a cloud runner from a vault
-         * @description `{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
-         *     a cloud runner whose Claude credentials the vault then holds. A runner needs the
+         * Serve an agent, a workspace's agents, a project's member agents or a cloud runner from a vault
+         * @description `{agent}`, `{workspace}` (the vault's own workspace or one below it), `{project}`
+         *     (`<workspace>/<handle>`, in the vault's tree: every current member agent in that tree is
+         *     served, and joining or leaving the project changes it) or `{runner}`:
+         *     a cloud runner whose Claude credentials the vault then holds. A project needs the caller
+         *     to be an editor of the project's workspace too. A runner needs the
          *     caller to administer it too, and must share an isolation boundary with every runner
          *     the vault already serves (422 `vault_crosses_isolation`). Attaching makes the box
          *     eligible for a copy of the key; a holder still has to grant it one.
@@ -26919,6 +26922,8 @@ export interface components {
             readonly may_edit: boolean;
             /** Services */
             readonly services?: readonly components["schemas"]["ProjectServiceOut"][];
+            /** Vaults */
+            readonly vaults?: readonly components["schemas"]["ProjectVaultOut"][];
         };
         /**
          * AgentTaskOut
@@ -27275,6 +27280,39 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
+        };
+        /**
+         * ProjectVaultOut
+         * @description A workspace vault attached to a project: names only, never a value. Its member agents
+         *     that lie in the vault's tree read it in their turns.
+         */
+        readonly ProjectVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Secrets
+             * @default []
+             */
+            readonly secrets: readonly string[];
+            /**
+             * Served
+             * @default []
+             */
+            readonly served: readonly string[];
+            /**
+             * Not Served
+             * @default []
+             */
+            readonly not_served: readonly string[];
+            /**
+             * Project Outside Tree
+             * @default false
+             */
+            readonly project_outside_tree: boolean;
         };
         /** TurnBriefOut */
         readonly TurnBriefOut: {
@@ -36430,6 +36468,23 @@ export interface components {
             readonly runner?: string | null;
             /** Runner Name */
             readonly runner_name?: string | null;
+            /** Project */
+            readonly project?: string | null;
+            /**
+             * Served
+             * @default []
+             */
+            readonly served: readonly string[];
+            /**
+             * Not Served
+             * @default []
+             */
+            readonly not_served: readonly string[];
+            /**
+             * Project Outside Tree
+             * @default false
+             */
+            readonly project_outside_tree: boolean;
             /**
              * Access
              * @default
@@ -36479,6 +36534,8 @@ export interface components {
             readonly agent?: string | null;
             /** Workspace */
             readonly workspace?: string | null;
+            /** Project */
+            readonly project?: string | null;
             /** Runner */
             readonly runner?: string | null;
         };

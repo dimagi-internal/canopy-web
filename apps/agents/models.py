@@ -960,10 +960,12 @@ class VaultKeyWrap(models.Model):
 
 class VaultAttachment(models.Model):
     """What a WORKSPACE vault serves: one agent, or every agent in a workspace and
-    below it (`workspace`, a subtree) — a turn of an agent reads every vault attached
-    to it, layered under its own (`workspace_vaults.layered_for`) — or one cloud
-    RUNNER, whose own Claude credentials it holds (`workspace_vaults.runner_layers`;
-    spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md)."""
+    below it (`workspace`, a subtree), or every CURRENT member agent of a project
+    (`project`; no list is stored, so joining the project gives the vault and leaving
+    it takes it away) — a turn of an agent reads every vault attached to it, layered
+    under its own (`workspace_vaults.layers_for`) — or one cloud RUNNER, whose own
+    Claude credentials it holds (`workspace_vaults.runner_layers`; spec
+    2026-10-23-runner-claude-credentials-in-the-vault-design.md)."""
 
     vault = models.ForeignKey("Vault", on_delete=models.CASCADE, related_name="attachments")
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True,
@@ -972,6 +974,8 @@ class VaultAttachment(models.Model):
                                   related_name="vault_attachments")
     runner = models.ForeignKey("harness.Runner", on_delete=models.CASCADE, null=True, blank=True,
                                related_name="vault_attachments")
+    project = models.ForeignKey("agents.AgentProject", on_delete=models.CASCADE, null=True, blank=True,
+                                related_name="vault_attachments")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -980,9 +984,10 @@ class VaultAttachment(models.Model):
         ordering = ["vault_id", "created_at"]
         constraints = [
             models.CheckConstraint(
-                condition=(models.Q(agent__isnull=False, workspace__isnull=True, runner__isnull=True)
-                           | models.Q(agent__isnull=True, workspace__isnull=False, runner__isnull=True)
-                           | models.Q(agent__isnull=True, workspace__isnull=True, runner__isnull=False)),
+                condition=(models.Q(agent__isnull=False, workspace__isnull=True, runner__isnull=True, project__isnull=True)
+                           | models.Q(agent__isnull=True, workspace__isnull=False, runner__isnull=True, project__isnull=True)
+                           | models.Q(agent__isnull=True, workspace__isnull=True, runner__isnull=False, project__isnull=True)
+                           | models.Q(agent__isnull=True, workspace__isnull=True, runner__isnull=True, project__isnull=False)),
                 name="vault_attachment_one_target"),
             models.UniqueConstraint(fields=["vault", "agent"], name="one_vault_attachment_per_agent",
                                     condition=models.Q(agent__isnull=False)),
@@ -990,10 +995,12 @@ class VaultAttachment(models.Model):
                                     condition=models.Q(workspace__isnull=False)),
             models.UniqueConstraint(fields=["vault", "runner"], name="one_vault_attachment_per_runner",
                                     condition=models.Q(runner__isnull=False)),
+            models.UniqueConstraint(fields=["vault", "project"], name="one_vault_attachment_per_project",
+                                    condition=models.Q(project__isnull=False)),
         ]
 
     def __str__(self) -> str:
-        return f"{self.vault_id} -> {self.agent_id or self.workspace_id}"
+        return f"{self.vault_id} -> {self.agent_id or self.workspace_id or self.project_id or self.runner_id}"
 
 
 class VaultMember(models.Model):
