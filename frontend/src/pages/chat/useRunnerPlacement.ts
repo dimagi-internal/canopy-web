@@ -1,31 +1,37 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import type { PlacementRunner } from 'canopy-ui/chat'
+import type { PlacementRunner, TurnStatus } from 'canopy-ui/chat'
 
 import { ChatApiError, getSession, placeTurn, transferSession, type ChatSessionDetail } from '@/api/chat'
 import { listRunners, recentRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
-import {
-  findBoundRunner,
-  isBoundRunnerOffline,
-  onlineSessionCapableRunners,
-} from '@/components/chat/runnerEligibility'
+import { findBoundRunner, onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
 import { withFreshLiveness } from '../chatPageLogic'
 
 export const RECOVERY_POLL_MS = 30_000
 /** How old a fleet read another page made may be and still open a chat (`recentRunners`). */
 export const FLEET_REUSE_MS = 60_000
 
-/** The offline-runner placement banner: whether the session's bound runner is
- *  offline or paused, where else the turn could go, and the actions (wait,
- *  continue on another runner, resume a paused one).
+/** Whether a turn is held by a runner that is away: queued for an offline or
+ *  paused box (`waiting_runner`; `parked` when someone paused it), or claimed by
+ *  one that went offline mid-turn (`paused`). The server's answer, live on the
+ *  socket — nothing here guesses from a runner list. */
+export function heldByAbsentRunner(status: TurnStatus | null | undefined): boolean {
+  return status?.state === 'waiting_runner' || status?.state === 'paused'
+}
+
+/** The offline-runner placement banner: whether the turn is held by a runner
+ *  that is away (from the server's `turn_status`, `heldByAbsentRunner`), where
+ *  else the turn could go, and the actions (wait, continue on another runner,
+ *  resume a paused one).
  *
- *  The session payload only carries `runner_name` (no runner id/liveness), so
- *  offline-ness is DERIVED by matching that name against the fleet-wide runner
- *  list, which is fetched once (or reused, when another page read it within
- *  FLEET_REUSE_MS) and re-polled while the banner shows. */
+ *  The fleet list is read only for the choices — which runners "Continue on…"
+ *  offers, and the paused runner's id for Resume. It is fetched once (or
+ *  reused, when another page read it within FLEET_REUSE_MS) and re-polled
+ *  while the banner shows. */
 export function useRunnerPlacement(
   sessionId: string,
   meta: ChatSessionDetail | null,
   setMeta: Dispatch<SetStateAction<ChatSessionDetail | null>>,
+  turnStatus?: TurnStatus | null,
 ) {
   const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>(() => recentRunners(FLEET_REUSE_MS) ?? [])
   const [placing, setPlacing] = useState(false)
@@ -57,7 +63,14 @@ export function useRunnerPlacement(
     }
   }, [])
 
-  const boundOffline = isBoundRunnerOffline(meta?.runner_name, fleetRunners, meta?.runner_online)
+  const boundOffline = heldByAbsentRunner(turnStatus)
+  // The box the turn waits on: the one holding it, else the one it is queued
+  // for, else the session's binding.
+  const runnerName = turnStatus?.claimed_by ?? turnStatus?.runners?.[0] ?? meta?.runner_name ?? null
+  // A Resume tapped here: the pause is lifted, whatever the status says until
+  // the server's next one arrives.
+  const [resumedFor, setResumedFor] = useState<TurnStatus | null | undefined>(undefined)
+  const resumed = resumedFor !== undefined && resumedFor === turnStatus
   // Only runners the conversation's host allows (e.g. sensitive-data runners): the server refuses any
   // other placement, so offering one would only produce an error.
   const runnerRequirements = meta?.runner_requirements
@@ -67,8 +80,9 @@ export function useRunnerPlacement(
   )
   // The bound runner's fleet row — the id `Resume` needs, and the `paused` /
   // `can_manage` flags that decide whether resuming is even on offer here.
-  const boundRunner = findBoundRunner(meta?.runner_name, fleetRunners)
-  const boundPaused = boundOffline && Boolean(boundRunner?.paused)
+  const boundRunner = findBoundRunner(runnerName, fleetRunners)
+  const boundPaused =
+    turnStatus?.state === 'waiting_runner' && Boolean(turnStatus.parked) && !resumed
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
   const placementRunners: PlacementRunner[] = useMemo(
@@ -86,22 +100,11 @@ export function useRunnerPlacement(
       })
   }, [])
 
-  // While the offline banner is up, a bound runner that recovers later in
-  // the same page-load would otherwise leave a stale-offline false positive
-  // forever. Poll on a modest interval for as long as the condition holds, so
-  // recovery hides the banner; stop the instant it flips false (recovered, or
-  // session switch).
-  //
-  // Each tick re-reads the SESSION's liveness too, not just the fleet: the
-  // payload's `runner_online` is authoritative in `isBoundRunnerOffline`, so a
-  // `false` read at mount outranks any fleet row that says the box is back.
-  // Refreshing only the fleet is why a laptop that rebooted and reconnected
-  // kept "<runner> is unavailable" up over a Connected, streaming chat until
-  // the page was remounted (Jonathan, 2026-10-22).
-  //
-  // A tick also fires the moment the tab comes back to the foreground or the
-  // network returns — a machine waking from sleep is exactly when the runner
-  // reconnects, and background timers are throttled while it slept.
+  // While the banner is up, keep the choices fresh: a runner that comes online
+  // is one more place to continue on. A tick also fires the moment the tab
+  // comes back to the foreground or the network returns, since background
+  // timers are throttled while a machine sleeps. Whether the banner shows at
+  // all follows the turn status on the socket, not this poll.
   useEffect(() => {
     if (!boundOffline) return
     let cancelled = false
@@ -113,17 +116,17 @@ export function useRunnerPlacement(
       if (inFlight) return
       inFlight = true
       clearTimeout(timer)
-      Promise.allSettled([
-        listRunners().then((r) => {
+      listRunners()
+        .then((r) => {
           if (!cancelled) setFleetRunners(r)
-        }),
-        getSession(sessionId).then((m) => {
-          if (!cancelled) setMeta((prev) => withFreshLiveness(prev, m))
-        }),
-      ]).finally(() => {
-        inFlight = false
-        if (!cancelled) timer = setTimeout(tick, RECOVERY_POLL_MS)
-      })
+        })
+        .catch(() => {
+          /* non-fatal: keep the last-known choices */
+        })
+        .finally(() => {
+          inFlight = false
+          if (!cancelled) timer = setTimeout(tick, RECOVERY_POLL_MS)
+        })
     }
     const onVisible = () => {
       if (document.visibilityState === 'visible') tick()
@@ -137,7 +140,7 @@ export function useRunnerPlacement(
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', tick)
     }
-  }, [boundOffline, sessionId, setMeta])
+  }, [boundOffline])
 
   const placementFail = useCallback((err: unknown) => {
     if (err instanceof ChatApiError && err.status === 404) {
@@ -177,23 +180,18 @@ export function useRunnerPlacement(
     unpauseRunner(boundRunner.id)
       .then((fresh) => {
         setFleetRunners((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)))
-        // Drop the session payload's liveness snapshot — it was computed before
-        // the unpause and is stale by construction — so the freshly-patched
-        // fleet row answers instead. This clears a STALE READING, it does not
-        // assert the box is up: unpause restores whatever the heartbeat says,
-        // so a runner that is also offline keeps the banner, correctly.
-        setMeta((prev) => (prev ? { ...prev, runner_online: null, runner_status: null } : prev))
+        // The pause is lifted; the banner stops saying so at once. Whether the
+        // box is also up is the server's next turn status to say.
+        setResumedFor(turnStatus)
         setPlaceInfo(`${fresh.name} resumed.`)
       })
       .catch(placementFail)
       .finally(() => setPlacing(false))
-  }, [boundRunner, begin, placementFail, setMeta])
+  }, [boundRunner, begin, placementFail, turnStatus])
 
-  // With a message waiting, re-pin it. With none — the composer is locked while
-  // the bound runner is down, so usually none — `place` has nothing to move and
-  // 404s, which left the banner's own "Continue on…" a dead end beside a
-  // composer that says to use it. Move the whole session instead (`transfer`),
-  // then re-read it so the banner and composer follow it to the new runner.
+  // With a message waiting, re-pin it. With none, `place` has nothing to move
+  // and 404s, so move the whole session instead (`transfer`), then re-read it
+  // so the banner and composer follow it to the new runner.
   const transferTo = useCallback(
     (runnerId: string) =>
       transferSession(sessionId, runnerId).then((res) => {
@@ -230,6 +228,7 @@ export function useRunnerPlacement(
 
   return {
     fleetRunners,
+    runnerName,
     boundOffline,
     boundRunner,
     boundPaused,

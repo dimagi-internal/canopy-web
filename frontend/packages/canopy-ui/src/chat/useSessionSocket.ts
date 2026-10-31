@@ -1,22 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { fromAgui, resetAguiState } from "./agui";
-import type { Draft, Message, SessionState, TypingVisibility, WsEvent } from "./protocol";
-import {
-  TYPING_VISIBILITY_STORAGE_KEY,
-  defaultDraftStorage,
-  readStoredTypingVisibility,
-  shouldSyncDraftLive,
-  writeStoredTypingVisibility,
-} from "./drafts";
+import { createAguiDecoder } from "./agui";
+import type { Message, SessionState, TypingVisibility, WsEvent } from "./protocol";
 import { prependHistory } from "./history";
-import {
-  REDUCER_EVENTS,
-  markSendDelivered,
-  markSendFailed,
-  sessionReducer,
-  withPendingSend,
-} from "./sessionReducer";
+import { REDUCER_EVENTS, sessionReducer } from "./sessionReducer";
+import { useDraftSync } from "./useDraftSync";
+import { newClientId, useSendReceipts } from "./useSendReceipts";
+
+export { newClientId };
 
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
@@ -25,40 +16,6 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
  *  not in or hold no key for) and 4004 (there is no such conversation). Asking
  *  again gets the same answer, so the hook stops and says so (`refused`). */
 export const REFUSAL_CLOSE_CODES: readonly number[] = [4003, 4004];
-const DRAFT_UPDATE_DEBOUNCE_MS = 150;
-/** How long a socket send may go without the server's receipt before the page
- *  resends it over HTTP. Short on purpose: the receipt normally arrives within
- *  a round trip, and a missing one means the socket is dead (a phone resuming
- *  from the background can hold one that still reads OPEN). */
-const SEND_RECEIPT_TIMEOUT_MS = 4_000;
-const NOT_SENT =
-  "Not sent: the connection dropped before canopy got it. Your words are kept here, so copy them and send again.";
-
-/**
- * A client-generated nonce for a send's `client_id` — exported so a host
- * driving its own HTTP send (the widget's opening message, before a socket
- * exists to send over; `ChatPage`'s `/share` command) can mint the SAME id
- * for both the REST body and the matching `noteLocalSend` call, which is what
- * lets `QueuedRows.hideClientIds` recognise the two as one send rather than
- * rendering it twice.
- */
-export function newClientId(): string {
-  // An idempotency nonce, not a secret — but it rides a request, so it comes
-  // from the platform CSPRNG, never Math.random (CodeQL js/insecure-randomness).
-  // randomUUID needs a secure context; getRandomValues does not.
-  const c = (globalThis as {
-    crypto?: { randomUUID?: () => string; getRandomValues?: (a: Uint8Array) => Uint8Array };
-  }).crypto;
-  if (c?.randomUUID) return c.randomUUID();
-  if (c?.getRandomValues) {
-    const bytes = c.getRandomValues(new Uint8Array(16));
-    return `c${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
-  }
-  return `c${Date.now().toString(36)}${(clientIdCounter++).toString(36)}`;
-}
-
-let clientIdCounter = 0;
-
 const INITIAL_STATE: SessionState = {
   messages: [],
   active_draft: null,
@@ -83,10 +40,10 @@ export interface UseSessionSocketOptions {
   wsUrl: (path: string) => string | Promise<string>;
   /**
    * Optional side-effect callback fired when the server broadcasts a
-   * `session.title_updated` (replaces ace's `notifySessionsUpdated`). The kit
-   * has no opinion on what to do with it.
+   * `session.title_updated`, with the new title. The kit has no opinion on
+   * what to do with it.
    */
-  onTitleUpdated?: () => void;
+  onTitleUpdated?: (title?: string) => void;
   /**
    * A frame the kit does not understand.
    *
@@ -170,6 +127,10 @@ export function withAguiProtocol(url: string): string {
 export interface UseSessionSocketResult {
   state: SessionState;
   connected: boolean;
+  /** This connection's snapshot (`session.state`) has arrived. Until it does an
+   *  empty transcript is unknown rather than empty — show "loading", not
+   *  "start the conversation". */
+  synced: boolean;
   /** A send is outstanding with no reply yet — the turn is QUEUED, waiting for
    *  a runner. Nothing in `state` can express this (there is no assistant
    *  message until the first token), and it is what keeps Stop reachable while
@@ -189,21 +150,15 @@ export interface UseSessionSocketResult {
    *  keeps compiling across the upgrade. */
   takeOverDraft: () => void;
   discardDraft: () => void;
-  prependMessages: (older: Message[]) => void;
-  /** A message was sent for this session over HTTP rather than through this
-   *  socket — show it, and start waiting for a reply.
-   *
-   *  Two callers need it and both are REST sends: the embedded widget's FIRST
-   *  message (the session does not exist until it is sent, so there is no
-   *  socket to send it on) and every message from a CONTACT (whose socket
-   *  listens only — presence and the co-edited draft are keyed on a user id
-   *  they do not have).
-   *
-   *  Without it those sends changed nothing on screen: `awaitingReply` is set
-   *  by `sendChat` alone, and the user's own line is not a server row until
-   *  the agent's transcript ships it back. So you typed, pressed send, and got
-   *  an empty panel — for as long as the reply took, and forever if its runner
-   *  was offline.
+  /** Merge an older REST page into the transcript. `hasMoreBefore` says
+   *  whether the server holds anything older still (`false` after loading
+   *  everything); it is kept across reconnects with the rows. */
+  prependMessages: (older: Message[], opts?: { hasMoreBefore?: boolean }) => void;
+  /** The HOST sent a message for this session over HTTP rather than through
+   *  this socket (the embedded widget's first message, before a socket exists;
+   *  `ChatPage`'s `/share` command): show it, as delivered, and wait for a
+   *  reply. The line is not a server row until the agent's transcript ships it
+   *  back, so without this the send changes nothing on screen.
    *
    *  Pass the SAME `clientId` the matching REST body sent (`sendChatOverHttp`
    *  does this internally; a host driving its own HTTP send — the widget's
@@ -235,6 +190,12 @@ export interface UseSessionSocketResult {
 // dropped.
 const KNOWN_EVENTS = REDUCER_EVENTS;
 
+/**
+ * The live session over one WebSocket: the transport (connect, reconnect,
+ * heartbeat, the refusal close codes, AG-UI decoding) and the reducer's state.
+ * The send path is `useSendReceipts` and the composer's draft `useDraftSync`;
+ * each takes every frame before the reducer does (`handleFrame`).
+ */
 export function useSessionSocket({
   sessionId,
   wsUrl,
@@ -245,34 +206,25 @@ export function useSessionSocket({
   resendOverHttp,
   localDrafts = false,
 }: UseSessionSocketOptions): UseSessionSocketResult {
-  const localDraftsRef = useRef(localDrafts);
-  localDraftsRef.current = localDrafts;
-  // The local draft a read-only principal types into (see `sendOverHttp`).
-  const [localDraft, setLocalDraft] = useState<Draft | null>(null);
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
+  // The current connection's snapshot has arrived: until then an empty
+  // transcript is unknown, not empty.
+  const [synced, setSynced] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [refused, setRefused] = useState<{ code: number; reason: string } | null>(null);
   // The server's `session.error` on the CURRENT connection, so a refusal that
   // follows it can say why.
   const connectionErrorRef = useRef<string>("");
-  // A send has gone out but no reply has begun — i.e. the turn is QUEUED,
-  // waiting for a runner to claim it. There is no assistant message during
-  // this window, so nothing else in the state can express it, and without it
-  // the Stop control is unreachable exactly when the turn is stuck.
+  // A send has gone out but no reply has begun — the turn is QUEUED. There is
+  // no assistant row in that window, so nothing in `state` can say it, and
+  // without it Stop is unreachable exactly when the turn is stuck.
   const [awaitingReply, setAwaitingReply] = useState(false);
-  // Per-browser, not per-session — a standing choice about how you type, read
-  // once at mount from the same try/catch-safe storage `SendBox` uses.
-  const [typingVisibility, setTypingVisibilityState] = useState<TypingVisibility>(
-    () => readStoredTypingVisibility(defaultDraftStorage()) ?? "live",
-  );
 
   const socketRef = useRef<WebSocket | null>(null);
   const stateRef = useRef<SessionState>(INITIAL_STATE);
   const reconnectAttemptRef = useRef(0);
   const heartbeatTimerRef = useRef<number | null>(null);
-  const draftDebounceRef = useRef<number | null>(null);
-  const pendingDraftBodyRef = useRef<string | null>(null);
   const closedByUserRef = useRef(false);
   const generationRef = useRef(0);
   const onTitleUpdatedRef = useRef(onTitleUpdated);
@@ -283,23 +235,11 @@ export function useSessionSocket({
   // vocabulary mid-session.
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
-  // Read wherever the mode needs to be sent or compared, closing over
-  // whatever is CURRENT rather than whatever a callback was created with.
-  const typingVisibilityRef = useRef(typingVisibility);
-  typingVisibilityRef.current = typingVisibility;
   const warnedNativeRef = useRef(false);
-  // Control frames that must not be lost across a reconnect (currently
-  // only chat.stop). The WS-world analogue of an abortable chat transport.
+  // Control frames that must not be lost across a reconnect (currently only
+  // chat.stop), flushed on the next open.
   const pendingFramesRef = useRef<{ action: string; data: unknown }[]>([]);
-  // A mode the person CHOSE while this socket could not carry it (closed, or
-  // open but before the first snapshot told us what the server holds). Sent
-  // once on the next snapshot, then cleared. Nothing else is ever pushed on
-  // connect: a device with nothing stored has only a DEFAULT, and pushing a
-  // default would expose words its author hid from another device.
-  const pendingVisibilityRef = useRef<TypingVisibility | null>(null);
   const snapshotSeenRef = useRef(false);
-  // Sends awaiting the server's receipt: client_id -> {text, timer}.
-  const unconfirmedRef = useRef(new Map<string, { text: string; timer: number | null }>());
   const resendRef = useRef(resendOverHttp);
   resendRef.current = resendOverHttp;
 
@@ -315,61 +255,41 @@ export function useSessionSocket({
     onUnknownEventRef.current = onUnknownEvent;
   }, [onUnknownEvent]);
 
-  // Belt-and-braces for the SAME cross-tab sync `draft.updated` adoption
-  // covers: a native `storage` event fires in every OTHER tab the instant one
-  // tab writes the key (never the writer's own tab), so it catches the case
-  // no socket frame can — a tab with no live socket right now.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== TYPING_VISIBILITY_STORAGE_KEY) return;
-      const next = readStoredTypingVisibility(defaultDraftStorage());
-      if (next != null && next !== typingVisibilityRef.current) {
-        typingVisibilityRef.current = next;
-        setTypingVisibilityState(next);
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
   const send = useCallback((frame: { action: string; data: unknown }) => {
     const ws = socketRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(frame));
       return true;
     }
-    // Queue chat.stop so a stop clicked while the socket is reconnecting
-    // is delivered on next OPEN instead of silently dropped. Draft updates
-    // are intentionally NOT queued — they have a version guard and the
-    // user's next keystroke will refresh the body anyway.
+    // A stop clicked while the socket is reconnecting is delivered on the next
+    // open instead of dropped. Draft updates are not queued: they have a
+    // version guard and the next keystroke refreshes the body anyway.
     if (frame.action === "chat.stop") {
       pendingFramesRef.current.push(frame);
     }
     return false;
   }, []);
 
-  // A send that got no receipt: resend it over HTTP under the same client_id,
-  // or, with no HTTP route, say plainly that it did not go. Never silent.
-  const rescueSend = useCallback((clientId: string) => {
-    const entry = unconfirmedRef.current.get(clientId);
-    if (!entry) return; // the receipt got here first
-    if (entry.timer != null) window.clearTimeout(entry.timer);
-    unconfirmedRef.current.delete(clientId);
-    const resend = resendRef.current;
-    if (!resend) {
-      setAwaitingReply(false);
-      setState((prev) => markSendFailed(prev, clientId, NOT_SENT));
-      return;
-    }
-    resend(entry.text, clientId).then(
-      () => setState((prev) => markSendDelivered(prev, clientId)),
-      () => {
-        setAwaitingReply(false);
-        setState((prev) => markSendFailed(prev, clientId, NOT_SENT));
-      },
-    );
-  }, []);
+  const drafts = useDraftSync({
+    send,
+    setState,
+    stateRef,
+    socketRef,
+    snapshotSeenRef,
+    localDrafts,
+    presenceUserIds: state.presence_user_ids,
+  });
+  const receipts = useSendReceipts({
+    send,
+    setState,
+    setAwaitingReply,
+    setLastError,
+    resendOverHttp: resendRef,
+    sendOverHttp,
+    drafts,
+  });
+  const { handleFrame: draftFrame } = drafts;
+  const { handleFrame: receiptFrame, rescueAll } = receipts;
 
   const applyEvent = useCallback((frame: WsEvent) => {
     // Any of these means the queued window is over: the reply began, ended,
@@ -383,93 +303,36 @@ export function useSessionSocket({
     ) {
       setAwaitingReply(false);
     }
-    // `draft.updated` only ever reaches the AUTHOR's own sockets (see
-    // `_broadcast_draft`), so this is always MY draft, echoed — including
-    // from a mode change in a DIFFERENT tab of my own, or from THIS tab's own
-    // `draft.set_visibility` round-tripping back. Adopted UNCONDITIONALLY:
-    // since the mode is now its own idempotent, unversioned frame
-    // (`draft.set_visibility`) rather than a field racing keystrokes on
-    // `draft.update`, the only thing that ever changes it server-side is an
-    // explicit choice — made here, in another tab, or on another device — so
-    // last-choice-wins is simply correct, with no downgrade race to guard
-    // against.
-    if (frame.event === "draft.updated" && frame.data.visibility) {
-      if (frame.data.visibility !== typingVisibilityRef.current) {
-        typingVisibilityRef.current = frame.data.visibility;
-        setTypingVisibilityState(frame.data.visibility);
-        writeStoredTypingVisibility(defaultDraftStorage(), frame.data.visibility);
-      }
-    }
-    // The server's receipt for one of OUR sends: stop waiting on it.
-    if (frame.event === "draft.committed" && frame.data.client_id) {
-      const entry = unconfirmedRef.current.get(frame.data.client_id);
-      if (entry?.timer != null) window.clearTimeout(entry.timer);
-      unconfirmedRef.current.delete(frame.data.client_id);
-    }
-    // On a snapshot (connect or reconnect) the SERVER's stored mode is the
-    // truth — it is the last explicit choice from any tab or device. The one
-    // exception is a choice made HERE while the socket could not carry it
-    // (`pendingVisibilityRef`): that is newer, so it is sent now, before any
-    // later joiner's snapshot can read the older mode. A local value that was
-    // never chosen (nothing stored, a private window, the widget's partitioned
-    // storage) is only a default, and is never pushed. No own draft (a viewer
-    // or a contact) means there is nothing of ours to set.
+    receiptFrame(frame);
     if (frame.event === "session.state") {
       snapshotSeenRef.current = true;
-      const ad = frame.data.active_draft;
-      const pending = pendingVisibilityRef.current;
-      pendingVisibilityRef.current = null;
-      if (ad != null && pending != null) {
-        send({ action: "draft.set_visibility", data: { visibility: pending } });
-      } else if (ad?.visibility && ad.visibility !== typingVisibilityRef.current) {
-        typingVisibilityRef.current = ad.visibility;
-        setTypingVisibilityState(ad.visibility);
-        writeStoredTypingVisibility(defaultDraftStorage(), ad.visibility);
-      }
+      setSynced(true);
     }
-    // Side-effect events: handle BEFORE setState so React strict-mode's
+    draftFrame(frame);
+    // Side-effect events: handled BEFORE setState so React strict-mode's
     // double-invocation of the updater doesn't double-fire the effect.
     if (frame.event === "session.title_updated") {
-      onTitleUpdatedRef.current?.();
+      onTitleUpdatedRef.current?.(frame.data?.title);
       return;
     }
     if (frame.event === "session.error") {
       setLastError(frame.data.message);
       connectionErrorRef.current = frame.data.message ?? "";
-      if (
-        frame.data.code === "draft_version_mismatch" &&
-        frame.data.detail &&
-        typeof frame.data.detail === "object"
-      ) {
-        // Clear any pending optimistic body so the user's stale local
-        // text doesn't auto-re-send with the new version. The mode is
-        // unaffected by this — it never rides `draft.update`, so a body
-        // conflict here has nothing to do with it and needs no recovery.
-        pendingDraftBodyRef.current = null;
-        if (draftDebounceRef.current != null) {
-          window.clearTimeout(draftDebounceRef.current);
-          draftDebounceRef.current = null;
-        }
-      }
     }
-    // The reducer ignores anything it does not know, which silently drops an
-    // app-specific frame. Hand it over instead, so the container can act on
-    // vocabulary the shared kit deliberately does not carry.
+    // The reducer ignores anything it does not know, which would silently drop
+    // an app-specific frame. Hand it over instead.
     if (!KNOWN_EVENTS.has(frame.event)) {
       onUnknownEventRef.current?.(frame);
       return;
     }
     setState((prev) => sessionReducer(prev, frame));
-  }, [send]);
+  }, [draftFrame, receiptFrame]);
 
   const connect = useCallback(() => {
     if (closedByUserRef.current) return;
     // Which mount this attempt belongs to. An async URL may resolve after the
     // hook re-mounted for another session; it must not open a socket then.
     const generation = generationRef.current;
-    // A half-read tool call from the previous connection must not be completed
-    // by an ARGS event from this one — the ids are per-stream.
-    resetAguiState();
     const path = `ws/canopy-sessions/${sessionId}/`;
     const built = wsUrl(path);
     if (typeof built !== "string") {
@@ -498,14 +361,16 @@ export function useSessionSocket({
       protocolRef.current === "ag-ui" ? withAguiProtocol(built) : built,
     );
     socketRef.current = ws;
+    // This connection's AG-UI decoder: a tool call's head waits for its
+    // arguments, and that pairing belongs to the stream it arrived on.
+    const decoder = createAguiDecoder();
 
     connectionErrorRef.current = "";
     ws.onopen = () => {
       snapshotSeenRef.current = false;
+      setSynced(false);
       setConnected(true);
       reconnectAttemptRef.current = 0;
-      // Flush any control frames that were queued while the socket was
-      // closed. See `send` above.
       const queued = pendingFramesRef.current;
       pendingFramesRef.current = [];
       for (const frame of queued) {
@@ -527,8 +392,7 @@ export function useSessionSocket({
           // a server that predates the negotiation, or a URL that lost the flag
           // on the way (see `withAguiProtocol`). The two are unambiguous — every
           // AG-UI event has a `type`, and no canopy frame does — so apply it as
-          // what it is. Decoding it as AG-UI yields nothing, which is a blank
-          // chat with no error: the worst possible way to find out.
+          // what it is rather than decoding it to nothing.
           if (typeof raw?.type !== "string" && typeof raw?.event === "string") {
             if (!warnedNativeRef.current) {
               warnedNativeRef.current = true;
@@ -541,7 +405,7 @@ export function useSessionSocket({
           }
           // One AG-UI event can be several canopy frames (a tool call is three
           // events) or none, so this is a fan-out rather than a rename.
-          for (const frame of fromAgui(raw)) applyEvent(frame);
+          for (const frame of decoder.decode(raw)) applyEvent(frame);
           return;
         }
         applyEvent(raw as WsEvent);
@@ -554,14 +418,14 @@ export function useSessionSocket({
       snapshotSeenRef.current = false;
       setConnected(false);
       // A send still waiting for its receipt will not get one on this socket.
-      for (const clientId of [...unconfirmedRef.current.keys()]) rescueSend(clientId);
+      rescueAll();
       if (heartbeatTimerRef.current != null) {
         window.clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
       if (closedByUserRef.current) return;
-      // canopy said no. Retrying would only hear no again, every 10s, behind a
-      // "Reconnecting…" chip over an empty transcript — which read as broken.
+      // canopy said no. Retrying would only hear no again, behind a
+      // "Reconnecting…" chip over an empty transcript.
       const code = event?.code;
       if (code != null && REFUSAL_CLOSE_CODES.includes(code)) {
         setAwaitingReply(false);
@@ -579,7 +443,7 @@ export function useSessionSocket({
       // onclose will fire next; nothing to do here.
     };
     }
-  }, [applyEvent, rescueSend, send, sessionId, wsUrl]);
+  }, [applyEvent, rescueAll, send, sessionId, wsUrl]);
 
   useEffect(() => {
     closedByUserRef.current = false;
@@ -598,34 +462,6 @@ export function useSessionSocket({
       }
     };
   }, [connect]);
-
-  const sendChat = useCallback((text?: string) => {
-    // The text goes IN the send, with a client_id, rather than relying on an
-    // earlier draft.update having reached the server. That frame and this one
-    // could both vanish into a socket that reads OPEN but is dead (a phone
-    // resuming from the background), and the composer had already cleared, so
-    // the prompt was simply lost (2026-09-23). Now the line shows at once as
-    // pending, the server's receipt (draft.committed + client_id) confirms it,
-    // and without one it is resent over HTTP under the same id.
-    if (draftDebounceRef.current != null) {
-      window.clearTimeout(draftDebounceRef.current);
-      draftDebounceRef.current = null;
-    }
-    const body = (text ?? pendingDraftBodyRef.current ?? stateRef.current.active_draft?.body ?? "").trim();
-    pendingDraftBodyRef.current = null;
-    if (!body) return;
-    const clientId = newClientId();
-    setAwaitingReply(true);
-    setState((prev) => withPendingSend(prev, { clientId, text: body }));
-    unconfirmedRef.current.set(clientId, { text: body, timer: null });
-    const sent = send({ action: "chat.send", data: { client_id: clientId, text: body } });
-    if (!sent) {
-      rescueSend(clientId);
-      return;
-    }
-    const entry = unconfirmedRef.current.get(clientId);
-    if (entry) entry.timer = window.setTimeout(() => rescueSend(clientId), SEND_RECEIPT_TIMEOUT_MS);
-  }, [send, rescueSend]);
 
   const stopChat = useCallback(
     (messageId: string | null) => {
@@ -662,206 +498,43 @@ export function useSessionSocket({
     [send],
   );
 
-  const updateDraft = useCallback(
-    (body: string) => {
-      // Optimistic local update so the textarea feels snappy.
-      setState((prev) =>
-        prev.active_draft
-          ? { ...prev, active_draft: { ...prev.active_draft, body } }
-          : prev,
-      );
-      pendingDraftBodyRef.current = body;
-      // Alone in the session? Don't mirror keystrokes at all. The body is
-      // flushed once by sendChat, which is the only moment the server actually
-      // needs it. This is what makes single-player typing purely local — no
-      // round trip, no echo, no version to disagree about.
-      if (localDraftsRef.current || !shouldSyncDraftLive(stateRef.current.presence_user_ids)) {
-        if (draftDebounceRef.current != null) {
-          window.clearTimeout(draftDebounceRef.current);
-          draftDebounceRef.current = null;
-        }
-        return;
-      }
-      if (draftDebounceRef.current != null) {
-        window.clearTimeout(draftDebounceRef.current);
-      }
-      draftDebounceRef.current = window.setTimeout(() => {
-        draftDebounceRef.current = null;
-        const current = stateRef.current.active_draft;
-        const pending = pendingDraftBodyRef.current;
-        if (current != null && pending != null) {
-          // Only consumed once it has actually gone out. Clearing it
-          // unconditionally dropped anything typed before session.state
-          // arrived (no draft yet ⇒ nothing sent, body forgotten).
-          pendingDraftBodyRef.current = null;
-          send({
-            action: "draft.update",
-            data: { version: current.version, body: pending },
-          });
-        }
-      }, DRAFT_UPDATE_DEBOUNCE_MS);
-    },
-    [send],
-  );
-
-  const setTypingVisibility = useCallback(
-    (visibility: TypingVisibility) => {
-      setTypingVisibilityState(visibility);
-      typingVisibilityRef.current = visibility;
-      writeStoredTypingVisibility(defaultDraftStorage(), visibility);
-      // The mode is its OWN idempotent frame — applied unconditionally
-      // server-side, no version check — so there is no presence gate: a mode
-      // change must reach the server even while ALONE, or a peer who joins
-      // later reads the old mode straight off their connect snapshot. Until
-      // the first snapshot has told us what the server holds (or while the
-      // socket is closed) the choice waits in `pendingVisibilityRef` and the
-      // snapshot sends it. With no own draft (a viewer or a contact) there is
-      // nothing to set, and the server would refuse it anyway.
-      const ws = socketRef.current;
-      const open = ws != null && ws.readyState === WebSocket.OPEN;
-      if (!open || !snapshotSeenRef.current) {
-        pendingVisibilityRef.current = visibility;
-        return;
-      }
-      if (stateRef.current.active_draft == null) return;
-      send({ action: "draft.set_visibility", data: { visibility } });
-    },
-    [send],
-  );
-
-  // @deprecated no-op since 0.13 — the server accepts and ignores
-  // `draft.take_over` too (see WsAction), so this is kept only so a host
-  // wired to the old prop doesn't need an upgrade-day edit.
+  // @deprecated no-op: everyone has their own draft, so there is no lock to
+  // take over. The server accepts and ignores `draft.take_over` too.
   const takeOverDraft = useCallback(() => undefined, []);
 
-  const discardDraft = useCallback(() => {
-    send({ action: "draft.discard", data: {} });
-  }, [send]);
-
-  // Someone joining mid-compose must see what is ALREADY typed. Nothing was
-  // mirrored while we were alone, so without this one catch-up flush their view
-  // would sit empty until the next keystroke. Closes the only gap that skipping
-  // live sync opens up.
-  const liveSync = !localDrafts && shouldSyncDraftLive(state.presence_user_ids);
-  useEffect(() => {
-    if (!liveSync) return;
-    const pending = pendingDraftBodyRef.current;
-    const current = stateRef.current.active_draft;
-    if (pending == null || current == null) return;
-    pendingDraftBodyRef.current = null;
-    send({
-      action: "draft.update",
-      data: { version: current.version, body: pending },
-    });
-  }, [liveSync, send]);
-
-  const prependMessages = useCallback((older: Message[]) => {
-    // Apply a REST "Load earlier" page into the live socket state. A later
-    // session.state snapshot (e.g. reconnect) resets to the tail — acceptable;
-    // the user re-loads earlier if needed.
+  const prependMessages = useCallback((older: Message[], opts?: { hasMoreBefore?: boolean }) => {
+    // A REST scroll-back page into the live state. The reducer keeps it across
+    // a reconnect's snapshot (`keepLoadedHistory`), and with it whether the
+    // server holds anything older still.
     setState((prev) => {
       const merged = prependHistory(prev.messages, older);
-      return merged === prev.messages ? prev : { ...prev, messages: merged };
+      const more = opts?.hasMoreBefore;
+      if (merged === prev.messages && (more === undefined || more === prev.has_more_before)) return prev;
+      return { ...prev, messages: merged, ...(more !== undefined ? { has_more_before: more } : {}) };
     });
   }, []);
-
-  // `sendOverHttp`'s half of the hook: typing is local, sending is HTTP. Defined
-  // here, after noteLocalSend, which it reuses for the pending row.
-  const updateLocalDraft = useCallback((body: string) => {
-    setLocalDraft({
-      id: "local", slot: "next", status: "open", body, version: 0, last_editor: 0,
-      last_edit_at: new Date().toISOString(),
-    });
-  }, []);
-
-  // A failed send's restore, NOT the same as `updateLocalDraft`: this is a
-  // stale write racing whatever the person typed while the request was in
-  // flight, so it must never overwrite it. A functional update reads the
-  // CURRENT draft rather than one closed over at send time — sendChatOverHttp
-  // cleared the draft to null before the request even went out, so "the local
-  // draft is still null or empty" means nothing newer has been typed since,
-  // and only then is it safe to put the failed body back. If the person has
-  // already started something else, that stays exactly as they left it; the
-  // failed send is simply lost rather than clobbering live typing (2026-09-26
-  // review: "contact sends hello, starts typing world, hello's failure
-  // overwrote world").
-  const restoreFailedLocalDraft = useCallback((body: string) => {
-    setLocalDraft((prev) =>
-      prev == null || prev.body === ""
-        ? {
-            id: "local", slot: "next", status: "open", body, version: 0,
-            last_editor: 0, last_edit_at: new Date().toISOString(),
-          }
-        : prev,
-    );
-  }, []);
-
-  const noteLocalSend = useCallback((text: string, clientId?: string) => {
-    setAwaitingReply(true);
-    const body = text.trim();
-    if (!body) return;
-    // Routed through the ordinary `chat.user_message` case rather than a new
-    // one, so the optimistic row goes in with the SAME dedupe the transcript
-    // echo already relies on: when the agent reads the message and the runner
-    // ships it back at its durable composite ordinal, the reducer matches on
-    // recent identical text and merges instead of rendering it twice.
-    setState((prev) =>
-      sessionReducer(prev, {
-        event: "chat.user_message",
-        data: {
-          // Local, and replaced by the server's id the moment the real row
-          // arrives. Namespaced so it can never collide with one.
-          message_id: `local:${Date.now()}`,
-          turn_index: prev.messages.reduce((acc, m) => Math.max(acc, m.turn_index), 0) + 1,
-          plaintext: body,
-          client_id: clientId,
-        },
-      }),
-    );
-  }, []);
-
-  const sendChatOverHttp = useCallback((text?: string) => {
-    const body = (text ?? localDraft?.body ?? "").trim();
-    if (!body || !sendOverHttp) return;
-    // ONE id for both halves of this send — the optimistic row and the REST
-    // body — so the server's queued-turn projection and this row compare
-    // equal (`QueuedRows.hideClientIds`) instead of rendering the same send
-    // twice, once as the sender's own bubble and once as an unowned "queued"
-    // placeholder (a contact's `author.user_id` is never set, so without a
-    // shared id that placeholder didn't even read as "mine").
-    const clientId = newClientId();
-    noteLocalSend(body, clientId);
-    setLocalDraft(null);
-    sendOverHttp(body, clientId).catch((err: unknown) => {
-      setAwaitingReply(false);
-      setLastError(err instanceof Error ? err.message : "the message could not be sent");
-      // Put the words back, so a failed send never costs what was typed —
-      // but only if nothing NEWER has been typed since (see
-      // `restoreFailedLocalDraft`).
-      restoreFailedLocalDraft(body);
-    });
-  }, [localDraft, sendOverHttp, noteLocalSend, restoreFailedLocalDraft]);
 
   const exposedState = useMemo(
-    () => (sendOverHttp ? { ...state, active_draft: localDraft } : state),
-    [sendOverHttp, state, localDraft],
+    () => (sendOverHttp ? { ...state, active_draft: drafts.localDraft } : state),
+    [sendOverHttp, state, drafts.localDraft],
   );
 
   return {
     state: exposedState,
     connected,
+    synced,
     awaitingReply,
-    sendChat: sendOverHttp ? sendChatOverHttp : sendChat,
+    sendChat: sendOverHttp ? receipts.sendChatOverHttp : receipts.sendChat,
     stopChat,
     unqueueChat,
-    updateDraft: sendOverHttp ? updateLocalDraft : updateDraft,
+    updateDraft: sendOverHttp ? drafts.updateLocalDraft : drafts.updateDraft,
     takeOverDraft,
-    discardDraft,
+    discardDraft: drafts.discardDraft,
     prependMessages,
-    noteLocalSend,
+    noteLocalSend: receipts.noteLocalSend,
     lastError,
     refused,
-    typingVisibility,
-    setTypingVisibility,
+    typingVisibility: drafts.typingVisibility,
+    setTypingVisibility: drafts.setTypingVisibility,
   };
 }

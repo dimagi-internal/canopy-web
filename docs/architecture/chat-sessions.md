@@ -32,6 +32,17 @@ close).
   session socket, drawn by `canopy-ui/chat/turnStatus.ts`
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
+- **"Is the last turn live" is answered once in the browser**:
+  `canopy-ui/chat/turnView.ts::useTurnView` → `{phase, inFlight, live, listLive,
+  canStop, label, runner}`, read by the chat header (`SessionStatusChip`) and by
+  `ChatPanel` (activity line, Stop, the fold); `MessageList`/`planFold` take `live`
+  as given. Only the NEWEST assistant row can be in flight, and not once the
+  status is settled with `finished_at` at or after that row began
+  (`inFlightRow`) — a lost `chat.stream_complete` never holds "working" up.
+- **The placement banner and the composer lock read the turn status**:
+  `waiting_runner` (paused when `parked`) or `paused` raise them
+  (`pages/chat/useRunnerPlacement.ts::heldByAbsentRunner`); the fleet list is read
+  only for the "Continue on…" choices and Resume's runner id.
 - **Claude Code's own error notice is not a reply.** An `isApiErrorMessage` record
   ("Not logged in · Please run /login", a usage cap) becomes an assistant row with
   `content.api_error` (+ `signed_out`) (`canopy_transcript.rows_for_record`), carried
@@ -282,9 +293,9 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 - **Not extended to claim routing:** a stale binding still pins its session to its
   holder (continuing elsewhere means a fresh session without context); moving it is
   the user's call via the placement banner.
-- The banner must fail **closed**: `frontend/src/components/chat/runnerEligibility.ts`
-  (`isBoundRunnerOffline`) treats a runner missing from `GET /runners/` (which omits
-  retired runners) as offline, not unknown.
+- The chat's placement banner follows the turn status (above), so a turn queued
+  for a retired runner shows it from the server's `waiting_runner`. The session
+  list's "runner offline" reads `runner_online` (`runnerEligibility.parkedReason`).
 - Code: `apps/canopy_sessions/staleness.py`. Spec:
   `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md`.
 

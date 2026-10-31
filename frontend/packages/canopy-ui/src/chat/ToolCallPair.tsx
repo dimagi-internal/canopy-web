@@ -59,6 +59,8 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
 
   return (
     <details
+      data-testid="tool-row"
+      data-tool-status={status.kind}
       data-turn-index={use.turn_index}
       // Where <RunningAgents> scrolls to for this call's subagent.
       data-tool-use-id={sub ? sub.summary.tool_use_id : undefined}

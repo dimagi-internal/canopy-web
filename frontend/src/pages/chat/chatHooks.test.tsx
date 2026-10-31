@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SessionMenu } from 'canopy-ui/chat'
+import type { SessionMenu, TurnStatus } from 'canopy-ui/chat'
 
 import { ChatApiError, type ChatSessionDetail } from '@/api/chat'
 import type { RunnerOut } from '@/api/harness'
@@ -178,6 +178,25 @@ describe('useTranscriptPaging', () => {
     expect(result.current.hasMoreBefore).toBe(false)
   })
 
+  it('hands "nothing older" to the socket state with the rows, so a reconnect keeps both', async () => {
+    chat.getSession.mockResolvedValue(meta({ messages: [], oldest_loaded_turn_index: 0 }))
+    const prepend = vi.fn()
+    const { result } = renderHook(() => useTranscriptPaging('s1', prepend))
+    await act(async () => { await result.current.loadAll() })
+    expect(prepend).toHaveBeenCalledWith([], { hasMoreBefore: false })
+  })
+
+  it("the socket state's has_more_before outranks the REST seed", () => {
+    const { result, rerender } = renderHook(
+      ({ more }: { more?: boolean }) => useTranscriptPaging('s1', vi.fn(), more),
+      { initialProps: { more: undefined as boolean | undefined } },
+    )
+    act(() => result.current.seed(meta({ has_more_before: false })))
+    expect(result.current.hasMoreBefore).toBe(false)
+    rerender({ more: true })
+    expect(result.current.hasMoreBefore).toBe(true)
+  })
+
   it('reports full history unavailable when the runner is offline', async () => {
     chat.requestBackfill.mockResolvedValue({ status: 'unavailable' })
     const { result } = renderHook(() => useTranscriptPaging('s1', vi.fn()))
@@ -207,17 +226,39 @@ describe('useTranscriptPaging', () => {
   })
 })
 
+const turnStatus = (over: Partial<TurnStatus> = {}): TurnStatus => ({
+  state: 'waiting_runner', agent_slug: null, runners: ['box'], claimed_by: null, pinned: true,
+  cloud_runner: null, cloud_runner_id: null, last_seen_at: null, menu_pending: false,
+  settled: false, stuck: true, ...over,
+})
+
 describe('useRunnerPlacement', () => {
-  it('derives offline from the fleet and offers the online runners', async () => {
+  it('raises the banner from the turn status and offers the online runners', async () => {
     harness.listRunners.mockResolvedValue([
       runner({ status: 'offline' }),
       runner({ id: 'r2', name: 'other', status: 'online', capabilities: { sessions: true } } as Partial<RunnerOut>),
     ])
-    const setMeta = vi.fn()
-    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), setMeta))
-    await waitFor(() => expect(result.current.boundOffline).toBe(true))
-    expect(result.current.boundRunner?.id).toBe('r1')
+    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn(), turnStatus()))
+    expect(result.current.boundOffline).toBe(true)
+    expect(result.current.runnerName).toBe('box')
+    await waitFor(() => expect(result.current.boundRunner?.id).toBe('r1'))
+    expect(result.current.placementRunners.map((r) => r.id)).toEqual(['r2'])
     expect(result.current.boundPaused).toBe(false)
+  })
+
+  it('never guesses offline from the fleet list or a page-load liveness', async () => {
+    harness.listRunners.mockResolvedValue([runner({ status: 'offline' })])
+    const { result } = renderHook(() =>
+      useRunnerPlacement('s1', meta({ runner_online: false }), vi.fn(), turnStatus({ state: 'done', settled: true, stuck: false })))
+    await waitFor(() => expect(harness.listRunners).toHaveBeenCalled())
+    expect(result.current.boundOffline).toBe(false)
+  })
+
+  it('a runner that went offline mid-turn holds the turn too', () => {
+    const { result } = renderHook(() =>
+      useRunnerPlacement('s1', meta(), vi.fn(), turnStatus({ state: 'paused', claimed_by: 'laptop', runners: ['laptop'] })))
+    expect(result.current.boundOffline).toBe(true)
+    expect(result.current.runnerName).toBe('laptop')
   })
 
   it('places the turn on another runner and says so', async () => {
@@ -272,16 +313,16 @@ describe('useRunnerPlacement', () => {
     await waitFor(() => expect(result.current.placeError).toBe('not allowed here'))
   })
 
-  it('resuming a paused runner patches the fleet and drops the stale liveness', async () => {
+  it('resuming a paused runner patches the fleet and stops calling it paused', async () => {
     harness.listRunners.mockResolvedValue([runner({ status: 'offline', paused: true })])
     harness.unpauseRunner.mockResolvedValue(runner({ status: 'online', paused: false }))
-    const setMeta = vi.fn()
-    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), setMeta))
-    await waitFor(() => expect(result.current.boundPaused).toBe(true))
+    const parked = turnStatus({ parked: true })
+    const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn(), parked))
+    expect(result.current.boundPaused).toBe(true)
+    await waitFor(() => expect(result.current.boundRunner?.id).toBe('r1'))
     act(() => result.current.resumeBoundRunner())
     await waitFor(() => expect(result.current.placeInfo).toBe('box resumed.'))
-    expect(result.current.boundOffline).toBe(false)
-    expect(setMeta).toHaveBeenCalled()
+    expect(result.current.boundPaused).toBe(false)
   })
 })
 

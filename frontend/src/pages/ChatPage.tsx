@@ -8,8 +8,8 @@ import {
   createAppResourceUpdates,
   PlacementBanner,
   MenuPrompt,
-  turnPhase,
   useSessionSocket,
+  useTurnView,
   type SecretRequestHost,
   type ToolRowsView,
 } from 'canopy-ui/chat'
@@ -32,6 +32,7 @@ import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
 import { MessageContextMenu } from '@/components/chat/MessageContextMenu'
 import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
+import { SessionStatusChip } from '@/components/chat/SessionStatusChip'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { menuBlocksComposer, restToKitMessage, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
 import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from './chat/useAttachments'
@@ -155,12 +156,16 @@ function ChatPageInner({
       (text: string, clientId: string) => sendMessage(id, text, clientId),
       [id],
     ),
-    // A rename made elsewhere (the /ide list, another tab, autotitle): `meta` is
-    // fetched once, so re-read just the title.
-    onTitleUpdated: useCallback(() => {
-      getSession(id)
-        .then((m) => setMeta((prev) => (prev ? { ...prev, title: m.title } : prev)))
-        .catch(() => {})
+    // A rename made elsewhere (the /ide list, another tab, autotitle): the frame
+    // carries the new title. A server that sends none gets the title re-read.
+    onTitleUpdated: useCallback((title?: string) => {
+      if (typeof title === 'string') {
+        setMeta((prev) => (prev ? { ...prev, title } : prev))
+      } else {
+        getSession(id)
+          .then((m) => setMeta((prev) => (prev ? { ...prev, title: m.title } : prev)))
+          .catch(() => {})
+      }
       onTitleChangeRef.current?.()
     }, [id, setMeta]),
   })
@@ -204,7 +209,7 @@ function ChatPageInner({
     [socket.state, sealed.messages],
   )
 
-  const paging = useTranscriptPaging(id, socket.prependMessages)
+  const paging = useTranscriptPaging(id, socket.prependMessages, socket.state.has_more_before)
 
   // Paint before the socket's snapshot lands: from this tab's last copy of the chat
   // (`sessionCache`) at once, else from the REST detail's tail as soon as it is read.
@@ -230,7 +235,7 @@ function ChatPageInner({
   useEffect(() => {
     if (live && socket.state.messages.length) rememberMessages(id, socket.state.messages)
   }, [id, live, socket.state.messages])
-  const placement = useRunnerPlacement(id, meta, setMeta)
+  const placement = useRunnerPlacement(id, meta, setMeta, socket.state.turn_status)
   const { boundOffline, boundRunner, boundPaused } = placement
   const fork = useMessageFork(id, meta?.runner_name, placement.fleetRunners, panelState.messages, sessionPath)
   const menuAnswer = useMenuAnswer(id, socket.state.menu, socket.state.activity)
@@ -271,20 +276,21 @@ function ChatPageInner({
     meta?.my_role === 'viewer'
       ? "You were given this chat as a viewer, so you can read it but not send."
       : sendBlockReason({
-          runnerName: meta?.runner_name,
+          runnerName: placement.runnerName,
           boundOffline,
           paused: boundPaused,
           blockedOnMenu: menuBlocksComposer(visibleMenu),
         })
-  // "Others see" moved from the composer into the ⋯ menu (canopy-web#1004) —
-  // an owner/editor has a composer for it to describe; a viewer does not.
+  // "Others see" lives in the ⋯ menu: an owner/editor has a composer for it to
+  // describe; a viewer does not.
   const canEditTypingVisibility = actions.canManage
   const canDetachSlack = actions.canManage
   const canRename = actions.canManage
 
-  // Until the socket is up the transcript is not empty, it is unknown: saying
-  // "Start the conversation" over a session still loading read as a blank chat.
-  const loadingTranscript = !socket.connected && socket.state.messages.length === 0
+  // Until the socket's snapshot lands the transcript is not empty, it is
+  // unknown: "Start the conversation" over a session still loading reads as a
+  // blank chat.
+  const loadingTranscript = !socket.synced && socket.state.messages.length === 0
   const emptyState = useMemo(
     () =>
       loadingTranscript ? (
@@ -305,12 +311,9 @@ function ChatPageInner({
     [loadingTranscript],
   )
 
-  // "Load all messages"/"Load full session" moved into the ⋯ menu (ChatSessionMenu,
-  // below) — Jonathan, 2026-10-05: they used to live here as a strip PINNED
-  // above the transcript whenever the server held more history, which on an
-  // old session is most of the time, for a control almost never tapped. Only
-  // the WARNING stays pinned: it's a fact about what's on screen, not an
-  // action, so it still renders nothing when there's nothing to say.
+  // "Load all messages" / "Load full session" live in the ⋯ menu
+  // (ChatSessionMenu, below). Only the WARNING is pinned above the transcript:
+  // it is a fact about what is on screen, not an action.
   const showLoadFull = shouldShowLoadFull({
     runnerName: meta?.runner_name,
     hasMoreBefore: paging.hasMoreBefore,
@@ -325,46 +328,26 @@ function ChatPageInner({
     </div>
   )
 
-  // The header says what the transcript's own bubble says: both read the kit's
-  // `turnPhase` (server turn status, then the hook, then `awaitingReply` for the
-  // instant after a send). The header used to derive its own from
-  // `awaitingReply` alone, so it could say "queued" over a turn the server had
-  // settled, with nothing on screen to correct it (2026-10-30).
-  const phase = turnPhase({
-    status: socket.state.turn_status,
-    activity: socket.state.activity,
-    awaitingReply: socket.awaitingReply,
-    replying: socket.state.messages.some((m) => m.role !== 'user' && m.status === 'streaming'),
-  });
   // The agent asked for a human and stopped — a permission prompt, or an idle
-  // wait for input. It previously rendered as "running", which is the worst way
-  // to get this wrong: you wait on an agent that is waiting on you.
-  //
-  // Except once you have answered: `Notification` fires on the way IN to a wait
-  // and nothing fires on the way out, so `activity` stays "blocked" until the
-  // agent's next row lands. Your answer is the event that ends the wait, and it
-  // happened here, so it is shown here, as running.
-  const answeredResuming = pendingAnswer !== null && !visibleMenu;
-  const liveBlocked = phase === 'blocked' && !answeredResuming;
-  const liveWorking = phase === 'working';
-  const liveQueued = phase === 'queued';
-  // `meta` is fetched ONCE per session id and never refreshed, and `running`
-  // derives from a 120s window on the runner's last report — so this is a
-  // PAGE-LOAD SNAPSHOT that can only decay. It used to outrank everything below
-  // `blocked`, which quietly cost #490 its whole point: open a chat you were
-  // just using and the header already said "running", so pressing send changed
-  // nothing on screen and the "queued" branch was unreachable. Demoted to the
-  // last resort — consulted only while nothing live has spoken (no hook, no
-  // turn status), and dropped for good once anything has.
-  const staleRunning =
-    socket.state.activity === undefined && socket.state.turn_status == null && Boolean(meta?.running);
+  // wait for input. Once you have answered, the turn reads as resuming:
+  // `Notification` fires on the way IN to a wait and nothing fires on the way
+  // out, so `activity` stays "blocked" until the agent's next row lands, and
+  // your answer is the event that ends the wait.
+  const answeredResuming = pendingAnswer !== null && !visibleMenu
+  // ONE answer to "is the last turn live" (`useTurnView`), read by the header
+  // chip here and by the panel (given the same inputs) for its activity line,
+  // Stop and fold.
+  const turn = useTurnView({
+    state: panelState,
+    awaitingReply: socket.awaitingReply,
+    pendingAnswer: answeredResuming,
+    runnerFallback: meta?.runner_name ?? null,
+  })
   const title = meta?.sensitive ? privateTitle(meta) : meta?.title?.trim() || 'Chat'
 
   // "with <agent>" / the project name / "no agent" — the same tag the Feed and
-  // the Sessions list show per row, missing from the one place you most want
-  // it: a session you're actually inside, with only its (often generic) title
-  // to say what it's for (Jonathan, 2026-10-05). Waits for `meta` so it never
-  // flashes "no agent" while the session is still loading.
+  // the Sessions list show per row. Waits for `meta` so it never flashes
+  // "no agent" while the session is still loading.
   const targetLabel = meta ? sessionTargetLabel(agentName, meta.project) : null
 
   return (
@@ -410,42 +393,11 @@ function ChatPageInner({
             </p>
           )}
         </div>
-        {/* Live agent activity beats the server's liveness fields when a hook has
-            reported. `meta.running` derives from the runner's session report —
-            emdash's own last_interacted_at, on a report cycle with a 120s window
-            — so it could not show "working" during the part of a turn where
-            Claude is thinking and nothing has been output yet. The hook fires the
-            instant the turn starts. Falls back to `meta.running` when no hook has
-            spoken (an older runner, or forwarding off). */}
-        {liveBlocked ? (
-          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-warning">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
-            needs you{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
-          </span>
-        ) : liveWorking || answeredResuming ? (
-          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
-            running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
-          </span>
-        ) : liveQueued ? (
-          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-muted-foreground">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
-            queued{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
-          </span>
-        ) : staleRunning ? (
-          <span className="flex shrink-0 items-center gap-1 text-[12px] font-medium text-success">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
-            running{meta?.runner_name ? ` · ${meta.runner_name}` : ''}
-          </span>
-        ) : meta?.runner_name ? (
-          <span className="shrink-0 text-[12px] text-muted-foreground">
-            idle · {meta.runner_name}
-          </span>
-        ) : meta?.requested_runner_name ? (
-          <span className="shrink-0 text-[12px] text-muted-foreground" data-testid="chat-requested-runner">
-            starts on {meta.requested_runner_name} with your first message
-          </span>
-        ) : null}
+        <SessionStatusChip
+          view={turn}
+          boundRunner={meta?.runner_name}
+          requestedRunner={meta?.requested_runner_name}
+        />
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {actions.closeNote && <span className="text-[12px] text-muted-foreground">{actions.closeNote}</span>}
@@ -556,11 +508,11 @@ function ChatPageInner({
           onStop={socket.stopChat}
           onUnqueue={socket.unqueueChat}
           awaitingReply={socket.awaitingReply}
+          pendingAnswer={answeredResuming}
           attachments={attachments}
           onAttach={attach}
           onRemoveAttachment={removeAttachment}
           onUpdateDraft={socket.updateDraft}
-          onDiscard={socket.discardDraft}
           // "Others see" moved into the ⋯ menu (ChatSessionMenu, above) — not
           // passed here, so the composer control disappears.
           renderMarkdown={renderChatMarkdown}
@@ -603,7 +555,7 @@ function ChatPageInner({
               </div>
             ) : boundOffline ? (
               <PlacementBanner
-                runnerName={meta?.runner_name ?? ''}
+                runnerName={placement.runnerName ?? ''}
                 eligibleRunners={placement.placementRunners}
                 busy={placement.placing}
                 error={placement.placeError}

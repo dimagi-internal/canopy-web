@@ -56,6 +56,11 @@ export {
   type TurnNotice,
   type TurnPhase,
 } from "./turnStatus";
+// "Is the last turn live", answered once: the header chip, the activity line,
+// Stop and the transcript's fold all read it.
+export { inFlightRow, turnView, useTurnView, type TurnView, type TurnViewInput } from "./turnView";
+// Where each send is drawn — your bubble, or the queue.
+export { HELD_STATES, heldSendClientIds, placeSends, type SendPlacement } from "./placeSends";
 
 // What a turn did: the live activity line, its to-do list, the fold line and
 // the files it changed — exported so a host can say the same outside the panel.
@@ -65,6 +70,7 @@ export {
   filesChanged,
   foldLine,
   formatElapsed,
+  isPersonMessage,
   latestTodos,
   planFold,
   segmentTurns,
@@ -101,6 +107,7 @@ export {
 export {
   pairToolMessages,
   deriveToolStatus,
+  toolFailed,
   toolPreview,
   toolDisplayName,
   type ChatRow,
@@ -158,7 +165,9 @@ export { AppBridge, PROTOCOL_VERSION as MCP_APPS_PROTOCOL_VERSION, type AppBridg
          type AppBridgeOptions, type CallToolResult } from "./mcpApps/bridge";
 // The AG-UI projection's inverse. Exported so a consumer can translate a stream
 // it obtained some other way — and so the round-trip test can reach it.
-export { fromAgui, resetAguiState, CUSTOM_PREFIX, METADATA_KEY } from "./agui";
+export {
+  createAguiDecoder, fromAgui, resetAguiState, CUSTOM_PREFIX, METADATA_KEY, type AguiDecoder,
+} from "./agui";
 
 // Context window meter + compaction marker
 export { ContextMeter } from "./ContextMeter";
@@ -167,6 +176,7 @@ export {
   readContext,
   contextWindow,
   contextLabel,
+  isCompactionSummary,
   DEFAULT_WINDOW,
   LONG_WINDOW,
   type ContextReading,
