@@ -1,78 +1,85 @@
-# Approval cards — a proposal waiting on your yes, decidable from where it reaches you
+# Approval requests — a typed ask for one person's yes, run by fixed code
 
-A **card** is a proposal that waits on a person's yes or no, delivered with everything needed
-to decide it, so the decision is one tap and no hunting. It is not a new kind of record: the card's
-content is the board task itself (`agents.AgentTask`). `apps/approvals` adds delivery, one decision
-door, and the memory of both.
+An **approval request** asks a person to approve ONE specific action. It is an explicit record
+(`ApprovalRequest`) with a `kind` from a closed registry; approving runs that kind's hard-coded
+handler, as the approver. No model is involved in approving or declining. The one exception is
+the kind that says so — `agent.run_turns` — which starts the listed agent turns.
 
 Code: `apps/approvals` (framework tier, L2 features), `apps/slack/approvals.py` (the Slack DM and
-its buttons). Page: `/w/:workspace/approvals/:taskKey` (`frontend/src/pages/ApprovalPage.tsx`).
+its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalPage.tsx`).
 
-## What is a card
+## Why it is built this way
 
-`cards.needs_decision(task)`: a **suggested** task whose approval starts work (`on_approve` is not
-empty) and that is not snoozed. This is deliberately narrower than "every open ask": a plain question
-or review on the board does not push (owner decision, 2026-10-05 — those were noise); a card is what an
-agent files when a person's yes is what lets it act.
+- **The preview is the server's, not the requester's.** `describe(params)` renders the title, the
+  plan ("If you approve, this happens") and the scopes from the same typed params the handler will
+  run. The requester's own words (`reason`, `evidence`) are stored and shown apart, labelled as
+  theirs. A request cannot say one thing and do another.
+- **The authority is the approver's own.** Each kind's `may_approve(user, params)` is the same rule
+  the real route enforces (`members.manage` and the role ceiling for adding a member; the agent's
+  owner or a workspace owner for agent admins). The handler runs as the approver. The person the
+  request is about never approves it. Nothing is filed that nobody could approve.
+- **Hard-coded, not routed to a model.** A kind is Python (`kinds/*.py`): typed params, `describe`,
+  `may_approve`, `execute`. A new kind is a new module with `@register`.
+- **Decided once.** `services.decide` locks the request; a second decision is a 409 naming who got
+  there first.
 
-`cards.build(task)` renders the one card every channel shows — the ask, the person's own words
-(`human_why`, verbatim), the agent's reason, the exact plan, **what approving starts** (the
-`on_approve` turns, or the card's own turn), **what declining does**, links, who it was sent to and how (`Jonathan Jackson (push, slack)`) and,
-once decided, who decided it, through which door and what they said. Nothing is invented.
+## The kinds (`GET /api/approvals/kinds`)
 
-An agent files a card by filing the task **on its own route** — `create_tasks` (`POST
-/api/agents/{slug}/tasks/`, a list) — with `status: suggested`, `human_why`, `plan`, `rationale`
-and `on_approve`. (The workspace route `POST /api/tasks/` refuses `on_approve`: that is the agent's
-own work to declare.) To send it to one named person rather than the default recipients, set
-`waiting_on_email`. Nothing else to call; delivery follows the save.
+| Kind | Params | Who can approve | What runs |
+|---|---|---|---|
+| `workspace.member.add` | `workspace, email, role` | an admin or owner of the workspace (only an owner can add an admin or owner) | adds the person (directly if they already have an account in the organisation, else emails an invitation) |
+| `workspace.member.set_role` | `workspace, email, role` | an admin or owner (only an owner can touch an admin or owner) | sets the member's role (the last owner cannot be demoted) |
+| `agent.admin.add` | `agent, email` | the agent's owner, or an owner of its workspace | makes a workspace member an admin of the agent |
+| `agent.run_turns` | `agent, prompts[1..3]` | anyone who can start turns for the agent | starts one turn per prompt, as the approver (the prompts are shown in full) |
 
-## Who gets it (`deciders.for_task`)
+## Filing
 
-The first rule that names anyone wins: the person the task is parked on or assigned to → the
-project's owner and check-in lead → the owner of the agent that raised it → the workspace's owners.
-An agent's own login is never a decider. At most 5. Anyone else in the workspace can still open a
-card and decide it (the same viewer tier as the board's Approve button); they are just not pushed.
+`POST /api/approvals/` `{kind, params, reason?, evidence?[{quote, who, source_url}], source_url?,
+for_email?, expires_in_hours?, idempotency_key?}` — as an agent's own login or a person who can
+work in the request's workspace. 422 says what is wrong with the kind or params, or that nobody can
+approve it. Replaying `idempotency_key` returns the original. `for_email` sends it to one named
+person (who must be able to approve it). Default expiry 7 days.
 
-## How it reaches them (`delivery.deliver`)
+## Status and history
 
-Once per (task, person, channel), on commit of the save that made it a card; a 60-second backstop
-(`approvals.backstop`, tick) delivers any card from the last 6 hours nobody was told about.
+`pending → done | failed | declined | cancelled | expired`. `failed` means it was approved but the
+handler refused (the person is already there, the target is gone, the last owner…): the reason is
+on the card and nothing was changed. `ApprovalEvent` is the audit trail (created, delivered,
+approved/declined, executed/failed, cancelled, expired), returned as `history`.
+
+## Who is told, and how (`delivery.deliver`)
+
+The people who could approve it (capped at 5), or the one named. Once per person per channel, on
+commit of the filing; a 60-second backstop (`approvals.backstop`) delivers any pending request from
+the last 6 hours nobody was told about, and expires the ones nobody decided.
 
 | Channel | What | One tap |
 |---|---|---|
-| **Slack DM** (`apps/slack/approvals.py`) | The whole card as blocks — ask, quotes, plan, what starts — and **Approve / Decline** buttons. | Yes: the click decides. |
-| **Web Push** (`channel_push.py`) | Title = what is asked; body = who and what; opens the card. High urgency. | Opens the card. |
-| **Email** (`channel_email.py`) | The same facts, and Approve / Decline buttons that open the card with the choice made. | Opens the card to confirm — a link never decides by itself (mail scanners open every link). |
+| **Slack DM** | the plan, the requester's words, and **Approve / Decline** buttons | yes: the click decides |
+| **Web Push** | what is asked and by whom; opens the request | opens it |
+| **Email** | the same, with buttons that open the request with your choice made | opens it to confirm (a link never decides by itself) |
 
-A person with a push or a Slack DM is not also emailed; email is for someone neither reaches.
-`NotificationPreference.approval_cards` (Settings → Account → Approval cards) turns the sending off
-for a person; the card stays on the board and Home.
+A person with a push or a Slack DM is not also emailed. A request in a workspace below another
+(Connect under Dimagi) uses the organisation's Slack. Settings → Account → *Approval cards* turns
+the sending off for a person (`NotificationPreference.approval_cards`).
 
-## The one door (`decide.decide`)
+A Slack click is accepted only from the DM canopy sent **that person for that request** (matched on
+the message ts). After any decision every Slack copy is rewritten ("Approved by X via Slack and done").
 
-The web page, a Slack button and an MCP client all call `decide`, which calls the board's own
-`services.act` — so approving starts exactly the turns `on_approve` names, once, atomically — and
-records an `ApprovalDecision` (who, `via` web | slack | email | push | api, comment). A second
-decision is a **409 naming who got there first**; the work is never run twice. A project decision
-card is still the project owner's (`proposals.before_act` → 403).
+## Routing like an alarm (`alerts_approval`)
 
-A Slack click is accepted only from the DM canopy sent **that person for that card** (matched on the
-message ts), by the person Slack signs the click as; anything else is refused privately.
-
-## Every copy stays honest (`delivery.settle`)
-
-Any action on the task — from the card, the board, or the API — triggers `settle` on commit, which
-rewrites each Slack DM to drop the buttons and say "Approved by X via Slack / the web / the board",
-and stamps the delivery settled. Push and email cannot be recalled; opening them shows the outcome.
+A pending request is also an alert of kind `approval_request`, scoped by its kind
+(`workspace:<slug>`, `agent:<slug>`), so it appears wherever alerts show for those scopes. The
+buttons are the kind's Approve / Decline as server actions (`via: alert`); a person who could not
+approve it has no actions and so does not see it. It resolves when the request is closed.
 
 ## API
 
-`GET /api/approvals/` (cards waiting on you) · `GET /api/approvals/{key}` · `POST
-/api/approvals/{key}/decide {decision, comment}`; each also an MCP tool. 404 for a task in a
-workspace you are not in.
+`GET /api/approvals/kinds` · `GET /api/approvals/` (what you could approve; `status=all`,
+`scope=…`) · `POST /api/approvals/` · `GET /api/approvals/{id}` · `POST /api/approvals/{id}/decide
+{decision, comment}` · `POST /api/approvals/{id}/cancel`; each also an MCP tool.
 
 ## Not here (on purpose)
 
-No passkey step-up on a decision yet: a card whose action is dangerous enough to need one is a
-follow-up (`act-as` and sign-offs already have the pattern). No snooze or reminder: a card waits on
-the board like any open ask.
+No passkey step-up on a decision yet (`act-as` and sign-offs have the pattern), and no reminders.
+Vault access and runner approvals are not kinds yet; each is one more module in `kinds/`.

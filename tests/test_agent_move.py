@@ -278,6 +278,8 @@ _NOT_THE_AGENTS = {
                                  "the agent-task gate once one moves away",
     "attention.Alert": "`handler_agent` is who is WORKING the alert, not whose it is; it lives in its "
                        "subject's workspace, and its source re-raises it there",
+    "approvals.ApprovalRequest": "a decision about its SUBJECT workspace (who may approve it is that "
+                                 "workspace's authority); `requested_by_agent` is who asked, kept as history",
 }
 
 
