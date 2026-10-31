@@ -1375,7 +1375,7 @@ def test_a_follow_up_mid_turn_is_delivered_into_the_running_turn(
     assert follow_up.status == Turn.DONE and follow_up.rides_turn_id == first.pk
 
 
-def test_queued_behind_renders_for_the_session_and_for_the_agent(slack, linked, hal):
+def test_queued_behind_renders_for_the_session_and_for_a_transfer(slack, linked, hal):
     from types import SimpleNamespace
 
     from apps.harness import claim
@@ -1390,10 +1390,9 @@ def test_queued_behind_renders_for_the_session_and_for_the_agent(slack, linked, 
     assert ":hourglass: Queued — `hal` is still finishing the previous message in this thread " \
            "on *acedimagi-mbp-cdp*, and this one runs next." in text
     assert blocks is None and "picking this up" not in text
-    ahead.chat_session_id = None
     text, _ = slack_status.render(turn, reach=SimpleNamespace(
-        kind=claim.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
-    assert "`hal` is busy with another turn on *acedimagi-mbp-cdp*" in text
+        kind=claim.LIVE, runners=[box], blocked_by_requirements=False, behind=None, transfer=True))
+    assert "this conversation is moving to *acedimagi-mbp-cdp*" in text
 
 
 @pytest.fixture

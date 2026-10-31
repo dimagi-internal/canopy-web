@@ -527,9 +527,13 @@ def test_a_chat_on_a_gone_member_moves_to_a_live_one(world, aws):
     assert session.runner_binding.runner_id == two.pk
     queued.refresh_from_db()
     assert queued.pinned_runner_id == two.pk and queued.status == Turn.QUEUED
-    # The transfer turn (NO SNAPSHOT: the old member was asleep) runs first.
-    first = Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at").first()
-    assert first.pk != queued.pk and first.pinned_runner_id == two.pk
+    # The transfer turn (NO SNAPSHOT: the old member was asleep) runs first: the
+    # claim holds the waiting message behind it (`routing.transfer_held_q`).
+    from apps.harness import routing
+
+    transfer = session.handoffs.get().turn
+    assert transfer is not None and transfer.pk != queued.pk and transfer.pinned_runner_id == two.pk
+    assert routing.blocking_turn(queued).pk == transfer.pk
 
 
 def test_a_chat_on_a_member_that_still_answers_is_left_where_it_is(world, aws):
