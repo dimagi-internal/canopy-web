@@ -11,6 +11,7 @@ import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { listTitle, PrivateMark } from '@/components/chat/privateConversation'
 import { StateDot as SharedStateDot } from '@/components/sessions/StateDot'
+import { sessionDisplay } from '@/components/sessions/sessionDisplay'
 import {
   linkKind,
   sessionMode,
@@ -22,7 +23,7 @@ import {
   type IdeState,
 } from './ideTree'
 
-export const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'input', idle: 'idle' }
+export const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'input', held: 'held', idle: 'idle' }
 export const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'auto', none: 'no turn' }
 
 export const sessionLabel = (s: ChatSession) =>
@@ -37,8 +38,8 @@ function dragReference(e: DragEvent<HTMLAnchorElement>, s: ChatSession) {
   e.dataTransfer.effectAllowed = 'copyLink'
 }
 
-export function StateDot({ state }: { state: IdeState }) {
-  return <SharedStateDot tone={state === 'input' ? 'asking' : state} />
+export function StateDot({ state, testId }: { state: IdeState; testId?: string }) {
+  return <SharedStateDot tone={state === 'input' ? 'asking' : state} testId={testId} />
 }
 
 function ModeTag({ mode }: { mode: IdeMode }) {
@@ -157,6 +158,12 @@ export function IdeTree({
                     {folder.counts.input}
                   </span>
                 )}
+                {folder.counts.held > 0 && (
+                  <span className="flex items-center gap-1" title="held behind an offline or paused runner">
+                    <StateDot state="held" />
+                    {folder.counts.held}
+                  </span>
+                )}
                 <span title="sessions shown">{folder.sessions.length}</span>
               </span>
             </button>
@@ -176,6 +183,7 @@ export function IdeTree({
             {open &&
               folder.sessions.map((s) => {
                 const st = sessionState(s)
+                const display = sessionDisplay(s)
                 const title = label(s)
                 const deleting = s.id in closing
                 // Moved to another runner that has not picked it up yet: kept in its
@@ -215,7 +223,7 @@ export function IdeTree({
                     title={[
                       s.sensitive ? title : s.title,
                       parent ? `${linkKind(s) === 'fork' ? 'forked' : 'started'} from ${label(parent)}` : '',
-                      `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
+                      `${display.label} · ${MODE_LABEL[sessionMode(s)]}`,
                       s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
                       s.runner_signed_out ? `Claude isn't signed in on ${s.runner_name}` : '',
                       `workspace ${s.workspace}`,
@@ -233,7 +241,7 @@ export function IdeTree({
                     )}
                     style={{ paddingLeft: '1.75rem' }}
                   >
-                    <StateDot state={st} />
+                    <StateDot state={st} testId={`session-status-${s.id}`} />
                     {renamingId === s.id ? (
                       <TitleInput
                         initial={s.title ?? ''}
@@ -259,16 +267,14 @@ export function IdeTree({
                       title={
                         s.runner_signed_out
                           ? `Claude isn't signed in on ${s.runner_name}: it runs nothing until someone signs in there`
-                          : !s.runner_name && s.requested_runner_name
+                          : display.runnerRequested
                             ? `Starts on ${s.requested_runner_name} with its first message`
                             : undefined
                       }
                       data-testid={s.runner_signed_out ? `ide-runner-signed-out-${s.id}` : undefined}
                     >
                       {s.runner_signed_out && '⚠ '}
-                      {s.runner_name ??
-                        s.turn_runner_name ??
-                        (s.requested_runner_name ? `→ ${s.requested_runner_name}` : 'web')}
+                      {display.runner ?? 'web'}
                     </span>
                     <ModeTag mode={sessionMode(s)} />
                     <span
@@ -304,7 +310,7 @@ export function IdeTree({
                           </span>
                           <span className="flex items-center gap-1 text-[11px]">
                             <StateDot state={kst} />
-                            {STATE_LABEL[kst]}
+                            {sessionDisplay(k).label}
                           </span>
                           <span className="text-right text-[11px] tabular-nums">
                             {kst === 'running' ? 'live' : shortAge(k.last_activity_at, now)}

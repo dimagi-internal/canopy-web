@@ -385,6 +385,9 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
     const row = screen.getByTestId('session-parked-parked')
     expect(row.className).toContain('opacity-60')
     expect(row.textContent).toContain('runner paused')
+    const status = screen.getByTestId('session-status-parked')
+    expect(status.getAttribute('data-tone')).toBe('held')
+    expect(status.textContent).toBe('runner paused')
   })
 
   it('still offers the reveal toggle when EVERY session is parked', async () => {
@@ -418,6 +421,43 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
 
     expect(await screen.findByText('Fresh chat')).toBeTruthy()
     expect(screen.queryByTestId('parked-summary')).toBeNull()
+  })
+})
+
+describe('ChatSessionsPanel — status column', () => {
+  it('shows each session in the shared precedence, with a stable test id and tone', async () => {
+    listRunners.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('ask', { title: 'Asking', running: true, waiting_on_you: true }),
+      chatSession('run', { title: 'Running', running: true }),
+      chatSession('quiet', { title: 'Quiet' }),
+    ])
+
+    renderPanel([agent()])
+    await screen.findByText('Asking')
+
+    const tone = (id: string) => screen.getByTestId(`session-status-${id}`).getAttribute('data-tone')
+    expect(tone('ask')).toBe('asking')
+    expect(screen.getByTestId('session-status-ask').textContent).toBe('waiting on you')
+    expect(tone('run')).toBe('running')
+    expect(tone('quiet')).toBe('idle')
+  })
+
+  it('names the requested runner of a chat that has not started yet', async () => {
+    listRunners.mockResolvedValue([])
+    listSessions.mockResolvedValue([
+      chatSession('fresh', {
+        title: 'Fresh',
+        origin: 'web',
+        runner_name: null,
+        runner_online: null,
+        runner_status: null,
+        requested_runner_name: 'Laptop',
+      }),
+    ])
+
+    renderPanel([agent()])
+    expect(await screen.findByText('→ Laptop')).toBeTruthy()
   })
 })
 
