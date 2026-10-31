@@ -44,6 +44,7 @@ export function ActivityLine({
   return (
     <div
       data-testid="pending-reply"
+      data-state={working ? "working" : "queued"}
       className="my-1 mr-auto flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-xs text-muted-foreground"
     >
       {working ? (

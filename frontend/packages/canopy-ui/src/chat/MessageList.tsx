@@ -14,12 +14,12 @@ import { useSecretRequestHost } from "./secretRequest";
 import { SubagentsContext, startedRunningAgent } from "./subagents";
 import { pairToolMessages, type ChatRow } from "./pairToolMessages";
 import {
-  groupToolRuns,
   lastTurnIndex,
   runHasError,
   runIsActive,
+  segmentToolRuns,
   summariseRun,
-  type GroupedRow,
+  type ToolRunSegment,
 } from "./groupToolRuns";
 import {
   currentActivity,
@@ -60,10 +60,11 @@ interface Props {
   onStopTurn?: () => void;
   /** A stop has been asked for and not yet landed. */
   stopping?: boolean;
-  /** Whether the LAST turn is still running — from the server's turn status
-   *  (ChatPanel derives it). A running turn shows its work as it happens; a
-   *  finished one folds its work into one line above its reply. Omitted, a
-   *  turn counts as running while any of its rows is still in flight. */
+  /** Whether the LAST turn is still running — `turnView().listLive`, taken as
+   *  given. A running turn shows its work as it happens; a finished one folds
+   *  its work into one line above its reply. Omitted (a host with no turn
+   *  status), a turn counts as running while one of its rows is in flight or
+   *  an agent it started still runs. */
   liveTurn?: boolean;
   /** Threaded to MessageItem so a `user` row can tell "me" from "someone
    *  else" for the authored-bubble treatment. */
@@ -116,7 +117,10 @@ export function MessageList({
 }: Props) {
   const secretHost = useSecretRequestHost();
   const subagents = useContext(SubagentsContext);
-  const paired = useMemo(() => pairToolMessages(messages), [messages]);
+  const paired = useMemo(
+    () => pairToolMessages(messages, { live: liveTurn === true }),
+    [messages, liveTurn],
+  );
   // One person's message and what followed it — the unit a finished turn
   // folds by. Within a turn, back-to-back tool calls still collapse into one
   // row (groupToolRuns): an agent mid-task emits long stretches of them, and
@@ -140,23 +144,31 @@ export function MessageList({
   const lastUserAt =
     lastTurn?.user?.kind === "message" ? lastTurn.user.message.created_at : null;
 
-  const renderRow = (row: GroupedRow): ReactNode => {
+  const renderRow = (row: ToolRunSegment): ReactNode => {
     if (row.kind === "tool_run") {
-      // One line for a whole run, open on demand. `open` when the bulk
-      // toggle says so, and always when something in it failed — a
-      // collapsed group must never hide an error.
-      const failed = runHasError(row.rows);
+      // Every run of calls is drawn in the same container, grouped or not, so
+      // a run growing from two calls to three keeps its rows mounted — only
+      // the header appears. A grouped run is one line, open on demand, and
+      // always open when something in it failed: a collapsed group must never
+      // hide an error. A short run is just its rows (open, no header).
+      const grouped = row.grouped;
+      const failed = grouped && runHasError(row.rows);
       // A run with a call still in flight must say so: collapsed, an agent
       // mid-task would otherwise look idle.
-      const active = runIsActive(row.rows);
+      const active = grouped && runIsActive(row.rows);
       return (
         <details
           key={row.key}
-          data-turn-index={lastTurnIndex(row.rows)}
-          open={forceToolOpen ?? (failed || undefined)}
-          className="group/run my-1 rounded border border-border bg-muted/40 text-sm"
+          data-testid="tool-run"
+          data-grouped={grouped ? "true" : "false"}
+          data-turn-index={grouped ? lastTurnIndex(row.rows) : undefined}
+          open={grouped ? forceToolOpen ?? (failed || undefined) : true}
+          className={grouped ? "group/run my-1 rounded border border-border bg-muted/40 text-sm" : "block"}
         >
-          <summary className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-muted-foreground hover:bg-muted/60 select-none [&::-webkit-details-marker]:hidden">
+          <summary
+            hidden={!grouped}
+            className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-muted-foreground hover:bg-muted/60 select-none [&::-webkit-details-marker]:hidden"
+          >
             <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open/run:rotate-90" />
             <span className="text-xs font-medium text-foreground">
               {summariseRun(row.rows)}
@@ -172,7 +184,7 @@ export function MessageList({
               </span>
             )}
           </summary>
-          <div className="space-y-1 border-t border-border/60 p-2">
+          <div className={grouped ? "space-y-1 border-t border-border/60 p-2" : "flex flex-col gap-2"}>
             {row.rows.map((r) =>
               r.kind === "tool_pair" ? (
                 <ToolRow key={r.key} use={r.use} result={r.result} forceOpen={forceToolOpen} />
@@ -233,50 +245,55 @@ export function MessageList({
       </div>
     );
   };
-  const renderRows = (list: ChatRow[]) => groupToolRuns(list).map(renderRow);
+  const renderRows = (list: ChatRow[]) => segmentToolRuns(list).map(renderRow);
 
   return (
     <LatestAppViewContext.Provider value={latestApp}>
     <div className="flex flex-col">
       <div className="flex flex-col gap-2 p-4">
         {turns.map((turn, i) => {
-          // Running = the caller says so (the server's turn status), or one of
-          // its rows is still on its way, or an agent it started still runs. A
-          // turn that hands work to background agents stops and wakes again
-          // each time one reports back; folding at every stop collapsed and
-          // re-expanded its work under a person reading it.
+          // Running = the caller says so (`turnView`). Without a caller's
+          // answer: one of its rows is still on its way, or an agent it
+          // started still runs — a turn that hands work to background agents
+          // stops and wakes again each time one reports back.
           const live =
             i === turns.length - 1 &&
-            ((liveTurn ?? turn.body.some(rowIsInFlight)) ||
-              startedRunningAgent(
-                turn.body.flatMap((r) => (r.kind === "tool_pair" ? [r.use] : [])),
-                subagents,
-              ));
+            (liveTurn ??
+              (turn.body.some(rowIsInFlight) ||
+                startedRunningAgent(
+                  turn.body.flatMap((r) => (r.kind === "tool_pair" ? [r.use] : [])),
+                  subagents,
+                )));
           const fold = planFold(turn, { live });
           const todos = latestTodos(turn.body);
+          // One flat, keyed list whether or not the turn is folded, so a turn
+          // finishing moves only its tool calls behind the fold: its reply and
+          // the agent's words along the way keep their place and stay mounted.
+          const children: ReactNode[] = fold
+            ? [
+                <TurnFold key="turn-fold" summary={fold.summary} forceOpen={forceToolOpen}>
+                  {todos && <TodoChecklist todos={todos} />}
+                  {renderRows(fold.folded)}
+                </TurnFold>,
+                ...renderRows(fold.kept),
+                renderRow(fold.reply),
+                ...renderRows(fold.after),
+              ]
+            : [
+                // The turn's plan at the top of its work — pinned while it
+                // runs, so the list stays in view as the work scrolls.
+                todos && turn.user ? <TodoChecklist key="todos" todos={todos} pinned={live} /> : null,
+                ...renderRows(turn.body),
+              ];
           return (
-            <div key={turn.key} data-testid="turn" className="flex flex-col gap-2">
+            <div
+              key={turn.key}
+              data-testid="turn"
+              data-live={live ? "true" : "false"}
+              className="flex flex-col gap-2"
+            >
               {turn.user && renderRow(turn.user)}
-              {fold ? (
-                <>
-                  <TurnFold summary={fold.summary} forceOpen={forceToolOpen}>
-                    {todos && <TodoChecklist todos={todos} />}
-                    {renderRows(fold.folded)}
-                  </TurnFold>
-                  {renderRows(fold.kept)}
-                  {renderRow(fold.reply)}
-                  {renderRows(fold.after)}
-                </>
-              ) : (
-                <>
-                  {/* The turn's plan at the top of its work — pinned while it
-                      runs, so the list stays in view as the work scrolls. */}
-                  {todos && turn.user && (
-                    <TodoChecklist todos={todos} pinned={live} />
-                  )}
-                  {renderRows(turn.body)}
-                </>
-              )}
+              {children}
             </div>
           );
         })}

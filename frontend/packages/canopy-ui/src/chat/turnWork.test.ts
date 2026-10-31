@@ -87,9 +87,30 @@ describe("planFold", () => {
     expect(planFold(turn(), { live: true })).toBeNull();
   });
 
-  it("never folds a turn with a call still running", () => {
+  it("takes `live` as given: a call whose result never came does not hold a finished turn open", () => {
     const t = segmentTurns(pairToolMessages([user("go"), say("hm"), ...call("Bash", { command: "x" }, null), say("…")]))[0];
-    expect(planFold(t, { live: false })).toBeNull();
+    expect(planFold(t, { live: true })).toBeNull();
+    const fold = planFold(t, { live: false });
+    expect(fold?.folded).toHaveLength(1);
+    expect(fold?.reply.kind === "message" && fold.reply.message.plaintext).toBe("…");
+  });
+
+  it("counts files changed with the same line diff each row's own +A −R shows", () => {
+    const t = segmentTurns(pairToolMessages([
+      user("go"),
+      ...call("Edit", { file_path: "a.py", old_string: "x\ny\nz", new_string: "x\nY\nz" }),
+      say("done"),
+    ]))[0];
+    // One line changed of three: +1 −1, not +3 −3.
+    expect(filesChanged(t.body)).toEqual([{ path: "a.py", added: 1, removed: 1 }]);
+  });
+
+  it("leaves a call that failed only in its text out of the files changed", () => {
+    const rows = pairToolMessages([
+      user("go"),
+      ...call("Edit", { file_path: "a.py", old_string: "x", new_string: "y" }, { plaintext: "Error: String to replace not found" }),
+    ]);
+    expect(filesChanged(rows)).toEqual([]);
   });
 
   it("does not fold a turn with no reply text, or nothing ahead of it", () => {

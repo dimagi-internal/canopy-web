@@ -98,23 +98,6 @@ export function repoChoices(fleet: readonly RunnerOut[]): RepoChoice[] {
 }
 
 /**
- * Whether the session's bound runner is offline — i.e. whether to raise the
- * placement banner and let the user choose wait-vs-continue.
- *
- * `runnerOnline` (SessionOut.runner_online) is AUTHORITATIVE when present: the
- * server computed it from the actual binding, so it needs no name matching and
- * no fleet fetch. The fleet list is only a fallback for payloads without it.
- *
- * The fallback distinguishes two things the old "no match ⇒ false" conflated:
- *   * an EMPTY fleet is genuinely unknown (not loaded, or the request failed) —
- *     still fail quiet, since alarming on missing data is worse than silence;
- *   * a LOADED fleet that does not contain the runner is evidence, not absence.
- *     `GET /runners/` omits retired runners, so a bound-but-unlisted runner is
- *     one that can never claim again. Failing quiet there is what left a send
- *     queued forever with no banner and no way to place it (labs 2026-07-25:
- *     10 sessions bound to a retired jj-mbp-cdp).
- */
-/**
  * The liveness half of a session payload — the two fields `_out` computes from
  * the binding's runner. Structural rather than the whole SessionOut so these
  * helpers stay testable from a two-key literal.
@@ -177,8 +160,8 @@ export function parkedSummary(parked: readonly SessionRunnerLiveness[]): string 
  * The fleet row for a session's bound runner, or null.
  *
  * The session payload carries the runner's NAME but not its id, and acting on a
- * runner (resume) needs the id — so the name is matched against the fleet list,
- * the same join `isBoundRunnerOffline` falls back to. Null when the fleet hasn't
+ * runner (resume) needs the id — so the name is matched against the fleet list.
+ * Null when the fleet hasn't
  * loaded, when the name is absent, or when the runner isn't in the caller's
  * fleet at all (retired, or owned by someone else) — every one of which means
  * "you cannot act on it from here", which is what the caller does with this.
@@ -189,17 +172,4 @@ export function findBoundRunner<T extends { name: string }>(
 ): T | null {
   if (!runnerName) return null
   return fleet.find((r) => r.name === runnerName) ?? null
-}
-
-export function isBoundRunnerOffline(
-  runnerName: string | null | undefined,
-  fleet: readonly Pick<RunnerOut, "name" | "status">[],
-  runnerOnline?: boolean | null,
-): boolean {
-  if (!runnerName) return false;
-  if (runnerOnline === false) return true;
-  if (runnerOnline === true) return false;
-  const match = fleet.find((r) => r.name === runnerName);
-  if (!match) return fleet.length > 0;
-  return match.status !== "online";
 }

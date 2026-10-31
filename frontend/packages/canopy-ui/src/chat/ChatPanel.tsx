@@ -9,14 +9,17 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList, type ToolRowsView } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
 import { withCancelledSends } from "./cancelledSends";
-import { isMine, isUnconfirmed } from "./identity";
+import { isMine } from "./identity";
+import { isCompactionSummary } from "./contextUsage";
+import { placeSends } from "./placeSends";
+import { useTurnView } from "./turnView";
 import { QueuedRows } from "./QueuedRows";
 import { RunningAgents } from "./RunningAgents";
 import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
 import type { SlashCommand } from "./slashCommands";
 import { type DraftStorage } from "./drafts";
-import { composerPlaceholder, pendingLabel as computePendingLabel, turnNotice, turnPhase } from "./turnStatus";
+import { composerPlaceholder, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { ContextMeter } from "./ContextMeter";
 import { useStickyBottom } from "./useStickyBottom";
 import { useNow } from "./useNow";
@@ -42,6 +45,10 @@ export interface ChatPanelProps {
   /** A send is outstanding but no reply has begun — the turn is queued,
    *  waiting for a runner to claim it. Keeps Stop reachable in that window. */
   awaitingReply?: boolean;
+  /** The person answered the agent's dialog here, so the turn reads as
+   *  resuming rather than blocked (`turnView`). Pass the same value to the
+   *  header's `useTurnView` so the two agree. */
+  pendingAnswer?: boolean;
   /** Files staged for the next send; omit to hide attaching entirely. */
   attachments?: PendingAttachment[];
   onAttach?: (files: File[]) => void;
@@ -52,7 +59,10 @@ export interface ChatPanelProps {
    *  wiring `useSessionSocket().takeOverDraft` through (e.g. ace-web) keeps
    *  compiling across the upgrade. */
   onTakeOver?: () => void;
-  onDiscard: () => void;
+  /** @deprecated never called: the panel has no discard control. Kept
+   *  optional so a host still passing `useSessionSocket().discardDraft`
+   *  keeps compiling. */
+  onDiscard?: () => void;
   renderMarkdown?: RenderMarkdown;
   /** Optional banner rendered above the composer. */
   banner?: ReactNode;
@@ -103,11 +113,6 @@ export interface ChatPanelProps {
  */
 const EMPTY_PEERS: PeerDraft[] = [];
 const NO_SUBAGENTS: SubagentSummary[] = [];
-/** Turn states in which a fresh send will sit and wait rather than be picked
- *  up in a moment: behind a running turn, or with no box that will take it. */
-const HELD_STATES = new Set([
-  "queued_behind", "waiting_runner", "signed_out", "unrouted", "working", "blocked", "paused",
-]);
 
 export function ChatPanel({
   state,
@@ -117,11 +122,11 @@ export function ChatPanel({
   onStop,
   onUnqueue,
   awaitingReply = false,
+  pendingAnswer = false,
   attachments,
   onAttach,
   onRemoveAttachment,
   onUpdateDraft,
-  onDiscard,
   renderMarkdown,
   banner,
   emptyState,
@@ -140,72 +145,26 @@ export function ChatPanel({
   messageActions,
   toolRows,
 }: ChatPanelProps) {
-  // `onDiscard` is part of the public surface (co-edit teardown) even though
-  // the default composer doesn't render a discard button. Referenced to keep
-  // it wired without an unused-var error; a future toolbar can surface it.
-  void onDiscard;
-
-  // A turn is "in flight" from the moment the assistant row appears
-  // (status=pending/streaming) until chat.stream_complete flips it to
-  // complete. Treat pending AND streaming as in-flight so the Stop button
-  // stays reachable during the "waiting for first token" window and SendBox
-  // knows to show its "sent after the current reply" placeholder — Send
-  // itself is never locked out by this any more (0.13): a send made while the
-  // agent is replying is QUEUED, not blocked, and <QueuedRows> shows it landed.
-  //
-  // Never YOUR line. A pending user row is a send waiting for its receipt, not
-  // a reply under way — `awaitingReply` already covers that window. Counting it
-  // here meant one row that never got confirmed held "Queued… 22m · Stop" under
-  // a turn that had finished long ago, with no frame able to clear it.
-  const inFlightMessage = useMemo(
-    () =>
-      state.messages.find(
-        (m) => m.role !== "user" && (m.status === "streaming" || m.status === "pending"),
-      ) ?? null,
-    [state.messages],
-  );
-
-  // Feedback where the eye actually is. Pressing send used to change NOTHING in
-  // the transcript: no assistant row exists until `chat.stream_start`, which the
-  // server emits together with `stream_complete` from a single `assistant`
-  // ledger event — i.e. only once the reply's first TEXT exists, seconds to
-  // minutes later. So MessageItem's own "Thinking…" treatment was unreachable on
-  // the real runner path, and the only signal was a 12px chip in the header,
-  // which on a phone is the far corner of the screen from your thumb.
-  //
-  // Three sources now, in `turnStatus.ts` — see `agentHasFloor` there for the
-  // order of authority. The server's `turn_status` wins when present because
-  // it is the only one that can say a turn is queued behind an offline box or
-  // routed nowhere at all; `awaitingReply` still covers the instant between
-  // pressing send and the first frame, which nothing server-side can.
+  // ONE answer to "is the last turn live" (`turnView`) — the same the host's
+  // header reads. The activity line, Stop, the composer's placeholder and the
+  // transcript's fold all derive from it.
   const status = state.turn_status ?? null;
-  // ONE answer (`turnPhase`), the same the host's header reads — every flag
-  // below derives from it, never from `awaitingReply` on its own, which the
-  // server's status overrides once it has spoken.
-  const phase = turnPhase({
-    status,
-    activity: state.activity,
-    awaitingReply,
-    replying: inFlightMessage != null,
-  });
+  const view = useTurnView({ state, awaitingReply, pendingAnswer });
+  const { phase, inFlight: inFlightMessage, working: isStreaming } = view;
   const agentHasFloor = phase === "working" || phase === "queued";
-  const showPendingReply = inFlightMessage == null && agentHasFloor;
   // The live line (what it is doing, the clock, Stop) stays under the turn
   // until it ends — while the reply streams too. It is the chat's one Stop
   // button; the composer has only Esc.
-  const showActivityLine = showPendingReply || inFlightMessage != null;
+  const showActivityLine = isStreaming;
   const pendingLabel = computePendingLabel({ status, activity: state.activity });
-  // The sentence for an ask that is going NOWHERE. Rendered instead of the
-  // bubble, never beside it: a spinner over a turn nothing will pick up is the
-  // precise lie this projection exists to remove.
+  // The sentence for an ask that is going NOWHERE, rendered instead of the
+  // activity line, never beside it.
   //
-  // Suppressed entirely when the host supplies its own `banner`. A host banner
-  // IS this host's richer answer for the same situation — canopy's chat page
-  // raises <PlacementBanner> for an offline runner, with buttons to wait or
-  // continue elsewhere, and <MenuPrompt> for a dialog. Rendering our sentence
-  // underneath would state the same fact twice and put a dead-end restatement
-  // directly below the thing you can actually press. The fallback is for hosts
-  // with no banner of their own, which is exactly the embedded widget.
+  // Suppressed when the host supplies its own `banner`: that IS the host's
+  // richer answer for the same situation (canopy's <PlacementBanner> for an
+  // offline runner, <MenuPrompt> for a dialog), and stating the fact twice puts
+  // a dead-end restatement under the thing you can press. The fallback is for
+  // hosts with no banner of their own, such as the embedded widget.
   const latestMessageAt =
     state.messages.length > 0 ? state.messages[state.messages.length - 1].created_at : null;
   // A clock only while a turn is working: the quiet notice is about time passing
@@ -217,39 +176,22 @@ export function ChatPanel({
     now,
   });
 
-  // Sticky-bottom scroll: dep changes on (a) new message arrival and (b)
-  // streaming text growth on the last message. length-only (cheap) instead
-  // of the full string so the effect doesn't re-run on equal characters.
-  // `showPendingReply` is in the dep too — the bubble is a new row at the
-  // bottom, and appearing below the fold would defeat the whole point of it.
+  // "Something new arrived" for the sticky-bottom scroll: a row was added or
+  // the newest row is a different one. Keyed by the row's stable identity (a
+  // send's client id survives its receipt), so a send being confirmed or the
+  // activity line appearing is not news. Growth within a row — a reply
+  // streaming in — is followed by the hook's ResizeObserver.
   const messages = state.messages;
-  const lastMessageLen =
-    messages.length > 0 ? messages[messages.length - 1].plaintext.length : 0;
-  const queuedCount = state.queued?.length ?? 0;
-  // The last row's id too: a snapshot that replaces the tab's cached tail holds
-  // the same number of rows, so a count alone said nothing had arrived.
-  const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : "";
-  const scrollDep = `${messages.length}:${lastMessageId}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
+  const last = messages.length > 0 ? messages[messages.length - 1] : null;
+  const lastIdentity = last
+    ? typeof last.content?.client_id === "string" ? last.content.client_id : last.id
+    : "";
+  const scrollDep = `${messages.length}:${lastIdentity}`;
   const { containerRef, onScroll, onWheel, scrollToBottom, away, unseen } = useStickyBottom(scrollDep);
 
-  // Is the newest turn still running? Then its work shows as it happens;
-  // once it isn't, the list folds that work into one line above the reply.
-  // From the server's status where there is one — a blocked agent or an open
-  // menu is still mid-turn, and folding the question away would hide it.
-  const liveTurn =
-    inFlightMessage != null ||
-    agentHasFloor ||
-    state.activity === "working" ||
-    state.activity === "blocked" ||
-    Boolean(status && (status.menu_pending || (!status.settled && !status.stuck)));
   // Queued vs a runner has it.
   const pendingWorking = phase === "working";
-  const canStop = state.active_draft != null && !disabledReason;
-  // The same answer the "Thinking…" bubble and the header give. Gating Stop
-  // (and Esc) on a streaming ROW alone hid it for most of a runner turn:
-  // that row only exists once the reply's first text does, so a turn busy
-  // in tools had a bubble saying it was working and no way to stop it.
-  const isStreaming = inFlightMessage != null || agentHasFloor;
+  const canStop = view.canStop && !disabledReason;
 
   // ONE way to stop, whichever control asked — Esc in the composer or Stop on
   // the turn's live line — and one "stopping…" both of them show. A stop you
@@ -304,43 +246,17 @@ export function ChatPanel({
     }
   };
 
-  // A send still waiting its turn is drawn ONCE, in the queue, in the order the
-  // server took it. Your own optimistic row for a send the server lists as
-  // `queued` leaves the transcript and is drawn by <QueuedRows> instead: left
-  // in place it read as already sent, and it sat ABOVE every queued row without
-  // a bubble of its own (a send from before a remount), so a later line showed
-  // first. A `delivering` send keeps its bubble — it is the agent's next read.
-  //
-  // Only when the wait is real, though. Every send is `queued` until a runner
-  // claims it, which on a live idle box is a second or two, and moving the
-  // bubble out for that window and back read as a flicker. So the head of the
-  // queue keeps its bubble unless something holds it: a send ahead of it, or a
-  // status that says it will wait (`picking_up` and a finished turn do not).
-  const waitIsReal = status != null && HELD_STATES.has(status.state);
-  const waitingClientIds = useMemo(
-    () =>
-      new Set(
-        (state.queued ?? [])
-          .filter((q, i) => q.client_id && (q.state === "midturn" || (q.state === "queued" && (i > 0 || waitIsReal))))
-          .map((q) => q.client_id),
-      ),
-    [state.queued, waitIsReal],
+  // Who is looking, for "is this line mine": a member by user id, a contact
+  // (the widget) by the snapshot's contact id.
+  const currentContactId = state.current_contact_id ?? null;
+
+  // Where each of your sends is drawn — as your bubble, or in the queue — in
+  // one pure answer (`placeSends`).
+  const placed = useMemo(
+    () => placeSends(state.messages, state.queued, { userId: currentUserId, contactId: currentContactId }, status),
+    [state.messages, state.queued, currentUserId, currentContactId, status],
   );
-  const shownMessages = useMemo(
-    () =>
-      waitingClientIds.size === 0
-        ? state.messages
-        : state.messages.filter(
-            (m) =>
-              !(
-                m.role === "user" &&
-                isUnconfirmed(m) &&
-                typeof m.content?.client_id === "string" &&
-                waitingClientIds.has(m.content.client_id)
-              ),
-          ),
-    [state.messages, waitingClientIds],
-  );
+  const shownMessages = placed.shown;
   // What the list draws: the same, plus the sends withdrawn before the agent read
   // them, in the place they were sent. Kept apart from `shownMessages` because
   // everything else (the queue fold, Edit, "is a reply owed") reasons about real
@@ -348,68 +264,6 @@ export function ChatPanel({
   const displayMessages = useMemo(
     () => withCancelledSends(shownMessages, state.cancelled),
     [shownMessages, state.cancelled],
-  );
-  // The list folds its LAST turn unless that turn is live. A send of yours drawn
-  // in the queue is not in the list, so its last turn is the previous one, and
-  // `liveTurn` (true from the moment you press send) unfolded that turn's whole
-  // work, then folded it back when a runner took the send. The page shrank by
-  // that much at once and could paint blank until scrolled. With your send in
-  // the queue, the previous turn is live only if it is itself still running.
-  const sendInQueue = shownMessages.length !== state.messages.length;
-  const listLiveTurn = sendInQueue
-    ? state.activity === "working" ||
-      state.activity === "blocked" ||
-      Boolean(status?.menu_pending) ||
-      (status?.state === "queued_behind" && status.behind !== "agent") ||
-      state.messages.some((m) => m.role !== "user" && (m.status === "streaming" || m.status === "pending"))
-    : liveTurn;
-
-  // Every other send of yours already renders in the transcript (as a
-  // "pending" user row keyed by client_id) the instant you press send, so a
-  // queued row for the SAME send would show it twice — once as your bubble,
-  // once as a dashed "queued" placeholder. hideClientIds is every client_id
-  // still on screen in the transcript.
-  const hideClientIds = useMemo(
-    () =>
-      new Set(
-        shownMessages
-          .map((m) => m.content?.client_id)
-          .filter((c): c is string => typeof c === "string"),
-      ),
-    [shownMessages],
-  );
-
-  // Who is looking, for "is this line mine": a member by user id, a contact
-  // (the widget) by the snapshot's contact id.
-  const currentContactId = state.current_contact_id ?? null;
-
-  // The text of your own sends still waiting to be confirmed — for a client
-  // that sends no client_id (an older host's HTTP send), the only way to tell
-  // its queued entry from a second copy of the same line.
-  // Your own sends a runner has not picked up yet, by client_id: the row your
-  // optimistic echo draws is where their Cancel goes.
-  const cancellable = useMemo(
-    () =>
-      new Map(
-        (state.queued ?? [])
-          .filter((q) => q.state === "queued" && q.client_id && isMine(q.author, currentUserId, currentContactId))
-          .map((q) => [q.client_id, q.turn_id] as const),
-      ),
-    [state.queued, currentUserId, currentContactId],
-  );
-  const ownPendingTexts = useMemo(
-    () =>
-      new Set(
-        shownMessages
-          .filter(
-            (m) =>
-              m.role === "user" &&
-              (m.status === "pending" || m.id.startsWith("local:")) &&
-              (!m.author || isMine(m.author, currentUserId, currentContactId)),
-          )
-          .map((m) => m.plaintext.trim()),
-      ),
-    [shownMessages, currentUserId, currentContactId],
   );
 
   // Everyone else's live drafts. The same list draws their boxes above the
@@ -474,13 +328,9 @@ export function ChatPanel({
           />
         </div>
       </div>
-      {/* Pinned ABOVE the scroll container, not inside it. The container is
-          auto-scrolled to the bottom (useStickyBottom), so a slot rendered as
-          the first child of the scroll content sits above the visible area —
-          on prod the "Load full session" control on an empty runner-discovered
-          session was in the DOM but scrolled out of view and covered by the
-          header, i.e. unreachable. Pinning keeps "Load earlier"/"Load full"
-          always visible. */}
+      {/* Pinned ABOVE the scroll container, not inside it: the container is
+          auto-scrolled to the bottom (useStickyBottom), so a slot inside the
+          scroll content would sit above the visible area, out of reach. */}
       {finding && (
         <FindBar rootRef={containerRef} version={scrollDep} onClose={() => setFinding(false)} />
       )}
@@ -511,20 +361,20 @@ export function ChatPanel({
             pendingStartedAt={pendingWorking ? status?.claimed_at ?? null : null}
             onStopTurn={canStop ? stopTurn : undefined}
             stopping={stopping}
-            liveTurn={listLiveTurn}
+            liveTurn={view.listLive}
             currentUserId={currentUserId}
             currentContactId={currentContactId}
-            cancellable={cancellable}
+            cancellable={placed.cancellable}
             onCancelQueued={onUnqueue}
             toolRows={toolRows}
           />
         </SubagentsContext.Provider>
         <QueuedRows
           queued={state.queued ?? []}
-          hideClientIds={hideClientIds}
+          hideClientIds={placed.hideClientIds}
           currentUserId={currentUserId}
           currentContactId={currentContactId}
-          ownPendingTexts={ownPendingTexts}
+          ownPendingTexts={placed.ownPendingTexts}
           onCancel={onUnqueue}
           editableTurnId={edit?.queued?.turn_id ?? null}
           onEdit={editQueued}
@@ -625,7 +475,7 @@ export function editTarget({
   if (!settled) return null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.role !== "user" || m.content?.cancelled === true || (m.content?.record as { compact_summary?: unknown } | undefined)?.compact_summary) {
+    if (m.role !== "user" || m.content?.cancelled === true || isCompactionSummary(m)) {
       continue;
     }
     // A row with no author predates authorship, and renders as yours.

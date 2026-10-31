@@ -11,6 +11,7 @@ import { useAppHost } from "./mcpApps/context";
 import { useSecretRequestHost } from "./secretRequest";
 import { useAttachmentHost } from "./attachmentHost";
 import { MessageActions } from "./messageActions";
+import { isCompactionSummary } from "./contextUsage";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
  *  stays free of `react-markdown`. Defaults to plain text in a <span>. */
@@ -46,13 +47,6 @@ function otherAuthorOf(
   return isMine(message.author, currentUserId, currentContactId) ? null : message.author;
 }
 
-/** A `user` row Claude Code wrote, not a person: the summary it leaves when it
- *  compacts the conversation. The runner keeps the transcript record's own
- *  flags on the row as `content.record` (`canopy_transcript.record_flags`). */
-function isCompactionSummary(message: Message): boolean {
-  const record = message.content?.record as Record<string, unknown> | undefined;
-  return message.role === "user" && Boolean(record?.compact_summary);
-}
 
 /** The CLI's sentences for a login that is gone — mirrors
  *  `canopy_transcript.signed_out.AUTH_REQUIRED_MARKERS`. Only for rows stored
@@ -217,7 +211,10 @@ export function MessageItem({
     // space on a phone (2026-09-24). Tables and code blocks keep their own
     // horizontal scroll; this only affects running text.
     <div
+      data-testid="message-row"
       data-turn-index={message.turn_index}
+      data-role={message.role}
+      data-status={message.status}
       // Focusable (not tabbable) so a tap on a touch screen reveals the row's
       // actions, as hovering does with a mouse.
       tabIndex={-1}
@@ -309,6 +306,7 @@ function SystemSeedRow({
       className="group my-2 mr-auto max-w-[80%] rounded-2xl border border-border bg-muted/40 px-3 py-1.5 text-sm"
       data-testid={testId}
       data-turn-index={message.turn_index}
+      data-role={message.role}
       {...(openProp !== undefined ? { open: openProp } : {})}
     >
       <summary className="flex cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground select-none list-none [&::-webkit-details-marker]:hidden">
@@ -337,6 +335,7 @@ function ApiErrorRow({ message, signedOut }: { message: Message; signedOut: bool
     <div
       data-testid="api-error-row"
       data-turn-index={message.turn_index}
+      data-role={message.role}
       className="my-1 mr-auto flex max-w-[80%] items-start gap-1.5 text-xs text-warning"
       role="status"
     >

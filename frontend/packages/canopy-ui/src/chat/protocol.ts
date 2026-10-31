@@ -362,6 +362,13 @@ export interface SessionState {
   /** The connecting CONTACT, when the viewer is one; null for a member.
    *  Absent on an older server. */
   current_contact_id?: number | null;
+  /** The server holds rows older than the ones loaded here. In the snapshot,
+   *  and kept by the reducer across reconnects and scroll-back loads (see
+   *  `keepLoadedHistory`). Absent when nothing has said. */
+  has_more_before?: boolean;
+  /** The snapshot's oldest row's ordinal — where its tail begins. Absent on an
+   *  older server; the reducer then uses the snapshot's lowest `turn_index`. */
+  oldest_loaded_turn_index?: number | null;
 }
 
 /** One subagent of a session, from the files Claude Code keeps beside its
