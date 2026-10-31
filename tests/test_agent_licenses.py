@@ -191,17 +191,12 @@ def test_the_access_check_says_license(world):
 def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatch):
     """Never the owner's GitHub delegation or the agent's own canopy
     login — the holder runs the agent's tools, not the agent."""
-    from types import SimpleNamespace
 
-    from apps.agents import api as agents_api
 
     agent = world["agent"]
     agent.runtime_secrets = ["nova-api-key", "canopy-pat"]
     agent.save(update_fields=["runtime_secrets"])
     AgentCredential.objects.create(agent=agent, name="canopy-pat", value_zk="zks1:agent-own-pat", kv=0)
-    monkeypatch.setattr(agents_api.delegations, "delegation_for",
-                        lambda a: SimpleNamespace(secret_enc="x"))
-    monkeypatch.setattr(agents_api.delegations, "decrypt_secret", lambda s: "owner-github-token")
 
     turn_id = _open(world["aath"]).json()["turn_id"]
     body = _resolve(world["aath"], turn_id).json()

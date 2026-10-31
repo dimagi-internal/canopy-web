@@ -2277,7 +2277,7 @@ class TurnGitHubTokenOut(Schema):
     """One turn's GitHub identity, and where its token is. A token a person delegated to
     the agent is in the agent's vault, sealed to the machines that run it: `token` is ""
     and `delegated` names the vault entry the box opens from its own resolve of `agent`.
-    One still held the old way comes in `token`, for that turn's environment only."""
+    (`token` is always "" now; older runners still read it.)"""
 
     token: str = ""
     #: The agent vault entry holding the token (`github-token`), when it is there.

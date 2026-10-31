@@ -20,7 +20,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import services
-from apps.agents.models import Agent, AgentCredentialRead, AgentDelegation
+from apps.agents.models import Agent, AgentCredentialRead
+from apps.connections.models import ConnectionApp
 from apps.common.encryption import encrypt_secret
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.harness.models import Runner, RunnerAssignment
@@ -128,16 +129,15 @@ def test_a_runner_header_naming_someone_elses_box_is_not_recorded(fleet):
 
 # ---- reencrypt_secrets ----------------------------------------------------------
 
-def _held(fleet, value: str) -> AgentDelegation:
-    """A row with an encrypted column to re-encrypt: a person's token lent to the agent."""
-    row, _ = AgentDelegation.objects.update_or_create(
-        user=fleet["user"], agent=fleet["agent"], service=AgentDelegation.GITHUB,
-        defaults={"secret_enc": value})
+def _held(fleet, value: str) -> ConnectionApp:
+    """A row with an encrypted column to re-encrypt: a workspace's OAuth client secret."""
+    row, _ = ConnectionApp.objects.update_or_create(
+        workspace=fleet["agent"].workspace, provider="salesforce", defaults={"client_id": "x", "client_secret_enc": value})
     return row
 
 
 def _stored(fleet) -> str:
-    return AgentDelegation.objects.get(agent=fleet["agent"]).secret_enc
+    return ConnectionApp.objects.get(workspace=fleet["agent"].workspace).client_secret_enc
 
 
 def _legacy(secret_key: str, plaintext: str) -> str:
@@ -150,7 +150,7 @@ def test_secret_columns_are_discovered_not_listed():
 
     found = {f"{m._meta.label}.{f}" for m, f in secret_columns()}
     assert {
-        "agents.AgentDelegation.secret_enc",
+        "connections.ConnectionApp.client_secret_enc",
         "slack.SlackInstallation.bot_token_enc",
         "contacts.HcpClient.webhook_secret_encrypted",
     } <= found

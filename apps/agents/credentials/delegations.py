@@ -1,12 +1,11 @@
-"""A person lending their GitHub identity to one agent — see `AgentDelegation`.
+"""A person lending their GitHub identity to one agent: a credential delegated to it in its vault (`accounts`).
 
 Request-free service layer: the agent routes (set / check / clear), the harness
 runner route (issue one token to one turn) and the runner-readiness route all
 call these, so they cannot drift about which delegation is in force.
 
 THE ONE RULE: a turn's GitHub credential is the delegation in force for its
-agent — its owner's, or when the owner has lent none, one of its admins'
-(`delegation_for`) — resolved here, server-side. The runner names a turn it has claimed and
+agent — the one a person who is still an admin of it lent (`accounts.serves`) — resolved here, server-side. The runner names a turn it has claimed and
 nothing else — it never chooses whose identity to use, and there is no fallback
 to any shared token when the delegation is missing. A turn with no agent (a repo
 chat, a project turn) has no GitHub credential at all — unless its repo has a
@@ -30,11 +29,9 @@ import requests
 from django.db import transaction
 from django.utils import timezone
 
-from apps.common.encryption import decrypt_secret
-from apps.workspaces import services as wsvc
 
 from ..definition import definition_key
-from ..models import Agent, AgentCredential, AgentDelegation, RepoIdentity
+from ..models import Agent, AgentCredential, RepoIdentity
 from . import accounts, zk
 
 GITHUB_API = "https://api.github.com"
@@ -232,48 +229,11 @@ def _expires(meta: dict) -> dt.datetime | None:
 
 # ---- the delegation itself ---------------------------------------------------
 
-def delegation_for(agent: Agent) -> AgentDelegation | None:
-    """The GitHub delegation IN FORCE for this agent: its current owner's. A row
-    left behind by a previous owner is not it.
-
-    Nor is an owner's who has left the workspace: lending a GitHub identity is
-    something a member does for their tenant's agent, and an ex-member's token
-    must stop acting the moment they are out — not when someone notices the
-    `owner` field still names them.
-
-    When the owner has lent nothing, an ADMIN's delegation is in force — the
-    most recently saved one whose person is still an admin (`Agent.is_admin`,
-    which already fails closed on ex-members). An agent set up on its owner's
-    behalf by an admin should not wait on the owner to paste a token (Jonathan,
-    2026-10-21). The owner's own token always wins, and someone who stops being
-    an admin stops lending at once."""
-
-    service = AgentDelegation.GITHUB
-    if agent.owner_id is not None and wsvc.is_member(agent.owner, agent.workspace_id):
-        row = AgentDelegation.objects.filter(
-            agent=agent, user_id=agent.owner_id, service=service).first()
-        if row is not None:
-            return row
-    for row in (AgentDelegation.objects.filter(agent=agent, service=service)
-                .exclude(user_id=agent.owner_id).select_related("user").order_by("-updated_at")):
-        if agent.is_admin(row.user):
-            return row
-    return None
-
-
 def github_entry(agent: Agent) -> AgentCredential | None:
     """The GitHub token a person delegated to `agent`, in its vault (`accounts`): sealed
-    to the machines that run the agent, readable by no person. None before one is given
-    (an older `AgentDelegation` row may still serve until it is moved)."""
+    to the machines that run the agent, readable by no person. None before one is given."""
     return accounts.delegated_entries(agent).filter(name=accounts.GITHUB_ENTRY,
                                                     provider="github").first()
-
-
-def _legacy_row(agent: Agent) -> AgentDelegation | None:
-    """A GitHub delegation still held the old way (`secret_enc`), until it is moved into
-    the vault (`manage.py move_delegations_to_vault`)."""
-    row = delegation_for(agent)
-    return row if row is not None and row.secret_enc else None
 
 
 def set_github(agent: Agent, user, token: str):
@@ -287,7 +247,7 @@ def set_github(agent: Agent, user, token: str):
 
     canopy-web sees the token for this request only: it checks it, seals it to the
     machines that run the agent (and to the person's own vault key), and keeps no copy it
-    can read. Their older `AgentDelegation` rows for the agent are deleted."""
+    can read."""
     token = (token or "").strip()
     if not token:
         raise DelegationError("paste the token")
@@ -320,7 +280,6 @@ def set_github(agent: Agent, user, token: str):
                 "provider_expires_at": _expires(meta),
                 "checks": meta["checks"], "checked_at": timezone.now(), "checked_by": "server",
             })
-        AgentDelegation.objects.filter(agent=agent, service=AgentDelegation.GITHUB).delete()
     return entry
 
 
@@ -345,33 +304,18 @@ def record_checks(agent: Agent, name: str, *, checks: list, provider_expires_at=
 
 
 def check_github(agent: Agent):
-    """Re-run the checks on a token still held the old way. One in the vault is checked
-    by the machines that open it (`record_checks`): canopy-web cannot read it."""
-    if github_entry(agent) is not None:
-        return github_entry(agent)
-    row = _legacy_row(agent)
-    if row is None:
-        return None
-    try:
-        meta = _meta_for(decrypt_secret(row.secret_enc), agent)
-    except DelegationError as exc:
-        meta = {**row.meta, "checks": [], "checked_at": timezone.now().isoformat(),
-                "error": str(exc)}
-    row.meta = meta
-    row.expires_at = _expires(meta) if "error" not in meta else row.expires_at
-    row.save(update_fields=["meta", "expires_at", "updated_at"])
-    return row
+    """The agent's GitHub entry. canopy-web cannot probe one itself — it cannot open it — so
+    the machines that do record what they found (`record_checks`)."""
+    return github_entry(agent)
 
 
 def clear_github(agent: Agent, user) -> bool:
-    """Withdraw the caller's own GitHub delegation — in the vault or held the old way."""
+    """Withdraw the caller's own GitHub delegation."""
     entry = github_entry(agent)
-    deleted = 0
-    if entry is not None and entry.delegated_by_id == user.pk:
-        deleted, _ = AgentCredential.objects.filter(pk=entry.pk).delete()
-    more, _ = AgentDelegation.objects.filter(
-        agent=agent, user=user, service=AgentDelegation.GITHUB).delete()
-    return bool(deleted or more)
+    if entry is None or entry.delegated_by_id != user.pk:
+        return False
+    deleted, _ = AgentCredential.objects.filter(pk=entry.pk).delete()
+    return bool(deleted)
 
 
 def status(agent: Agent, *, machines: bool = False, viewer=None) -> dict:
@@ -424,24 +368,7 @@ def status(agent: Agent, *, machines: bool = False, viewer=None) -> dict:
             "waiting_machines": about["waiting"],
             "no_longer_works": bool(failed),
         }
-    row = delegation_for(agent)
-    if row is None:
-        return base
-    meta = row.meta or {}
-    return {
-        **base,
-        "set": True,
-        "lent_by_email": row.user.email,
-        "login": meta.get("login", ""),
-        "name": meta.get("name", ""),
-        "expires_at": row.expires_at,
-        "expired": bool(row.expires_at and row.expires_at <= now),
-        "expiring_soon": bool(row.expires_at and now < row.expires_at <= now + EXPIRY_WARNING),
-        "checks": meta.get("checks", []),
-        "error": meta.get("error", ""),
-        "checked_at": meta.get("checked_at"),
-        "updated_at": row.updated_at,
-    }
+    return base
 
 
 def readiness(agent: Agent) -> tuple[str, str]:
@@ -509,9 +436,8 @@ def github_token_for_turn(turn) -> dict:
 
     A token a person delegated to the agent is in its vault, sealed to the machines that
     run it: this hands out no token, only `delegated` (the vault entry's name) and
-    `agent` — the box opens the entry from its own resolve. One still held the old way
-    (`AgentDelegation.secret_enc`, until it is moved) is handed over in `token`, as before.
-    `credentials/resolve` never returns either to a person."""
+    `agent` — the box opens the entry from its own resolve. `credentials/resolve` never
+    returns it to a person."""
     if turn.capability:
         # A CALLER's turn (confined to a capability of the agent's interface) is
         # never lent the owner's GitHub identity: no published capability needs it,
@@ -535,16 +461,10 @@ def github_token_for_turn(turn) -> dict:
         return _issued(turn, agent, token="", login=ident.get("login", ""), user_id=ident.get("user_id", 0),
                        name=ident.get("name", ""), expires_at=entry.provider_expires_at,
                        delegated=entry.name)
-    row = _legacy_row(agent)
-    if row is None:
-        who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
-        raise DelegationError(
-            f"neither {agent.slug}'s owner {who} nor an admin has delegated it a GitHub identity — "
-            f"add a token at /agents/{agent.slug}/settings → External accounts → GitHub")
-    meta = row.meta or {}
-    return _issued(turn, agent, token=decrypt_secret(row.secret_enc), login=meta.get("login", ""),
-                   user_id=meta.get("user_id", 0), name=meta.get("name", ""), expires_at=row.expires_at,
-                   delegated="")
+    who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
+    raise DelegationError(
+        f"neither {agent.slug}'s owner {who} nor an admin has delegated it a GitHub identity — "
+        f"add a token at /agents/{agent.slug}/settings → External accounts → GitHub")
 
 
 def _issued(turn, agent: Agent, *, token: str, login: str, user_id, name: str, expires_at,

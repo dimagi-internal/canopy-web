@@ -5904,7 +5904,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 # inherited it) and written to a global ~/.git-credentials — which meant every
 # agent pushed as whoever made that token, with whatever it could do, and could
 # not open a pull request (#747). Now each TURN asks canopy-web for its agent
-# owner's token for that agent (`AgentDelegation`), and it goes into that turn's
+# owner's token for that agent (delegated in its vault), and it goes into that turn's
 # environment and nowhere else, so two concurrent turns for agents with
 # different owners cannot see each other's.
 
