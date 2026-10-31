@@ -19,7 +19,7 @@ from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
 from apps.api.route_gates import gate
-from apps.canopy_sessions import handoff
+from apps.canopy_sessions import control, handoff
 from apps.canopy_sessions.coaching import full_upload_session_ids
 from apps.canopy_sessions.models import HandoffArchive, RunnerBinding, Session, SessionHandoff
 from apps.workspaces import services as wsvc
@@ -64,6 +64,8 @@ from .schemas import (
     ResolveSessionIn,
     ResolveSessionOut,
     SessionBackfillIn,
+    SessionInterruptResultIn,
+    SessionInterruptSyncOut,
     SessionMenuIn,
     SessionMenuOut,
     SessionSubagentsIn,
@@ -646,6 +648,43 @@ def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
     binding.pending_answer = None
     binding.save(update_fields=["pending_answer"])
     return {"ok": True}
+
+
+@router.get("/runners/{runner_id}/session-interrupts", response=SessionInterruptSyncOut)
+@gate("runner")
+def list_session_interrupts(request: HttpRequest, runner_id: uuid.UUID):
+    """Stops a person asked of a session on this runner that it has not carried
+    out yet. The `session_interrupt` control frame is the doorbell; this is the
+    record, drained on the poll tick, so a frame lost while the control channel
+    was down costs a tick rather than the stop. A request older than
+    `control.INTERRUPT_TTL` is not offered."""
+    runner = runner_or_404(request, runner_id)
+    bindings = (
+        RunnerBinding.objects.select_related("session")
+        .filter(runner=runner)
+        .exclude(pending_interrupt__isnull=True)
+        .exclude(session_key="")
+    )
+    return {"interrupts": [
+        {"session_id": str(b.session_id), "session_key": b.session_key,
+         "project": b.emdash_project or b.session.emdash_project,
+         "interrupt_id": (b.pending_interrupt or {}).get("id") or ""}
+        for b in bindings if control.interrupt_live(b.pending_interrupt)
+    ]}
+
+
+@router.post("/runners/{runner_id}/session-interrupt-result", response=MenuAnswerResultOut)
+@gate("runner", kind="runner-protocol")
+def post_session_interrupt_result(request: HttpRequest, runner_id: uuid.UUID,
+                                  payload: SessionInterruptResultIn):
+    """The runner reports what became of a stop, which retires it. Matched on
+    `interrupt_id`, so a result for a stop since replaced leaves the newer one."""
+    runner = runner_or_404(request, runner_id)
+    retired = (RunnerBinding.objects
+               .filter(session_id=payload.session_id, runner=runner,
+                       pending_interrupt__id=payload.interrupt_id)
+               .update(pending_interrupt=None))
+    return {"ok": bool(retired)}
 
 
 @router.post("/runners/{runner_id}/session-menu", response=SessionMenuOut)

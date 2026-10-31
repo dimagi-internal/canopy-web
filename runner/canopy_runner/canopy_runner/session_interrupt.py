@@ -11,6 +11,13 @@ They are sessions, though, and canopy knows the session: every agent/project/pho
 thread gets a durable Session plus a RunnerBinding carrying `session_key` — the emdash
 task. So a stop is addressed exactly the way a menu answer already is.
 
+Two ways a stop arrives: the `session_interrupt` control frame (the doorbell,
+`ring()`), and the server's durable record of it, `GET
+/runners/{id}/session-interrupts`, read by `pull()` on the report sweep so a frame
+lost on a down control channel costs a tick rather than the stop. Each carries the
+stop's `interrupt_id`; once the stop lands or gives up, `drain()` retires it on the
+server by that id.
+
 THE THREAD SPLIT IS THE POINT, and it is why this is a doorbell rather than a
 function the socket calls. `ring()` runs on the WAKE-LISTENER thread, which also
 carries `cancel`, `wake` and `menu_answer`; a CDP round trip there would block the
@@ -33,14 +40,19 @@ logger = logging.getLogger("canopy_runner")
 #: chat_pump.CANCEL_MAX_ATTEMPTS — the same question, asked about a session.
 MAX_ATTEMPTS = 3
 
-#: {session_key: {"session_id": str, "attempts": int}} — stops rung and not yet
-#: confirmed. Guarded because ring() and take() run on different threads.
+#: {session_key: {"session_id": str, "attempts": int, "interrupt_ids": set}} —
+#: stops rung and not yet confirmed. Guarded because ring() and take() run on
+#: different threads.
 _pending: dict[str, dict] = {}
+#: Stop ids already carried out here, so the durable record read before the
+#: server retired it is not rung a second time.
+_done_ids: set[str] = set()
 _lock = threading.Lock()
 
 
-def ring(session_key: str, session_id: str = "") -> None:
-    """A stop arrived for this session. Called from the wake-listener thread.
+def ring(session_key: str, session_id: str = "", interrupt_id: str = "") -> None:
+    """A stop arrived for this session. Called from the wake-listener thread, and
+    by `pull()` for one recorded on the server.
 
     Re-ringing a session already pending does NOT reset its attempt count: a human
     jabbing the button three times is asking for the same stop, not for nine
@@ -49,37 +61,71 @@ def ring(session_key: str, session_id: str = "") -> None:
     if not session_key:
         return
     with _lock:
-        entry = _pending.setdefault(session_key, {"session_id": session_id, "attempts": 0})
+        if interrupt_id and interrupt_id in _done_ids:
+            return
+        entry = _pending.setdefault(session_key, {"session_id": session_id, "attempts": 0,
+                                                  "interrupt_ids": set()})
         if session_id:
             entry["session_id"] = session_id
+        if interrupt_id:
+            entry["interrupt_ids"].add(interrupt_id)
+
+
+def pull(cfg, client, runner_id: str) -> int:
+    """Ring every stop the server holds for this runner that has not been rung —
+    the stops whose frame never arrived. Returns how many were new. Network only;
+    the Escape itself is `drain()`'s, on the next tick."""
+    del cfg
+    new = 0
+    for item in client.sync_session_interrupts(runner_id):
+        key, iid = str(item.get("session_key") or ""), str(item.get("interrupt_id") or "")
+        if not key or not iid:
+            continue
+        with _lock:
+            known = iid in _done_ids or iid in _pending.get(key, {}).get("interrupt_ids", ())
+        if known:
+            continue
+        ring(key, str(item.get("session_id") or ""), iid)
+        new += 1
+    return new
+
+
+def _retire(client, runner_id: str, session_id: str, ids: set[str], outcome: str) -> None:
+    """Tell the server what became of these stops, which retires them there."""
+    for iid in ids:
+        with _lock:
+            _done_ids.add(iid)
+        if not session_id:
+            continue
+        try:
+            client.post_session_interrupt_result(runner_id, session_id, iid, outcome)
+        except Exception:  # noqa: BLE001 — the TTL retires it if this never lands
+            logger.debug("session stop: could not retire %s", iid, exc_info=True)
 
 
 def take() -> list[tuple[str, str]]:
-    """Drain the rung stops as (session_key, session_id), for this tick's attempt.
+    """The rung stops as (session_key, session_id), for this tick's attempt.
 
-    Draining rather than peeking: `settle()` puts back the ones still unconfirmed,
-    so a stop that lands cleanly leaves no state behind and one that does not is
-    retried a bounded number of times.
+    `settle()` drops the ones that are finished with, so a stop that lands cleanly
+    leaves no state behind and one that does not is retried a bounded number of
+    times.
     """
     with _lock:
         return [(key, entry["session_id"]) for key, entry in _pending.items()]
 
 
-def settle(session_key: str, *, confirmed: bool) -> bool:
-    """Record this tick's outcome. Returns whether the stop is now finished with —
-    either because it landed, or because it has used up its attempts."""
+def settle(session_key: str, *, confirmed: bool) -> tuple[bool, set[str]]:
+    """Record this tick's outcome. Returns (whether the stop is now finished with —
+    it landed, or used up its attempts — and the server ids it carried)."""
     with _lock:
         entry = _pending.get(session_key)
         if entry is None:
-            return True
-        if confirmed:
+            return True, set()
+        if confirmed or entry["attempts"] + 1 >= MAX_ATTEMPTS:
             _pending.pop(session_key, None)
-            return True
+            return True, set(entry.get("interrupt_ids") or ())
         entry["attempts"] += 1
-        if entry["attempts"] >= MAX_ATTEMPTS:
-            _pending.pop(session_key, None)
-            return True
-        return False
+        return False, set()
 
 
 def drain(cfg, client, runner_id: str) -> int:
@@ -107,7 +153,9 @@ def drain(cfg, client, runner_id: str) -> int:
             action = "unreadable"
 
         confirmed = action in ("interrupted", "idle")
-        done = settle(session_key, confirmed=confirmed)
+        done, ids = settle(session_key, confirmed=confirmed)
+        if done and ids:
+            _retire(client, runner_id, session_id, ids, action if confirmed else "failed")
 
         # Say what happened, on both outcomes. Only the SUCCESS was reported before,
         # which left a failed stop indistinguishable from a stop nobody asked for —

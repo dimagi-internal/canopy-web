@@ -12,10 +12,10 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.harness import clis, routing, sensitivity
-from apps.harness.models import Turn
+from apps.harness.models import Runner, Turn
 
 from . import activity as session_activity
-from . import conversation_keys, handoff, services, transcript_read
+from . import conversation_keys, handoff, services, staleness, transcript_read
 from . import lifecycle
 from .models import Message, RunnerBinding, Session
 
@@ -82,7 +82,6 @@ def _eligible_runner(session: Session, runner_id):
     resolve to None so callers 422 exactly like a nonexistent id (no oracle);
     a malformed id (not a UUID) resolves to None the same way rather than
     raising django's ValidationError out of the ORM lookup."""
-    from apps.harness.models import Runner
     from apps.workspaces import services as wsvc
 
     if not runner_id:
@@ -214,14 +213,14 @@ def _initiator(initiator, user, via: str):
 def busy_reason(session: Session) -> str:
     """Why `session` cannot be moved right now, or "" when it can.
 
-    Two ways a session is mid-thought: a harness turn executing in it, or the
-    engine itself working — a person typing straight into the session (the chat,
-    /ide, emdash) runs Claude with no executing `Turn` at all, so the turn check
-    alone moved live sessions (2026-10-24: a dry run offered all 11 of a box's
-    sessions, three of them `running`). The engine's word counts whenever its
-    runner is reachable, PAUSED included; an offline box's last report describes
-    a session nobody can still be driving, so moving off it stays allowed."""
-    if Turn.objects.filter(chat_session=session, status__in=list(routing.EXECUTING)).exists():
+    Two ways a session is mid-thought: a turn that drives it executing
+    (`staleness.driving_turns_of` — a chat turn, or an agent turn a cloud runner
+    keeps RUNNING for the whole of the work), or the engine itself working — a
+    person typing straight into the session runs Claude with no executing `Turn`
+    at all. The engine's word counts whenever its runner is reachable, PAUSED
+    included; an offline box's last report describes a session nobody can still
+    be driving, so moving off it stays allowed."""
+    if staleness.driving_turns_of(session).filter(status__in=list(routing.EXECUTING)).exists():
         return "a turn is still executing — stop the session first"
     binding = getattr(session, "runner_binding", None)
     if (binding is not None and binding.runner_id is not None and binding.runner.is_reachable
@@ -348,6 +347,108 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
                          handoff=str(h.pk), to_cli=to_cli)
     binding.refresh_from_db()
     return binding, h.turn
+
+
+def place_queued_turn(*, session: Session, placement: str, user=None) -> Turn:
+    """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
+    directed-placement decision (vs `_resolve_placement`, which only applies to
+    a turn being newly enqueued). `placement` is "wait" (pin to the session's
+    currently bound runner) or a runner UUID string.
+
+    Raises LookupError if there is no queued turn to place (-> 404), or
+    ValueError for an unresolvable placement (-> 422): "wait" with no bound
+    runner, an unknown/retired runner id, or a box `user` may not choose
+    (`may_place`).
+    """
+    turn = (
+        Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
+        .order_by("created_at")
+        .first()
+    )
+    if turn is None:
+        raise LookupError("no queued turn to place")
+    if placement == "wait":
+        binding = getattr(session, "runner_binding", None)
+        if not (binding and binding.runner_id):
+            raise ValueError("session has no bound runner to wait for")
+        turn.pinned_runner_id = binding.runner_id
+    else:
+        runner = _placeable_runner(session, placement)
+        if runner is None:
+            raise _placement_refused(session, placement, "unknown runner")
+        if not may_place(user, session, runner):
+            raise _placement_forbidden(session, runner)
+        turn.pinned_runner = runner
+    turn.save(update_fields=["pinned_runner"])
+    return turn
+
+
+def available_cloud_runner(session: Session, user=None):
+    """An ONLINE, session-capable cloud runner this session could be placed on,
+    or None. Same `_placeable_runner` gate as every other placement, so the
+    answer is never a box that would leave the turn pinned and unclaimable — and
+    one `user` (who sent it) may place it on (`may_place`), so the offer is never
+    one the click refuses. A
+    directed-only box (a test box) is never offered unasked: it takes work only
+    when someone chooses it (the pickers still list it)."""
+    for runner in (Runner.objects.filter(kind=Runner.CLOUD, owner__isnull=False)
+                   .exclude(status=Runner.RETIRED).order_by("name")):
+        if runner.live_status != Runner.ONLINE or runner.directed_only():
+            continue
+        if (_placeable_runner(session, str(runner.id)) is not None
+                and may_place(user, session, runner)):
+            return runner
+    return None
+
+
+MOVE_BRIEF = (
+    "{source} was offline with {n} message(s) waiting in this conversation, so it was "
+    "moved here. Those messages arrive as the next turn(s) — answer them once you have "
+    "checked the state above."
+)
+
+
+def move_queued_turns(*, session: Session, placement: str, user=None, initiator=None) -> list[Turn]:
+    """Send a session's QUEUED turns to another runner — the "its box is offline,
+    run it somewhere else" move. Returns the turns moved.
+
+    Two cases, because a session that already lives on a box cannot simply have
+    its next turn pinned elsewhere (that is `place_queued_turn`, and the
+    `transfer_session` docstring records what it cost when done by hand):
+
+    * **Unbound** (a new conversation whose first message never got picked up):
+      nothing exists on any box yet, so pinning the waiting turns is the whole
+      move, and `requested_runner_id` makes later sends follow.
+    * **Bound** to another box: a real transfer, carrying the history and a
+      handoff turn. The handoff runs BEFORE the waiting messages — the new box
+      is cold, and answering them first is answering blind — because the claim
+      holds a session's other turns until its transfer turn has started
+      (`routing.transfer_held_q`).
+
+    Raises like `transfer_session`: ValueError (bad target), LookupError
+    (nothing queued), RuntimeError (a turn is still executing).
+    """
+    target = _placeable_runner(session, placement)
+    if target is None:
+        raise _placement_refused(session, placement, "unknown runner")
+    if not may_place(user, session, target):
+        raise _placement_forbidden(session, target)
+    queued = list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at"))
+    if not queued:
+        raise LookupError("no queued turn to move")
+    binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
+    if binding is not None and binding.runner_id and binding.runner_id != target.id:
+        transfer_session(
+            session=session, placement=str(target.id),
+            brief=MOVE_BRIEF.format(source=binding.runner.name, n=len(queued)),
+            user=user, initiator=initiator,
+        )
+    else:
+        services._merge_metadata(session, {"requested_runner_id": str(target.id)})
+    Turn.objects.filter(pk__in=[t.pk for t in queued], status=Turn.QUEUED).update(pinned_runner=target)
+    for t in queued:
+        t.refresh_from_db()
+    return [t for t in queued if t.pinned_runner_id == target.id]
 
 
 #: Where a fork records what its first turn must copy (`resolve_session` hands it

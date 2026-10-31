@@ -137,7 +137,7 @@ def participant_dto_for(user, role: str) -> dict:
 
 def session_state_dto(*, session, current_user_id, participants, present_ids, draft,
                       messages, peer_drafts=(), queued=(), cancelled=(), current_contact_id=None,
-                      draft_words: bool = True) -> dict:
+                      draft_words: bool = True, activity: str | None = None) -> dict:
     """The canonical `session.state` snapshot payload. `draft_words` False
     withholds every draft's body (`draft_dto`)."""
     return {
@@ -151,8 +151,14 @@ def session_state_dto(*, session, current_user_id, participants, present_ids, dr
         # `turn_status` are: a client that just connected has no live frame to
         # have caught it from.
         "queued": list(queued),
-        # Sends withdrawn before the agent read them: kept in place, marked cancelled.
+        # Sends whose turn ended without their words reaching the transcript
+        # (`send.ended_sends`): kept in place, each with its final `state`.
         "cancelled": list(cancelled),
+        # What the session is doing right now (`session_state.activity`: working |
+        # blocked | idle), the same values as the runner's live `session.activity`
+        # frames. In the snapshot so a reconnect replaces whatever a client last
+        # heard — a live frame that was missed cannot leave it saying "working".
+        "activity": activity,
         # Already DTOs: the socket merges rowless readers in (`_snapshot`).
         "participants": [p if isinstance(p, dict) else participant_dto(p) for p in participants],
         "presence_user_ids": list(present_ids),

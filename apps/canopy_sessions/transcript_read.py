@@ -376,37 +376,22 @@ def with_last_reply(sessions):
 
 
 def with_driving_turn(sessions):
-    """`sessions` annotated with `_turn_mode` / `_turn_origin`: the mode and origin
-    of the FIRST claimed turn that drove each one — the session's mode is fixed
-    when it starts (apps/harness/turn_mode.py), so the feed's "did the agent do
-    this on its own?" and the list's mode badge read how it started, not
-    whoever replied last.
-
-    A turn drives a session two ways: a chat send carries the session itself
-    (`chat_session`), and an agent turn the runner opened a session for carries
-    that session's key (`Turn.session_key`, the same value as the binding's) —
-    which is how a scheduled or email turn's session is found, since it was never
-    a chat. Unclaimed turns have no mode yet ("" until claim), so they say nothing.
-    """
-    driving = staleness.driving_turns().exclude(turn_mode="").order_by("created_at")
+    """`sessions` annotated with `_turn_mode` / `_turn_origin` / `_turn_by_agent`:
+    the mode, origin and starter of the FIRST claimed turn that drove each one
+    (`staleness.first_driving_turn`). A session's mode is fixed when it starts
+    (apps/harness/turn_mode.py), so the feed's "did it run on its own?"
+    (`staleness.ran_on_its_own`) and the list's mode badge read how it started,
+    not whoever replied last. `_turn_runner_name` is the runner that claimed its
+    newest turn."""
+    first = staleness.first_driving_turn()
     return sessions.annotate(
-        _turn_mode=Subquery(driving.values("turn_mode")[:1]),
-        _turn_origin=Subquery(driving.values("origin")[:1]),
+        _turn_mode=Subquery(first.values("turn_mode")[:1]),
+        _turn_origin=Subquery(first.values("origin")[:1]),
+        _turn_by_agent=Subquery(first.values("_by_agent")[:1]),
         _turn_runner_name=Subquery(
             staleness.driving_turns().exclude(claimed_by=None)
             .order_by("-claimed_at").values("claimed_by__name")[:1]
         ),
-    )
-
-
-def with_open_turn(sessions):
-    """`sessions` annotated with `_turn_open`: a turn that drives each one is
-    queued or in flight (`Turn.NON_TERMINAL`). The feed's evidence that a session
-    on a paused/offline runner is genuinely held up (`feed.status`)."""
-    from django.db.models import Exists
-
-    return sessions.annotate(
-        _turn_open=Exists(staleness.driving_turns().filter(status__in=Turn.NON_TERMINAL)),
     )
 
 

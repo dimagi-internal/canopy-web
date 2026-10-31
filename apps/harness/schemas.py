@@ -2415,6 +2415,26 @@ class SessionSubagentsIn(Schema):
     subagents: list[dict] = []
 
 
+class SessionInterruptOut(Schema):
+    session_id: str
+    session_key: str
+    #: The emdash project owning `session_key` (task names are unique per project).
+    project: str = ""
+    interrupt_id: str
+
+
+class SessionInterruptSyncOut(Schema):
+    interrupts: list[SessionInterruptOut] = []
+
+
+class SessionInterruptResultIn(Schema):
+    session_id: uuid.UUID
+    interrupt_id: str
+    #: What the runner did with it (interrupted / idle / failed / no_session …);
+    #: free-form, the server only retires the request.
+    outcome: str = ""
+
+
 class CloseOut(Schema):
     session_id: str
     session_key: str
