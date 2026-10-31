@@ -8,57 +8,85 @@ from pydantic import Field
 
 from apps.common.schemas import StrictModel
 
-
-class ApprovalWillRunOut(StrictModel):
-    agent: str
-    prompt: str
+Status = Literal["pending", "done", "failed", "declined", "cancelled", "expired"]
 
 
-class ApprovalEvidenceOut(StrictModel):
-    quote: str
-    who: str
-    source_url: str = ""
-    said_at: dt.datetime | None = None
+class ApprovalEvidenceIn(StrictModel):
+    quote: str = Field(min_length=1, max_length=1500)
+    who: str = Field(default="", max_length=200)
+    source_url: str = Field(default="", max_length=500)
 
 
-class ApprovalLinkOut(StrictModel):
-    label: str
-    url: str
-
-
-class ApprovalDecidedOut(StrictModel):
-    decision: Literal["approve", "decline", "other"]
-    by: str
-    via: str
-    at: dt.datetime | None = None
-    comment: str = ""
-
-
-class ApprovalCardOut(StrictModel):
-    key: str
-    title: str
-    state: Literal["open", "approved", "declined", "closed"]
-    workspace: str
-    url: str
-    agent_slug: str
-    agent_name: str
-    filed_by: str
-    summary: str
-    evidence: list[ApprovalEvidenceOut]
-    rationale: str
-    plan: list[str]
-    will_run: list[ApprovalWillRunOut]
-    if_declined: str
-    links: list[ApprovalLinkOut]
-    source_url: str
-    priority: int
-    confidence: str
-    created_at: dt.datetime
-    sent_to: list[str]
-    decided: ApprovalDecidedOut | None = None
-    can_decide: bool
+class ApprovalFileIn(StrictModel):
+    kind: str = Field(description="One of GET /api/approvals/kinds, e.g. `workspace.member.add`.")
+    params: dict = Field(description="That kind's typed params (see its `params_schema`).")
+    reason: str = Field(default="", max_length=4000,
+                        description="Why you are asking, in your own words. Shown as yours, apart from the preview.")
+    evidence: list[ApprovalEvidenceIn] = Field(default_factory=list, max_length=5,
+                                               description="What a person actually said, verbatim.")
+    source_url: str = Field(default="", max_length=500)
+    for_email: str = Field(default="", max_length=254,
+                           description="Send it to this one person (they must be able to approve it).")
+    expires_in_hours: int | None = Field(default=None, ge=1, le=720)
+    idempotency_key: str = Field(default="", max_length=128,
+                                 description="A replay with the same key returns the original request.")
 
 
 class ApprovalDecideIn(StrictModel):
     decision: Literal["approve", "decline"]
     comment: str = Field(default="", max_length=2000)
+
+
+class ApprovalEvidenceOut(StrictModel):
+    quote: str
+    who: str
+    source_url: str
+
+
+class ApprovalDecidedOut(StrictModel):
+    by: str
+    via: str
+    at: dt.datetime | None = None
+    comment: str
+
+
+class ApprovalHistoryOut(StrictModel):
+    kind: str
+    by: str
+    at: dt.datetime
+
+
+class ApprovalCardOut(StrictModel):
+    id: int
+    key: str
+    kind: str
+    kind_label: str
+    needs: str
+    title: str
+    summary: str
+    status: Status
+    workspace: str
+    url: str
+    requested_by: str
+    reason: str
+    evidence: list[ApprovalEvidenceOut]
+    plan: list[str]
+    if_declined: str
+    source_url: str
+    created_at: dt.datetime
+    expires_at: dt.datetime | None = None
+    sent_to: list[str]
+    decided: ApprovalDecidedOut | None = None
+    outcome: str
+    result: dict
+    error: str
+    can_decide: bool
+    history: list[ApprovalHistoryOut]
+
+
+class ApprovalKindOut(StrictModel):
+    key: str
+    label: str
+    needs: str
+    does: str
+    params_schema: dict
