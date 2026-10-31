@@ -155,6 +155,9 @@ describe("jump to latest", () => {
   function scrolledUp(el: HTMLElement) {
     Object.defineProperty(el, "scrollHeight", { configurable: true, value: 2000 });
     Object.defineProperty(el, "clientHeight", { configurable: true, value: 500 });
+    // From the bottom, as a person gets there: only a move up leaves it.
+    el.scrollTop = 1500;
+    fireEvent.scroll(el);
     el.scrollTop = 200;
     fireEvent.scroll(el);
   }
@@ -227,6 +230,8 @@ describe("jump to latest", () => {
     const view = panel(s);
     const scroller = screen.getByTestId("chat-scroll");
     tall(scroller);
+    scroller.scrollTop = 1500;
+    fireEvent.scroll(scroller);
     scroller.scrollTop = 800;
     fireEvent.scroll(scroller);
     scroller.scrollTop = 1450;
@@ -301,6 +306,26 @@ describe("jump to latest", () => {
       Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2600 });
       act(() => fire?.());
       expect(scroller.scrollTop).toBe(900);
+    });
+
+    // The browser delivers the scroll event for a snap a frame later. When the
+    // transcript grows more in between (a snapshot replacing the cached tail,
+    // markdown laying out), that event finds the view short of the new bottom —
+    // but nobody moved up, so it must not stop following and strand the view.
+    it("keeps following when content grows between a snap and its scroll event", () => {
+      fakeResizeObserver();
+      const scroller = (panel(state({ turn_status: status({ state: "done", settled: true }) })),
+        screen.getByTestId("chat-scroll"));
+      tall(scroller);
+      scroller.scrollTop = 1500;
+      fireEvent.scroll(scroller);
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2600 });
+      act(() => fire?.()); // snap to the bottom
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 3400 });
+      fireEvent.scroll(scroller); // the snap's late event, after the growth
+      expect(screen.queryByTestId("jump-to-latest")).toBeNull();
+      act(() => fire?.());
+      expect(scroller.scrollTop).toBe(3400);
     });
   });
 });
