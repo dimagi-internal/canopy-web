@@ -120,3 +120,25 @@ def test_device_key_enrollment_never_runs_without_any_credential(tmp_path):
     st = device_key.enroll(cfg, runner=lambda *a, **k: ran.append(a), home=tmp_path,
                            cli="/bin/canopy", bearer="")
     assert st == {"error": "no credential"} and ran == []
+
+
+def test_a_native_exchange_that_cannot_connect_retries_soon():
+    _register()
+    calls = []
+    up = {"v": False}
+    srv = Server()
+
+    def transport(method, url, headers, body):
+        calls.append(url)
+        if not up["v"]:
+            raise OSError("[Errno 8] nodename nor servname provided, or not known")
+        return srv(method, url, headers, body)
+
+    now = {"t": 1000.0}
+    cred = RunnerCredential("https://canopy.test", "", "r1", transport=transport,
+                            clock=lambda: now["t"])
+    assert cred.bearer() == ""
+    up["v"] = True
+    now["t"] += runner_token.UNREACHABLE_RETRY_SECONDS
+    assert cred.bearer() == "crt_1"
+    assert len(calls) == 2

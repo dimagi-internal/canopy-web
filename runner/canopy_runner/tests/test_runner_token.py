@@ -143,3 +143,50 @@ def test_the_update_check_signs_in_with_the_device_key(monkeypatch, tmp_path):
     monkeypatch.setattr(runner_main.RunnerCredential, "bearer", lambda self: "crt_9")
     assert runner_main.update_check(tmp_path / "runner.json") == 0
     assert seen["bearer"] == "crt_9"
+
+
+class _OfflineCli(_Cli):
+    """`canopy vault runner-session` on a laptop that has just woken: no DNS yet."""
+
+    def __init__(self):
+        super().__init__()
+        self.offline = True
+
+    def __call__(self, argv, **kw):
+        if self.offline:
+            self.calls.append(argv)
+            return subprocess.CompletedProcess(
+                argv, 1, "", "<urlopen error [Errno 8] nodename nor servname provided, or not known>")
+        return super().__call__(argv, **kw)
+
+
+def test_an_unreachable_canopy_web_is_retried_soon_not_after_the_refusal_back_off():
+    # 2026-11-01: a Mac slept, its token ran out, the exchange failed for want of
+    # DNS — and the runner (no PAT) then 401'd every call for the rest of a 300s
+    # back-off it had taken while offline, logging "waiting for its key to be approved".
+    cli = _OfflineCli()
+    now = {"t": 1000.0}
+    cred = RunnerCredential("https://canopy.test/", "", "r1", runner=cli,
+                            cli="/usr/bin/canopy", clock=lambda: now["t"])
+    assert cred.bearer() == ""
+    assert cred.bearer() == "", "not re-asked on every call"
+    assert len(cli.calls) == 1
+    cli.offline = False
+    now["t"] += runner_token.UNREACHABLE_RETRY_SECONDS
+    assert cred.bearer().startswith("crt_"), "signed back in within seconds of the network returning"
+    assert cred._mode == "keyless"
+
+
+def test_an_unreachable_exchange_says_so_rather_than_blaming_the_key(caplog):
+    caplog.set_level("INFO", logger="canopy_runner.runner_token")
+    cred = RunnerCredential("https://canopy.test/", "", "r1", runner=_OfflineCli(),
+                            cli="/usr/bin/canopy", clock=lambda: 1000.0)
+    cred.bearer()
+    assert "could not reach canopy-web" in caplog.text
+    assert "approved" not in caplog.text
+
+
+def test_a_refusal_is_not_mistaken_for_an_outage():
+    assert not runner_token._looks_unreachable(
+        "canopy-web refused the device proof (401) — is this machine's device key approved? timed out")
+    assert runner_token._looks_unreachable("URLError: <urlopen error timed out>")
