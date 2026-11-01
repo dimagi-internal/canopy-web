@@ -28,6 +28,10 @@ describe("restToKitMessage", () => {
     });
   });
 
+  it("keeps the stored id the socket also carries, so the row keeps its key", () => {
+    expect(restToKitMessage({ ...row, id: "4211" }).id).toBe("4211");
+  });
+
   it("gives a row read back from REST no streaming history", () => {
     // A REST row was never watched arriving, so claiming a `started_at` would
     // invent a fact. `completed_at` is what the server does know.
