@@ -821,10 +821,21 @@ jobs:
         working-directory: frontend
         run: npm ci && npx playwright install --with-deps chromium
 
+      # Its own step, so the migrations (500+) are not counted against the
+      # suite's server start-up limit and their output is in the log. The
+      # backend script's own `migrate` is then a no-op.
+      - name: Migrate the e2e database
+        env:
+          DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
+          SECRET_KEY: e2e-secret-key
+          DEBUG: "True"
+        run: uv run python manage.py migrate --noinput
+
       - name: Run the chat browser suite
         working-directory: frontend
         env:
           E2E_DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
+          E2E_SERVER_TIMEOUT: "300000"
         run: npx playwright test e2e/chat-runner.spec.ts --project=desktop
 
       - name: Keep the traces of a failure
