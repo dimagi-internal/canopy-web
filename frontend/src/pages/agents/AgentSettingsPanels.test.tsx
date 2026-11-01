@@ -183,8 +183,10 @@ describe('Security — its secrets', () => {
         created_at: '2026-10-16T00:00:00Z', last_seen_at: '2026-10-16T00:10:00Z' },
     ])
     inRouter(<AgentSecretsPanel agent={AGENT} />)
-    await waitFor(() => expect(screen.getByTestId('cred-reads-canopy-pat').textContent).toContain('1 alert'))
-    fireEvent.click(screen.getByTestId('cred-reads-canopy-pat'))
+    // The row says only when it was last used; the log is behind its Activity button.
+    const activity = await screen.findByTestId('vault-details-canopy-pat')
+    expect(screen.queryByTestId('cred-alerts-canopy-pat')).toBeNull()
+    fireEvent.click(activity)
     expect(await screen.findByTestId('cred-alerts-canopy-pat')).toBeTruthy()
   })
 })

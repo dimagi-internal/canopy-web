@@ -10,19 +10,33 @@ import type { VaultEntry } from './VaultEditor'
 // One row of the vault table, and the badge that says how values are held. The table (search, add,
 // the draft being edited) is `VaultEditor`; this only draws what a row shows and the buttons on it.
 
-export function VaultRow({ entry: e, lastUsed, revealed, canEdit, busy, onChange, onReveal, onDelete }: {
+export function VaultRow({ entry: e, lastUsed, revealed, canEdit, busy, detailsOpen, onChange, onReveal, onDelete, onDetails }: {
   entry: VaultEntry
   lastUsed: ReactNode
   revealed: string | null
   canEdit: boolean
   busy: boolean
+  /** Whether this row's activity panel is open; undefined when it has none. */
+  detailsOpen?: boolean
   onChange: () => void
   onReveal?: () => void
   onDelete?: () => void
+  onDetails?: () => void
 }) {
+  // The row is the way in to the secret: a stored one opens (reveal), one with no value
+  // takes its value. A click on a button, or one that ends a text selection, is not that.
+  const activate = canEdit ? (onReveal ?? (e.set || e.sealed ? undefined : onChange)) : undefined
   return (
     <>
-      <TableRow data-testid={`vault-row-${e.name}`}>
+      <TableRow
+        data-testid={`vault-row-${e.name}`}
+        className={activate && !busy ? 'cursor-pointer' : undefined}
+        onClick={activate && ((ev) => {
+          if (busy || (ev.target as HTMLElement).closest('button, a, input, label, textarea')) return
+          if (window.getSelection()?.toString()) return
+          activate()
+        })}
+      >
         <TableCell className="font-mono text-foreground">
           {e.name}
           {e.flag && (
@@ -40,6 +54,18 @@ export function VaultRow({ entry: e, lastUsed, revealed, canEdit, busy, onChange
         <TableCell className="text-right">
           {canEdit && (
             <div className="flex justify-end gap-1">
+              {onDetails && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onDetails}
+                  aria-expanded={detailsOpen}
+                  data-testid={`vault-details-${e.name}`}
+                  className="text-muted-foreground"
+                >
+                  Activity
+                </Button>
+              )}
               {!e.sealed && (
                 <Button size="sm" variant="outline" onClick={onChange} disabled={busy} aria-label={`${e.set ? 'Change' : 'Set'} ${e.name}`}>
                   {e.set ? 'Change' : 'Set'}
