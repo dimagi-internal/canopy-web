@@ -71,6 +71,22 @@ test.describe('chat with a runner', () => {
     expect(text.indexOf('hello there')).toBeLessThan(text.indexOf('echo: hello there'))
   })
 
+  test('a send pressed while the chat is still connecting goes once it connects', async ({ page }) => {
+    // A slow network: the chat's socket opens three seconds after the page.
+    await page.routeWebSocket(/\/ws\/canopy-sessions\//, (ws) => {
+      setTimeout(() => ws.connectToServer(), 3000)
+    })
+    const id = await newSession(page)
+    await page.goto(sessionUrl(id))
+    await expect(page.getByTestId('composer')).toBeVisible()
+    await sendFromComposer(page, 'sent before connecting')
+    await expect(page.getByTestId('send-waiting')).toBeVisible()
+
+    await expect(transcript(page).getByText('echo: sent before connecting')).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByTestId('composer')).toHaveValue('')
+    await expect(transcript(page).getByText('sent before connecting', { exact: true })).toHaveCount(1)
+  })
+
   test('a finished turn stops saying it is working', async ({ page }) => {
     const id = await newSession(page)
     await page.goto(sessionUrl(id))
