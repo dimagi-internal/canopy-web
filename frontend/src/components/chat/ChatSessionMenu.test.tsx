@@ -23,6 +23,11 @@ function baseProps(overrides: Partial<ComponentProps<typeof ChatSessionMenu>> = 
   }
 }
 
+async function openSub(testId: string) {
+  fireEvent.click(screen.getByTestId(testId))
+  await waitFor(() => expect(screen.getAllByRole('menuitemradio').length).toBeGreaterThan(0))
+}
+
 async function openMenu() {
   fireEvent.click(screen.getByTestId('chat-session-menu'))
   await waitFor(() => expect(screen.getByText('People…')).toBeTruthy())
@@ -38,6 +43,7 @@ describe('ChatSessionMenu — Others see while you type', () => {
     )
     await openMenu()
     expect(screen.getByText('Others see while you type')).toBeTruthy()
+    await openSub('typing-visibility')
     expect(screen.getByRole('menuitemradio', { name: 'My text' }).getAttribute('aria-checked'))
       .toBe('false')
     expect(screen.getByRole('menuitemradio', { name: 'Typing…' }).getAttribute('aria-checked'))
@@ -54,6 +60,7 @@ describe('ChatSessionMenu — Others see while you type', () => {
       />,
     )
     await openMenu()
+    await openSub('typing-visibility')
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Nothing' }))
     expect(onTypingVisibilityChange).toHaveBeenCalledWith('hidden')
   })
@@ -249,15 +256,13 @@ describe('ChatSessionMenu — Tool calls', () => {
     const onToolRowsChange = vi.fn()
     render(<ChatSessionMenu {...baseProps({ toolRows: 'default', onToolRowsChange })} />)
     await openMenu()
-    expect(screen.getByRole('menuitemradio', { name: 'As left' }).getAttribute('aria-checked'))
-      .toBe('true')
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Expand all' }))
+    fireEvent.click(screen.getByTestId('tool-rows-all'))
     expect(onToolRowsChange).toHaveBeenCalledWith('all')
   })
 
   it('is hidden when the host offers no choice', async () => {
     render(<ChatSessionMenu {...baseProps()} />)
     await openMenu()
-    expect(screen.queryByText('Tool calls')).toBeNull()
+    expect(screen.queryByTestId('tool-rows-all')).toBeNull()
   })
 })
