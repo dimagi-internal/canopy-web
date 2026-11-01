@@ -17,6 +17,7 @@ import type { ChatSessionDetail } from "@/api/chat";
 describe("restToKitMessage", () => {
   it("maps a REST MessageOut into the kit Message shape as complete", () => {
     const rest: ChatSessionDetail["messages"][number] = {
+      id: "41",
       turn_index: 7,
       role: "assistant",
       plaintext: "hello",
@@ -39,6 +40,7 @@ describe("restToKitMessage", () => {
 
   it("gives every mapped row a synthetic id distinct from a real WS pk", () => {
     const rest: ChatSessionDetail["messages"][number] = {
+      id: "42",
       turn_index: 3,
       role: "user",
       plaintext: "hi",

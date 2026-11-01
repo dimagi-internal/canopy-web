@@ -543,7 +543,7 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         Message.objects.bulk_create([
             Message(session=fork, turn_index=m.turn_index - offset, role=m.role, content=m.content,
                     plaintext=m.plaintext, author=m.author, source_turn_id=m.source_turn_id,
-                    sealed=m.sealed)
+                    sealed=m.sealed, typed=m.typed)
             for m in Message.objects.filter(
                 session=session, turn_index__gte=offset,
                 turn_index__lt=offset + records * BLOCK_STRIDE)

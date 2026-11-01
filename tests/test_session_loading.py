@@ -53,7 +53,8 @@ def _tool_heavy(asks: int, tools_per_turn: int) -> Session:
     for _ in range(asks):
         rows = [Message.USER] + [Message.TOOL_USE] * tools_per_turn + [Message.ASSISTANT]
         for role in rows:
-            Message.objects.create(session=s, turn_index=i, role=role, plaintext=f"m{i}")
+            Message.objects.create(session=s, turn_index=i, role=role, plaintext=f"m{i}",
+                                   typed=role == Message.USER)
             i += 1
     return s
 
@@ -64,6 +65,18 @@ def test_tail_reaches_back_to_the_persons_last_few_messages():
     msgs, has_more, _ = transcript_read.tail_messages(s)
     assert sum(m.role == Message.USER for m in msgs) == transcript_read.SESSION_TAIL_ASKS
     assert msgs[0].role == Message.USER and has_more is True
+
+
+def test_tail_reach_counts_only_what_a_person_typed():
+    """A skill's injected body or a scheduled prompt is a USER row nobody typed:
+    it does not count as one of the person's messages."""
+    s = _tool_heavy(asks=5, tools_per_turn=40)
+    # An untyped USER row inside each of the last two turns.
+    for turn in (3, 4):
+        Message.objects.filter(session=s, turn_index=turn * 42 + 1).update(
+            role=Message.USER, typed=False)
+    msgs, _, _ = transcript_read.tail_messages(s)
+    assert sum(m.role == Message.USER and m.typed for m in msgs) == transcript_read.SESSION_TAIL_ASKS
 
 
 def test_tail_reach_is_capped():

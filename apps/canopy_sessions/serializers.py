@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from .drafts import body_of
 from .models import Draft, Message, SessionParticipant
+from .schemas import MessageOut
 
 
 def _iso(dt):
@@ -41,27 +42,22 @@ def session_subagents(session) -> list[dict]:
     return list(binding.subagents or []) if binding is not None else []
 
 
+#: A row's extras, present on the socket only when set: an MCP Apps View
+#: (`mcp_apps_views.annotate`), a secret request's card (`secret_requests.annotate`),
+#: a sensitive conversation's sealed words (set only by `sensitivity.readable`).
+_OPTIONAL_ROW_FIELDS = ("app", "secret_request", "sealed")
+
+
 def message_dto(msg: Message) -> dict:
-    return {
-        "id": str(msg.pk),
-        "turn_index": msg.turn_index,
-        "role": msg.role,
-        "content": msg.content or {},
-        "plaintext": msg.plaintext,
-        "author": msg.author,
-        "status": "complete",
-        "error_detail": None,
-        "started_at": None,
-        "completed_at": None,
-        "created_at": _iso(msg.created_at),
-        # MCP Apps: this tool result has a View (`mcp_apps_host/mcp_apps_views.annotate`).
-        **({"app": msg.app} if getattr(msg, "app", None) else {}),
-        # A request for one of the agent's secrets (`agents.secret_requests.annotate`).
-        **({"secret_request": msg.secret_request} if getattr(msg, "secret_request", None) else {}),
-        # A sensitive conversation's sealed words, for its own people's browsers to
-        # decrypt — set only by the gate (`sensitivity.readable`).
-        **({"sealed": msg.readable_sealed} if getattr(msg, "readable_sealed", None) else {}),
-    }
+    """A transcript row on the socket: REST's `MessageOut` — the one message
+    shape, so a row reads the same whichever transport carried it — plus the
+    streaming fields the socket's live frames update in place."""
+    row = MessageOut.from_orm(msg).model_dump(mode="json")
+    for key in _OPTIONAL_ROW_FIELDS:
+        if row.get(key) is None:
+            row.pop(key, None)
+    return {**row, "status": "complete", "error_detail": None,
+            "started_at": None, "completed_at": None}
 
 
 def draft_dto(draft: Draft | None, *, words: bool = True) -> dict | None:
@@ -137,11 +133,17 @@ def participant_dto_for(user, role: str) -> dict:
 
 def session_state_dto(*, session, current_user_id, participants, present_ids, draft,
                       messages, peer_drafts=(), queued=(), cancelled=(), current_contact_id=None,
-                      draft_words: bool = True, activity: str | None = None) -> dict:
+                      draft_words: bool = True, activity: str | None = None,
+                      has_more_before: bool = False,
+                      oldest_loaded_turn_index: int | None = None) -> dict:
     """The canonical `session.state` snapshot payload. `draft_words` False
     withholds every draft's body (`draft_dto`)."""
     return {
         "messages": [message_dto(m) for m in messages],
+        # The scroll-back cursor, as REST's `GET /{id}` returns it: whether older
+        # rows exist, and the turn_index to page back from (`GET /{id}/messages`).
+        "has_more_before": has_more_before,
+        "oldest_loaded_turn_index": oldest_loaded_turn_index,
         # The CONNECTING user's own draft (None for a contact, who has none).
         "active_draft": draft_dto(draft, words=draft_words),
         # Everyone else's draft in progress, as `draft.typing` rows.

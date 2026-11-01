@@ -291,6 +291,9 @@ class MessageSecretRequestOut(Schema):
 
 
 class MessageOut(Schema):
+    #: The row's id — the same id the session socket's snapshot and live frames
+    #: carry for it, so a row loaded here and one that arrived live are one row.
+    id: str
     turn_index: int
     role: str
     plaintext: str
@@ -310,6 +313,12 @@ class MessageOut(Schema):
     #: conversation's own people on its chat surfaces (`sensitivity.readable`); null
     #: for every other reader and every ordinary conversation.
     sealed: str | None = None
+
+    @staticmethod
+    def resolve_id(obj) -> str:
+        if isinstance(obj, MessageOut):  # already built (a response re-validates it)
+            return obj.id
+        return str(obj.pk)
 
     # Read off the gate's own attribute, never the row's column: a route that forgot
     # `sensitivity.readable` hands out nothing rather than the ciphertext.

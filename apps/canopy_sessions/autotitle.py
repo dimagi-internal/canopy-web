@@ -17,9 +17,17 @@ from django.dispatch import receiver
 from apps.harness.signals import turn_events_appended
 from apps.realtime import groups
 
-from .models import Message, Session
+from .models import Session
+from .transcript_read import first_typed
 
 TITLE_MAX = 80
+
+
+def title_from(text: str) -> str:
+    """The title a first message makes: one line, whitespace collapsed, at most
+    TITLE_MAX characters. The one spelling — `harness.session_sync` tells a
+    generated title from a chosen one by comparing against it."""
+    return " ".join((text or "").split())[:TITLE_MAX]
 
 
 def names_nothing(key: str) -> bool:
@@ -49,9 +57,9 @@ def _publish_title(session) -> None:
 
 
 def maybe_autotitle(session_id) -> str | None:
-    """Title an untitled session from its first user message. No-op (returns
-    None) if the session already has a title, has no user message yet, or that
-    message is blank. Publishes `session.title_updated` on the session's
+    """Title an untitled session from the first message a person typed into it
+    (`transcript_read.first_typed`). No-op (returns None) if the session already
+    has a title, has no typed message yet, or that message is blank. Publishes `session.title_updated` on the session's
     realtime group when it actually sets one."""
     with transaction.atomic():
         session = Session.objects.select_for_update().get(pk=session_id)
@@ -80,14 +88,10 @@ def maybe_autotitle(session_id) -> str | None:
                 session.save(update_fields=["title"])
                 _publish_title(session)
             return None
-        first = (
-            Message.objects.filter(session=session, role=Message.USER)
-            .order_by("turn_index")
-            .first()
-        )
+        first = first_typed(session)
         if first is None or not first.plaintext.strip():
             return None
-        title = " ".join(first.plaintext.split())[:TITLE_MAX]
+        title = title_from(first.plaintext)
         session.title = title
         session.save(update_fields=["title"])
     groups.publish(

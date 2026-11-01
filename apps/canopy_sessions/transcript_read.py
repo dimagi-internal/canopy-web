@@ -12,7 +12,9 @@ from canopy_transcript import BLOCK_STRIDE, contract
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
-from apps.harness import runner_requirements
+from apps.agents.credentials import secret_requests
+from apps.harness import runner_requirements, sensitivity
+from apps.mcp_apps_host import mcp_apps_views
 from apps.harness.models import Turn
 
 from . import authorship, staleness, transcript_ingest
@@ -58,11 +60,12 @@ def tail_messages(session: Session, limit: int | None = None):
     Returns (messages, has_more_before, oldest_loaded_turn_index). This is what
     a client gets by default — enough to continue, never the whole history.
     The default reaches back to the person's last `SESSION_TAIL_ASKS` messages
-    too, at most `SESSION_TAIL_MAX` rows; an explicit `limit` is exact.
+    (rows a person typed, `Message.typed`) too, at most `SESSION_TAIL_MAX` rows;
+    an explicit `limit` is exact.
     """
     if limit is None:
         limit = SESSION_TAIL_DEFAULT
-        asks = (session.messages.filter(role=Message.USER)
+        asks = (session.messages.filter(role=Message.USER, typed=True)
                 .order_by("-turn_index").values_list("turn_index", flat=True)[:SESSION_TAIL_ASKS])
         if asks:
             reach = session.messages.filter(turn_index__gte=list(asks)[-1]).count()
@@ -111,7 +114,7 @@ def program_prompts(session: Session) -> set[str]:
     """
     from django.db.models import Q
 
-    match = Q(chat_session=session)
+    match = Q(chat_session_id=session.pk)
     binding = getattr(session, "runner_binding", None)
     if binding is not None and binding.session_key and session.agent_id:
         match |= Q(agent_id=session.agent_id, session_key=binding.session_key)
@@ -268,6 +271,25 @@ def is_human_input(message, program: set[str], injected: InjectedPrompts | None 
     return _normalized_prompt(text) not in program
 
 
+def mark_typed(session: Session, turn_indices) -> int:
+    """Set `Message.typed` on those of `session`'s USER rows at `turn_indices` that
+    a person typed (`is_human_input`). Run once as rows are stored, so every
+    reader of "what the person said" asks the column instead of re-deciding.
+    Returns how many rows were marked."""
+    indices = list(turn_indices)
+    if not indices:
+        return 0
+    rows = list(session.messages.filter(role=Message.USER, turn_index__in=indices, typed=False))
+    if not rows:
+        return 0
+    program = program_prompts(session)
+    injected = InjectedPrompts(session)
+    ids = [m.pk for m in rows if is_human_input(m, program, injected)]
+    if ids:
+        Message.objects.filter(pk__in=ids).update(typed=True)
+    return len(ids)
+
+
 def human_inputs(session: Session, *, after: int | None = None, limit: int = SCROLLBACK_PAGE_DEFAULT):
     """What PEOPLE typed into this session, oldest first, `limit` at a time.
 
@@ -333,11 +355,18 @@ def for_widget(messages):
 OPENING_CHARS = 140
 
 
+def first_typed(session):
+    """The first row a person typed into `session` (`Message.typed`), or None —
+    what names a conversation (`opening_of`, `autotitle`)."""
+    return session.messages.filter(role=Message.USER, typed=True).order_by("turn_index").first()
+
+
 def with_opening(sessions):
-    """`sessions` annotated with `_opening`: the text of each one's first user
-    message, in the same query — a list of fifty must not become fifty-one."""
+    """`sessions` annotated with `_opening`: the text of the first message a
+    person typed into each (`Message.typed`), in the same query — a list of fifty
+    must not become fifty-one."""
     first = (
-        Message.objects.filter(session=OuterRef("pk"), role=Message.USER)
+        Message.objects.filter(session=OuterRef("pk"), role=Message.USER, typed=True)
         .order_by("turn_index")
         .values("plaintext")[:1]
     )
@@ -506,15 +535,19 @@ _BACKFILL_ROLES = contract.ROLES
 
 
 def last_message_at():
-    """Each session's newest message time, as a correlated subquery.
+    """Each session's newest message's time, as a correlated subquery.
 
-    Not `Max("messages__created_at")`: that joins every message row into the query
-    and groups them back down, so the planner read the whole message table (526k
-    rows, a sequential scan and a sort) on every session-list call, polled every
-    ~2s -- the largest single query on the shared labs RDS, 2026-10-24. This is
-    one probe per session on `message_session_created_idx`."""
+    "Newest" is by `turn_index`, the order the conversation happened in — the
+    same rule every other "latest" read uses (`with_last_reply`, the tail). Not
+    the newest INSERT: a backfill writes old history now, and that is not
+    activity.
+
+    Not `Max("messages__created_at")`: that joins every message row into the
+    query and groups them back down, a sequential scan of the message table on
+    every session-list call. This is one probe per session on the
+    (session, turn_index) unique index."""
     return Subquery(
-        Message.objects.filter(session=OuterRef("pk")).order_by("-created_at").values("created_at")[:1]
+        Message.objects.filter(session=OuterRef("pk")).order_by("-turn_index").values("created_at")[:1]
     )
 
 
@@ -637,6 +670,24 @@ def visible_transcript(session, *, full: bool = False):
         # the binding's rolling tail rather than an empty panel.
         rows = tail_as_messages(session, getattr(session, "runner_binding", None))
     return rows, has_more, oldest
+
+
+def readable_window(session, rows, *, user=None, contact=None, chat_surface: bool,
+                    widget: bool = False) -> list:
+    """A transcript window as this reader receives it — THE read pipeline every
+    transport runs (REST detail, REST scroll-back, the socket snapshot):
+
+    1. `sensitivity.readable`: a sensitive conversation's sealed words reach only
+       its own people on its chat surfaces; everyone else reads the metadata.
+    2. MCP Apps: a tool result whose call has a View carries it (`app`).
+    3. A tool result that opened a request for one of the agent's secrets
+       carries the card (`secret_request`).
+    4. `widget`: an embedded widget's window drops tool rows (`for_widget`).
+    """
+    rows = sensitivity.readable(rows, session, chat_surface=chat_surface, user=user, contact=contact)
+    mcp_apps_views.annotate(session, rows)
+    secret_requests.annotate(session, rows)
+    return for_widget(rows) if widget else rows
 
 
 class BackfillRefusedError(Exception):

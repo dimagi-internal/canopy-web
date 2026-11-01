@@ -339,13 +339,12 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
 @router.post("/runners/{runner_id}/session-stream", response=StreamPostOut)
 @gate("runner", kind="runner-protocol")  # session must be bound to this runner
 def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: SessionStreamIn):
-    """The runner ships live conversational events for a session it backs. For an
-    origin=runner session, events carrying a transcript ordinal are PERSISTED as
-    Message rows first (the transcript is the durable source — spec 2026-07-24),
-    then the assistant frames fan out to the session group as the same
-    chat.turn_event frames the chat path uses (turn-less -> the consumer derives
-    seq:<n> message ids). User events are persisted but never live-pushed — the
-    sender's client already echoed them optimistically."""
+    """The runner ships live conversational events for a session it backs. For a
+    transcript-sourced session, events carrying a transcript ordinal are
+    PERSISTED as Message rows first (the transcript is the durable source); then,
+    while someone is watching, every event — user lines included — fans out to the
+    session's viewers, each carrying the stored row's id and `turn_index`, so a
+    row that arrives live is the same row a reload returns."""
     runner = runner_or_404(request, runner_id)
     binding = (
         RunnerBinding.objects.select_related("session")
@@ -755,12 +754,12 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
-    session = chat_transcript_ingest.fork_if_name_reused(session, payload.transcript_id) or session
-    # Same guard as the live path: history from a different transcript lands in
-    # its own epoch rather than merging into what is held. Idempotent across chunks — the
-    # first one records the id, so the rest of the ship matches and writes through.
-    chat_transcript_ingest.ensure_transcript_identity(session, payload.transcript_id)
-    written = chat_transcript_ingest.write_backfill(session, [m.dict() for m in payload.messages])
+    # The same write as the live path, transcript identity included: history from
+    # a different transcript lands in its own epoch rather than merging into what
+    # is held. Idempotent across chunks — the first one records the id, so the
+    # rest of the ship matches and writes through.
+    written = chat_transcript_ingest.write_backfill(
+        session, [m.dict() for m in payload.messages], transcript_id=payload.transcript_id)
     # Only the LAST chunk clears the ask. A transcript is shipped in byte-budgeted
     # chunks (see SessionBackfillIn.final), and clearing on the first one would
     # retire the request while most of the history was still in flight — a ship

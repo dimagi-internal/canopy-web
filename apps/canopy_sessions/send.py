@@ -286,6 +286,10 @@ def _send_message(
         if turn is not None:
             message.source_turn_id = turn.pk
         message.save(update_fields=["author", "source_turn_id", *resealed])
+        # Whether a person typed it, by the same rule a transcript row is marked
+        # with — a program's prompt sent through this path is not the person.
+        if transcript_read.mark_typed(locked, [index]):
+            message.typed = True
         # Fan the row out to every OTHER watcher on the session socket. The
         # sender's own client already has it (the optimistic echo off
         # `draft.committed` / the REST response), but nobody said so to anyone

@@ -47,13 +47,13 @@
 "apps/canopy_sessions/access.py" = ["PLC0415"]  # 4
 "apps/canopy_sessions/activity.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/agui.py" = ["PLC0415"]  # 1
-"apps/canopy_sessions/api.py" = ["PLC0415"]  # 27
+"apps/canopy_sessions/api.py" = ["PLC0415"]  # 22
 "apps/canopy_sessions/app_views_api.py" = ["PLC0415"]  # 3
 "apps/canopy_sessions/apps.py" = ["PLC0415"]  # 4
 "apps/canopy_sessions/attachment_storage.py" = ["PLC0415"]  # 3
 "apps/canopy_sessions/autotitle.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/close_review.py" = ["PLC0415"]  # 3
-"apps/canopy_sessions/consumers.py" = ["PLC0415"]  # 8
+"apps/canopy_sessions/consumers.py" = ["PLC0415"]  # 6
 "apps/canopy_sessions/control.py" = ["PLC0415"]  # 6
 "apps/canopy_sessions/doors.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/feed.py" = ["PLC0415"]  # 4
@@ -169,7 +169,7 @@
 "apps/harness/schemas.py" = ["PLC0415"]  # 6
 "apps/harness/sensitivity.py" = ["PLC0415"]  # 3
 "apps/harness/services.py" = ["PLC0415"]  # 17
-"apps/harness/session_sync.py" = ["PLC0415"]  # 23
+"apps/harness/session_sync.py" = ["PLC0415"]  # 22
 "apps/harness/sign_in_requests.py" = ["PLC0415"]  # 1
 "apps/harness/signals.py" = ["PLC0415"]  # 2
 "apps/harness/sweeps.py" = ["PLC0415"]  # 1
