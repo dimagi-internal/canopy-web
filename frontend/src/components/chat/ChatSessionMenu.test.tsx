@@ -256,16 +256,13 @@ describe('ChatSessionMenu — Tool calls', () => {
     const onToolRowsChange = vi.fn()
     render(<ChatSessionMenu {...baseProps({ toolRows: 'default', onToolRowsChange })} />)
     await openMenu()
-    await openSub('tool-rows')
-    expect(screen.getByRole('menuitemradio', { name: 'Per row (default)' }).getAttribute('aria-checked'))
-      .toBe('true')
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Expand all' }))
+    fireEvent.click(screen.getByTestId('tool-rows-all'))
     expect(onToolRowsChange).toHaveBeenCalledWith('all')
   })
 
   it('is hidden when the host offers no choice', async () => {
     render(<ChatSessionMenu {...baseProps()} />)
     await openMenu()
-    expect(screen.queryByText('Tool calls')).toBeNull()
+    expect(screen.queryByTestId('tool-rows-all')).toBeNull()
   })
 })

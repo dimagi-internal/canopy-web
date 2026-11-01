@@ -29,8 +29,6 @@ import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryContro
 import { SessionInfoPanel } from "./SessionInfoPanel";
 
 const TYPING_LABEL: Record<TypingVisibility, string> = { live: "My text", typing: "Typing…", hidden: "Nothing" };
-// "Per row": each tool call keeps its own open/closed state; the other two force every row.
-const TOOL_ROWS_LABEL: Record<ToolRowsView, string> = { default: "Per row", all: "Expanded", none: "Collapsed" };
 
 /** A section heading in the menu: small caps, so it reads as a heading above its items. */
 function MenuSection({ children }: { children: React.ReactNode }) {
@@ -269,25 +267,25 @@ export function ChatSessionMenu({
               <MenuSection>View</MenuSection>
             </>
           )}
+          {/* Two switches over the rows' own open/closed state: on forces every tool call open (or
+              closed); off puts the choice back to each row's own. */}
           {toolRows != null && onToolRowsChange != null && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger inset data-testid="tool-rows">
-                <span className="flex w-full items-center justify-between gap-2">
-                  Tool calls
-                  <span className="text-[12px] text-muted-foreground">{TOOL_ROWS_LABEL[toolRows]}</span>
-                </span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                <DropdownMenuRadioGroup
-                  value={toolRows}
-                  onValueChange={(value) => onToolRowsChange(value as ToolRowsView)}
-                >
-                  <DropdownMenuRadioItem value="default" data-testid="tool-rows-default">Per row (default)</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="all" data-testid="tool-rows-all">Expand all</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="none" data-testid="tool-rows-none">Collapse all</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
+            <>
+              <DropdownMenuCheckboxItem
+                data-testid="tool-rows-all"
+                checked={toolRows === "all"}
+                onCheckedChange={(on) => onToolRowsChange(on ? "all" : "default")}
+              >
+                Expand all tool calls
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                data-testid="tool-rows-none"
+                checked={toolRows === "none"}
+                onCheckedChange={(on) => onToolRowsChange(on ? "none" : "default")}
+              >
+                Collapse all tool calls
+              </DropdownMenuCheckboxItem>
+            </>
           )}
           {showLoadAll && (
             <DropdownMenuItem inset disabled={loadingAll} onClick={onLoadAll} data-testid="menu-load-all">
