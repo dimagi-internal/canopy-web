@@ -12,6 +12,9 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "canopy-ui/ui";
 import type { ToolRowsView, TypingVisibility } from "canopy-ui/chat";
@@ -24,6 +27,10 @@ import { ShareSecretForm } from "./ShareSecret";
 import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
 import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryControl } from "./SessionMemoryToggles";
 import { SessionInfoPanel } from "./SessionInfoPanel";
+
+const TYPING_LABEL: Record<TypingVisibility, string> = { live: "My text", typing: "Typing…", hidden: "Nothing" };
+// "Per row": each tool call keeps its own open/closed state; the other two force every row.
+const TOOL_ROWS_LABEL: Record<ToolRowsView, string> = { default: "Per row", all: "Expanded", none: "Collapsed" };
 
 /** A section heading in the menu: small caps, so it reads as a heading above its items. */
 function MenuSection({ children }: { children: React.ReactNode }) {
@@ -163,7 +170,7 @@ export function ChatSessionMenu({
         >
           <MoreHorizontal className="h-4 w-4" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuContent align="end" className="max-h-[calc(100dvh-5rem)] w-60 overflow-y-auto">
           {/* Sections, top to bottom: how you hear about and appear in this chat; the
               conversation itself; Slack; how the transcript is drawn; then the two that can't be
               undone (Reset, Close), set apart and unheaded. A new item goes in the section it is about, not at the end. */}
@@ -180,19 +187,24 @@ export function ChatSessionMenu({
                 </DropdownMenuCheckboxItem>
               )}
               {typingVisibility != null && onTypingVisibilityChange != null && (
-                <>
-                  <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
-                    Others see while you type
-                  </DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={typingVisibility}
-                    onValueChange={(value) => onTypingVisibilityChange(value as TypingVisibility)}
-                  >
-                    <DropdownMenuRadioItem value="live">My text</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="typing">Typing…</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="hidden">Nothing</DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger inset data-testid="typing-visibility">
+                    <span className="flex w-full items-center justify-between gap-2">
+                      Others see while you type
+                      <span className="text-[12px] text-muted-foreground">{TYPING_LABEL[typingVisibility]}</span>
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={typingVisibility}
+                      onValueChange={(value) => onTypingVisibilityChange(value as TypingVisibility)}
+                    >
+                      <DropdownMenuRadioItem value="live">My text</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="typing">Typing…</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="hidden">Nothing</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               )}
               <DropdownMenuSeparator />
             </>
@@ -258,19 +270,24 @@ export function ChatSessionMenu({
             </>
           )}
           {toolRows != null && onToolRowsChange != null && (
-            <>
-              <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
-                Tool calls
-              </DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={toolRows}
-                onValueChange={(value) => onToolRowsChange(value as ToolRowsView)}
-              >
-                <DropdownMenuRadioItem value="default" data-testid="tool-rows-default">As left</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="all" data-testid="tool-rows-all">Expand all</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="none" data-testid="tool-rows-none">Collapse all</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger inset data-testid="tool-rows">
+                <span className="flex w-full items-center justify-between gap-2">
+                  Tool calls
+                  <span className="text-[12px] text-muted-foreground">{TOOL_ROWS_LABEL[toolRows]}</span>
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup
+                  value={toolRows}
+                  onValueChange={(value) => onToolRowsChange(value as ToolRowsView)}
+                >
+                  <DropdownMenuRadioItem value="default" data-testid="tool-rows-default">Per row (default)</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="all" data-testid="tool-rows-all">Expand all</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="none" data-testid="tool-rows-none">Collapse all</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
           )}
           {showLoadAll && (
             <DropdownMenuItem inset disabled={loadingAll} onClick={onLoadAll} data-testid="menu-load-all">
