@@ -78,19 +78,20 @@ def publish_for_turn(turn) -> None:
     publish(session_group(turn.chat_session_id),
             {"type": "session.turn_status", "status": payload})
     if payload.get("settled"):
-        _publish_idle(turn.chat_session_id)
+        publish_idle(turn.chat_session_id)
     from .queued_feed import publish_queued
 
     publish_queued(turn.chat_session_id)
 
 
-def _publish_idle(session_id) -> None:
-    """Say `idle` on the session's activity channel once its turn has settled and
-    the session resolver agrees nothing is running (`session_state.activity`).
+def publish_idle(session_id) -> None:
+    """Say `idle` on the session's activity channel when the session resolver
+    agrees nothing is running (`session_state.activity`).
 
     The runner's live `session.activity` frames open and close "working", and they
     are never stored, so one that is missed leaves a watching client saying
-    working. This closes it from the turn's own end. Never says `working`: the
+    working. This closes it from the turn's own end, and from a laptop's report
+    when its engine stops (`session_sync`). Never says `working`: the
     runner's frames are faster at that, and a laptop's engine flag lags the turn.
     """
     try:

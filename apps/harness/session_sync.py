@@ -756,6 +756,7 @@ def replace_reported_sessions(
     binding's thread_key silently reassigned to `emdash:<task>` underneath it
     (that would orphan the agent thread's reuse lookup and fork a duplicate
     session on its next turn)."""
+    from apps.canopy_sessions import transcript_read  # noqa: PLC0415 — cycle: transcript_read -> harness
     # Record that this runner PARTICIPATES in the wholesale report — the observer
     # session staleness is derived against (see Runner.sessions_reported_at and
     # canopy_sessions.staleness.unseen_q). Stamped BEFORE the early-outs and
@@ -799,6 +800,11 @@ def replace_reported_sessions(
     # an unchanged menu would re-render the buttons under a thumb.
     menu_changes: list[tuple] = []
     new_asks: list[tuple] = []
+    # Sessions whose engine said working on the last report and stopped on this one.
+    # The turn's own end says idle only if the engine has stopped by then, and a
+    # laptop's flag lags the turn, so this edge is what ends "working" on a chat
+    # whose agent kept going after its turn settled.
+    went_quiet: list = []
     # Tasks of another tree's agent (`session_home` → None): never filed. Their
     # names go to `skipped` when the caller passed a list; each project is logged once.
     foreign_logged: set = set()
@@ -989,11 +995,14 @@ def replace_reported_sessions(
             # or a finished session keeps a live badge forever. getattr for the same
             # reason too: lightweight session objects also reach this service, and a
             # display flag must never be why a liveness report fails.
+            was_running = transcript_read.engine_says_running(binding)
             binding.agent_status = getattr(s, "agent_status", "") or ""
             # Written through on EVERY report including False, for the same reason
             # as the flag it qualifies: it is a fresh observation, so "it has gone
             # quiet" has to be able to clear "it is still writing".
             binding.agent_status_stale = bool(getattr(s, "agent_status_stale", False))
+            if was_running and not transcript_read.engine_says_running(binding):
+                went_quiet.append(binding.session_id)
             binding.last_interacted_at = _aware(s.last_interacted_at)
             binding.live_seen_at = timezone.now()
             # The one write site. See RunnerBinding.reported_at — `close` branches
@@ -1163,6 +1172,11 @@ def replace_reported_sessions(
 
         sessions_reported.send(sender=Runner, runner=runner)
         _publish_menu_changes(menu_changes, new_asks)
+        if went_quiet:
+            from apps.canopy_sessions.status_feed import publish_idle  # noqa: PLC0415 — as _publish_menu_changes: realtime imports harness
+
+            for session_id in went_quiet:
+                publish_idle(session_id)
 
     transaction.on_commit(_fire_reported)
     if newly_closed:

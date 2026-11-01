@@ -121,6 +121,30 @@ def test_work_no_turn_owns_is_read_from_the_engine(ctx):
     assert session_state.activity(s) == session_state.WORKING
 
 
+def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_capture_on_commit_callbacks):
+    """The agent kept working after its turn settled, so the turn's end could not
+    say idle; the laptop's next report, with the engine stopped, does."""
+    from apps.canopy_sessions import status_feed
+
+    _session(ctx, ctx.laptop, agent_status="working")
+    frames = []
+    monkeypatch.setattr(status_feed, "publish", lambda g, m: frames.append(m))
+    task = SimpleNamespace(emdash_task="a-task", project="canopy-web", status="in_progress",
+                           last_interacted_at=None, recent_messages=[], agent_status="working")
+    with django_capture_on_commit_callbacks(execute=True):
+        session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
+    assert frames == []  # still working: nothing to say
+
+    task.agent_status = "completed"
+    with django_capture_on_commit_callbacks(execute=True):
+        session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
+    assert [f["event"]["kind"] for f in frames] == ["activity:idle"]
+
+    with django_capture_on_commit_callbacks(execute=True):
+        session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
+    assert len(frames) == 1  # only the edge, not every report
+
+
 def test_a_queued_follow_up_is_not_your_move_either(ctx):
     s = _session(ctx, ctx.cloud, key="uuid-3")
     Message.objects.create(session=s, turn_index=64, role=Message.ASSISTANT, plaintext="done")
