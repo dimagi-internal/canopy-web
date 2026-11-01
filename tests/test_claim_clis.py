@@ -209,7 +209,7 @@ def test_an_agent_turns_session_keeps_its_cli():
 def test_a_codex_conversation_is_not_signed_out_by_claudes_login():
     from canopy_transcript import SIGNED_OUT_NOTE
 
-    from apps.canopy_sessions import api as sessions_api
+    from apps.canopy_sessions import session_row
     from apps.canopy_sessions.models import RunnerBinding
 
     agent, session, runner = _ctx(report={"codex": CONFINING, "claude-code": {"signed_in": False}})
@@ -217,10 +217,10 @@ def test_a_codex_conversation_is_not_signed_out_by_claudes_login():
     RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
     Session.objects.filter(pk=session.pk).update(cli="codex")
     session.refresh_from_db()
-    assert sessions_api._out(session)["runner_signed_out"] is False
+    assert session_row.session_out(session)["runner_signed_out"] is False
     Session.objects.filter(pk=session.pk).update(cli="claude-code")
     session.refresh_from_db()
-    assert sessions_api._out(session)["runner_signed_out"] is True
+    assert session_row.session_out(session)["runner_signed_out"] is True
 
 
 def test_a_fleet_member_signed_in_to_codex_is_still_wakeable():

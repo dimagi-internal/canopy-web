@@ -12,7 +12,8 @@ from apps.attention.types import AttentionRow
 from apps.workspaces.links import scoped_path
 
 from . import feed, session_state, transcript_read
-from .api import _filtered_sessions, _out
+from .api import _filtered_sessions
+from .session_row import session_out
 
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:
@@ -21,7 +22,7 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
     rows = session_state.with_state(transcript_read.with_last_reply(rows))
     out = []
     for s in rows:
-        row = _out(s, reply=True, viewer=request.user)
+        row = session_out(s, reply=True, viewer=request.user)
         if row["workspace"] not in slugs:
             continue
         said = _state(request.user, s, row)

@@ -23,6 +23,7 @@ from . import access
 from . import control
 from . import session_state, transcript_read
 from .models import Session
+from .session_row import session_out
 
 #: A proposal's quote and reason, as shown in the panel.
 QUOTE_CHARS = 400
@@ -74,9 +75,8 @@ def _blocked(user, session: Session, row: dict) -> str:
 
 
 def _facts(user, session: Session) -> dict:
-    from .api import _out  # the list's own row, so the panel and the rail agree
-
-    row = _out(session, reply=True, viewer=user)
+    # The list's own row, so the panel and the rail agree.
+    row = session_out(session, reply=True, viewer=user)
     reply = row["last_reply"]
     return {
         "id": str(session.pk),
@@ -130,8 +130,6 @@ def close(user, session_ids) -> dict:
     deletes the emdash task), or a refusal — `not_found`, or `blocked` with the
     reason (re-checked now: a session that started running after the review
     rendered is not closed under the person who ticked it)."""
-    from .api import _out
-
     ids = _ids(session_ids)
     found = _readable(user, ids)
     results = []
@@ -141,7 +139,7 @@ def close(user, session_ids) -> dict:
         if session is None:
             outcome = "not_found"
         else:
-            reason = _blocked(user, session, _out(session, reply=True, viewer=user))
+            reason = _blocked(user, session, session_out(session, reply=True, viewer=user))
             outcome = "blocked" if reason else control.close_session(session=session)
         results.append({"id": str(i), "title": session.title if session else "",
                          "outcome": outcome, "reason": reason})

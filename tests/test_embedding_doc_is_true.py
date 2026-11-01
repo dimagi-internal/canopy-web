@@ -351,7 +351,7 @@ def test_the_documented_history_filters_are_real_parameters(doc):
     they are pinned to the route's signature rather than trusted."""
     import inspect
 
-    from apps.canopy_sessions.api import list_sessions
+    from apps.canopy_sessions.api_read import list_sessions
 
     params = inspect.signature(list_sessions).parameters
     for name in ("resource", "page_path"):

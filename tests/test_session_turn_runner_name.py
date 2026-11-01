@@ -14,7 +14,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.api import _out
+from apps.canopy_sessions.session_row import session_out
 from apps.canopy_sessions.models import Session
 from apps.canopy_sessions.transcript_read import with_driving_turn
 from apps.harness.models import Runner, Turn
@@ -50,7 +50,7 @@ def test_an_unbound_session_names_the_box_that_claimed_its_newest_turn(unbound):
     now = timezone.now()
     _claimed(unbound, old, at=now - timezone.timedelta(hours=1))
     _claimed(unbound, live, at=now)
-    out = _out(_row(unbound))
+    out = session_out(_row(unbound))
     assert out["runner_name"] is None
     assert out["turn_runner_name"] == "cloud-ec2-live"
 
@@ -58,4 +58,4 @@ def test_an_unbound_session_names_the_box_that_claimed_its_newest_turn(unbound):
 def test_a_session_nothing_has_claimed_names_no_box(unbound):
     Turn.objects.create(chat_session=unbound["session"],
                         origin=Turn.ORIGIN_SLACK, idempotency_key=uuid.uuid4().hex)
-    assert _out(_row(unbound))["turn_runner_name"] is None
+    assert session_out(_row(unbound))["turn_runner_name"] is None

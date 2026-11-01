@@ -238,7 +238,7 @@ def test_bulk_reset_only_touches_sessions_you_may_act_in():
 ALLOWED_GRANTERS = {
     "apps/canopy_sessions/participants.py",  # ensure_participant itself
     "apps/canopy_sessions/services.py",      # create_session: the creator as owner
-    "apps/canopy_sessions/api.py",           # add_participant: the owner shares
+    "apps/canopy_sessions/api_people.py",    # add_participant: the owner shares
     "apps/slack/audience.py",                # a member in the Slack conversation
     "apps/harness/channels/email.py",        # a member on an (aligned) email thread
 }
