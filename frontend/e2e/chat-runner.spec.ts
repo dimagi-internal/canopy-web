@@ -92,8 +92,9 @@ test.describe('chat with a runner', () => {
     await expect(page.getByTestId('pending-reply')).toBeVisible({ timeout: 15_000 })
     await page.getByRole('button', { name: 'Stop' }).click()
     await expect(page.getByTestId('pending-reply')).toHaveCount(0, { timeout: 15_000 })
-    const detail = await api(page, 'GET', `/api/canopy-sessions/${id}`)
-    expect(detail.turn_status.settled).toBe(true)
+    await expect.poll(async () => (await api(page, 'GET', `/api/canopy-sessions/${id}`)).turn_status.state,
+      { timeout: 15_000 }).toBe('cancelled')
+    await expect(page.getByTestId('pending-reply')).toHaveCount(0)
   })
 
   test('watching a long turn keeps the view at the newest row', async ({ page }) => {
