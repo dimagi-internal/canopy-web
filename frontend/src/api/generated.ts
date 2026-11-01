@@ -12904,13 +12904,12 @@ export interface paths {
         readonly put?: never;
         /**
          * Post Session Stream
-         * @description The runner ships live conversational events for a session it backs. For an
-         *     origin=runner session, events carrying a transcript ordinal are PERSISTED as
-         *     Message rows first (the transcript is the durable source — spec 2026-07-24),
-         *     then the assistant frames fan out to the session group as the same
-         *     chat.turn_event frames the chat path uses (turn-less -> the consumer derives
-         *     seq:<n> message ids). User events are persisted but never live-pushed — the
-         *     sender's client already echoed them optimistically.
+         * @description The runner ships live conversational events for a session it backs. For a
+         *     transcript-sourced session, events carrying a transcript ordinal are
+         *     PERSISTED as Message rows first (the transcript is the durable source); then,
+         *     while someone is watching, every event — user lines included — fans out to the
+         *     session's viewers, each carrying the stored row's id and `turn_index`, so a
+         *     row that arrives live is the same row a reload returns.
          */
         readonly post: operations["post_session_stream"];
         readonly delete?: never;
@@ -21052,6 +21051,8 @@ export interface components {
         };
         /** MessageOut */
         readonly MessageOut: {
+            /** Id */
+            readonly id: string;
             /** Turn Index */
             readonly turn_index: number;
             /** Role */

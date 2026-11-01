@@ -21,6 +21,11 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
     kind = evt.get("kind")
     seq = evt.get("seq")
     payload = evt.get("payload") or {}
+    # Where the client sorts and upserts the row: the stored row's own
+    # `turn_index` when the event names one (a transcript row the server just
+    # persisted, `harness.session_sync._ingest`), else the event's `seq`.
+    stored = evt.get("turn_index")
+    ordinal = stored if isinstance(stored, int) else seq
 
     if isinstance(kind, str) and kind.startswith("activity:"):
         # A turn boundary, not a chat row. It answers "is the agent working right
@@ -50,7 +55,7 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         # other way — there was no optimistic echo, because no web client sent
         # it. Carries the transcript ordinal so the client can upsert rather
         # than append, which is what keeps a re-delivery from doubling it.
-        mid = resolve_message_id(seq)
+        mid = resolve_message_id(ordinal)
         # Same parse as the durable path, so a watcher sees the stripped text and
         # the author before any reload — and the sender's echo matches on text.
         author, text, _turn = authorship.parse(str(payload.get("text", "")))
@@ -61,7 +66,7 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
             # the result back in the payload so a watcher does not have to
             # wait for a reload to see it.
             author = payload.get("author")
-        data = {"message_id": mid, "turn_index": seq, "plaintext": text, "author": author}
+        data = {"message_id": mid, "turn_index": ordinal, "plaintext": text, "author": author}
         # The send's nonce, when this line was a web send (session_sync hands it
         # over from the stored row): the sender's browser matches its own
         # optimistic row on it exactly, instead of on recent identical words.
@@ -74,7 +79,7 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
             data["record"] = payload["record"]
         return [{"event": "chat.user_message", "data": data}]
     if kind == "assistant":
-        mid = resolve_message_id(seq)
+        mid = resolve_message_id(ordinal)
         done = {"message_id": mid, "plaintext": payload.get("text", "")}
         # Claude Code's own error notice, not the agent talking
         # (`canopy_transcript.rows_for_record`) — so a watcher sees "didn't run"
@@ -89,24 +94,24 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         if isinstance(payload.get("usage"), dict):
             done["usage"] = payload["usage"]
         return [
-            {"event": "chat.stream_start", "data": {"message_id": mid, "turn_index": seq}},
+            {"event": "chat.stream_start", "data": {"message_id": mid, "turn_index": ordinal}},
             {"event": "chat.stream_complete", "data": done},
         ]
     # "tool_start"/"tool_end" are the cloud runner's names for these; the laptop
     # runner ships the transcript's own block types. Both reach the same frame —
     # a renderer should never have to know which producer it was talking to.
     if kind in ("tool_start", "tool_use"):
-        mid, ordinal = _tool_identity(seq, payload.get("id"), "use", resolve_message_id)
+        mid, ordinal = _tool_identity(ordinal, payload.get("id"), "use", resolve_message_id)
         return [{"event": "chat.tool_use",
                  "data": {"parent_message_id": None, "tool_message_id": mid,
                           "turn_index": ordinal, "block": payload}}]
     if kind in ("tool_end", "tool_result"):
-        mid, ordinal = _tool_identity(seq, payload.get("tool_use_id"), "result", resolve_message_id)
+        mid, ordinal = _tool_identity(ordinal, payload.get("tool_use_id"), "result", resolve_message_id)
         return [{"event": "chat.tool_result",
                  "data": {"parent_message_id": None, "tool_message_id": mid,
                           "turn_index": ordinal, "block": payload}}]
     if kind == "error":
-        mid = resolve_message_id(seq)
+        mid = resolve_message_id(ordinal)
         return [{"event": "chat.stream_error",
                  "data": {"message_id": mid, "detail": payload.get("detail") or payload.get("text", "error")}}]
     # status / heartbeat / question / approval carry no client-visible stream frame.

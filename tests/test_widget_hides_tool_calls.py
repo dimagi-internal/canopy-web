@@ -50,7 +50,8 @@ def world():
         (Message.ASSISTANT, "Twenty-three of them."),
     ]
     for i, (role, text) in enumerate(rows):
-        Message.objects.create(session=session, turn_index=i, role=role, plaintext=text)
+        Message.objects.create(session=session, turn_index=i, role=role, plaintext=text,
+                               typed=role == Message.USER)
     own, _ = PersonalToken.create_for_user(user=me, label="own")
     return {"me": me, "session": session, "raw": raw,
             "widget": {"HTTP_AUTHORIZATION": f"Bearer {raw}"},

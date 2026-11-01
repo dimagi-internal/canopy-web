@@ -96,7 +96,27 @@ close).
   `Message.turn_index`. A send authors **no** second copy of the user's line — it
   becomes durable as the transcript record the agent read; until then it lives in
   `Turn.prompt` and the client's optimistic echo. Streamed transcript rows persist
-  through `transcript_ingest.persist_transcript_rows`.
+  through `transcript_ingest.record_transcript` (`persist_transcript_rows` is its
+  count-only form).
+- **One identity per row, from runner to screen.** `record_transcript` decides the
+  transcript identity (`fork_if_name_reused`, `ensure_transcript_identity`) and
+  shifts every ordinal into its epoch (`RunnerBinding.index_offset`, or a confined
+  turn's own `_turn_end_epoch`) in one place, under the binding lock; no caller
+  shifts an ordinal. It returns the rows as stored, and `session_sync._ingest`
+  builds each live `chat.turn_event` from them: the event carries the row's
+  `turn_index` and `message_id`, which `stream_map` and the consumer use in place of
+  the raw `seq` — so a live row and the same row from a reload are one row on the
+  client. `seq` alone remains only on events with no row (`activity:`, `stop:`, an
+  old runner's ordinal-less event).
+- **What a person typed is decided once**, as a row is stored: `Message.typed`
+  (`transcript_read.mark_typed`, the `is_human_input` rule). The tail's reach back
+  to the person's last messages, a conversation's opening (`with_opening`) and its
+  autotitle read the column. "Newest" is by `turn_index` everywhere — the tail,
+  the last reply, and a session's last activity (`last_message_at`).
+- **REST and the socket give a row one shape**: `message_dto` is `MessageOut` (with
+  `id`) plus the streaming fields, the snapshot carries `has_more_before` /
+  `oldest_loaded_turn_index` as `GET /{id}` does, and all three readers (`GET /{id}`,
+  `GET /{id}/messages`, the snapshot) run `transcript_read.readable_window`.
 - **Ledger-sourced** (no transcript: the dev stub, and sessions predating the flag
   until reset): rows are projected from the turn's event ledger with a dense
   counter. Don't mix the two in one session — the dense counter collides with
@@ -500,7 +520,7 @@ written — when no runner has reported it within `SESSION_LIVE_WINDOW`
 - A spawned `claude` must not inherit the parent session: `runner/ec2/cloud_runner.py::_child_safe_env` strips `INHERITED_SESSION_MARKERS` (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_PID`, `CLAUDE_EFFORT`) — an inherited child marker turns transcript saving off. `CLAUDE_CODE_OAUTH_TOKEN` is never stripped (it is the box's login).
 - A watched session ships every conversational transcript row, `tool_use`/`tool_result` included (`packages/canopy_transcript::conversational_messages`); a row's payload is its stored `Message.content`, so live and history render identically. Tool payloads are capped at the runner (`TOOL_TEXT_MAX`, `TOOL_INPUT_STR_MAX`). The live chat bridge stays prose-only (tools there would render twice).
 - Optional hook path: the laptop runner installs `PreToolUse`/`PostToolUse`/`UserPromptSubmit`/`Stop` hooks in the user-level `~/.claude/settings.json` with a loopback listener (`hook_port`, default 8787; 0 disables); `forward_sessions` (default off) forwards them as view-only rows (`index=-1`); counters ride the heartbeat every 300s.
-- Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this; a stale session is reset automatically on its next write.
+- Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this (a new session starts on the current scheme); a stale session is reset automatically on its next write.
 - The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the owner's sessions out as `supervisor.sessions` frames (typed in `frontend/src/api/types.ws.ts`; no page consumes them today).
 
 ## Secrets shared with a chat: sealed to the machine running it

@@ -534,23 +534,19 @@ def _title_is_derived(session, thread_key: str) -> bool:
 
     Generated titles are safe to replace with the emdash task name; a title
     somebody typed is not. Two generators exist: `_thread_session`'s raw
-    thread_key fallback, and `autotitle.maybe_autotitle`, which takes the first
-    user message, collapses whitespace and truncates to TITLE_MAX.
+    thread_key fallback, and `autotitle.maybe_autotitle`, which names a session
+    after the first message a person typed (`autotitle.title_from`).
     """
-    from apps.canopy_sessions.autotitle import TITLE_MAX
+    from apps.canopy_sessions.autotitle import title_from  # noqa: PLC0415 — cycle: autotitle -> transcript_read -> harness
+    from apps.canopy_sessions.transcript_read import first_typed  # noqa: PLC0415 — cycle: transcript_read -> harness
 
     title = (session.title or "").strip()
     if not title or title == thread_key:
         return True
-    first = (
-        Message.objects.filter(session=session, role=Message.USER)
-        .order_by("turn_index")
-        .values_list("plaintext", flat=True)
-        .first()
-    )
-    if not first:
+    first = first_typed(session)
+    if first is None or not first.plaintext:
         return False
-    return title == " ".join(first.split())[:TITLE_MAX]
+    return title == title_from(first.plaintext)
 
 
 def _reported_project(s) -> str:
@@ -1393,8 +1389,7 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
     many frames were pushed. The route (`post_session_stream`) only finds the
     binding."""
     return _ingest(binding.session, transcript_id=transcript_id, events=events,
-                   index_offset=binding.index_offset, live=binding.stream_desired,
-                   binding=binding)
+                   live=binding.stream_desired)
 
 
 def ingest_turn_end_rows(session, *, transcript_id, events) -> int:
@@ -1411,11 +1406,9 @@ def ingest_turn_end_rows(session, *, transcript_id, events) -> int:
     again, under the same id: the earlier turns' rows land on the rows already held
     and are skipped, and only its own are added; a re-ship of the same turn is a
     no-op. Always fanned out: the person who asked is waiting for it."""
-    offset = _turn_end_epoch(session, transcript_id)
-    shifted = [e.model_copy(update={"index": e.index + offset}) if e.index >= 0 else e
-               for e in events]
-    return _ingest(session, transcript_id="", events=shifted, index_offset=0, live=True,
-                   binding=None, fan_out_held=False)
+    return _ingest(session, transcript_id="", events=events,
+                   epoch=_turn_end_epoch(session, transcript_id), live=True,
+                   fan_out_held=False)
 
 
 #: Session metadata: the epoch (`turn_index` offset) of each confined turn's
@@ -1482,9 +1475,17 @@ def _conforming_events(session, events) -> list:
     return out
 
 
-def _ingest(session, *, transcript_id, events, index_offset, live, binding,
-            fan_out_held=True) -> int:
-    """`fan_out_held=False`: a row the session already held before this batch is
+def _ingest(session, *, transcript_id, events, live, epoch=None, fan_out_held=True) -> int:
+    """Persist a batch's transcript rows, then fan the batch out to watchers.
+
+    Every frame for a stored row carries the row's own identity — its
+    `turn_index` and Message id, as `transcript_ingest.record_transcript`
+    returns them — so a live row sorts and dedupes exactly as the same row does
+    on a reload. The raw `seq` rides along for an event with no row (a live-only
+    kind, an old runner's ordinal-less event).
+
+    `epoch`: the confined turn's offset (`_turn_end_epoch`), else the binding's.
+    `fan_out_held=False`: a row the session already held before this batch is
     not sent to watchers again — they have it (the turn-end ship of rows a live
     tail already shipped, or a resumed conversation's earlier turns)."""
     from apps.canopy_sessions import services as chat_services
@@ -1495,34 +1496,9 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
     # shown live and gone on reload is the worst of both. Only that event drops —
     # the rest of the batch, and every non-row kind (`activity:`, `stop:`), go on.
     events = _conforming_events(session, events)
-    already: set[int] = set()
-    if not fan_out_held:
-        shift = chat_transcript_ingest._index_offset(session)
-        already = {i - shift for i in Message.objects.filter(
-            session=session,
-            turn_index__in=[e.index + shift for e in events if e.index >= 0],
-        ).values_list("turn_index", flat=True)}
-
-    # transcript ordinal (e.index) -> the author persist_transcript_rows found
-    # for it, if any — carried into the live frame below so a watcher sees who
-    # sent an unmarked line without waiting for a reload (stream_map's
-    # kind=="user" branch reads this when its own marker-parse finds none).
-    authors_by_index: dict[int, dict] = {}
-    # …and the send's nonce the row stored, so the sender's browser can know its
-    # own line by id rather than by guessing from its words (`chat.user_message`
-    # in canopy-ui's sessionReducer). A reload already had it; only the live
-    # frame did not, which is what left a send "Sending…" under its own reply.
-    client_ids_by_index: dict[int, str] = {}
+    # transcript ordinal (e.index) -> the row the session holds for it.
+    stored: dict[int, chat_transcript_ingest.StoredRow] = {}
     if chat_services.transcript_sourced(session):
-        # BEFORE any write: if these ordinals index a different transcript than the
-        # rows already held, the two would interleave (or the new one be silently
-        # swallowed). If a closed session's NAME was reused, these rows are a new
-        # conversation's and go to a new session, leaving the old one whole;
-        # otherwise the new transcript opens a new epoch above the held rows.
-        if binding is not None and chat_transcript_ingest.fork_if_name_reused(session, transcript_id):
-            binding = RunnerBinding.objects.select_related("session").get(pk=binding.pk)
-            session = binding.session
-        chat_transcript_ingest.ensure_transcript_identity(session, transcript_id)
         # Not "was this session discovered in emdash?" — where a conversation
         # started says nothing about where its record belongs. A phone-created chat
         # is driven by the same runner, in the same emdash session, writing the same
@@ -1536,12 +1512,17 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
         # {tool_use_id,is_error} are what the client pairs and renders on, so
         # flattening to text here would strip exactly the half that makes a tool
         # call legible.
-        created = chat_transcript_ingest.persist_transcript_rows(session, [
+        #
+        # The transcript identity (a reused task name forks, a new file opens an
+        # epoch) is decided inside the write, so the rows land where it decided.
+        recorded = chat_transcript_ingest.record_transcript(session, [
             {"index": e.index, "role": e.kind,
              "text": (e.payload or {}).get("text", ""), "content": e.payload or {},
              "cwd": e.cwd, "git_branch": e.git_branch}
             for e in events if e.index >= 0
-        ])
+        ], transcript_id=transcript_id, epoch=epoch)
+        session = recorded.session
+        stored = {r.index: r for r in recorded.rows}
         from apps.canopy_sessions.authorship import parse as parse_marker
 
         # A user row's text is the prompt AS DELIVERED — marker line included —
@@ -1553,29 +1534,16 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
                     if e.index >= 0 and e.kind in ("user", "assistant")
                     for text in [str((e.payload or {}).get("text") or "")]
                     if text]
-        if created and streamed:
+        if recorded.created and streamed:
             from apps.harness.signals import transcript_rows_streamed
 
             streamed_session = session
             transaction.on_commit(lambda: transcript_rows_streamed.send(
                 sender=type(streamed_session), session=streamed_session, rows=streamed))
-        user_indices = [
-            e.index + index_offset
-            for e in events if e.index >= 0 and e.kind == "user"
-        ]
-        if user_indices:
-            for turn_index, author, content in Message.objects.filter(
-                session=session, turn_index__in=user_indices,
-            ).values_list("turn_index", "author", "content"):
-                if author:
-                    authors_by_index[turn_index - index_offset] = author
-                client_id = (content or {}).get("client_id")
-                if isinstance(client_id, str) and client_id:
-                    client_ids_by_index[turn_index - index_offset] = client_id
     if not live:
         # Persisted above, but nobody is watching, so there is nothing to push.
-        # The runner now tails EVERY session it backs so the durable record stops
-        # depending on someone having the chat open (see list_streams); this is the
+        # The runner tails EVERY session it backs so the durable record never
+        # depends on someone having the chat open (see list_streams); this is the
         # gate that keeps that from also broadcasting every session in the fleet to
         # session groups no client has joined.
         return 0
@@ -1591,10 +1559,9 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
 
     for e in events:
         # The noise filter has to run HERE too, not just in
-        # persist_transcript_rows. Now that user events fan out live, a filter
-        # applied only on the durable path would drop a harness marker from
-        # history while still pushing it to every watching client — so it would
-        # appear live, then vanish on reload. Same rule, both paths.
+        # persist_transcript_rows: a filter applied only on the durable path would
+        # drop a harness marker from history while still pushing it to every
+        # watching client — so it would appear live, then vanish on reload.
         if e.kind.startswith(LIVE_ONLY_PREFIXES):
             # Fans out, never persists — index -1 already excludes it from the
             # durable write, and it has no transcript row to be.
@@ -1608,29 +1575,27 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
         if e.kind == "user" and is_system_noise((e.payload or {}).get("text", "")):
             n += 1
             continue
-        if e.index >= 0 and e.index in already:
+        row = stored.get(e.index) if e.index >= 0 else None
+        if row is not None and not row.fresh and not fan_out_held:
             continue  # on screen since it first arrived
-        # User events ARE fanned out. They used to be withheld on the grounds
-        # that "the sender's client already echoed them optimistically" — true
-        # for text typed in the web, false for text typed directly into emdash,
-        # which no web client ever saw. The result was that typing in emdash and
-        # watching on the phone silently dropped your own words until a reload
-        # (observed 2026-07-27). The client upserts on turn_index, so a message
-        # that does arrive twice collapses instead of doubling.
+        # User events are fanned out too: text typed straight into emdash reached
+        # no web client any other way. The client upserts on the row's id and
+        # turn_index, so a message that arrives twice collapses instead of doubling.
         event_payload = e.payload
         if withhold and e.kind in sensitivity.RESULT_KINDS:
             event_payload = {**sensitivity.strip_result(e.payload, session=session), "text": ""}
-        if e.kind == "user":
-            author = authors_by_index.get(e.index)
-            if author:
-                event_payload = {**(e.payload or {}), "author": author}
-            client_id = client_ids_by_index.get(e.index)
-            if client_id:
-                event_payload = {**(event_payload or {}), "client_id": client_id}
-        groups.publish(sgroup, {
-            "type": "chat.turn_event",
-            "event": {"kind": e.kind, "seq": e.seq, "payload": event_payload},
-            "turn_id": None,
-        })
+        if e.kind == "user" and row is not None:
+            # Who sent it and the send's nonce, as the stored row has them: a
+            # watcher sees an unmarked line's author without a reload, and the
+            # sender's browser knows its own line by id rather than by its words.
+            if row.author:
+                event_payload = {**(event_payload or {}), "author": row.author}
+            if row.client_id:
+                event_payload = {**(event_payload or {}), "client_id": row.client_id}
+        event = {"kind": e.kind, "seq": e.seq, "payload": event_payload}
+        if row is not None:
+            event["turn_index"] = row.turn_index
+            event["message_id"] = row.message_id
+        groups.publish(sgroup, {"type": "chat.turn_event", "event": event, "turn_id": None})
         n += 1
     return n

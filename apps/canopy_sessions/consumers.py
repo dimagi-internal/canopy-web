@@ -499,16 +499,25 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         return chat_control.stop_session(
             self.session, by=chat_control.person_name((getattr(self, "scope", None) or {}).get("user")))
 
-    def _resolve_message_id_sync(self, turn_id, seq):
+    def _stored_identity_sync(self, turn_id, evt) -> tuple[str, int | None]:
+        """(message id, stored turn_index) for a `chat.turn_event`: the row's own,
+        so a live row and the same row reloaded are one row on the client.
+
+        A transcript row names it in the event (`harness.session_sync._ingest`);
+        a ledger row is found by its turn and ledger seq (`project_events`). An
+        event with no stored row gets a synthetic id and no turn_index."""
+        seq = evt.get("seq")
+        if evt.get("message_id"):
+            return str(evt["message_id"]), evt.get("turn_index")
         if turn_id:
-            pk = (
+            found = (
                 Message.objects.filter(turn_id=turn_id, content__source_seq=seq)
-                .values_list("pk", flat=True).first()
+                .values_list("pk", "turn_index").first()
             )
-            if pk is not None:
-                return str(pk)
-            return f"{str(turn_id)[:8]}:{seq}"
-        return f"seq:{seq}"
+            if found is not None:
+                return str(found[0]), found[1]
+            return f"{str(turn_id)[:8]}:{seq}", None
+        return f"seq:{seq}", None
 
     # -- group frame handlers (dots -> underscores) --
     async def access_recheck(self, message):
@@ -543,8 +552,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def chat_turn_event(self, message):
         evt = message["event"]
         turn_id = message.get("turn_id")
-        mid = await database_sync_to_async(self._resolve_message_id_sync)(turn_id, evt.get("seq"))
-        for frame in stream_map.turn_event_to_frames(evt, lambda _seq: mid):
+        mid, turn_index = await database_sync_to_async(self._stored_identity_sync)(turn_id, evt)
+        if turn_index is not None:
+            evt = {**evt, "turn_index": turn_index}
+        for frame in stream_map.turn_event_to_frames(evt, lambda _ordinal: mid):
             if frame.get("event") == "chat.tool_result":
                 # MCP Apps: decided server-side, on the live frame as on a reload.
                 app = await database_sync_to_async(self._app_for_result)(frame["data"].get("block"))
@@ -810,21 +821,17 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # ONE policy for both transports (transcript_read.visible_transcript): tail-first,
         # falling back to the binding tail for a local session with no Message rows.
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
-        messages, _has_more, _oldest = chat_transcript_read.visible_transcript(self.session)
-        # The same gate as REST (`sensitivity.reads_content`): a sensitive
-        # conversation reads back for its own people on its own chat surfaces.
-        messages = sensitivity.readable(
-            messages, self.session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
+        messages, has_more, oldest = chat_transcript_read.visible_transcript(self.session)
+        # The same read pipeline as REST (`transcript_read.readable_window`). A
+        # widget's socket drops tool rows on the frame instead (`without_tools`),
+        # which covers its live frames too.
+        messages = chat_transcript_read.readable_window(
+            self.session, messages, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
             user=self.user, contact=getattr(self, "contact", None))
         # Drafts by the same gate: a sensitive conversation's are its people's.
         self._draft_words = sensitivity.reads_content(
             self.session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
             user=self.user, contact=getattr(self, "contact", None))
-        from apps.agents.credentials import secret_requests
-        from apps.mcp_apps_host import mcp_apps_views
-
-        mcp_apps_views.annotate(self.session, messages)
-        secret_requests.annotate(self.session, messages)
         return {
             "event": "session.state",
             "data": serializers.session_state_dto(
@@ -841,6 +848,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 peer_drafts=peers,
                 draft_words=self._draft_words,
                 messages=messages,
+                has_more_before=has_more,
+                oldest_loaded_turn_index=oldest,
                 queued=chat_send.queued_messages(self.session),
                 cancelled=chat_send.ended_sends(self.session),
                 activity=self._activity(),

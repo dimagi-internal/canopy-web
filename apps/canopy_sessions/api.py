@@ -1176,12 +1176,16 @@ def _holder_or_422(*, user=None, contact=None) -> None:
         raise HttpError(422, str(exc)) from None
 
 
-def _readable(request: HttpRequest, session, rows) -> list:
-    # A sensitive conversation reads back only for its own people, on its chat
-    # surfaces (`sensitivity.reads_content`): an MCP call, a PAT or a co-tenant
-    # who is not in it gets the metadata columns.
-    return sensitivity.readable(rows, session, user=request.user,
-                                chat_surface=sensitivity.request_is_chat_surface(request))
+def _read_window(request: HttpRequest, session, rows) -> list:
+    # The one read pipeline (`transcript_read.readable_window`), as the socket
+    # snapshot runs it: a sensitive conversation reads back only for its own
+    # people on its chat surfaces, and a site's widget gets no tool rows.
+    from apps.embedding import delegation
+
+    return transcript_read.readable_window(
+        session, rows, user=request.user,
+        chat_surface=sensitivity.request_is_chat_surface(request),
+        widget=delegation.acting_app(request) is not None)
 
 
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
@@ -1207,16 +1211,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
         asked = join_requests.latest_of(session, request.user)
         data["your_join_request"] = asked.status if asked is not None else ""
     rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
-    rows = _readable(request, session, rows)
-    from apps.agents.credentials import secret_requests
-    from apps.embedding import delegation
-    from apps.mcp_apps_host import mcp_apps_views
-
-    mcp_apps_views.annotate(session, rows)
-    secret_requests.annotate(session, rows)
-
-    if delegation.acting_app(request) is not None:
-        rows = transcript_read.for_widget(rows)
+    rows = _read_window(request, session, rows)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
@@ -1357,16 +1352,7 @@ def list_messages(
     session = _session_or_404(request, session_id)
     limit = clamp_limit(limit)
     rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
-    rows = _readable(request, session, rows)
-    from apps.agents.credentials import secret_requests
-    from apps.embedding import delegation
-    from apps.mcp_apps_host import mcp_apps_views
-
-    mcp_apps_views.annotate(session, rows)
-    secret_requests.annotate(session, rows)
-
-    if delegation.acting_app(request) is not None:
-        rows = transcript_read.for_widget(rows)
+    rows = _read_window(request, session, rows)
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
         "has_more_before": has_more,
