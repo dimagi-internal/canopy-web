@@ -364,8 +364,9 @@ export function IdePage() {
         <span className="text-[11px] tabular-nums text-muted-foreground" data-testid="ide-totals">
           {shown.length}
         </span>
-        {/* The totals ARE the state filters: a count struck through is hidden. */}
-        <div className="flex min-w-0 items-center gap-0.5">
+        {/* The totals ARE the state filters: a count struck through is hidden.
+            They wrap rather than run under "New session" on a narrow rail. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5" data-testid="ide-state-totals">
           {IDE_STATES.map((k) => (
             <button
               key={k}
