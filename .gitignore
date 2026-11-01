@@ -46,6 +46,7 @@ frontend/e2e/.auth/
 # multiplayer UI by eye, regenerated on demand.
 frontend/e2e/.shots/
 frontend/test-results/
+frontend/e2e/prod-shots/
 frontend/playwright-report/
 
 # Canopy plugin vendored into the build context at deploy time (deploy.sh)

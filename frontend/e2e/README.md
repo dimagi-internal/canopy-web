@@ -48,3 +48,22 @@ E2E_API_PORT=8011 npx playwright test e2e/chat-runner.spec.ts   # when :8000 is 
 ```
 
 CI runs it in the merge queue as `Browser suite (chat)`, on Postgres.
+
+## Checking a deployment (`prod-check.cjs`)
+
+Not a Playwright test: a script that drives a deployed canopy-web (production by
+default) in a real browser as the token's owner, after a deploy.
+
+```bash
+cd frontend && CANOPY_E2E_TOKEN=<your PAT> node e2e/prod-check.cjs
+CANOPY_E2E_TOKEN=... LIVE_AGENT=ada SEND_EARLY=1 node e2e/prod-check.cjs   # plus one live chat
+```
+
+It mints an hour-long browser session from the token, then checks:
+- the sessions list and its "Started by me" filter;
+- the six most recently active sessions open at the newest row, and an idle one shows no "working" line;
+- `/ide`'s filter and header.
+
+With `LIVE_AGENT` it also sends one message to that agent and sees the reply arrive, the turn
+settle and a reload show the same rows. It archives that session afterwards. `CANOPY_URL` and
+`WORKSPACE` point it elsewhere. Screenshots go to `e2e/prod-shots/`.
