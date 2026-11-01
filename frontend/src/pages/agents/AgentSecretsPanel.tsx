@@ -16,7 +16,7 @@ import { EncryptedBadge, VaultEditor, type VaultEntry } from '@/components/vault
 import { LoadFailed } from '@/components/vault/LoadFailed'
 import { VaultSection } from '@/components/vault/VaultSection'
 import { VaultView } from '@/components/vault/VaultView'
-import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
+import { AgentCredentialAlertsSection, groupAlerts, isExpected } from '@/pages/agents/AgentCredentialAlertsSection'
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
 import { AgentVaultMembersSection } from '@/pages/agents/AgentVaultMembersSection'
 import { AgentZkSection } from '@/pages/agents/AgentZkSection'
@@ -153,6 +153,8 @@ export function AgentSecretsPanel({
   const rotate = Boolean(zk?.rotation_recommended)
   const secretsAttention = sec.orphans.length > 0 || missing > 0
   const activeMachines = machines?.filter((k) => k.status === 'active').length
+  const alertGroups = groupAlerts(alerts ?? [])
+  const unexpectedAlerts = alertGroups.filter((g) => !isExpected(g.kind)).length
   const attention = [
     secretsAttention && [
       sec.orphans.length > 0 && `${sec.orphans.length} stored secret${sec.orphans.length === 1 ? '' : 's'} nothing declares`,
@@ -160,7 +162,7 @@ export function AgentSecretsPanel({
     ].filter(Boolean).join(' · '),
     waiting > 0 && `${waiting} waiting to be given access`,
     rotate && 'someone no longer allowed could still open it — change the key',
-    alerts && alerts.length > 0 && `${alerts.length} unusual read${alerts.length === 1 ? '' : 's'}`,
+    unexpectedAlerts > 0 && `${unexpectedAlerts} unusual read${unexpectedAlerts === 1 ? '' : 's'}`,
   ].filter((a): a is string => Boolean(a))
 
   return (
@@ -201,7 +203,7 @@ export function AgentSecretsPanel({
                 onDelete={remove}
                 describeError={reason}
                 badge={zk ? <EncryptedBadge /> : undefined}
-                usage={(e) => {
+                details={(e) => {
                   const row = byName.get(e.name)
                   return row?.set && canEdit ? <CredentialReadHistory slug={agent.slug} row={row} alerts={alerts} /> : null
                 }}
@@ -255,8 +257,11 @@ export function AgentSecretsPanel({
         }}
       >
         {canEdit && alerts && alerts.length > 0 && (
-          <VaultSection id="read-alerts" title="Read alerts" tone="attention" anchors={['cred-alerts']}
-            summary={`${alerts.length} unusual read${alerts.length === 1 ? '' : 's'}`}>
+          <VaultSection id="read-alerts" title="Read alerts" tone={unexpectedAlerts > 0 ? 'attention' : 'quiet'}
+            anchors={['cred-alerts']}
+            summary={unexpectedAlerts > 0
+              ? `${unexpectedAlerts} to look at${alertGroups.length > unexpectedAlerts ? `, ${alertGroups.length - unexpectedAlerts} expected` : ''}`
+              : `${alertGroups.length} asked-for secret${alertGroups.length === 1 ? '' : 's'} no skill lists`}>
             <AgentCredentialAlertsSection alerts={alerts} />
           </VaultSection>
         )}

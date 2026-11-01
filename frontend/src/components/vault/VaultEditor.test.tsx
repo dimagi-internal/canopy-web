@@ -119,6 +119,29 @@ describe('VaultEditor', () => {
     await waitFor(() => expect(screen.queryByTestId('revealed-OCS_API_TOKEN')).toBeNull())
   })
 
+  it('reveals a stored value when its row is clicked, and opens a missing one for entry', async () => {
+    const onReveal = vi.fn(async () => 'the-plaintext')
+    show({ onReveal })
+    fireEvent.click(screen.getByTestId('vault-row-OCS_API_TOKEN'))
+    await waitFor(() => expect(screen.getByTestId('revealed-OCS_API_TOKEN').textContent).toContain('the-plaintext'))
+    expect(onReveal).toHaveBeenCalledTimes(1)
+    // A click on a button inside the row is the button's, not the row's.
+    fireEvent.click(screen.getByRole('button', { name: 'Change OCS_API_TOKEN' }))
+    expect(onReveal).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('vault-row-NOVA_API_KEY'))
+    expect(await screen.findByLabelText('New value for NOVA_API_KEY')).toBeTruthy()
+  })
+
+  it('keeps the activity behind its own button, beneath the row', () => {
+    show({ details: (e) => (e.name === 'OCS_API_TOKEN' ? <p>who read it</p> : null) })
+    expect(screen.queryByText('who read it')).toBeNull()
+    expect(screen.queryByTestId('vault-details-ACE_HQ_PASSWORD')).toBeNull()
+    fireEvent.click(screen.getByTestId('vault-row-OCS_API_TOKEN'))
+    expect(screen.queryByText('who read it')).toBeNull()
+    fireEvent.click(screen.getByTestId('vault-details-OCS_API_TOKEN'))
+    expect(screen.getByText('who read it')).toBeTruthy()
+  })
+
   it('deletes only after asking', async () => {
     const onDelete = vi.fn(async () => undefined)
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
