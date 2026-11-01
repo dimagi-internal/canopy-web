@@ -1,6 +1,6 @@
 # Connections hold nothing canopy-web can use: tokens are minted, sealed and refreshed on runners
 
-**Status:** design 2026-10-31; approved 2026-11-01 with two decisions: the owner signs grants with a passkey touch (§4.3), and the older Google paths fold in later. It replaces the storage and token paths of the server-held Connections feature (#2287, #2311, #2347). The workspace apps, per-workspace callbacks, providers, grants and the Settings screens stay.
+**Status:** design 2026-10-31 (amended by the plan's rulings R1–R17, `docs/superpowers/plans/2026-11-01-connections-zero-knowledge.md`); approved 2026-11-01 with two decisions: the owner signs grants with a passkey touch (§4.3), and the older Google paths fold in later. It replaces the storage and token paths of the server-held Connections feature (#2287, #2311, #2347). The workspace apps, per-workspace callbacks, providers, grants and the Settings screens stay.
 
 ## Intent
 
@@ -107,7 +107,7 @@ Recipients that stop qualifying are pruned from the envelope without decrypting 
   - It carries a valid endorsement of its exact ECDH key, signed by a person the box trusts, naming an agent that is in the statement's `agents`. The runner also checks the endorsement's subject against the statement itself, not against the server's payload.
 
   Member keys: only the owner's. canopy-web's recipient list only narrows this set, for example pruning a box that stopped serving. It can never widen it. A request to seal to anything else is refused as `zk_unendorsed_recipient`.
-- **Envelopes are signed.** Every envelope a runner writes (`sealed`, `access_sealed`) is signed by the writing device's signing key, together with `expect`. A reader checks that the signer is a device the statement allows, or the owner. Anyone can build a `zks1` from public keys, so an unsigned or wrongly signed envelope is refused. This is how a forged access token pointing an agent at a stranger's account is stopped.
+- **Envelopes are authenticated.** Every envelope a runner writes (`sealed`, `access_sealed`) carries, for each recipient, a MAC keyed by ECDH between the writer's and that recipient's keys, covering the envelope and `expect`. It is not a signing-key signature: aws-iam boxes have no signing key, and only canopy-web links a signing key to an ECDH key (plan Part 0.4). A reader checks that the signer is a device the statement allows, or the owner. Anyone can build a `zks1` from public keys, so an unsigned or wrongly signed envelope is refused. This is how a forged access token pointing an agent at a stranger's account is stopped.
 - **Accepted trust at the start.** The owner's key comes from canopy-web the first time a runner sees it, as for every zero-knowledge vault in canopy today: keepers pin a person on first sight. So a server compromised at the moment of connecting could substitute keys for that one connection. One compromised later gets nothing from connections made before.
 
 A write-back must also keep every current, still-eligible recipient, as `accounts.reseal` requires.
