@@ -14920,38 +14920,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/search": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Page through every session (cursor)
-         * @description Every session you can see, newest last activity first, `limit` (≤ 500)
-         *     at a time — the whole history, not just the newest 500.
-         *
-         *     Pass the response's `next_cursor` back as `cursor` (with the same filters)
-         *     for the next page; it is null when the walk is done. Ordered by
-         *     (last activity, id), descending, so the order is total and stable. `state`
-         *     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
-         *     repo it ran in or worked on), `branch`, `pr` (as on the list), `since` /
-         *     `until` (last activity in [since, until), ISO-8601, UTC when no zone is given).
-         *
-         *     A session that does something mid-walk moves to the front and can be
-         *     missed by a walk already past it; pass `until` = the time the walk started
-         *     to freeze the set. Same visibility rule as the list and `GET /{id}`.
-         */
-        readonly get: operations["search_sessions"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/canopy-sessions/reset": {
         readonly parameters: {
             readonly query?: never;
@@ -15028,338 +14996,6 @@ export interface paths {
          *     the workspace named (never the ones below it).
          */
         readonly post: operations["purge_session_noise"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/my-vault-key": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * My vault public key, to wrap a new chat's key to
-         * @description Your vault key's PUBLIC half and its thumbprint, for your browser to wrap a new
-         *     conversation's key to before it starts one (`SessionCreateIn.conversation_key`) —
-         *     also from the embedded panel, which has no browser session to read
-         *     `/api/vault/keyset` with. With it, to your own browser only, the keyset that opens
-         *     it: a browser that has not opened your vault key before derives its public half
-         *     from it before trusting this one. 404 when you have none.
-         */
-        readonly get: operations["my_vault_key"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/my-keys": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The private chats whose key I hold a copy of
-         * @description Before you replace your vault key: every sensitive conversation you hold a copy
-         *     of the key to (a wrap only your vault key opens — never what was said), so your
-         *     browser can re-wrap each to the new key while the old one is open, and name them
-         *     to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set.
-         *     Canopy's own signed-in page only.
-         */
-        readonly get: operations["my_key_copies"];
-        /**
-         * Store my private chats' keys, re-wrapped to my new vault key
-         * @description After `PUT /api/vault/keyset` with `replace`: your copies of your conversations'
-         *     keys, each re-wrapped in your browser to your NEW vault key. Replaces only copies
-         *     you already hold, and only to your current vault key; 422 (storing none) when one
-         *     is not.
-         */
-        readonly put: operations["put_my_key_copies"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/transfer-requests": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Transfer requests waiting on you, or that you made
-         * @description Requests to move a session onto a runner you administer (yours to approve
-         *     or decline), plus the ones you asked for. `status` filters (default
-         *     `pending`; `all` for every state).
-         */
-        readonly get: operations["list_transfer_requests"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/transfer-requests/{request_id}/approve": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Approve a transfer onto your runner (and carry it out)
-         * @description Approve moving the session onto your runner; the move happens now and
-         *     `transfer` reports it LAUNCHED. Only an administrator of the target runner may
-         *     approve, checked at this moment. 409 while a turn is still executing on the
-         *     session — the request stays pending; stop the session and approve again.
-         */
-        readonly post: operations["approve_transfer_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/transfer-requests/{request_id}/decline": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Decline a transfer onto your runner
-         * @description Decline; the session stays where it is. `note` is shown to the requester.
-         */
-        readonly post: operations["decline_transfer_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/transfer-requests/{request_id}/cancel": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Withdraw a transfer request you made */
-        readonly post: operations["cancel_transfer_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/transfer-all": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Move every open session on one runner to another
-         * @description Move every open session you can act in from `from_runner` to `to_runner`,
-         *     each with its work (see `transfer`), and say what happened to each one.
-         *
-         *     The way to empty a box — an account out of Claude tokens, a laptop going
-         *     away, load moving to the cloud. `dry_run` lists what would move first. Each
-         *     session is its own transfer, so one that cannot move (a turn executing, a
-         *     session the target cannot run) is reported `refused` with the reason and the
-         *     rest still move. Discovery alone is `GET /api/canopy-sessions/?runner=<name>`.
-         */
-        readonly post: operations["transfer_all"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/join-requests/{request_id}/decline": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Decline someone's request to join your private conversation
-         * @description They stay out. To let them in, add them (`POST /{id}/participants`, from your
-         *     browser, which gives them their copy of the conversation's key): that answers
-         *     the request.
-         */
-        readonly post: operations["decline_join_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/join-requests/{request_id}/cancel": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Withdraw your request to join a private conversation */
-        readonly post: operations["cancel_join_request"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Get a session + transcript tail
-         * @description A session and the tail of its transcript.
-         *
-         *     `session_id` is the session's id. When no session you can read has that id,
-         *     it is tried as the runner's `session_key` instead (a cloud session's key is
-         *     a UUID, and it is the name the Open Sessions card shows); the response's
-         *     `id` then differs from the one you asked for, and `session_key` is the one
-         *     that matched. A key naming several sessions is a 409 listing their ids.
-         */
-        readonly get: operations["canopy_sessions_get_session"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}/info": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Everything stored about a session
-         * @description What canopy stores about one session: the session itself (who opened it,
-         *     what created it and under which parent, what it did), the runner binding
-         *     that backs it, and the turns that drove it — each with who asked, through
-         *     which credential and client, in which mode and on which runner. Readable by
-         *     anyone who can read the session; turn content you may not read is blanked.
-         */
-        readonly get: operations["get_session_info"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}/slash-commands": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The slash commands the composer offers
-         * @description What `/` offers in this session's composer: the agent's launchable skills
-         *     and what the session's runner reported it can run. Empty for someone who can
-         *     read the session but not send to it.
-         */
-        readonly get: operations["list_slash_commands"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}/messages": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Load earlier transcript (scroll-back) */
-        readonly get: operations["list_messages"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}/human-inputs": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * What people typed into a session (cursor)
-         * @description Only the human side of a session: what a person typed, oldest first,
-         *     `limit` (≤ 500) at a time. Pass the response's `next_cursor` back as
-         *     `after` for the next page; it is null when there is no more.
-         *
-         *     Excluded, though some are stored on the user's side of a transcript: tool
-         *     results, the agent's output, system rows, harness records (task
-         *     notifications, system reminders, local command output) and the prompts
-         *     PROGRAMS delivered — a scheduled or email turn's `/agent:turn …`, an API
-         *     caller — and what Claude Code itself wrote as a user record: a skill's or
-         *     slash command's injected body, the agent's own ScheduleWakeup/cron fires,
-         *     a peer session's message, a compaction summary, a subagent's records. Those
-         *     are decided by the transcript record's own flags (`content.record`, captured
-         *     by the runner); a row shipped before runners captured them falls back to the
-         *     session's own rows (the tool call that carried the prompt, the Skill result
-         *     it follows) and, last, to text shape (`transcript_read.InjectedPrompts`).
-         *
-         *     A session with no durable transcript yet (a local runner session before its
-         *     backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.
-         *     Same access rule as `GET /{id}`, and `session_id` may likewise be the
-         *     runner's `session_key`.
-         */
-        readonly get: operations["list_human_inputs"];
-        readonly put?: never;
-        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15512,6 +15148,238 @@ export interface paths {
          *     already in is a no-op.
          */
         readonly post: operations["move_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/send": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Send a message */
+        readonly post: operations["canopy_sessions_send"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/place": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-pin a session's oldest queued turn to a runner */
+        readonly post: operations["place"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/fork": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Fork a session from a message
+         * @description Start a new session from this one's conversation up to the end of the turn
+         *     `turn_index` belongs to. The new session runs on the same runner, in the same
+         *     worktree, so both see the same files. Its own transcript is cut on the runner
+         *     when its first message is sent; until then it holds a copy of the history.
+         *
+         *     Needs a runner on the Claude CLI runtime (422 otherwise). 404 for an unknown
+         *     message; 409 when the cut would fall inside a turn that is still running.
+         */
+        readonly post: operations["fork_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/answer-menu": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Answer the dialog an agent is blocked on
+         * @description Approve or refuse a permission prompt from the web.
+         *
+         *     A refusal is a 200 with `ok:false` and a stable reason, not a 4xx: the dialog
+         *     can go stale between the phone rendering it and a thumb reaching it, and the
+         *     runner can go offline in between — both ordinary, neither a client error.
+         *     Same shape `reset` uses for the same reason.
+         */
+        readonly post: operations["answer_menu"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/close": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Close a session for good
+         * @description End a session — delete its emdash task if a runner is reporting one, or
+         *     archive it outright if nothing exists on a box.
+         *
+         *     `closing: true` means the close was relayed to a runner and the row is still
+         *     listed: the runner deletes the task and its next report retires the session.
+         *     `closing: false` with `ok: true` means it is already done. A refusal is a 200
+         *     with `ok:false` and a stable reason (`unavailable`, `already_closed`), never a
+         *     4xx — same shape `answer-menu` and `reset` use, for the same reason.
+         *
+         *     There is deliberately no `unbound` refusal: a session with no binding has
+         *     nothing on a box, which is the second branch rather than an error.
+         */
+        readonly post: operations["close_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop this session: cancel its open turns, or interrupt its agent
+         * @description Stop whatever this session is doing — the same stop as the web UI's button.
+         *     Returns `cancelled` (an open turn was cancelled), `interrupted` (no turn was
+         *     open, so the session's runner was asked to interrupt the agent) and `route`.
+         */
+        readonly post: operations["stop_session_turn"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/my-vault-key": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My vault public key, to wrap a new chat's key to
+         * @description Your vault key's PUBLIC half and its thumbprint, for your browser to wrap a new
+         *     conversation's key to before it starts one (`SessionCreateIn.conversation_key`) —
+         *     also from the embedded panel, which has no browser session to read
+         *     `/api/vault/keyset` with. With it, to your own browser only, the keyset that opens
+         *     it: a browser that has not opened your vault key before derives its public half
+         *     from it before trusting this one. 404 when you have none.
+         */
+        readonly get: operations["my_vault_key"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/my-keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The private chats whose key I hold a copy of
+         * @description Before you replace your vault key: every sensitive conversation you hold a copy
+         *     of the key to (a wrap only your vault key opens — never what was said), so your
+         *     browser can re-wrap each to the new key while the old one is open, and name them
+         *     to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set.
+         *     Canopy's own signed-in page only.
+         */
+        readonly get: operations["my_key_copies"];
+        /**
+         * Store my private chats' keys, re-wrapped to my new vault key
+         * @description After `PUT /api/vault/keyset` with `replace`: your copies of your conversations'
+         *     keys, each re-wrapped in your browser to your NEW vault key. Replaces only copies
+         *     you already hold, and only to your current vault key; 422 (storing none) when one
+         *     is not.
+         */
+        readonly put: operations["put_my_key_copies"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/join-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline someone's request to join your private conversation
+         * @description They stay out. To let them in, add them (`POST /{id}/participants`, from your
+         *     browser, which gives them their copy of the conversation's key): that answers
+         *     the request.
+         */
+        readonly post: operations["decline_join_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/join-requests/{request_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw your request to join a private conversation */
+        readonly post: operations["cancel_join_request"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15691,41 +15559,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/send": {
+    readonly "/api/canopy-sessions/transfer-requests": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * Transfer requests waiting on you, or that you made
+         * @description Requests to move a session onto a runner you administer (yours to approve
+         *     or decline), plus the ones you asked for. `status` filters (default
+         *     `pending`; `all` for every state).
+         */
+        readonly get: operations["list_transfer_requests"];
         readonly put?: never;
-        /** Send a message */
-        readonly post: operations["canopy_sessions_send"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/place": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Re-pin a session's oldest queued turn to a runner */
-        readonly post: operations["place"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}/fork": {
+    readonly "/api/canopy-sessions/transfer-requests/{request_id}/approve": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15735,16 +15591,77 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Fork a session from a message
-         * @description Start a new session from this one's conversation up to the end of the turn
-         *     `turn_index` belongs to. The new session runs on the same runner, in the same
-         *     worktree, so both see the same files. Its own transcript is cut on the runner
-         *     when its first message is sent; until then it holds a copy of the history.
-         *
-         *     Needs a runner on the Claude CLI runtime (422 otherwise). 404 for an unknown
-         *     message; 409 when the cut would fall inside a turn that is still running.
+         * Approve a transfer onto your runner (and carry it out)
+         * @description Approve moving the session onto your runner; the move happens now and
+         *     `transfer` reports it LAUNCHED. Only an administrator of the target runner may
+         *     approve, checked at this moment. 409 while a turn is still executing on the
+         *     session — the request stays pending; stop the session and approve again.
          */
-        readonly post: operations["fork_session"];
+        readonly post: operations["approve_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a transfer onto your runner
+         * @description Decline; the session stays where it is. `note` is shown to the requester.
+         */
+        readonly post: operations["decline_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-requests/{request_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw a transfer request you made */
+        readonly post: operations["cancel_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-all": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move every open session on one runner to another
+         * @description Move every open session you can act in from `from_runner` to `to_runner`,
+         *     each with its work (see `transfer`), and say what happened to each one.
+         *
+         *     The way to empty a box — an account out of Claude tokens, a laptop going
+         *     away, load moving to the cloud. `dry_run` lists what would move first. Each
+         *     session is its own transfer, so one that cannot move (a turn executing, a
+         *     session the target cannot run) is reported `refused` with the reason and the
+         *     rest still move. Discovery alone is `GET /api/canopy-sessions/?runner=<name>`.
+         */
+        readonly post: operations["transfer_all"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15837,77 +15754,160 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/answer-menu": {
+    readonly "/api/canopy-sessions/search": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
-        readonly put?: never;
         /**
-         * Answer the dialog an agent is blocked on
-         * @description Approve or refuse a permission prompt from the web.
+         * Page through every session (cursor)
+         * @description Every session you can see, newest last activity first, `limit` (≤ 500)
+         *     at a time — the whole history, not just the newest 500.
          *
-         *     A refusal is a 200 with `ok:false` and a stable reason, not a 4xx: the dialog
-         *     can go stale between the phone rendering it and a thumb reaching it, and the
-         *     runner can go offline in between — both ordinary, neither a client error.
-         *     Same shape `reset` uses for the same reason.
+         *     Pass the response's `next_cursor` back as `cursor` (with the same filters)
+         *     for the next page; it is null when the walk is done. Ordered by
+         *     (last activity, id), descending, so the order is total and stable. `state`
+         *     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
+         *     repo it ran in or worked on), `branch`, `pr` (as on the list), `since` /
+         *     `until` (last activity in [since, until), ISO-8601, UTC when no zone is given).
+         *
+         *     A session that does something mid-walk moves to the front and can be
+         *     missed by a walk already past it; pass `until` = the time the walk started
+         *     to freeze the set. Same visibility rule as the list and `GET /{id}`.
          */
-        readonly post: operations["answer_menu"];
+        readonly get: operations["search_sessions"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/close": {
+    readonly "/api/canopy-sessions/{session_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
-        readonly put?: never;
         /**
-         * Close a session for good
-         * @description End a session — delete its emdash task if a runner is reporting one, or
-         *     archive it outright if nothing exists on a box.
+         * Get a session + transcript tail
+         * @description A session and the tail of its transcript.
          *
-         *     `closing: true` means the close was relayed to a runner and the row is still
-         *     listed: the runner deletes the task and its next report retires the session.
-         *     `closing: false` with `ok: true` means it is already done. A refusal is a 200
-         *     with `ok:false` and a stable reason (`unavailable`, `already_closed`), never a
-         *     4xx — same shape `answer-menu` and `reset` use, for the same reason.
-         *
-         *     There is deliberately no `unbound` refusal: a session with no binding has
-         *     nothing on a box, which is the second branch rather than an error.
+         *     `session_id` is the session's id. When no session you can read has that id,
+         *     it is tried as the runner's `session_key` instead (a cloud session's key is
+         *     a UUID, and it is the name the Open Sessions card shows); the response's
+         *     `id` then differs from the one you asked for, and `session_key` is the one
+         *     that matched. A key naming several sessions is a 409 listing their ids.
          */
-        readonly post: operations["close_session"];
+        readonly get: operations["canopy_sessions_get_session"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/stop": {
+    readonly "/api/canopy-sessions/{session_id}/info": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
-        readonly put?: never;
         /**
-         * Stop this session: cancel its open turns, or interrupt its agent
-         * @description Stop whatever this session is doing — the same stop as the web UI's button.
-         *     Returns `cancelled` (an open turn was cancelled), `interrupted` (no turn was
-         *     open, so the session's runner was asked to interrupt the agent) and `route`.
+         * Everything stored about a session
+         * @description What canopy stores about one session: the session itself (who opened it,
+         *     what created it and under which parent, what it did), the runner binding
+         *     that backs it, and the turns that drove it — each with who asked, through
+         *     which credential and client, in which mode and on which runner. Readable by
+         *     anyone who can read the session; turn content you may not read is blanked.
          */
-        readonly post: operations["stop_session_turn"];
+        readonly get: operations["get_session_info"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/slash-commands": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The slash commands the composer offers
+         * @description What `/` offers in this session's composer: the agent's launchable skills
+         *     and what the session's runner reported it can run. Empty for someone who can
+         *     read the session but not send to it.
+         */
+        readonly get: operations["list_slash_commands"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/messages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Load earlier transcript (scroll-back) */
+        readonly get: operations["list_messages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/human-inputs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What people typed into a session (cursor)
+         * @description Only the human side of a session: what a person typed, oldest first,
+         *     `limit` (≤ 500) at a time. Pass the response's `next_cursor` back as
+         *     `after` for the next page; it is null when there is no more.
+         *
+         *     Excluded, though some are stored on the user's side of a transcript: tool
+         *     results, the agent's output, system rows, harness records (task
+         *     notifications, system reminders, local command output) and the prompts
+         *     PROGRAMS delivered — a scheduled or email turn's `/agent:turn …`, an API
+         *     caller — and what Claude Code itself wrote as a user record: a skill's or
+         *     slash command's injected body, the agent's own ScheduleWakeup/cron fires,
+         *     a peer session's message, a compaction summary, a subagent's records. Those
+         *     are decided by the transcript record's own flags (`content.record`, captured
+         *     by the runner); a row shipped before runners captured them falls back to the
+         *     session's own rows (the tool call that carried the prompt, the Skill result
+         *     it follows) and, last, to text shape (`transcript_read.InjectedPrompts`).
+         *
+         *     A session with no durable transcript yet (a local runner session before its
+         *     backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.
+         *     Same access rule as `GET /{id}`, and `session_id` may likewise be the
+         *     runner's `session_key`.
+         */
+        readonly get: operations["list_human_inputs"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15972,6 +15972,32 @@ export interface paths {
          *     pull from that box (`access.may_pull`); anyone else reads what is stored (403).
          */
         readonly post: operations["request_backfill"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Export a session's conversation to pick it up in your own Claude
+         * @description This session as readable markdown — the same rows the web view shows, tool
+         *     output shortened — for handing to your own Claude so it can see where the
+         *     work stands and carry on. For when the runner
+         *     is out of tokens, or you want to take it from here yourself.
+         *
+         *     `canopy runner export <session>` saves it to a file and prints the prompt to
+         *     start from. Only the person who started the session can export it.
+         */
+        readonly get: operations["export_session"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -16290,32 +16316,6 @@ export interface paths {
         readonly post?: never;
         /** Forget a shared secret */
         readonly delete: operations["delete_secret"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/canopy-sessions/{session_id}/export": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Export a session's conversation to pick it up in your own Claude
-         * @description This session as readable markdown — the same rows the web view shows, tool
-         *     output shortened — for handing to your own Claude so it can see where the
-         *     work stands and carry on. For when the runner
-         *     is out of tokens, or you want to take it from here yourself.
-         *
-         *     `canopy runner export <session>` saves it to a file and prints the prompt to
-         *     start from. Only the person who started the session can export it.
-         */
-        readonly get: operations["export_session"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -41627,16 +41627,6 @@ export interface components {
             readonly cli?: ("claude-code" | "codex") | null;
         };
         /**
-         * SessionSearchPageOut
-         * @description One page of a newest-activity-first walk over every visible session.
-         */
-        readonly SessionSearchPageOut: {
-            /** Sessions */
-            readonly sessions: readonly components["schemas"]["SessionOut"][];
-            /** Next Cursor */
-            readonly next_cursor?: string | null;
-        };
-        /**
          * ResetOut
          * @description One session's reset outcome. `reason` is `ok` | `no_binding` |
          *     `runner_unreachable` — stable strings the UI renders as the refusal.
@@ -41735,6 +41725,104 @@ export interface components {
              */
             readonly sample: number;
         };
+        /** SessionNotifyIn */
+        readonly SessionNotifyIn: {
+            /** Every Completion */
+            readonly every_completion: boolean;
+        };
+        /** SessionTitleIn */
+        readonly SessionTitleIn: {
+            /** Title */
+            readonly title: string;
+        };
+        /** SessionMoveIn */
+        readonly SessionMoveIn: {
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /** SendOut */
+        readonly SendOut: {
+            /** Turn Id */
+            readonly turn_id: string | null;
+            readonly message: components["schemas"]["MessageOut"];
+        };
+        /** SendIn */
+        readonly SendIn: {
+            /** Text */
+            readonly text: string;
+            /**
+             * Client Id
+             * @default
+             */
+            readonly client_id: string;
+            /** Placement */
+            readonly placement?: string | null;
+            /** Origin */
+            readonly origin?: ("api" | "ace_web") | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
+            /**
+             * Clear Prompt
+             * @default false
+             */
+            readonly clear_prompt: boolean;
+        };
+        /**
+         * TurnOutMinimal
+         * @description Just enough of a Turn for the /place response — the caller only needs to
+         *     confirm the pin took, not the full harness TurnOut shape.
+         */
+        readonly TurnOutMinimal: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** Pinned Runner Id */
+            readonly pinned_runner_id?: string | null;
+        };
+        /**
+         * PlaceIn
+         * @description Body for POST /{session_id}/place — the chat banner's after-the-fact
+         *     directed-placement decision on an already-queued turn.
+         */
+        readonly PlaceIn: {
+            /** Placement */
+            readonly placement: string;
+        };
+        /**
+         * ForkIn
+         * @description Body for POST /{session_id}/fork.
+         */
+        readonly ForkIn: {
+            /** Turn Index */
+            readonly turn_index: number;
+        };
+        /**
+         * MenuAnswerIn
+         * @description Which option to press on a blocked agent's dialog.
+         *
+         *     `None` means refuse — sent as Escape. Deliberately nullable rather than a
+         *     magic number: every dialog offers Esc, and it is the only answer that is
+         *     safe when the option numbering is not what the client thought it was.
+         *
+         *     `selections` carries the whole answer to an `AskUserQuestion`: one list of
+         *     chosen option numbers per declared question, in declaration order, empty for
+         *     a question left unanswered. A single `option` cannot express "Red and Blue",
+         *     and cannot reach the tab holding question 2 at all — so a multi-select or a
+         *     multi-question ask was unanswerable from the web until this field existed.
+         *     `option` is still sent beside it (the first pick) purely so a runner older
+         *     than this behaves exactly as it does today instead of pressing Escape.
+         */
+        readonly MenuAnswerIn: {
+            /** Option */
+            readonly option?: number | null;
+            /** Selections */
+            readonly selections?: readonly (readonly number[])[] | null;
+            /** Texts */
+            readonly texts?: readonly (string | null)[] | null;
+        };
         /**
          * MyVaultKeyOut
          * @description Your vault key's public half (`GET /my-vault-key`).
@@ -41810,6 +41898,156 @@ export interface components {
             readonly wrap: components["schemas"]["ConversationKeyWrapIn"];
             /** Recipient Jkt */
             readonly recipient_jkt: string;
+        };
+        /**
+         * JoinRequestOut
+         * @description A request to be added to a private conversation. Who asked and how it was
+         *     decided; never anything the conversation said.
+         */
+        readonly JoinRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Requested By */
+            readonly requested_by: string;
+            /** Requested By Name */
+            readonly requested_by_name: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Decided By
+             * @default
+             */
+            readonly decided_by: string;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * ParticipantOut
+         * @description Someone explicitly given this chat. The creator is its owner.
+         */
+        readonly ParticipantOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Role */
+            readonly role: string;
+            /** Joined At */
+            readonly joined_at?: string | null;
+            /**
+             * Needs Key
+             * @default false
+             */
+            readonly needs_key: boolean;
+            /**
+             * Test Key
+             * @default false
+             */
+            readonly test_key: boolean;
+        };
+        /**
+         * ParticipantAddIn
+         * @description Give a teammate this chat. They must already be in its workspace. In a
+         *     sensitive conversation `wrap` is their copy of its key, made in your browser;
+         *     required unless they already hold a current one.
+         */
+        readonly ParticipantAddIn: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Role
+             * @default editor
+             * @enum {string}
+             */
+            readonly role: "editor" | "viewer";
+            readonly wrap?: components["schemas"]["SealedKeyWrapIn"] | null;
+        };
+        /**
+         * SealedKeyWrapIn
+         * @description A sensitive conversation's key, wrapped in your browser to the person you add:
+         *     `{alg: "ecdh-es", epk, n, ct}` for info `canopy-chat/v1/wrap|<conversation>|<their
+         *     user id>`, and the thumbprint of the vault key it is for
+         *     (`GET /{id}/participants/recipient`).
+         */
+        readonly SealedKeyWrapIn: {
+            /**
+             * Alg
+             * @constant
+             */
+            readonly alg: "ecdh-es";
+            /** Epk */
+            readonly epk: string;
+            /** N */
+            readonly n: string;
+            /** Ct */
+            readonly ct: string;
+            /** Recipient Jkt */
+            readonly recipient_jkt: string;
+        };
+        /**
+         * ParticipantCandidateOut
+         * @description Someone you could add to this chat: a member of its workspace not yet in it.
+         */
+        readonly ParticipantCandidateOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
+        };
+        /**
+         * ParticipantRecipientOut
+         * @description The vault key to wrap a sensitive conversation's key to, for the person you
+         *     are about to add.
+         */
+        readonly ParticipantRecipientOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Jkt */
+            readonly jkt: string;
+            /**
+             * Test Key
+             * @default false
+             */
+            readonly test_key: boolean;
+        };
+        /**
+         * KeyCopyIn
+         * @description Someone already in a sensitive conversation, given their copy of its key from your
+         *     browser: `wrap` is the key wrapped to their current vault key
+         *     (`GET /{id}/participants/recipient`).
+         */
+        readonly KeyCopyIn: {
+            /** User Id */
+            readonly user_id: number;
+            readonly wrap: components["schemas"]["SealedKeyWrapIn"];
         };
         /**
          * HandoffOut
@@ -42058,39 +42296,34 @@ export interface components {
             readonly cli?: ("claude-code" | "codex") | null;
         };
         /**
-         * JoinRequestOut
-         * @description A request to be added to a private conversation. Who asked and how it was
-         *     decided; never anything the conversation said.
+         * TransferIn
+         * @description Body for POST /{session_id}/transfer — move a LIVE session onto another
+         *     runner, history and all.
+         *
+         *     Distinct from `place`, which only re-pins a queued turn and leaves the
+         *     binding (and so the next ship, and the next send's stickiness) on the old
+         *     box. This moves the session.
          */
-        readonly JoinRequestOut: {
+        readonly TransferIn: {
+            /** Runner */
+            readonly runner: string;
             /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            readonly session_id: string;
-            /** Requested By */
-            readonly requested_by: string;
-            /** Requested By Name */
-            readonly requested_by_name: string;
-            /** Status */
-            readonly status: string;
-            /**
-             * Decided By
+             * Brief
              * @default
              */
-            readonly decided_by: string;
-            /** Decided At */
-            readonly decided_at?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
+            readonly brief: string;
+            /** Cli */
+            readonly cli?: ("claude-code" | "codex") | null;
+        };
+        /**
+         * SessionSearchPageOut
+         * @description One page of a newest-activity-first walk over every visible session.
+         */
+        readonly SessionSearchPageOut: {
+            /** Sessions */
+            readonly sessions: readonly components["schemas"]["SessionOut"][];
+            /** Next Cursor */
+            readonly next_cursor?: string | null;
         };
         /**
          * SealedKeyOut
@@ -42594,239 +42827,6 @@ export interface components {
              */
             readonly source: "transcript" | "tail";
         };
-        /** SessionNotifyIn */
-        readonly SessionNotifyIn: {
-            /** Every Completion */
-            readonly every_completion: boolean;
-        };
-        /** SessionTitleIn */
-        readonly SessionTitleIn: {
-            /** Title */
-            readonly title: string;
-        };
-        /** SessionMoveIn */
-        readonly SessionMoveIn: {
-            /** Workspace */
-            readonly workspace: string;
-        };
-        /**
-         * ParticipantOut
-         * @description Someone explicitly given this chat. The creator is its owner.
-         */
-        readonly ParticipantOut: {
-            /** User Id */
-            readonly user_id: number;
-            /** Email */
-            readonly email: string;
-            /** Display Name */
-            readonly display_name: string;
-            /** Role */
-            readonly role: string;
-            /** Joined At */
-            readonly joined_at?: string | null;
-            /**
-             * Needs Key
-             * @default false
-             */
-            readonly needs_key: boolean;
-            /**
-             * Test Key
-             * @default false
-             */
-            readonly test_key: boolean;
-        };
-        /**
-         * ParticipantAddIn
-         * @description Give a teammate this chat. They must already be in its workspace. In a
-         *     sensitive conversation `wrap` is their copy of its key, made in your browser;
-         *     required unless they already hold a current one.
-         */
-        readonly ParticipantAddIn: {
-            /** Email */
-            readonly email: string;
-            /**
-             * Role
-             * @default editor
-             * @enum {string}
-             */
-            readonly role: "editor" | "viewer";
-            readonly wrap?: components["schemas"]["SealedKeyWrapIn"] | null;
-        };
-        /**
-         * SealedKeyWrapIn
-         * @description A sensitive conversation's key, wrapped in your browser to the person you add:
-         *     `{alg: "ecdh-es", epk, n, ct}` for info `canopy-chat/v1/wrap|<conversation>|<their
-         *     user id>`, and the thumbprint of the vault key it is for
-         *     (`GET /{id}/participants/recipient`).
-         */
-        readonly SealedKeyWrapIn: {
-            /**
-             * Alg
-             * @constant
-             */
-            readonly alg: "ecdh-es";
-            /** Epk */
-            readonly epk: string;
-            /** N */
-            readonly n: string;
-            /** Ct */
-            readonly ct: string;
-            /** Recipient Jkt */
-            readonly recipient_jkt: string;
-        };
-        /**
-         * ParticipantCandidateOut
-         * @description Someone you could add to this chat: a member of its workspace not yet in it.
-         */
-        readonly ParticipantCandidateOut: {
-            /** User Id */
-            readonly user_id: number;
-            /** Email */
-            readonly email: string;
-            /** Display Name */
-            readonly display_name: string;
-            /**
-             * Agent Slug
-             * @default
-             */
-            readonly agent_slug: string;
-        };
-        /**
-         * ParticipantRecipientOut
-         * @description The vault key to wrap a sensitive conversation's key to, for the person you
-         *     are about to add.
-         */
-        readonly ParticipantRecipientOut: {
-            /** User Id */
-            readonly user_id: number;
-            /** Email */
-            readonly email: string;
-            /** Public Jwk */
-            readonly public_jwk: {
-                readonly [key: string]: unknown;
-            };
-            /** Jkt */
-            readonly jkt: string;
-            /**
-             * Test Key
-             * @default false
-             */
-            readonly test_key: boolean;
-        };
-        /**
-         * KeyCopyIn
-         * @description Someone already in a sensitive conversation, given their copy of its key from your
-         *     browser: `wrap` is the key wrapped to their current vault key
-         *     (`GET /{id}/participants/recipient`).
-         */
-        readonly KeyCopyIn: {
-            /** User Id */
-            readonly user_id: number;
-            readonly wrap: components["schemas"]["SealedKeyWrapIn"];
-        };
-        /** SendOut */
-        readonly SendOut: {
-            /** Turn Id */
-            readonly turn_id: string | null;
-            readonly message: components["schemas"]["MessageOut"];
-        };
-        /** SendIn */
-        readonly SendIn: {
-            /** Text */
-            readonly text: string;
-            /**
-             * Client Id
-             * @default
-             */
-            readonly client_id: string;
-            /** Placement */
-            readonly placement?: string | null;
-            /** Origin */
-            readonly origin?: ("api" | "ace_web") | null;
-            readonly parent?: components["schemas"]["ParentIn"] | null;
-            /**
-             * Clear Prompt
-             * @default false
-             */
-            readonly clear_prompt: boolean;
-        };
-        /**
-         * TurnOutMinimal
-         * @description Just enough of a Turn for the /place response — the caller only needs to
-         *     confirm the pin took, not the full harness TurnOut shape.
-         */
-        readonly TurnOutMinimal: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /** Status */
-            readonly status: string;
-            /** Pinned Runner Id */
-            readonly pinned_runner_id?: string | null;
-        };
-        /**
-         * PlaceIn
-         * @description Body for POST /{session_id}/place — the chat banner's after-the-fact
-         *     directed-placement decision on an already-queued turn.
-         */
-        readonly PlaceIn: {
-            /** Placement */
-            readonly placement: string;
-        };
-        /**
-         * ForkIn
-         * @description Body for POST /{session_id}/fork.
-         */
-        readonly ForkIn: {
-            /** Turn Index */
-            readonly turn_index: number;
-        };
-        /**
-         * TransferIn
-         * @description Body for POST /{session_id}/transfer — move a LIVE session onto another
-         *     runner, history and all.
-         *
-         *     Distinct from `place`, which only re-pins a queued turn and leaves the
-         *     binding (and so the next ship, and the next send's stickiness) on the old
-         *     box. This moves the session.
-         */
-        readonly TransferIn: {
-            /** Runner */
-            readonly runner: string;
-            /**
-             * Brief
-             * @default
-             */
-            readonly brief: string;
-            /** Cli */
-            readonly cli?: ("claude-code" | "codex") | null;
-        };
-        /**
-         * MenuAnswerIn
-         * @description Which option to press on a blocked agent's dialog.
-         *
-         *     `None` means refuse — sent as Escape. Deliberately nullable rather than a
-         *     magic number: every dialog offers Esc, and it is the only answer that is
-         *     safe when the option numbering is not what the client thought it was.
-         *
-         *     `selections` carries the whole answer to an `AskUserQuestion`: one list of
-         *     chosen option numbers per declared question, in declaration order, empty for
-         *     a question left unanswered. A single `option` cannot express "Red and Blue",
-         *     and cannot reach the tab holding question 2 at all — so a multi-select or a
-         *     multi-question ask was unanswerable from the web until this field existed.
-         *     `option` is still sent beside it (the first pick) purely so a runner older
-         *     than this behaves exactly as it does today instead of pressing Escape.
-         */
-        readonly MenuAnswerIn: {
-            /** Option */
-            readonly option?: number | null;
-            /** Selections */
-            readonly selections?: readonly (readonly number[])[] | null;
-            /** Texts */
-            readonly texts?: readonly (string | null)[] | null;
-        };
         /**
          * StreamStateOut
          * @description Whether the bound runner is being asked to stream this session live.
@@ -42842,6 +42842,23 @@ export interface components {
         readonly BackfillStateOut: {
             /** Status */
             readonly status: string;
+        };
+        /**
+         * SessionExportOut
+         * @description A session's conversation as readable markdown, to pick it up elsewhere.
+         */
+        readonly SessionExportOut: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /** Message Count */
+            readonly message_count: number;
+            /** Markdown */
+            readonly markdown: string;
         };
         /**
          * AttachmentOut
@@ -43047,23 +43064,6 @@ export interface components {
             readonly value_zk: string;
             /** Value */
             readonly value?: string | null;
-        };
-        /**
-         * SessionExportOut
-         * @description A session's conversation as readable markdown, to pick it up elsewhere.
-         */
-        readonly SessionExportOut: {
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            readonly session_id: string;
-            /** Title */
-            readonly title: string;
-            /** Message Count */
-            readonly message_count: number;
-            /** Markdown */
-            readonly markdown: string;
         };
         /**
          * ProjectSessionShareOut
@@ -64109,40 +64109,6 @@ export interface operations {
             };
         };
     };
-    readonly search_sessions: {
-        readonly parameters: {
-            readonly query?: {
-                readonly cursor?: string;
-                readonly limit?: number;
-                readonly state?: string;
-                readonly q?: string;
-                readonly repo?: string;
-                readonly since?: string | null;
-                readonly until?: string | null;
-                readonly source?: string;
-                readonly origin_key?: string;
-                readonly embed_app?: string;
-                readonly session_key?: string;
-                readonly branch?: string;
-                readonly pr?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SessionSearchPageOut"];
-                };
-            };
-        };
-    };
     readonly reset_sessions: {
         readonly parameters: {
             readonly query?: never;
@@ -64210,348 +64176,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["NoisePurgeOut"];
-                };
-            };
-        };
-    };
-    readonly my_vault_key: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MyVaultKeyOut"];
-                };
-            };
-        };
-    };
-    readonly my_key_copies: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["MyKeyCopyOut"][];
-                };
-            };
-        };
-    };
-    readonly put_my_key_copies: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["MyKeyCopiesIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MyKeyCopiesOut"];
-                };
-            };
-        };
-    };
-    readonly list_transfer_requests: {
-        readonly parameters: {
-            readonly query?: {
-                readonly status?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["TransferRequestOut"][];
-                };
-            };
-        };
-    };
-    readonly approve_transfer_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TransferRequestOut"];
-                };
-            };
-        };
-    };
-    readonly decline_transfer_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["TransferDecisionIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TransferRequestOut"];
-                };
-            };
-        };
-    };
-    readonly cancel_transfer_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TransferRequestOut"];
-                };
-            };
-        };
-    };
-    readonly transfer_all: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["TransferAllIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TransferAllOut"];
-                };
-            };
-        };
-    };
-    readonly decline_join_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["JoinRequestOut"];
-                };
-            };
-        };
-    };
-    readonly cancel_join_request: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly request_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["JoinRequestOut"];
-                };
-            };
-        };
-    };
-    readonly canopy_sessions_get_session: {
-        readonly parameters: {
-            readonly query?: {
-                readonly full?: boolean;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SessionDetailOut"];
-                };
-            };
-        };
-    };
-    readonly get_session_info: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SessionInfoOut"];
-                };
-            };
-        };
-    };
-    readonly list_slash_commands: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["SlashCommandOut"][];
-                };
-            };
-        };
-    };
-    readonly list_messages: {
-        readonly parameters: {
-            readonly query: {
-                readonly before: number;
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MessagePageOut"];
-                };
-            };
-        };
-    };
-    readonly list_human_inputs: {
-        readonly parameters: {
-            readonly query?: {
-                readonly after?: number | null;
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["HumanInputPageOut"];
                 };
             };
         };
@@ -64698,6 +64322,268 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly canopy_sessions_send: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SendIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SendOut"];
+                };
+            };
+        };
+    };
+    readonly place: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PlaceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnOutMinimal"];
+                };
+            };
+        };
+    };
+    readonly fork_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ForkIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly answer_menu: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MenuAnswerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly close_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly stop_session_turn: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly my_vault_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MyVaultKeyOut"];
+                };
+            };
+        };
+    };
+    readonly my_key_copies: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MyKeyCopyOut"][];
+                };
+            };
+        };
+    };
+    readonly put_my_key_copies: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MyKeyCopiesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MyKeyCopiesOut"];
+                };
+            };
+        };
+    };
+    readonly decline_join_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JoinRequestOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_join_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JoinRequestOut"];
                 };
             };
         };
@@ -64911,20 +64797,16 @@ export interface operations {
             };
         };
     };
-    readonly canopy_sessions_send: {
+    readonly list_transfer_requests: {
         readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
+            readonly query?: {
+                readonly status?: string;
             };
+            readonly header?: never;
+            readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SendIn"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {
@@ -64932,25 +64814,21 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SendOut"];
+                    readonly "application/json": readonly components["schemas"]["TransferRequestOut"][];
                 };
             };
         };
     };
-    readonly place: {
+    readonly approve_transfer_request: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly session_id: string;
+                readonly request_id: string;
             };
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["PlaceIn"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {
@@ -64958,23 +64836,23 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["TurnOutMinimal"];
+                    readonly "application/json": components["schemas"]["TransferRequestOut"];
                 };
             };
         };
     };
-    readonly fork_session: {
+    readonly decline_transfer_request: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly session_id: string;
+                readonly request_id: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ForkIn"];
+                readonly "application/json": components["schemas"]["TransferDecisionIn"];
             };
         };
         readonly responses: {
@@ -64984,7 +64862,53 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SessionOut"];
+                    readonly "application/json": components["schemas"]["TransferRequestOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_transfer_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferRequestOut"];
+                };
+            };
+        };
+    };
+    readonly transfer_all: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TransferAllIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferAllOut"];
                 };
             };
         };
@@ -65060,20 +64984,28 @@ export interface operations {
             };
         };
     };
-    readonly answer_menu: {
+    readonly search_sessions: {
         readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
+            readonly query?: {
+                readonly cursor?: string;
+                readonly limit?: number;
+                readonly state?: string;
+                readonly q?: string;
+                readonly repo?: string;
+                readonly since?: string | null;
+                readonly until?: string | null;
+                readonly source?: string;
+                readonly origin_key?: string;
+                readonly embed_app?: string;
+                readonly session_key?: string;
+                readonly branch?: string;
+                readonly pr?: string;
             };
+            readonly header?: never;
+            readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["MenuAnswerIn"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {
@@ -65081,14 +65013,36 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["SessionSearchPageOut"];
                 };
             };
         };
     };
-    readonly close_session: {
+    readonly canopy_sessions_get_session: {
+        readonly parameters: {
+            readonly query?: {
+                readonly full?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionDetailOut"];
+                };
+            };
+        };
+    };
+    readonly get_session_info: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -65105,14 +65059,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["SessionInfoOut"];
                 };
             };
         };
     };
-    readonly stop_session_turn: {
+    readonly list_slash_commands: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -65129,9 +65081,57 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": readonly components["schemas"]["SlashCommandOut"][];
+                };
+            };
+        };
+    };
+    readonly list_messages: {
+        readonly parameters: {
+            readonly query: {
+                readonly before: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MessagePageOut"];
+                };
+            };
+        };
+    };
+    readonly list_human_inputs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly after?: number | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HumanInputPageOut"];
                 };
             };
         };
@@ -65198,6 +65198,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BackfillStateOut"];
+                };
+            };
+        };
+    };
+    readonly export_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionExportOut"];
                 };
             };
         };
@@ -65611,28 +65633,6 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    readonly export_session: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SessionExportOut"];
-                };
             };
         };
     };
