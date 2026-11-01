@@ -193,3 +193,24 @@ test.describe('chat with a runner', () => {
     }, { timeout: 15_000 }).toBe(true)
   })
 })
+
+test.describe('session lists', () => {
+  // Every state count (running, input, held, idle) fits beside "New session":
+  // they wrap on a narrow rail rather than running underneath the button.
+  for (const railWidth of [400, 280]) {
+    test(`/ide's header does not overlap at a ${railWidth}px rail`, async ({ page }) => {
+      await page.addInitScript((w) => {
+        try { localStorage.setItem('canopy.ide.v1', JSON.stringify({ railWidth: w })) } catch { /* private mode */ }
+      }, railWidth)
+      await page.goto('/ide')
+      await expect(page.getByTestId('ide-state-totals')).toBeVisible()
+      const overlaps = await page.evaluate(() => {
+        const totals = document.querySelector('[data-testid="ide-state-totals"]')!.getBoundingClientRect()
+        const button = [...document.querySelectorAll('button')].find((b) => /New session/.test(b.textContent ?? ''))!
+        const r = button.getBoundingClientRect()
+        return totals.right > r.left + 1 && totals.top < r.bottom && totals.bottom > r.top
+      })
+      expect(overlaps).toBe(false)
+    })
+  }
+})
