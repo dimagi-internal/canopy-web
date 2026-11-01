@@ -1173,7 +1173,7 @@ def replace_reported_sessions(
         sessions_reported.send(sender=Runner, runner=runner)
         _publish_menu_changes(menu_changes, new_asks)
         if went_quiet:
-            from apps.canopy_sessions.status_feed import publish_idle
+            from apps.canopy_sessions.status_feed import publish_idle  # noqa: PLC0415 — as _publish_menu_changes: realtime imports harness
 
             for session_id in went_quiet:
                 publish_idle(session_id)
