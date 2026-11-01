@@ -138,10 +138,33 @@ describe("SendBox — local-first composer", () => {
     expect(textarea().value).toBe("typed while connecting");
   });
 
-  it("cannot send until a draft exists, since chat.send commits the server copy", () => {
-    const { textarea } = setup({ draft: null });
+  it("holds a send made while connecting, says so, and sends once the chat connects", () => {
+    // chat.send commits the server's copy of the draft, so nothing can go before
+    // the socket and the draft exist. Enter used to be dropped there, leaving the
+    // words in the box with nothing saying they were never sent.
+    const { textarea, onSend, rerender, onUpdate } = setup({ draft: null, connected: false });
+    fireEvent.change(textarea(), { target: { value: "typed while connecting" } });
+    fireEvent.keyDown(textarea(), { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByTestId("send-waiting").textContent).toContain("connects");
+
+    rerender(
+      <SendBox draft={draft()} connected isStreaming={false} streamingMessageId={null}
+        onUpdate={onUpdate} onSend={onSend} onStop={vi.fn()} />,
+    );
+    expect(onSend).toHaveBeenCalledWith("typed while connecting");
+    expect(textarea().value).toBe("");
+    expect(screen.queryByTestId("send-waiting")).toBeNull();
+  });
+
+  it("drops a held send if the words are cleared before it could go", () => {
+    const { textarea, onSend } = setup({ draft: null, connected: false });
     fireEvent.change(textarea(), { target: { value: "hi" } });
-    expect(screen.getByRole("button", { name: /send/i }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(screen.getByTestId("send-waiting")).toBeTruthy();
+    fireEvent.change(textarea(), { target: { value: "" } });
+    expect(screen.queryByTestId("send-waiting")).toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("clears the composer when you send", () => {
