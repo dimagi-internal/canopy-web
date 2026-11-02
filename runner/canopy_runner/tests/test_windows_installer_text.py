@@ -57,3 +57,14 @@ def test_developer_install_waits_for_end_before_run():
     query = ps1.index('Get-ScheduledTask -TaskPath "$TASK_FOLDER\\" -TaskName $RUNNER_TASK', end)
     run = ps1.index('schtasks /Run /TN "$TASK_FOLDER\\$RUNNER_TASK"', query)
     assert end < query < run
+
+
+def test_update_check_reads_stdout_only():
+    """2>&1 under ErrorActionPreference Stop: one stderr line ends the updater on PS 5.1."""
+    ps1 = (RUNNER / "canopy_runner" / "scripts" / "install-runner.ps1").read_text(
+        encoding="utf-8")
+    check = ps1.index("update-check --config $Config 2>$null")
+    relax = ps1.rindex('$ErrorActionPreference = "Continue"', 0, check)
+    restore = ps1.index("$ErrorActionPreference = $prevEap", check)
+    assert relax < check < restore
+    assert "update-check --config $Config 2>&1" not in ps1
