@@ -21,11 +21,13 @@
     <string>run</string>
     <string>--config</string>
     <string>__HOME__/.canopy/runner.json</string>
+    <string>--log-file</string>
+    <string>__HOME__/.canopy/runner.log</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>__HOME__/.canopy/runner.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/.canopy/runner.log</string>
+  <key>StandardOutPath</key><string>__HOME__/.canopy/runner-launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.canopy/runner-launchd.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <!-- launchd's default PATH omits Homebrew, so the runner can't find `gog`

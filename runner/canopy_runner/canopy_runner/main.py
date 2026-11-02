@@ -1358,31 +1358,63 @@ def _tolerant_console(streams=None) -> None:
             pass  # not a TextIOWrapper (a test capture, a pipe wrapper) — leave it
 
 
-#: A --log-file larger than this at startup is moved to <file>.1 first: nothing else
-#: rotates it (launchd does not rotate its StandardOutPath either, but a Windows box
-#: keeps one task running for months).
-LOG_ROLL_BYTES = 20 * 1024 * 1024
+#: The runner's own log rolls at this size and keeps this many old files, so the
+#: whole thing is bounded at ~LOG_ROLL_BYTES * (LOG_BACKUPS + 1). Nothing else caps
+#: it: launchd does not rotate its StandardOutPath, and a Windows task runs for
+#: months (runner.log reached 160 MB on one box).
+LOG_ROLL_BYTES = 10 * 1024 * 1024
+LOG_BACKUPS = 5
+
+
+class _LogStream:
+    """sys.stdout/sys.stderr stand-in that writes whole lines through the rotating
+    handler, so a stray print or a traceback rolls the file like a log record does
+    (a second open file on the same path would keep writing to the rotated one)."""
+
+    encoding = "utf-8"
+    errors = "backslashreplace"
+
+    def __init__(self, handler: logging.Handler, name: str, level: int) -> None:
+        self._handler, self._name, self._level, self._buf = handler, name, level, ""
+
+    def write(self, text: str) -> int:
+        self._buf += text
+        *lines, self._buf = self._buf.split("\n")
+        for line in lines:
+            self._emit(line)
+        return len(text)
+
+    def _emit(self, line: str) -> None:
+        self._handler.handle(logging.LogRecord(self._name, self._level, "", 0, line, None, None))
+
+    def flush(self) -> None:
+        if self._buf:
+            self._emit(self._buf)
+            self._buf = ""
+
+    def isatty(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.flush()
 
 
 def _log_to_file(path: str) -> None:
-    """Send logging AND stdout/stderr to `path`. pythonw.exe has no console: without
-    this every log line and every traceback goes nowhere."""
+    """Send logging AND stdout/stderr to `path`, rotating at LOG_ROLL_BYTES. pythonw.exe
+    has no console: without this every log line and every traceback goes nowhere."""
+    from logging.handlers import RotatingFileHandler
+
     p = Path(path).expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if p.stat().st_size > LOG_ROLL_BYTES:
-            import os
-
-            os.replace(p, p.with_name(p.name + ".1"))
-    except OSError:
-        pass
-    stream = open(p, "a", encoding="utf-8", errors="backslashreplace", buffering=1)
-    sys.stdout = sys.stderr = stream
+    handler = RotatingFileHandler(p, maxBytes=LOG_ROLL_BYTES, backupCount=LOG_BACKUPS,
+                                  encoding="utf-8", errors="backslashreplace")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    sys.stdout = _LogStream(handler, "stdout", logging.INFO)
+    sys.stderr = _LogStream(handler, "stderr", logging.WARNING)
     root = logging.getLogger()
     for h in list(root.handlers):
         root.removeHandler(h)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                        stream=stream, force=True)
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
 def main() -> None:
