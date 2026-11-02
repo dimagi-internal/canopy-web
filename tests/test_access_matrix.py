@@ -17,7 +17,7 @@ from allauth.account.models import EmailAddress
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access
+from apps.agents import access, roles
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import send as session_send
@@ -231,6 +231,98 @@ def test_the_mcp_tool_list_follows_the_rule(w):
                                           "admin_only": {"callers": []}}})
     assert offered_to(w["editor"], w["agent"]) == ["admin_only", "ask"]
     assert offered_to(w["viewer"], w["agent"]) == []
+
+
+# --- the permission model: one line, one person, every door ----------------------------------
+
+#: A person with ONE line of each kind on an agent that publishes `ask` and `status` (no
+#: callers: who may use them is the list's business). (profile, why, mode) per line, through
+#: the doors that can confine. `read_only` is `read`: it opens `ask` and nothing else; a
+#: named-capability line opens just that capability; `write` (read_write, editor) is the whole agent.
+HAL_NO_CALLERS = {"capabilities": {"ask": {"description": "Ask", "tools": ["Read"]},
+                                   "status": {"description": "Status", "tools": ["Read"]}}}
+LINES = {
+    "read_only": {"role": roles.READ_ONLY},
+    "read_write": {"role": roles.READ_WRITE},
+    "editor": {"role": roles.EDITOR},
+    "use_ask": {"capability": "ask"},
+    "use_status": {"capability": "status"},
+}
+
+
+def _expect_line(kind, user):
+    return {
+        "read_only": ("confined", "capability:ask", "auto"),
+        "read_write": ("full", f"grant:person:{user.pk}", "auto"),
+        "editor": ("full", f"grant:person:{user.pk}", "auto"),
+        "use_ask": ("confined", "capability:ask", "auto"),
+        "use_status": REFUSED,          # a free-form message asks `ask`, and this line is not for it
+    }[kind]
+
+
+@pytest.mark.parametrize("kind", list(LINES))
+@pytest.mark.parametrize("door", ["chat", "slack"])
+def test_each_kind_of_line_through_the_doors_that_can_confine(w, door, kind):
+    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    user = w["viewer"]
+    AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=user, **LINES[kind])
+    turn = ENTRY_POINTS[door](w, user, f"line-{door}-{kind}")
+    _check(turn, _expect_line(kind, user))
+
+
+@pytest.mark.parametrize("kind", list(LINES))
+def test_each_kind_of_line_by_verified_email(w, kind):
+    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    user = w["viewer"]
+    AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=user, **LINES[kind])
+    _check(_via_email(w, user.email, f"line-email-{kind}"), _expect_line(kind, user))
+
+
+def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
+    """The harness API asks `decide` like every other door: `write` is the whole agent, `read` or a
+    capability line is a confined turn, and a line naming another capability is refused."""
+    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    user = w["editor"]                    # a workspace editor may start work through the API
+    for kind in LINES:
+        AgentGrant.objects.filter(agent=w["agent"]).delete()
+        AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=user, **LINES[kind])
+        turn = _via_api(w, user, f"api-{kind}")
+        want = _expect_line(kind, user)
+        if want[0] is None:
+            assert turn is None, kind
+        else:
+            _check(turn, want)
+
+
+def test_ask_is_off_until_the_owner_publishes_it(w):
+    """`read` opens the `ask` capability: with none published, a read_only line opens nothing."""
+    publish(w["agent"], None, editors=False)
+    AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["viewer"], role=roles.READ_ONLY)
+    _check(_via_chat(w, w["viewer"], "off"), REFUSED)
+    publish(w["agent"], {"capabilities": {"ask": {"tools": ["Read"]}}}, editors=False)
+    _check(_via_chat(w, w["viewer"], "on"), ("confined", "capability:ask", "auto"))
+
+
+def test_manual_only_gates_whoever_is_driving_the_whole_agent_whatever_the_role(w):
+    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["viewer"],
+                              role=roles.READ_WRITE, manual_only=True)
+    _check(_via_chat(w, w["viewer"], "gated"), ("full", f"grant:person:{w['viewer'].pk}", "manual"))
+
+
+def test_a_workspace_line_with_the_subtree_option_reaches_a_person_in_a_child(w):
+    root = Workspace.objects.create(slug="org", display_name="Org", created_by=w["owner"])
+    w["ws"].parent = root
+    w["ws"].save()
+    kid = User.objects.create_user("kid", "kid@dimagi.com", "pw")      # only in connect, below org
+    M.objects.create(user=kid, workspace=w["ws"], role=M.VIEWER)
+    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    line = AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE, subject_workspace=root,
+                                     role=roles.READ_ONLY)
+    _check(_via_chat(w, kid, "plain"), REFUSED)                         # org alone does not reach a child
+    line.include_below = True
+    line.save()
+    _check(_via_chat(w, kid, "below"), ("confined", "capability:ask", "auto"))
 
 
 # --- requested mode ------------------------------------------------------------------

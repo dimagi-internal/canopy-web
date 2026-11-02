@@ -32,7 +32,7 @@ ASK_CAP = dict(
     bash=["canopy email read --repo . {thread_id}"],
     read_paths=["{cwd}/**"],
 )
-#: The same interface as it is published now: no one named, just the lowest role that may use it.
+#: The same interface as it is published now: no one named, and no role: it says only what it is.
 PLAIN = {"capabilities": {"ask": ASK_CAP}}
 #: The interface in the old words, with who may use `ask`; `_publish` writes the equivalent
 #: capabilities and access-list lines (tests/access_helpers.py).
@@ -93,7 +93,7 @@ def test_parse_refuses_what_it_does_not_understand(doc, msg):
 def test_parse_normalises():
     got = parse({"capabilities": {"ask": ASK_CAP}})
     assert got["version"] == 1 and "callers_default" not in got
-    assert got["capabilities"]["ask"]["role"] == "user"     # what a capability says when it says nothing
+    assert "role" not in got["capabilities"]["ask"]     # a capability says what it is, never who may use it
     assert got["capabilities"]["ask"]["bash"] == ["canopy email read --repo . {thread_id}"]
 
 
@@ -264,7 +264,7 @@ def test_the_owner_publishes_and_any_member_reads(w):
     assert r.json()["published_by_email"] == "op@dimagi.com"
     got = _client(w["ed"]).get("/api/agents/ace/interface").json()
     ask = got["interface"]["capabilities"]["ask"]
-    assert ask["role"] == "user" and "callers" not in ask
+    assert "role" not in ask and "callers" not in ask
 
 
 def test_publishing_the_old_who_keys_is_a_422_that_points_at_the_access_list(w):
@@ -507,15 +507,14 @@ def test_an_unmatched_resource_gets_ask(w):
 
 def test_a_page_capability_a_caller_is_not_offered_is_skipped_not_fatal(w):
     """`ask` may still admit them, so a page door they cannot open must not
-    refuse the turn outright. (Now: the caller's role on the list is below the page
-    capability's `role:`.)"""
+    refuse the turn outright. (Now: their lines open `ask` but not the page's capability.)"""
     ask, marketplace = PAGED["capabilities"]["ask"], PAGED["capabilities"]["marketplace"]
     doc = {"capabilities": {
-        "ask": {k: v for k, v in ask.items() if k != "callers"} | {"role": "viewer"},
-        "marketplace": {k: v for k, v in marketplace.items() if k != "callers"} | {"role": "user"},
+        "ask": {k: v for k, v in ask.items() if k != "callers"},
+        "marketplace": {k: v for k, v in marketplace.items() if k != "callers"},
     }}
     publish(w["agent"], doc)
-    let_in(w["agent"], "member", "viewer")
+    let_in(w["agent"], "member", capability="ask")          # read_only: `ask`, not the page's door
     t = _on_page(w["agent"], w["ed"], "p6", "labs-marketplace://orgs")
     assert t.capability == ASK
 
@@ -549,7 +548,7 @@ def test_an_existing_interface_is_unchanged_by_the_feature(w):
     ("labs-marketplace", "not a resource pattern"),
 ])
 def test_a_pages_pattern_that_says_everything_is_refused(pattern, msg):
-    doc = {"capabilities": {"m": {"role": "viewer", "pages": [pattern]}}}
+    doc = {"capabilities": {"m": {"pages": [pattern]}}}
     with pytest.raises(InterfaceError, match=msg):
         parse(doc)
 

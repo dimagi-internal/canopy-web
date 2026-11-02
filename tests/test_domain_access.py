@@ -128,7 +128,7 @@ def test_full_rules_are_refused_and_point_at_the_access_list():
 YAML = """# What ACE offers.
 capabilities:
   ask:
-    role: viewer   # anyone who may ask
+    description: Anyone who may ask.
 """
 
 
@@ -144,7 +144,7 @@ def test_the_yaml_is_saved_verbatim_and_parsed(w):
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["source"].strip() == YAML.strip()                     # comments kept
-    assert body["interface"]["capabilities"]["ask"]["role"] == "viewer"
+    assert "role" not in body["interface"]["capabilities"]["ask"]
     assert _client(w["op"]).get("/api/agents/ace/interface").json()["source"].strip() == YAML.strip()
 
 

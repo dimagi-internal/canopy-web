@@ -25,14 +25,6 @@ from apps.agents.models import AgentGrant
 _CALLER = re.compile(r"^(?P<base>member|contact|unknown)"
                      r"(?:@(?P<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))?"
                      r"(?::(?P<verified>verified))?$")
-_RANK = {roles.VIEWER: 1, roles.USER: 2, roles.EDITOR: 3}
-
-
-def _capability_role(cap: dict) -> str:
-    if cap.get("role") in (roles.VIEWER, roles.USER):
-        return cap["role"]
-    callers = cap.get("callers") or []
-    return roles.VIEWER if any(c.startswith(("contact", "unknown")) for c in callers) else roles.USER
 
 
 def editors_run(agent, *, manual_only: bool = True) -> AgentGrant:
@@ -45,8 +37,10 @@ def editors_run(agent, *, manual_only: bool = True) -> AgentGrant:
                       role=roles.EDITOR, manual_only=manual_only, verified=False))[0]
 
 
-def let_in(agent, who: str, role: str) -> AgentGrant:
-    """One old-style caller class (`member`, `contact@dimagi.com:verified`, ...) as a line."""
+def let_in(agent, who: str, role: str | None = None, *, capability: str | None = None) -> AgentGrant:
+    """One old-style caller class (`member`, `contact@dimagi.com:verified`, ...) as a line: a role
+    (`roles.EDITOR` for the old `full:` rule) or the capability it was let into. The `ask`
+    capability is what `read` opens, so it is a `read_only` line; any other is a named-capability line."""
     m = _CALLER.match(who)
     assert m and m["base"] != "unknown", f"no line for {who!r}"
     domain, verified = m["domain"] or "", bool(m["verified"])
@@ -54,11 +48,14 @@ def let_in(agent, who: str, role: str) -> AgentGrant:
         kind, ws, v = AgentGrant.WORKSPACE, agent.workspace_id, False
     else:
         kind, ws, v = AgentGrant.CONTACT, None, verified
-    key = AgentGrant.key_of(kind, subject_workspace=ws, at_least="", domain=domain)
+    if capability == roles.READ_CAPABILITY:
+        role, capability = roles.READ_ONLY, None
+    key = AgentGrant.key_of(kind, subject_workspace=ws, at_least="", domain=domain, capability=capability or "")
     row, _ = AgentGrant.objects.get_or_create(
         agent=agent, subject_key=key,
-        defaults=dict(kind=kind, subject_workspace_id=ws, domain=domain, verified=v, role=role))
-    if _RANK[role] > _RANK[row.role]:
+        defaults=dict(kind=kind, subject_workspace_id=ws, domain=domain, verified=v, role=role or "",
+                      capability=capability or ""))
+    if role and roles.rank(role) > roles.rank(row.role):
         row.role = role
         row.save(update_fields=["role"])
     return row
@@ -67,14 +64,14 @@ def let_in(agent, who: str, role: str) -> AgentGrant:
 def publish(agent, doc: dict | None, *, editors: bool = True):
     """Write the capabilities of an old-style interface `doc` to `agent` and its `full:` rules,
     `callers` and (unless `editors=False`, the old `editors: confined`) the implicit editor rule
-    as access-list lines. `doc=None` publishes nothing."""
+    as access-list lines. `doc=None` publishes nothing. A capability's old `role:` is dropped (it
+    has none now)."""
     doc = copy.deepcopy(doc or {})
     caps = {}
     for name, cap in (doc.get("capabilities") or {}).items():
-        role = _capability_role(cap)
         for who in cap.pop("callers", None) or []:
-            let_in(agent, who, role)
-        cap["role"] = role
+            let_in(agent, who, capability=name)
+        cap.pop("role", None)
         caps[name] = cap
     for who in doc.pop("full", None) or []:
         let_in(agent, who, roles.EDITOR)

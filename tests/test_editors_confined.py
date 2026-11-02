@@ -1,5 +1,5 @@
-"""A workspace editor who is only a user: the access list gives editors a `user` line, so they go
-through the capabilities like any member instead of driving the whole agent. The retired
+"""A workspace editor who is only a reader: the access list gives editors a `read_only` line, so
+they go through the capabilities like any member instead of driving the whole agent. The retired
 `editors: confined` setting is refused at publish and points at the access list.
 docs/architecture/access.md; the door-by-door matrix is in tests/test_access_matrix.py."""
 from __future__ import annotations
@@ -41,8 +41,8 @@ def w(db):
     return {"agent": agent, "owner": op, "admin": adm, "editor": ed, "viewer": vw}
 
 
-def _editors_are_users(agent, role=roles.USER):
-    """Everyone in the workspace at least editor gets only a `user` line."""
+def _editors_are_users(agent, role=roles.READ_ONLY):
+    """Everyone in the workspace at least editor gets only a `read_only` line."""
     return AgentGrant.objects.create(
         agent=agent, kind=AgentGrant.WORKSPACE, subject_workspace_id=agent.workspace_id,
         at_least="editor", role=role)
@@ -69,10 +69,16 @@ def test_editor_given_an_editor_line_is_full(w):
     assert (d.access, d.manual_only) == (access.FULL, False)
 
 
-def test_an_editor_whose_user_line_has_no_capability_to_use_is_refused(w):
-    publish(w["agent"], {"capabilities": {"ask": {"role": "user", "tools": ["Read"]}}}, editors=False)
-    _editors_are_users(w["agent"], roles.VIEWER)                   # a viewer line cannot use it
-    assert access.decide(w["agent"], w["editor"], verified=True).access == access.NONE
+def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
+    publish(w["agent"], {"capabilities": {"ask": {"tools": ["Read"]}, "data": {"tools": ["Read"]}}},
+            editors=False)
+    AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE,
+                              subject_workspace_id=w["agent"].workspace_id, at_least="editor",
+                              capability="data")
+    d = access.decide(w["agent"], w["editor"], verified=True, capability="data")
+    assert (d.access, d.capability) == (access.CONFINED, "data")
+    assert d.agent_role is None and d.permissions == {roles.use("data")}      # a door, not a role
+    assert access.decide(w["agent"], w["editor"], verified=True).access == access.NONE   # no `ask` line
 
 
 def test_editors_who_run_the_agent_are_full_and_manual(w):

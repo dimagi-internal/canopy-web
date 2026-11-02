@@ -11,22 +11,26 @@ the whole answer, and EVERY entry point that makes an agent do work asks it — 
 a chat send, Slack, email (through `harness.services.enqueue_turn`), the caller envelope, the
 turn mode at claim, and the roster below — so no two of them can disagree.
 
-**Agent roles** (`roles.py`): owner > admin > editor > user > viewer, plus `system` (canopy
-itself, the agent's OWN login, an approved item's dispatch). `Decision.role` is the older
-relationship word (owner / admin / member / contact / system), kept for readers that have not
-moved; `Decision.agent_role` is the ladder.
+**Agent roles and permissions** (`roles.py`): owner > admin > editor > read_write > read_only,
+each a named bundle of permissions (read, write, agent_edit, admin, own), plus `system` (canopy
+itself, the agent's OWN login, an approved item's dispatch). A line may instead open one named
+capability (`use:<name>`). `Decision.role` is the older relationship word (owner / admin /
+member / contact / system), kept for readers that have not moved; `Decision.agent_role` is the
+named role (None for someone who holds only capability lines) and `Decision.permissions` is
+everything their lines grant.
 **Access:** `full` (the agent's whole profile) / `confined` (one capability) / `none` (refused).
 
 The tiers, strongest first:
 
 * **owner, admin, system** → `full`. May ask for `auto`, pin any runner that may hold the agent,
   and manage its keys, capabilities, admins, access list and routing.
-* **editor** (a line on the access list) → `full`, in the agent's own mode unless the winning
-  line says `manual_only`: then every turn they start runs `manual` — they may dispatch work to
-  it, never let it act outbound unreviewed. No `auto`, and a pin only to a runner they administer.
-* **user, viewer** (lines on the access list) → confined to the capability they ask for (else the
-  page's or site's, else `ask`), if their role may use it. A line cannot open a capability the
-  agent does not have.
+* **anyone whose lines give `write`** (read_write, editor) → `full`, in the agent's own mode unless
+  every line that gives it says `manual_only`: then every turn they start runs `manual` — they may
+  dispatch work to it, never let it act outbound unreviewed. No `auto`, and a pin only to a runner
+  they administer.
+* **anyone whose lines give only `read` or named capabilities** → confined to the capability they
+  ask for (else the page's or site's, else `ask`), if their permissions open it. A line cannot open
+  a capability the agent does not have.
 * **anyone else** → `none`, with the reason naming who can add them.
 """
 from __future__ import annotations
@@ -70,15 +74,19 @@ class Decision:
     basis: str
     # For `none`: what was refused and what the asker CAN do instead.
     reason: str = ""
-    # The asker's place on the role ladder (`roles.py`): owner | admin | editor | user |
-    # viewer | system, or None when refused. `role` above is the older relationship word
-    # (owner | admin | member | contact | system), kept until its readers move.
+    # The asker's named role (`roles.py`): owner | admin | editor | read_write | read_only |
+    # system, or None when refused or when they hold only named-capability lines. `role` above
+    # is the older relationship word (owner | admin | member | contact | system), kept until
+    # its readers move.
     agent_role: str | None = None
     # WHERE the role came from: `owner` | `admin` | `system` | `session` | `list:<line>`.
     source: str = ""
     # `source` in words, for a person to read: the access-list line's `who` ("Anyone at
     # @dimagi.com (verified)").
     via: str = ""
+    # Everything their lines grant (read, write, use:<capability>, ...); what a confined turn is
+    # checked against. Empty for the owner/admin/system tiers, who need no list.
+    permissions: frozenset = frozenset()
 
     @property
     def stamp(self) -> str | None:
@@ -104,6 +112,8 @@ class Standing:
     roles: Mapping[str, str] | None = None
     #: The agent's access list, when the caller read it in bulk (`Standings`).
     lines: list | None = None
+    #: {workspace: every workspace below it} for the subtree lines of the lists read in bulk.
+    descendants: Mapping[str, frozenset[str]] | None = None
 
 
 def standing_of(user, agent) -> Standing:
@@ -124,6 +134,10 @@ class Standings:
     def __init__(self, users, agents) -> None:
         self._roles = wsvc.member_roles_of(users)
         self._lines = grants.lines_for_many(agents)
+        subtree = {ln.subject_workspace_id for lines in self._lines.values() for ln in lines
+                   if ln.kind == grants.AgentGrant.WORKSPACE and ln.include_below}
+        self._below = ({s: frozenset(v) for s, v in wsvc.descendant_map(subtree).items()}
+                       if subtree else {})
         self.grants: dict[int, dict[int, AgentAdmin]] = {a.pk: {} for a in agents}
         for g in AgentAdmin.objects.filter(agent__in=self.grants).select_related("granted_by"):
             self.grants[g.agent_id][g.user_id] = g
@@ -135,7 +149,7 @@ class Standings:
     def of(self, user, agent) -> Standing:
         mine = self._roles[user.pk]
         return Standing(mine.get(agent.workspace_id), user.pk in self.grants[agent.pk], mine,
-                        self._lines[agent.pk])
+                        self._lines[agent.pk], self._below)
 
     def is_admin(self, user, agent) -> bool:
         """`agent.is_admin(user)`, from what was read."""
@@ -146,8 +160,8 @@ class Standings:
 def _list_refusal(agent, *, verified_contact: bool = False) -> str:
     owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
     why = (f"{agent.slug} does not list you on its access list; ask {owner} or an admin of "
-           f"{agent.slug} to add you (a viewer can ask it questions, a user can use what it "
-           "publishes, an editor can run all of it)")
+           f"{agent.slug} to add you (read_only can ask it questions, read_write can use all of "
+           "it, an editor can also change it)")
     if verified_contact:
         # A verified sender nobody listed is, far more often than a stranger, an automated
         # one someone subscribed on purpose — CloudWatch alarms went unanswered for nine days
@@ -237,7 +251,7 @@ def _sensitive_rule(agent, d: Decision, *, capability: str | None, turn) -> Deci
     you = "" if capability_name is None else f" that is open to you ('{capability_name}' does not list you)"
     return replace(d, access=NONE, capability=None, may_request_auto=False, may_pin_runner=False,
                    manual_only=False, basis="refused", agent_role=None, source="",
-                   reason=SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
+                   permissions=frozenset(), reason=SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
 
 
 def _stamp(d: Decision) -> Decision:
@@ -266,45 +280,50 @@ def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.As
         contact = who
     email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
     return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
-                        workspace_roles=getattr(standing, "roles", None))
+                        workspace_roles=getattr(standing, "roles", None),
+                        descendants=getattr(standing, "descendants", None))
 
 
-def _capability_for(agent, iface: dict, asker_role: str, capability, turn):
-    """The capability a viewer or user is confined to: the one named, else the page's or the
-    site's, else `ask` — among those their role may use."""
-    def opens(cap):
-        return iface_mod.role_opens(asker_role, cap)
+def _capability_for(agent, iface: dict, permissions, capability, turn):
+    """The capability someone confined is held to: the one named, else the page's or the
+    site's, else `ask` — among those their permissions open."""
+    def opens(name, cap):
+        return iface_mod.opens(permissions, name)
 
     name = capability
     if name is None and turn is not None:
         name = iface_mod._page_capability(turn, iface, opens) or iface_mod._site_capability(turn, iface, opens)
     name = name or iface_mod.ASK
     cap = (iface.get("capabilities") or {}).get(name)
-    return (name, cap) if cap and opens(cap) else (None, None)
+    return (name, cap) if cap and opens(name, cap) else (None, None)
 
 
 def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
                       standing: Standing | None, lines) -> Decision:
     """What the access list gives the asker. An owner, admin or canopy itself, and a session
-    writer, already have the whole agent; everyone else has exactly what their line says."""
+    writer, already have the whole agent; everyone else has exactly what their lines say."""
     if d.access == FULL:
         return d
     asker = _asker_of(who, turn, verified, standing)
     got = grants.resolve(agent, asker, lines if lines is not None else getattr(standing, "lines", None))
-    if got.role is None:
+    if not got.permissions:
         return d
     iface = getattr(agent, "interface", None) or {}
-    via = grants.describe(got.lines[0])
-    if roles.allows(got.role, roles.RUN):
-        # An `admin` line is read as `editor` here: what makes someone an agent admin is
-        # still `Agent.is_admin` (owner, workspace owner, `AgentAdmin`), not a list line.
+    if roles.holds(got.permissions, roles.WRITE):
+        # `write` is driving the whole agent: that is `full`, whatever the role is called. What
+        # makes someone an agent ADMIN is still `Agent.is_admin` (owner, workspace owner,
+        # `AgentAdmin`), never a list line, so a line never raises `may_request_auto`.
+        line = got.line_for(roles.WRITE)
         return Decision(d.role, FULL, None, False, False, got.manual_only, got.basis,
-                        agent_role=roles.EDITOR, source=f"list:{got.lines[0].subject_key}", via=via)
-    name, _cap = _capability_for(agent, iface, got.role, capability, turn)
+                        agent_role=got.role, source=f"list:{line.subject_key}", via=grants.describe(line),
+                        permissions=got.permissions)
+    name, _cap = _capability_for(agent, iface, got.permissions, capability, turn)
     if name is None:
         return d
+    line = got.line_opening(name)
     return Decision(d.role, CONFINED, name, False, False, False, f"capability:{name}",
-                    agent_role=got.role, source=f"list:{got.lines[0].subject_key}", via=via)
+                    agent_role=got.role, source=f"list:{line.subject_key}", via=grants.describe(line),
+                    permissions=got.permissions)
 
 
 def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
@@ -434,8 +453,8 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
         if held == MEMBER:
             d = decide(agent, user, verified=True, origin="canopy_web", standing=standings.of(user, agent),
                        lines=lines)
-            caps = (sorted(n for n, c in (iface.get("capabilities") or {}).items()
-                           if iface_mod.role_opens(d.agent_role, c)) if d.access == CONFINED else [])
+            caps = (sorted(n for n in (iface.get("capabilities") or {})
+                           if iface_mod.opens(d.permissions, n)) if d.access == CONFINED else [])
             access, manual_only, may_auto = d.access, d.manual_only, False
             role, source, via = d.agent_role, d.source, d.via
             if d.source == "system":

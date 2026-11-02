@@ -46,19 +46,25 @@ def _post(w, who, body, path="/api/agents/hal/access-list"):
 # --- reading ----------------------------------------------------------------------------
 
 def test_any_member_reads_the_list_and_sees_the_roles_that_come_with_the_agent(w):
-    G.objects.create(agent=w["agent"], kind=G.PERSON, user=w["vw"], role=roles.USER)
-    G.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.VIEWER)
+    G.objects.create(agent=w["agent"], kind=G.PERSON, user=w["vw"], role=roles.READ_WRITE)
+    G.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.READ_ONLY)
+    G.objects.create(agent=w["agent"], kind=G.PERSON, user=w["ed"], capability="connect")
     r = _c(w["vw"]).get("/api/agents/hal/access-list")
     assert r.status_code == 200
     body = r.json()
     assert body["can_edit"] is False and "uses_access_list" not in body
-    assert {(ln["scope"], ln["who"], ln["role"]) for ln in body["lines"]} == {
-        ("agent", "vw@dimagi.com", "user"), ("workspace", "Anyone at @dimagi.com (verified)", "viewer")}
+    assert {(ln["scope"], ln["who"], ln["role"], ln["capability"]) for ln in body["lines"]} == {
+        ("agent", "vw@dimagi.com", "read_write", ""), ("agent", "ed@dimagi.com", "", "connect"),
+        ("workspace", "Anyone at @dimagi.com (verified)", "read_only", "")}
     assert all(ln["can_edit"] is False for ln in body["lines"])
     assert {(i["who"], i["role"]) for i in body["implicit"]} >= {("owner@dimagi.com", "owner"),
                                                                 ("admin@dimagi.com", "admin")}
     assert [r["role"] for r in body["roles"]] == list(roles.LADDER)
-    assert "run the whole agent" in next(r for r in body["roles"] if r["role"] == "editor")["can"]
+    by_role = {r["role"]: r for r in body["roles"]}
+    assert "drive the whole agent" in by_role["read_write"]["can"]
+    assert by_role["editor"]["permissions"] == ["read", "write", "agent_edit"]
+    assert by_role["read_only"]["permissions"] == ["read"]
+    assert {"user", "viewer"}.isdisjoint(by_role)
 
 
 def test_a_stranger_to_the_workspace_gets_a_404_not_a_403(w):
@@ -70,7 +76,7 @@ def test_a_stranger_to_the_workspace_gets_a_404_not_a_403(w):
 
 @pytest.mark.parametrize("who,status", [("owner", 201), ("admin", 201), ("boss", 201), ("ed", 403), ("vw", 403)])
 def test_only_the_agents_admins_add_lines(w, who, status):
-    r = _post(w, who, {"kind": "person", "role": "user", "email": "vw@dimagi.com"})
+    r = _post(w, who, {"kind": "person", "role": "read_write", "email": "vw@dimagi.com"})
     assert r.status_code == status, r.content
     assert AgentGrant.objects.filter(agent=w["agent"]).count() == (1 if status == 201 else 0)
 
@@ -91,19 +97,26 @@ def test_a_group_line_for_another_workspace_the_adder_is_in(w):
 # --- what a line may say ----------------------------------------------------------------
 
 @pytest.mark.parametrize("body,fragment", [
-    ({"kind": "domain", "role": "editor", "domain": "dimagi.com"}, "viewer or user, not editor"),
-    ({"kind": "contact", "role": "editor"}, "viewer or user, not editor"),
-    ({"kind": "domain", "role": "viewer"}, "needs the domain"),
-    ({"kind": "domain", "role": "viewer", "domain": "not a domain"}, "is not a domain"),
-    ({"kind": "domain", "role": "viewer", "domain": "dimagi.com", "verified": False}, None),
-    ({"kind": "person", "role": "user", "email": "nobody@nowhere.org"}, "no such person"),
-    ({"kind": "workspace", "role": "user", "workspace": "secret"}, "not in a workspace"),
-    ({"kind": "workspace", "role": "user", "workspace": "connect", "at_least": "god"}, "workspace role"),
+    ({"kind": "domain", "role": "editor", "domain": "dimagi.com"}, "drive the whole agent"),
+    ({"kind": "domain", "role": "read_write", "domain": "dimagi.com"}, "drive the whole agent"),
+    ({"kind": "contact", "role": "editor"}, "drive the whole agent"),
+    ({"kind": "domain", "role": "read_only"}, "needs the domain"),
+    ({"kind": "domain", "role": "read_only", "domain": "not a domain"}, "is not a domain"),
+    ({"kind": "domain", "role": "read_only", "domain": "dimagi.com", "verified": False}, None),
+    ({"kind": "domain", "capability": "connect", "domain": "dimagi.com"}, None),
+    ({"kind": "domain", "domain": "dimagi.com"}, "either a role or one named capability"),
+    ({"kind": "domain", "role": "read_only", "capability": "x", "domain": "dimagi.com"},
+     "either a role or one named capability"),
+    ({"kind": "domain", "role": "read_only", "domain": "dimagi.com", "include_below": True},
+     "only applies to a line naming a workspace"),
+    ({"kind": "person", "role": "read_write", "email": "nobody@nowhere.org"}, "no such person"),
+    ({"kind": "workspace", "role": "read_write", "workspace": "secret"}, "not in a workspace"),
+    ({"kind": "workspace", "role": "read_write", "workspace": "connect", "at_least": "god"}, "workspace role"),
 ])
 def test_a_line_that_would_admit_too_much_or_name_nothing_is_refused(w, body, fragment):
     r = _post(w, "owner", body)
     if fragment is None:
-        assert r.status_code == 201                     # an unproven line for one domain is allowed (viewer)
+        assert r.status_code == 201                     # an unproven line for one domain is allowed (read only)
     else:
         assert r.status_code == 422 and fragment in r.json()["detail"], r.content
 
@@ -112,21 +125,24 @@ def test_a_person_is_only_found_among_workspaces_the_adder_can_see(w):
     lone = get_user_model().objects.create_user("lone", "lone@elsewhere.org", "pw")
     other = Workspace.objects.create(slug="private", display_name="Private", created_by=lone)
     M.objects.create(user=lone, workspace=other, role=M.OWNER)
-    r = _post(w, "owner", {"kind": "person", "role": "user", "email": "lone@elsewhere.org"})
+    r = _post(w, "owner", {"kind": "person", "role": "read_write", "email": "lone@elsewhere.org"})
     assert r.status_code == 422 and "no such person" in r.json()["detail"]
 
 
 def test_the_same_subject_twice_is_a_conflict_not_a_second_line(w):
-    body = {"kind": "domain", "role": "viewer", "domain": "dimagi.com"}
+    body = {"kind": "domain", "role": "read_only", "domain": "dimagi.com"}
     assert _post(w, "owner", body).status_code == 201
-    assert _post(w, "owner", {**body, "role": "user"}).status_code == 409
-    assert AgentGrant.objects.filter(agent=w["agent"]).count() == 1
+    assert _post(w, "owner", {**body, "role": "read_only"}).status_code == 409
+    # ...but a capability for the same subject is its own line.
+    assert _post(w, "owner", {"kind": "domain", "capability": "connect", "domain": "dimagi.com"}).status_code == 201
+    assert _post(w, "owner", {"kind": "domain", "capability": "connect", "domain": "dimagi.com"}).status_code == 409
+    assert AgentGrant.objects.filter(agent=w["agent"]).count() == 2
 
 
 # --- changing and removing --------------------------------------------------------------
 
 def test_change_and_remove_a_line(w):
-    line_id = _post(w, "owner", {"kind": "person", "role": "user", "email": "vw@dimagi.com"}).json()["id"]
+    line_id = _post(w, "owner", {"kind": "person", "role": "read_write", "email": "vw@dimagi.com"}).json()["id"]
     r = _c(w["admin"]).patch(f"/api/agents/hal/access-list/{line_id}",
                              {"role": "editor", "manual_only": True}, content_type="application/json")
     assert r.status_code == 200 and (r.json()["role"], r.json()["manual_only"]) == ("editor", True)
@@ -135,21 +151,48 @@ def test_change_and_remove_a_line(w):
     assert not AgentGrant.objects.filter(agent=w["agent"]).exists()
 
 
-def test_an_address_line_cannot_be_promoted_to_editor(w):
-    line_id = _post(w, "owner", {"kind": "domain", "role": "user", "domain": "dimagi.com"}).json()["id"]
-    r = _c(w["owner"]).patch(f"/api/agents/hal/access-list/{line_id}", {"role": "editor"},
+@pytest.mark.parametrize("role", ["read_write", "editor"])
+def test_an_address_line_cannot_be_promoted_to_a_role_that_contains_write(w, role):
+    line_id = _post(w, "owner", {"kind": "domain", "role": "read_only", "domain": "dimagi.com"}).json()["id"]
+    r = _c(w["owner"]).patch(f"/api/agents/hal/access-list/{line_id}", {"role": role},
                              content_type="application/json")
-    assert r.status_code == 422
+    assert r.status_code == 422 and "drive the whole agent" in r.json()["detail"]
+
+
+def test_a_capability_line_is_not_given_a_role_by_a_patch(w):
+    line_id = _post(w, "owner", {"kind": "person", "capability": "connect", "email": "vw@dimagi.com"}).json()["id"]
+    r = _c(w["owner"]).patch(f"/api/agents/hal/access-list/{line_id}", {"role": "read_only"},
+                             content_type="application/json")
+    assert r.status_code == 422 and "one named capability" in r.json()["detail"]
+
+
+def test_a_capability_the_agent_has_not_published_is_added_with_a_warning(w):
+    from apps.agents.interface import parse
+
+    Agent.objects.filter(pk=w["agent"].pk).update(interface=parse({"capabilities": {"ask": {"tools": ["Read"]}}}))
+    w["agent"].refresh_from_db()
+    body = {"kind": "person", "email": "vw@dimagi.com"}
+    got = _post(w, "owner", {**body, "capability": "connect"}).json()
+    assert "has not published a capability called 'connect'" in got["warning"]
+    got = _post(w, "owner", {"kind": "person", "email": "ed@dimagi.com", "capability": "ask"}).json()
+    assert got["warning"] == ""
+
+
+def test_a_subtree_line_reaches_a_person_only_in_a_child_workspace(w):
+    r = _post(w, "boss", {"kind": "workspace", "role": "read_write", "workspace": "dimagi", "include_below": True})
+    assert r.status_code == 201 and r.json()["include_below"] is True
+    assert r.json()["who"] == "Everyone in dimagi or any workspace below it"
+    assert access.decide(w["agent"], w["vw"], verified=True).access == access.FULL      # only in connect
 
 
 def test_an_inherited_line_is_not_changed_from_the_agent(w):
-    d = AgentGrant.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.VIEWER)
+    d = AgentGrant.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.READ_ONLY)
     r = _c(w["owner"]).delete(f"/api/agents/hal/access-list/{d.pk}")
     assert r.status_code == 404 and "inherited" in r.json()["detail"]
 
 
 def test_opting_out_of_the_workspace_defaults(w):
-    AgentGrant.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.VIEWER)
+    AgentGrant.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.READ_ONLY)
     r = _c(w["owner"]).put("/api/agents/hal/inherit-workspace-defaults", {"inherit": False}, content_type="application/json")
     assert r.status_code == 200 and r.json()["inherit_workspace_defaults"] is False
     assert [ln for ln in r.json()["lines"] if ln["scope"] == "workspace"] == []
@@ -159,33 +202,42 @@ def test_opting_out_of_the_workspace_defaults(w):
 
 # --- a workspace's defaults -------------------------------------------------------------
 
-def test_workspace_defaults_belong_to_workspace_admins_and_editor_defaults_to_its_owner(w):
+def test_workspace_defaults_belong_to_workspace_admins_and_write_defaults_to_its_owner(w):
     url = "/api/workspaces/dimagi/agent-defaults"
-    ok = {"kind": "domain", "role": "viewer", "domain": "dimagi.com"}
+    ok = {"kind": "domain", "role": "read_only", "domain": "dimagi.com"}
     assert _post(w, "ed", ok, url).status_code in (403, 404)
     r = _post(w, "rootadmin", ok, url)
     assert r.status_code == 201 and r.json()["scope"] == "workspace"
-    everyone = {"kind": "workspace", "role": "editor", "workspace": "dimagi", "at_least": "editor"}
-    assert _post(w, "rootadmin", everyone, url).status_code == 403          # an admin cannot hand out editor
-    assert _post(w, "boss", everyone, url).status_code == 201               # the owner can
+    # A named capability is a door, not a role: the workspace admin's call, like read_only.
+    assert _post(w, "rootadmin", {"kind": "workspace", "capability": "connect", "workspace": "dimagi"},
+                 url).status_code == 201
+    # By PERMISSION: every role that contains `write` is the owner's call, not just `editor`.
+    for role in ("read_write", "editor"):
+        everyone = {"kind": "workspace", "role": role, "workspace": "dimagi", "at_least": "editor"}
+        assert _post(w, "rootadmin", everyone, url).status_code == 403      # an admin cannot hand out write
+    assert _post(w, "boss", {"kind": "workspace", "role": "editor", "workspace": "dimagi",
+                             "at_least": "editor"}, url).status_code == 201     # the owner can
     got = _c(w["boss"]).get(url).json()
-    assert len(got["lines"]) == 2 and (got["can_edit"], got["can_give_editor"]) == (True, True)
+    assert len(got["lines"]) == 3 and (got["can_edit"], got["can_give_write"]) == (True, True)
     assert [r["role"] for r in got["roles"]] == list(roles.LADDER)
     got = _c(w["rootadmin"]).get(url).json()
-    assert (got["can_edit"], got["can_give_editor"]) == (True, False)
+    assert (got["can_edit"], got["can_give_write"]) == (True, False)
+    # ...and removing one takes the same standing.
+    line = next(ln for ln in got["lines"] if ln["role"] == "editor")
+    assert _c(w["rootadmin"]).delete(f"{url}/{line['id']}").status_code == 403
 
 
 def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):
     from apps.agents.interface import parse
 
     Agent.objects.filter(pk=w["agent"].pk).update(
-        interface=parse({"capabilities": {"ask": {"role": "viewer", "tools": ["Read"]}}}))
+        interface=parse({"capabilities": {"ask": {"tools": ["Read"]}}}))
     w["agent"].refresh_from_db()
-    r = _post(w, "boss", {"kind": "workspace", "role": "user", "workspace": "dimagi"},
+    r = _post(w, "boss", {"kind": "workspace", "role": "read_only", "workspace": "dimagi"},
               "/api/workspaces/dimagi/agent-defaults")
     assert r.status_code == 201
     d = access.decide(w["agent"], w["out"], verified=True)          # `out` is in dimagi, not connect
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "ask", roles.USER)
+    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "ask", roles.READ_ONLY)
     listed = _c(w["owner"]).get("/api/agents/hal/access-list").json()["lines"]
     assert [ln["scope"] for ln in listed] == ["workspace"]
     assert _c(w["boss"]).delete(f"/api/workspaces/dimagi/agent-defaults/{r.json()['id']}").status_code == 204
@@ -199,7 +251,7 @@ def test_a_verified_line_for_a_domain_that_cannot_prove_its_senders_is_added_wit
 
     monkeypatch.setattr("apps.agents.grants.proof",
                         lambda domain, ws: DomainProof(domain=domain, dmarc=False, aligned_seen=False))
-    r = _post(w, "owner", {"kind": "domain", "role": "viewer", "domain": "no-dmarc.example"})
+    r = _post(w, "owner", {"kind": "domain", "role": "read_only", "domain": "no-dmarc.example"})
     assert r.status_code == 201
     assert "can never prove who sent it" in r.json()["warning"] and "no-dmarc.example" in r.json()["warning"]
     assert AgentGrant.objects.filter(agent=w["agent"], domain="no-dmarc.example").exists()   # advice, not a refusal
@@ -212,5 +264,5 @@ def test_no_warning_when_the_domain_can_prove_itself_or_dns_could_not_be_asked_o
 
     monkeypatch.setattr("apps.agents.grants.proof",
                         lambda domain, ws: DomainProof(domain=domain, dmarc=dmarc, aligned_seen=seen))
-    r = _post(w, "owner", {"kind": "domain", "role": "viewer", "domain": "ok.example", "verified": verified})
+    r = _post(w, "owner", {"kind": "domain", "role": "read_only", "domain": "ok.example", "verified": verified})
     assert r.status_code == 201 and r.json()["warning"] == ""

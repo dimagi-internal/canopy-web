@@ -36,15 +36,17 @@ router = Router(tags=["agents"])
 defaults_router = Router(tags=["workspaces"])
 
 #: The words a person sees beside each permission.
-_CAN = {roles.READ: "ask", roles.WRITE: "use what it publishes", roles.RUN: "run the whole agent",
-        roles.EDIT: "change its skills and capabilities", roles.ADMINISTER: "configure it",
-        roles.OWN: "transfer or delete it"}
+_CAN = {roles.READ: "ask (through its ask capability, when it publishes one)",
+        roles.WRITE: "drive the whole agent", roles.AGENT_EDIT: "change its skills and capabilities",
+        roles.ADMINISTER: "configure it", roles.OWN: "transfer or delete it"}
+_PERMISSIONS = (roles.READ, roles.WRITE, roles.AGENT_EDIT, roles.ADMINISTER, roles.OWN)
 
 
 def _out(line: AgentGrant, *, can_edit: bool, warning: str = "") -> AccessLineOut:
     return AccessLineOut(
         warning=warning, id=line.pk, scope="agent" if line.agent_id else "workspace",
         scope_workspace=line.workspace_id, kind=line.kind, who=grants.describe(line), role=line.role,
+        capability=line.capability, include_below=line.include_below,
         user_id=line.user_id, subject_workspace=line.subject_workspace_id, at_least=line.at_least,
         domain=line.domain, verified=line.verified, manual_only=line.manual_only, note=line.note,
         granted_by_email=getattr(line.granted_by, "email", None), granted_at=line.granted_at,
@@ -52,8 +54,8 @@ def _out(line: AgentGrant, *, can_edit: bool, warning: str = "") -> AccessLineOu
 
 
 def _roles_out() -> list[AccessRoleOut]:
-    return [AccessRoleOut(role=r, can=[_CAN[p] for p in (roles.READ, roles.WRITE, roles.RUN, roles.EDIT,
-                                                        roles.ADMINISTER, roles.OWN) if roles.allows(r, p)])
+    return [AccessRoleOut(role=r, can=[_CAN[p] for p in _PERMISSIONS if roles.allows(r, p)],
+                          permissions=[p for p in _PERMISSIONS if roles.allows(r, p)])
             for r in roles.LADDER]
 
 
@@ -68,12 +70,14 @@ def _implicit(agent: Agent) -> list[AccessImplicitOut]:
 def _fields(payload: AccessLineIn, actor) -> dict:
     try:
         fields = grants.check_line(
-            actor, kind=payload.kind, role=payload.role, user_id=payload.user_id, email=payload.email,
-            workspace=payload.workspace, at_least=payload.at_least, domain=payload.domain,
-            verified=payload.verified)
+            actor, kind=payload.kind, role=payload.role, capability=payload.capability,
+            user_id=payload.user_id, email=payload.email, workspace=payload.workspace,
+            at_least=payload.at_least, domain=payload.domain, verified=payload.verified,
+            include_below=payload.include_below)
     except grants.LineError as exc:
         raise HttpError(422, str(exc)) from exc
-    fields.update(manual_only=payload.manual_only, note=payload.note)
+    # An approval gate is about driving the whole agent; a capability line has nothing to gate.
+    fields.update(manual_only=payload.manual_only and bool(fields["role"]), note=payload.note)
     return fields
 
 
@@ -81,7 +85,8 @@ def _create(scope: dict, fields: dict, actor) -> AgentGrant:
     line = AgentGrant(**scope, granted_by=actor, **fields)
     line.subject_key = AgentGrant.key_of(
         line.kind, user_id=line.user_id, subject_workspace=line.subject_workspace_id,
-        at_least=line.at_least, domain=line.domain)
+        at_least=line.at_least, domain=line.domain, include_below=line.include_below,
+        capability=line.capability)
     if AgentGrant.objects.filter(**scope, subject_key=line.subject_key).exists():
         raise HttpError(409, f"{grants.describe(line)} is already on the list — change that line instead")
     try:
@@ -93,7 +98,17 @@ def _create(scope: dict, fields: dict, actor) -> AgentGrant:
 
 
 def _summary(line: AgentGrant) -> dict:
-    return {"who": grants.describe(line), "role": line.role, "manual_only": line.manual_only}
+    return {"who": grants.describe(line), "role": line.role, "capability": line.capability,
+            "manual_only": line.manual_only}
+
+
+def _capability_warning(line: AgentGrant, agent: Agent) -> str:
+    """Advice, never a refusal: a capability line names a capability this agent has not published,
+    so it opens nothing until it does."""
+    if not line.capability or line.capability in ((agent.interface or {}).get("capabilities") or {}):
+        return ""
+    return (f"{agent.slug} has not published a capability called {line.capability!r}, so this line "
+            "opens nothing until it does")
 
 
 # --- an agent's list --------------------------------------------------------------------
@@ -117,14 +132,18 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
              summary="Add a line to this agent's access list (an agent admin)")
 @gate("agent-admin", setting=True)
 def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> Status:
-    """A line says who has which role: a person, everyone in a workspace, anyone at an email
-    domain, or a known visitor or sender. Roles you can add are viewer, user and editor; a
-    line that names people only by address (domain, contact) can give viewer or user."""
+    """A line says who has what: a person, everyone in a workspace (optionally also any workspace
+    below it), anyone at an email domain, or a known visitor or sender. What they get is a role
+    (read_only, read_write, editor) or, rarely, one named capability. A line that names people only
+    by address (domain, contact) can give read_only or a capability, never a role that drives the
+    whole agent."""
     agent = agent_for_admin(request, slug)
     line = _create({"agent": agent}, _fields(payload, request.user), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),
-                      summary=f"added {grants.describe(line)} as {line.role} on {agent.slug}")
-    return Status(201, _out(line, can_edit=True, warning=grants.domain_warning(line, agent.workspace_id)))
+                      summary=f"added {grants.describe(line)} as {line.role or 'use ' + line.capability} "
+                              f"on {agent.slug}")
+    warning = grants.domain_warning(line, agent.workspace_id) or _capability_warning(line, agent)
+    return Status(201, _out(line, can_edit=True, warning=warning))
 
 
 def _own_line(agent: Agent, line_id: int) -> AgentGrant:
@@ -149,9 +168,12 @@ def change_access_line(request: HttpRequest, slug: str, line_id: int, payload: A
 
 def _apply_patch(line: AgentGrant, payload: AccessLinePatch) -> None:
     if payload.role is not None:
-        if line.kind in grants.ADDRESS_ONLY and payload.role == roles.EDITOR:
-            raise HttpError(422, "a line that names people only by their address can give viewer or "
-                                 "user, not editor")
+        if line.capability:
+            raise HttpError(422, "this line opens one named capability; remove it and add a role line")
+        try:
+            grants.check_role(line.kind, payload.role)
+        except grants.LineError as exc:
+            raise HttpError(422, str(exc)) from exc
         line.role = payload.role
     if payload.manual_only is not None:
         line.manual_only = payload.manual_only
@@ -206,15 +228,16 @@ def list_agent_defaults(request: HttpRequest, slug: str) -> AgentDefaultsOut:
     return AgentDefaultsOut(
         lines=[_out(ln, can_edit=manage) for ln in
                AgentGrant.objects.filter(workspace=ws).select_related("user", "granted_by")],
-        roles=_roles_out(), can_edit=manage, can_give_editor=perms.can(request.user, ws, perms.OWN))
+        roles=_roles_out(), can_edit=manage, can_give_write=perms.can(request.user, ws, perms.OWN))
 
 
 def _require_default_rights(request: HttpRequest, ws: Workspace, role: str) -> None:
     if not perms.can(request.user, ws, perms.MEMBERS_MANAGE):
         raise HttpError(403, "changing a workspace's default access takes a workspace admin")
-    if role == roles.EDITOR and not perms.can(request.user, ws, perms.OWN):
-        raise HttpError(403, "a default that lets people run every agent in the workspace "
-                             "(editor) is the workspace owner's to set")
+    # By permission, not by name: any role that lets people drive (or change) every agent here.
+    if role and roles.allows(role, roles.WRITE) and not perms.can(request.user, ws, perms.OWN):
+        raise HttpError(403, "a default that lets people drive every agent in the workspace "
+                             f"({role}) is the workspace owner's to set")
 
 
 @defaults_router.post("/{slug}/agent-defaults", response={201: AccessLineOut},

@@ -75,7 +75,8 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "turn_mode": agent.turn_mode,
         "has_interface": iface_mod.published(agent.interface or {}),
         "capabilities": len((agent.interface or {}).get("capabilities") or {}),
-        "access_lines": [f"{grants_mod.describe(ln)}: {ln.role}" for ln in standings.lines_of(agent)],
+        "access_lines": [f"{grants_mod.describe(ln)}: {ln.role or 'use ' + ln.capability}"
+                         for ln in standings.lines_of(agent)],
         "skills": c.get("skills", 0),
         "schedules": c.get("schedules", 0),
         "projects": c.get("projects", 0),

@@ -16,6 +16,7 @@ from pgvector.django import HalfVectorField
 
 from apps.harness import clis as clis_vocab
 
+from . import roles
 from .interface_default import default_interface
 
 #: An argument not passed, so read from the database. `None` is an answer (not
@@ -356,6 +357,9 @@ class AgentGrant(models.Model):
     subject_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
                                           on_delete=models.CASCADE, related_name="+")
     at_least = models.CharField(max_length=12, blank=True, default="")
+    #: `kind=workspace`: also everyone in any workspace BELOW the subject (its own subtree in the
+    #: parent tree, never another organisation's), at the same `at_least` / `domain`.
+    include_below = models.BooleanField(default=False)
     #: `kind=domain`: anyone whose address is at the exact domain ("" = any address), member
     #: or not. `kind=contact`: a person canopy knows as a contact (an emailer, a Slack member
     #: outside the workspace, a widget visitor — who may have no address at all), optionally
@@ -364,7 +368,10 @@ class AgentGrant(models.Model):
     #: request always does.
     domain = models.CharField(max_length=253, blank=True, default="")
     verified = models.BooleanField(default=True)
-    role = models.CharField(max_length=12)
+    #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named capability
+    #: (the scoped permission `use:<capability>`). Exactly one of the two is set.
+    role = models.CharField(max_length=12, blank=True, default="")
+    capability = models.CharField(max_length=41, blank=True, default="")
     #: Every turn this line lets someone start runs `manual`: an admin approves what goes
     #: out. The editor lines migrated from "a workspace editor is an editor" keep it, so
     #: dropping the gate is one visible edit per agent.
@@ -386,6 +393,10 @@ class AgentGrant(models.Model):
                 condition=(models.Q(agent__isnull=False, workspace__isnull=True)
                            | models.Q(agent__isnull=True, workspace__isnull=False)),
                 name="agent_grant_one_scope"),
+            models.CheckConstraint(
+                condition=(~models.Q(role="") & models.Q(capability=""))
+                | (models.Q(role="") & ~models.Q(capability="")),
+                name="agent_grant_role_or_capability"),
             models.UniqueConstraint(fields=["agent", "subject_key"],
                                     condition=models.Q(agent__isnull=False),
                                     name="uniq_agent_grant_subject"),
@@ -395,20 +406,33 @@ class AgentGrant(models.Model):
         ]
 
     @staticmethod
-    def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="") -> str:
+    def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="",
+               include_below=False, capability="") -> str:
         if kind == AgentGrant.PERSON:
-            return f"person:{user_id}"
-        d = (domain or "").lower()
-        if kind == AgentGrant.WORKSPACE:
-            return f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}:{d}"
-        if kind == AgentGrant.CONTACT:
-            return f"contact:{d}"
-        return f"domain:{d}"
+            key = f"person:{user_id}"
+        else:
+            d = (domain or "").lower()
+            if kind == AgentGrant.WORKSPACE:
+                key = (f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}:{d}"
+                       + (":below" if include_below else ""))
+            elif kind == AgentGrant.CONTACT:
+                key = f"contact:{d}"
+            else:
+                key = f"domain:{d}"
+        # A capability line is one line per capability: the same subject can hold a role line and
+        # several capability lines, so the capability is part of what makes a line unique.
+        return f"{key}#use:{capability}" if capability else key
+
+    @property
+    def permissions(self) -> frozenset[str]:
+        """What the line grants: its role's permissions, or the one `use:<capability>`."""
+        return roles.permissions_of(self.role) if self.role else frozenset({roles.use(self.capability)})
 
     def save(self, *args, **kwargs):
         self.subject_key = self.key_of(
             self.kind, user_id=self.user_id, subject_workspace=self.subject_workspace_id,
-            at_least=self.at_least, domain=self.domain)
+            at_least=self.at_least, domain=self.domain, include_below=self.include_below,
+            capability=self.capability)
         if self.domain:
             self.domain = self.domain.lower()
         super().save(*args, **kwargs)

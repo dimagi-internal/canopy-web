@@ -24,6 +24,8 @@ writes are `CONTENT_WRITE`).
 """
 from __future__ import annotations
 
+from apps.common.rolesets import RoleSet
+
 from .models import WorkspaceMembership as _M
 
 # --- membership -----------------------------------------------------------------
@@ -122,14 +124,24 @@ MINIMUM_ROLE: dict[str, str] = {
 }
 
 
+#: The one role -> permission-set engine (`apps/common/rolesets.py`, shared with the agent's
+#: roles), built from `MINIMUM_ROLE` and the ladder `models.WorkspaceMembership.ROLE_RANK`:
+#: each role holds every capability whose minimum is at or below it. Nothing here is a second
+#: table; `MINIMUM_ROLE` stays the one place a capability's tier is set.
+ROLES = RoleSet.ladder(
+    "workspace", MINIMUM_ROLE,
+    [(role, [c for c, minimum in MINIMUM_ROLE.items() if minimum == role])
+     for role in sorted(_M.ROLE_RANK, key=_M.ROLE_RANK.__getitem__)])
+
+
 def _rank(role: str | None) -> int:
-    return _M.ROLE_RANK.get(role or "", -1)
+    return ROLES.rank(role)
 
 
 def role_allows(role: str | None, capability: str) -> bool:
     """Does `role` hold `capability`? For a caller that already has the role in
-    hand (a listing that read every membership once)."""
-    return _rank(role) >= _M.ROLE_RANK[MINIMUM_ROLE[capability]]
+    hand (a listing that read every membership once). An unknown capability raises."""
+    return ROLES.allows(role, capability)
 
 
 def role_meets(role: str | None, floor: str) -> bool:
@@ -139,12 +151,12 @@ def role_meets(role: str | None, floor: str) -> bool:
     but `""`."""
     if not floor:
         return role is not None
-    return _rank(role) >= _M.ROLE_RANK[floor]
+    return ROLES.at_least(role, floor)
 
 
 def is_role(name: str) -> bool:
     """Is `name` a workspace role someone can hold (not a superuser cap)?"""
-    return name in _M.ROLE_RANK and name != _M.SUPERUSER
+    return ROLES.is_role(name) and name != _M.SUPERUSER
 
 
 def can(user, workspace, capability: str) -> bool:
