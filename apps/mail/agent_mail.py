@@ -14,8 +14,8 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
-from apps.harness import services as harness
 from apps.harness import invocations, session_sync
+from apps.harness import services as harness
 from apps.harness.channels import email as email_channel
 from apps.harness.models import Turn
 
@@ -70,6 +70,56 @@ def _enforce_cap(msg) -> None:
         logger.exception("mail cap %s: eviction failed", msg.mailbox)
 
 
+def _store(route, parsed, raw_key: str, *, verdicts, raw_size: int, quiet: str | None):
+    """Store one inbound copy under `route`'s mailbox. Returns (msg, thread), or None when
+    this mailbox already holds the message."""
+    ws = route.workspace
+    keep = storage.kept_attachments([len(a.data) for a in parsed.attachments])
+    # The raw MIME holds every attachment, so a message that dropped one keeps no raw copy.
+    whole = all(keep)
+    try:
+        with transaction.atomic():
+            thread = threads.place(route, parsed)
+            msg = MailMessage.objects.create(
+                thread=thread, workspace=ws, direction=MailMessage.IN, mailbox=route.address,
+                message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
+                references=" ".join(parsed.references), from_addr=parsed.from_addr,
+                from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
+                reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
+                raw_key=ses.keep(raw_key) if whole else "", verdicts=dict(verdicts or {}),
+                size_bytes=storage.message_size(
+                    text=parsed.text, html=parsed.html, raw_size=raw_size if whole else 0,
+                    attachment_sizes=[len(a.data) for a, k in zip(parsed.attachments, keep) if k]),
+                auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
+            for i, (att, kept) in enumerate(zip(parsed.attachments, keep)):
+                key = f"attachments/{ws.slug}/{msg.pk}/{i}" if kept else ""
+                if kept:
+                    ses.put_object(key, att.data, att.content_type)
+                MailAttachment.objects.create(message=msg, filename=att.filename[:255],
+                                              content_type=att.content_type[:255],
+                                              size=len(att.data), s3_key=key, kept=kept)
+            upd = {"message_count": F("message_count") + 1, "last_message_at": timezone.now()}
+            if quiet is None:
+                upd["unread"] = True
+            elif thread.message_count == 0:
+                upd["unread"] = False  # a brand-new thread of only quiet mail
+            MailThread.objects.filter(pk=thread.pk).update(**upd)
+    except IntegrityError:
+        return None
+    _enforce_cap(msg)
+    thread.refresh_from_db()
+    return msg, thread
+
+
+def keep_forwarded(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
+    """Store a copy of mail a forward route passes on, as a thread only the destination can read."""
+    if MailMessage.objects.filter(workspace=route.workspace, mailbox=route.address,
+                                  message_id=parsed.message_id).exists():
+        return "duplicate"
+    stored = _store(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size, quiet=None)
+    return "duplicate" if stored is None else "kept"
+
+
 def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
     """Store one inbound copy for `route` and wake its agent. `raw_size` is the raw MIME
     object's length, counted against the mailbox's cap with the stored parts."""
@@ -79,40 +129,10 @@ def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_si
                 .select_related("thread").first())
     if existing is None:
         quiet = _quiet(route, parsed)
-        keep = storage.kept_attachments([len(a.data) for a in parsed.attachments])
-        # The raw MIME holds every attachment, so a message that dropped one keeps no raw copy.
-        whole = all(keep)
-        try:
-            with transaction.atomic():
-                thread = threads.place(route, parsed)
-                msg = MailMessage.objects.create(
-                    thread=thread, workspace=ws, direction=MailMessage.IN, mailbox=route.address,
-                    message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
-                    references=" ".join(parsed.references), from_addr=parsed.from_addr,
-                    from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
-                    reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
-                    raw_key=ses.keep(raw_key) if whole else "", verdicts=dict(verdicts or {}),
-                    size_bytes=storage.message_size(
-                        text=parsed.text, html=parsed.html, raw_size=raw_size if whole else 0,
-                        attachment_sizes=[len(a.data) for a, k in zip(parsed.attachments, keep) if k]),
-                    auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
-                for i, (att, kept) in enumerate(zip(parsed.attachments, keep)):
-                    key = f"attachments/{ws.slug}/{msg.pk}/{i}" if kept else ""
-                    if kept:
-                        ses.put_object(key, att.data, att.content_type)
-                    MailAttachment.objects.create(message=msg, filename=att.filename[:255],
-                                                  content_type=att.content_type[:255],
-                                                  size=len(att.data), s3_key=key, kept=kept)
-                upd = {"message_count": F("message_count") + 1, "last_message_at": timezone.now()}
-                if quiet is None:
-                    upd["unread"] = True
-                elif thread.message_count == 0:
-                    upd["unread"] = False  # a brand-new thread of only quiet mail
-                MailThread.objects.filter(pk=thread.pk).update(**upd)
-        except IntegrityError:
+        stored = _store(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size, quiet=quiet)
+        if stored is None:
             return "duplicate"
-        _enforce_cap(msg)
-        thread.refresh_from_db()
+        msg, thread = stored
         if quiet:
             return quiet
         _wake(route, parsed, msg, thread)

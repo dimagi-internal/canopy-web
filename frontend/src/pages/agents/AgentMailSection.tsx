@@ -45,7 +45,7 @@ const STATUS_CLASS: Record<string, string> = {
   complained: toneText('warning'),
 }
 
-function MessageView({ m }: { m: MailMessageOut }) {
+export function MessageView({ m }: { m: MailMessageOut }) {
   return (
     <article className="border-b border-border py-3 last:border-b-0">
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px] text-muted-foreground">

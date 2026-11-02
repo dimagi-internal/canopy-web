@@ -11,6 +11,8 @@ export type MailRouteIn = components['schemas']['MailRouteIn']
 export type MailThreadOut = components['schemas']['MailThreadOut']
 export type MailThreadListOut = components['schemas']['MailThreadListOut']
 export type MailMessageOut = components['schemas']['MailMessageOut']
+export type MailInboundLogOut = components['schemas']['MailInboundLogOut']
+export type MailInboundLogListOut = components['schemas']['MailInboundLogListOut']
 export type AgentMailboxOut = components['schemas']['AgentMailboxOut']
 
 // Same shape as InboundApiError: callers branch on the status (403 non-admin,
@@ -85,10 +87,11 @@ export async function unshareMailDomain(workspace: string, domainId: number,
 
 export type MailThreadList = { items: MailThreadOut[]; agent_address: string }
 
-// The agent's threads plus its own address here ('' when it has none).
-export async function fetchMailThreads(workspace: string, agent?: string): Promise<MailThreadList> {
+// The agent's threads plus its own address here ('' when it has none). `forwarded`
+// lists the caller's own inbox of mail kept from forward routes instead.
+export async function fetchMailThreads(workspace: string, agent?: string, forwarded = false): Promise<MailThreadList> {
   const res = await apiV2.GET('/api/mail/threads/{workspace}', {
-    params: { path: { workspace }, query: agent ? { agent } : {} },
+    params: { path: { workspace }, query: { ...(agent ? { agent } : {}), ...(forwarded ? { forwarded: true } : {}) } },
   })
   ensureOk(res, 'Failed to load mail threads')
   const d = res.data as MailThreadListOut
@@ -115,4 +118,22 @@ export async function setAgentMailbox(slug: string, address: string): Promise<Ag
   const res = await apiV2.PUT('/api/mail/agents/{slug}/mailbox', { params: { path: { slug } }, body: { address } })
   ensureOk(res, 'Could not save the address')
   return res.data as AgentMailboxOut
+}
+
+/** Every message that reached a domain and what became of it (admin or owner). */
+export async function fetchInboundLog(workspace: string, domainId: number, recipient = ''): Promise<MailInboundLogListOut> {
+  const res = await apiV2.GET('/api/mail/domains/{workspace}/{domain_id}/inbound', {
+    params: { path: { workspace, domain_id: domainId }, query: recipient ? { recipient } : {} },
+  })
+  ensureOk(res, 'Failed to load the inbound mail log')
+  return res.data as MailInboundLogListOut
+}
+
+/** Mark a thread read/unread or archived. */
+export async function setMailThreadState(workspace: string, threadId: string,
+  body: { unread?: boolean; archived?: boolean }): Promise<MailThreadOut> {
+  const res = await apiV2.POST('/api/mail/threads/{workspace}/{uuid}/state', {
+    params: { path: { workspace, uuid: threadId } }, body })
+  ensureOk(res, 'Failed to update the thread')
+  return res.data as MailThreadOut
 }

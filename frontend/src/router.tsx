@@ -40,6 +40,7 @@ import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { WorkspaceEmailPage } from '@/pages/WorkspaceEmailPage'
+import { MailInboxPage } from '@/pages/MailInboxPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
 import { WorkspaceConnectionAppsSection } from '@/components/settings/ConnectionAppsPanel'
 import { DddPage } from './pages/DddPage'
@@ -429,6 +430,8 @@ export const routeTable: RouteObject[] = [
       // The workspace's work: every task (My tasks, Waiting on me, …) as a table,
       // a board or a calendar; one task's page; what waits for a decision.
       { path: '/w/:workspace/tasks', element: <TasksPage /> },
+      // Your own copies of mail forwarded to you (Settings → Email: keep a copy).
+      { path: '/w/:workspace/mail', element: <MailInboxPage /> },
       { path: '/w/:workspace/tasks/:taskKey', element: <TaskPage /> },
       // A proposal waiting on a yes or no, with everything needed to decide it (the push, Slack and email link here).
       { path: '/w/:workspace/approvals/:approvalId', element: <ApprovalPage /> },

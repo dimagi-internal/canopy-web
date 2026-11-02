@@ -98,6 +98,9 @@ class MailRoute(models.Model):
                                    on_delete=models.CASCADE, related_name="mail_forwards")
     """A canopy USER, never a typed address — the feature cannot be used as a relay."""
     enabled = models.BooleanField(default=True)
+    keep_copy = models.BooleanField(default=False)
+    """A forward route also stores each message as a thread only `forward_to` can read
+    (their inbox), so a forward that goes missing in transit can still be read in canopy."""
     auto = models.BooleanField(default=False)
     """Made by the domain's `agent_addresses` switch and kept in sync by it. An admin who
     edits the route takes it over (auto → False); the switch never touches it again."""
@@ -145,6 +148,10 @@ class MailThread(models.Model):
     last_message_at = models.DateTimeField(null=True, blank=True)
     archived = models.BooleanField(default=False)
     unread = models.BooleanField(default=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE,
+                              related_name="+")
+    """Set on a thread kept from a forward route: only this person may read it (not even an
+    admin, as for any other person's mail). NULL for an agent's thread, which the workspace sees."""
 
     class Meta:
         ordering = ["-last_message_at"]
@@ -242,6 +249,29 @@ class MailForwardLog(models.Model):
             models.UniqueConstraint(fields=["domain", "message_id", "recipient"],
                                     name="mail_forward_once"),
         ]
+
+
+class MailInboundLog(models.Model):
+    """One row per recipient of every inbound notification, with the outcome — including
+    the ones that never reach a person or an agent (spam/virus, no route, mail off).
+    Metadata only, no body; pruned after `RETENTION_DAYS`."""
+    RETENTION_DAYS = 30
+
+    domain = models.ForeignKey(MailDomain, null=True, blank=True, on_delete=models.CASCADE,
+                               related_name="inbound_log")
+    """The domain the recipient is on; NULL for a recipient on none of ours."""
+    recipient = models.CharField(max_length=320)
+    message_id = models.CharField(max_length=998, blank=True, default="")
+    original_from = models.CharField(max_length=320, blank=True, default="")
+    subject = models.CharField(max_length=998, blank=True, default="")
+    outcome = models.CharField(max_length=80)
+    """`forwarded`, `agent`, `stored:*`, `duplicate`, `dropped:<why>` or `error:<Type>`."""
+    verdicts = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["domain", "-created_at"], name="mail_inlog_domain_age")]
 
 
 class MailEvent(models.Model):

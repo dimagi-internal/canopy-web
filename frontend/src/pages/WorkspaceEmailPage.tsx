@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { CopyButton } from 'canopy-ui/ui'
 
 import { listAgents, type AgentOut } from '@/api/agents'
@@ -18,6 +18,8 @@ import {
   type MailRouteOut,
 } from '@/api/mail'
 import { listMembers, type MemberOut } from '@/api/workspaces'
+import { scopedPath } from '@/lib/scopedLinks'
+import { InboundMailLog } from '@/pages/InboundMailLog'
 
 // A workspace's own email domain run through canopy (apps/mail, SES). Any member
 // can read it; the server answers `can_manage` for the list and per domain, so this
@@ -56,7 +58,7 @@ function manyFound(found: readonly string[]): boolean {
 
 function goesTo(r: MailRouteOut): string {
   if (r.kind === 'agent') return r.agent_slug
-  if (r.kind === 'forward') return r.forward_to_email
+  if (r.kind === 'forward') return r.keep_copy ? `${r.forward_to_email} (and kept in their canopy inbox)` : r.forward_to_email
   return 'Dropped'
 }
 
@@ -75,6 +77,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   const [agent, setAgent] = useState('')
   const [member, setMember] = useState('')
   const [enabled, setEnabled] = useState(true)
+  const [keepCopy, setKeepCopy] = useState(false)
   const [cap, setCap] = useState(String(domain.daily_send_cap))
   const manage = domain.can_manage
   const owned = domain.owned
@@ -101,9 +104,11 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         agent_slug: kind === 'agent' ? agent : '',
         forward_to_user_id: kind === 'forward' ? Number(member) : null,
         enabled,
+        keep_copy: kind === 'forward' ? keepCopy : false,
       })
       setLocal('')
       setEnabled(true)
+      setKeepCopy(false)
       await reload()
     }, 'Could not save the address')
   }
@@ -117,6 +122,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         agent_slug: r.agent_slug,
         forward_to_user_id: r.forward_to_user_id ?? null,
         enabled: !r.enabled,
+        keep_copy: r.keep_copy,
       })
       await reload()
     }, 'Could not change the address')
@@ -305,7 +311,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                         onClick={() => {
                           setLocal(r.local_part); setKind(r.kind as Kind); setAgent(r.agent_slug)
                           setMember(r.forward_to_user_id ? String(r.forward_to_user_id) : '')
-                          setEnabled(r.enabled)
+                          setEnabled(r.enabled); setKeepCopy(r.keep_copy ?? false)
                         }}>Edit</button>
                       {!r.auto && <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
                         onClick={() => {
@@ -348,6 +354,14 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 aria-label="Enabled" className="h-3.5 w-3.5 accent-primary" />
               Enabled
             </label>
+            {kind === 'forward' && (
+              <label className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 text-[12px] text-foreground-secondary sm:min-h-0"
+                title="Also keep each message in that member's canopy inbox, readable only by them">
+                <input type="checkbox" checked={keepCopy} onChange={(e) => setKeepCopy(e.target.checked)}
+                  aria-label="Keep a copy in their canopy inbox" className="h-3.5 w-3.5 accent-primary" />
+                Keep a copy in their canopy inbox
+              </label>
+            )}
             <button type="button" className={primary} disabled={busy || !canSave} onClick={() => void saveRoute()}>
               Save address
             </button>
@@ -355,6 +369,8 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
       </div>
 
+
+      {manage && owned && domain.status !== 'pending' && <InboundMailLog workspace={workspace} domainId={domain.id} />}
 
       {(!owned || manage || domain.can_share || domain.can_set_sign_in || domain.sign_in) && (
         <div className="flex flex-col gap-3" data-testid="mail-settings">
@@ -502,7 +518,8 @@ export function WorkspaceEmailPage(): JSX.Element {
         <h2 className="text-[15px] font-semibold text-foreground">Email</h2>
         <p className="mt-1 max-w-3xl text-[13px] text-foreground-secondary">
           Addresses on your own domain, and where each one goes: an agent, a member of this workspace, or
-          nowhere.
+          nowhere.{' '}
+          <Link to={scopedPath(slug, '/mail')} className="text-primary underline">Your forwarded mail</Link>
         </p>
       </section>
 

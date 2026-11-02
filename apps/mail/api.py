@@ -13,7 +13,7 @@ from dataclasses import asdict
 
 from django.conf import settings
 from django.db import InterfaceError, OperationalError
-from django.db.models import OuterRef, Subquery
+from django.db.models import OuterRef, Q, Subquery
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -28,7 +28,7 @@ from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
 
 from . import agent_mail, auto_addresses, domains, inbound, reputation, ses, sns, storage
-from .models import MailDomain, MailMessage, MailRoute, MailThread
+from .models import MailDomain, MailInboundLog, MailMessage, MailRoute, MailThread
 from .schemas import (
     AgentMailboxIn,
     AgentMailboxOut,
@@ -37,6 +37,7 @@ from .schemas import (
     MailDomainOut,
     MailDomainPatchIn,
     MailDomainShareIn,
+    MailInboundLogListOut,
     MailMessageOut,
     MailReplyIn,
     MailResolveOut,
@@ -78,7 +79,7 @@ def _route_out(r: MailRoute) -> dict:
             "agent_slug": r.agent.slug if r.agent_id else "",
             "forward_to_user_id": r.forward_to_id,
             "forward_to_email": r.forward_to.email if r.forward_to_id else "",
-            "enabled": r.enabled, "auto": r.auto}
+            "enabled": r.enabled, "auto": r.auto, "keep_copy": r.keep_copy}
 
 
 def _domain_out(d: MailDomain, user, ws=None) -> dict:
@@ -269,7 +270,7 @@ def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payloa
         r = domains.save_route(d, local_part=payload.local_part, kind=payload.kind,
                                agent_slug=payload.agent_slug,
                                forward_to_user_id=payload.forward_to_user_id, enabled=payload.enabled,
-                               workspace=ws)
+                               workspace=ws, keep_copy=payload.keep_copy)
     except domains.DomainError as exc:
         _raise(exc)
     audit.note_change(scope=f"mail.route:{r.address}",
@@ -291,6 +292,24 @@ def delete_mail_route(request: HttpRequest, workspace: str, domain_id: int, rout
     audit.note_change(scope=f"mail.route:{r.address}", before=_route_out(r), after=None)
     r.delete()
     return 204, None
+
+
+@router.get("/domains/{workspace}/{domain_id}/inbound", response=MailInboundLogListOut,
+            summary="Every message that reached the domain, and what happened to it (admin or owner)")
+@gate("integrations")
+def list_inbound_log(request: HttpRequest, workspace: str, domain_id: int, recipient: str = "",
+                     limit: int = 100) -> dict:
+    """The inbound ledger: one row per recipient of each message, newest first — forwarded,
+    delivered to an agent, or dropped and why (spam, no route, mail off). Metadata only."""
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
+    d = _domain(ws, domain_id)
+    qs = MailInboundLog.objects.filter(domain=d)
+    if recipient.strip():
+        qs = qs.filter(recipient__icontains=recipient.strip().lower())
+    items = [{"id": r.pk, "recipient": r.recipient, "original_from": r.original_from, "subject": r.subject,
+              "outcome": r.outcome, "verdicts": r.verdicts or {}, "created_at": r.created_at.isoformat()}
+             for r in qs[:max(1, min(limit, 500))]]
+    return {"retention_days": MailInboundLog.RETENTION_DAYS, "items": items}
 
 
 # Sharing is a superuser decision, not a workspace setting: it lets one tenant hold addresses
@@ -340,12 +359,18 @@ def unshare_mail_domain(request: HttpRequest, workspace: str, domain_id: int, sh
     return _domain_out(d, request.user)
 
 
-def _thread(ws, uuid: str) -> MailThread:
+def _visible(qs, user):
+    """A thread kept from a forward route belongs to its destination alone."""
+    return qs.filter(Q(owner__isnull=True) | Q(owner=user))
+
+
+def _thread(ws, uuid: str, user) -> MailThread:
     try:
         key = uuidlib.UUID(uuid)
     except ValueError:
         raise HttpError(404, "no such thread") from None
-    t = MailThread.objects.filter(workspace=ws, uuid=key).select_related("route__agent", "route__domain").first()
+    t = (_visible(MailThread.objects.filter(workspace=ws, uuid=key), user)
+         .select_related("route__agent", "route__domain").first())
     if t is None:
         raise HttpError(404, "no such thread")
     return t
@@ -389,6 +414,7 @@ def _msg_out(m) -> dict:
 def _thread_out(t, *, messages: bool) -> dict:
     agent = t.route.agent.slug if t.route_id and t.route.agent_id else ""
     out = {"thread_id": str(t.uuid), "address": t.address, "agent": agent, "subject": t.subject,
+           "forwarded": t.owner_id is not None,
            "message_count": t.message_count, "unread": t.unread, "archived": t.archived,
            "last_message_at": t.last_message_at.isoformat() if t.last_message_at else ""}
     if messages:
@@ -447,7 +473,7 @@ def resolve_mail_address(request: HttpRequest, address: str = "", thread: str = 
             key = uuidlib.UUID(thread)
         except ValueError:
             raise HttpError(404, "not an SES thread") from None
-        t = MailThread.objects.filter(uuid=key).first()
+        t = MailThread.objects.filter(uuid=key, owner__isnull=True).first()
         if t is None or t.workspace_id not in mine:
             raise HttpError(404, "not an SES thread")
         return {"backend": "ses", "workspace": t.workspace_id, "agent": t.agent_slug,
@@ -507,9 +533,13 @@ def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) 
 
 @router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")
 @gate("member")
-def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False) -> dict:
+def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False,
+                      forwarded: bool = False) -> dict:
+    """`forwarded=true`: the caller's own inbox of mail kept from forward routes. Otherwise
+    the workspace's threads (agents' mail), never another person's forwarded copies."""
     ws = workspace_for(request.user, workspace)
     qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
+    qs = qs.filter(owner=request.user) if forwarded else qs.filter(owner__isnull=True)
     address = ""
     if agent:
         qs = qs.filter(agent_slug=agent)  # snapshotted: survives the route's removal
@@ -530,7 +560,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
 @gate("member")
 def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
-    t = _thread(workspace_for(request.user, workspace), uuid)
+    t = _thread(workspace_for(request.user, workspace), uuid, request.user)
     out = _thread_out(t, messages=True)
     newest = t.messages.order_by("-created_at", "-pk").values("direction", "from_addr", "to").first()
     out["counterpart"] = _counterpart(newest["direction"], newest["from_addr"], newest["to"]) if newest else ""
@@ -572,7 +602,7 @@ def _reply_recipients(t) -> list[str]:
 def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
-    t = _thread(ws, uuid)
+    t = _thread(ws, uuid, request.user)
     if t.route is None or not t.route.enabled:
         raise HttpError(409, "this address no longer exists")
     if t.route.kind != MailRoute.AGENT:
@@ -609,9 +639,10 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
 @gate("agent.work", kind="conversation")
 def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, payload: MailThreadStateIn) -> dict:
     ws = workspace_for(request.user, workspace)
-    _need(request.user, ws, perms.AGENT_WORK)
-    t = _thread(ws, uuid)
-    _agent_full(request.user, t.route)
+    t = _thread(ws, uuid, request.user)
+    if t.owner_id is None:  # your own forwarded mail needs no agent rights to mark or archive
+        _need(request.user, ws, perms.AGENT_WORK)
+        _agent_full(request.user, t.route)
     if payload.unread is not None:
         t.unread = payload.unread
     if payload.archived is not None:

@@ -810,6 +810,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/mail/domains/{workspace}/{domain_id}/inbound": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every message that reached the domain, and what happened to it (admin or owner)
+         * @description The inbound ledger: one row per recipient of each message, newest first — forwarded,
+         *     delivered to an agent, or dropped and why (spam, no route, mail off). Metadata only.
+         */
+        readonly get: operations["list_inbound_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/mail/domains/{workspace}/{domain_id}/shares": {
         readonly parameters: {
             readonly query?: never;
@@ -895,7 +916,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List mail threads */
+        /**
+         * List mail threads
+         * @description `forwarded=true`: the caller's own inbox of mail kept from forward routes. Otherwise
+         *     the workspace's threads (agents' mail), never another person's forwarded copies.
+         */
         readonly get: operations["list_mail_threads"];
         readonly put?: never;
         readonly post?: never;
@@ -19005,6 +19030,11 @@ export interface components {
              * @default false
              */
             readonly auto: boolean;
+            /**
+             * Keep Copy
+             * @default false
+             */
+            readonly keep_copy: boolean;
         };
         /** MailDomainIn */
         readonly MailDomainIn: {
@@ -19043,6 +19073,37 @@ export interface components {
              * @default true
              */
             readonly enabled: boolean;
+            /** Keep Copy */
+            readonly keep_copy?: boolean | null;
+        };
+        /** MailInboundLogListOut */
+        readonly MailInboundLogListOut: {
+            /** Retention Days */
+            readonly retention_days: number;
+            /** Items */
+            readonly items: readonly components["schemas"]["MailInboundLogOut"][];
+        };
+        /** MailInboundLogOut */
+        readonly MailInboundLogOut: {
+            /** Id */
+            readonly id: number;
+            /** Recipient */
+            readonly recipient: string;
+            /** Original From */
+            readonly original_from: string;
+            /** Subject */
+            readonly subject: string;
+            /** Outcome */
+            readonly outcome: string;
+            /**
+             * Verdicts
+             * @default {}
+             */
+            readonly verdicts: {
+                readonly [key: string]: string;
+            };
+            /** Created At */
+            readonly created_at: string;
         };
         /** MailDomainShareIn */
         readonly MailDomainShareIn: {
@@ -19230,6 +19291,11 @@ export interface components {
             readonly archived: boolean;
             /** Last Message At */
             readonly last_message_at: string;
+            /**
+             * Forwarded
+             * @default false
+             */
+            readonly forwarded: boolean;
             /**
              * Counterpart
              * @default
@@ -46016,6 +46082,32 @@ export interface operations {
             };
         };
     };
+    readonly list_inbound_log: {
+        readonly parameters: {
+            readonly query?: {
+                readonly recipient?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailInboundLogListOut"];
+                };
+            };
+        };
+    };
     readonly share_mail_domain: {
         readonly parameters: {
             readonly query?: never;
@@ -46143,6 +46235,7 @@ export interface operations {
             readonly query?: {
                 readonly agent?: string;
                 readonly archived?: boolean;
+                readonly forwarded?: boolean;
             };
             readonly header?: never;
             readonly path: {
