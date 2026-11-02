@@ -63,12 +63,18 @@ async function passkeyStopsGivingPrf(page: Page) {
 }
 
 /** They registered a passkey some time ago. Registering counts as a step-up for that
- *  session, so they come back in another one, where replacing a key asks for a touch. */
+ *  session, so they come back in another one, where replacing a key asks for a touch.
+ *  They leave the page first: every response re-issues the session cookie
+ *  (SESSION_SAVE_EVERY_REQUEST), so one still in flight would put the old session back. */
 async function hasPasskeyFromBefore(page: Page, name: string) {
   await page.goto('/settings#passkeys')
   await page.getByTestId('passkey-register').click()
   await expect(page.getByTestId('passkey-add-another')).toBeVisible()
+  await page.waitForLoadState('networkidle')
+  await page.goto('about:blank')
   await page.context().addCookies([sessionCookie(`${name}-later`)])
+  const status = await (await page.context().request.get('/api/passkeys/step-up')).json()
+  expect(status.active, 'this visit must start with no step-up').toBe(false)
 }
 
 async function openNewKeyScreen(page: Page) {
