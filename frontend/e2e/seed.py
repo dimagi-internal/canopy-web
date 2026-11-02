@@ -282,7 +282,51 @@ for _person in (user, mp_user):
     UserVaultKeyset.objects.get_or_create(
         user=_person, defaults={"public_jwk": {"kty": "EC", "crv": "P-256", "x": "e2e", "y": "e2e"}})
 
+# People for vault-new-key.spec.ts, one per scenario because each replaces their key.
+# Each already holds a key sealed by a passphrase nobody knows (random ciphertext of
+# the real shape): they have lost it, which is the state that screen is for.
+import base64
+
+from apps.canopy_sessions.models import SessionKey, SessionKeyWrap
+from apps.passkeys.models import Passkey
+
+
+def _b64u(n):
+    return base64.urlsafe_b64encode(os.urandom(n)).rstrip(b"=").decode()
+
+
+_lost_jwk = {"kty": "EC", "crv": "P-256", "x": _b64u(32), "y": _b64u(32)}
+vault_sessions = {}
+for _name in ("vault-lost", "vault-noprf", "vault-prf", "vault-conversation", "vault-wrong"):
+    _person, _ = User.objects.get_or_create(username=f"e2e-{_name}", defaults={"email": f"e2e-{_name}@dimagi.com"})
+    if ws is not None:
+        wsvc.ensure_member(ws, _person)
+    # A database kept from an earlier run: start each of them over.
+    Passkey.objects.filter(user=_person).delete()
+    SessionKeyWrap.objects.filter(user=_person).delete()
+    UserVaultKeyset.objects.update_or_create(user=_person, defaults={
+        "public_jwk": _lost_jwk,
+        "seals": [{"alg": "2skd", "kdf": "pbkdf2-sha256", "i": 650000, "s": _b64u(16), "n": _b64u(12), "ct": _b64u(48)}],
+    })
+    vault_sessions[_name] = _mint(_person)
+    # Their later visit: registering a passkey counts as a step-up for that session.
+    vault_sessions[f"{_name}-later"] = _mint(_person)
+
+# One private conversation the "vault-conversation" person holds a copy of.
+_private = CanopySession.objects.create(
+    workspace=ws, agent=_hal, title="A private conversation", status=CanopySession.ACTIVE,
+    origin=CanopySession.ORIGIN_WEB, created_by=User.objects.get(username="e2e-vault-conversation"),
+)
+SessionKey.objects.create(session=_private, conversation=_private.id, public_jwk=_lost_jwk)
+SessionKeyWrap.objects.create(
+    session=_private, user=_private.created_by, recipient_jkt=_b64u(32),
+    wrap={"alg": "ecdh-es", "epk": _lost_jwk, "n": _b64u(12), "ct": _b64u(48)},
+)
+
 os.makedirs("frontend/e2e/.auth", exist_ok=True)
+for _name, _key in vault_sessions.items():
+    with open(f"frontend/e2e/.auth/{_name}.txt", "w") as f:
+        f.write(_key)
 with open("frontend/e2e/.auth/session.txt", "w") as f:
     f.write(session_key)
 # The second identity, and the session id both browsers will open. Written as
