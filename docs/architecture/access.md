@@ -755,6 +755,9 @@ profile), `turn_mode` (`{mode, basis}`), and:
   `session:<role>` | `grant:<line>` (an editor line) | `capability:<name>` (a user or viewer in
   that capability) | `sensitive:<capability>` | `refused`, and `no-interface` for a turn with no
   agent.
+* **`access_help`** — on a confined turn only: `{your_role, workspace, role_needed_for_full,
+  who_can_grant}`. Why the caller is confined and what would change it, in roles (never people
+  or other callers' data); the Slack "Questions only" notice says the same. `null` on a full profile.
 * **`relationship`** — an older, coarser field, kept for readers that have not moved: `owner` |
   `admin` | `system` for those, and `member` or `contact` for everyone else (in the agent's
   workspace, or not). It is how canopy knows the asker, not a role: it says nothing about what

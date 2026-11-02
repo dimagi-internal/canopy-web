@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from apps.agents import roles
 from apps.agents.credentials import authority
 from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
@@ -374,6 +375,10 @@ def build(turn, *, reader_user=None) -> dict:
         # what an agent reads to say "you are a viewer here because ..." instead of
         # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
         **_grant(turn, agent),
+        # WHY A CONFINED CALLER IS CONFINED and what would change it: their place, the
+        # role the FULL profile takes, and who can give it. Roles only, never people or
+        # other callers' data. null on a full profile. Additive: no VERSION bump.
+        "access_help": _access_help(turn, agent, rel),
         "capability": _profile(agent, turn.capability),
         # manual | auto for THIS turn, and why (apps/harness/turn_mode.py). What
         # `canopy agent mode --caller <path>` reads in preference to the agent-wide
@@ -671,6 +676,20 @@ def _grant(turn, agent) -> dict:
     from apps.agents.interface import grant_facts
 
     return grant_facts(turn, agent)
+
+
+def _access_help(turn, agent, rel: str) -> dict | None:
+    if agent is None or not turn.capability:
+        return None
+    grant = _grant(turn, agent)
+    return {
+        "your_role": grant.get("role") or rel,
+        "workspace": agent.workspace_id,
+        "role_needed_for_full": roles.EDITOR,
+        "who_can_grant": (f"{agent.slug}'s owner or an admin: add you to the agent's access list "
+                          f"as {roles.EDITOR}, or to the {agent.workspace_id} workspace as an "
+                          "editor or above"),
+    }
 
 
 def _profile(agent, capability: str):

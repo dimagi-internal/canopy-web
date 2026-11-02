@@ -72,6 +72,20 @@ def test_a_verified_email_contact_carries_their_profile(ctx):
     assert env["capability"] is None
 
 
+def test_a_confined_caller_is_told_what_would_change_it(ctx):
+    """A confined `ask` caller learned only `profile: confined` and a Slack line that said
+    "add them to the workspace" without a role (Hal sessions b6eebedc, 5cbcd525)."""
+    owner, _ws, agent = ctx
+    turn = _email(agent, headers=HDRS)
+    turn.capability = "ask"
+    help_ = caller_context.build(turn)["access_help"]
+    assert help_["workspace"] == "canopy" and help_["role_needed_for_full"] == "editor"
+    assert help_["your_role"] and "owner or an admin" in help_["who_can_grant"]
+    assert owner.email not in str(help_)
+    turn.capability = ""
+    assert caller_context.build(turn)["access_help"] is None
+
+
 def test_an_unverified_email_is_not_verified(ctx):
     _o, _ws, agent = ctx
     env = caller_context.build(_email(agent))
