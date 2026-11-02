@@ -7,3 +7,15 @@
 export function openInSlackApp(appUrl: string) {
   window.location.assign(appUrl)
 }
+
+/** What to call a session's Slack thread: `#channel`, never the channel id. */
+export function slackLabel(thread: { channel_name?: string; is_dm?: boolean }): string {
+  if (thread.is_dm) return 'DM'
+  return thread.channel_name ? `#${thread.channel_name.replace(/^#/, '')}` : 'thread'
+}
+
+/** Open a session's Slack thread natively (desktop app, or the phone's Slack via the same deep link). */
+export function openSlackThread(thread: { app_url?: string; url?: string }) {
+  if (thread.app_url) openInSlackApp(thread.app_url)
+  else if (thread.url) window.open(thread.url, '_blank', 'noopener,noreferrer')
+}

@@ -1,11 +1,17 @@
 import { DropdownMenuItem } from "canopy-ui/ui";
-import { openInSlackApp } from "@/lib/slackLinks";
+import { openSlackThread } from "@/lib/slackLinks";
 
-export type SlackThread = { channel: string; url?: string; app_url?: string };
+export type SlackThread = {
+  channel: string;
+  channel_name?: string;
+  is_dm?: boolean;
+  url?: string;
+  app_url?: string;
+};
 
 /**
- * The actions on a session's Slack thread — open it (app, browser) and
- * disconnect. One list, shown in the chat header's Slack chip and in the ⋯ menu.
+ * The actions on a session's Slack thread: open it in Slack (the app, desktop or
+ * phone — never the web client unless canopy has no app link) and disconnect.
  */
 export function SlackThreadMenuItems({
   thread,
@@ -18,18 +24,9 @@ export function SlackThreadMenuItems({
 }) {
   return (
     <>
-      {thread.app_url && (
-        <DropdownMenuItem inset data-testid="slack-thread-app-link" onClick={() => openInSlackApp(thread.app_url!)}>
-          Open Slack thread
-        </DropdownMenuItem>
-      )}
-      {thread.url && (
-        <DropdownMenuItem
-          inset
-          data-testid="slack-thread-link"
-          onClick={() => window.open(thread.url, "_blank", "noopener,noreferrer")}
-        >
-          {thread.app_url ? "Open Slack thread in the browser" : "Open Slack thread"}
+      {(thread.app_url || thread.url) && (
+        <DropdownMenuItem inset data-testid="slack-thread-app-link" onClick={() => openSlackThread(thread)}>
+          Open in Slack
         </DropdownMenuItem>
       )}
       {onDetach && (

@@ -41538,6 +41538,16 @@ export interface components {
             /** Channel */
             readonly channel: string;
             /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /**
+             * Is Dm
+             * @default false
+             */
+            readonly is_dm: boolean;
+            /**
              * Thread Ts
              * @default
              */

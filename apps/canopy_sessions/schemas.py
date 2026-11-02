@@ -387,6 +387,10 @@ class HumanInputPageOut(Schema):
 class SlackBindingOut(Schema):
     """The Slack thread a session is connected to (apps/slack/share.py::binding_of)."""
     channel: str
+    #: The channel's name (no `#`), when canopy has looked it up; "" otherwise. Show this, not `channel`.
+    channel_name: str = ""
+    #: A direct message: there is no channel name to show.
+    is_dm: bool = False
     thread_ts: str = ""
     #: Opens the thread in Slack's web client; "" when canopy can't build one.
     url: str = ""

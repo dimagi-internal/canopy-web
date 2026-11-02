@@ -494,7 +494,10 @@ def binding_of(session: Session) -> dict | None:
     channel = str(meta.get("slack_channel") or "")
     thread_ts = str(meta.get("slack_thread_ts") or "")
     in_thread = thread_ts if thread_ts != services.DM_ANCHOR else ""
+    # The name is read from the session's cache (no Slack call); null until `location.fill` has asked.
+    where = location.location_of(session) or {}
     return {"channel": channel, "thread_ts": thread_ts,
+            "channel_name": where.get("channel_name") or "", "is_dm": bool(where.get("is_dm")),
             "url": location.web_url(team, channel, in_thread),
             "app_url": location.app_url(team, channel, in_thread),
             "shared": bool(meta.get("slack_shared_by"))}
