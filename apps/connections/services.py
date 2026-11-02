@@ -1,4 +1,5 @@
-"""Connect, disconnect and grant — the one implementation every surface calls.
+"""Connect and disconnect — the one implementation every surface calls. Lending
+(a signed grant statement) is `sharing.py`; who may open a connection is `recipients.py`.
 
 Request-free, like `apps.github_connect.github_app`: takes a `session` mapping
 where OAuth state must live between the two legs, raises domain exceptions, and
@@ -66,7 +67,6 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import F, QuerySet
 
@@ -79,7 +79,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
 
 from . import providers, wire
-from .models import Connection, ConnectionApp, ConnectionGrant
+from .models import Connection, ConnectionApp
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class ConnectionError(Exception):  # shadows the builtin inside this module only
     routes map it to a response in one place (`problems.problem_for`):
     `not_configured`, `not_connected`, `reconnect_required`, `ambiguous`,
     `insufficient_scope`, `provider_error`, `provider_unavailable`, `bad_state`,
-    `own_connection`, `not_grantable`, `not_usable`, `no_vault_key` (the
+    `no_vault_key` (the
     owner has no vault key to seal a connection to), `app_locked` (an app's client id, or an
     option naming its authorization server, cannot change while connections
     use it), `invalid_app` (an app's settings
@@ -331,7 +331,7 @@ def remove_app(app: ConnectionApp, *, by) -> None:
         record(late_subject, "disconnected", by=by,
                summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
         for grantee in grantees:
-            _record_grant_revoked(late_subject, grantee, by=by, during="disconnected")
+            record_grant_revoked(late_subject, grantee, by=by, during="disconnected")
     record(subject, "app_removed", by=by, workspace=slug, client_id=client_id,
            summary=f"{_who(by) or 'someone'} removed {title} from {slug}")
 
@@ -340,7 +340,7 @@ def remove_app(app: ConnectionApp, *, by) -> None:
 
 # Verbs that are the owner's history: an Event for an agent's connection, a log
 # line for a person's. The rest are canopy's operational trouble: always a log line.
-AUDITED = frozenset({"connected", "disconnected", "granted", "grant_revoked", "token_issued",
+AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_revoked", "token_issued",
                      "reconnect_required", "app_configured", "app_removed"})
 
 
@@ -677,17 +677,15 @@ def disconnect(conn: Connection, *, by) -> None:
     if subject.workspace is not None and subject.workspace.pk != app_ws.pk:
         record(dataclasses.replace(subject, workspace=app_ws), "disconnected", by=by, summary=summary)
     for grantee in grantees:
-        _record_grant_revoked(subject, grantee, by=by, during="disconnected")
+        record_grant_revoked(subject, grantee, by=by, during="disconnected")
 
 
 def _grantees(conn: Connection) -> list:
     """The agents `conn` is shared with, read before a delete takes the grants."""
-    if conn.agent_id is None:
-        return []
     return [g.agent for g in conn.grants.select_related("agent__workspace").order_by("agent__slug")]
 
 
-def _record_grant_revoked(subject: Subject, grantee, *, by, **context) -> None:
+def record_grant_revoked(subject: Subject, grantee, *, by, **context) -> None:
     """`grant_revoked` for one grantee: in the owner's workspace (whose connection
     it is) and, when the grantee lives elsewhere, in the grantee's too, so the
     workspace whose turns just lost it can see why."""
@@ -766,34 +764,3 @@ def providers_for_agent(agent) -> list[str]:
     granted = usable.filter(grants__agent=agent).values_list("provider", flat=True)
     # A row for a provider no longer registered here has nothing to stage.
     return sorted(p for p in set(own) | set(granted) if p in providers.CLASSES)
-
-
-def grant(conn: Connection, agent, *, by) -> ConnectionGrant:
-    """Let `agent` use another agent's connection. Idempotent."""
-    if conn.agent_id is None:
-        raise ConnectionError("not_grantable", "a person's connection is never granted to an agent")
-    if conn.agent_id == agent.pk:
-        raise ConnectionError("own_connection", "an agent already uses its own connection")
-    if not (conn.agent.is_admin(by) and agent.is_admin(by)):
-        raise PermissionDenied("granting a connection needs admin of both agents")
-    if not agent_connection_usable(conn):
-        # A moved owner's connection is dead; a grant of it would be too.
-        raise ConnectionError("not_usable", f"{conn.agent.slug} has moved out of the workspace that made "
-                                            "this connection; connect it again there first")
-    g, created = ConnectionGrant.objects.get_or_create(
-        connection=conn, agent=agent, defaults={"granted_by": by},
-    )
-    if created:
-        record(Subject.of(conn), "granted", by=by, grantee=agent.slug,
-               summary=f"{conn.owner_label}'s {conn.provider} granted to {agent.slug}")
-    return g
-
-
-def revoke_grant(g: ConnectionGrant, *, by) -> None:
-    """Stop `g.agent` using the connection. Admin of EITHER agent may: taking
-    access away should never need more standing than either side has."""
-    conn, agent = g.connection, g.agent
-    if not (conn.agent.is_admin(by) or agent.is_admin(by)):
-        raise PermissionDenied("revoking a grant needs admin of either agent")
-    g.delete()
-    _record_grant_revoked(Subject.of(conn), agent, by=by)

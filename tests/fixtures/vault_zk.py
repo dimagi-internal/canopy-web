@@ -20,4 +20,16 @@ def _load_reference():
 ref = _load_reference()
 
 
+def _load_connections_reference():
+    spec = importlib.util.spec_from_file_location("connections_v1_reference", ZK_DIR / "connections_v1_reference.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+#: The connections wire format's reference (`docs/vault/zk-v1/connections_v1_reference.py`):
+#: what the owner's browser and the CLI do, signing statements and writing envelope MACs.
+conn_ref = _load_connections_reference()
+
+
 VECTORS = json.loads((ZK_DIR / "zk_v1_vectors.json").read_text())

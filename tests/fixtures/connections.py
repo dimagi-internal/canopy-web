@@ -1,19 +1,32 @@
 """What the connections suites share: the fake Salesforce and the fake Google (faked
 at the `requests` boundary), a workspace's Salesforce app (`sf_app`), a person's home
 workspace (`home`), a person's vault key (`vault_key`: a connection is sealed to it)
-and a stored, sealed connection helper (`_stored`) — plain helpers, imported by
-name. This module is also registered in the root conftest's
+a stored connection helper (`_stored`), one sealed to its owner as connect
+seals it (`sealed_to_owner`), and what the owner's browser sends to share one
+(`browser_share`), and a world to share one in (`ShareWorld`) — plain helpers,
+imported by name. This module is also registered in the root conftest's
 `pytest_plugins`, for fixtures; it declares none today."""
 from __future__ import annotations
 
+import hashlib
+import json
 from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric import ec
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 
+from apps.agents.credentials import zk, zk_seal
+from apps.agents.models import Agent, AgentAdmin
+from apps.connections import recipients as rcpt
+from apps.connections import sharing
 from apps.connections.models import Connection, ConnectionApp
 from apps.connections.providers import google as _google
+from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.machines import a_machine
+from tests.fixtures.vault_zk import conn_ref
 from tests.fixtures.vault_zk import ref as zk_ref
 
 CLIENT_ID = "3MVG-client"
@@ -214,3 +227,102 @@ def _stored(owner_kw, by, *, app=None, sealed=SEALED, **fields):
     values = {"provider": app.provider, "account_id": "00Dorg/005user", "account_label": "jj@dimagi.com",
               "instance_url": "https://dimagi.my.salesforce.com", **fields}
     return Connection.objects.create(app=app, sealed=sealed, connected_by=by, **values, **owner_kw)
+
+
+FAKE_REFRESH = "5Aep_refresh_shared"
+
+
+def _refresh_plain(conn) -> str:
+    return json.dumps({"v": 1, "provider": conn.provider, "refresh_token": FAKE_REFRESH, "client_id": CLIENT_ID,
+                       "login_host": "login.salesforce.com", "instance_url": conn.instance_url,
+                       "account_id": conn.account_id, "owner_key": conn.owner_key, "issued_at": 1793500000,
+                       "scopes": "api refresh_token"}, separators=(",", ":"))
+
+
+def sealed_to_owner(owner_kw, signer, *, app=None, **fields) -> Connection:
+    """A connection as connect leaves it: `unshared`, the refresh plaintext sealed to
+    `signer`'s member key only (their `vault_key` must exist), `owner_key` its thumbprint."""
+    ks = UserVaultKeyset.objects.get(user=signer)
+    conn = _stored(owner_kw, signer, app=app, sealed="", owner_key=zk_ref.jkt(zk.public_key(ks.public_jwk)),
+                   signer=signer, **fields)
+    conn.sealed = zk_seal.seal_to(_refresh_plain(conn), agent_id=conn.binding, name="refresh", kv=0,
+                                  recipients=[("member", str(signer.pk), ks.public_jwk)])
+    conn.sealed_digest = hashlib.sha256(conn.sealed.encode()).hexdigest()
+    conn.save()
+    return conn
+
+
+def browser_share(conn, user, priv, *, agents=(), my_computers=(), to=None, version=None, sign_with=None,
+                  writer=None) -> dict:
+    """The `sharing.share` keyword arguments the owner's browser sends (contract
+    §0.3-0.4): a statement lending `conn` to `agents` and its use on `my_computers`
+    (ECDH thumbprints), signed with `sign_with` (default `priv`); the refresh token
+    sealed to `user` and to `to` (`[(kind, target, public_jwk)]`; default every
+    machine canopy-web lists for that statement), with writer MACs by `writer`
+    (default `priv`, as `user`)."""
+    conn.refresh_from_db()
+    st = {"account_id": conn.account_id, "agents": sorted(str(a.pk) for a in agents), "connection": str(conn.pk),
+          "my_computers": sorted(my_computers), "v": 1,
+          "version": conn.statement_version + 1 if version is None else version}
+    if to is None:
+        to = [r for r in rcpt.recipients(conn, st) if r[0] == "device"]
+    owner = ("member", str(user.pk), zk_ref.jwk(priv.public_key()))
+    everyone = [owner, *to]
+    sealed = zk_seal.seal_to(_refresh_plain(conn), agent_id=conn.binding, name="refresh", kv=0, recipients=everyone)
+    pubs = {(k, t): zk.public_key(j) for k, t, j in everyone}
+    sig = conn_ref.writer_sig(conn.binding, "refresh", conn.sealed_digest, sealed, writer or priv, "member",
+                              str(user.pk), pubs)
+    return {"statement": st, "sig": conn_ref.sign_statement(st, sign_with or priv),
+            "by_jkt": zk_ref.jkt(priv.public_key()), "sealed": sealed, "sealed_sig": sig,
+            "expect": conn.sealed_digest}
+
+
+# ---- a world to share a connection in -------------------------------------------------
+
+class ShareWorld:
+    """jj (a person with a vault key) administers eva (their own) and echo (op's,
+    by an AgentAdmin row). op runs a cloud box for each; ada, another admin of
+    eva, runs eva on her laptop; jj has a computer of their own (plain Claude Code)."""
+
+    def __init__(self):
+        users = get_user_model().objects
+        self.person = users.create_user(username="jj", email="jj@dimagi.com")
+        self.person_priv = vault_key(self.person)
+        self.op = users.create_user(username="op", email="op@dimagi.com")
+        self.ada = users.create_user(username="ada", email="ada@dimagi.com")
+        self.ada_priv = vault_key(self.ada)
+        self.ws = Workspace.objects.create(slug="w", display_name="W", created_by=self.person)
+        for u in (self.person, self.op, self.ada):
+            WorkspaceMembership.objects.create(workspace=self.ws, user=u, role=WorkspaceMembership.EDITOR)
+        self.app = sf_app(self.ws)
+        self.eva = Agent.objects.create(slug="eva", name="Eva", workspace=self.ws, owner=self.person)
+        self.echo = Agent.objects.create(slug="echo", name="Echo", workspace=self.ws, owner=self.op)
+        AgentAdmin.objects.create(agent=self.echo, user=self.person)
+        AgentAdmin.objects.create(agent=self.eva, user=self.op)
+        AgentAdmin.objects.create(agent=self.eva, user=self.ada)
+        self.eva_box, _, self.eva_ecdh = self._box("eva-cloud", Runner.CLOUD, self.op, self.eva)
+        self.echo_box, _, self.echo_ecdh = self._box("echo-cloud", Runner.CLOUD, self.op, self.echo)
+        self.ada_laptop, _, _ = self._box("ada-laptop", Runner.EMDASH, self.ada, self.eva)
+        self.computer, _, _ = self._box("jj-computer", Runner.COMPUTER, self.person, None)
+        self.ada_computer, _, _ = self._box("ada-computer", Runner.COMPUTER, self.ada, None)
+
+    def _box(self, name, kind, owner, agent):
+        r = Runner.objects.create(name=name, kind=kind, owner=owner, workspace=self.ws,
+                                  last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
+        if agent is not None:
+            RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
+        return a_machine(r, owner)
+
+    def persons(self) -> Connection:
+        return sealed_to_owner({"user": self.person}, self.person, app=self.app)
+
+    def evas(self) -> Connection:
+        return sealed_to_owner({"agent": self.eva}, self.person, app=self.app)
+
+    def shared(self, conn, agents=(), my_computers=(), to=None) -> Connection:
+        return sharing.share(conn, user=self.person, **browser_share(
+            conn, self.person, self.person_priv, agents=agents, my_computers=my_computers, to=to))
+
+
+def revoke_admin(user, agent):
+    AgentAdmin.objects.filter(agent=agent, user=user).delete()

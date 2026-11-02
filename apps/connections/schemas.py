@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from apps.agents.schemas import ZkEndorsementOut
 from apps.common.schemas import StrictModel
 
 
@@ -45,6 +46,18 @@ class ConnectionStatementOut(StrictModel):
         description="ECDH key thumbprints of the owner's own computers it may be used on.")
 
 
+class WaitingOut(StrictModel):
+    agent: str = Field(description="The slug of the agent the machine runs; empty for one of the owner's own "
+                                   "computers.")
+    runner: str = Field(description="The machine's runner name.")
+
+
+class MyMachineOut(StrictModel):
+    jkt: str = Field(description="The machine's ECDH key thumbprint, as `statement.my_computers` lists it.")
+    name: str = Field(description="Its runner name.")
+    fingerprint: str = Field(description="The thumbprint as the owner compares it: eight groups of four.")
+
+
 class ConnectionOut(StrictModel):
     id: uuid.UUID
     provider: str
@@ -68,6 +81,14 @@ class ConnectionOut(StrictModel):
     holders: list[str] = Field(
         default_factory=list,
         description="Names of the runners whose machines hold it now, sorted. Empty while `unshared`.")
+    waiting: list[WaitingOut] = Field(
+        default_factory=list,
+        description="Machines the statement allows that do not hold it yet: a machine that holds it gives them "
+                    "a copy, or the owner does from Settings. Empty unless `active`.")
+    my_machines: list[MyMachineOut] = Field(
+        default_factory=list,
+        description="The owner's own computers the statement lets it be used on (`Use on my computers`), "
+                    "named. Empty for an agent's connection.")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "
@@ -157,3 +178,63 @@ class TurnConnectionsOut(StrictModel):
     providers: list[str] = Field(
         description="Provider keys the turn's agent has a connection for (its own or one shared "
                     "with it), sorted. Empty for most agents.")
+
+
+class ShareCandidateOut(StrictModel):
+    kind: Literal["device", "member"]
+    target: str = Field(description="The device's ECDH key thumbprint, or the owner's user id.")
+    public_jwk: dict[str, Any] = Field(description="The key to seal to.")
+    agent_id: str = Field(default="", description="The agent (pk) whose machine this is; empty for the owner "
+                                                  "and their own computers.")
+    runner_name: str = Field(default="", description="The machine's runner name; empty for the owner.")
+    mine: bool = Field(description="The owner's own: their member key, or a machine they own.")
+
+
+class ShareOwnerOut(StrictModel):
+    user_id: str
+    public_jwk: dict[str, Any] = Field(description="The owner's member public key, whose thumbprint is the "
+                                                   "`owner_key` sealed in the envelope.")
+
+
+class ShareAgentOut(StrictModel):
+    id: str = Field(description="The agent's pk, as a statement lists it.")
+    slug: str
+    name: str
+
+
+class ShareStateOut(StrictModel):
+    id: uuid.UUID
+    binding: str = Field(description="`connection:<uuid>`, the binding id both envelopes are sealed to.")
+    provider: str
+    account_id: str
+    account_label: str
+    state: Literal["unshared", "active", "revoking"]
+    sealed: str = Field(description="The refresh envelope (`zks1`); only its recipients can open it.")
+    sealed_sig: dict[str, Any] | None = Field(
+        default=None, description="Its writer MACs; null only on canopy-web's first seal, at connect.")
+    sealed_digest: str = Field(description="SHA-256 of `sealed`: the `expect` of the next write.")
+    access_sealed: str = Field(description="The access envelope; empty until a machine first refreshes.")
+    access_sig: dict[str, Any] | None = None
+    statement: dict[str, Any] | None = Field(
+        default=None, description="The stored signed grant statement; null before the first share.")
+    owner: ShareOwnerOut
+    candidates: list[ShareCandidateOut] = Field(
+        description="Everyone the owner could seal to: their member key, each machine of an agent they could "
+                    "lend it to (one row per agent that admits it), and their own computers. A machine is sealed "
+                    "to only when the statement allows it AND the browser trusts its endorsement.")
+    endorsements: list[ZkEndorsementOut] = Field(
+        default_factory=list, description="Endorsements of those machines' keys, each with its `agent_id`.")
+    agents: list[ShareAgentOut] = Field(description="The agents the owner may lend it to.")
+
+
+class ShareIn(StrictModel):
+    statement: dict[str, Any] = Field(description="The grant statement (contract §0.3), signed.")
+    sig: str = Field(max_length=128, description="The owner's ECDSA P-256 signature over it (P1363, base64url).")
+    by_jkt: str = Field(max_length=64, description="The signer's member key thumbprint: the `owner_key`.")
+    sealed: str = Field(description="The refresh envelope, re-sealed to the owner and the machines the "
+                                    "statement allows.")
+    sealed_sig: dict[str, Any] | None = Field(description="Its writer MACs, by the owner's member key.")
+    access_sealed: str | None = Field(default=None, description="The access envelope re-sealed likewise, "
+                                                                "when there is one.")
+    access_sig: dict[str, Any] | None = None
+    expect: str = Field(max_length=64, description="`sealed_digest` as read: the write replaces exactly that.")

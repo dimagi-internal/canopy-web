@@ -17,11 +17,11 @@ from django.utils import timezone
 
 from apps.agents import move
 from apps.agents.models import Agent, AgentAdmin
-from apps.connections import services
+from apps.connections import services, sharing
 from apps.connections.models import Connection, ConnectionGrant
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import _stored, sf_app
+from tests.fixtures.connections import _stored, browser_share, sealed_to_owner, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -153,12 +153,13 @@ def test_an_agent_without_connections_adds_nothing_to_a_move(user, dimagi, x):
 
 
 def test_a_moved_agents_connection_cannot_be_shared(user, dimagi, x):
+    priv = vault_key(user)
     eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
+    conn = sealed_to_owner({"agent": eva}, user, app=sf_app(dimagi))
     _moved(eva, x)
-    with pytest.raises(services.ConnectionError) as e:
-        services.grant(Connection.objects.get(pk=conn.pk), echo, by=user)
-    assert e.value.code == "not_usable"
+    with pytest.raises(sharing.WireError) as e:
+        sharing.share(conn, user=user, **browser_share(conn, user, priv, agents=[eva, echo], to=[]))
+    assert e.value.code == "agent_outside_workspace"
     assert not ConnectionGrant.objects.exists()
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from apps.api.errors import ProblemError
 
-from . import services
+from . import services, wire
 
 # code -> (status, title). 409: the caller's state needs changing (connect,
 # reconnect, disconnect one); 400: what the caller sent; 502/503: the provider,
@@ -22,9 +22,6 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "reconnect_required": (409, "Reconnect required"),
     "ambiguous": (409, "More than one account connected"),
     "insufficient_scope": (409, "Missing permissions"),
-    "own_connection": (409, "Cannot share this connection"),
-    "not_grantable": (409, "Cannot share this connection"),
-    "not_usable": (409, "Cannot share this connection"),
     "no_vault_key": (409, "No vault key"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),
@@ -56,3 +53,26 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail
         "provider_error": f"{title} refused the request.",
     }.get(exc.code, str(exc))
     return ProblemError(status, heading, detail=detail, members={"error": exc.code or "provider_error", **members})
+
+
+# Each refusal of a share, by its `error` code; the status comes with the refusal.
+_WIRE_TITLES = {
+    "bad_statement": "Invalid grant statement",
+    "bad_signature": "Signature does not verify",
+    "not_the_owner_key": "Not the owner's key",
+    "statement_stale": "Already shared at that version",
+    "not_an_admin": "Not an admin of that agent",
+    "agent_outside_workspace": "Agent outside the workspace",
+    "not_your_machine": "Not your computer",
+    "statement_missing_owner_agent": "Statement must list the owner agent",
+    "zk_value_changed": "Changed since you read it",
+    "foreign_reader": "Sealed to someone the statement does not allow",
+    "bad_writer_sig": "Invalid writer MACs",
+    "revoking": "Being disconnected",
+}
+
+
+def problem_for_wire(exc: wire.WireError) -> ProblemError:
+    """The response for a refused share (`sharing.share`, `sharing.share_state`)."""
+    return ProblemError(exc.status, _WIRE_TITLES.get(exc.code, "Refused"), detail=exc.detail,
+                        members={"error": exc.code})

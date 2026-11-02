@@ -20,19 +20,18 @@ from django.urls import reverse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.agents.credentials import zk_seal
 from apps.agents.gates import agent_for_admin
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.harness.models import RunnerDeviceKey
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 
-from . import providers, services
+from . import providers, services, sharing
+from . import recipients as rcpt
 from .models import Connection, ConnectionApp
-from .problems import problem_for
+from .problems import problem_for, problem_for_wire
 from .schemas import (
     ConnectionAppIn,
     ConnectionAppOut,
@@ -40,9 +39,13 @@ from .schemas import (
     ConnectionOut,
     ConnectionsOut,
     ConnectionStatementOut,
+    MyMachineOut,
     OptionFieldOut,
     ProviderOut,
     ScopeChoiceOut,
+    ShareIn,
+    ShareStateOut,
+    WaitingOut,
 )
 
 router = Router(auth=session_auth, tags=["connections"])
@@ -99,10 +102,21 @@ def _statement(conn: Connection) -> ConnectionStatementOut:
 
 def _holders(conn: Connection) -> list[str]:
     # The runners whose device keys the refresh envelope is sealed to now.
-    jkts = [t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"]
-    if not jkts:
+    return sorted({k.runner.name for k in rcpt.holders(conn)})
+
+
+def _fingerprint(jkt: str) -> str:
+    # As the browser shows a key (`vault/zk.ts` `fingerprint`): eight groups of four.
+    s = "".join(c for c in jkt if c.isalnum()).upper()[:32]
+    return " ".join(s[i:i + 4] for i in range(0, len(s), 4))
+
+
+def _my_machines(conn: Connection) -> list[MyMachineOut]:
+    jkts = (conn.statement or {}).get("my_computers") or []
+    if conn.user_id is None or not jkts:
         return []
-    return sorted(set(RunnerDeviceKey.objects.filter(ecdh_jkt__in=jkts).values_list("runner__name", flat=True)))
+    return [MyMachineOut(jkt=k.ecdh_jkt, name=k.runner.name, fingerprint=_fingerprint(k.ecdh_jkt))
+            for k in rcpt.my_machines(conn.user, jkts)]
 
 
 def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> ConnectionOut:
@@ -112,6 +126,8 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> 
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
         state=conn.state, statement=_statement(conn), holders=_holders(conn),
+        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn)],
+        my_machines=_my_machines(conn),
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())
@@ -157,6 +173,62 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     readable = services.readable_workspaces(request.user)
     return ConnectionsOut(providers=_person_provider_rows(request.user),
                           connections=[_out(c, usable=c.app.workspace_id in readable) for c in rows])
+
+
+def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
+    # Mine, or an agent's I administer; anyone else's id is a 404 (never probed).
+    conn = get_object_or_404(Connection.objects.select_related("app__workspace", "agent", "user"), pk=connection_id)
+    if not sharing.visible(conn, request.user):
+        raise HttpError(404, "Not Found")
+    return conn
+
+
+@router.get("/{connection_id}/share", response=ShareStateOut, summary="What sharing a connection needs")
+@gate("self")
+def get_share_state(request: HttpRequest, connection_id: uuid.UUID) -> ShareStateOut:
+    """Everything the owner's browser needs to share a connection: its sealed
+    envelopes (only their recipients can open them), the signed statement in
+    force, the owner's key, every machine the owner could seal it to (each with
+    the agent that admits it, or marked `mine`) and the endorsements to check
+    them by. Only the person whose vault key it is sealed to: anyone else who can
+    see it gets 403 `not_the_owner_key`; 409 `revoking` while it is being
+    disconnected."""
+    conn = _visible(request, connection_id)
+    try:
+        return ShareStateOut(**sharing.share_state(conn, request.user))
+    except sharing.WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+@router.put("/{connection_id}/share", response=ConnectionOut, summary="Share a connection")
+@gate("self", setting=True, step_up=True)
+def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: ShareIn) -> ConnectionOut:
+    """Store the owner's signed grant statement (which agents it is lent to, and
+    whether it is used on their own computers) and the envelope their browser
+    re-sealed to the machines it allows; the connection becomes `active`.
+    canopy-web never opens the envelope: it checks the signer is the owner
+    (403 `not_the_owner_key`), the signature (422 `bad_signature`), that the
+    version moves forward (409 `statement_stale`), that every agent added is one
+    the owner administers (403 `not_an_admin`) in the app's workspace (422
+    `agent_outside_workspace`), that listed computers are the owner's own (422
+    `not_your_machine`), that an agent's statement lists the agent (422
+    `statement_missing_owner_agent`), that `expect` is what is stored (409
+    `zk_value_changed`), that it is sealed only to the owner and allowed machines
+    (422 `foreign_reader`) and that its writer MACs are the owner's (422
+    `bad_writer_sig`). From a browser this needs a fresh passkey check."""
+    conn = _visible(request, connection_id)
+    # After the visibility check: someone who cannot see it gets 404, never a step-up prompt.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        conn = sharing.share(conn, user=request.user, **payload.model_dump())
+    except sharing.WireError as exc:
+        raise problem_for_wire(exc) from None
+    conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")
+            .prefetch_related("grants__agent").get(pk=conn.pk))
+    usable = (conn.app.workspace_id in services.readable_workspaces(request.user) if conn.user_id
+              else services.agent_connection_usable(conn))
+    return _out(conn, usable=usable)
 
 
 @router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")

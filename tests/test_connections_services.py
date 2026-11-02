@@ -18,7 +18,6 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 import requests
 from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied
 
 from apps.agents.models import Agent
 from apps.connections import providers, services
@@ -313,13 +312,12 @@ def test_disconnect_deletes_and_calls_no_provider(user):
 def test_an_agents_connection_is_evented(user, eva, echo):
     conn = _stored({"agent": eva}, user)
     cid = str(conn.pk)
-    g = services.grant(conn, echo, by=user)
-    services.revoke_grant(g, by=user)
+    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
     with FakeSF():
         services.disconnect(conn, by=user)
 
     kinds = list(Event.objects.order_by("id").values_list("kind", flat=True))
-    assert kinds == ["connections.granted", "connections.grant_revoked", "connections.disconnected"]
+    assert kinds == ["connections.disconnected", "connections.grant_revoked"]
     for ev in Event.objects.all():
         assert ev.workspace_id == eva.workspace_id
         assert ev.payload["connection"] == cid
@@ -351,7 +349,7 @@ def test_connection_for_agent_own_then_granted(user, eva, echo):
     assert services.connection_for_agent(eva, "salesforce") == mine
     with pytest.raises(services.NotConnected):
         services.connection_for_agent(echo, "salesforce")
-    services.grant(mine, echo, by=user)
+    ConnectionGrant.objects.create(connection=mine, agent=echo, granted_by=user)
     assert services.connection_for_agent(echo, "salesforce") == mine
 
 
@@ -367,71 +365,11 @@ def test_connection_for_agent_ambiguous(user, eva, echo, ws):
     b = _stored({"agent": other}, user)
     b.account_id = "00Dorg/005other"
     b.save()
-    services.grant(a, echo, by=user)
-    services.grant(b, echo, by=user)
+    ConnectionGrant.objects.create(connection=a, agent=echo, granted_by=user)
+    ConnectionGrant.objects.create(connection=b, agent=echo, granted_by=user)
     with pytest.raises(services.ConnectionError) as e:
         services.connection_for_agent(echo, "salesforce")
     assert e.value.code == "ambiguous"
-
-
-def test_grant_refuses_own_agent_and_person_connections(user, eva):
-    own = _stored({"agent": eva}, user)
-    with pytest.raises(services.ConnectionError) as e:
-        services.grant(own, eva, by=user)
-    assert e.value.code == "own_connection"
-    persons = _stored({"user": user}, user)
-    with pytest.raises(services.ConnectionError) as e:
-        services.grant(persons, eva, by=user)
-    assert e.value.code == "not_grantable"
-    assert not ConnectionGrant.objects.exists()
-
-
-def test_grant_needs_admin_of_both_agents(user, eva, ws):
-    stranger = get_user_model().objects.create_user(username="s", email="s@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=ws, user=stranger, role=WorkspaceMembership.EDITOR)
-    theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=stranger)
-    conn = _stored({"agent": eva}, user)
-    with pytest.raises(PermissionDenied):
-        services.grant(conn, theirs, by=user)  # admin of eva, not of theirs
-    with pytest.raises(PermissionDenied):
-        services.grant(conn, theirs, by=stranger)  # admin of theirs, not of eva
-    assert not ConnectionGrant.objects.exists()
-    g = services.grant(conn, theirs, by=WorkspaceOwner.of(ws))
-    # Revoking needs admin of EITHER agent: someone who administers neither is refused...
-    nobody = get_user_model().objects.create_user(username="n", email="n@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=ws, user=nobody, role=WorkspaceMembership.EDITOR)
-    with pytest.raises(PermissionDenied):
-        services.revoke_grant(g, by=nobody)
-    assert ConnectionGrant.objects.filter(pk=g.pk).exists()
-    # ...and the grantee's admin alone may cut it off.
-    services.revoke_grant(g, by=stranger)
-    assert not ConnectionGrant.objects.filter(pk=g.pk).exists()
-
-
-def test_revoke_grant_by_owner_agent_admin_only(user, eva, ws):
-    stranger = get_user_model().objects.create_user(username="s", email="s@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=ws, user=stranger, role=WorkspaceMembership.EDITOR)
-    theirs = Agent.objects.create(slug="theirs", name="Theirs", workspace=ws, owner=stranger)
-    conn = _stored({"agent": eva}, user)
-    g = services.grant(conn, theirs, by=WorkspaceOwner.of(ws))
-    services.revoke_grant(g, by=user)  # admin of eva only
-    assert not ConnectionGrant.objects.exists()
-
-
-class WorkspaceOwner:
-    @staticmethod
-    def of(ws):
-        boss = get_user_model().objects.create_user(username="boss", email="boss@dimagi.com")
-        WorkspaceMembership.objects.create(workspace=ws, user=boss, role=WorkspaceMembership.OWNER)
-        return boss
-
-
-# ---- granted scopes ------------------------------------------------------------
-
-
-
-
-
 
 
 def test_complete_refuses_a_grant_missing_a_required_scope(user, caplog):

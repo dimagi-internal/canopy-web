@@ -26,16 +26,24 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.connections import services
+from apps.connections import services, sharing
 from apps.connections.models import Connection
 from apps.events.models import Event
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import CLIENT_SECRET, FakeSF, _resp, _token_body, sf_app, vault_key
+from tests.fixtures.connections import (
+    CLIENT_SECRET,
+    FakeSF,
+    _resp,
+    _token_body,
+    browser_share,
+    sf_app,
+    vault_key,
+)
 
 pytestmark = pytest.mark.django_db
 
 VOCABULARY = {
-    "connected": logging.INFO, "disconnected": logging.INFO, "granted": logging.INFO,
+    "connected": logging.INFO, "disconnected": logging.INFO, "shared": logging.INFO, "granted": logging.INFO,
     "grant_revoked": logging.INFO, "token_issued": logging.INFO,
     "reconnect_required": logging.WARNING, "provider_error": logging.WARNING,
     "revoke_failed": logging.WARNING, "app_configured": logging.INFO, "app_removed": logging.INFO,
@@ -57,7 +65,7 @@ def _connect_in_browser(client, secrets, **agent):
 @pytest.fixture
 def world():
     user = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
-    vault_key(user)  # a connection is sealed to it
+    priv = vault_key(user)  # a connection is sealed to it
     ws = Workspace.objects.create(slug="w", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.EDITOR)
     sf_app(ws)
@@ -65,11 +73,11 @@ def world():
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
     for a in (eva, echo):
         AgentAdmin.objects.get_or_create(agent=a, user=user)
-    return user, eva, echo
+    return user, eva, echo, priv
 
 
 def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
-    user, eva, echo = world
+    user, eva, echo, priv = world
     caplog.set_level(logging.DEBUG)
     caplog.set_level(logging.DEBUG, logger="apps")      # the settings quiet `apps` below WARNING
     secrets = ["00D!access_1", "5Aep_refresh_1", "c0de-secret", CLIENT_SECRET]
@@ -96,14 +104,15 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     mine = Connection.objects.get(user=user)
     assert browser.delete(f"/api/connections/{mine.pk}").status_code == 204
     conn = Connection.objects.get(agent=eva)
-    services.grant(conn, echo, by=user)
-    services.revoke_grant(conn.grants.get(), by=user)
+    sharing.share(conn, user=user, **browser_share(conn, user, priv, agents=[eva, echo], to=[]))
+    sharing.share(conn, user=user, **browser_share(conn, user, priv, agents=[eva], to=[]))
     services.disconnect(conn, by=user)
 
     # ---- the vocabulary -------------------------------------------------------------
     events = list(Event.objects.filter(source=services.EVENT_SOURCE).order_by("id"))
     assert [e.kind for e in events] == [
-        "connections.connected", "connections.granted", "connections.grant_revoked", "connections.disconnected"]
+        "connections.connected", "connections.granted", "connections.shared", "connections.grant_revoked",
+        "connections.shared", "connections.disconnected"]
     for e in events:
         assert e.level == "info" and e.payload["owner"] == "agent:eva"
         assert all(k in e.payload for k in BASE_KEYS)

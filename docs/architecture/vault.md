@@ -50,8 +50,9 @@ Every record goes through one function, `apps/connections/services.record`, in o
 | `connections.disconnected` | info | yes | the row was deleted (revoke attempted first); `by` is who disconnected it, or the admin who removed its app |
 | `connections.app_configured` | info | yes | a workspace's app was created or changed (a workspace Event, no connection or owner); `workspace`, `client_id` — never the secret |
 | `connections.app_removed` | info | yes | a workspace's app was removed (same shape) |
-| `connections.granted` | info | yes (agents only) | shared with another agent; `grantee` |
-| `connections.grant_revoked` | info | yes (agents only) | sharing stopped; `grantee`; `during=disconnected` when the shared connection was disconnected (or its app removed) and the grant went with it. In the owner's workspace, and also in the grantee's when that is another |
+| `connections.shared` | info | yes | the owner's signed grant statement and the envelope sealed to it were stored (`sharing.share`); `version` |
+| `connections.granted` | info | yes | the statement lends it to an agent it did not before; `grantee` |
+| `connections.grant_revoked` | info | yes | sharing stopped (a statement no longer lists the agent); `grantee`; `during=disconnected` when the shared connection was disconnected (or its app removed) and the grant went with it. In the owner's workspace, and also in the grantee's when that is another |
 | `connections.token_issued` | info | yes | an access token handed out; `to` (`cli` \| `turn`), `refreshed`, and for a turn `agent`, `turn`, `runner` (one turn's re-stages coalesce into one Event) |
 | `connections.reconnect_required` | warn | yes | the provider answered `invalid_grant`; `error` |
 | `connections.provider_error` | warn | no (log) | the provider refused or could not be reached; `during` (`authorize`: its `?error=` at the callback, never for `access_denied` · `connect`: the exchange or identity failed, or `no_refresh_token`, or `insufficient_scope` with `missing`, or `wrong_account` · `refresh`), `error` (the provider's code, `provider_unavailable`, or one of canopy's; an `?error=` that is not code-shaped is `unrecognised`). Before a row exists `connection` is empty and `owner` is the would-be owner |
