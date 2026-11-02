@@ -3,6 +3,7 @@ import { getSessionInfo, type SessionInfo, type SessionInfoTurn } from "@/api/ch
 import { relativeAge } from "@/lib/relativeAge";
 import { CopyButton } from "canopy-ui/ui";
 import { cliLabel } from "@/lib/clis";
+import { slackLabel } from "@/lib/slackLinks";
 
 /**
  * "Session info", opened from the chat's ⋯ menu and the /ide row menu:
@@ -137,7 +138,7 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
             ) : (
               <p className="text-muted-foreground">No runner has backed this session yet.</p>
             )}
-            {s.slack && <Row label="Slack" value={s.slack.channel} href={s.slack.app_url || s.slack.url || undefined} />}
+            {s.slack && <Row label="Slack" value={slackLabel(s.slack)} href={s.slack.app_url || s.slack.url || undefined} />}
           </Section>
 
           {Object.keys(activity).length > 0 && (
