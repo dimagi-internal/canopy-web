@@ -35,13 +35,15 @@ _MAX_LISTED = zk_seal.MAX_RECIPIENTS
 
 
 class WireError(Exception):
-    """A refused statement or writer sig; `code` is the problem's `error` member."""
+    """A refused statement, writer sig or machine request; `code` is the problem's
+    `error` member and `members` add to its body (`retry_after`, `workspaces`)."""
 
-    def __init__(self, status: int, code: str, detail: str):
+    def __init__(self, status: int, code: str, detail: str, **members):
         super().__init__(detail)
         self.status = status
         self.code = code
         self.detail = detail
+        self.members = members
 
 
 def binding_id(connection_id: uuid.UUID) -> str:

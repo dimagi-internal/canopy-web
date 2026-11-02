@@ -19,7 +19,6 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "wrong_account": (409, "Wrong account"),
     "not_configured": (409, "Not set up"),
     "not_connected": (409, "Not connected"),
-    "reconnect_required": (409, "Reconnect required"),
     "ambiguous": (409, "More than one account connected"),
     "insufficient_scope": (409, "Missing permissions"),
     "no_vault_key": (409, "No vault key"),
@@ -43,7 +42,6 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail
         "wrong_account": f"That {title} account is not one {owner.lower() if owner == 'Your' else owner} "
                          "connection may use; sign in with the right account.",
         "not_connected": f"{owner} {title} is not connected.",
-        "reconnect_required": f"{owner} {title} connection no longer works; connect it again.",
         "ambiguous": f"{owner} {title} has more than one account connected; disconnect all but one.",
         "insufficient_scope": f"{title} did not grant every permission canopy needs; connect again "
                               "and allow them all.",
@@ -69,10 +67,25 @@ _WIRE_TITLES = {
     "foreign_reader": "Sealed to someone the statement does not allow",
     "bad_writer_sig": "Invalid writer MACs",
     "revoking": "Being disconnected",
+    # A machine's material, lease and write-back (`tokens`, `proofs`).
+    "device_proof_required": "Device proof required",
+    "machine_not_enrolled": "Computer not enrolled",
+    "not_on_my_computers": "Not used on this computer",
+    "not_a_recipient": "Not a machine this connection reaches",
+    "not_connected": "Not connected",
+    "ambiguous": "More than one account connected",
+    "needs_reconnect": "Reconnect required",
+    "waiting": "Waiting for a copy",
+    "lease_held": "Another machine is refreshing",
+    "lease_lost": "Refresh lease lost",
+    "zk_rewrap_required": "Drops a machine that still holds it",
+    "rotation_mismatch": "Rotated refresh token missing",
 }
 
 
 def problem_for_wire(exc: wire.WireError) -> ProblemError:
-    """The response for a refused share (`sharing.share`, `sharing.share_state`)."""
+    """The response for a refused share (`sharing`), or a machine's refused material,
+    lease or write-back (`tokens`, `proofs`)."""
+    headers = {"WWW-Authenticate": 'DPoP algs="ES256"'} if exc.status == 401 else None
     return ProblemError(exc.status, _WIRE_TITLES.get(exc.code, "Refused"), detail=exc.detail,
-                        members={"error": exc.code})
+                        members={"error": exc.code, **exc.members}, headers=headers)

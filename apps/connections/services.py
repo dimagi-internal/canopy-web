@@ -68,7 +68,7 @@ from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.db.models import F, QuerySet
+from django.db.models import F, Q, QuerySet
 
 from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
@@ -101,7 +101,7 @@ EVENT_SOURCE = "connections"
 class ConnectionError(Exception):  # shadows the builtin inside this module only; the interface names it
     """A connection operation failed. `code` is stable and safe to show; the
     routes map it to a response in one place (`problems.problem_for`):
-    `not_configured`, `not_connected`, `reconnect_required`, `ambiguous`,
+    `not_configured`, `not_connected`, `ambiguous`,
     `insufficient_scope`, `provider_error`, `provider_unavailable`, `bad_state`,
     `no_vault_key` (the
     owner has no vault key to seal a connection to), `app_locked` (an app's client id, or an
@@ -130,15 +130,6 @@ class NotConnected(ConnectionError):  # noqa: N818 - name fixed by the interface
     """No connection for that owner and provider."""
 
     code = "not_connected"
-
-    def __init__(self, message: str = "") -> None:
-        super().__init__("", message)
-
-
-class ReconnectRequired(ConnectionError):  # noqa: N818 - name fixed by the interface
-    """The stored grant cannot mint a token any more; the owner must connect again."""
-
-    code = "reconnect_required"
 
     def __init__(self, message: str = "") -> None:
         super().__init__("", message)
@@ -341,7 +332,8 @@ def remove_app(app: ConnectionApp, *, by) -> None:
 # Verbs that are the owner's history: an Event for an agent's connection, a log
 # line for a person's. The rest are canopy's operational trouble: always a log line.
 AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_revoked", "token_issued",
-                     "reconnect_required", "app_configured", "app_removed"})
+                     "refreshed", "lease_expired_unwritten", "reconnect_required", "app_configured",
+                     "app_removed"})
 
 
 @dataclass(frozen=True)
@@ -711,20 +703,31 @@ def agent_connection_usable(conn: Connection) -> bool:
     return conn.agent_id is not None and conn.agent.workspace_id == conn.app.workspace_id
 
 
-def connection_for_agent(agent, provider: str) -> Connection:
-    """The agent's own connection for `provider`, else one granted to it — each
-    only while usable (`agent_connections_usable`).
+def _granted_to(agent):
+    """Connections granted to `agent`: another agent's while usable, or a person's
+    (whether the grant is still in force is `recipients.grants_in_force`). Never
+    one being disconnected."""
+    return (Connection.objects.filter(grants__agent=agent)
+            .filter(Q(**agent_connections_usable()) | Q(user__isnull=False))
+            .exclude(state=Connection.REVOKING).distinct())
 
-    Never a person's connection. More than one candidate at the level that
-    answers is `ambiguous` rather than a guess.
+
+def connection_for_agent(agent, provider: str) -> Connection:
+    """The agent's own connection for `provider`, else one granted to it (another
+    agent's, or a person's lent to it) — each only while usable
+    (`agent_connections_usable`), never one being disconnected.
+
+    Never a person's connection that was not lent to it. More than one candidate
+    at the level that answers is `ambiguous` rather than a guess.
     """
-    usable = Connection.objects.filter(provider=provider, **agent_connections_usable())
+    usable = (Connection.objects.filter(provider=provider, **agent_connections_usable())
+              .exclude(state=Connection.REVOKING))
     own = list(usable.filter(agent=agent)[:2])
     if len(own) == 1:
         return own[0]
     if len(own) > 1:
         raise ConnectionError("ambiguous", f"{agent.slug} holds more than one {provider} connection")
-    granted = list(usable.filter(grants__agent=agent).distinct()[:2])
+    granted = list(_granted_to(agent).filter(provider=provider)[:2])
     if len(granted) == 1:
         return granted[0]
     if len(granted) > 1:
@@ -739,7 +742,7 @@ def person_connections(user, provider: str, *, workspace: str | None = None) -> 
     if workspace is not None:
         readable &= {workspace}
     return list(connections_for(("user", user.pk)).filter(provider=provider, app__workspace_id__in=readable)
-                .select_related("app__workspace"))
+                .exclude(state=Connection.REVOKING).select_related("app__workspace"))
 
 
 def connection_for_person(user, provider: str, *, workspace: str | None = None) -> Connection:
@@ -758,9 +761,10 @@ def connection_for_person(user, provider: str, *, workspace: str | None = None) 
 
 def providers_for_agent(agent) -> list[str]:
     """The providers `agent` has a usable connection for — its own or one granted
-    to it — sorted. What a runner stages for a turn; never a person's connection."""
-    usable = Connection.objects.filter(**agent_connections_usable())
-    own = usable.filter(agent=agent).values_list("provider", flat=True)
-    granted = usable.filter(grants__agent=agent).values_list("provider", flat=True)
+    to it (a person's lent to it among them) — sorted. What a runner stages for a
+    turn; never a person's connection that was not lent to it."""
+    own = (Connection.objects.filter(agent=agent, **agent_connections_usable())
+           .exclude(state=Connection.REVOKING).values_list("provider", flat=True))
+    granted = _granted_to(agent).values_list("provider", flat=True)
     # A row for a provider no longer registered here has nothing to stage.
     return sorted(p for p in set(own) | set(granted) if p in providers.CLASSES)

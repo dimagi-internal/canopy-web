@@ -64,6 +64,7 @@ WORKSPACE_ARG = "workspace"
 # -- what is not a tool, and why -------------------------------------------
 
 _RUNNER = "runner protocol: a runner calls this on its own tick, not a person"
+_SEALED_FOR_A_MACHINE = "sealed credentials and an app secret for a machine, never a model's context"
 _BROWSER = "a browser tab's own plumbing (page state, live viewer, push subscription)"
 _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
@@ -178,6 +179,19 @@ EXCLUDED: dict[str, str] = {
     "resources_updated": _HOST,
     # A turn's connections (apps/connections): the runner's own question.
     "turn_connections": _RUNNER,
+    # A connection's material, lease and write-back (routes 7-12): sealed credentials
+    # and an app secret for a machine, never a model's context. The person's routes
+    # refuse an MCP call too (`_plain_pat`); the runner's take only a box's token.
+    "my_connection_material": _SEALED_FOR_A_MACHINE,
+    "take_my_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "release_my_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "write_back_my_connection": _SEALED_FOR_A_MACHINE,
+    "my_connection_reconnect_required": _SEALED_FOR_A_MACHINE,
+    "turn_connection_material": _SEALED_FOR_A_MACHINE,
+    "take_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "release_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "write_back_connection": _SEALED_FOR_A_MACHINE,
+    "connection_reconnect_required": _SEALED_FOR_A_MACHINE,
     # A workspace's OAuth client for connections: the body carries the client
     # secret, which a tool call would put in a model's context; removing it
     # disconnects a whole workspace. Reading it (never the secret) stays a tool.

@@ -1,4 +1,5 @@
-"""The runner's side of a turn's connections, under `/api/harness/runners/{rid}/turns/{tid}/`.
+"""The runner's side of a turn's connections, under `/api/harness/runners/{rid}/turns/{tid}/`:
+which providers to stage, and each one's material (route 11).
 
 Mounted at `/harness` (`apps/api/api.py`) so the URLs sit beside the turn's other
 credentials, while the code stays here: harness and agents are core and may not
@@ -21,8 +22,10 @@ from apps.harness import routing
 from apps.harness.api import runner_or_404
 from apps.harness.models import Turn
 
-from . import services
-from .schemas import TurnConnectionsOut
+from . import proofs, providers, services, tokens
+from .problems import problem_for, problem_for_wire
+from .schemas import ConnectionMaterialOut, TurnConnectionsOut
+from .wire import WireError
 
 router = Router(tags=["connections"])
 
@@ -63,3 +66,41 @@ def turn_connections(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
     as no agent."""
     _, _, agent = _turn_agent(request, runner_id, turn_id)
     return TurnConnectionsOut(providers=services.providers_for_agent(agent))
+
+
+@router.get("/runners/{runner_id}/turns/{turn_id}/connections/{provider}", response=ConnectionMaterialOut,
+            summary="A claimed turn's agent connection: sealed envelopes and the app client")
+# turn must be claimed by this box, and the box must prove its device key
+# a read: no write kind (the route-gate lint refuses one on a GET)
+@gate("runner", "runner-holds-agent", step_up="runner protocol: ciphertext and an app client for a box")
+def turn_connection_material(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID,
+                             provider: str) -> ConnectionMaterialOut:
+    """What this box needs to stage the turn's AGENT connection for `provider` (its
+    own, else one lent to it — never the person who started the turn): the sealed
+    envelopes, which only machines they are sealed to can open, the owner's signed
+    grant statement and endorsements to check them by, and the app's client id and
+    secret to refresh with. Never a token. Requires a device proof (`DPoP`) by this
+    runner's own approved key (401 `device_proof_required`). 404 unless this runner
+    holds the turn (always for a caller's turn), or for an unknown provider. 409
+    `not_connected` when the agent has none, it is not shared yet, it is being
+    disconnected, or this box no longer serves an agent it is lent to;
+    `needs_reconnect` when its refresh token is dead; `waiting` when this box may
+    use it but holds no copy yet; `ambiguous`, `no_agent`. Each turn's reads are
+    recorded once (`token_issued`, naming the runner)."""
+    try:
+        cls = providers.get_class(provider)
+    except providers.UnknownProvider:
+        raise HttpError(404, "unknown provider") from None
+    runner, turn, agent = _turn_agent(request, runner_id, turn_id)
+    try:
+        key = proofs.proving_device(request, runner)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    try:
+        conn = services.connection_for_agent(agent, cls.name)
+    except services.ConnectionError as exc:
+        raise problem_for(exc, title=cls.title, owner=f"{agent.slug}'s") from None
+    try:
+        return ConnectionMaterialOut(**tokens.material(conn, key, turn=turn, runner=runner))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None

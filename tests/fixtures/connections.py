@@ -286,6 +286,8 @@ class ShareWorld:
 
     def __init__(self):
         users = get_user_model().objects
+        # Every machine by runner name: `(key, signing key, ECDH key)`.
+        self.machines: dict = {}
         self.person = users.create_user(username="jj", email="jj@dimagi.com")
         self.person_priv = vault_key(self.person)
         self.op = users.create_user(username="op", email="op@dimagi.com")
@@ -311,7 +313,8 @@ class ShareWorld:
                                   last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
         if agent is not None:
             RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
-        return a_machine(r, owner)
+        self.machines[name] = a_machine(r, owner)
+        return self.machines[name]
 
     def persons(self) -> Connection:
         return sealed_to_owner({"user": self.person}, self.person, app=self.app)

@@ -4,9 +4,10 @@ Errors from the service layer become responses in one place, `problem_for`.
 
 Four routers, because the URLs live under four prefixes (see `apps/api/api.py`):
 `router` at `/connections` (a person's own), `agents_router` at `/agents`
-(an agent's, admin-only), `me_router` at `/me/connections` (a person's CLI; no
-routes today) and
+(an agent's, admin-only), `me_router` at `/me/connections` (a person's CLI on
+their own enrolled computer: material, lease, write-back) and
 `workspaces_router` at `/workspaces` (a workspace's apps, its admins').
+A runner's material and write-back are `api_turns.py` and `api_runner.py`.
 The browser legs of connecting are bare views (`views.py`).
 """
 from __future__ import annotations
@@ -23,12 +24,15 @@ from ninja.errors import HttpError
 from apps.agents.gates import agent_for_admin
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
+from apps.harness.models import RunnerDeviceKey
 from apps.passkeys import stepup
+from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 
-from . import providers, services, sharing
+from . import proofs, providers, services, sharing, tokens
 from . import recipients as rcpt
 from .models import Connection, ConnectionApp
 from .problems import problem_for, problem_for_wire
@@ -36,17 +40,24 @@ from .schemas import (
     ConnectionAppIn,
     ConnectionAppOut,
     ConnectionAppsOut,
+    ConnectionMaterialOut,
     ConnectionOut,
     ConnectionsOut,
     ConnectionStatementOut,
+    LeaseIn,
+    LeaseOut,
     MyMachineOut,
     OptionFieldOut,
     ProviderOut,
+    ReconnectRequiredIn,
     ScopeChoiceOut,
     ShareIn,
     ShareStateOut,
     WaitingOut,
+    WriteBackIn,
+    WriteBackOut,
 )
+from .wire import WireError
 
 router = Router(auth=session_auth, tags=["connections"])
 agents_router = Router(auth=session_auth, tags=["connections"])
@@ -196,7 +207,7 @@ def get_share_state(request: HttpRequest, connection_id: uuid.UUID) -> ShareStat
     conn = _visible(request, connection_id)
     try:
         return ShareStateOut(**sharing.share_state(conn, request.user))
-    except sharing.WireError as exc:
+    except WireError as exc:
         raise problem_for_wire(exc) from None
 
 
@@ -222,7 +233,7 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
         stepup.require_recent_step_up(request)
     try:
         conn = sharing.share(conn, user=request.user, **payload.model_dump())
-    except sharing.WireError as exc:
+    except WireError as exc:
         raise problem_for_wire(exc) from None
     conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")
             .prefetch_related("grants__agent").get(pk=conn.pk))
@@ -280,6 +291,148 @@ def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: 
         stepup.require_recent_step_up(request)
     conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
     services.disconnect(conn, by=request.user)
+    return Status(204, None)
+
+
+# ---- my CLI, on my own enrolled computer -------------------------------------------
+
+def _plain_pat(request: HttpRequest) -> bool:
+    """A personal access token authenticated this request, over REST.
+
+    An allowlist, not "not a browser": a route handing out sealed credentials and
+    an app secret must not answer whatever else is not a browser. An MCP tool call
+    runs as the caller's PAT but puts the answer in a model's context; an
+    OAuth-grant PAT is a connector's (Claude's) token, also a model's; a caller
+    token speaks for a turn. All refused."""
+    if getattr(request, "via_mcp", False) or getattr(request, "auth_method", None) != kinds.PAT:
+        return False
+    kind = kinds.kind_of(getattr(request, "auth_credential", None))
+    return kind is not None and kind.name == kinds.PAT
+
+
+def _my_machine(request: HttpRequest) -> RunnerDeviceKey:
+    # A plain PAT, then a device proof by one of my own enrolled machines.
+    if not _plain_pat(request):
+        raise ProblemError(403, "A personal access token is required",
+                           detail="Use the CLI (`canopy login`) on your enrolled computer.",
+                           members={"error": "token_route_needs_pat"})
+    try:
+        return proofs.proving_machine(request, request.user)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+def _ambiguous_members(request: HttpRequest, p: type[providers.Provider], workspace: str | None) -> dict:
+    where = sorted({c.app.workspace_id for c in services.person_connections(request.user, p.name,
+                                                                             workspace=workspace)})
+    out: dict = {"workspaces": where}
+    if len(where) > 1:
+        out["detail"] = (f"Your {p.title} is connected in more than one workspace ({', '.join(where)}); pick "
+                         "one with `?workspace=<slug>` (`--workspace <slug>` in the CLI).")
+    return out
+
+
+@me_router.get("/{provider}/material", response=ConnectionMaterialOut,
+               summary="My connection's sealed envelopes and app client, for my own computer (CLI)")
+# a read: no write kind (the route-gate lint refuses one on a GET)
+@gate("self", step_up="a person's own machine; PAT and device proof only")
+def my_connection_material(request: HttpRequest, provider: str, workspace: str | None = None) -> ConnectionMaterialOut:
+    """What my enrolled computer needs to use the account I connected: the sealed
+    envelopes (only machines they are sealed to can open them), my signed grant
+    statement, and the app's client id and secret to refresh with. Never a token.
+
+    Needs a personal access token over REST (403 `token_route_needs_pat` for a
+    browser session, an MCP call, an OAuth connector's token or a caller token)
+    and a device proof (`DPoP`) by one of my own enrolled computers (401
+    `device_proof_required` without one; 403 `machine_not_enrolled` for any other
+    key: enroll it with `canopy vault device --enroll`). The computer must be one
+    the connection's `Use on my computers` lists (403 `not_on_my_computers`).
+    `?workspace=` picks one when I connected in several (409 `ambiguous` lists them
+    in `workspaces`). 409 `not_connected` when there is none (or it is not shared
+    yet, or being disconnected), `needs_reconnect` when its refresh token is dead,
+    and `waiting` when this computer may use it but holds no copy yet."""
+    p = _provider_or_404(provider)
+    key = _my_machine(request)
+    try:
+        conn = services.connection_for_person(request.user, p.name, workspace=workspace or None)
+    except services.ConnectionError as exc:
+        members = _ambiguous_members(request, p, workspace or None) if exc.code == "ambiguous" else {}
+        detail = members.pop("detail", None)
+        raise problem_for(exc, title=p.title, owner="Your", detail=detail, **members) from None
+    try:
+        return ConnectionMaterialOut(**tokens.material(conn, key))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+def _my_connection(request: HttpRequest, connection_id: uuid.UUID) -> tuple[Connection, RunnerDeviceKey]:
+    # My own connection (anyone else's id is a 404), on one of my listed computers.
+    key = _my_machine(request)
+    conn = get_object_or_404(Connection.objects.select_related("app", "user"), pk=connection_id,
+                             user=request.user)
+    try:
+        tokens.admits_my_computer(conn, key)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    return conn, key
+
+
+@me_router.post("/{connection_id}/refresh-lease", response=LeaseOut,
+                summary="Take the refresh lease on my connection (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def take_my_refresh_lease(request: HttpRequest, connection_id: uuid.UUID, payload: LeaseIn) -> LeaseOut:
+    """Take the one refresh lease (60 s; send `lease_id` to renew the one I hold)
+    before refreshing my connection at the provider on my own computer. 409
+    `lease_held` with `retry_after` while another machine holds it: wait for its new
+    access token instead of refreshing too. Renew on `ttl_seconds`, not
+    `expires_at`. PAT and device proof as for the material."""
+    conn, key = _my_connection(request, connection_id)
+    try:
+        return LeaseOut(**tokens.take_lease(conn, key, payload.lease_id))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+@me_router.delete("/{connection_id}/refresh-lease/{lease_id}", response={204: None},
+                  summary="Give up the refresh lease on my connection (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def release_my_refresh_lease(request: HttpRequest, connection_id: uuid.UUID, lease_id: uuid.UUID) -> Status:
+    """Release the refresh lease this computer holds; harmless when it holds none."""
+    conn, key = _my_connection(request, connection_id)
+    tokens.release_lease(conn, key, lease_id)
+    return Status(204, None)
+
+
+@me_router.put("/{connection_id}/sealed", response=WriteBackOut,
+               summary="Write back my connection's refreshed envelopes (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def write_back_my_connection(request: HttpRequest, connection_id: uuid.UUID, payload: WriteBackIn) -> WriteBackOut:
+    """Store the access token my computer just minted, sealed to exactly who may open
+    the connection now (and the refresh token, when it rotated), against the
+    `sealed_digest` read. 409 `lease_lost`, `zk_value_changed`, `revoking`; 422
+    `foreign_reader`, `zk_rewrap_required`, `bad_writer_sig`. Only after this
+    succeeds is the token used."""
+    conn, key = _my_connection(request, connection_id)
+    try:
+        digest = tokens.write_back(conn, device_key=key, **payload.model_dump())
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    return WriteBackOut(sealed_digest=digest)
+
+
+@me_router.post("/{connection_id}/reconnect-required", response={204: None},
+                summary="Report my connection's refresh refused (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def my_connection_reconnect_required(request: HttpRequest, connection_id: uuid.UUID,
+                                     payload: ReconnectRequiredIn) -> Status:
+    """The provider refused the refresh made under `lease_id`. `invalid_grant` marks
+    the connection `needs_reconnect` (connect it again); any other error is only
+    noted. 409 `lease_lost` unless this computer holds the lease."""
+    conn, key = _my_connection(request, connection_id)
+    try:
+        tokens.mark_reconnect_required(conn, key, payload.lease_id, payload.error)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
     return Status(204, None)
 
 

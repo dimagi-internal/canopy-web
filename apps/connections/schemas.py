@@ -238,3 +238,89 @@ class ShareIn(StrictModel):
                                                                 "when there is one.")
     access_sig: dict[str, Any] | None = None
     expect: str = Field(max_length=64, description="`sealed_digest` as read: the write replaces exactly that.")
+
+
+# ---- a machine's material, lease and write-back (routes 7-12) ----------------------
+
+class MaterialAppOut(StrictModel):
+    client_id: str = Field(description="The app's OAuth client id; a machine refuses material whose client id "
+                                       "differs from the one sealed in the envelope.")
+    client_secret: str = Field(description="The app's client secret, to refresh with. Only ever in this "
+                                           "response, to a machine that proved itself.")
+    options: dict[str, Any] = Field(default_factory=dict,
+                                    description="The app's settings; only `access_token_seconds` is read.")
+
+
+class MaterialRecipientOut(StrictModel):
+    kind: Literal["device", "member"]
+    target: str = Field(description="A device's ECDH key thumbprint, or the owner's user id.")
+    public_jwk: dict[str, Any]
+    runner_name: str = Field(default="", description="The device's runner name; empty for the owner.")
+
+
+class MaterialLeaseOut(StrictModel):
+    mine: bool = Field(description="This machine holds the refresh lease.")
+    ttl_seconds: int = Field(description="Seconds the lease has left, by canopy-web's clock.")
+
+
+class ConnectionMaterialOut(StrictModel):
+    id: uuid.UUID
+    provider: str
+    workspace: str = Field(description="The workspace whose app made the connection.")
+    binding: str = Field(description="`connection:<uuid>`, the binding id both envelopes are sealed to.")
+    account_id: str
+    account_label: str
+    sealed: str = Field(description="The refresh envelope (`zks1`); this machine opens it with its ECDH key.")
+    sealed_sig: dict[str, Any] | None = Field(default=None, description="Its writer MACs.")
+    sealed_digest: str = Field(description="SHA-256 of `sealed`: the `expect` of a write-back.")
+    access_sealed: str = Field(description="The access envelope; empty until a machine first refreshes.")
+    access_sig: dict[str, Any] | None = None
+    access_expires_at: datetime | None = Field(
+        default=None, description="When the sealed access token expires, so a machine can decide without "
+                                  "opening it.")
+    statement: dict[str, Any] | None = Field(default=None, description="The owner's signed grant statement.")
+    statement_sig: str = Field(description="Its signature, by the owner's key.")
+    owner: ShareOwnerOut
+    endorsements: list[ZkEndorsementOut] = Field(
+        default_factory=list, description="Endorsements of the recipient machines' keys, each with its `agent_id`.")
+    recipients: list[MaterialRecipientOut] = Field(
+        description="Who canopy-web lets the envelopes reach now. A machine seals only to those the signed "
+                    "statement also allows: this list narrows, never widens.")
+    app: MaterialAppOut
+    lease: MaterialLeaseOut | None = Field(default=None,
+                                           description="The live refresh lease, if any; null when none is held.")
+    rotates_refresh_token: bool = Field(description="A refresh may hand back a new refresh token (write it back "
+                                                    "as `sealed`).")
+
+
+class LeaseIn(StrictModel):
+    lease_id: uuid.UUID | None = Field(default=None, description="The lease this machine holds, to renew it.")
+
+
+class LeaseOut(StrictModel):
+    lease_id: uuid.UUID
+    ttl_seconds: int = Field(description="How long the lease lasts from now; renew before it runs out, on the "
+                                         "machine's own monotonic clock.")
+    expires_at: datetime
+
+
+class WriteBackIn(StrictModel):
+    lease_id: uuid.UUID
+    sealed: str | None = Field(default=None, description="The refresh envelope, only when the refresh token "
+                                                         "rotated.")
+    sealed_sig: dict[str, Any] | None = None
+    access_sealed: str = Field(description="The new access envelope, to the same recipients.")
+    access_sig: dict[str, Any] | None = Field(description="Its writer MACs, by this machine's ECDH key.")
+    access_expires_at: datetime
+    expect: str = Field(max_length=64, description="`sealed_digest` as read: the write replaces exactly that.")
+    rotated: bool = Field(description="The provider handed back a new refresh token.")
+
+
+class WriteBackOut(StrictModel):
+    sealed_digest: str = Field(description="The digest now stored: the `expect` of the next write.")
+
+
+class ReconnectRequiredIn(StrictModel):
+    lease_id: uuid.UUID
+    error: str = Field(max_length=100, description="The provider's error code; only `invalid_grant` marks the "
+                                                   "connection `needs_reconnect`.")
