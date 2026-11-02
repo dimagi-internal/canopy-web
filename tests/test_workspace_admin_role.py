@@ -184,6 +184,18 @@ def test_a_turns_content_is_read_by_its_starter_and_admins(adm, path):
             assert (res.status_code == 200) == can, (role, res.status_code)
 
 
+def test_a_turn_you_see_but_may_not_read_is_a_403_that_says_why(adm):
+    """An editor sees THAT the turn ran, so its closed content is a 403 naming the
+    rule and who could read it - not the bare 404 that read as "no such turn"."""
+    turn = _turn(adm, adm[M.OWNER])
+    res = _c(adm[M.EDITOR]).get(f"/api/harness/turns/{turn.id}/transcript")
+    assert res.status_code == 403
+    assert "logs.read" in res.json()["detail"] and "admin" in res.json()["detail"]
+    assert "secret plan" not in res.content.decode()
+    # A turn that does not exist is still the uniform 404.
+    assert _c(adm[M.EDITOR]).get(f"/api/harness/turns/{uuid.uuid4()}/transcript").status_code == 404
+
+
 def test_a_turns_provenance_is_hidden_with_its_content(adm):
     """Which token (its label), user agent and request id made a turn is a log,
     read by the same people as the prompt (apps/harness/turn_access.py)."""
