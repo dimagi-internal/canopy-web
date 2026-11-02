@@ -9,6 +9,7 @@ from django.db.models import Q
 from django.http import Http404, HttpRequest
 from ninja.errors import HttpError
 
+from apps.agents.credentials import delegations
 from apps.api.errors import ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
@@ -343,8 +344,6 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
 
 
 def _github_identity(session) -> dict:
-    from apps.agents.credentials import delegations
-
     who = delegations.session_identity(session)
     return {"agent": who["agent"].slug if who["agent"] else "", "source": who["source"], "repo": who["repo"]}
 
