@@ -192,6 +192,9 @@ EXCLUDED: dict[str, str] = {
     "release_refresh_lease": _SEALED_FOR_A_MACHINE,
     "write_back_connection": _SEALED_FOR_A_MACHINE,
     "connection_reconnect_required": _SEALED_FOR_A_MACHINE,
+    "get_connection_keeper_work": _SEALED_FOR_A_MACHINE,
+    "put_connection_reseal": _SEALED_FOR_A_MACHINE,
+    "post_connection_revoked": _SEALED_FOR_A_MACHINE,
     # A workspace's OAuth client for connections: the body carries the client
     # secret, which a tool call would put in a model's context; removing it
     # disconnects a whole workspace. Reading it (never the secret) stays a tool.

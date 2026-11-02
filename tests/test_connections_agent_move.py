@@ -174,3 +174,37 @@ def test_disconnecting_a_moved_agents_connection_is_recorded_in_the_apps_workspa
     services.disconnect(Connection.objects.get(pk=conn.pk), by=user)
     kinds = set(Event.objects.filter(kind="connections.disconnected").values_list("workspace_id", flat=True))
     assert kinds == {"dimagi", "x"}
+
+
+def test_moved_agent_loses_its_grants(django_capture_on_commit_callbacks):
+    """A grant is in force only while the grantee is in the app's workspace (spec §3):
+    moving the grantee out ends it. The dry run says so (never naming the lender or
+    the account); the move deletes the grant, records `grant_revoked`, and once it
+    commits drops the agent's boxes from the envelope."""
+    from apps.events.models import Event
+    from tests.fixtures.connections import ShareWorld
+
+    world = ShareWorld()
+    conn = world.shared(world.evas(), agents=[world.eva, world.echo])
+    assert ("device", world.echo_box.ecdh_jkt) in zk_seal_targets(conn)
+    x = _ws(world.person, "x")
+    p = move.plan(world.echo, x, by=world.person)
+    [stop] = [s for s in p.stops_working if s["kind"] == "connections_lent"]
+    assert "1 connection(s) lent to it" in stop["detail"] and "Salesforce" in stop["detail"]
+    assert "jj@dimagi.com" not in stop["detail"] and "eva" not in stop["detail"]
+    assert ConnectionGrant.objects.filter(agent=world.echo).exists()  # the dry run wrote nothing
+
+    with django_capture_on_commit_callbacks(execute=True):
+        move.move(world.echo, x, by=world.person)
+    assert not ConnectionGrant.objects.filter(agent=world.echo).exists()
+    assert ("device", world.echo_box.ecdh_jkt) not in zk_seal_targets(conn)
+    assert ("device", world.eva_box.ecdh_jkt) in zk_seal_targets(conn)
+    revoked = [e for e in Event.objects.filter(kind="connections.grant_revoked")
+               if e.payload.get("grantee") == "echo"]
+    assert revoked and {e.payload["during"] for e in revoked} == {"moved"}
+
+
+def zk_seal_targets(conn):
+    from apps.agents.credentials import zk_seal
+
+    return zk_seal.sealed_targets(Connection.objects.get(pk=conn.pk).sealed)

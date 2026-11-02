@@ -69,6 +69,7 @@ from urllib.parse import urlparse
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models import F, QuerySet
+from django.utils import timezone
 
 from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
@@ -163,7 +164,10 @@ def owner_keyset(owner_kind: str, owner, by) -> UserVaultKeyset:
 
 
 def connections_for(owner: Owner) -> QuerySet[Connection]:
-    return Connection.objects.filter(**_owner_filter(owner)).order_by("provider", "account_label", "pk")
+    """The owner's connections, as listed: never one being revoked (it left every
+    list when it was disconnected)."""
+    return (Connection.objects.filter(**_owner_filter(owner)).exclude(state=Connection.REVOKING)
+            .order_by("provider", "account_label", "pk"))
 
 
 def _configured(app: ConnectionApp | None, provider: str = "") -> providers.Provider:
@@ -188,7 +192,7 @@ def app_for(workspace, provider: str) -> ConnectionApp:
     provider not registered."""
     providers.get_class(provider)
     app = (ConnectionApp.objects.select_related("workspace")
-           .filter(workspace_id=_slug(workspace), provider=provider).first())
+           .filter(workspace_id=_slug(workspace), provider=provider, removed_at__isnull=True).first())
     _configured(app, provider)
     return app
 
@@ -210,7 +214,8 @@ def apps_for_person(user, provider: str) -> list[ConnectionApp]:
     if provider not in providers.CLASSES:
         return []
     rows = (ConnectionApp.objects.select_related("workspace")
-            .filter(provider=provider, workspace_id__in=readable_workspaces(user)).order_by("workspace_id"))
+            .filter(provider=provider, workspace_id__in=readable_workspaces(user), removed_at__isnull=True)
+            .order_by("workspace_id"))
     return [a for a in rows if providers.for_app(a).is_configured()]
 
 
@@ -292,6 +297,9 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
     app.client_id = client_id
     if client_secret:
         app.client_secret = client_secret
+    # Set up again after a removal: back in use, with the connections still being
+    # revoked through it (their client cannot change: `app_locked` above).
+    app.removed_at = None
     app.options = cleaned
     app.scopes = " ".join(s for s in cls.scope_choices if s in chosen)
     app.configured_by = by
@@ -300,32 +308,44 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
 
 
 def remove_app(app: ConnectionApp, *, by) -> None:
-    """Disconnect every connection made with `app` (each recorded as
-    `disconnected` by `by`), then delete the app.
+    """Remove `app`: hide it at once (`removed_at`: no new connect, not listed, not
+    set up), then disconnect every connection made with it (each recorded as
+    `disconnected` by `by`). Rows a cloud box holds are `revoking` and still need
+    the app's client to be revoked with, so the app stays (hidden) until they are
+    gone and the sweep (`keeper.sweep`) deletes it (R12); with none left it is
+    deleted here. Records `app_removed` once.
 
-    A connect that commits while this runs is caught too: the app row is locked
-    for the delete, and whatever connections it holds then are deleted with it
-    and recorded afterwards, outside the transaction."""
-    for conn in list(app.connections.select_related("app__workspace", "agent__workspace").order_by("pk")):
-        disconnect(conn, by=by)
-    subject = _app_subject(app)
-    title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
-    client_id, slug = app.client_id, app.workspace_id
-    late: list[tuple[Subject, list]] = []
+    `removed_at` is set under the app's lock first: a connect that completes after
+    that is refused (`complete` re-checks it under the same lock), and one that
+    committed before is among the rows disconnected next."""
     with transaction.atomic():
         locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk).first()
-        if locked is not None:
-            for conn in locked.connections.select_related("agent__workspace").order_by("pk"):
-                late.append((Subject.of(conn), _grantees(conn)))
-                conn.delete()
-            locked.delete()
-    for late_subject, grantees in late:
-        record(late_subject, "disconnected", by=by,
-               summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
-        for grantee in grantees:
-            record_grant_revoked(late_subject, grantee, by=by, during="disconnected")
-    record(subject, "app_removed", by=by, workspace=slug, client_id=client_id,
-           summary=f"{_who(by) or 'someone'} removed {title} from {slug}")
+        if locked is None:
+            return
+        newly = locked.removed_at is None
+        if newly:
+            locked.removed_at = timezone.now()
+            locked.save(update_fields=["removed_at", "updated_at"])
+    for conn in list(Connection.objects.filter(app_id=app.pk).exclude(state=Connection.REVOKING)
+                     .select_related("app__workspace", "agent__workspace").order_by("pk")):
+        disconnect(conn, by=by)
+    delete_removed_app(app)
+    if newly:
+        title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
+        record(_app_subject(app), "app_removed", by=by, workspace=app.workspace_id, client_id=app.client_id,
+               summary=f"{_who(by) or 'someone'} removed {title} from {app.workspace_id}")
+
+
+def delete_removed_app(app: ConnectionApp) -> bool:
+    """Delete `app` if it was removed and no connection made with it remains (R12).
+    Under the app's lock, so a disconnect that leaves a `revoking` row behind is
+    seen. True when it was deleted."""
+    with transaction.atomic():
+        locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk, removed_at__isnull=False).first()
+        if locked is None or Connection.objects.filter(app_id=app.pk).exists():
+            return False
+        locked.delete()
+    return True
 
 
 # ---- the audit trail and the log: one vocabulary ---------------------------------
@@ -333,8 +353,8 @@ def remove_app(app: ConnectionApp, *, by) -> None:
 # Verbs that are the owner's history: an Event for an agent's connection, a log
 # line for a person's. The rest are canopy's operational trouble: always a log line.
 AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_revoked", "token_issued",
-                     "refreshed", "lease_expired_unwritten", "reconnect_required", "app_configured",
-                     "app_removed"})
+                     "refreshed", "lease_expired_unwritten", "reconnect_required", "resealed", "revoked",
+                     "revoke_unconfirmed", "app_configured", "app_removed"})
 
 
 @dataclass(frozen=True)
@@ -586,11 +606,18 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         # (and either one, waiting on this lock, sees the new connection).
         changed = not ConnectionApp.objects.select_for_update().filter(
             pk=app.pk, client_id=parked["client_id"], removed_at__isnull=True).exists()
-        if not changed:
+        # The same account's row being revoked is never resurrected: replacing its
+        # envelope would orphan the refresh token its holder is about to revoke.
+        revoking = not changed and Connection.objects.select_for_update().filter(
+            **lookup, state=Connection.REVOKING).exists()
+        if not changed and not revoking:
             conn = _upsert_connection(lookup, defaults, seal)
-    if changed:
+    if changed or revoking:
         # Discarded outside the transaction: a network call never holds a row lock.
         _discard_grant(p, subject, token)
+        if revoking:
+            raise ConnectionError("revoking", f"That {p.title} account is still being disconnected; connect it "
+                                              "again once that finishes.")
         raise ConnectionError("bad_state", "that app has changed; start the connection again")
     record(Subject.of(conn), "connected", by=by,
            summary=f"{conn.owner_label} connected {p.title} as {conn.account_label}")
@@ -657,20 +684,59 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
 # ---- disconnecting -----------------------------------------------------------
 
 def disconnect(conn: Connection, *, by) -> None:
-    """Delete the row and record it. canopy-web holds no token, so it revokes
-    nothing at the provider itself."""
-    subject = Subject.of(conn)
-    grantees = _grantees(conn)
-    conn.delete()  # its grants go with it (CASCADE)
+    """Disconnect `conn`. canopy-web holds no token, so it revokes nothing at the
+    provider itself: a machine that holds it does (spec §4.5).
+
+    When a cloud box holds it (`recipients.revokers`; only cloud runners revoke),
+    the row becomes `revoking` at once: it leaves every list, is handed to no
+    machine, and its holders are told to revoke it (`keeper.work`) — at the provider
+    only when no other connection of that account through that app remains
+    (`revoke_at_provider`: revoking at Google ends every token of the account on the
+    client). The first holder to confirm deletes it (`keeper.confirm_revoked`); the
+    sweep deletes one nobody confirms. When no cloud box holds it (never shared, or
+    only laptops), nothing ever could revoke it, so it is deleted now and recorded
+    `revoke_unconfirmed` (R7): the provider's own idle expiry finishes it.
+
+    Records `disconnected` (in the app's workspace too, for a moved agent's) and
+    `grant_revoked` for every agent it was lent to. Disconnecting a row already
+    `revoking` changes nothing."""
+    with transaction.atomic():
+        row = (Connection.objects.select_for_update(of=("self",)).select_related("app__workspace", "agent__workspace")
+               .filter(pk=conn.pk).first())
+        if row is None or row.state == Connection.REVOKING:
+            return
+        subject = Subject.of(row)
+        grantees = _grantees(row)
+        held = rcpt.revokers(row)
+        if held:
+            row.state, row.revoking_since = Connection.REVOKING, timezone.now()
+            row.revoke_at_provider = not other_live_connections(row).exists()
+            # A lease in flight ends here: its write-back is refused (`revoking`).
+            row.lease_id, row.lease_holder, row.lease_expires_at = None, "", None
+            row.save(update_fields=["state", "revoking_since", "revoke_at_provider", "lease_id", "lease_holder",
+                                    "lease_expires_at", "updated_at"])
+        else:
+            row.delete()  # its grants go with it (CASCADE)
     summary = f"{subject.owner} disconnected {subject.provider} ({subject.account_label})"
     record(subject, "disconnected", by=by, summary=summary)
     # A moved agent's connection belongs to the app's workspace as much as the
     # agent's: the admins removing that app see it go too.
-    app_ws = conn.app.workspace
+    app_ws = row.app.workspace
     if subject.workspace is not None and subject.workspace.pk != app_ws.pk:
         record(dataclasses.replace(subject, workspace=app_ws), "disconnected", by=by, summary=summary)
     for grantee in grantees:
         record_grant_revoked(subject, grantee, by=by, during="disconnected")
+    if not held:
+        record(subject, "revoke_unconfirmed", by=by, reason="no_holder",
+               summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: no machine "
+                       "holds it to revoke it")
+
+
+def other_live_connections(conn: Connection) -> QuerySet[Connection]:
+    """Other connections of `conn`'s account through `conn`'s app that are not being
+    revoked: while one remains, revoking `conn` at the provider would end it too."""
+    return (Connection.objects.filter(app_id=conn.app_id, account_id=conn.account_id)
+            .exclude(pk=conn.pk).exclude(state=Connection.REVOKING))
 
 
 def _grantees(conn: Connection) -> list:

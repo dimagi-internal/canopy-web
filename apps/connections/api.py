@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -245,10 +245,13 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
 @router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")
 @gate("self", setting=True)
 def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> Status:
-    """Stop canopy holding this connection.
+    """Disconnect it: it leaves every list at once and is handed to no machine; a
+    cloud box that holds it revokes it at the provider and it is then deleted (at
+    once, when no cloud box holds it).
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
-    conn = get_object_or_404(Connection, pk=connection_id, user=request.user)
+    conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
+                             user=request.user)
     services.disconnect(conn, by=request.user)
     return Status(204, None)
 
@@ -269,7 +272,7 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     own = (services.connections_for(("agent", agent.pk))
            .select_related("connected_by", "agent", "app__workspace")
            .prefetch_related("grants__agent"))
-    granted = (Connection.objects.filter(grants__agent=agent)
+    granted = (Connection.objects.filter(grants__agent=agent).exclude(state=Connection.REVOKING)
                .select_related("connected_by", "agent", "app__workspace")
                .order_by("provider", "account_label", "pk").distinct())
     return ConnectionsOut(
@@ -289,7 +292,8 @@ def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: 
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
+    conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
+                             agent=agent)
     services.disconnect(conn, by=request.user)
     return Status(204, None)
 
@@ -443,7 +447,7 @@ def _connection_count(app: ConnectionApp | None) -> int:
         return 0
     # Annotated by the list (one query for every provider); a saved row counts its own.
     n = getattr(app, "n_connections", None)
-    return app.connections.count() if n is None else n
+    return app.connections.exclude(state=Connection.REVOKING).count() if n is None else n
 
 
 def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
@@ -484,8 +488,11 @@ def list_connection_apps(request: HttpRequest, workspace: str) -> ConnectionApps
     to register at the provider, and how many connections it holds. Workspace
     admins only."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
-    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by").filter(workspace=ws)
-            .annotate(n_connections=Count("connections"))}
+    # A removed app is hidden at once; it lingers only for its revoking rows' holders.
+    live = ~Q(connections__state=Connection.REVOKING)
+    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by")
+            .filter(workspace=ws, removed_at__isnull=True)
+            .annotate(n_connections=Count("connections", filter=live))}
     return ConnectionAppsOut(apps=[_app_out(request, ws.slug, c, rows.get(c.name))
                                    for c in providers.CLASSES.values()])
 
@@ -522,9 +529,10 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
                           summary="Remove a workspace's connection app")
 @gate("integrations", setting=True, step_up=True)
 def remove_connection_app(request: HttpRequest, workspace: str, provider: str) -> Status:
-    """Remove this workspace's OAuth client for `provider`. Every account
-    connected with it is disconnected — people's and agents' — and agents it was
-    shared with lose it. Removing an app that is
+    """Remove this workspace's OAuth client for `provider`: hidden at once. Every
+    account connected with it is disconnected — people's and agents' — and agents
+    it was shared with lose it; the app is deleted once the machines holding them
+    have revoked them (or seven days pass). Removing an app that is
     not set up is harmless. A workspace cannot be deleted while it has apps.
     From a browser this needs a fresh passkey check. Workspace admins only; not
     an MCP tool."""

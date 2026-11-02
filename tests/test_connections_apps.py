@@ -179,8 +179,9 @@ def test_remove_disconnects_every_connection_and_records(ws, user, eva, caplog):
     assert not ConnectionGrant.objects.exists() and not ConnectionApp.objects.filter(pk=app.pk).exists()
     assert Connection.objects.filter(pk=elsewhere.pk).exists()          # another workspace's app: untouched
     kinds = list(Event.objects.order_by("id").values_list("kind", flat=True))
+    # Never shared: no machine holds them to revoke, so they are deleted at once (R7).
     assert kinds == ["connections.app_configured", "connections.disconnected", "connections.grant_revoked",
-                     "connections.app_removed"]
+                     "connections.revoke_unconfirmed", "connections.app_removed"]
     gone = Event.objects.get(kind="connections.grant_revoked")      # echo's loss is on the record
     assert gone.payload["grantee"] == "echo" and gone.payload["by"] == "jj@dimagi.com"
     assert gone.payload["during"] == "disconnected"
@@ -478,6 +479,10 @@ def test_a_client_id_change_during_the_exchange_stores_nothing(ws, user):
 
 
 def test_remove_catches_a_connection_made_while_it_ran(ws, user, eva, monkeypatch):
+    """A connect refuses a removed app under its lock, so none commits after removal
+    starts; one that slipped by anyway is disconnected by the sweep, which then
+    deletes the app."""
+    from apps.connections import keeper
     app = _configure(ws, user)
     _stored({"agent": eva}, user, app=app)
     real = services.disconnect
@@ -489,20 +494,28 @@ def test_remove_catches_a_connection_made_while_it_ran(ws, user, eva, monkeypatc
     monkeypatch.setattr(services, "disconnect", racing)
     with FakeSF() as fake:
         services.remove_app(app, by=user)
+        assert ConnectionApp.objects.get().removed_at is not None
+        monkeypatch.setattr(services, "disconnect", real)
+        keeper.sweep()
     assert fake.calls == []
     assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
 
 
-def test_late_connections_are_recorded_as_disconnected_by_the_admin(ws, user, eva, monkeypatch, caplog):
+def test_late_connections_are_disconnected_by_the_sweep(ws, user, eva, monkeypatch, caplog):
+    from apps.connections import keeper
+
     caplog.set_level(logging.INFO, logger="apps.connections.services")
     app = _configure(ws, user)
-    monkeypatch.setattr(services, "disconnect", lambda conn, *, by: None)   # the snapshot "misses" them
+    real = services.disconnect
+    monkeypatch.setattr(services, "disconnect", lambda conn, *, by: None)   # removal "misses" them
     _stored({"user": user}, user, app=app)
     with FakeSF():
         services.remove_app(app, by=user)
+        monkeypatch.setattr(services, "disconnect", real)
+        assert keeper.sweep()["apps_deleted"] == 1
     lines = [services.parse_log_line(r.getMessage()) for r in caplog.records]
-    assert ("disconnected", f"user:{user.pk}", "jj@dimagi.com") in [
-        (k, p.get("owner"), p.get("by")) for k, p in lines]
+    assert ("disconnected", f"user:{user.pk}") in [(k, p.get("owner")) for k, p in lines]
+    assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
 
 
 def test_a_workspace_with_a_connection_app_cannot_be_deleted_from_under_it(user):

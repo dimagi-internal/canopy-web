@@ -184,6 +184,12 @@ def _revokers(jkts) -> list[str]:
         .values_list("ecdh_jkt", flat=True))
 
 
+def revokers(conn: Connection) -> list[str]:
+    """The machines holding `conn` that could revoke it (`_revokers`): an active cloud
+    box it is sealed to. None means nothing ever will: a disconnect deletes it at once."""
+    return _revokers(t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device")
+
+
 def _last_holder(kept: set[tuple[str, str]], dropped: set[tuple[str, str]]) -> tuple[str, str] | None:
     """The one dropped machine to keep so a revoke still has a holder: only when no
     kept recipient could revoke, and only a machine that could (`_revokers`). A

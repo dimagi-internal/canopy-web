@@ -143,6 +143,20 @@ def material(conn: Connection, device_key: RunnerDeviceKey, *, turn=None, runner
                         "This machine may use the connection but holds no copy yet: a machine that holds it "
                         "gives it one, or the owner does from Settings.")
 
+    out = material_fields(conn, device_key, pairs)
+    now = timezone.now()
+    Connection.objects.filter(pk=conn.pk).update(last_used_at=now)
+    _record_issued(conn, device_key, turn=turn, runner=runner)
+    return out
+
+
+def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None) -> dict:
+    """`ConnectionMaterialOut` for `conn` as `device_key`'s machine reads it, with no
+    admission check and no record: `material` (a machine about to use it) and the
+    keeper (`keeper.work`: a box that holds it, re-sealing or revoking) both answer it.
+    `recipients` and the endorsements are those of the statement in force
+    (`pairs`, default `recipients.device_reasons`)."""
+    pairs = rcpt.device_reasons(conn) if pairs is None else pairs
     devices, seen = [], set()
     for k, _ in pairs:
         if k.ecdh_jkt not in seen:
@@ -156,8 +170,7 @@ def material(conn: Connection, device_key: RunnerDeviceKey, *, turn=None, runner
     agents = {a.pk: a for _, a in pairs if a is not None}
     endorsements = [{**e, "agent_id": str(a.pk)} for a in agents.values() for e in zk_endorse.endorsements(a)
                     if e["kind"] == "device" and e["target"] in seen]
-    now = timezone.now()
-    out = {
+    return {
         "id": conn.pk, "provider": conn.provider, "workspace": conn.app.workspace_id, "binding": conn.binding,
         "account_id": conn.account_id, "account_label": conn.account_label,
         "sealed": conn.sealed, "sealed_sig": conn.sealed_sig, "sealed_digest": conn.sealed_digest,
@@ -167,13 +180,10 @@ def material(conn: Connection, device_key: RunnerDeviceKey, *, turn=None, runner
         "endorsements": endorsements, "recipients": recipients,
         "app": {"client_id": conn.app.client_id, "client_secret": conn.app.client_secret,
                 "options": dict(conn.app.options)},
-        "lease": _lease_view(conn, device_key, now),
+        "lease": _lease_view(conn, device_key, timezone.now()),
         "rotates_refresh_token": bool(getattr(providers.CLASSES.get(conn.provider), "rotates_refresh_token",
                                               False)),
     }
-    Connection.objects.filter(pk=conn.pk).update(last_used_at=now)
-    _record_issued(conn, device_key, turn=turn, runner=runner)
-    return out
 
 
 # ---- the lease ----------------------------------------------------------------------
@@ -240,7 +250,11 @@ def _check_lease(row: Connection, key: RunnerDeviceKey, lease_id) -> None:
 
 # ---- write-back ---------------------------------------------------------------------
 
-def _check_write(value, sig, *, name: str, allowed: set, keep: set, writer: RunnerDeviceKey, expect: str) -> None:
+def check_write(value, sig, *, name: str, allowed: set, keep: set, writer: RunnerDeviceKey, expect: str) -> None:
+    """One envelope a machine writes (a write-back, or a keeper's re-seal): well
+    formed, sealed only to `allowed` (422 `foreign_reader`), still to everyone in
+    `keep` (422 `zk_rewrap_required`), with writer MACs by `writer`'s ECDH key over
+    exactly the value `expect` names (422 `bad_writer_sig`)."""
     try:
         zk_seal.check_sealed_value(value, name)
     except ZkError as exc:
@@ -288,10 +302,10 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
         allowed = rcpt.targets(rcpt.recipients(row))
         keep = zk_seal.sealed_targets(row.sealed) & allowed
-        _check_write(access_sealed, access_sig, name=wire.ACCESS_NAME, allowed=allowed, keep=keep,
+        check_write(access_sealed, access_sig, name=wire.ACCESS_NAME, allowed=allowed, keep=keep,
                      writer=device_key, expect=vault_engine.value_digest(row.access_sealed))
         if sealed is not None:
-            _check_write(sealed, sealed_sig, name=wire.REFRESH_NAME, allowed=allowed, keep=keep,
+            check_write(sealed, sealed_sig, name=wire.REFRESH_NAME, allowed=allowed, keep=keep,
                          writer=device_key, expect=row.sealed_digest)
             row.sealed, row.sealed_sig, row.sealed_digest = sealed, sealed_sig, vault_engine.value_digest(sealed)
         row.access_sealed, row.access_sig, row.access_expires_at = access_sealed, access_sig, access_expires_at

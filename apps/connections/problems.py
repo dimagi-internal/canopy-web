@@ -22,6 +22,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "ambiguous": (409, "More than one account connected"),
     "insufficient_scope": (409, "Missing permissions"),
     "no_vault_key": (409, "No vault key"),
+    "revoking": (409, "Being disconnected"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),
 }
@@ -80,6 +81,9 @@ _WIRE_TITLES = {
     "lease_lost": "Refresh lease lost",
     "zk_rewrap_required": "Drops a machine that still holds it",
     "rotation_mismatch": "Rotated refresh token missing",
+    # A keeper's re-seal and a holder's revoke (`keeper`).
+    "zk_not_a_holder": "Not a holder",
+    "not_revoking": "Not being disconnected",
 }
 
 

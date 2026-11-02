@@ -10,15 +10,23 @@ the connections stay with their app, and the dry run names each one that stops
 working — with every agent it is shared with, which loses it too — so the admin
 can disconnect it and connect again in the destination. A connection the agent
 made in the destination before (it is moving back) starts working again.
-Grants TO this agent from other agents are untouched: they work while their
-owner stays in its app's workspace, wherever the grantee is.
+
+Grants TO this agent are in force only while it is in the lending connection's
+app's workspace (`recipients.grants_in_force`), so moving out of it ends them: the
+move deletes those grants and records `grant_revoked` (`during=moved`), and once
+the move commits prunes each such connection, so the agent's boxes stop holding a
+copy (`recipients.prune`). Moving back does not bring them back: the lender shares
+again. Grants of a connection made with the destination's apps are untouched.
 """
 from __future__ import annotations
 
+from django.db import transaction
+
 from apps.agents.move import Plan
 
-from . import providers
-from .models import Connection
+from . import providers, services
+from . import recipients as rcpt
+from .models import Connection, ConnectionGrant
 
 
 def _title(provider: str) -> str:
@@ -33,7 +41,35 @@ def _describe(conn: Connection) -> str:
     return _title(conn.provider) + (f", shared with {shared} agent(s)" if shared else "")
 
 
-def participant(p: Plan, apply: bool) -> None:  # noqa: ARG001 - nothing is written either way
+def participant(p: Plan, apply: bool) -> None:
+    _own(p)
+    _lent(p, apply)
+
+
+def _lent(p: Plan, apply: bool) -> None:
+    """Grants to the agent of connections made with apps outside the destination end."""
+    agent = p.agent
+    grants = list(ConnectionGrant.objects.filter(agent=agent).exclude(connection__app__workspace_id=p.dest.slug)
+                  .select_related("connection__app", "connection__agent__workspace", "connection__user")
+                  .order_by("connection__provider", "pk"))
+    if not grants:
+        return
+    # Never the lender or the account: this text is stored in the destination's Event.
+    p.breaks("connections_lent", f"{len(grants)} connection(s) lent to it stop: "
+                                 f"{'; '.join(_title(g.connection.provider) for g in grants)}. Their owners "
+                                 f"share them again in '{p.dest.slug}' if they should")
+    if not apply:
+        return
+    conns = [g.connection for g in grants]
+    ConnectionGrant.objects.filter(pk__in=[g.pk for g in grants]).delete()
+    for conn in conns:
+        services.record_grant_revoked(services.Subject.of(conn), agent, by=p.by, during="moved")
+    # After the move commits, when the agent is in its new workspace: its boxes
+    # no longer qualify, and are dropped from each envelope.
+    transaction.on_commit(lambda: [rcpt.prune(c) for c in conns])
+
+
+def _own(p: Plan) -> None:
     agent, source, dest = p.agent, p.source.slug, p.dest.slug
     rows = (Connection.objects.filter(agent=agent).select_related("app")
             .prefetch_related("grants__agent").order_by("provider", "account_label", "pk"))

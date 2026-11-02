@@ -324,3 +324,35 @@ class ReconnectRequiredIn(StrictModel):
     lease_id: uuid.UUID
     error: str = Field(max_length=100, description="The provider's error code; only `invalid_grant` marks the "
                                                    "connection `needs_reconnect`.")
+
+
+class ConnectionKeeperWorkOut(ConnectionMaterialOut):
+    waiting: list[str] = Field(default_factory=list, description="ECDH thumbprints of the machines the statement "
+                                                                 "allows that hold no copy yet: re-seal for them.")
+    revoking: bool = Field(description="Being disconnected: revoke it and confirm at `revoked_path`.")
+    revoke_at_provider: bool = Field(description="Revoke at the provider too; false while another connection of "
+                                                 "the same account through the same app remains.")
+    reseal_path: str
+    revoked_path: str
+
+
+class ConnectionKeeperOut(StrictModel):
+    connections: list[ConnectionKeeperWorkOut]
+
+
+class ResealIn(StrictModel):
+    sealed: str = Field(description="The same refresh plaintext, re-sealed to the owner and allowed machines.")
+    sealed_sig: dict[str, Any] | None = Field(description="Its writer MACs, by this box's ECDH key.")
+    access_sealed: str = Field(default="", description="The access envelope re-sealed likewise; empty only "
+                                                       "when none is stored.")
+    access_sig: dict[str, Any] | None = None
+    expect: str = Field(max_length=64, description="`sealed_digest` as read.")
+
+
+class ResealOut(StrictModel):
+    machines: list[str] = Field(description="The machines it is now sealed to.")
+
+
+class RevokedIn(StrictModel):
+    revoked: bool = Field(description="Revoked at the provider (or told not to); false when that failed.")
+    error: str = Field(default="", max_length=100, description="The provider's error code, when it failed.")

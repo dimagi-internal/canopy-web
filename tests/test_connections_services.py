@@ -318,7 +318,8 @@ def test_an_agents_connection_is_evented(user, eva, echo):
         services.disconnect(conn, by=user)
 
     kinds = list(Event.objects.order_by("id").values_list("kind", flat=True))
-    assert kinds == ["connections.disconnected", "connections.grant_revoked"]
+    # Never shared, so no machine could revoke it: deleted at once (R7).
+    assert kinds == ["connections.disconnected", "connections.grant_revoked", "connections.revoke_unconfirmed"]
     for ev in Event.objects.all():
         assert ev.workspace_id == eva.workspace_id
         assert ev.payload["connection"] == cid
@@ -336,7 +337,7 @@ def test_person_connection_is_logged_not_evented(user, caplog):
 
     assert not Event.objects.exists()
     lines = [r.getMessage() for r in caplog.records if r.name == "apps.connections.services"]
-    assert [m.split(" ", 1)[0] for m in lines] == ["connections.disconnected"]
+    assert [m.split(" ", 1)[0] for m in lines] == ["connections.disconnected", "connections.revoke_unconfirmed"]
     assert "provider=salesforce" in lines[0] and f"owner=user:{user.pk}" in lines[0]
     assert "account_label=jj@dimagi.com" in lines[0] and "by=jj@dimagi.com" in lines[0]
 

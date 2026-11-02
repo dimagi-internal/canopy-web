@@ -47,6 +47,7 @@ VOCABULARY = {
     "grant_revoked": logging.INFO, "token_issued": logging.INFO,
     "reconnect_required": logging.WARNING, "provider_error": logging.WARNING,
     "revoke_failed": logging.WARNING, "app_configured": logging.INFO, "app_removed": logging.INFO,
+    "resealed": logging.INFO, "revoked": logging.INFO, "revoke_unconfirmed": logging.INFO,
 }
 BASE_KEYS = ("connection", "provider", "owner", "account_label", "by")
 
@@ -112,14 +113,14 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     events = list(Event.objects.filter(source=services.EVENT_SOURCE).order_by("id"))
     assert [e.kind for e in events] == [
         "connections.connected", "connections.granted", "connections.shared", "connections.grant_revoked",
-        "connections.shared", "connections.disconnected"]
+        "connections.shared", "connections.disconnected", "connections.revoke_unconfirmed"]
     for e in events:
         assert e.level == "info" and e.payload["owner"] == "agent:eva"
         assert all(k in e.payload for k in BASE_KEYS)
 
     lines = [r for r in caplog.records if r.getMessage().startswith("connections.")]
     kinds = [r.getMessage().split(" ", 1)[0].removeprefix("connections.") for r in lines]
-    assert kinds == ["provider_error", "provider_error", "connected", "disconnected"]
+    assert kinds == ["provider_error", "provider_error", "connected", "disconnected", "revoke_unconfirmed"]
     parsed = [services.parse_log_line(r.getMessage()) for r in lines]
     assert [p[1].get("during") for p in parsed[:2]] == ["authorize", "connect"]
     assert [p[1].get("error") for p in parsed[:2]] == ["server_error", "no_refresh_token"]
