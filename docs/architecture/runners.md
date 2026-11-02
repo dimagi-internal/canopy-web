@@ -870,6 +870,13 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
   (`repo_slug` unique → agent; edited in Django admin, listed as
   `identity_for_repos` on `GET /api/agents/{slug}/github`), in which case the turn
   runs as that agent under the same rule.
+- **Which agent's token a session uses is shown, not inferred.** Session info → Where it
+  came from → *GitHub identity* (`GET /api/canopy-sessions/{id}/info`, `github_identity`;
+  `delegations.session_identity`, the one decision `turn_agent` also takes) names the agent
+  and the reason: `agent` (an agent chat runs as its own agent), `repo_default` (an agentless
+  repo chat, run as the agent its repo's `RepoIdentity` names) or `none` (refused a token).
+  A workspace project (`AgentProject`) has a lead agent but no default agent of its own: the
+  identity comes from the chat's agent or the repo's `RepoIdentity`, never from the project.
 - **canopy-web's MCP sign-in is per turn.** Claude Code remembers a 401 from an
   MCP server in `mcp-needs-auth-cache.json` and skips it for ~15 minutes in every
   session sharing that file — on a box, every login's copy is a symlink to the

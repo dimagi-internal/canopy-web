@@ -406,17 +406,26 @@ def turn_agent(turn) -> Agent | None:
     if turn.agent_id:
         return turn.agent
     cs = getattr(turn, "chat_session", None)
-    if cs is not None and cs.agent_id:
-        return cs.agent
     # A project chat's repo is on its SESSION: a chat turn's own `project` is
     # always "" (`turn_targets_agent_xor_project_xor_session`), so reading
     # `turn.project` alone refused every project chat a GitHub identity.
-    repo = turn.project or (cs.project if cs is not None else "")
+    return session_identity(cs, repo=turn.project)["agent"]
+
+
+def session_identity(session, *, repo: str = "") -> dict:
+    """Whose GitHub identity a chat session's turns borrow, and why:
+    `{agent, source, repo}` with `source` one of `agent` (an agent chat runs as its
+    own agent), `repo_default` (an agentless repo chat, run as the agent that
+    repo's `RepoIdentity` names) or `none` (neither — its turns are refused a
+    token). The one decision behind `turn_agent` and the Session info panel."""
+    if session is not None and session.agent_id:
+        return {"agent": session.agent, "source": "agent", "repo": ""}
+    repo = repo or (session.project if session is not None else "")
     if repo:
         row = RepoIdentity.objects.select_related("agent").filter(repo_slug=repo).first()
         if row is not None:
-            return row.agent
-    return None
+            return {"agent": row.agent, "source": "repo_default", "repo": repo}
+    return {"agent": None, "source": "none", "repo": repo}
 
 
 def requested_by(turn) -> str:

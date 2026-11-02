@@ -7,7 +7,7 @@ vi.mock('@/api/chat', () => ({
   getSessionInfo: (...a: unknown[]) => getSessionInfo(...a),
 }))
 
-const { SessionInfoPanel, credentialText, originText } = await import('./SessionInfoPanel')
+const { SessionInfoPanel, credentialText, originText, githubIdentityText } = await import('./SessionInfoPanel')
 
 const TURN = {
   id: 't-1',
@@ -76,6 +76,7 @@ const INFO = {
   turn_count: 1,
   turns_limit: 50,
   participant_count: 1,
+  github_identity: { agent: 'hal', source: 'agent', repo: '' },
   message_count: 12,
 }
 
@@ -157,5 +158,15 @@ describe('originText', () => {
     expect(originText({ origin: 'web', turn_origin: 'slack' })).toBe('web (opened from Slack)')
     expect(originText({ origin: 'web', turn_origin: 'email' })).toBe('web (opened from email)')
     expect(originText({ origin: 'web', turn_origin: 'canopy_web_chat' })).toBe('web (started in canopy)')
+  })
+})
+
+describe('githubIdentityText', () => {
+  it('says whose token it is and why', () => {
+    expect(githubIdentityText({ agent: 'hal', source: 'agent', repo: '' })).toBe("hal — this chat's own agent")
+    expect(githubIdentityText({ agent: 'hal', source: 'repo_default', repo: 'canopy-web' }))
+      .toBe('hal — the default agent for the canopy-web repo')
+    expect(githubIdentityText({ agent: '', source: 'none', repo: 'canopy-web' }))
+      .toContain('canopy-web has no default agent')
   })
 })

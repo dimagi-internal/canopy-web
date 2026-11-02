@@ -42676,6 +42676,28 @@ export interface components {
             readonly sealed_key?: components["schemas"]["SealedKeyOut"] | null;
         };
         /**
+         * GithubIdentityOut
+         * @description Whose GitHub identity this session's turns borrow (`delegations.session_identity`).
+         */
+        readonly GithubIdentityOut: {
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Source
+             * @default none
+             * @enum {string}
+             */
+            readonly source: "agent" | "repo_default" | "none";
+            /**
+             * Repo
+             * @default
+             */
+            readonly repo: string;
+        };
+        /**
          * SessionBindingInfoOut
          * @description The runner side of a session, for Session info: where it lives right now
          *     and how the runner names it. Every field is the binding's own, unprocessed.
@@ -42797,6 +42819,14 @@ export interface components {
              * @default 0
              */
             readonly message_count: number;
+            /**
+             * @default {
+             *       "agent": "",
+             *       "source": "none",
+             *       "repo": ""
+             *     }
+             */
+            readonly github_identity: components["schemas"]["GithubIdentityOut"];
         };
         /**
          * SlashCommandOut
