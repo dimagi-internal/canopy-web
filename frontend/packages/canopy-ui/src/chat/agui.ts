@@ -167,6 +167,8 @@ function decode(pendingCalls: PendingCalls, frame: AguiFrame): WsEvent[] {
             // The transcript record's provenance — the `content.record` a
             // history row carries — so a compaction summary is known live.
             ...(m.record ? { record: m.record as Record<string, unknown> } : {}),
+            // The send's nonce, which ties this echo to the sender's own line.
+            ...(m.client_id ? { client_id: str(m.client_id) } : {}),
           },
         },
       ];

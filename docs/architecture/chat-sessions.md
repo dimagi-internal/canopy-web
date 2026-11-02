@@ -251,7 +251,20 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   (Slack) passes `()` explicitly.
 - **A send only enqueues.** `send.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
-  `client_id` so the sender's optimistic row dedupes against the queued entry.
+  `client_id` so the sender's optimistic row dedupes against the queued entry. A
+  DONE send stays listed (`delivering`) for `DONE_LANDING_GRACE` while no person's
+  line has been stored since it was sent, so a reconnect always finds it in this
+  list or in `ended_sends`.
+- **The echo of your line is matched by its `client_id`.** The stored row keeps the
+  send's nonce and the live `chat.user_message` carries it (in the AG-UI chunk's
+  metadata too); the sender's page matches it exactly, falls back to words only for
+  a line that has none and only against a line still waiting for its echo, and
+  places the row by its ordinal (`sessionReducer`).
+- **The open page checks itself against the server.** After each turn ends, and on
+  coming back to a tab hidden a minute or more, `ChatPage`'s `useTailCheck` reads
+  `GET /{id}` and compares it with what it holds (`canopy-ui/chat/tailDivergence`);
+  on a difference it applies the server's rows (`resyncTail`) and records a
+  `web.chat` / `chat.diverged` event (ids only).
 - **A send that never lands is still shown.** `send.ended_sends` (wire key
   `cancelled`, in the snapshot and `session.queued`) lists every send whose turn
   ended without its row reaching the transcript, each with `state` (its final

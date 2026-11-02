@@ -288,6 +288,31 @@ def test_a_done_send_whose_row_never_landed_is_listed_after_the_grace(ctx):
     assert [e["state"] for e in session_send.ended_sends(s)] == [Turn.DONE]
 
 
+def test_a_finished_send_is_still_on_its_way_until_its_line_lands(ctx):
+    """Between its turn's end and its line landing, a send is in one list or the
+    other — never in neither, which a reconnecting page read as "gone"."""
+    s = _transcript_sourced(_session(ctx, ctx.cloud, key="uuid-8"))
+    Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext="earlier")
+    _m, t = session_send.send_message(session=s, text="are we done?", user=ctx.user, client_id="c8")
+    Turn.objects.filter(pk=t.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    [entry] = session_send.queued_messages(s)
+    assert (entry["client_id"], entry["state"]) == ("c8", "delivering")
+
+    Message.objects.create(session=s, turn_index=64, role=Message.USER, plaintext="are we done?",
+                           source_turn_id=t.pk)
+    assert session_send.queued_messages(s) == []
+
+
+def test_a_rebuilt_history_does_not_hold_finished_sends_on_their_way(ctx):
+    """A reset's rows carry no turn ids, so a finished send's missing one is no
+    sign it is still coming."""
+    s = _transcript_sourced(_session(ctx, ctx.cloud, key="uuid-9"))
+    _m, t = session_send.send_message(session=s, text="before the reset", user=ctx.user, client_id="c9")
+    Turn.objects.filter(pk=t.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    Message.objects.create(session=s, turn_index=64, role=Message.USER, plaintext="before the reset")
+    assert session_send.queued_messages(s) == []
+
+
 # --- 5. archive ---------------------------------------------------------------
 
 def test_archive_cancels_open_turns_and_survives_the_report(ctx):

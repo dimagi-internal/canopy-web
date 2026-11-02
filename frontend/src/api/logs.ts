@@ -22,3 +22,11 @@ export async function listMcpCalls(limit = 100, failed = false): Promise<McpCall
   const data = unwrap(res, "Failed to load MCP calls");
   return Array.from(data.items);
 }
+
+export type EventIn = components["schemas"]["EventIn"];
+
+/** Record events in the workspace's log (`POST /api/events/`), scoped by the URL. */
+export async function recordEvents(items: EventIn[]): Promise<void> {
+  const res = await apiV2.POST("/api/events/", { body: { items } });
+  unwrap(res, "Failed to record the event");
+}
