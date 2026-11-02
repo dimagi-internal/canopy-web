@@ -26,7 +26,7 @@ ROUND_TRIP_FRAMES = [
               "usage": {"context_tokens": 124005, "model": "claude-opus-5-5"}}},
     {"event": "chat.user_message",
      "data": {"message_id": "u1", "turn_index": 3, "plaintext": "hi there",
-              "author": {"name": "Jon", "user_id": 7}}},
+              "author": {"name": "Jon", "user_id": 7}, "client_id": "c-41"}},
     {"event": "chat.tool_use",
      "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 5,
               "block": {"name": "list_tasks", "input": {"limit": 5}}}},

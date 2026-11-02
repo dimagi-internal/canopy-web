@@ -222,6 +222,35 @@ test.describe('chat with a runner', () => {
     expect(live).toEqual(await rows())
   })
 
+  test('a dropped connection while your line is on its way keeps it, once, above its reply', async ({ page, context }) => {
+    const id = await newSession(page)
+    await page.goto(sessionUrl(id))
+    await expect(page.getByTestId('composer')).toBeVisible()
+    await sendFromComposer(page, 'yes')
+    await expect(transcript(page).getByText('echo: yes')).toBeVisible({ timeout: 20_000 })
+
+    // The same words again, and the connection drops while the agent works on them.
+    await sendFromComposer(page, 'e2e:slow 4')
+    await context.setOffline(true)
+    await page.waitForTimeout(1500)
+    await context.setOffline(false)
+    await expect(transcript(page).getByText('done after 4 tool calls')).toBeVisible({ timeout: 30_000 })
+    await sendFromComposer(page, 'yes')
+    await expect(transcript(page).getByText('echo: yes')).toHaveCount(2, { timeout: 20_000 })
+
+    await expect(transcript(page).getByText('e2e:slow 4', { exact: true })).toHaveCount(1)
+    await expect(transcript(page).getByText('yes', { exact: true })).toHaveCount(2)
+    const text = await transcript(page).innerText()
+    expect(text.indexOf('e2e:slow 4')).toBeLessThan(text.indexOf('done after 4 tool calls'))
+
+    const rows = () => page.$$eval('[data-testid="message-row"]',
+      (els) => els.map((e) => `${e.getAttribute('data-role')}:${(e as HTMLElement).innerText.trim().slice(0, 40)}`))
+    const live = await rows()
+    await page.reload()
+    await expect(transcript(page).getByText('done after 4 tool calls')).toBeVisible()
+    await expect.poll(rows).toEqual(live)
+  })
+
   test('a send from another tab shows once in both', async ({ page, context }) => {
     const id = await newSession(page)
     await page.goto(sessionUrl(id))

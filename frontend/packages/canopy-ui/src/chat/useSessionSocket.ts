@@ -154,6 +154,9 @@ export interface UseSessionSocketResult {
    *  whether the server holds anything older still (`false` after loading
    *  everything); it is kept across reconnects with the rows. */
   prependMessages: (older: Message[], opts?: { hasMoreBefore?: boolean }) => void;
+  /** Apply the server's tail (`GET /{id}`) as a reconnect snapshot would be, for
+   *  a host that found the page differing from it (`tailDivergence`). */
+  resyncTail: (rows: Message[], meta: { hasMoreBefore?: boolean; oldestLoadedTurnIndex?: number | null }) => void;
   /** The HOST sent a message for this session over HTTP rather than through
    *  this socket (the embedded widget's first message, before a socket exists;
    *  `ChatPage`'s `/share` command): show it, as delivered, and wait for a
@@ -514,6 +517,26 @@ export function useSessionSocket({
     });
   }, []);
 
+  const resyncTail = useCallback(
+    (rows: Message[], meta: { hasMoreBefore?: boolean; oldestLoadedTurnIndex?: number | null }) => {
+      // The server's tail, applied as a snapshot would be: it replaces the rows
+      // it covers, keeps older history this tab loaded and your lines still on
+      // their way, and leaves everything else (drafts, status, presence) alone.
+      setState((prev) =>
+        sessionReducer(prev, {
+          event: "session.state",
+          data: {
+            ...prev,
+            messages: rows,
+            ...(meta.hasMoreBefore !== undefined ? { has_more_before: meta.hasMoreBefore } : {}),
+            ...(meta.oldestLoadedTurnIndex !== undefined ? { oldest_loaded_turn_index: meta.oldestLoadedTurnIndex } : {}),
+          },
+        }),
+      );
+    },
+    [],
+  );
+
   const exposedState = useMemo(
     () => (sendOverHttp ? { ...state, active_draft: drafts.localDraft } : state),
     [sendOverHttp, state, drafts.localDraft],
@@ -524,6 +547,7 @@ export function useSessionSocket({
     connected,
     synced,
     awaitingReply,
+    resyncTail,
     sendChat: sendOverHttp ? receipts.sendChatOverHttp : receipts.sendChat,
     stopChat,
     unqueueChat,
