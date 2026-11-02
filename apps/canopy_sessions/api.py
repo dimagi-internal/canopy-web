@@ -97,7 +97,7 @@ def _aware(value: dt.datetime | None) -> dt.datetime | None:
     """A query-string datetime, read as UTC when it names no zone."""
     if value is None or timezone.is_aware(value):
         return value
-    return timezone.make_aware(value, dt.UTC)
+    return timezone.make_aware(value, dt.timezone.utc)
 
 
 def _filtered_sessions(
@@ -254,11 +254,11 @@ def _in_it_or_403(request: HttpRequest, session) -> None:
 # `/my-keys`, `/transfer-all`, …) comes before `api_read`, whose `/{session_id}`
 # would otherwise take that segment as a session id.
 from . import (  # noqa: E402,F401
-    api_attachments,
     api_lifecycle,
-    api_page,
     api_people,
-    api_read,
-    api_secrets,
     api_transfer,
+    api_read,
+    api_attachments,
+    api_page,
+    api_secrets,
 )
