@@ -338,7 +338,15 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
         "turns_limit": SESSION_INFO_TURNS,
         "participant_count": session.participants.count(),
         "message_count": session.messages.count(),
+        "github_identity": _github_identity(session),
     }
+
+
+def _github_identity(session) -> dict:
+    from apps.agents.credentials import delegations
+
+    who = delegations.session_identity(session)
+    return {"agent": who["agent"].slug if who["agent"] else "", "source": who["source"], "repo": who["repo"]}
 
 
 @router.get("/{session_id}/slash-commands", response=list[SlashCommandOut],
