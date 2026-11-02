@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from apps.agents import roles
 from apps.agents.credentials import authority
 from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
@@ -680,8 +681,6 @@ def _grant(turn, agent) -> dict:
 def _access_help(turn, agent, rel: str) -> dict | None:
     if agent is None or not turn.capability:
         return None
-    from apps.agents import roles
-
     grant = _grant(turn, agent)
     return {
         "your_role": grant.get("role") or rel,
