@@ -14,6 +14,8 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/vault', () => api)
 const passkeysApi = vi.hoisted(() => ({ registerThisDevice: vi.fn(), listPasskeys: vi.fn(), deletePasskey: vi.fn() }))
 vi.mock('@/api/passkeys', () => passkeysApi)
+const chat = vi.hoisted(() => ({ myKeyCopies: vi.fn(), putMyKeyCopies: vi.fn() }))
+vi.mock('@/api/chat', async (orig) => ({ ...(await orig<typeof import('@/api/chat')>()), ...chat }))
 const prf = vi.hoisted(() => ({ assertWithPrf: vi.fn(), browserSupportsPrf: vi.fn() }))
 vi.mock('@/vault/prf', async (orig) => ({ ...(await orig<typeof import('./prf')>()), ...prf }))
 
@@ -117,6 +119,47 @@ describe('Set up vault key', () => {
 async function person() {
   return zk.generateKeyPair()
 }
+
+describe('Start over with a new key', () => {
+  // Someone who lost the passphrase + Secret Key: the only seal is a passphrase one, so the old key cannot open.
+  const lockedOut = () => keysetOut({
+    exists: true, public_jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }, seals: [{ alg: '2skd' }],
+    passkeys: [{ credential_id: 'cred-1', label: 'mac', prf_enabled: true, sealed: false }] })
+  const copy = { session_id: 's-1', conversation: 'c-1', agent_name: 'Labs Data', started_at: '2026-10-20T10:00:00Z' }
+
+  it('offers to start over WITHOUT private conversations, and never asks to unlock the old key', async () => {
+    api.getKeyset.mockResolvedValue(lockedOut())
+    chat.myKeyCopies.mockResolvedValue([copy])
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
+    api.putKeyset.mockImplementation(async (b) => keysetOut({ exists: true, ...b }))
+    render(<VaultKeyPanel />)
+    fireEvent.click(await screen.findByTestId('vault-key-replace'))
+    const choice = await screen.findByTestId('vault-start-over-choice')
+    expect(choice.textContent).toContain('1 private conversation')
+    expect(api.putKeyset).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('vault-start-over-without'))
+    await waitFor(() => expect(api.putKeyset).toHaveBeenCalled())
+    expect(api.putKeyset.mock.calls[0][0].replace).toBe(true)
+    // No unlock prompt, no passphrase attempt, and nothing re-wrapped to the new key.
+    expect(screen.queryByTestId('vault-unlock')).toBeNull()
+    expect(chat.putMyKeyCopies).not.toHaveBeenCalled()
+    const notice = await screen.findByTestId('vault-key-notice')
+    expect(notice.textContent).toContain('not carried over')
+    expect(notice.textContent).toContain('with Labs Data')
+  })
+
+  it('with no private conversations it is the old single confirm, and does not show the choice', async () => {
+    api.getKeyset.mockResolvedValue(lockedOut())
+    chat.myKeyCopies.mockResolvedValue([])
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
+    api.putKeyset.mockImplementation(async (b) => keysetOut({ exists: true, ...b }))
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    render(<VaultKeyPanel />)
+    fireEvent.click(await screen.findByTestId('vault-key-replace'))
+    await waitFor(() => expect(api.putKeyset).toHaveBeenCalled())
+    expect(screen.queryByTestId('vault-start-over-choice')).toBeNull()
+  })
+})
 
 describe('An agent page: nothing to set up by hand', () => {
   it('shows a born agent (no key of its own yet) as private, with no setup button', async () => {
