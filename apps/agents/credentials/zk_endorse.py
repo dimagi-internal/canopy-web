@@ -34,18 +34,23 @@ def endorse_msg(agent_id, kind: str, target: str, key_jkt: str) -> str:
     return f"canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
 
 
-def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser_jwk: dict) -> bool:
-    """Is `sig` the endorser's §7 signature over this (agent, kind, target, key)?"""
+def verify_p1363(msg: bytes, sig: str, signer_jwk: dict) -> bool:
+    """Is `sig` (b64u IEEE P1363 r||s, as WebCrypto signs) the signer's ECDSA
+    P-256/SHA-256 signature over `msg`? Never raises."""
     try:
         raw = b64u_bytes(sig, "sig")
         if len(raw) != 64:
             return False
         der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
-        zk.public_key(endorser_jwk).verify(der, endorse_msg(agent_id, kind, target, key_jkt).encode(),
-                                         ec.ECDSA(hashes.SHA256()))
-    except (InvalidSignature, ValueError, ZkError):
+        zk.public_key(signer_jwk).verify(der, msg, ec.ECDSA(hashes.SHA256()))
+    except (InvalidSignature, ValueError, TypeError, AttributeError, ZkError):
         return False
     return True
+
+
+def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser_jwk: dict) -> bool:
+    """Is `sig` the endorser's §7 signature over this (agent, kind, target, key)?"""
+    return verify_p1363(endorse_msg(agent_id, kind, target, key_jkt).encode(), sig, endorser_jwk)
 
 
 def recipients(agent) -> list[dict]:
