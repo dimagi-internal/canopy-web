@@ -715,8 +715,6 @@ class AgentCredentialAlert(models.Model):
 
     NO_TURN, UNDECLARED, BURST, DEVICE_PROOF = "no-turn", "undeclared-ref", "burst", "device-proof"
     ZK_WRAP_MISSING = "zk-wrap-missing"
-    #: A delegated GitHub token is about to expire, or has (`credentials/github_expiry.py`).
-    GITHUB_EXPIRY = "github-expiry"
     #: A NO_TURN read whose caller labelled it a verification check. Its own kind so
     #: the hourly debounce of one never swallows the other: a labelled check cannot
     #: use up the hour's alert for an unlabelled read after it.
@@ -728,7 +726,6 @@ class AgentCredentialAlert(models.Model):
         (BURST, "Burst of reads"),
         (DEVICE_PROOF, "Resolve refused: bad or missing device proof"),
         (ZK_WRAP_MISSING, "Resolve refused: the device holds no vault-key wrap"),
-        (GITHUB_EXPIRY, "Its GitHub token expires soon, or has expired"),
     ]
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credential_alerts")

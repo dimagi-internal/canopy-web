@@ -27,7 +27,6 @@ class AgentsConfig(AppConfig):
         post_save.connect(_prune_shares, sender=Workspace, dispatch_uid="agents.prune_shares")
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
-        ticks.register("agents.github_expiry", _github_expiry, 3600)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
 
 
@@ -49,12 +48,6 @@ def _zk_notify() -> None:
     from .credentials import zk_notify
 
     zk_notify.maybe_sweep()
-
-
-def _github_expiry() -> None:
-    from .credentials import github_expiry  # noqa: PLC0415 — a tick: imported once the app is ready
-
-    github_expiry.tick()
 
 
 def _pat_rotation() -> None:
