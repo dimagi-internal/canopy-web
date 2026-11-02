@@ -402,23 +402,13 @@ def context_lines(context: dict) -> list[str]:
     return lines
 
 
-def recipients(agent, alert=None) -> list:
-    """The agent's owner; with none, its explicit admins (still members). An expiring GitHub
-    token also goes to the person who lent it: it is theirs to replace, and they may not own
-    the agent."""
+def recipients(agent) -> list:
+    """The agent's owner; with none, its explicit admins (still members)."""
     if agent.owner_id and agent.owner.is_active:
-        people = [agent.owner]
-    else:
-        people = [g.user for g in AgentAdmin.objects.filter(agent=agent).select_related("user")
-                  if g.user.is_active and agent.is_admin(g.user)]
-    if alert is not None and alert.kind == AgentCredentialAlert.GITHUB_EXPIRY:
-        from . import delegations  # noqa: PLC0415 — cycle: delegations -> vault_alerts
+        return [agent.owner]
 
-        entry = delegations.github_entry(agent)
-        lender = getattr(entry, "delegated_by", None) if entry is not None else None
-        if lender is not None and lender.is_active and lender not in people:
-            people.append(lender)
-    return people
+    return [g.user for g in AgentAdmin.objects.filter(agent=agent).select_related("user")
+            if g.user.is_active and agent.is_admin(g.user)]
 
 
 #: Where each kind's action is: the Security tab's section that holds it, not the top of
@@ -428,22 +418,15 @@ def recipients(agent, alert=None) -> list:
 _ACT_AT = {"device-proof": ("cred-device-keys", "Review {slug}\u2019s approved machines"),
            "zk-wrap-missing": ("cred-device-keys", "Review {slug}\u2019s approved machines")}
 _DEFAULT_ACT = ("cred-alerts", "See {slug}\u2019s vault alerts and credential read history")
-#: A kind whose action is not in the Security tab: a path under the agent instead.
-_ACT_PATH = {"github-expiry": ("/agents/{slug}/settings",
-                               "Replace {slug}\u2019s GitHub token (Settings \u2192 External accounts \u2192 GitHub)")}
 
 
 def _link(agent, kind: str = "") -> str:
 
-    if kind in _ACT_PATH:
-        return wslinks.scoped_url(agent.workspace, _ACT_PATH[kind][0].format(slug=agent.slug))
     anchor, _ = _ACT_AT.get(kind, _DEFAULT_ACT)
     return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings/security#{anchor}")
 
 
 def _link_label(agent, kind: str) -> str:
-    if kind in _ACT_PATH:
-        return _ACT_PATH[kind][1].format(slug=agent.slug)
     return _ACT_AT.get(kind, _DEFAULT_ACT)[1].format(slug=agent.slug)
 
 
@@ -485,13 +468,6 @@ _WHY = {
                             "the turn above or the runner is not yours. Every alert like "
                             "this, with each repeat and the turn it came from, is at the "
                             "second link below."),
-    "github-expiry": ("This is the GitHub token that gives the agent its identity on GitHub: "
-                      "its pushes and pull requests, and every turn that opens one. GitHub ends "
-                      "a fine-grained token on its expiry date and nothing renews it for you. "
-                      "Once it has expired, the agent cannot push or open a PR from a turn until "
-                      "a new token is lent: whoever lent it (or an admin) makes a new "
-                      "fine-grained token on GitHub for the agent's repo (read and write on "
-                      "Contents and Pull requests) and pastes it at the link below."),
     "zk-wrap-missing": ("Nothing is wrong or unsafe. Approving a machine lets it identify itself; "
                         "it does not hand it the agent's secrets. An admin of the agent does "
                         "that separately, once per machine. Open the link, find the machine "
@@ -512,8 +488,7 @@ def _why(alert) -> str:
 
 
 #: Subject wording for kinds whose model label reads as internals.
-_SUBJECT = {"github-expiry": "its GitHub token needs replacing",
-            "zk-wrap-missing": "a newly approved machine needs access granted",
+_SUBJECT = {"zk-wrap-missing": "a newly approved machine needs access granted",
             "device-proof": "a request for its secrets was refused (no machine proof)"}
 
 
@@ -549,24 +524,6 @@ def _notify(agent, alert) -> dict:
         label = _SUBJECT.get(alert.kind, label)
         subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
         why = _why(alert)
-        if alert.kind == AgentCredentialAlert.GITHUB_EXPIRY:
-            footer_text = (f"You are getting this because you own {agent.slug} on Canopy or lent "
-                           f"it this token. It repeats a few times as the date nears (14, 7, 3 "
-                           f"and 1 days out, then on expiry), and stops once a new token is lent.\n")
-            footer_html = (f"<p style=\"color:#78716c;font-size:13px\">You are getting this because you own "
-                           f"{escape(agent.slug)} on Canopy or lent it this token. It repeats a few "
-                           f"times as the date nears (14, 7, 3 and 1 days out, then on expiry), and "
-                           f"stops once a new token is lent.</p>")
-        else:
-            footer_text = (f"At most one alert of this kind per agent per hour, and one per runner: "
-                           f"other agents refused on the same runner within the hour are listed on "
-                           f"their own alert pages, not emailed again. You are getting this "
-                           f"because you own {agent.slug} on Canopy.\n")
-            footer_html = (f"<p style=\"color:#78716c;font-size:13px\">At most one alert of "
-                           f"this kind per agent per hour, and one per runner: other agents refused "
-                           f"on the same runner within the hour are listed on their own alert pages, "
-                           f"not emailed again. You are getting this because you own "
-                           f"{escape(agent.slug)} on Canopy.</p>")
         who = context_lines(alert.context or {})
         log = _link(agent)
         log_label = _link_label(agent, "")
@@ -574,17 +531,24 @@ def _notify(agent, alert) -> dict:
                 + (f"{why}\n\n" if why else "")
                 + f"{act}: {link}\n"
                 + (f"{log_label}: {log}\n" if log != link else "") + "\n"
-                + footer_text)
+                f"At most one alert of this kind per agent per hour, and one per runner: "
+                f"other agents refused on the same runner within the hour are listed on "
+                f"their own alert pages, not emailed again. You are getting this "
+                f"because you own {agent.slug} on Canopy.\n")
         html = (f"<p>{escape(alert.detail)}</p>"
                 + ("<p>" + "<br>".join(escape(line) for line in who) + "</p>" if who else "")
                 + (f"<p>{escape(why)}</p>" if why else "")
                 + f'<p><a href="{escape(link)}">{escape(act)}</a>'
                 + (f'<br><a href="{escape(log)}">{escape(log_label)}</a>' if log != link else "")
                 + "</p>"
-                + footer_html)
+                f"<p style=\"color:#78716c;font-size:13px\">At most one alert of "
+                f"this kind per agent per hour, and one per runner: other agents refused "
+                f"on the same runner within the hour are listed on their own alert pages, "
+                f"not emailed again. You are getting this because you own "
+                f"{escape(agent.slug)} on Canopy.</p>")
         rel = link.split("://", 1)[-1]
         rel = rel[rel.find("/"):] if "/" in rel else "/"
-        for person in recipients(agent, alert):
+        for person in recipients(agent):
             if person.email in told:
                 result["already_told"][person.email] = told[person.email]
                 continue
