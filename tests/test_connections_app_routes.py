@@ -1,12 +1,12 @@
 """The per-workspace routes of connections, over HTTP: a workspace's app admin API
 (`/api/workspaces/{workspace}/connection-apps`), the per-workspace browser legs
 (`/auth/connections/<provider>/<workspace>/start|callback/`), and how listings and
-the CLI token route answer once a person can be in several workspaces.
+the connection lists answer once a person can be in several workspaces.
 
 The service layer is pinned in `test_connections_apps.py`; this pins what only
 the routes decide: who may read or write an app (workspace admins; a browser
 needs a fresh step-up for a write), that the secret never comes back, which
-workspace a start or a callback is for, and the 409 bodies the CLI branches on.
+workspace a start or a callback is for.
 """
 from __future__ import annotations
 
@@ -28,12 +28,8 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connections import (
     CLIENT_SECRET,
-    REVOKE_URL,
-    TOKEN_URL,
     FakeSF,
-    _resp,
     _stored,
-    _token_body,
     sf_app,
 )
 
@@ -195,19 +191,16 @@ def test_invalid_settings_are_400_invalid_app(admin, ws, body):
 
 
 def test_rotating_the_secret_carries_existing_connections(admin, ws):
-    """Review Focus 2: a new secret with the same client id; connections refresh
-    with it. A blank secret keeps the stored one."""
+    """Review Focus 2: a new secret with the same client id is saved while
+    connections exist, and they stay. A blank secret keeps the stored one."""
     c = _browser(admin)
     app = sf_app(ws)
-    conn = _stored({"user": admin}, admin, app=app, access="")
+    conn = _stored({"user": admin}, admin, app=app)
     resp = _put(c, client_id=app.client_id, client_secret="rotated-secret")
     assert resp.status_code == 200 and resp.json()["has_secret"] is True
     assert _put(c, client_id=app.client_id).status_code == 200     # blank: keeps "rotated-secret"
-    with FakeSF() as fake:
-        got = Client().post("/api/me/connections/salesforce/token", **_pat(admin))
-    assert got.status_code == 200, got.content
-    (_, url, data), = fake.token_calls()
-    assert url == TOKEN_URL and data["client_secret"] == "rotated-secret" and data["client_id"] == app.client_id
+    app.refresh_from_db()
+    assert app.client_secret == "rotated-secret"
     assert Connection.objects.filter(pk=conn.pk).exists()
 
 
@@ -224,7 +217,7 @@ def test_the_client_id_is_locked_while_connections_exist(admin, ws):
 
     with FakeSF() as fake:
         assert c.delete(f"{APPS.format('w')}/salesforce").status_code == 204
-    assert [call[1] for call in fake.calls] == [REVOKE_URL]
+    assert fake.calls == []                                     # canopy-web holds no token to revoke
     assert not Connection.objects.filter(pk=conn.pk).exists() and not ConnectionApp.objects.exists()
     resp = _put(c, client_id="3MVG-other", client_secret="other-secret",
                 options={"login_url": "https://login.salesforce.com"})
@@ -326,13 +319,11 @@ def test_a_callback_for_another_workspace_is_bad_state(admin, ws):
         assert _landing(resp) == {"connection": "salesforce", "status": "error", "reason": "bad_state"}
         assert fake.calls == []
     assert not Connection.objects.exists()
-    # The right workspace's callback still completes it.
+    # The right workspace's callback exchanges the code with its own callback URL.
     state = _state(_start(c, "b"))
     with FakeSF() as fake:
-        resp = c.get(reverse("connections_callback", args=["salesforce", "b"]), {"code": "c0de", "state": state})
-    assert _landing(resp)["status"] == "connected"
+        c.get(reverse("connections_callback", args=["salesforce", "b"]), {"code": "c0de", "state": state})
     assert fake.token_calls()[0][2]["redirect_uri"] == "http://testserver/auth/connections/salesforce/b/callback/"
-    assert Connection.objects.get().app.workspace_id == "b"
 
 
 def _callback(client, slug, state):
@@ -400,69 +391,7 @@ def test_an_agents_list_names_its_workspace(admin, ws):
     assert body["connections"][0]["workspace"] == "w"
 
 
-# ---- my CLI token, across workspaces ------------------------------------------------
-
-def _token(user, query=""):
-    return Client().post(f"/api/me/connections/salesforce/token{query}", **_pat(user))
-
-
-def test_a_person_who_left_the_workspace_gets_no_token(admin, editor, ws):
-    """Review Focus 4."""
-    _stored({"user": editor}, editor, app=sf_app(ws))
-    assert _token(editor).status_code == 200
-    M.objects.filter(workspace=ws, user=editor).delete()
-    resp = _token(editor)
-    assert resp.status_code == 409 and resp.json()["error"] == "not_connected"
-    assert "00D!cached" not in resp.content.decode()
-
-
-def test_ambiguous_across_workspaces_lists_them_and_workspace_picks_one(admin, ws):
-    b = _ws("b", "B", editor=[admin])
-    _stored({"user": admin}, admin, app=sf_app(ws))
-    _stored({"user": admin}, admin, app=sf_app(b, client_id="b-client"), access="00D!b")
-    resp = _token(admin)
-    assert resp.status_code == 409
-    body = resp.json()
-    assert body["error"] == "ambiguous" and body["workspaces"] == ["b", "w"]
-    assert body["accounts"] == ["jj@dimagi.com", "jj@dimagi.com"]
-    assert body["connect_url"] == "http://testserver/settings/connections"
-    assert "--workspace <slug>" in body["detail"] and "b, w" in body["detail"]
-    assert "disconnect" not in body["detail"]
-    got = _token(admin, "?workspace=b")
-    assert got.status_code == 200 and got.json()["access_token"] == "00D!b"
-    assert _token(admin, "?workspace=w").json()["access_token"] == "00D!cached"
-    assert _token(admin, "?workspace=nope").json()["error"] == "not_connected"
-
-
-def test_not_connected_points_at_the_one_set_up_workspace_or_lists_them(admin, ws):
-    sf_app(ws)
-    assert _token(admin).json()["connect_url"] == "http://testserver/auth/connections/salesforce/w/start/"
-    sf_app(_ws("b", "B", editor=[admin]))
-    body = _token(admin).json()
-    assert body["error"] == "not_connected" and body["workspaces"] == ["b", "w"]
-    assert body["connect_url"] == "http://testserver/settings/connections"
-    assert "--workspace <slug>" in body["detail"]
-    narrowed = _token(admin, "?workspace=b").json()
-    assert narrowed["connect_url"] == "http://testserver/auth/connections/salesforce/b/start/"
-    assert "workspaces" not in narrowed
-
-
-def test_two_accounts_in_one_workspace_are_disconnected_in_settings(admin, ws):
-    first = _stored({"user": admin}, admin, app=sf_app(ws))
-    Connection.objects.create(provider="salesforce", account_id="00Dother/005x", account_label="second@dimagi.com",
-                              user=admin, connected_by=admin, app=first.app)
-    body = _token(admin).json()
-    assert body["error"] == "ambiguous" and body["workspaces"] == ["w"]
-    assert "disconnect all but one" in body["detail"]
-    # Connecting again would not help: Settings is where a spare account is disconnected.
-    assert body["connect_url"] == "http://testserver/settings/connections"
-
-
-def test_nothing_set_up_points_at_settings(admin, ws):
-    body = _token(admin).json()
-    assert body["error"] == "not_connected" and "workspaces" not in body
-    assert body["connect_url"] == "http://testserver/settings/connections"
-
+# ---- the app list ---------------------------------------------------------------------
 
 def test_the_app_list_costs_the_same_however_many_connections(admin, ws):
     from django.db import connection as db
@@ -482,16 +411,6 @@ def test_the_app_list_costs_the_same_however_many_connections(admin, ws):
     assert _row(c.get(APPS.format("w")).json())["connection_count"] == 3
 
 
-def test_reconnect_points_at_the_connections_workspace(admin, ws):
-    b = _ws("b", "B", editor=[admin])
-    sf_app(ws)
-    _stored({"user": admin}, admin, app=sf_app(b), access="")
-    with FakeSF(token=[_resp(400, {"error": "invalid_grant"})]):
-        body = _token(admin).json()
-    assert body["error"] == "reconnect_required"
-    assert body["connect_url"] == "http://testserver/auth/connections/salesforce/b/start/"
-
-
 # ---- the secret never comes back ----------------------------------------------------
 
 def test_an_apps_secret_is_never_in_a_response_log_event_or_setting_change(admin, ws, caplog):
@@ -504,18 +423,14 @@ def test_an_apps_secret_is_never_in_a_response_log_event_or_setting_change(admin
                        options={"login_url": "https://login.salesforce.com"}))
     bodies.append(c.get(APPS.format("w")))
     app = ConnectionApp.objects.get()
-    _stored({"user": admin}, admin, app=app, access="")
+    _stored({"user": admin}, admin, app=app)
     bodies.append(_put(c, client_id="3MVG-a", client_secret="rotated-s3cret"))
     bodies.append(_put(c, client_id="3MVG-b", client_secret="refused-s3cret"))           # 409 app_locked
     bodies.append(_put(c, client_id="3MVG-a", client_secret="refused-s3cret", scopes=["nope"]))  # 400
-    with FakeSF(token=[_resp(400, {"error": "invalid_client"})]):
-        bodies.append(_token(admin))                                                       # 502
-    with FakeSF(token=[_resp(body=_token_body())]):
-        bodies.append(_token(admin, "?refresh=true"))
     bodies.append(c.get("/api/connections/"))
     with FakeSF():
         bodies.append(c.delete(f"{APPS.format('w')}/salesforce"))
-    assert [r.status_code for r in bodies] == [200, 200, 200, 409, 400, 502, 200, 200, 204]
+    assert [r.status_code for r in bodies] == [200, 200, 200, 409, 400, 200, 204]
 
     tracebacks = [logging.Formatter().formatException(r.exc_info) for r in caplog.records if r.exc_info]
     blob = "\n".join(

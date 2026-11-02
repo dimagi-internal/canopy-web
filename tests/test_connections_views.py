@@ -78,6 +78,17 @@ def test_start_redirects_to_salesforce_for_self(client):
     assert q["code_challenge_method"] == ["S256"]
 
 
+def test_a_person_flow_lands_refused_and_stores_nothing(client, user):
+    state = _state(_start(client, return_to="/settings?tab=x"))
+    with FakeSF():
+        resp = _callback(client, state)
+    path, q = _landing(resp)
+    assert path == "/settings"
+    assert q == {"tab": "x", "connection": "salesforce", "status": "error", "reason": "provider_error"}
+    assert not Connection.objects.exists()
+
+
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_full_person_flow_connects_and_returns(client, user):
     state = _state(_start(client, return_to="/settings?tab=x"))
     with FakeSF():
@@ -98,6 +109,7 @@ def test_start_for_agent_requires_admin(client, user, eva):
     assert _start(client, agent="nope").status_code == 404
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_agent_flow_stores_agent_owned_connection(client, eva):
     state = _state(_start(client, agent="eva"))
     with FakeSF():

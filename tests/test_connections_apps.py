@@ -2,9 +2,9 @@
 
 Pins the service layer of per-workspace apps — creating, rotating and removing
 one, what a provider accepts as its options and scopes — and how the flow and
-the token lookups use it: a callback finishes only for the app it was begun
-with, a person's token comes only from a workspace they can still read, and a
-provider can refuse the account that signed in (`check_owner`).
+the connection lookups use it: a callback finishes only for the app it was
+begun with, a person's connection counts only in a workspace they can still
+read, and a provider can refuse the account that signed in (`check_owner`).
 Salesforce is faked at the `requests` boundary, as everywhere in these suites.
 """
 from __future__ import annotations
@@ -87,18 +87,6 @@ def test_create_stores_the_secret_encrypted_and_records_without_it(ws, user):
     assert "shh" not in json.dumps(ev.payload) + ev.summary
 
 
-def test_rotating_the_secret_keeps_connections_refreshing_with_the_new_one(ws, user, eva):
-    app = _configure(ws, user)
-    conn = _stored({"agent": eva}, user, app=app, access="")
-    _configure(ws, user, client_secret="shh-rotated")
-    with FakeSF() as fake:
-        tok = services.access_token_for(conn)
-    assert tok.token == "00D!access_1"
-    _, _, data = fake.token_calls()[0]
-    assert data["client_id"] == "3MVG-client" and data["client_secret"] == "shh-rotated"
-    assert Connection.objects.filter(pk=conn.pk).exists()
-
-
 def test_a_blank_secret_on_update_keeps_the_stored_one(ws, user):
     _configure(ws, user)
     app = _configure(ws, user, client_secret="", options={**OPTIONS, "access_token_seconds": 900})
@@ -167,15 +155,14 @@ def test_remove_disconnects_every_connection_and_records(ws, user, eva, caplog):
     caplog.set_level(logging.INFO, logger="apps.connections.services")
     app = _configure(ws, user)
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
-    agents = _stored({"agent": eva}, user, app=app, refresh="5Aep_eva")
+    agents = _stored({"agent": eva}, user, app=app)
     ConnectionGrant.objects.create(connection=agents, agent=echo, granted_by=user)
-    person = _stored({"user": user}, user, app=app, refresh="5Aep_jj")
+    person = _stored({"user": user}, user, app=app)
     other_ws = sf_app(Workspace.objects.create(slug="else", display_name="E", created_by=user))
     elsewhere = _stored({"user": user}, user, app=other_ws)
     with FakeSF() as fake:
         services.remove_app(app, by=user)
-    revoked = sorted(c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL)
-    assert revoked == ["5Aep_eva", "5Aep_jj"]
+    assert fake.calls == []                                             # canopy-web holds no token to revoke
     assert not Connection.objects.filter(pk__in=[agents.pk, person.pk]).exists()
     assert not ConnectionGrant.objects.exists() and not ConnectionApp.objects.filter(pk=app.pk).exists()
     assert Connection.objects.filter(pk=elsewhere.pk).exists()          # another workspace's app: untouched
@@ -240,6 +227,7 @@ def test_an_app_removed_between_the_legs_is_bad_state(ws, user):
     assert e.value.code == "bad_state" and fake.calls == []
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_stores_the_connection_against_its_app(ws, user):
     app = sf_app(ws)
     session = {}
@@ -298,17 +286,17 @@ def test_lifetime_comes_from_the_apps_options(ws):
     assert providers.for_app(app).access_token_lifetime() == timedelta(seconds=1800)
 
 
-def test_token_and_revoke_go_to_the_apps_login_host(ws, user, eva):
+def test_the_exchange_and_revoke_go_to_the_apps_login_host(ws):
     app = sf_app(ws, login_url="https://test.salesforce.com")
-    conn = _stored({"agent": eva}, user, app=app, access="")
     seen = []
 
     def post(url, data=None, headers=None, timeout=None):
         seen.append(url)
         return _resp(body=_token_body())
+    p = providers.for_app(app)
     with mock.patch.multiple("apps.connections.providers.base.requests", post=post):
-        services.access_token_for(conn)
-        services.disconnect(conn, by=user)
+        p.exchange_code("c0de", REDIRECT, "verifier")
+        p.revoke("5Aep_r")
     assert seen == ["https://test.salesforce.com/services/oauth2/token",
                     "https://test.salesforce.com/services/oauth2/revoke"]
     assert TOKEN_URL not in seen
@@ -344,6 +332,7 @@ def test_check_owner_refusal_stores_nothing(ws, user, eva, monkeypatch, caplog):
     assert problem_for(e.value, title="Salesforce", owner="eva's").status_code == 409
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_check_owner_acceptance_connects(ws, user, monkeypatch):
     monkeypatch.setitem(providers.CLASSES, "picky", PickySalesforce)
     app = sf_app(ws, provider="picky", **OPTIONS)
@@ -456,6 +445,7 @@ def test_a_client_id_change_between_the_legs_is_bad_state(ws, user):
     assert e.value.code == "bad_state" and fake.calls == []
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_a_client_id_change_during_the_exchange_stores_nothing(ws, user):
     """The app changed client after the exchange began: the grant belongs to the old
     client, so it is refused under the app row's lock rather than stored."""
@@ -480,18 +470,17 @@ def test_a_client_id_change_during_the_exchange_stores_nothing(ws, user):
 
 def test_remove_catches_a_connection_made_while_it_ran(ws, user, eva, monkeypatch):
     app = _configure(ws, user)
-    _stored({"agent": eva}, user, app=app, refresh="5Aep_first")
+    _stored({"agent": eva}, user, app=app)
     real = services.disconnect
 
     def racing(conn, *, by):
         real(conn, by=by)
         # Another request's connect commits now, after the snapshot was taken.
-        _stored({"user": user}, user, app=app, refresh="5Aep_late")
+        _stored({"user": user}, user, app=app)
     monkeypatch.setattr(services, "disconnect", racing)
     with FakeSF() as fake:
         services.remove_app(app, by=user)
-    revoked = [c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL]
-    assert revoked == ["5Aep_first", "5Aep_late"]
+    assert fake.calls == []
     assert not Connection.objects.exists() and not ConnectionApp.objects.exists()
 
 
@@ -505,25 +494,6 @@ def test_late_connections_are_recorded_as_disconnected_by_the_admin(ws, user, ev
     lines = [services.parse_log_line(r.getMessage()) for r in caplog.records]
     assert ("disconnected", f"user:{user.pk}", "jj@dimagi.com") in [
         (k, p.get("owner"), p.get("by")) for k, p in lines]
-
-
-def test_a_refresh_sends_the_secret_the_app_holds_under_the_lock(ws, user, eva, monkeypatch):
-    app = sf_app(ws)
-    conn = _stored({"agent": eva}, user, app=app, access="")
-    real, seen = services._cached_token, {"n": 0}
-
-    def rotating(c, min_life):
-        seen["n"] += 1
-        if seen["n"] == 1:   # rotated while this caller waited for the lock
-            fresh = ConnectionApp.objects.get(pk=app.pk)
-            fresh.client_secret = "shh-rotated"
-            fresh.save()
-            return ""
-        return real(c, min_life)
-    monkeypatch.setattr(services, "_cached_token", rotating)
-    with FakeSF() as fake:
-        services.access_token_for(conn)
-    assert fake.token_calls()[0][2]["client_secret"] == "shh-rotated"
 
 
 def test_a_workspace_with_a_connection_app_cannot_be_deleted_from_under_it(user):
@@ -552,9 +522,7 @@ def test_the_workspace_delete_route_says_to_remove_its_connection_apps_first(use
     detail = r.json()["detail"]
     assert "1 connection apps" in detail
     assert "Remove its connection apps in Settings → Connections first." in detail
-    with FakeSF() as fake:
-        services.remove_app(app, by=user)
-    assert [u for _, u, _ in fake.calls if u == REVOKE_URL]     # removing the app revoked the grant
+    services.remove_app(app, by=user)
     assert c.delete("/api/workspaces/gone/").status_code == 204
     assert not Workspace.objects.filter(slug="gone").exists() and not Connection.objects.exists()
 
@@ -576,23 +544,3 @@ def test_a_locked_option_stored_in_another_spelling_is_not_a_change(ws, user):
     assert e.value.code == "app_locked"
 
 
-def test_an_unreadable_late_token_is_recorded_after_the_removal_commits(ws, user, monkeypatch):
-    from django.db import connection as db
-
-    app = _configure(ws, user)
-    monkeypatch.setattr(services, "disconnect", lambda conn, *, by: None)   # the snapshot "misses" it
-    late = _stored({"user": user}, user, app=app)
-    Connection.objects.filter(pk=late.pk).update(refresh_token_enc="not-fernet")
-    depth_outside = len(db.atomic_blocks)
-    seen = []
-    real = services.record
-
-    def spy(subject, kind, **kw):
-        seen.append((kind, kw.get("error"), len(db.atomic_blocks)))
-        return real(subject, kind, **kw)
-    monkeypatch.setattr(services, "record", spy)
-    with FakeSF() as fake:
-        services.remove_app(app, by=user)
-    assert ("revoke_failed", "undecryptable", depth_outside) in seen
-    assert [c for c in fake.calls if c[1] == REVOKE_URL] == []
-    assert not Connection.objects.exists() and not ConnectionApp.objects.exists()

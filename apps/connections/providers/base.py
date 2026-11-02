@@ -1,8 +1,10 @@
 """The provider contract: one OAuth 2.0 authorization-code provider (with PKCE).
 
-`Provider` implements everything the OAuth spec makes common — the authorize
-URL, the code exchange, refresh, revocation, error parsing, the timeout on
-every call — from a handful of class attributes. A provider module subclasses
+`Provider` implements what canopy-web does with the OAuth spec — the authorize
+URL, the code exchange, revoking a grant refused at connect time, error
+parsing, the timeout on every call — from a handful of class attributes.
+canopy-web never refreshes or revokes a stored token (it holds none): the
+machines that hold a connection do, in the canopy CLI. A provider module subclasses
 it, fills in those attributes, implements `identity()` and overrides only
 what its service does differently (see `salesforce.py`).
 
@@ -41,8 +43,8 @@ What a provider declares, and where providers differ:
 - Expiry: a token response's `expires_in` when it sends one; otherwise the
   app's `access_token_seconds` option, else `default_access_token_seconds`.
 - `rotates_refresh_token`: whether a refresh may hand back a NEW refresh token
-  (Salesforce, Intacct) that replaces the old one. The service stores a
-  returned refresh token either way; the flag documents the provider and is
+  (Salesforce, Intacct) that replaces the old one. The refreshing machine keeps
+  a returned refresh token either way; the flag documents the provider and is
   what the tests pin.
 - `instance_url(body)`: the account's own API base, when the provider has one
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
@@ -273,12 +275,6 @@ class Provider:
         if self.pkce:
             data["code_verifier"] = code_verifier
         return self._token_response(self._token(data, "code exchange"))
-
-    def refresh(self, refresh_token: str) -> TokenResponse:
-        """A new access token. `refresh_token` on the answer is "" unless the
-        provider rotated it; the caller keeps the old one then."""
-        body = self._token({"grant_type": "refresh_token", "refresh_token": refresh_token}, "refresh")
-        return self._token_response(body)
 
     def missing_scopes(self, granted: tuple[str, ...]) -> tuple[str, ...]:
         """The required scopes a grant lacks: the provider's own required ones

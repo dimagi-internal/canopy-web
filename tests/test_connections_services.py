@@ -1,15 +1,12 @@
-"""The connections service layer: connect, refresh under lock, disconnect, grants.
+"""The connections service layer: connect, disconnect, grants.
 
 Salesforce is faked at the `requests` boundary (as `tests/test_github_connect.py`),
 so the provider's real HTTP handling runs under every test here. What is pinned:
 
 - a rejected grant can arrive as **HTTP 200 with an `error` key**;
-- the refresh token **rotates**, and failing to store the new one bricks the
-  connection on second use;
-- two refreshes racing must spend the refresh token once (re-check under lock);
-- `invalid_grant` stamps `refresh_failed_at`, but a network blip must NOT;
 - the identity URL comes from the token response, so the bearer token is only
-  ever sent to a Salesforce host.
+  ever sent to a Salesforce host;
+- canopy-web never refreshes or revokes a stored token: it holds none.
 """
 from __future__ import annotations
 
@@ -27,7 +24,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.common.encryption import decrypt_secret, encrypt_secret
+from apps.common.encryption import decrypt_secret
 from apps.connections import providers, services
 from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
 from apps.connections.providers.base import TokenResponse
@@ -145,7 +142,7 @@ def test_complete_rejects_unknown_or_reused_state(user):
         _complete(session, "forged", user, code="c")
     assert e.value.code == "bad_state"
     assert fake.calls == []
-    with FakeSF():
+    with FakeSF(), pytest.raises(services.ConnectionError):
         _complete(session, state, user, code="c")
     with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:  # replay
         _complete(session, state, user, code="c")
@@ -153,6 +150,29 @@ def test_complete_rejects_unknown_or_reused_state(user):
     assert fake.calls == []
 
 
+def test_complete_exchanges_checks_and_then_stores_nothing(user, caplog):
+    """No token canopy-web could read is ever stored: after the exchange and every
+    check pass, the grant is revoked and the connect refused."""
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    session = {}
+    url = _begin(session, ("user", user.pk))
+    state = parse_qs(urlparse(url).query)["state"][0]
+    verifier = session[services.SESSION_KEY][state]["verifier"]
+    with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:
+        _complete(session, state, user, code="c0de")
+    assert e.value.code == "provider_error"
+    _, _, data = fake.token_calls()[0]
+    assert data["code"] == "c0de" and data["code_verifier"] == verifier
+    get = [c for c in fake.calls if c[0] == "GET"][0]
+    assert get[1] == ID_URL                                    # identity read, checks ran
+    assert [(c[1], c[2]["token"]) for c in fake.calls if c[1] == REVOKE_URL] == [(REVOKE_URL, "5Aep_refresh_1")]
+    assert not Connection.objects.exists()
+    kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
+    assert (kind, pairs["during"], pairs["error"]) == ("provider_error", "connect", "not_sealed")
+    assert "5Aep_refresh_1" not in caplog.text and "00D!access_1" not in caplog.text
+
+
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_exchanges_with_verifier_and_stores_encrypted(user):
     session = {}
     url = _begin(session, ("user", user.pk))
@@ -255,6 +275,7 @@ def test_complete_agent_deleted_since_begin_is_bad_state(user, eva):
     assert not Connection.objects.exists()
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_concurrent_insert_updates_the_winner(user):
     """Another completion for the same account inserted between lookup and insert."""
     # The winner's row is committed; our update_or_create saw no row and its insert collides.
@@ -268,6 +289,7 @@ def test_complete_concurrent_insert_updates_the_winner(user):
     assert decrypt_secret(conn.access_token_enc) == "00D!access_1"
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_upserts_same_account(user):
     first = _connect({}, ("user", user.pk), user)
     Connection.objects.filter(pk=first.pk).update(refresh_failed_at=timezone.now())
@@ -280,6 +302,7 @@ def test_complete_upserts_same_account(user):
     assert decrypt_secret(again.refresh_token_enc) == "5Aep_r2"
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_for_agent_owner(user, eva):
     conn = _connect({}, ("agent", eva.pk), user)
     assert conn.agent_id == eva.pk and conn.user_id is None
@@ -328,240 +351,48 @@ def test_identity_refuses_a_non_salesforce_login_host_even_if_an_app_holds_one()
     assert fake.calls == []
 
 
-# ---- access_token_for --------------------------------------------------------
-
-def test_cached_token_reused_without_http(user):
-    conn = _stored({"user": user}, user)
-    with FakeSF() as fake:
-        tok = services.access_token_for(conn)
-    assert fake.calls == []
-    assert tok.token == "00D!cached"
-    assert tok.instance_url == "https://dimagi.my.salesforce.com"
-    assert tok.account_label == "jj@dimagi.com"
-    conn.refresh_from_db()
-    assert conn.last_used_at is not None
-
-
-def test_token_inside_margin_is_refreshed(user):
-    conn = _stored({"user": user}, user, expires_in=timedelta(minutes=4))
-    with FakeSF() as fake:
-        tok = services.access_token_for(conn)
-    assert len(fake.token_calls()) == 1
-    assert tok.token == "00D!access_1"
-
-
-def test_min_life_decides_whether_the_cache_is_enough(user):
-    """A token with 10 minutes left is enough by default (5 min margin) but not
-    for a caller that needs 15 (the runner's re-stage interval)."""
-    conn = _stored({"user": user}, user, expires_in=timedelta(minutes=10))
-    with FakeSF() as fake:
-        assert services.access_token_for(conn).token == "00D!cached"
-        assert fake.token_calls() == []
-        tok = services.access_token_for(conn, min_life=timedelta(seconds=900))
-    assert len(fake.token_calls()) == 1 and tok.token == "00D!access_1"
-
-
-def test_min_life_is_capped_at_half_a_fresh_tokens_lifetime(user):
-    """A lifetime at or under what the runner asks for (900 s) must not refresh on
-    every call: a fresh token satisfies the caller for half its life."""
-    conn = _stored({"user": user}, user, expires_in=timedelta(seconds=850))
-    _set_options(conn, access_token_seconds=900)
-    with FakeSF() as fake:
-        assert services.access_token_for(conn, min_life=timedelta(seconds=900)).token == "00D!cached"
-    assert fake.token_calls() == []
-    Connection.objects.filter(pk=conn.pk).update(access_token_expires_at=timezone.now() + timedelta(seconds=400))
-    with FakeSF() as fake:
-        assert services.access_token_for(conn, min_life=timedelta(seconds=900)).token == "00D!access_1"
-    assert len(fake.token_calls()) == 1
-
-
-def test_refresh_true_skips_a_fresh_cache(user):
-    conn = _stored({"user": user}, user, expires_in=timedelta(hours=1), refresh="5Aep_old")
-    fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!forced", refresh_token="5Aep_new"))])
-    with fake:
-        tok = services.access_token_for(conn, refresh=True)
-    assert len(fake.token_calls()) == 1 and tok.token == "00D!forced"
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_new"
-
-
-def test_access_token_lifetime_is_the_apps_option(user):
-    conn = _stored({"user": user}, user, access="")
-    _set_options(conn, access_token_seconds=600)
-    with FakeSF():
-        tok = services.access_token_for(conn)
-    assert timezone.now() + timedelta(minutes=9) < tok.expires_at <= timezone.now() + timedelta(minutes=10)
-
-
-def test_refresh_stores_rotated_refresh_token(user):
-    conn = _stored({"user": user}, user, access="", refresh="5Aep_old")
-    fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!new", refresh_token="5Aep_new"))])
-    with fake:
-        tok = services.access_token_for(conn)
-    _, _, data = fake.token_calls()[0]
-    assert data["grant_type"] == "refresh_token" and data["refresh_token"] == "5Aep_old"
-    assert tok.token == "00D!new"
-    # The app's access_token_seconds (1800): Salesforce sends no expires_in.
-    assert timezone.now() + timedelta(minutes=29) < tok.expires_at <= timezone.now() + timedelta(minutes=30)
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_new"
-    assert decrypt_secret(conn.access_token_enc) == "00D!new"
-    assert conn.refresh_failed_at is None and conn.last_used_at is not None
-
-
-def test_refresh_without_rotation_keeps_refresh_token(user):
-    conn = _stored({"user": user}, user, access="", refresh="5Aep_keep")
-    fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!new", refresh_token=None,
-                                                instance_url="https://moved.my.salesforce.com"))])
-    with fake:
-        services.access_token_for(conn)
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_keep"
-    assert conn.instance_url == "https://moved.my.salesforce.com"
-
-
-def test_refresh_inside_lock_rechecks_cache(user):
-    """Review Focus 2: another worker refreshed while this one waited for the lock."""
-    conn = _stored({"user": user}, user, access="", refresh="5Aep_old")
-    real = services._cached_token
-    seen = {"n": 0}
-
-    def racing(c, min_life):
-        seen["n"] += 1
-        if seen["n"] == 1:
-            # The pre-lock check finds nothing; meanwhile the other worker lands.
-            Connection.objects.filter(pk=c.pk).update(
-                access_token_enc=encrypt_secret("00D!theirs"),
-                access_token_expires_at=timezone.now() + timedelta(hours=2),
-                refresh_token_enc=encrypt_secret("5Aep_rotated"),
-            )
-            return ""
-        return real(c, min_life)
-
-    with mock.patch.object(services, "_cached_token", side_effect=racing), FakeSF() as fake:
-        tok = services.access_token_for(conn)
-    assert fake.token_calls() == []
-    assert tok.token == "00D!theirs"
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_rotated"
-
-
-def test_invalid_grant_stamps_reconnect(user):
-    """Review Focus 1."""
-    conn = _stored({"user": user}, user, access="")
-    fake = FakeSF(token=[_resp(400, {"error": "invalid_grant", "error_description": "expired access/refresh token"})])
-    with fake, pytest.raises(services.ReconnectRequired):
-        services.access_token_for(conn)
-    conn.refresh_from_db()
-    assert conn.refresh_failed_at is not None
-    assert conn.needs_reconnect
-    # and the next call refuses without spending anything
-    with FakeSF() as fake2, pytest.raises(services.ReconnectRequired):
-        services.access_token_for(conn)
-    assert fake2.calls == []
-
-
-def test_invalid_grant_as_http_200_stamps_reconnect(user):
-    conn = _stored({"user": user}, user, access="")
-    with FakeSF(token=[_resp(200, _token_body(error="invalid_grant"))]), pytest.raises(services.ReconnectRequired):
-        services.access_token_for(conn)
-    conn.refresh_from_db()
-    assert conn.refresh_failed_at is not None
-
-
-@pytest.mark.parametrize("error", ["invalid_client", "unsupported_grant_type"])
-def test_non_grant_rejection_is_provider_error_without_stamp(user, error):
-    conn = _stored({"user": user}, user, access="")
-    with FakeSF(token=[_resp(400, {"error": error})]), pytest.raises(services.ConnectionError) as e:
-        services.access_token_for(conn)
-    assert not isinstance(e.value, services.ReconnectRequired)
-    assert e.value.code == "provider_error"
-    conn.refresh_from_db()
-    assert conn.refresh_failed_at is None
-
-
-@pytest.mark.parametrize("failure", [
-    requests.Timeout("slow"), requests.ConnectionError("down"),
-    _resp(503, text="<html>maintenance"), _resp(200, text="<html>"),
-])
-def test_transient_refresh_failure_does_not_stamp(user, failure):
-    conn = _stored({"user": user}, user, access="")
-    with FakeSF(token=[failure]), pytest.raises(services.ConnectionError) as e:
-        services.access_token_for(conn)
-    assert not isinstance(e.value, services.ReconnectRequired)
-    assert e.value.code == "provider_unavailable"
-    conn.refresh_from_db()
-    assert conn.refresh_failed_at is None
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_r"
-
-
 # ---- disconnect --------------------------------------------------------------
 
-def test_disconnect_revokes_and_deletes(user):
-    conn = _stored({"user": user}, user, refresh="5Aep_bye")
+def test_disconnect_deletes_and_calls_no_provider(user):
+    conn = _stored({"user": user}, user)
     with FakeSF() as fake:
         services.disconnect(conn, by=user)
-    assert [(c[0], c[1], c[2].get("token")) for c in fake.calls] == [("POST", REVOKE_URL, "5Aep_bye")]
-    assert not Connection.objects.exists()
-
-
-@pytest.mark.parametrize("failure", [_resp(400, {"error": "unsupported_token_type"}),
-                                     requests.ConnectionError("down")])
-def test_disconnect_revokes_and_deletes_even_if_revoke_fails(user, failure):
-    conn = _stored({"user": user}, user)
-    with FakeSF(revoke=failure):
-        services.disconnect(conn, by=user)
+    assert fake.calls == []                                    # canopy-web holds no token to revoke
     assert not Connection.objects.exists()
 
 
 # ---- events ------------------------------------------------------------------
 
-def test_no_token_in_event_payloads(user, eva, echo):
-    conn = _connect({}, ("agent", eva.pk), user)
-    Connection.objects.filter(pk=conn.pk).update(access_token_enc="", access_token_expires_at=None)
-    conn.refresh_from_db()
-    with FakeSF(token=[_resp(body=_token_body(access_token="00D!second", refresh_token="5Aep_second"))]):
-        services.access_token_for(conn)
+def test_an_agents_connection_is_evented(user, eva, echo):
+    conn = _stored({"agent": eva}, user)
+    cid = str(conn.pk)
     g = services.grant(conn, echo, by=user)
     services.revoke_grant(g, by=user)
     with FakeSF():
         services.disconnect(conn, by=user)
 
     kinds = list(Event.objects.order_by("id").values_list("kind", flat=True))
-    assert kinds == ["connections.connected", "connections.granted",
-                     "connections.grant_revoked", "connections.disconnected"]
+    assert kinds == ["connections.granted", "connections.grant_revoked", "connections.disconnected"]
     for ev in Event.objects.all():
         assert ev.workspace_id == eva.workspace_id
+        assert ev.payload["connection"] == cid
         assert ev.payload["provider"] == "salesforce"
         assert ev.payload["account_label"] == "jj@dimagi.com"
         assert ev.payload["owner"] == "agent:eva"
-        blob = json.dumps(ev.payload) + ev.summary
-        for secret in ("00D!access_1", "5Aep_refresh_1", "00D!second", "5Aep_second", "enc"):
-            assert secret not in blob
+        assert "zks1:" not in json.dumps(ev.payload) + ev.summary
 
 
 def test_person_connection_is_logged_not_evented(user, caplog):
     caplog.set_level(logging.INFO, logger="apps.connections.services")
-    conn = _connect({}, ("user", user.pk), user)
-    services.issue_token(conn, to="cli", by=user)  # cached
-    Connection.objects.filter(pk=conn.pk).update(access_token_enc="", access_token_expires_at=None)
-    with FakeSF(token=[_resp(body=_token_body(access_token="00D!second", refresh_token="5Aep_second"))]):
-        services.issue_token(conn, to="cli", by=user)  # refreshed
+    conn = _stored({"user": user}, user)
     with FakeSF():
         services.disconnect(conn, by=user)
 
     assert not Event.objects.exists()
     lines = [r.getMessage() for r in caplog.records if r.name == "apps.connections.services"]
-    kinds = [m.split(" ", 1)[0] for m in lines]
-    assert kinds == ["connections.connected", "connections.token_issued", "connections.token_issued",
-                     "connections.disconnected"]
-    for m in lines:
-        assert "provider=salesforce" in m and f"owner=user:{user.pk}" in m
-        assert "account_label=jj@dimagi.com" in m and "by=jj@dimagi.com" in m
-    assert "refreshed=false" in lines[1] and "refreshed=true" in lines[2]
-    blob = caplog.text
-    for secret in ("00D!access_1", "5Aep_refresh_1", "00D!second", "5Aep_second"):
-        assert secret not in blob
+    assert [m.split(" ", 1)[0] for m in lines] == ["connections.disconnected"]
+    assert "provider=salesforce" in lines[0] and f"owner=user:{user.pk}" in lines[0]
+    assert "account_label=jj@dimagi.com" in lines[0] and "by=jj@dimagi.com" in lines[0]
 
 
 # ---- which connection an agent uses; grants ----------------------------------
@@ -650,12 +481,14 @@ class WorkspaceOwner:
 
 # ---- granted scopes ------------------------------------------------------------
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_stores_the_granted_scopes(user):
     fake = FakeSF(token=[_resp(body=_token_body(scope="refresh_token api web"))])
     conn = _connect({}, ("user", user.pk), user, fake)
     assert conn.scopes == "api refresh_token web"
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_without_a_scope_answer_stores_what_was_asked(user):
     conn = _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope=None))]))
     assert conn.scopes == "api refresh_token id"
@@ -671,18 +504,6 @@ def test_complete_refuses_a_grant_missing_a_required_scope(user, caplog):
     assert kind == "provider_error" and pairs["error"] == "insufficient_scope" and pairs["missing"] == "api"
     assert pairs["during"] == "connect" and pairs["owner"] == f"user:{user.pk}"
     assert caplog.records[-1].levelno == logging.WARNING
-
-
-def test_refresh_updates_scopes_only_when_the_provider_says(user):
-    conn = _stored({"user": user}, user, access="")
-    with FakeSF(token=[_resp(body=_token_body(scope=None))]):
-        services.access_token_for(conn)
-    conn.refresh_from_db()
-    assert conn.scopes == ""                                       # as stored; nothing said
-    with FakeSF(token=[_resp(body=_token_body(scope="api refresh_token chatter_api"))]):
-        services.access_token_for(conn, refresh=True)
-    conn.refresh_from_db()
-    assert conn.scopes == "api chatter_api refresh_token"
 
 
 # ---- connect-time failures are logged -------------------------------------------
@@ -714,43 +535,6 @@ def test_an_authorize_error_is_logged_unless_declined(user, eva, caplog, error, 
             ("provider_error", "authorize", logged, "agent:eva")
 
 
-# ---- an agent's rejected grant is an Event --------------------------------------
-
-def test_an_agents_invalid_grant_is_a_warn_event(user, eva):
-    conn = _stored({"agent": eva}, user, access="")
-    with FakeSF(token=[_resp(400, {"error": "invalid_grant"})]), pytest.raises(services.ReconnectRequired):
-        services.access_token_for(conn)
-    ev = Event.objects.get(kind="connections.reconnect_required")
-    assert ev.level == "warn" and ev.workspace_id == eva.workspace_id
-    assert ev.payload["owner"] == "agent:eva" and ev.payload["error"] == "invalid_grant"
-
-
-def test_a_provider_error_on_refresh_is_logged_after_the_transaction(user, caplog):
-    caplog.set_level(logging.INFO, logger="apps.connections.services")
-    conn = _stored({"user": user}, user, access="")
-    with FakeSF(token=[_resp(400, {"error": "invalid_client"})]), pytest.raises(services.ConnectionError):
-        services.access_token_for(conn)
-    assert Connection.objects.get(pk=conn.pk).refresh_failed_at is None
-    kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
-    assert (kind, pairs["during"], pairs["error"]) == ("provider_error", "refresh", "invalid_client")
-
-
-# ---- the lifetime the cap uses is the one observed --------------------------------
-
-def test_min_life_cap_uses_the_lifetime_the_provider_gave(user):
-    conn = _stored({"user": user}, user, access="")
-    _set_options(conn, access_token_seconds=3600)
-    with FakeSF(token=[_resp(body=_token_body(expires_in=600))]):
-        services.access_token_for(conn)
-    conn.refresh_from_db()
-    assert conn.access_token_seconds == 600
-    # 500 s left: under the asked 900, but over half of the 600 s the token really had.
-    Connection.objects.filter(pk=conn.pk).update(access_token_expires_at=timezone.now() + timedelta(seconds=500))
-    with FakeSF() as fake:
-        services.access_token_for(conn, min_life=timedelta(seconds=900))
-    assert fake.token_calls() == []
-
-
 # ---- the log line format --------------------------------------------------------
 
 @pytest.mark.parametrize("value", ["plain", "", "two words", "a=b", 'say "hi"', "line\nbreak", "tab\there",
@@ -767,17 +551,17 @@ def test_non_ascii_stays_readable_in_the_line():
 
 # ---- client authentication ------------------------------------------------------
 
-def test_basic_client_auth_is_used_for_token_and_revoke(user, monkeypatch):
+def test_basic_client_auth_is_used_for_the_exchange_and_revoke(user, monkeypatch):
     monkeypatch.setattr(providers.get_class("salesforce"), "client_auth", "basic")
     seen = []
 
     def post(url, data=None, headers=None, timeout=None, auth=None):
         seen.append((url, dict(data or {}), auth))
         return _resp(body=_token_body())
-    conn = _stored({"user": user}, user, access="")
+    p = providers.for_app(_app_of(("user", user.pk)))
     with mock.patch.multiple("apps.connections.providers.base.requests", post=post):
-        services.access_token_for(conn)
-        services.disconnect(conn, by=user)
+        p.exchange_code("c0de", REDIRECT, "verifier")
+        p.revoke("5Aep_r")
     for url, data, auth in seen:
         assert auth == ("3MVG-client", "shh") and "client_secret" not in data
     assert seen[-1][1] == {"token": "5Aep_r", "token_type_hint": "refresh_token"}
@@ -793,8 +577,10 @@ def test_log_line_escapes_every_line_separator(value):
 
 def test_a_full_scope_grant_satisfies_api(user):
     """A Connected App set to `full` reports "full refresh_token", not `api`."""
-    conn = _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope="full refresh_token"))]))
-    assert conn.scopes == "full refresh_token"
+    p = providers.for_app(_app_of(("user", user.pk)))
+    assert p.missing_scopes(("full", "refresh_token")) == ()
     with pytest.raises(services.ConnectionError) as e:
         _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope="full"))]))
     assert e.value.code == "insufficient_scope"
+
+

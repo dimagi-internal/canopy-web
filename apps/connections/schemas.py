@@ -1,11 +1,11 @@
 """Schemas for connections (`/api/connections…`, an agent's connections, a workspace's
-connection apps, the token routes).
+connection apps, a turn's providers).
 
-Nothing here carries a token except `AccessTokenOut`, which only the two
-token-handout routes return.
+Nothing here carries a token.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any, Literal
 
@@ -37,7 +37,7 @@ class ScopeChoiceOut(StrictModel):
 
 
 class ConnectionOut(StrictModel):
-    id: int
+    id: uuid.UUID
     provider: str
     title: str = Field(description="The provider's display name.")
     workspace: str = Field(description="The workspace whose app made this connection.")
@@ -134,13 +134,6 @@ class ConnectionAppIn(StrictModel):
     scopes: list[str] = Field(
         default_factory=list,
         description="The full list of extra scopes, from `scope_choices`; replaces the saved list.")
-
-
-class AccessTokenOut(StrictModel):
-    access_token: str
-    instance_url: str = Field(description="The account's API base URL; empty when the provider's is fixed.")
-    expires_at: datetime
-    account_label: str
 
 
 class TurnConnectionsOut(StrictModel):

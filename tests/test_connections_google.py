@@ -1,6 +1,5 @@
 """Google (Gmail, Calendar) as a connection provider, faked at the `requests`
-boundary and driven through the browser connect flow, the token refresh and
-disconnect.
+boundary and driven through the browser connect flow and disconnect.
 
 Any Google account connects by default — a personal @gmail.com one or another
 organisation's — unless the workspace's app lists `allowed_domains`; an agent
@@ -8,7 +7,6 @@ must connect its own Google account (`Agent.google_identity()`) when it has one.
 """
 from __future__ import annotations
 
-import logging
 from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -20,7 +18,6 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.common.encryption import decrypt_secret
 from apps.connections import providers, services
 from apps.connections.models import Connection
 from apps.connections.providers.google import (
@@ -31,6 +28,7 @@ from apps.connections.providers.google import (
     GoogleProvider,
 )
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.connections import _stored
 
 pytestmark = pytest.mark.django_db
 
@@ -136,6 +134,7 @@ def _connect(user, **agent):
 
 # ---- a person connects ---------------------------------------------------------------
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_a_person_connects_with_offline_access_and_the_chosen_scopes(google, user, ws):
     authorize, query, landed = _connect(user)
     assert f"{authorize.scheme}://{authorize.netloc}{authorize.path}" == AUTHORIZE_URL
@@ -165,6 +164,7 @@ def test_a_person_connects_with_offline_access_and_the_chosen_scopes(google, use
 
 
 @pytest.mark.parametrize("email", ["someone@gmail.com", "x@marshellis.com"])
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_with_no_domain_rule_any_google_account_connects(google, user, ws, email):
     google.user = {"sub": "1", "email": email, "email_verified": True}
     _, _, landed = _connect(user)
@@ -201,6 +201,7 @@ def test_an_unverified_or_incomplete_identity_is_refused(google, user, ws, user_
     assert [r["token"] for r in google.revokes()] == ["1//refresh"]
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_the_legacy_string_email_verified_is_accepted(google, user, ws):
     google.user = {"sub": "1", "email": "someone@gmail.com", "email_verified": "true"}
     _, _, landed = _connect(user)
@@ -209,6 +210,7 @@ def test_the_legacy_string_email_verified_is_accepted(google, user, ws):
 
 # ---- allowed domains ----------------------------------------------------------------
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_one_allowed_domain_hints_it_and_refuses_another(google, user, ws):
     _domains(ws, user, "Dimagi.com")
     _, query, landed = _connect(user)
@@ -223,6 +225,7 @@ def test_one_allowed_domain_hints_it_and_refuses_another(google, user, ws):
     assert Connection.objects.get().account_label == "jj@dimagi.com"
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_several_allowed_domains_send_no_hd(google, user, ws):
     _domains(ws, user, "dimagi.com, dimagi-ai.com")
     google.user = {"sub": "3", "email": "eva@dimagi-ai.com", "email_verified": True, "hd": "dimagi-ai.com"}
@@ -243,6 +246,7 @@ def test_an_allowed_address_without_that_workspace_domain_is_refused(google, use
     assert not Connection.objects.exists()
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_a_secondary_domain_user_is_admitted_when_the_primary_is_listed_too(google, user, ws):
     """An organisation's user on its secondary domain gets the primary domain as `hd`."""
     _domains(ws, user, "dimagi.com, dimagi-ai.com")
@@ -261,6 +265,7 @@ def test_a_secondary_domain_user_is_refused_when_only_the_address_domain_is_list
 
 
 @pytest.mark.parametrize("email", ["someone@gmail.com", "someone@googlemail.com"])
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_a_consumer_domain_matches_by_address_and_sends_no_hd(google, user, ws, email):
     _domains(ws, user, "gmail.com" if email.endswith("@gmail.com") else "googlemail.com")
     google.user = {"sub": "6", "email": email, "email_verified": True}     # consumer: no `hd`
@@ -292,14 +297,15 @@ def test_the_allowed_domains_field_explains_itself():
 
 def test_allowed_domains_may_change_while_connections_exist(google, user, ws):
     """It gates new connects only: a connection made before stays."""
-    _connect(user)
+    conn = _stored({"user": user}, user, app=ws.connection_apps.get(provider="google"), account_id="1098",
+                   account_label="someone@gmail.com", instance_url="")
     _domains(ws, user, "dimagi.com")
-    conn = Connection.objects.get(account_label="someone@gmail.com")
-    assert services.access_token_for(conn, refresh=True).token == "ya29.access-2"
+    assert Connection.objects.filter(pk=conn.pk).exists()
 
 
 # ---- an agent connects --------------------------------------------------------------
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_an_agent_is_hinted_and_must_sign_in_as_its_own_account(google, user, ws):
     """Review Focus 5."""
     eva = _agent(user, ws, google_account="Eva@Dimagi-AI.com")
@@ -328,6 +334,7 @@ def test_an_agent_with_one_allowed_domain_gets_both_hints_and_both_checks(google
     assert not Connection.objects.exists()
 
 
+@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_an_agent_with_no_google_identity_is_not_hinted_and_takes_any_account(google, user, ws):
     eva = _agent(user, ws)                                    # no email, no google_account
     assert eva.google_identity() == ""
@@ -336,38 +343,15 @@ def test_an_agent_with_no_google_identity_is_not_hinted_and_takes_any_account(go
     assert "status=connected" in landed
 
 
-# ---- refresh and disconnect ---------------------------------------------------------
+# ---- disconnect ---------------------------------------------------------------------
 
-def test_refresh_keeps_the_refresh_token_google_does_not_resend(google, user, ws):
-    _connect(user)
-    conn = Connection.objects.get()
-    token = services.access_token_for(conn, refresh=True)
-    assert token.token == "ya29.access-2" and token.refreshed
-    refresh = [c for c in google.calls if c[1] == TOKEN_URL][-1][2]
-    assert refresh == {"grant_type": "refresh_token", "refresh_token": "1//refresh",
-                       "client_id": "123.apps.googleusercontent.com", "client_secret": "GOCSPX-s"}
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "1//refresh"
-    assert conn.access_token_seconds == 3599
+def test_disconnect_calls_nothing_at_google(google, user, ws):
+    conn = _stored({"user": user}, user, app=ws.connection_apps.get(provider="google"), account_id="1098",
+                   account_label="someone@gmail.com", instance_url="")
+    services.disconnect(conn, by=user)
+    assert google.calls == []                                 # canopy-web holds no token to revoke
+    assert not Connection.objects.exists()
     assert GoogleProvider.rotates_refresh_token is False
-
-
-def test_a_400_from_googles_revoke_still_disconnects(google, user, ws, caplog):
-    caplog.set_level(logging.INFO, logger="apps.connections.services")
-    _connect(user)
-    google.revoke_status = 400                                # already revoked at Google
-    services.disconnect(Connection.objects.get(), by=user)
-    assert not Connection.objects.exists()
-    assert any(services.parse_log_line(r.getMessage())[1].get("error") == "invalid_token"
-               for r in caplog.records if r.name == "apps.connections.services")
-
-
-def test_disconnect_revokes_the_refresh_token_at_google(google, user, ws):
-    _connect(user)
-    services.disconnect(Connection.objects.get(), by=user)
-    method, url, data = google.calls[-1]
-    assert (method, url, data["token"]) == ("POST", REVOKE_URL, "1//refresh")
-    assert not Connection.objects.exists()
 
 
 # ---- the provider itself ------------------------------------------------------------

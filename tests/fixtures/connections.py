@@ -1,16 +1,12 @@
 """What the connections suites share: the fake Salesforce (faked at the
 `requests` boundary), a workspace's Salesforce app (`sf_app`), a person's home
-workspace (`home`) and a stored-connection helper (`_stored`) — plain helpers,
+workspace (`home`) and a stored, sealed connection helper (`_stored`) — plain helpers,
 imported by name. This module is also registered in the root conftest's
 `pytest_plugins`, for fixtures; it declares none today."""
 from __future__ import annotations
 
-from datetime import timedelta
 from unittest import mock
 
-from django.utils import timezone
-
-from apps.common.encryption import encrypt_secret
 from apps.connections.models import Connection, ConnectionApp
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -135,19 +131,17 @@ def home(user):
     return ws
 
 
-def _stored(owner_kw, by, *, app=None, access="00D!cached", expires_in=timedelta(hours=1), refresh="5Aep_r",
-            **fields):
-    """A stored Salesforce connection, made with `app` — by default the agent's
-    workspace's app, or the person's `home` workspace's (each created if missing)."""
+# A stand-in envelope: canopy-web never opens one, so its bytes are never read here.
+SEALED = "zks1:test-envelope"
+
+
+def _stored(owner_kw, by, *, app=None, sealed=SEALED, **fields):
+    """A stored Salesforce connection, sealed (`sealed="zks1:…"`), made with `app` —
+    by default the agent's workspace's app, or the person's `home` workspace's
+    (each created if missing). No token: canopy-web holds none."""
     if app is None:
         owner = owner_kw.get("agent") or owner_kw.get("user")
         app = sf_app(owner.workspace if "agent" in owner_kw else home(owner))
     values = {"provider": app.provider, "account_id": "00Dorg/005user", "account_label": "jj@dimagi.com",
               "instance_url": "https://dimagi.my.salesforce.com", **fields}
-    return Connection.objects.create(
-        app=app,
-        refresh_token_enc=encrypt_secret(refresh),
-        access_token_enc=encrypt_secret(access) if access else "",
-        access_token_expires_at=(timezone.now() + expires_in) if access else None,
-        connected_by=by, **values, **owner_kw,
-    )
+    return Connection.objects.create(app=app, sealed=sealed, connected_by=by, **values, **owner_kw)

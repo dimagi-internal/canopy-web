@@ -176,12 +176,8 @@ EXCLUDED: dict[str, str] = {
     # A connected site telling canopy its resources changed: signed by the site's own
     # key, a host's door, never a person's or an agent's.
     "resources_updated": _HOST,
-    # Connection tokens (apps/connections): a live provider access token is the
-    # answer, so a tool would put it in a model's context. The route refuses an
-    # MCP call too; leaving it out also keeps a caller token off it over REST.
-    "turn_connection_token": _RUNNER,
+    # A turn's connections (apps/connections): the runner's own question.
     "turn_connections": _RUNNER,
-    "my_connection_token": "a person's own token, for their CLI — never into a model's context",
     # A workspace's OAuth client for connections: the body carries the client
     # secret, which a tool call would put in a model's context; removing it
     # disconnects a whole workspace. Reading it (never the secret) stays a tool.

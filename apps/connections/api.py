@@ -1,17 +1,18 @@
-"""The JSON half of connections: a workspace's apps, status, disconnect, sharing,
-and my CLI token.
+"""The JSON half of connections: a workspace's apps, status and disconnect.
 
 Errors from the service layer become responses in one place, `problem_for`.
 
 Four routers, because the URLs live under four prefixes (see `apps/api/api.py`):
 `router` at `/connections` (a person's own), `agents_router` at `/agents`
-(an agent's, admin-only), `me_router` at `/me/connections` (the CLI token) and
+(an agent's, admin-only), `me_router` at `/me/connections` (a person's CLI; no
+routes today) and
 `workspaces_router` at `/workspaces` (a workspace's apps, its admins').
 The browser legs of connecting are bare views (`views.py`).
 """
 from __future__ import annotations
 
-from django.core.exceptions import PermissionDenied
+import uuid
+
 from django.db.models import Count
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
@@ -19,21 +20,18 @@ from django.urls import reverse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.agents.gates import agent_for_admin, agent_for_read
+from apps.agents.gates import agent_for_admin
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
-from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.passkeys import stepup
-from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 
 from . import providers, services
-from .models import Connection, ConnectionApp, ConnectionGrant
+from .models import Connection, ConnectionApp
 from .problems import problem_for
 from .schemas import (
-    AccessTokenOut,
     ConnectionAppIn,
     ConnectionAppOut,
     ConnectionAppsOut,
@@ -142,8 +140,8 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
 
 @router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")
 @gate("self", setting=True)
-def disconnect_mine(request: HttpRequest, connection_id: int) -> Status:
-    """Stop canopy holding this connection, and ask the provider to revoke it.
+def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> Status:
+    """Stop canopy holding this connection.
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
     conn = get_object_or_404(Connection, pk=connection_id, user=request.user)
@@ -181,181 +179,15 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
 @agents_router.delete("/{slug}/connections/{connection_id}", response={204: None},
                       summary="Disconnect an agent's connection")
 @gate("agent-admin", setting=True, step_up=True)
-def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: int) -> Status:
-    """Stop canopy holding this agent's connection and ask the provider to
-    revoke it. From a browser this needs a fresh passkey check; agents sharing
-    it lose access too."""
+def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: uuid.UUID) -> Status:
+    """Stop canopy holding this agent's connection. From a browser this needs a
+    fresh passkey check; agents it is lent to lose access too."""
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
     services.disconnect(conn, by=request.user)
     return Status(204, None)
-
-
-def _admin_of_either(request: HttpRequest, slug: str, other_slug: str) -> tuple[Agent, bool]:
-    """The owner agent `slug`, for a caller who administers it or `other_slug`,
-    and whether the caller came in ONLY as the grantee's admin.
-
-    The grantee's admin is confirmed first, then the owner is looked up without
-    the read-scope pin: an agent shared across workspaces has a grantee admin
-    who cannot read the owner, and must still be able to stop using it."""
-    other = Agent.objects.filter(slug=other_slug).first()
-    if other is not None and other.is_admin(request.user):
-        owner = Agent.objects.filter(slug=slug).first()
-        if owner is None:
-            raise HttpError(404, "unknown agent")
-        return owner, not owner.is_admin(request.user)
-    agent = agent_for_read(request, slug)
-    if agent.is_admin(request.user):
-        return agent, False
-    raise HttpError(403, "this action requires an admin of either agent")
-
-
-def _grant_target(request: HttpRequest, slug: str, connection_id: int, other_slug: str, *, either: bool = False):
-    grantee_only = False
-    if either:
-        agent, grantee_only = _admin_of_either(request, slug, other_slug)
-    else:
-        agent = agent_for_admin(request, slug)
-    conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
-    other = Agent.objects.filter(slug=other_slug).first()
-    if other is None:
-        raise HttpError(404, "unknown agent")
-    # The grantee's admin sees only what is shared with their agent: an owner's
-    # connection that is not is "not found" to them, never "nothing to revoke".
-    if grantee_only and not ConnectionGrant.objects.filter(connection=conn, agent=other).exists():
-        raise HttpError(404, "not shared with that agent")
-    return conn, other
-
-
-@agents_router.put("/{slug}/connections/{connection_id}/grants/{other_slug}", response={204: None},
-                   summary="Share an agent's connection with another agent")
-@gate("agent-admin", setting=True, step_up=True)
-def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
-    """Let another agent act through this agent's connection. You must
-    administer both agents. Sharing again is harmless."""
-    conn, other = _grant_target(request, slug, connection_id, other_slug)
-    # After the admin check: a non-admin gets 404/403, never a step-up prompt.
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    try:
-        services.grant(conn, other, by=request.user)
-    except PermissionDenied as exc:
-        raise HttpError(403, str(exc)) from None
-    except services.ConnectionError as exc:
-        raise problem_for(exc, title=_title(conn.provider), owner=f"{slug}'s") from None
-    return Status(204, None)
-
-
-@agents_router.delete("/{slug}/connections/{connection_id}/grants/{other_slug}", response={204: None},
-                      summary="Stop sharing an agent's connection with another agent")
-@gate("agent-admin", setting=True, step_up=True)
-def revoke_connection_grant(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
-    """Take the other agent's access away. An admin of either the owning agent or
-    the agent it was shared with may do this."""
-    conn, other = _grant_target(request, slug, connection_id, other_slug, either=True)
-    # After the admin check: a non-admin gets 404/403, never a step-up prompt.
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    g = (ConnectionGrant.objects.filter(connection=conn, agent=other)
-         .select_related("connection__agent", "agent").first())
-    if g is not None:
-        try:
-            services.revoke_grant(g, by=request.user)
-        except PermissionDenied as exc:
-            raise HttpError(403, str(exc)) from None
-    return Status(204, None)
-
-
-# ---- my CLI token ----------------------------------------------------------------
-
-def _plain_pat(request: HttpRequest) -> bool:
-    """A personal access token authenticated this request, over REST.
-
-    An allowlist, not "not a browser": a token route must not answer whatever
-    else is not a browser. An MCP tool call runs as the caller's PAT but puts the
-    answer in a model's context; an OAuth-grant PAT is a connector's (Claude's)
-    token, also a model's; a caller token speaks for a turn. All refused."""
-    if getattr(request, "via_mcp", False) or getattr(request, "auth_method", None) != kinds.PAT:
-        return False
-    kind = kinds.kind_of(getattr(request, "auth_credential", None))
-    return kind is not None and kind.name == kinds.PAT
-
-
-def _token_problem(request: HttpRequest, exc: services.ConnectionError, p: type[providers.Provider],
-                   workspace: str | None, conn: Connection | None) -> dict:
-    """The extra members (and, where the case needs its own words, `detail`) of
-    a 409 a person fixes themselves. `connect_url` is where to fix it: the start
-    URL of the one workspace in question (the connection's, the one asked for,
-    or the only one set up), else Settings, where they choose a workspace or
-    disconnect a spare account. Several workspaces in play are listed in
-    `workspaces`, and the detail says to pick one."""
-    user, provider = request.user, p.name
-    settings_url = request.build_absolute_uri("/settings/connections")
-    out: dict = {}
-    if exc.code not in ("not_connected", "reconnect_required", "ambiguous"):
-        return out
-    if conn is not None:                       # reconnect: the connection's own workspace
-        out["connect_url"] = _start_url(request, provider, conn.app.workspace_id)
-        return out
-    pick = "pick one with `?workspace=<slug>` (`--workspace <slug>` in the CLI)"
-    if exc.code == "ambiguous":
-        rows = services.person_connections(user, provider, workspace=workspace)
-        where = sorted({c.app.workspace_id for c in rows})
-        out["accounts"] = [c.account_label for c in rows]
-        out["workspaces"] = where
-        out["connect_url"] = settings_url
-        if len(where) > 1:
-            out["detail"] = (f"Your {p.title} is connected in more than one workspace "
-                             f"({', '.join(where)}); {pick}.")
-        return out
-    where = [a.workspace_id for a in services.apps_for_person(user, provider)
-             if workspace is None or a.workspace_id == workspace]
-    if len(where) == 1:
-        out["connect_url"] = _start_url(request, provider, where[0])
-        return out
-    out["connect_url"] = settings_url
-    if len(where) > 1:
-        out["workspaces"] = where
-        out["detail"] = (f"Your {p.title} is not connected. It is set up in more than one workspace "
-                         f"({', '.join(where)}): connect in one, then {pick}.")
-    return out
-
-
-@me_router.post("/{provider}/token", response=AccessTokenOut,
-                summary="A fresh access token for my own connection (CLI)")
-@gate("self", kind="ephemeral-credential", step_up="a person's own token for their own CLI; PAT only")
-def my_connection_token(request: HttpRequest, provider: str, refresh: bool = False,
-                        workspace: str | None = None) -> AccessTokenOut:
-    """Mint a short-lived access token for the account I connected, for my own
-    command line. Needs a personal access token sent as a bearer: a browser
-    session, an MCP call, an OAuth connector's token and a conversation's caller
-    token are all refused (403 `token_route_needs_pat`), so neither a stolen
-    cookie nor a model holding my token can pull a provider token. Only a
-    connection made in a workspace I am still a member of counts; `?workspace=`
-    picks one when I connected in several (409 `ambiguous` lists them in
-    `workspaces`). 409 when I have not connected, or must reconnect
-    (`connect_url`, an absolute URL, says where: a workspace's connect page, or
-    Settings when I must first choose a workspace or disconnect a spare account). `?refresh=true` forces a new
-    token even when the cached one looks fresh (for a CLI whose token the
-    provider already rejected)."""
-    if not _plain_pat(request):
-        raise ProblemError(403, "A personal access token is required",
-                           detail="Use the CLI (`canopy login`) to fetch your own token.",
-                           members={"error": "token_route_needs_pat"})
-    p = _provider_or_404(provider)
-    # No outer transaction: a refresh rejection stamps the row, and that stamp
-    # must survive the exception turned into a 409 below.
-    conn = None
-    try:
-        conn = services.connection_for_person(request.user, provider, workspace=workspace or None)
-        token = services.issue_token(conn, to="cli", by=request.user, refresh=refresh)
-    except services.ConnectionError as exc:
-        members = _token_problem(request, exc, p, workspace or None, conn)
-        raise problem_for(exc, title=p.title, owner="Your", **members) from None
-    return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
-                          expires_at=token.expires_at, account_label=token.account_label)
 
 
 # ---- a workspace's apps ----------------------------------------------------------
@@ -445,8 +277,8 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
 @gate("integrations", setting=True, step_up=True)
 def remove_connection_app(request: HttpRequest, workspace: str, provider: str) -> Status:
     """Remove this workspace's OAuth client for `provider`. Every account
-    connected with it is disconnected (each revoked at the provider) — people's
-    and agents' — and agents it was shared with lose it. Removing an app that is
+    connected with it is disconnected — people's and agents' — and agents it was
+    shared with lose it. Removing an app that is
     not set up is harmless. A workspace cannot be deleted while it has apps.
     From a browser this needs a fresh passkey check. Workspace admins only; not
     an MCP tool."""

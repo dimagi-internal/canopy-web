@@ -73,7 +73,7 @@ def test_reconnecting_after_a_move_is_one_connection_not_ambiguous(user, dimagi,
     eva = _agent(dimagi, user, "eva")
     _stored({"agent": eva}, user, app=sf_app(dimagi))
     eva = _moved(eva, x)
-    here = _stored({"agent": eva}, user, app=sf_app(x), access="00D!new")
+    here = _stored({"agent": eva}, user, app=sf_app(x))
     assert services.connection_for_agent(eva, "salesforce").pk == here.pk
 
 
@@ -103,7 +103,7 @@ def test_a_grantee_that_moves_keeps_the_grant(user, dimagi, x):
     assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
 
 
-def test_a_moved_agents_turn_token_is_not_connected(user, dimagi, x):
+def test_a_moved_agents_turn_lists_no_connection(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
     _stored({"agent": eva}, user, app=sf_app(dimagi))
     eva = _moved(eva, x)
@@ -116,9 +116,6 @@ def test_a_moved_agents_turn_token_is_not_connected(user, dimagi, x):
     turn = Turn.objects.create(agent=eva, origin=Turn.ORIGIN_EMAIL, prompt="x",
                                idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=runner)
     base = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}"
-    r = Client().post(f"{base}/connection-token", {"provider": "salesforce"}, content_type="application/json",
-                      HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 409 and r.json()["error"] == "not_connected"
     listed = Client().get(f"{base}/connections", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert listed.json() == {"providers": []}
 

@@ -1,15 +1,20 @@
-"""Connect, refresh, hand out, disconnect and grant — the one implementation every surface calls.
+"""Connect, disconnect and grant — the one implementation every surface calls.
 
 Request-free, like `apps.github_connect.github_app`: takes a `session` mapping
 where OAuth state must live between the two legs, raises domain exceptions, and
-does no HTTP-framework work. The settings views (person and agent), the CLI
-token route and the runner turn-token routes all come through here, so they
-cannot disagree about what a usable grant is. Nothing here names a provider:
-what differs between providers lives in `providers/`.
+does no HTTP-framework work. The settings views (person and agent) and the
+runner routes all come through here, so they cannot disagree about what a
+usable connection is. Nothing here names a provider: what differs between
+providers lives in `providers/`.
+
+canopy-web HOLDS NO TOKEN IT CAN USE. The only plaintext token it ever sees is
+the one in hand during the callback's code exchange; it never refreshes and
+never revokes a stored token (it has none). Machines the owner allows refresh
+and revoke, with the app's client.
 
 THE APP. Every flow runs against one workspace's `ConnectionApp` (`app_for`):
 its client id and secret, its options, its chosen scopes. A connection keeps the
-app that minted it, and is refreshed and revoked with that app's credentials,
+app that minted it, and machines refresh and revoke it with that app's client,
 so rotating an app's secret carries every connection with it. `begin` parks the
 app and `complete` refuses a callback for any other provider or workspace (an
 OAuth mix-up defence: a code is only ever exchanged by the client it was issued
@@ -21,22 +26,6 @@ old connection stops; so do the grants of it, wherever the grantee is).
 An `Owner` is `("user", user_id)` or `("agent", agent_id)`. There is no fallback
 between owners: an agent uses its own connection or one explicitly granted to
 it, never a person's; a person uses their own.
-
-WHY THE CACHE AND THE LOCK. A provider may rotate the refresh token on every
-refresh (Salesforce does), so two callers refreshing at once can spend the same
-token and brick the grant. A cached access token is reused while it has the
-caller's `min_life` left, and a refresh happens inside a transaction holding
-`select_for_update` on the row, re-reading the cache AFTER the lock is taken, so
-a caller that queued behind another's refresh uses that refresh's token instead
-of spending a dead one (`github_app.access_token_for` is the same structure,
-for the same reason).
-
-ONLY `invalid_grant` MEANS RECONNECT. `invalid_grant` (revoked, rotated
-elsewhere, user deactivated) stamps `refresh_failed_at`, which is what turns an
-opaque 401 into "Reconnect" in the UI. Any other rejection (`invalid_client`,
-`unsupported_grant_type`, ...) is canopy's own configuration, which reconnecting
-cannot fix: it raises `provider_error` and stamps nothing. A timeout or a 5xx
-says nothing about the grant either: `provider_unavailable`, nothing stamped.
 
 AUDIT AND LOGS go through one function, `record()`, with one vocabulary:
 `connections.<verb>` and the payload keys `connection`, `provider`, `owner`
@@ -62,17 +51,14 @@ import logging
 import re
 import secrets as _secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import F, QuerySet
-from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.events import services as events
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
@@ -83,10 +69,6 @@ from .models import Connection, ConnectionApp, ConnectionGrant
 logger = logging.getLogger(__name__)
 
 Owner = tuple[Literal["user", "agent"], int]
-
-# A cached access token is reused until this long before its expiry, so a token
-# handed out does not die mid-operation.
-ACCESS_TOKEN_MARGIN = timedelta(minutes=5)
 
 # Where pending authorizations wait between `begin` and `complete`, keyed by
 # `state`. Session-bound so the callback is tied to this browser; popped so a
@@ -144,15 +126,6 @@ class ReconnectRequired(ConnectionError):  # noqa: N818 - name fixed by the inte
 
     def __init__(self, message: str = "") -> None:
         super().__init__("", message)
-
-
-@dataclass(frozen=True)
-class AccessToken:
-    token: str
-    instance_url: str
-    expires_at: datetime
-    account_label: str
-    refreshed: bool = False  # minted by a refresh just now, rather than the cached one
 
 
 def _owner_filter(owner: Owner) -> dict:
@@ -302,33 +275,26 @@ def _save_app(cls, slug, client_id, client_secret, options, chosen, by) -> Conne
 
 
 def remove_app(app: ConnectionApp, *, by) -> None:
-    """Disconnect every connection made with `app` (each revoked best effort and
-    recorded as `disconnected` by `by`), then delete the app.
+    """Disconnect every connection made with `app` (each recorded as
+    `disconnected` by `by`), then delete the app.
 
     A connect that commits while this runs is caught too: the app row is locked
     for the delete, and whatever connections it holds then are deleted with it
-    and revoked afterwards, outside the transaction."""
-    # Revokes run in this request, one at a time (each bounded by HTTP_TIMEOUT):
-    # fine for a workspace's handful of connections; a route that may face
-    # hundreds should budget for it rather than parallelise blindly.
+    and recorded afterwards, outside the transaction."""
     for conn in list(app.connections.select_related("app__workspace", "agent__workspace").order_by("pk")):
         disconnect(conn, by=by)
     subject = _app_subject(app)
     title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
     client_id, slug = app.client_id, app.workspace_id
-    late: list[tuple[Subject, str | None, list]] = []
+    late: list[tuple[Subject, list]] = []
     with transaction.atomic():
         locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk).first()
         if locked is not None:
             for conn in locked.connections.select_related("agent__workspace").order_by("pk"):
-                # Read only: an unreadable token is recorded after the transaction.
-                late.append((Subject.of(conn), _decrypted_refresh(conn), _grantees(conn)))
+                late.append((Subject.of(conn), _grantees(conn)))
                 conn.delete()
             locked.delete()
-    for late_subject, refresh, grantees in late:
-        if refresh is None:
-            record(late_subject, "revoke_failed", warn=True, error="undecryptable")
-        _revoke(app, late_subject, refresh or "")
+    for late_subject, grantees in late:
         record(late_subject, "disconnected", by=by,
                summary=f"{late_subject.owner} disconnected {late_subject.provider} ({late_subject.account_label})")
         for grantee in grantees:
@@ -350,7 +316,7 @@ class Subject:
     """What a record says about a connection, captured while the row exists (a
     disconnect records after deleting it). Never a token."""
 
-    connection: int | None  # None before a row exists (a connect that failed), and for an app
+    connection: str | None  # the row's uuid; None before a row exists (a connect that failed), and for an app
     provider: str
     owner: str  # "agent:<slug>" | "user:<id>"; "" for an app
     account_label: str
@@ -359,7 +325,7 @@ class Subject:
     @classmethod
     def of(cls, conn: Connection) -> Subject:
         agent = conn.agent if conn.agent_id is not None else None
-        return cls(connection=conn.pk, provider=conn.provider,
+        return cls(connection=str(conn.pk), provider=conn.provider,
                    owner=f"agent:{agent.slug}" if agent else f"user:{conn.user_id}",
                    account_label=conn.account_label, workspace=agent.workspace if agent else None)
 
@@ -491,15 +457,15 @@ def authorize_refused(session, *, provider: str, state: str, error: str, by) -> 
 
 
 def complete(session, *, provider: str, workspace, code: str, state: str, redirect_uri: str, by) -> Connection:
-    """Exchange `code` with the parked app, read who the account is, and upsert the grant.
+    """Exchange `code` with the parked app, read who the account is, and check it.
 
     The state is popped first, so a failed exchange still spends it. A callback
     for another provider or workspace than the flow was begun with is
     `bad_state`, and nothing is exchanged. Nothing is stored unless the
     exchange, the identity lookup and the provider's `check_owner` succeed;
     a grant refused after the exchange is revoked at the provider (best effort).
-    Connecting the same account again for the same owner with the same app
-    updates that row (and clears any reconnect stamp) rather than adding a second.
+    Every connect is refused (`provider_error`) after those checks: canopy-web
+    stores no token it can read, and does not yet seal one to its owner.
     """
     pending = dict(session.get(SESSION_KEY) or {})
     parked = pending.pop(state, None) if state else None
@@ -518,9 +484,8 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         agent = Agent.objects.filter(pk=parked["owner_id"]).first()
         if agent is None:  # deleted between begin and complete
             raise ConnectionError("bad_state", "that agent no longer exists")
-        owner_kw, owner_obj = {"agent": agent}, agent
+        owner_obj = agent
     else:
-        owner_kw = {"user_id": parked["owner_id"]}
         owner_obj = get_user_model().objects.filter(pk=parked["owner_id"]).first()
     # No row yet: a refusal is logged against the would-be owner.
     subject = _parked_subject(provider, parked)
@@ -557,33 +522,11 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         _discard_grant(p, subject, token)
         raise ConnectionError(code, str(e)) from None
 
-    lookup = {"app": app, "provider": provider, "account_id": ident.account_id, **owner_kw}
-    defaults = {
-        "account_label": ident.label,
-        "instance_url": token.instance_url,
-        "scopes": " ".join(token.scopes or p.requested_scopes()),
-        "refresh_token_enc": encrypt_secret(token.refresh_token),
-        "access_token_enc": encrypt_secret(token.access_token),
-        "access_token_expires_at": token.expires_at,
-        "access_token_seconds": int(token.lifetime.total_seconds()) or None,
-        "refresh_failed_at": None,
-        "connected_by": by,
-    }
-    with transaction.atomic():
-        # The app row, locked, is still the client that issued this grant: a client
-        # id change or a removal that committed during the exchange refuses it
-        # (and either one, waiting on this lock, sees the new connection).
-        changed = not ConnectionApp.objects.select_for_update().filter(
-            pk=app.pk, client_id=parked["client_id"]).exists()
-        if not changed:
-            conn = _upsert_connection(lookup, defaults)
-    if changed:
-        # Revoked outside the transaction: a network call never holds a row lock.
-        _discard_grant(p, subject, token)
-        raise ConnectionError("bad_state", "that app has changed; start the connection again")
-    record(Subject.of(conn), "connected", by=by,
-           summary=f"{conn.owner_label} connected {p.title} as {conn.account_label}")
-    return conn
+    # Nothing may be stored that canopy-web could read, and the token is not yet
+    # sealed to its owner here: the grant is discarded and the connect refused.
+    record(subject, "provider_error", by=by, warn=True, during="connect", error="not_sealed")
+    _discard_grant(p, subject, token)
+    raise ConnectionError("provider_error", f"{p.title} cannot be connected yet")
 
 
 def _upsert_connection(lookup: dict, defaults: dict) -> Connection:
@@ -618,142 +561,13 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
                error=getattr(e, "code", "") or type(e).__name__)
 
 
-# ---- using the grant ---------------------------------------------------------
-
-def _cached_token(conn: Connection, min_life: timedelta) -> str:
-    """The row's access token if it is good for at least `min_life` longer, else
-    "". An undecryptable value (a rotated key) counts as no cache."""
-    if not (conn.access_token_enc and conn.access_token_expires_at):
-        return ""
-    if conn.access_token_expires_at - min_life <= timezone.now():
-        return ""
-    try:
-        return decrypt_secret(conn.access_token_enc)
-    except Exception:  # noqa: BLE001
-        return ""
-
-
-def _handout(conn: Connection, token: str, *, refreshed: bool) -> AccessToken:
-    return AccessToken(token=token, instance_url=conn.instance_url, expires_at=conn.access_token_expires_at,
-                       account_label=conn.account_label, refreshed=refreshed)
-
-
-def access_token_for(conn: Connection, *, min_life: timedelta = ACCESS_TOKEN_MARGIN,
-                     refresh: bool = False) -> AccessToken:
-    """A usable access token: the cached one while it has at least `min_life` left,
-    else refreshed under the row lock. Records nothing about the handout — the
-    door that hands it out calls `issue_token`, which does.
-
-    `min_life` is what the caller needs (a runner that re-stages every few minutes
-    asks for more than the default margin). It is capped at half a fresh token's
-    lifetime: asking for more than a fresh token has would refresh on every call.
-    `refresh` skips the cache entirely — for a caller whose token the provider
-    already rejected (a 401 before the assumed expiry); it still refreshes under
-    the lock, so it cannot race another refresh.
-    """
-    conn = Connection.objects.select_related("app__workspace").get(pk=conn.pk)
-    # Half the life the last token actually had (the provider's `expires_in`), else
-    # half the app's configured lifetime.
-    lifetime = (timedelta(seconds=conn.access_token_seconds) if conn.access_token_seconds
-                else providers.for_app(conn.app).access_token_lifetime())
-    min_life = min(min_life, lifetime / 2)
-    if conn.needs_reconnect:
-        raise ReconnectRequired(f"reconnect {conn.provider}")
-    cached = "" if refresh else _cached_token(conn, min_life)
-    if cached:
-        conn.last_used_at = timezone.now()
-        Connection.objects.filter(pk=conn.pk).update(last_used_at=conn.last_used_at)
-        return _handout(conn, cached, refreshed=False)
-
-    p = _configured(conn.app)  # checked before the lock; rebuilt from the locked read below
-    rejected: providers.ProviderError | None = None
-    failed: tuple[str, providers.ProviderError] | None = None
-    with transaction.atomic():
-        # Re-read under the lock: another process may have refreshed (or had its
-        # refresh rejected) while this one waited.
-        conn = Connection.objects.select_for_update(of=("self",)).select_related("app__workspace").get(pk=conn.pk)
-        # The app as it is now: a secret rotated while this waited is the one to send.
-        p = _configured(conn.app)
-        if conn.needs_reconnect:
-            raise ReconnectRequired(f"reconnect {conn.provider}")
-        cached = "" if refresh else _cached_token(conn, min_life)
-        if cached:
-            conn.last_used_at = timezone.now()
-            conn.save(update_fields=["last_used_at", "updated_at"])
-            return _handout(conn, cached, refreshed=False)
-
-        try:
-            token = p.refresh(decrypt_secret(conn.refresh_token_enc))
-        except providers.ProviderError as e:
-            if isinstance(e, providers.ProviderUnavailable) or e.code != "invalid_grant":
-                # Not about the grant (unreachable; our client config; an unexpected
-                # answer): reconnecting would not fix it, so nothing is stamped.
-                code = "provider_unavailable" if isinstance(e, providers.ProviderUnavailable) else "provider_error"
-                failed = (code, e)
-            else:
-                # Stamped inside the block and raised after it, so the stamp commits
-                # rather than rolling back with the exception.
-                conn.refresh_failed_at = timezone.now()
-                conn.save(update_fields=["refresh_failed_at", "updated_at"])
-                rejected = e
-        else:
-            if token.refresh_token:  # rotated: the old one is dead now
-                conn.refresh_token_enc = encrypt_secret(token.refresh_token)
-            if token.instance_url:
-                conn.instance_url = token.instance_url
-            if token.scopes:  # the provider said what it granted this time
-                conn.scopes = " ".join(token.scopes)
-            conn.access_token_enc = encrypt_secret(token.access_token)
-            conn.access_token_expires_at = token.expires_at
-            conn.access_token_seconds = int(token.lifetime.total_seconds()) or None
-            conn.refresh_failed_at = None
-            conn.last_used_at = timezone.now()
-            conn.save(update_fields=[
-                "refresh_token_enc", "instance_url", "scopes", "access_token_enc", "access_token_expires_at",
-                "access_token_seconds", "refresh_failed_at", "last_used_at", "updated_at",
-            ])
-            return _handout(conn, token.access_token, refreshed=True)
-
-    # Records are written after the transaction, never inside it: an Event written
-    # in the block would share its fate, and a record is about what committed.
-    if failed is not None:
-        code, e = failed
-        record(Subject.of(conn), "provider_error", warn=True, during="refresh", error=e.code or code)
-        raise ConnectionError(code, str(e))
-    record(Subject.of(conn), "reconnect_required", warn=True, error=rejected.code,
-           summary=f"{conn.owner_label}'s {p.title} connection was rejected; reconnect it")
-    raise ReconnectRequired(f"{p.title} rejected the stored grant ({rejected.code})")
-
-
-def issue_token(conn: Connection, *, to: Literal["cli", "turn"], by=None,
-                min_life: timedelta = ACCESS_TOKEN_MARGIN, refresh: bool = False,
-                agent: str = "", turn: str = "", runner: str = "", runner_name: str = "") -> AccessToken:
-    """`access_token_for`, plus the `token_issued` record of handing it out.
-
-    The one way a token leaves canopy-web: both token routes come through here,
-    so no handout goes unrecorded. `to` is `cli` (the owner's own command line;
-    `by` is that person) or `turn` (named by `agent`, `turn` and `runner`; one
-    turn's repeated issues, its heartbeat re-stages, coalesce into one Event;
-    `runner_name` is for the summary only)."""
-    token = access_token_for(conn, min_life=min_life, refresh=refresh)
-    title = getattr(providers.CLASSES.get(conn.provider), "title", conn.provider)
-    context = {"agent": agent, "turn": turn, "runner": runner} if to == "turn" else {}
-    record(Subject.of(conn), "token_issued", by=by, to=to, refreshed=token.refreshed, **context,
-           key=f"token_issued:{conn.provider}:{agent}:{turn}" if to == "turn" else "",
-           summary=(f"{conn.owner_label}'s {title} token for {agent}'s turn on {runner_name or runner}"
-                    if to == "turn" else f"{conn.owner_label}'s {title} token for their CLI"))
-    return token
-
+# ---- disconnecting -----------------------------------------------------------
 
 def disconnect(conn: Connection, *, by) -> None:
-    """Revoke at the provider with the connection's app (best effort) and delete the row.
-
-    A failed revoke is logged, not raised: the person asked for canopy to stop
-    holding the grant, and deleting it does that whatever the provider says.
-    """
+    """Delete the row and record it. canopy-web holds no token, so it revokes
+    nothing at the provider itself."""
     subject = Subject.of(conn)
     grantees = _grantees(conn)
-    _revoke(conn.app, subject, _refresh_token_of(conn, subject))
     conn.delete()  # its grants go with it (CASCADE)
     summary = f"{subject.owner} disconnected {subject.provider} ({subject.account_label})"
     record(subject, "disconnected", by=by, summary=summary)
@@ -764,33 +578,6 @@ def disconnect(conn: Connection, *, by) -> None:
         record(dataclasses.replace(subject, workspace=app_ws), "disconnected", by=by, summary=summary)
     for grantee in grantees:
         _record_grant_revoked(subject, grantee, by=by, during="disconnected")
-
-
-def _decrypted_refresh(conn: Connection) -> str | None:
-    """The plaintext refresh token, or None when it cannot be read."""
-    try:
-        return decrypt_secret(conn.refresh_token_enc)
-    except Exception:  # noqa: BLE001 - an unreadable token cannot be revoked; still delete
-        return None
-
-
-def _refresh_token_of(conn: Connection, subject: Subject) -> str:
-    """The plaintext refresh token, or "" (recorded) when it cannot be read."""
-    refresh = _decrypted_refresh(conn)
-    if refresh is None:
-        record(subject, "revoke_failed", warn=True, error="undecryptable")
-        return ""
-    return refresh
-
-
-def _revoke(app: ConnectionApp, subject: Subject, refresh: str) -> None:
-    """Revoke `refresh` with `app`'s client, best effort: a failure is a log line."""
-    if not refresh:
-        return
-    try:
-        providers.for_app(app).revoke(refresh)
-    except Exception as e:  # noqa: BLE001
-        record(subject, "revoke_failed", warn=True, error=getattr(e, "code", "") or type(e).__name__)
 
 
 def _grantees(conn: Connection) -> list:
