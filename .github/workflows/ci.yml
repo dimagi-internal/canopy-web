@@ -783,6 +783,7 @@ jobs:
   # what unit tests cannot see: the reply arriving once and in order, the view
   # at the newest row, a finished turn that stops saying it is working, history
   # that survives a dropped connection. Not yet behind a required gate.
+  # Also runs vault-new-key: real passkey ceremonies, with a virtual authenticator.
   test-e2e-chat:
     name: Browser suite (chat)
     if: github.event_name != 'pull_request'
@@ -836,7 +837,7 @@ jobs:
         env:
           E2E_DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
           E2E_SERVER_TIMEOUT: "300000"
-        run: npx playwright test e2e/chat-runner.spec.ts --project=desktop
+        run: npx playwright test e2e/chat-runner.spec.ts e2e/vault-new-key.spec.ts --project=desktop
 
       - name: Keep the traces of a failure
         if: failure()
