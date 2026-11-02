@@ -18,8 +18,8 @@ never this list; what this module computes can only NARROW it:
   (`owner_member`).
 
 A recipient that stops qualifying is pruned from both envelopes without
-decrypting anything (`prune`), except the last machine holding it, which a
-revoke still needs.
+decrypting anything (`prune`), except one active cloud box when no remaining
+recipient could revoke it: a revoke still needs one.
 """
 from __future__ import annotations
 
@@ -175,36 +175,42 @@ def waiting(conn: Connection) -> list[dict]:
     return out
 
 
-def _last_holder(dropped: set[tuple[str, str]]) -> tuple[str, str] | None:
-    """The one dropped machine to keep when nothing else would hold it: a revoke
-    needs a holder. An active cloud box first (only they revoke), then any."""
-    jkts = sorted(t for kind, t in dropped if kind == "device")
-    if not jkts:
+def _revokers(jkts) -> list[str]:
+    """Those of `jkts` that could revoke at the provider: an ACTIVE, ECDH-ready key on
+    a cloud runner (only cloud runners keep or revoke). Sorted."""
+    return sorted(RunnerDeviceKey.objects.filter(
+        ecdh_jkt__in=list(jkts), status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False,
+        runner__kind=Runner.CLOUD).exclude(ecdh_jkt="").exclude(runner__status=Runner.RETIRED)
+        .values_list("ecdh_jkt", flat=True))
+
+
+def _last_holder(kept: set[tuple[str, str]], dropped: set[tuple[str, str]]) -> tuple[str, str] | None:
+    """The one dropped machine to keep so a revoke still has a holder: only when no
+    kept recipient could revoke, and only a machine that could (`_revokers`). A
+    revoked key, a laptop or a computer is never kept: with nothing able to revoke,
+    the delete-at-once path applies instead."""
+    if _revokers(t for kind, t in kept if kind == "device"):
         return None
-    keys = {k.ecdh_jkt: k for k in RunnerDeviceKey.objects.filter(ecdh_jkt__in=jkts).select_related("runner")}
-
-    def rank(t):
-        k = keys.get(t)
-        return (not (k and k.status == RunnerDeviceKey.ACTIVE and k.runner.kind == Runner.CLOUD), t)
-
-    return ("device", min(jkts, key=rank))
+    able = _revokers(t for kind, t in dropped if kind == "device")
+    return ("device", able[0]) if able else None
 
 
 def prune(conn: Connection) -> list[str]:
     """Drop from both envelopes (and their writer sigs) every recipient that may no
     longer open it: each recipient carries its own ciphertext, so this decrypts
-    nothing. Never the last machine holding it: a revoke needs one. Nothing while
-    `unshared` (sealed to the owner alone). Returns what was dropped (runner names,
+    nothing. When no kept machine could revoke it, one dropped machine that could (an
+    active cloud box) stays, so a revoke still has a holder. Only an `active` row:
+    nothing while `unshared` (sealed to the owner alone) or `revoking` (its holders
+    are revoking it). Returns what was dropped (runner names,
     `person <id>`); empty when nothing changed."""
     with transaction.atomic():
         fresh = Connection.objects.select_for_update().filter(pk=conn.pk).first()
-        if fresh is None or fresh.state == Connection.UNSHARED or not fresh.sealed:
+        if fresh is None or fresh.state != Connection.ACTIVE or not fresh.sealed:
             return []
         allowed = targets(recipients(fresh))
         _, dropped = zk_seal.keep_only(fresh.sealed, allowed)
-        kept_devices = {t for t in zk_seal.sealed_targets(fresh.sealed) - dropped if t[0] == "device"}
-        if dropped and not kept_devices:
-            last = _last_holder(dropped)
+        if dropped:
+            last = _last_holder(zk_seal.sealed_targets(fresh.sealed) - dropped, dropped)
             if last is not None:
                 allowed.add(last)
         sealed, dropped = zk_seal.keep_only(fresh.sealed, allowed)

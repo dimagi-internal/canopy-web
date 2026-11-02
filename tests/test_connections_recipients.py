@@ -6,7 +6,8 @@ connection, still administered by them); a person's connection reaches the
 cloud boxes that run each such agent and their own computers they listed —
 never another admin's laptop; an agent's reaches the machines that run it. A
 recipient that stops qualifying is pruned from the envelopes without opening
-them, except the last machine holding it (a revoke needs one).
+them, except one active cloud box when nothing kept could revoke it (a
+revoke needs one) — never a revoked key, a laptop or a computer.
 """
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ import pytest
 from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
 from apps.connections import recipients as rcpt
-from apps.connections.models import ConnectionGrant
+from apps.connections.models import Connection, ConnectionGrant
+from apps.harness.models import Runner, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace
 from tests.fixtures.connections import ShareWorld, revoke_admin, vault_key
@@ -115,7 +117,7 @@ def test_prune_drops_a_machine_that_no_longer_qualifies_from_both_envelopes(worl
     assert rcpt.prune(conn) == []
 
 
-def test_prune_never_drops_the_last_device_holder(world):
+def test_prune_keeps_the_last_active_cloud_box_holding_it(world):
     conn = world.shared(world.persons(), agents=[world.echo])
     revoke_admin(world.person, world.echo)
     assert rcpt.recipients(conn) == [rcpt.owner_member(conn)]
@@ -123,6 +125,52 @@ def test_prune_never_drops_the_last_device_holder(world):
     conn.refresh_from_db()
     # Kept so a revoke still has a machine that can open it; the material route refuses it.
     assert ("device", world.echo_box.ecdh_jkt) in zk_seal.sealed_targets(conn.sealed)
+
+
+def held(conn) -> set[str]:
+    conn.refresh_from_db()
+    return {t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"}
+
+
+def test_prune_drops_a_revoked_key_even_when_it_is_the_last_holder(world):
+    conn = world.shared(world.persons(), agents=[world.echo])
+    RunnerDeviceKey.objects.filter(pk=world.echo_box.pk).update(status=RunnerDeviceKey.REVOKED)
+    assert rcpt.prune(conn) == ["echo-cloud"]
+    assert held(conn) == set()
+    assert zk_seal.sealed_targets(conn.sealed) == {("member", str(world.person.pk))}
+
+
+def test_prune_drops_a_computer_even_when_it_is_the_last_holder(world):
+    conn = world.shared(world.persons(), my_computers=[world.computer.ecdh_jkt])
+    Connection.objects.filter(pk=conn.pk).update(statement={**conn.statement, "my_computers": []})
+    assert rcpt.prune(conn) == ["jj-computer"]
+    assert held(conn) == set()
+
+
+def test_prune_drops_a_laptop_even_when_it_is_the_last_holder(world):
+    laptop, _, _ = world._box("jj-laptop", Runner.EMDASH, world.person, world.eva)
+    conn = world.shared(world.persons(), agents=[world.eva],
+                        to=[("device", laptop.ecdh_jkt, laptop.ecdh_public_jwk)])
+    elsewhere = Workspace.objects.create(slug="x", display_name="X", created_by=world.person)
+    Agent.objects.filter(pk=world.eva.pk).update(workspace=elsewhere)
+    assert rcpt.prune(conn) == ["jj-laptop"]
+    assert held(conn) == set()
+
+
+def test_prune_keeps_an_out_of_force_cloud_box_beside_the_owners_computer(world):
+    """The owner's computer never revokes, so the cloud box stays the revoker."""
+    conn = world.shared(world.persons(), agents=[world.echo], my_computers=[world.computer.ecdh_jkt])
+    revoke_admin(world.person, world.echo)
+    assert rcpt.prune(conn) == []
+    assert held(conn) == {world.echo_box.ecdh_jkt, world.computer.ecdh_jkt}
+
+
+def test_prune_leaves_a_revoking_connection_alone(world):
+    conn = world.shared(world.persons(), agents=[world.eva, world.echo])
+    revoke_admin(world.person, world.echo)
+    Connection.objects.filter(pk=conn.pk).update(state=Connection.REVOKING)
+    assert rcpt.prune(conn) == []
+    assert held(conn) == {world.eva_box.ecdh_jkt, world.echo_box.ecdh_jkt}
 
 
 def test_prune_leaves_an_unshared_connection_alone(world):
