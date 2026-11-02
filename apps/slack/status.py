@@ -129,7 +129,8 @@ def _confined_note(turn: Turn, agent: str) -> str:
     who = who or "This sender"
     return (f":lock: *Questions only* — {who} isn't a member of this agent's conversation in "
             f"canopy, so {agent} answers in `{turn.capability}` mode (no actions), in a session of "
-            "its own. To give them more, add them to the agent's canopy workspace.")
+            "its own. To give them more, the agent's owner or an admin can add them as an editor "
+            "(on the agent's access list, or in its canopy workspace).")
 
 
 def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
