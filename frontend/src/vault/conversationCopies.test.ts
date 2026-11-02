@@ -7,7 +7,7 @@ const api = vi.hoisted(() => ({ myKeyCopies: vi.fn(), putMyKeyCopies: vi.fn() })
 vi.mock('@/api/chat', () => api)
 vi.stubGlobal('window', { localStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined } })
 
-const { atStake, replaceKeepingConversations } = await import('./conversationCopies')
+const { atStake, atStakeLost, replaceKeepingConversations } = await import('./conversationCopies')
 const { wrapInfo } = await import('./sealedChat')
 const zk = await import('./zk')
 
@@ -70,6 +70,22 @@ describe('replaceKeepingConversations', () => {
       async () => ({ keyset: {} as never, me: { userId: '7', privateKey: fresh.privateKey, publicJwk: fresh.publicJwk } }), [])
     expect(unlockOld).not.toHaveBeenCalled()
     expect(api.putMyKeyCopies).not.toHaveBeenCalled()
+  })
+
+  it('carry: false never unlocks the old key and reports every copy as not carried', async () => {
+    const old = await zk.generateKeyPair()
+    const fresh = await zk.generateKeyPair()
+    const held = [await copyFor('conv-a', 's-a', zk.randomBytes(32), old.publicJwk),
+                  await copyFor('conv-b', 's-b', zk.randomBytes(32), old.publicJwk)]
+    const unlockOld = vi.fn()
+    const out = await replaceKeepingConversations(unlockOld,
+      async () => ({ keyset: { exists: true } as never, me: { userId: '7', privateKey: fresh.privateKey, publicJwk: fresh.publicJwk } }),
+      held as never, { carry: false })
+    expect(unlockOld).not.toHaveBeenCalled()
+    expect(api.putMyKeyCopies).not.toHaveBeenCalled()
+    expect(out.carried).toBe(0)
+    expect(out.lost.map((c) => c.session_id)).toEqual(['s-a', 's-b'])
+    expect(atStakeLost(out.lost)).toContain('with Labs Data')
   })
 
   it('names the private conversations at stake for the confirm', () => {

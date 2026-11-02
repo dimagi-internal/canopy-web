@@ -45,6 +45,11 @@ export const PRF_UNSUPPORTED =
 export const USE_A_PASSPHRASE =
   "Your passkey app can't unlock a vault key, so use a passphrase — save it and the Secret Key in your password manager."
 
+/** Everywhere a passphrase or Secret Key is asked for or refused: there is a way out. */
+export const LOST_PASSPHRASE = 'Lost your passphrase or Secret Key? Create a new vault key - it does not need them.'
+
+export const WRONG_PASSPHRASE = `That passphrase and Secret Key do not open your vault key. ${LOST_PASSPHRASE}`
+
 /** What to tell a person when a key-setup flow failed: the passphrase hint when the
  *  passkey cannot hold the key, a plain line when they dismissed the passkey sheet,
  *  else the error's own message. */

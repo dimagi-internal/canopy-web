@@ -31,8 +31,15 @@ export function atStake(copies: MyKeyCopy[]): string {
   const shown = copies.slice(0, 5).map((c) => `• a private conversation ${nameOf(c)}`).join('\n')
   const more = copies.length > 5 ? `\n• and ${copies.length - 5} more` : ''
   return `\n\nYou are in ${copies.length} private conversation${copies.length === 1 ? '' : 's'}, sealed to your `
-    + `current key:\n${shown}${more}\n\nThis browser will unlock your current key first and carry them over to the `
-    + 'new one, so you can still read them.'
+    + `current key:\n${shown}${more}\n\nTo keep reading them, this browser can unlock your current key first and `
+    + 'carry them over to the new one.'
+}
+
+/** Which conversations were NOT carried over, for the notice after creating a new key without them. */
+export function atStakeLost(copies: MyKeyCopy[]): string {
+  if (!copies.length) return ''
+  const shown = copies.slice(0, 5).map((c) => `a private conversation ${nameOf(c)}`).join('; ')
+  return ` Needs a fresh copy: ${shown}${copies.length > 5 ? `; and ${copies.length - 5} more` : ''}.`
 }
 
 /** The conversation keys you hold, opened with your current (old) vault key. Copies it
@@ -85,16 +92,23 @@ export async function storeOnNewKey(opened: { copy: MyKeyCopy; scalar: Uint8Arra
  * Replace your vault key, keeping your private conversations: list your copies, unlock
  * the OLD key (`unlockOld`), open them, make the new key (`makeNew`), then store each
  * copy wrapped to it. Returns the new keyset and what could not be carried.
+ *
+ * `carry: false` is for someone who cannot open the old key (lost passphrase and
+ * Secret Key): it never calls `unlockOld`, and every held copy comes back in `lost`.
+ * Those conversations then list the person as needing a fresh copy of the key, which
+ * anyone else in them can give (People → Give key) — the same state a stale copy is in.
  */
 export async function replaceKeepingConversations(
   unlockOld: () => Promise<Unlocked>,
   makeNew: () => Promise<{ keyset: VaultKeysetOut; me: Unlocked }>,
   copies?: MyKeyCopy[],
+  opts: { carry?: boolean } = {},
 ): Promise<{ keyset: VaultKeysetOut; carried: number; lost: MyKeyCopy[] }> {
   const held = copies ?? await myKeyCopies()
   let opened: { copy: MyKeyCopy; scalar: Uint8Array }[] = []
   let lost: MyKeyCopy[] = []
-  if (held.length) ({ opened, lost } = await openMyCopies(held, await unlockOld()))
+  if (held.length && opts.carry === false) lost = [...held]
+  else if (held.length) ({ opened, lost } = await openMyCopies(held, await unlockOld()))
   let made: { keyset: VaultKeysetOut; me: Unlocked }
   try {
     made = await makeNew()

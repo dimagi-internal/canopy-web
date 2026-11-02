@@ -131,6 +131,18 @@ export async function setVaultAgentLink(slug: string, linked: boolean): Promise<
     params: { path: { slug } }, body: { linked, role: 'member' } }), 'Could not change the vault’s link to this agent')
 }
 
+// ---- what a new vault key affects (vault/newKeyImpact.ts) ----
+// These two REFUSE on failure, unlike listWorkspaces (./workspaces), which answers [] and
+// would read as "you hold no vaults".
+
+export async function listMyAgentsWithVaults(limit: number): Promise<{ items: { slug: string; name: string }[]; total: number }> {
+  return need(await apiV2.GET('/api/me/agents/', { params: { query: { limit } } }), 'Could not list your agents')
+}
+
+export async function listMyWorkspacesWithVaults(): Promise<{ slug: string; name: string }[]> {
+  return need(await apiV2.GET('/api/workspaces/'), 'Could not list your workspaces')
+}
+
 // ---- workspace vaults (spec §4): any number per workspace, layered under an agent's own ----
 
 export type WorkspaceVaultOut = Schemas['WorkspaceVaultOut']

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { UnlockAsk, UnlockChoice, UnlockPrompt } from './operations'
+import { LOST_PASSPHRASE } from './prf'
 
 /**
  * "Unlock your vault key" — passkey or passphrase (canopy-web#1550). A hook, so
@@ -77,6 +78,11 @@ function UnlockForm({ ask, onFinish }: { ask: UnlockAsk; onFinish: (choice: Unlo
       )}
       <button type="button" onClick={() => onFinish(null)}
               className="text-muted-foreground hover:text-foreground">Cancel</button>
+      {/* A new tab: this form renders in the embedded panel too, whose frame has no session. */}
+      <p className="text-muted-foreground">
+        <a href="/settings#vault-key" target="_blank" rel="noreferrer" data-testid="vault-unlock-lost"
+           className="underline hover:text-foreground">{LOST_PASSPHRASE}</a>
+      </p>
     </form>
   )
 }

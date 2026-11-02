@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Button } from 'canopy-ui/ui'
 import { getKeyset, type VaultKeysetOut } from '@/api/vault'
-import { myKeyCopies } from '@/api/chat'
-import { atStake, replaceKeepingConversations } from '@/vault/conversationCopies'
 import {
   createVaultKeyWithPasskey,
   passkeyCanHoldVaultKey,
-  stepUpAndUnlock,
-  unlockVaultKey,
   upgradePasskey,
   vaultKeyRoute,
   addPassphraseToVaultKey,
@@ -20,6 +16,7 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { passphraseProblem } from '@/vault/zk'
 import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
 import { useHash } from '@/lib/useHash'
+import { NewVaultKey } from './NewVaultKey'
 
 
 /**
@@ -90,6 +87,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
   const [pass2, setPass2] = useState('')
   const [kit, setKit] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
+  const [creatingKey, setCreatingKey] = useState(false)
   const { prompt, element } = useUnlockPrompt()
 
   useEffect(() => {
@@ -139,35 +137,6 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
     if (fresh.prf_enabled !== true) throw new PrfUnsupportedError()
     return (await createVaultKeyWithPasskey(false, [fresh.credential_id])).keyset
   }
-  /** A new key, carrying your private conversations over to it: their keys are wrapped
-   *  only to your current key, so this browser opens them with it first. */
-  const startOver = async () => {
-    setError('')
-    let copies
-    try {
-      copies = await myKeyCopies()
-    } catch (e) {
-      setError(`Could not list your private conversations, so your key was not replaced: ${
-        e instanceof Error ? e.message : 'the request failed'}.`)
-      return
-    }
-    if (!window.confirm('Start over with a new key? Every agent must let you in again, and your recovery code '
-                        + `stops working.${atStake(copies)}`)) return
-    await run(async () => {
-      const out = await replaceKeepingConversations(
-        async () => (await stepUpAndUnlock(await getKeyset())) ?? unlockVaultKey(prompt),
-        () => createVaultKeyWithPasskey(true),
-        copies,
-      )
-      if (out.lost.length) {
-        setNotice(`${out.lost.length} private conversation${out.lost.length === 1 ? '' : 's'} could not be carried over `
-          + '(your copy was already out of date). Ask someone in it to give you a fresh copy (People → Give key).')
-      } else if (out.carried) {
-        setNotice(`Your ${out.carried} private conversation${out.carried === 1 ? ' was' : 's were'} carried over to the new key.`)
-      }
-      return out.keyset
-    })
-  }
   const sealsOf = (k: VaultKeysetOut) => ((k.seals ?? []) as { alg?: string }[]).map((s) => s.alg)
   const hasPassphrase = ks ? sealsOf(ks).includes('2skd') : false
   const unsealed = (ks?.passkeys ?? []).filter((p) => !p.sealed)
@@ -208,7 +177,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
   // On Settings the card is not part of the default view: the vault key is
   // created where it is needed (an agent's zero-knowledge section), and the
   // Passkeys card says which passkey unlocks it. This full card — add a
-  // passphrase, add a passkey, start over — is reached at #vault-key.
+  // passphrase, add a passkey, create a new key — is reached at #vault-key.
   if (onlyWhenLinked && !linked && !kit) return null
 
   return (
@@ -288,12 +257,22 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
                     data-testid="vault-key-add-passphrase">
               {hasPassphrase ? 'Change passphrase' : 'Add a passphrase'}
             </Button>
-            <Button size="sm" variant="outline" disabled={busy} data-testid="vault-key-replace"
-                    onClick={() => void startOver()}>
-              Start over with a new key
+            <Button size="sm" variant="outline" disabled={busy} data-testid="new-key-open"
+                    onClick={() => { setMode(null); setError(''); setNotice(''); setCreatingKey(true) }}>
+              Create a new vault key
             </Button>
           </div>
           {mode === 'passphrase' && passphraseForm}
+          {creatingKey && (
+            <NewVaultKey userId={ks.user_id} passkeyOk={passkeyOk} prompt={prompt}
+                         onCancel={() => setCreatingKey(false)}
+                         onCreated={(keyset, secretKey, message) => {
+                           setCreatingKey(false)
+                           setKs(keyset)
+                           setKit(secretKey)
+                           setNotice(message)
+                         }} />
+          )}
           {element}
         </div>
       )}

@@ -6,7 +6,7 @@ import {
   type VaultKeysetOut,
 } from '@/api/vault'
 import { } from '@/api/problem'
-import { assertWithPrf, PrfUnsupportedError } from './prf'
+import { assertWithPrf, PrfUnsupportedError, WRONG_PASSPHRASE } from './prf'
 import type { } from './trust'
 import {
   importPrivateScalar,
@@ -108,7 +108,7 @@ export async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Prom
       // the next passphrase seal, if any
     }
   }
-  throw new Error('That passphrase and Secret Key do not open your vault key.')
+  throw new Error(WRONG_PASSPHRASE)
 }
 
 /** The ONE passkey touch that both steps up (the server's five-minute window)
