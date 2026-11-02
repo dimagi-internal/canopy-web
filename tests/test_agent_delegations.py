@@ -33,7 +33,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.credentials import accounts, delegations, vault_engine
-from apps.agents.models import Agent, AgentAdmin, AgentCredential
+from apps.agents.models import Agent, AgentAdmin, AgentCredential, AgentCredentialAlert
 from apps.harness import drills, services
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.passkeys.testing import grant_step_up
@@ -761,3 +761,75 @@ def test_the_access_check_names_what_a_local_user_must_bring_themselves(agent, o
     [w] = body["delegated_withheld"]
     assert (w["provider"], w["delegated_by_email"]) == ("github", "olive@dimagi.com")
     assert "github_pat" not in str(body)
+
+
+# ---- the owner is told before the token expires (credentials/github_expiry.py) ------
+
+def _expire_in(entry, **delta):
+    AgentCredential.objects.filter(pk=entry.pk).update(
+        provider_expires_at=timezone.now() + dt.timedelta(**delta))
+    entry.refresh_from_db()
+
+
+def _hour_later():
+    """vault_alerts debounces one alert per agent and kind per hour; real steps are days apart."""
+    AgentCredentialAlert.objects.update(created_at=timezone.now() - dt.timedelta(hours=2))
+
+
+def test_steps_are_the_sharpest_one_reached():
+    from apps.agents.credentials import github_expiry as ge
+
+    now = dt.datetime(2026, 11, 1, 12, 0, tzinfo=dt.UTC)
+    at = lambda **d: ge.step_for(now + dt.timedelta(**d), now)  # noqa: E731
+    assert at(days=30) is None
+    assert at(days=14) == 14 and at(days=10) == 14
+    assert at(days=7) == 7 and at(days=5) == 7
+    assert at(days=2) == 3 and at(hours=20) == 1
+    assert ge.step_for(now - dt.timedelta(minutes=1), now) == 0
+
+
+def test_each_step_is_sent_once_and_tells_the_owner_and_the_lender(agent, owner, github, runner, machine, mailoutbox):
+    from apps.agents.credentials import github_expiry as ge
+
+    entry = _lend(agent, owner, github)
+    expires = timezone.now() + dt.timedelta(days=40)
+    AgentCredential.objects.filter(pk=entry.pk).update(provider_expires_at=expires)
+    day = dt.timedelta(days=1)
+    assert ge.sweep(now=expires - 30 * day) == []                  # far away: silent
+    assert ge.sweep(now=expires - 10 * day) == [("echo", 14)]
+    assert ge.sweep(now=expires - 9 * day) == []                   # the same step is not repeated
+    mail = [m for m in mailoutbox if "GitHub token" in m.subject]
+    assert mail and mail[0].to == [owner.email]
+    assert "Replace echo" in mail[0].body and "/agents/echo/settings" in mail[0].body
+    _hour_later()
+    assert ge.sweep(now=expires - 6 * day) == [("echo", 7)]
+    _hour_later()
+    assert ge.sweep(now=expires + dt.timedelta(hours=1)) == [("echo", 0)]
+    assert "expired" in AgentCredentialAlert.objects.filter(agent=agent).latest("created_at").detail
+
+
+def test_a_replaced_token_starts_over(agent, owner, github, runner, machine):
+    from apps.agents.credentials import github_expiry as ge
+
+    entry = _lend(agent, owner, github)
+    first = timezone.now() + dt.timedelta(days=2)
+    AgentCredential.objects.filter(pk=entry.pk).update(provider_expires_at=first)
+    assert ge.sweep() == [("echo", 3)]
+    _hour_later()
+    AgentCredential.objects.filter(pk=entry.pk).update(provider_expires_at=timezone.now() + dt.timedelta(days=90))
+    assert ge.sweep() == []                                        # lent again: far away, silent
+    AgentCredential.objects.filter(pk=entry.pk).update(provider_expires_at=timezone.now() + dt.timedelta(days=2, hours=5))
+    assert ge.sweep() == [("echo", 3)]                             # a NEW token reaching its own step
+
+
+def test_the_lender_is_told_even_when_they_do_not_own_the_agent(agent, owner, github, runner, machine, mailoutbox):
+    from apps.agents.credentials import github_expiry as ge
+
+    admin = User.objects.create_user("adam", "adam@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, admin, WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=agent, user=admin)
+    entry = delegations.set_github(agent, admin, "github_pat_adam")
+    _expire_in(entry, days=1)
+    assert ge.sweep() == [("echo", 1)]
+    recipients = {addr for m in mailoutbox if "GitHub token" in m.subject for addr in m.to}
+    assert recipients == {owner.email, admin.email}
