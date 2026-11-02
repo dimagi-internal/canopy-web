@@ -102,9 +102,10 @@ def test_macos_renders_three_jobs_into_the_app_and_starts_them(mac, monkeypatch)
     agents = home / "Library" / "LaunchAgents"
     runner = plistlib.loads((agents / "com.canopy.runner.plist").read_bytes())
     assert runner["ProgramArguments"] == [str(rt / "bin" / "canopy-runner"), "run",
-                                          "--config", str(cfg)]
+                                          "--config", str(cfg),
+                                          "--log-file", str(home / ".canopy" / "runner.log")]
     assert runner["KeepAlive"] is True and runner["RunAtLoad"] is True
-    assert runner["StandardOutPath"] == str(home / ".canopy" / "runner.log")
+    assert runner["StandardOutPath"] == str(home / ".canopy" / "runner-launchd.log")
     assert runner["AssociatedBundleIdentifiers"] == ["com.canopy.runner.menubar"]
     path = runner["EnvironmentVariables"]["PATH"].split(":")
     assert path[0] == str(rt / "node" / "bin") and "/opt/homebrew/bin" in path
