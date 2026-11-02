@@ -185,6 +185,43 @@ test.describe('chat with a runner', () => {
     await expect(transcript(page).getByText('echo: e2e:newfile')).toHaveCount(1)
   })
 
+  test('after a reset, the open chat shows what comes next, once', async ({ page }) => {
+    const id = await newSession(page)
+    await page.goto(sessionUrl(id))
+    await expect(page.getByTestId('composer')).toBeVisible()
+    await sendFromComposer(page, 'first ask')
+    await expect(transcript(page).getByText('echo: first ask')).toBeVisible({ timeout: 20_000 })
+    // The conversation moves to a new transcript file (a failover, a move, /clear), so
+    // the rows the page holds are numbered past the ones a rebuild of that file gives.
+    await sendFromComposer(page, 'e2e:newfile')
+    await expect(transcript(page).getByText('echo: e2e:newfile')).toBeVisible({ timeout: 20_000 })
+    await sendFromComposer(page, 'before the reset')
+    await expect(transcript(page).getByText('echo: before the reset')).toBeVisible({ timeout: 20_000 })
+
+    await page.getByTestId('chat-session-menu').click()
+    await page.getByTestId('menu-reset').click()
+    await expect(page.getByText(/Reset — rebuilding/)).toBeVisible()
+    // Someone else speaks after the rebuild (here through the API, as a Slack reply does).
+    await page.waitForTimeout(2000)
+    await sendAndSettle(page, id, 'after the reset')
+
+    await expect(transcript(page).getByText('echo: after the reset')).toBeVisible({ timeout: 20_000 })
+    for (const words of ['before the reset', 'echo: before the reset', 'after the reset', 'echo: after the reset']) {
+      await expect(transcript(page).getByText(words, { exact: true })).toHaveCount(1)
+    }
+    const text = await transcript(page).innerText()
+    expect(text.indexOf('echo: before the reset')).toBeLessThan(text.indexOf('after the reset'))
+    await expect.poll(() => atBottom(page)).toBe(true)
+
+    // What the open tab shows is what a reload shows.
+    const rows = () => page.$$eval('[data-testid="message-row"]',
+      (els) => els.map((e) => `${e.getAttribute('data-role')}:${(e as HTMLElement).innerText.trim().slice(0, 40)}`))
+    const live = await rows()
+    await page.reload()
+    await expect(transcript(page).getByText('echo: after the reset')).toBeVisible()
+    expect(live).toEqual(await rows())
+  })
+
   test('a send from another tab shows once in both', async ({ page, context }) => {
     const id = await newSession(page)
     await page.goto(sessionUrl(id))

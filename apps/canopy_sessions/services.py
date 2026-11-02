@@ -559,9 +559,35 @@ def reset_session(session, *, dry_run: bool = False) -> dict:
     Message.objects.filter(session=session).delete()
     lifecycle.record(lifecycle.RESET, session, rows_dropped=rows)
     session_activity.rebuild(session)   # counters restart; the re-derive refolds them
-    _merge_metadata(session, {TRANSCRIPT_SOURCED: True})
+    _merge_metadata(session, {TRANSCRIPT_SOURCED: True, REBUILDING_KEY: True})
     transcript_read.request_backfill(session)
     return out
+
+
+#: Stamped by a reset until the runner's last chunk of the rebuilt history lands
+#: (`finish_rebuild`): the moment every open copy of the conversation is stale.
+REBUILDING_KEY = "rebuilding"
+
+
+def finish_rebuild(session) -> None:
+    """The rebuilt history has landed: tell every open chat to take it whole.
+
+    A reset deletes the rows a watching tab holds and writes new ones, and the
+    rebuild may number them differently (it reads only the current transcript
+    file). A tab that merged new frames into its old rows would keep lines the
+    server no longer has and file new ones against the old numbering, so it is
+    sent a fresh snapshot to replace them (`consumers.session_rebuilt`). No-op for
+    a backfill no reset asked for."""
+    if not (session.metadata or {}).get(REBUILDING_KEY):
+        return
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(locked.metadata or {})
+        if not meta.pop(REBUILDING_KEY, None):
+            return
+        locked.metadata = meta
+        locked.save(update_fields=["metadata", "updated_at"])
+    transaction.on_commit(lambda: groups.publish(groups.session_group(session.pk), {"type": "session.rebuilt"}))
 
 
 def reset_sessions(sessions, *, prune_ghosts: bool = False, dry_run: bool = False) -> dict:

@@ -724,6 +724,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         """
         await self.send_json({"event": "session.page_action", "data": message["action"]})
 
+    async def session_rebuilt(self, message):
+        """A reset's rebuilt history has landed (`services.finish_rebuild`). The
+        rows this client holds are gone, so it gets a fresh snapshot marked
+        `rebuilt`, which it takes whole rather than merging into what it had."""
+        frame = await self._snapshot()
+        frame["data"]["rebuilt"] = True
+        await self.send_json(frame)
+
     async def session_stop(self, message):
         # "requested" comes from here, the moment we publish to the runner.
         # "stopped"/"failed" come from the runner itself, up the session stream

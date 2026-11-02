@@ -75,7 +75,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
   switch (frame.event) {
     case "session.state": {
       const carried = keepUnechoedSends(prev.messages, frame.data.messages, frame.data.queued);
-      const { messages, hasMoreBefore } = keepLoadedHistory(prev, frame.data, carried);
+      // A rebuild renumbers the rows, so nothing held before it can be kept.
+      const { messages, hasMoreBefore } = frame.data.rebuilt
+        ? { messages: carried, hasMoreBefore: frame.data.has_more_before }
+        : keepLoadedHistory(prev, frame.data, carried);
       if (messages === frame.data.messages && hasMoreBefore === frame.data.has_more_before) return frame.data;
       return {
         ...frame.data,

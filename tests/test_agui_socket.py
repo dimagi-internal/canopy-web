@@ -351,3 +351,22 @@ def test_a_client_cannot_ask_its_way_in_or_out():
         c.scope = {"query_string": query}
         c._negotiate_protocol()
         assert c.hide_tools is False
+
+
+@pytest.mark.asyncio
+async def test_a_rebuilt_history_reaches_an_ag_ui_client_marked_rebuilt(consumer):
+    """After a reset (`session.rebuilt`), the fresh snapshot carries `rebuilt` to
+    canopy's own client through the verbatim frame, so it replaces what it held."""
+    consumer.agui_mode = True
+    snapshot = {"messages": [], "active_draft": None, "participants": [],
+                "presence_user_ids": [], "current_user_id": 7, "menu": None}
+
+    async def fresh():
+        return {"event": "session.state", "data": dict(snapshot)}
+
+    consumer._snapshot = fresh
+    await consumers.SessionConsumer.session_rebuilt(consumer, {"type": "session.rebuilt"})
+
+    [event] = consumer.sent
+    assert event["type"] == "MESSAGES_SNAPSHOT"
+    assert event["metadata"]["canopy"]["frame"]["data"]["rebuilt"] is True
