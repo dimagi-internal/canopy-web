@@ -21,7 +21,8 @@ from apps.agents.models import Agent
 from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.workspaces import permissions as perms
-from apps.workspaces.models import WorkspaceInvite, WorkspaceMembership as M
+from apps.workspaces.models import WorkspaceInvite
+from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member, a_workspace
 
 pytestmark = pytest.mark.django_db
