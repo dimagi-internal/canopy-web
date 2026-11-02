@@ -28,7 +28,7 @@ from apps.connections.models import Connection
 from apps.connections.providers.base import Identity, Provider
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import sf_app, vault_key
+from tests.fixtures.connections import in_force, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -189,7 +189,11 @@ def test_an_agent_starts_a_connect_and_its_turn_lists_the_connection(acme, user,
     turn = Turn.objects.create(agent=eva, origin=Turn.ORIGIN_EMAIL, prompt="x", idempotency_key="k",
                                status=Turn.CLAIMED, claimed_by=runner)
     box = Client(HTTP_AUTHORIZATION=f"Bearer {bearer}")
-    assert box.get(f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/connections").json() == {"providers": ["acme"]}
+    listed = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/connections"
+    # Not shared yet: no machine can use it, so the turn stages nothing.
+    assert box.get(listed).json() == {"providers": []}
+    in_force(Connection.objects.get(provider="acme", agent=eva))
+    assert box.get(listed).json() == {"providers": ["acme"]}
 
 
 def test_an_unregistered_provider_is_404_everywhere(user):

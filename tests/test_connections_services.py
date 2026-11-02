@@ -34,6 +34,7 @@ from tests.fixtures.connections import (
     _stored,
     _token_body,
     home,
+    in_force,
     sf_app,
     vault_key,
 )
@@ -345,11 +346,11 @@ def test_person_connection_is_logged_not_evented(user, caplog):
 def test_connection_for_agent_own_then_granted(user, eva, echo):
     with pytest.raises(services.NotConnected):
         services.connection_for_agent(echo, "salesforce")
-    mine = _stored({"agent": eva}, user)
+    mine = in_force(_stored({"agent": eva}, user))
     assert services.connection_for_agent(eva, "salesforce") == mine
     with pytest.raises(services.NotConnected):
         services.connection_for_agent(echo, "salesforce")
-    ConnectionGrant.objects.create(connection=mine, agent=echo, granted_by=user)
+    in_force(mine, echo, by=user)
     assert services.connection_for_agent(echo, "salesforce") == mine
 
 
@@ -361,15 +362,50 @@ def test_connection_for_agent_never_a_persons(user, eva):
 
 def test_connection_for_agent_ambiguous(user, eva, echo, ws):
     other = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=user)
-    a = _stored({"agent": eva}, user)
+    a = in_force(_stored({"agent": eva}, user), echo, by=user)
     b = _stored({"agent": other}, user)
     b.account_id = "00Dorg/005other"
     b.save()
-    ConnectionGrant.objects.create(connection=a, agent=echo, granted_by=user)
-    ConnectionGrant.objects.create(connection=b, agent=echo, granted_by=user)
+    in_force(b, echo, by=user)
     with pytest.raises(services.ConnectionError) as e:
         services.connection_for_agent(echo, "salesforce")
     assert e.value.code == "ambiguous"
+    assert a.pk != b.pk
+
+
+def test_a_stale_grant_neither_answers_nor_makes_it_ambiguous(user, ws, echo):
+    """Review Focus 3, at lookup: lender A stopped administering echo; lender B's
+    grant still works, so echo uses B's — never `ambiguous` forever."""
+    from apps.agents.models import AgentAdmin
+
+    users = get_user_model().objects
+    lender_a = users.create_user(username="a", email="a@dimagi.com")
+    lender_b = users.create_user(username="b", email="b@dimagi.com")
+    for u in (lender_a, lender_b):
+        WorkspaceMembership.objects.create(workspace=ws, user=u, role=WorkspaceMembership.EDITOR)
+        AgentAdmin.objects.create(agent=echo, user=u)
+    stale = in_force(_stored({"user": lender_a}, lender_a, app=sf_app(ws)), echo, by=lender_a)
+    live = _stored({"user": lender_b}, lender_b, app=sf_app(ws))
+    live.account_id = "00Dorg/005b"
+    live.save()
+    in_force(live, echo, by=lender_b)
+    with pytest.raises(services.ConnectionError):
+        services.connection_for_agent(echo, "salesforce")      # both in force: ambiguous
+    AgentAdmin.objects.filter(agent=echo, user=lender_a).delete()
+    assert services.connection_for_agent(echo, "salesforce") == live
+    assert services.providers_for_agent(echo) == ["salesforce"]
+    assert stale.grants.filter(agent=echo).exists()           # the row stays; it is just not in force
+
+
+def test_an_own_connection_not_shared_yet_does_not_shadow_a_lent_one(user, eva, echo):
+    in_force(_stored({"agent": echo}, user, account_id="00Dorg/005echo"))
+    Connection.objects.filter(agent=echo).update(state=Connection.UNSHARED)
+    lent = in_force(_stored({"agent": eva}, user), echo, by=user)
+    assert services.connection_for_agent(echo, "salesforce") == lent
+    Connection.objects.filter(pk=lent.pk).update(state=Connection.REVOKING)
+    with pytest.raises(services.NotConnected):
+        services.connection_for_agent(echo, "salesforce")
+    assert services.providers_for_agent(echo) == []
 
 
 def test_complete_refuses_a_grant_missing_a_required_scope(user, caplog):

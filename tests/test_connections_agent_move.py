@@ -2,9 +2,10 @@
 
 Connect already holds "an agent connects with its own workspace's app"; this pins
 the use-time half (final review I1): a moved agent's old connection is
-`not_connected` for its turns and absent from what the runner stages, a grant of
-it stops wherever the grantee is, a grant across workspaces from an owner that
-stayed keeps working, and the move's dry run names what stops.
+`not_connected` for its turns and absent from what the runner stages, and a grant
+of it stops. A grant is in force only while the grantee is in the app's workspace
+too (spec §3), so one across workspaces, or to a grantee that moved, does not
+count. The move's dry run names what stops.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from apps.connections import services, sharing
 from apps.connections.models import Connection, ConnectionGrant
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import _stored, browser_share, sealed_to_owner, sf_app, vault_key
+from tests.fixtures.connections import _stored, browser_share, in_force, sealed_to_owner, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -60,7 +61,7 @@ def _moved(agent, dest):
 
 def test_a_moved_agents_old_connection_is_not_connected(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
-    _stored({"agent": eva}, user, app=sf_app(dimagi))
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)))
     assert services.connection_for_agent(eva, "salesforce")
     assert services.providers_for_agent(eva) == ["salesforce"]
     eva = _moved(eva, x)
@@ -71,36 +72,37 @@ def test_a_moved_agents_old_connection_is_not_connected(user, dimagi, x):
 
 def test_reconnecting_after_a_move_is_one_connection_not_ambiguous(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
-    _stored({"agent": eva}, user, app=sf_app(dimagi))
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)))
     eva = _moved(eva, x)
-    here = _stored({"agent": eva}, user, app=sf_app(x))
+    here = in_force(_stored({"agent": eva}, user, app=sf_app(x)))
     assert services.connection_for_agent(eva, "salesforce").pk == here.pk
 
 
-def test_a_grant_across_workspaces_works_while_its_owner_stays(user, dimagi, x):
+def test_a_grant_to_an_agent_outside_the_apps_workspace_is_not_in_force(user, dimagi, x):
     eva, echo = _agent(dimagi, user, "eva"), _agent(x, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
-    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
-    assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
-    assert services.providers_for_agent(echo) == ["salesforce"]
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)), echo, by=user)
+    with pytest.raises(services.NotConnected):
+        services.connection_for_agent(echo, "salesforce")
+    assert services.providers_for_agent(echo) == []
 
 
 def test_a_grant_stops_when_its_owner_moves(user, dimagi, x):
     eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
-    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
+    conn = in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)), echo, by=user)
+    assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
     _moved(eva, x)
     with pytest.raises(services.NotConnected):
         services.connection_for_agent(echo, "salesforce")
     assert services.providers_for_agent(echo) == []
 
 
-def test_a_grantee_that_moves_keeps_the_grant(user, dimagi, x):
+def test_a_grantee_that_moves_out_of_the_apps_workspace_loses_the_grant(user, dimagi, x):
     eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
-    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
-    echo = _moved(echo, x)
+    conn = in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)), echo, by=user)
     assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
+    echo = _moved(echo, x)
+    with pytest.raises(services.NotConnected):
+        services.connection_for_agent(echo, "salesforce")
 
 
 def test_a_moved_agents_turn_lists_no_connection(user, dimagi, x):

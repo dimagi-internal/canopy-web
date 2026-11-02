@@ -68,7 +68,7 @@ from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.db.models import F, Q, QuerySet
+from django.db.models import F, QuerySet
 
 from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
@@ -79,6 +79,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
 
 from . import providers, wire
+from . import recipients as rcpt
 from .models import Connection, ConnectionApp
 
 logger = logging.getLogger(__name__)
@@ -703,31 +704,43 @@ def agent_connection_usable(conn: Connection) -> bool:
     return conn.agent_id is not None and conn.agent.workspace_id == conn.app.workspace_id
 
 
-def _granted_to(agent):
-    """Connections granted to `agent`: another agent's while usable, or a person's
-    (whether the grant is still in force is `recipients.grants_in_force`). Never
-    one being disconnected."""
-    return (Connection.objects.filter(grants__agent=agent)
-            .filter(Q(**agent_connections_usable()) | Q(user__isnull=False))
-            .exclude(state=Connection.REVOKING).distinct())
+def _in_force_for(agent, rows) -> list[Connection]:
+    """Those of `rows` that `agent` may use now: shared (`active` — an `unshared` row
+    reaches no machine, a `revoking` one is never handed out) and with `agent` among
+    the statement's grants still in force (`recipients.grants_in_force`: in the app's
+    workspace and, for a person's, still administered by them; the owner agent
+    counts as granted to itself)."""
+    return [c for c in rows if c.state == Connection.ACTIVE
+            and any(a.pk == agent.pk for a in rcpt.grants_in_force(c))]
+
+
+def _agent_candidates(agent, provider: str | None = None) -> tuple[list[Connection], list[Connection]]:
+    """`(own, granted)`: the connections `agent` may use now (`_in_force_for`), its
+    own and those lent to it (by another agent or a person), for `provider` when given."""
+    base = Connection.objects.filter(state=Connection.ACTIVE).select_related("app", "agent", "user")
+    if provider is not None:
+        base = base.filter(provider=provider)
+    own = _in_force_for(agent, base.filter(agent=agent).order_by("pk"))
+    granted = _in_force_for(agent, base.filter(grants__agent=agent).distinct().order_by("pk"))
+    return own, granted
 
 
 def connection_for_agent(agent, provider: str) -> Connection:
     """The agent's own connection for `provider`, else one granted to it (another
-    agent's, or a person's lent to it) — each only while usable
-    (`agent_connections_usable`), never one being disconnected.
+    agent's, or a person's lent to it) — each only while the agent may use it now
+    (`_in_force_for`: shared, and the grant still in force). A stale grant (a lender
+    who stopped administering the agent, an owner that moved) or an own connection
+    not shared yet is no candidate, so it neither answers nor makes the answer
+    `ambiguous`.
 
     Never a person's connection that was not lent to it. More than one candidate
     at the level that answers is `ambiguous` rather than a guess.
     """
-    usable = (Connection.objects.filter(provider=provider, **agent_connections_usable())
-              .exclude(state=Connection.REVOKING))
-    own = list(usable.filter(agent=agent)[:2])
+    own, granted = _agent_candidates(agent, provider)
     if len(own) == 1:
         return own[0]
     if len(own) > 1:
         raise ConnectionError("ambiguous", f"{agent.slug} holds more than one {provider} connection")
-    granted = list(_granted_to(agent).filter(provider=provider)[:2])
     if len(granted) == 1:
         return granted[0]
     if len(granted) > 1:
@@ -760,11 +773,9 @@ def connection_for_person(user, provider: str, *, workspace: str | None = None) 
 
 
 def providers_for_agent(agent) -> list[str]:
-    """The providers `agent` has a usable connection for — its own or one granted
-    to it (a person's lent to it among them) — sorted. What a runner stages for a
-    turn; never a person's connection that was not lent to it."""
-    own = (Connection.objects.filter(agent=agent, **agent_connections_usable())
-           .exclude(state=Connection.REVOKING).values_list("provider", flat=True))
-    granted = _granted_to(agent).values_list("provider", flat=True)
+    """The providers `agent` may use a connection for now — its own or one lent to
+    it, by the same rule as `connection_for_agent` — sorted. What a runner stages
+    for a turn; never a person's connection that was not lent to it."""
+    own, granted = _agent_candidates(agent)
     # A row for a provider no longer registered here has nothing to stage.
-    return sorted(p for p in set(own) | set(granted) if p in providers.CLASSES)
+    return sorted({c.provider for c in own + granted if c.provider in providers.CLASSES})

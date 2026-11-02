@@ -20,7 +20,7 @@ from apps.agents.credentials import zk, zk_seal
 from apps.agents.models import Agent, AgentAdmin
 from apps.connections import recipients as rcpt
 from apps.connections import sharing
-from apps.connections.models import Connection, ConnectionApp
+from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
 from apps.connections.providers import google as _google
 from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.models import UserVaultKeyset
@@ -227,6 +227,23 @@ def _stored(owner_kw, by, *, app=None, sealed=SEALED, **fields):
     values = {"provider": app.provider, "account_id": "00Dorg/005user", "account_label": "jj@dimagi.com",
               "instance_url": "https://dimagi.my.salesforce.com", **fields}
     return Connection.objects.create(app=app, sealed=sealed, connected_by=by, **values, **owner_kw)
+
+
+def in_force(conn, *agents, by=None) -> Connection:
+    """`conn` as a share leaves it, without the crypto: `active`, its statement lending
+    it to `agents` (and its owner agent), with a `ConnectionGrant` row for each.
+    For suites about which connection an agent uses, not about sealing."""
+    pks = {a.pk for a in agents} | ({conn.agent_id} if conn.agent_id else set())
+    for a in agents:
+        if a.pk != conn.agent_id:
+            ConnectionGrant.objects.get_or_create(connection=conn, agent=a, defaults={"granted_by": by})
+    conn.state = Connection.ACTIVE
+    conn.statement = {"account_id": conn.account_id, "agents": sorted(str(pk) for pk in pks),
+                      "connection": str(conn.pk), "my_computers": [], "v": 1,
+                      "version": conn.statement_version + 1}
+    conn.statement_version += 1
+    conn.save()
+    return conn
 
 
 FAKE_REFRESH = "5Aep_refresh_shared"
