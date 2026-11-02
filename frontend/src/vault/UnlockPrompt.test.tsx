@@ -46,6 +46,14 @@ describe('useUnlockPrompt', () => {
     expect(((await screen.findByLabelText('Vault passphrase')) as HTMLInputElement).value).toBe('')
   })
 
+  it('tells someone who lost them that a new vault key does not need them, and where to make it', async () => {
+    render(<Harness onResult={() => undefined} />)
+    fireEvent.click(screen.getByText('ask'))
+    const link = (await screen.findByTestId('vault-unlock-lost')) as HTMLAnchorElement
+    expect(link.textContent).toBe('Lost your passphrase or Secret Key? Create a new vault key - it does not need them.')
+    expect(link.getAttribute('href')).toBe('/settings#vault-key')
+  })
+
   it('rejects when cancelled, changing nothing', async () => {
     const results: Array<UnlockChoice | Error> = []
     render(<Harness onResult={(r) => results.push(r)} />)

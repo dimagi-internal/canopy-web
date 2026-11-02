@@ -35,7 +35,7 @@ export function atStake(copies: MyKeyCopy[]): string {
     + 'carry them over to the new one.'
 }
 
-/** Which conversations were NOT carried over, for the notice after starting over without them. */
+/** Which conversations were NOT carried over, for the notice after creating a new key without them. */
 export function atStakeLost(copies: MyKeyCopy[]): string {
   if (!copies.length) return ''
   const shown = copies.slice(0, 5).map((c) => `a private conversation ${nameOf(c)}`).join('; ')
