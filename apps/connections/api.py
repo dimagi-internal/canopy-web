@@ -20,10 +20,12 @@ from django.urls import reverse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.agents.credentials import zk_seal
 from apps.agents.gates import agent_for_admin
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.harness.models import RunnerDeviceKey
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
@@ -37,6 +39,7 @@ from .schemas import (
     ConnectionAppsOut,
     ConnectionOut,
     ConnectionsOut,
+    ConnectionStatementOut,
     OptionFieldOut,
     ProviderOut,
     ScopeChoiceOut,
@@ -85,12 +88,30 @@ def _missing_scopes(conn: Connection) -> list[ScopeChoiceOut]:
             for sc in providers.for_app(conn.app).missing_scopes(tuple(conn.scopes.split()))]
 
 
+def _statement(conn: Connection) -> ConnectionStatementOut:
+    # The statement names agents by pk (what endorsements sign); shown by slug.
+    st = conn.statement or {}
+    pks = [int(a) for a in st.get("agents", []) if str(a).isdigit()]
+    slugs = dict(Agent.objects.filter(pk__in=pks).values_list("pk", "slug")) if pks else {}
+    return ConnectionStatementOut(version=conn.statement_version, agents=sorted(slugs[p] for p in pks if p in slugs),
+                                  my_computers=sorted(st.get("my_computers", [])))
+
+
+def _holders(conn: Connection) -> list[str]:
+    # The runners whose device keys the refresh envelope is sealed to now.
+    jkts = [t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"]
+    if not jkts:
+        return []
+    return sorted(set(RunnerDeviceKey.objects.filter(ecdh_jkt__in=jkts).values_list("runner__name", flat=True)))
+
+
 def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> ConnectionOut:
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
+        state=conn.state, statement=_statement(conn), holders=_holders(conn),
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())

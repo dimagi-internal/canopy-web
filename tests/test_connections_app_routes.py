@@ -31,6 +31,7 @@ from tests.fixtures.connections import (
     FakeSF,
     _stored,
     sf_app,
+    vault_key,
 )
 
 pytestmark = pytest.mark.django_db
@@ -40,7 +41,9 @@ APPS = "/api/workspaces/{}/connection-apps"
 
 
 def _mk(username):
-    return get_user_model().objects.create_user(username=username, email=f"{username}@dimagi.com")
+    u = get_user_model().objects.create_user(username=username, email=f"{username}@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 def _ws(slug, name, **members):

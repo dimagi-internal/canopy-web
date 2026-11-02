@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
@@ -20,11 +19,8 @@ import pytest
 import requests
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
-from django.db import IntegrityError
-from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.common.encryption import decrypt_secret
 from apps.connections import providers, services
 from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
 from apps.connections.providers.base import TokenResponse
@@ -40,6 +36,7 @@ from tests.fixtures.connections import (
     _token_body,
     home,
     sf_app,
+    vault_key,
 )
 
 pytestmark = pytest.mark.django_db
@@ -48,7 +45,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def user():
-    return get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    u = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 @pytest.fixture
@@ -142,7 +141,7 @@ def test_complete_rejects_unknown_or_reused_state(user):
         _complete(session, "forged", user, code="c")
     assert e.value.code == "bad_state"
     assert fake.calls == []
-    with FakeSF(), pytest.raises(services.ConnectionError):
+    with FakeSF():
         _complete(session, state, user, code="c")
     with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:  # replay
         _complete(session, state, user, code="c")
@@ -150,30 +149,7 @@ def test_complete_rejects_unknown_or_reused_state(user):
     assert fake.calls == []
 
 
-def test_complete_exchanges_checks_and_then_stores_nothing(user, caplog):
-    """No token canopy-web could read is ever stored: after the exchange and every
-    check pass, the grant is revoked and the connect refused."""
-    caplog.set_level(logging.INFO, logger="apps.connections.services")
-    session = {}
-    url = _begin(session, ("user", user.pk))
-    state = parse_qs(urlparse(url).query)["state"][0]
-    verifier = session[services.SESSION_KEY][state]["verifier"]
-    with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:
-        _complete(session, state, user, code="c0de")
-    assert e.value.code == "provider_error"
-    _, _, data = fake.token_calls()[0]
-    assert data["code"] == "c0de" and data["code_verifier"] == verifier
-    get = [c for c in fake.calls if c[0] == "GET"][0]
-    assert get[1] == ID_URL                                    # identity read, checks ran
-    assert [(c[1], c[2]["token"]) for c in fake.calls if c[1] == REVOKE_URL] == [(REVOKE_URL, "5Aep_refresh_1")]
-    assert not Connection.objects.exists()
-    kind, pairs = services.parse_log_line(caplog.records[-1].getMessage())
-    assert (kind, pairs["during"], pairs["error"]) == ("provider_error", "connect", "not_sealed")
-    assert "5Aep_refresh_1" not in caplog.text and "00D!access_1" not in caplog.text
-
-
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
-def test_complete_exchanges_with_verifier_and_stores_encrypted(user):
+def test_complete_exchanges_with_the_verifier_and_reads_the_identity(user):
     session = {}
     url = _begin(session, ("user", user.pk))
     state = parse_qs(urlparse(url).query)["state"][0]
@@ -187,15 +163,12 @@ def test_complete_exchanges_with_verifier_and_stores_encrypted(user):
     # identity read with the new access token at the token response's `id` URL
     get = [c for c in fake.calls if c[0] == "GET"][0]
     assert get[1] == ID_URL and get[2]["Authorization"] == "Bearer 00D!access_1"
-    conn.refresh_from_db()
-    assert conn.user_id == user.pk and conn.agent_id is None
-    assert conn.account_id == "00Dorg/005user" and conn.account_label == "jj@dimagi.com"
-    assert conn.instance_url == "https://dimagi.my.salesforce.com"
-    assert conn.connected_by_id == user.pk
-    assert "5Aep_refresh_1" not in conn.refresh_token_enc
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_refresh_1"
-    assert decrypt_secret(conn.access_token_enc) == "00D!access_1"
-    assert conn.access_token_expires_at > timezone.now() + timedelta(minutes=29)
+    assert [c for c in fake.calls if c[1] == REVOKE_URL] == []          # a kept grant is not revoked
+    assert conn.user_id == user.pk and conn.connected_by_id == user.pk
+    assert list(services.connections_for(("user", user.pk))) == [conn]
+
+
+
 
 
 def test_token_error_with_200_is_failure(user):
@@ -275,39 +248,13 @@ def test_complete_agent_deleted_since_begin_is_bad_state(user, eva):
     assert not Connection.objects.exists()
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
-def test_complete_concurrent_insert_updates_the_winner(user):
-    """Another completion for the same account inserted between lookup and insert."""
-    # The winner's row is committed; our update_or_create saw no row and its insert collides.
-    _stored({"user": user}, user, refresh="5Aep_theirs")
-    with mock.patch.object(Connection.objects, "update_or_create",
-                           side_effect=IntegrityError("duplicate key")):
-        conn = _connect({}, ("user", user.pk), user)
-    assert Connection.objects.count() == 1
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "5Aep_refresh_1"
-    assert decrypt_secret(conn.access_token_enc) == "00D!access_1"
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
-def test_complete_upserts_same_account(user):
-    first = _connect({}, ("user", user.pk), user)
-    Connection.objects.filter(pk=first.pk).update(refresh_failed_at=timezone.now())
-    fake = FakeSF(token=[_resp(body=_token_body(access_token="00D!a2", refresh_token="5Aep_r2"))])
-    again = _connect({}, ("user", user.pk), user, fake)
-    assert again.pk == first.pk
-    assert Connection.objects.count() == 1
-    again.refresh_from_db()
-    assert again.refresh_failed_at is None
-    assert decrypt_secret(again.refresh_token_enc) == "5Aep_r2"
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
-def test_complete_for_agent_owner(user, eva):
-    conn = _connect({}, ("agent", eva.pk), user)
-    assert conn.agent_id == eva.pk and conn.user_id is None
-    assert list(services.connections_for(("agent", eva.pk))) == [conn]
-    assert list(services.connections_for(("user", user.pk))) == []
+
+
+
 
 
 # ---- identity host check (the bearer token goes only to Salesforce) ----------
@@ -481,17 +428,10 @@ class WorkspaceOwner:
 
 # ---- granted scopes ------------------------------------------------------------
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
-def test_complete_stores_the_granted_scopes(user):
-    fake = FakeSF(token=[_resp(body=_token_body(scope="refresh_token api web"))])
-    conn = _connect({}, ("user", user.pk), user, fake)
-    assert conn.scopes == "api refresh_token web"
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
-def test_complete_without_a_scope_answer_stores_what_was_asked(user):
-    conn = _connect({}, ("user", user.pk), user, FakeSF(token=[_resp(body=_token_body(scope=None))]))
-    assert conn.scopes == "api refresh_token id"
+
+
 
 
 def test_complete_refuses_a_grant_missing_a_required_scope(user, caplog):

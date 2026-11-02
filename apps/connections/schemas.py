@@ -36,6 +36,15 @@ class ScopeChoiceOut(StrictModel):
     label: str = Field(description="What it allows, in words.")
 
 
+class ConnectionStatementOut(StrictModel):
+    version: int = Field(description="The owner's signed grant statement's version; 0 = never shared.")
+    agents: list[str] = Field(default_factory=list,
+                              description="Slugs of the agents the statement lends it to, sorted.")
+    my_computers: list[str] = Field(
+        default_factory=list,
+        description="ECDH key thumbprints of the owner's own computers it may be used on.")
+
+
 class ConnectionOut(StrictModel):
     id: uuid.UUID
     provider: str
@@ -51,6 +60,14 @@ class ConnectionOut(StrictModel):
         description="What the grant allows at the provider (e.g. `api`, `refresh_token`).",
     )
     needs_reconnect: bool = Field(description="The stored grant can no longer mint a token; connect again.")
+    state: Literal["unshared", "active", "revoking"] = Field(
+        description="`unshared`: sealed to its owner only, so no agent or computer can use it yet (share it); "
+                    "`active`: shared as the owner's signed statement allows; `revoking`: being disconnected.")
+    statement: ConnectionStatementOut = Field(
+        description="What the owner's signed grant statement allows (version 0 and empty when never shared).")
+    holders: list[str] = Field(
+        default_factory=list,
+        description="Names of the runners whose machines hold it now, sorted. Empty while `unshared`.")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "

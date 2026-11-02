@@ -1,10 +1,9 @@
 """The connections audit trail and log: one vocabulary, and never a secret.
 
 Every flow that writes a record runs here once — connects through the browser
-views (refused at authorize, refused for a missing refresh token, refused after
-every check because canopy-web keeps no token it can read), sharing and
-unsharing, disconnects. Then every log record (any logger) and every Event is
-checked:
+views (refused at authorize, refused for a missing refresh token, a person's and
+an agent's sealed to their owner), sharing and unsharing, disconnects. Then
+every log record (any logger) and every Event is checked:
 
 - each kind is in the documented vocabulary (`docs/architecture/vault.md`
   § Connection audit), and a connections log line parses back
@@ -13,7 +12,7 @@ checked:
   revoke_failed, never ERROR from canopy's own code;
 - no secret used anywhere in the run appears: the access and refresh tokens,
   the authorization code, every OAuth `state` and PKCE verifier, and the
-  client secret.
+  client secret — not in a log, an Event, or a stored connection row.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ from apps.connections import services
 from apps.connections.models import Connection
 from apps.events.models import Event
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import CLIENT_SECRET, FakeSF, _resp, _stored, _token_body, sf_app
+from tests.fixtures.connections import CLIENT_SECRET, FakeSF, _resp, _token_body, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -52,12 +51,13 @@ def _connect_in_browser(client, secrets, **agent):
     with FakeSF():
         landed = client.get(reverse("connections_callback", args=["salesforce", "w"]),
                             {"code": "c0de-secret", "state": state})
-    assert "status=error" in landed["Location"]                  # nothing readable is stored
+    assert "/share?" in landed["Location"]                       # sealed to its owner
 
 
 @pytest.fixture
 def world():
     user = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(user)  # a connection is sealed to it
     ws = Workspace.objects.create(slug="w", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.EDITOR)
     sf_app(ws)
@@ -86,14 +86,16 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     with FakeSF(token=[_resp(body=_token_body(refresh_token=None))]):
         browser.get(reverse("connections_callback", args=["salesforce", "w"]), {"code": "c0de-secret", "state": state})
 
-    # A connect that passes every check is still refused: canopy-web keeps no token.
+    # Connects that pass every check: sealed to the owner, nothing readable kept.
     _connect_in_browser(browser, secrets)
-    assert not Connection.objects.exists()
+    _connect_in_browser(browser, secrets, agent="eva")
+    rows = json.dumps(list(Connection.objects.values()), default=str)
+    assert not [s for s in secrets if s in rows], "a secret in a stored connection row"
 
     # A person's connection, disconnected; an agent's, shared, unshared, disconnected.
-    mine = _stored({"user": user}, user, app=eva.workspace.connection_apps.get())
+    mine = Connection.objects.get(user=user)
     assert browser.delete(f"/api/connections/{mine.pk}").status_code == 204
-    conn = _stored({"agent": eva}, user)
+    conn = Connection.objects.get(agent=eva)
     services.grant(conn, echo, by=user)
     services.revoke_grant(conn.grants.get(), by=user)
     services.disconnect(conn, by=user)
@@ -101,17 +103,17 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
     # ---- the vocabulary -------------------------------------------------------------
     events = list(Event.objects.filter(source=services.EVENT_SOURCE).order_by("id"))
     assert [e.kind for e in events] == [
-        "connections.granted", "connections.grant_revoked", "connections.disconnected"]
+        "connections.connected", "connections.granted", "connections.grant_revoked", "connections.disconnected"]
     for e in events:
         assert e.level == "info" and e.payload["owner"] == "agent:eva"
         assert all(k in e.payload for k in BASE_KEYS)
 
     lines = [r for r in caplog.records if r.getMessage().startswith("connections.")]
     kinds = [r.getMessage().split(" ", 1)[0].removeprefix("connections.") for r in lines]
-    assert kinds == ["provider_error", "provider_error", "provider_error", "disconnected"]
+    assert kinds == ["provider_error", "provider_error", "connected", "disconnected"]
     parsed = [services.parse_log_line(r.getMessage()) for r in lines]
-    assert [p[1].get("during") for p in parsed[:3]] == ["authorize", "connect", "connect"]
-    assert [p[1].get("error") for p in parsed[:3]] == ["server_error", "no_refresh_token", "not_sealed"]
+    assert [p[1].get("during") for p in parsed[:2]] == ["authorize", "connect"]
+    assert [p[1].get("error") for p in parsed[:2]] == ["server_error", "no_refresh_token"]
     for r, (kind, pairs) in zip(lines, parsed, strict=True):
         assert all(k in pairs for k in BASE_KEYS), r.getMessage()
         assert r.levelno == VOCABULARY[kind], r.getMessage()

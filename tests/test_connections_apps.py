@@ -27,7 +27,17 @@ from apps.connections.providers.base import ProviderError
 from apps.connections.providers.salesforce import SalesforceProvider
 from apps.events.models import Event
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import REDIRECT, REVOKE_URL, TOKEN_URL, FakeSF, _resp, _stored, _token_body, sf_app
+from tests.fixtures.connections import (
+    REDIRECT,
+    REVOKE_URL,
+    TOKEN_URL,
+    FakeSF,
+    _resp,
+    _stored,
+    _token_body,
+    sf_app,
+    vault_key,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -36,7 +46,9 @@ OPTIONS = {"login_url": "https://login.salesforce.com", "access_token_seconds": 
 
 @pytest.fixture
 def user():
-    return get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    u = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 @pytest.fixture
@@ -227,7 +239,6 @@ def test_an_app_removed_between_the_legs_is_bad_state(ws, user):
     assert e.value.code == "bad_state" and fake.calls == []
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_complete_stores_the_connection_against_its_app(ws, user):
     app = sf_app(ws)
     session = {}
@@ -332,7 +343,6 @@ def test_check_owner_refusal_stores_nothing(ws, user, eva, monkeypatch, caplog):
     assert problem_for(e.value, title="Salesforce", owner="eva's").status_code == 409
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_check_owner_acceptance_connects(ws, user, monkeypatch):
     monkeypatch.setitem(providers.CLASSES, "picky", PickySalesforce)
     app = sf_app(ws, provider="picky", **OPTIONS)
@@ -445,7 +455,6 @@ def test_a_client_id_change_between_the_legs_is_bad_state(ws, user):
     assert e.value.code == "bad_state" and fake.calls == []
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_a_client_id_change_during_the_exchange_stores_nothing(ws, user):
     """The app changed client after the exchange began: the grant belongs to the old
     client, so it is refused under the app row's lock rather than stored."""

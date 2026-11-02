@@ -12,6 +12,15 @@ the one in hand during the callback's code exchange; it never refreshes and
 never revokes a stored token (it has none). Machines the owner allows refresh
 and revoke, with the app's client.
 
+CONNECTING SEALS TO THE OWNER. `complete` exchanges the code, runs every policy
+check, then seals the refresh token (the `refresh` plaintext of
+`docs/vault/zk-v1/connections_v1_reference.py`) to the owner's member vault key
+only — the person's, or for an agent the admin connecting it (`owner_keyset`) —
+drops the access token and keeps no readable copy. The row is `unshared` until
+the owner's browser signs a grant statement and re-seals it to the machines
+that statement allows. Without a vault key there is nothing to seal to:
+`no_vault_key`, before anything is exchanged.
+
 THE APP. Every flow runs against one workspace's `ConnectionApp` (`app_for`):
 its client id and secret, its options, its chosen scopes. A connection keeps the
 app that minted it, and machines refresh and revoke it with that app's client,
@@ -50,20 +59,26 @@ import json
 import logging
 import re
 import secrets as _secrets
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import F, QuerySet
 
+from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
 from apps.events import services as events
+from apps.harness import device_keys
+from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
 
-from . import providers
+from . import providers, wire
 from .models import Connection, ConnectionApp, ConnectionGrant
 
 logger = logging.getLogger(__name__)
@@ -88,7 +103,8 @@ class ConnectionError(Exception):  # shadows the builtin inside this module only
     routes map it to a response in one place (`problems.problem_for`):
     `not_configured`, `not_connected`, `reconnect_required`, `ambiguous`,
     `insufficient_scope`, `provider_error`, `provider_unavailable`, `bad_state`,
-    `own_connection`, `not_grantable`, `not_usable`, `app_locked` (an app's client id, or an
+    `own_connection`, `not_grantable`, `not_usable`, `no_vault_key` (the
+    owner has no vault key to seal a connection to), `app_locked` (an app's client id, or an
     option naming its authorization server, cannot change while connections
     use it), `invalid_app` (an app's settings
     were refused; the message says why), `wrong_account` (the provider signed
@@ -135,6 +151,23 @@ def _owner_filter(owner: Owner) -> dict:
     if kind == "user":
         return {"user_id": pk}
     raise ValueError(f"unknown owner kind {kind!r}")
+
+
+# Where a person sets up their vault key (`apps.agents.setup` points there too).
+VAULT_KEY_SETUP = "/settings#vault-key"
+
+
+def owner_keyset(owner_kind: str, owner, by) -> UserVaultKeyset:
+    """The member vault key a new connection is sealed to: the person's own, or for
+    an agent's the admin connecting it (`by`). `no_vault_key` when they have none:
+    there is nothing to seal to, and no fallback."""
+    user = by if owner_kind == "agent" else owner
+    keyset = (UserVaultKeyset.objects.filter(user_id=getattr(user, "pk", None)).first()
+              if user is not None else None)
+    if keyset is None:
+        raise ConnectionError("no_vault_key", "Set up your vault key first (Settings → Vault key): a connection "
+                                              "is sealed to it, and canopy-web keeps no copy it can read.")
+    return keyset
 
 
 def connections_for(owner: Owner) -> QuerySet[Connection]:
@@ -457,15 +490,18 @@ def authorize_refused(session, *, provider: str, state: str, error: str, by) -> 
 
 
 def complete(session, *, provider: str, workspace, code: str, state: str, redirect_uri: str, by) -> Connection:
-    """Exchange `code` with the parked app, read who the account is, and check it.
+    """Exchange `code` with the parked app, check who the account is, and seal its
+    refresh token to the owner.
 
     The state is popped first, so a failed exchange still spends it. A callback
     for another provider or workspace than the flow was begun with is
-    `bad_state`, and nothing is exchanged. Nothing is stored unless the
-    exchange, the identity lookup and the provider's `check_owner` succeed;
-    a grant refused after the exchange is revoked at the provider (best effort).
-    Every connect is refused (`provider_error`) after those checks: canopy-web
-    stores no token it can read, and does not yet seal one to its owner.
+    `bad_state`, and nothing is exchanged; so is an owner with no vault key
+    (`no_vault_key`). Nothing is stored unless the exchange, the identity lookup,
+    the required scopes and the provider's `check_owner` succeed; a grant refused
+    after the exchange is discarded (`_discard_grant`). On success the refresh
+    plaintext is sealed to the owner's member key only (`owner_keyset`), the
+    access token is dropped, and the row (inserted, or the same account's row
+    for this owner and app, replaced) is `unshared`; records `connected`.
     """
     pending = dict(session.get(SESSION_KEY) or {})
     parked = pending.pop(state, None) if state else None
@@ -473,7 +509,8 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     if not parked or parked.get("provider") != provider or parked.get("workspace") != _slug(workspace):
         raise ConnectionError("bad_state", "start the connection again")
     app = (ConnectionApp.objects.select_related("workspace")
-           .filter(pk=parked.get("app"), provider=provider, workspace_id=parked["workspace"]).first())
+           .filter(pk=parked.get("app"), provider=provider, workspace_id=parked["workspace"],
+                   removed_at__isnull=True).first())
     # Removed, or given another client, between begin and complete: the code was
     # issued to a client this app no longer is.
     if app is None or app.client_id != parked.get("client_id"):
@@ -484,9 +521,13 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         agent = Agent.objects.filter(pk=parked["owner_id"]).first()
         if agent is None:  # deleted between begin and complete
             raise ConnectionError("bad_state", "that agent no longer exists")
-        owner_obj = agent
+        owner_obj, owner_kw = agent, {"agent": agent}
     else:
         owner_obj = get_user_model().objects.filter(pk=parked["owner_id"]).first()
+        owner_kw = {"user": owner_obj}
+    # Checked before the exchange: without it there is nothing to seal to, and a
+    # code never exchanged leaves no grant behind.
+    keyset = owner_keyset(parked["owner_kind"], owner_obj, by)
     # No row yet: a refusal is logged against the would-be owner.
     subject = _parked_subject(provider, parked)
     try:
@@ -494,7 +535,7 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     except providers.ProviderError as e:
         record(subject, "provider_error", by=by, warn=True, during="connect", error=_error_code(e))
         raise ConnectionError("provider_error", str(e)) from None
-    # From here the provider has issued a grant: every refusal revokes it, so a
+    # From here the provider has issued a grant: every refusal discards it, so a
     # refused account (the admin's own, signed in by mistake) is not left holding
     # a live grant to this client that canopy has thrown away.
     try:
@@ -522,25 +563,80 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         _discard_grant(p, subject, token)
         raise ConnectionError(code, str(e)) from None
 
-    # Nothing may be stored that canopy-web could read, and the token is not yet
-    # sealed to its owner here: the grant is discarded and the connect refused.
-    record(subject, "provider_error", by=by, warn=True, during="connect", error="not_sealed")
-    _discard_grant(p, subject, token)
-    raise ConnectionError("provider_error", f"{p.title} cannot be connected yet")
+    scopes = " ".join(token.scopes or p.requested_scopes())
+    owner_key = device_keys.thumbprint(keyset.public_jwk)
+    plaintext = refresh_plaintext(app, token, account_id=ident.account_id, owner_key=owner_key, scopes=scopes)
+    lookup = {"app": app, "provider": provider, "account_id": ident.account_id, **owner_kw}
+    defaults = {
+        "account_label": ident.label,
+        "instance_url": token.instance_url,
+        "scopes": scopes,
+        "state": Connection.UNSHARED,
+        "sealed_sig": None,  # canopy-web has no writer key: only the owner's browser accepts this seal
+        "access_sealed": "",
+        "access_sig": None,
+        "access_expires_at": None,
+        "owner_key": owner_key,
+        "signer": keyset.user,
+        "refresh_failed_at": None,
+        "connected_by": by,
+    }
+
+    def seal(connection_id) -> dict:
+        sealed = zk_seal.seal_to(plaintext, agent_id=wire.binding_id(connection_id), name=wire.REFRESH_NAME,
+                                 kv=0, recipients=[("member", str(keyset.user_id), keyset.public_jwk)])
+        return {"sealed": sealed, "sealed_digest": hashlib.sha256(sealed.encode()).hexdigest()}
+
+    with transaction.atomic():
+        # The app row, locked, is still the client that issued this grant: a client
+        # id change or a removal that committed during the exchange refuses it
+        # (and either one, waiting on this lock, sees the new connection).
+        changed = not ConnectionApp.objects.select_for_update().filter(
+            pk=app.pk, client_id=parked["client_id"], removed_at__isnull=True).exists()
+        if not changed:
+            conn = _upsert_connection(lookup, defaults, seal)
+    if changed:
+        # Discarded outside the transaction: a network call never holds a row lock.
+        _discard_grant(p, subject, token)
+        raise ConnectionError("bad_state", "that app has changed; start the connection again")
+    record(Subject.of(conn), "connected", by=by,
+           summary=f"{conn.owner_label} connected {p.title} as {conn.account_label}")
+    return conn
 
 
-def _upsert_connection(lookup: dict, defaults: dict) -> Connection:
-    """Insert or update the grant's row; the caller holds the transaction."""
-    try:
-        with transaction.atomic():
-            conn, _ = Connection.objects.update_or_create(**lookup, defaults=defaults)
-    except IntegrityError:
-        # A concurrent completion for the same account inserted the row between
-        # our lookup and insert. It exists now: update it with this grant.
-        conn = Connection.objects.select_for_update().get(**lookup)
-        for k, v in defaults.items():
-            setattr(conn, k, v)
-        conn.save()
+def refresh_plaintext(app: ConnectionApp, token: providers.TokenResponse, *, account_id: str,
+                      owner_key: str, scopes: str) -> str:
+    """The `refresh` plaintext (contract §0.2), compact JSON. Never the client secret:
+    a machine gets that from the app with the material. `login_host` is the host of
+    the app's `login_url` (Salesforce), "" for a provider without one (Google)."""
+    login_url = (app.options or {}).get("login_url") or ""
+    return json.dumps({
+        "v": 1, "provider": app.provider, "refresh_token": token.refresh_token, "client_id": app.client_id,
+        "login_host": (urlparse(login_url).hostname or "") if login_url else "",
+        "instance_url": token.instance_url, "account_id": account_id, "owner_key": owner_key,
+        "issued_at": int(time.time()), "scopes": scopes,
+    }, separators=(",", ":"))
+
+
+def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
+    """Insert or update the grant's row with its envelope; the caller holds the
+    transaction. `seal(connection_id)` gives the envelope fields: the binding is the
+    row's id, so the row is always sealed to the id it ends up with — its own when
+    the same owner, app and account already has one, else the id it is created with."""
+    conn = Connection.objects.select_for_update().filter(**lookup).first()
+    if conn is None:
+        pk = uuid.uuid4()
+        try:
+            with transaction.atomic():
+                return Connection.objects.create(id=pk, **lookup, **defaults, **seal(pk))
+        except IntegrityError:
+            # A concurrent completion for the same account inserted the row between
+            # our lookup and insert. It exists now: update it with this grant,
+            # sealed to ITS binding.
+            conn = Connection.objects.select_for_update().get(**lookup)
+    for k, v in {**defaults, **seal(conn.pk)}.items():
+        setattr(conn, k, v)
+    conn.save()
     return conn
 
 
@@ -549,9 +645,13 @@ def _error_code(e: providers.ProviderError) -> str:
 
 
 def _discard_grant(p: providers.Provider, subject: Subject, token: providers.TokenResponse) -> None:
-    """Revoke a grant the provider issued but canopy refused — its refresh token,
-    else its access token — best effort: a failure is a `revoke_failed` record,
+    """Drop a grant the provider issued but canopy refused. Revoked at the provider
+    — its refresh token, else its access token — unless the provider says not to
+    (`revokes_refused_grant`; Google, where a revoke ends every token of that
+    account on the client). Best effort: a failure is a `revoke_failed` record,
     never raised, so the refusal the caller is about to raise is what surfaces."""
+    if not p.revokes_refused_grant:
+        return
     secret, hint = ((token.refresh_token, "refresh_token") if token.refresh_token
                     else (token.access_token, "access_token"))
     try:

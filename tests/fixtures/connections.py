@@ -1,14 +1,20 @@
-"""What the connections suites share: the fake Salesforce (faked at the
-`requests` boundary), a workspace's Salesforce app (`sf_app`), a person's home
-workspace (`home`) and a stored, sealed connection helper (`_stored`) — plain helpers,
-imported by name. This module is also registered in the root conftest's
+"""What the connections suites share: the fake Salesforce and the fake Google (faked
+at the `requests` boundary), a workspace's Salesforce app (`sf_app`), a person's home
+workspace (`home`), a person's vault key (`vault_key`: a connection is sealed to it)
+and a stored, sealed connection helper (`_stored`) — plain helpers, imported by
+name. This module is also registered in the root conftest's
 `pytest_plugins`, for fixtures; it declares none today."""
 from __future__ import annotations
 
 from unittest import mock
 
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from apps.connections.models import Connection, ConnectionApp
+from apps.connections.providers import google as _google
+from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.vault_zk import ref as zk_ref
 
 CLIENT_ID = "3MVG-client"
 CLIENT_SECRET = "shh"
@@ -92,6 +98,69 @@ class FakeSF:
 
     def __exit__(self, *exc):
         self._p.stop()
+
+
+class FakeGoogle:
+    """Google at the `requests` boundary: the token response carries `expires_in`
+    and the granted `scope` as space-separated URLs; userinfo answers for whoever
+    `self.user` says signed in."""
+
+    G = "https://www.googleapis.com/auth/"
+
+    def __init__(self):
+        self.calls: list[tuple[str, str, dict]] = []
+        self.n = 0
+        self.granted = f"openid {self.G}userinfo.email {self.G}gmail.readonly {self.G}calendar.readonly"
+        self.user = {"sub": "1098", "email": "someone@gmail.com", "email_verified": True}
+        self.revoke_status = 200
+
+    def _resp(self, body, status=200):
+        r = mock.Mock(status_code=status)
+        r.json.return_value = body
+        return r
+
+    def post(self, url, data=None, headers=None, timeout=None):
+        assert timeout == 15
+        self.calls.append(("POST", url, dict(data or {})))
+        if url == _google.TOKEN_URL:
+            self.n += 1
+            body = {"access_token": f"ya29.access-{self.n}", "expires_in": 3599, "token_type": "Bearer",
+                    "scope": self.granted, "id_token": "eyJ.not.read"}
+            if data["grant_type"] == "authorization_code":
+                body["refresh_token"] = "1//refresh"
+            return self._resp(body)
+        if url == _google.REVOKE_URL:
+            # Google answers 400 invalid_token for a token already revoked or expired.
+            return self._resp({} if self.revoke_status == 200 else {"error": "invalid_token"}, self.revoke_status)
+        raise AssertionError(url)
+
+    def revokes(self):
+        return [c[2] for c in self.calls if c[1] == _google.REVOKE_URL]
+
+    def get(self, url, headers=None, timeout=None):
+        assert url == _google.USERINFO_URL and timeout == 15
+        self.calls.append(("GET", url, dict(headers or {})))
+        return self._resp(self.user)
+
+    def __enter__(self):
+        self._p = mock.patch.multiple("apps.connections.providers.base.requests", post=self.post, get=self.get)
+        self._p.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._p.stop()
+
+
+# ---- a person's vault key ----------------------------------------------------------
+
+def vault_key(user) -> ec.EllipticCurvePrivateKey:
+    """Give `user` a vault keyset (public half stored, as their browser would) and
+    return its private key, which only the test holds: what opens a connection
+    sealed to them. Replaces any keyset they had."""
+    priv = ec.generate_private_key(ec.SECP256R1())
+    UserVaultKeyset.objects.update_or_create(user=user, defaults={"public_jwk": zk_ref.jwk(priv.public_key()),
+                                                                  "seals": []})
+    return priv
 
 
 # ---- workspaces and their apps ---------------------------------------------------

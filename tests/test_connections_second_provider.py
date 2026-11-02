@@ -28,7 +28,7 @@ from apps.connections.models import Connection
 from apps.connections.providers.base import Identity, Provider
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import _stored, sf_app
+from tests.fixtures.connections import sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -117,7 +117,9 @@ def acme(monkeypatch):
 
 @pytest.fixture
 def user():
-    return get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    u = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 @pytest.fixture
@@ -155,13 +157,14 @@ def test_a_person_lists_starts_a_connect_and_disconnects(acme, user, ws):
     assert {"name": "acme", "title": "Acme Books", "workspace": "w", "workspace_name": "W",
             "configured": True} in listed["providers"]
 
-    authorize, query, _ = _connect(client)
+    authorize, query, landed = _connect(client)
     assert f"{authorize.scheme}://{authorize.netloc}{authorize.path}" == AUTHORIZE
     assert query["access_type"] == "offline" and query["prompt"] == "consent"
     assert query["scope"] == "books.read offline_access" and query["code_challenge_method"] == "S256"
 
-    conn = _stored({"user": user}, user, app=ws.connection_apps.get(provider="acme"), account_id="acme-user-1",
-                   account_label="jj@acme.test", instance_url="", scopes="books.read offline_access")
+    conn = Connection.objects.get(provider="acme", user=user)
+    assert landed["Location"].startswith(f"/w/w/connections/{conn.pk}/share")
+    assert (conn.account_id, conn.account_label, conn.instance_url) == ("acme-user-1", "jj@acme.test", "")
     row = client.get("/api/connections/").json()["connections"][0]
     assert row["title"] == "Acme Books" and row["scopes"] == ["books.read", "offline_access"]
     calls = len(acme.calls)
@@ -175,7 +178,7 @@ def test_an_agent_starts_a_connect_and_its_turn_lists_the_connection(acme, user,
     _, query, _ = _connect(client, agent="eva")
     assert query["prompt"] == "select_account consent"          # the provider's own agent parameter
     assert query["login_hint"] == "eva@agents.test"             # it was given the agent itself
-    _stored({"agent": eva}, user, app=eva.workspace.connection_apps.get(provider="acme"))
+    assert Connection.objects.get(provider="acme", agent=eva).state == Connection.UNSHARED
 
     runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=user, workspace=eva.workspace,
                                    last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
@@ -204,7 +207,6 @@ def test_a_grant_with_fewer_scopes_than_required_is_refused(acme, user, ws):
     assert not Connection.objects.filter(provider="acme").exists()
 
 
-@pytest.mark.skip(reason="canopy-web stores nothing at connect until it seals the token to its owner")
 def test_the_stored_scopes_are_the_granted_ones(acme, user, ws):
     acme.granted = "books.read offline_access books.write"
     client = Client()

@@ -46,6 +46,10 @@ What a provider declares, and where providers differ:
   (Salesforce, Intacct) that replaces the old one. The refreshing machine keeps
   a returned refresh token either way; the flag documents the provider and is
   what the tests pin.
+- `revokes_refused_grant`: whether a grant refused after the code exchange is
+  revoked at the provider before it is dropped (default yes). Google: no — revoking
+  there ends every token of that account on that OAuth client, including ones
+  other connections hold.
 - `instance_url(body)`: the account's own API base, when the provider has one
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
 - `identity(token)`: who the account is — a stable `account_id`, a label, and
@@ -157,6 +161,7 @@ class Provider:
     scope_implies: ClassVar[Mapping[str, tuple[str, ...]]] = {}
     client_auth: ClassVar[Literal["body", "basic"]] = "body"
     rotates_refresh_token: ClassVar[bool] = False
+    revokes_refused_grant: ClassVar[bool] = True
     pkce: ClassVar[bool] = True
     default_access_token_seconds: ClassVar[int] = 3600
 

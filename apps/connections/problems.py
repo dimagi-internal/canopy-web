@@ -25,6 +25,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "own_connection": (409, "Cannot share this connection"),
     "not_grantable": (409, "Cannot share this connection"),
     "not_usable": (409, "Cannot share this connection"),
+    "no_vault_key": (409, "No vault key"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),
 }
@@ -50,6 +51,8 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail
         "insufficient_scope": f"{title} did not grant every permission canopy needs; connect again "
                               "and allow them all.",
         "provider_unavailable": f"{title} could not be reached; try again.",
+        "no_vault_key": f"Set up your vault key first (Settings → Vault key): "
+                        f"{owner.lower() if owner == 'Your' else owner} {title} connection is sealed to it.",
         "provider_error": f"{title} refused the request.",
     }.get(exc.code, str(exc))
     return ProblemError(status, heading, detail=detail, members={"error": exc.code or "provider_error", **members})
