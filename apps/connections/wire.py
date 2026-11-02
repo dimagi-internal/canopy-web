@@ -61,7 +61,7 @@ def _bad_statement(detail: str) -> WireError:
 def _sorted_unique(items, pattern: re.Pattern, what: str) -> None:
     if not isinstance(items, list) or len(items) > _MAX_LISTED:
         raise _bad_statement(f"{what} must be a list of at most {_MAX_LISTED}")
-    if not all(isinstance(i, str) and pattern.match(i) for i in items):
+    if not all(isinstance(i, str) and pattern.fullmatch(i) for i in items):
         raise _bad_statement(f"{what} has an entry of the wrong form")
     if items != sorted(set(items)):
         raise _bad_statement(f"{what} must be sorted with no repeats")
@@ -77,7 +77,7 @@ def check_statement(st: dict, *, connection_id, account_id: str) -> dict:
         raise _bad_statement("v must be 1")
     if type(st["version"]) is not int or st["version"] < 1:
         raise _bad_statement("version must be a whole number of at least 1")
-    if not isinstance(st["account_id"], str) or not _ACCOUNT_ID.match(st["account_id"]):
+    if not isinstance(st["account_id"], str) or not _ACCOUNT_ID.fullmatch(st["account_id"]):
         raise _bad_statement("account_id must be 1-255 printable ASCII characters without quotes or backslashes")
     if st["account_id"] != account_id:
         raise _bad_statement("it names another account")
@@ -124,11 +124,11 @@ def check_writer_sig(value: str, sig: dict) -> dict:
         if by["target"] != device_keys.thumbprint(by["public_jwk"]):
             raise _bad_sig("a device writer's target must be the thumbprint of its key")
     elif by["kind"] == "member":
-        if not isinstance(by["target"], str) or not _AGENT_PK.match(by["target"]):
+        if not isinstance(by["target"], str) or not _AGENT_PK.fullmatch(by["target"]):
             raise _bad_sig("a member writer's target must be a user id")
     else:
         raise _bad_sig("by.kind must be device or member")
-    if not isinstance(sig["expect"], str) or not (sig["expect"] == "" or _DIGEST.match(sig["expect"])):
+    if not isinstance(sig["expect"], str) or not (sig["expect"] == "" or _DIGEST.fullmatch(sig["expect"])):
         raise _bad_sig("expect must be a sealed digest (64 lower-case hex) or empty")
     macs = sig["macs"]
     if not isinstance(macs, list):

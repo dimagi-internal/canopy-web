@@ -149,6 +149,9 @@ def test_malformed_statement_is_refused(bad):
     {"version": True}, {"version": "3"}, {"version": -1}, {"v": True},
     {"account_id": "a\\b"}, {"account_id": "a b"}, {"account_id": ""}, {"account_id": "é"},
     {"account_id": "x" * 256}, {"connection": str(CID).upper()},
+    # A trailing newline is another spelling of the same value: never accepted.
+    {"agents": ["12", "12\n"]}, {"agents": ["12\n", "40"]}, {"my_computers": [GOOD["my_computers"][0] + "\n"]},
+    {"account_id": GOOD["account_id"] + "\n"}, {"connection": str(CID) + "\n"},
 ])
 def test_other_malformed_statements_are_refused(bad):
     with pytest.raises(wire.WireError) as e:
@@ -252,6 +255,9 @@ def _bad_sigs():
         "member target not an id": {**SIG, "by": {**by, "kind": "member", "target": "seven"}},
         "expect not a digest": {**SIG, "expect": "abc"},
         "expect upper hex": {**SIG, "expect": "A" * 64},
+        "expect trailing newline": {**SIG, "expect": SIG["expect"] + "\n"},
+        "member target trailing newline": {**SIG, "by": {**by, "kind": "member", "target": "7\n"}},
+        "mac trailing newline": {**SIG, "macs": [{**m0, "mac": m0["mac"] + "\n"}, *SIG["macs"][1:]]},
         "extra member": {**SIG, "extra": 1},
         "missing by": {k: v for k, v in SIG.items() if k != "by"},
         "not an object": [],
