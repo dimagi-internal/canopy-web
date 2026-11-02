@@ -298,7 +298,7 @@ export function ChatSessionMenu({
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
+          <DropdownMenuItem inset disabled={resetting} onClick={onReset} data-testid="menu-reset">
             {resetting ? "Resetting…" : "Reset from transcript"}
           </DropdownMenuItem>
           <DropdownMenuItem
