@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import threading
+import time
 from datetime import timedelta
 from unittest import mock
 
@@ -50,10 +53,13 @@ class Answer:
         self.raw_bytes = raw if raw is not None else json.dumps({} if body is None else body).encode()
         self.closed = False
 
-    def iter_content(self, chunk_size=None):
-        size = chunk_size or len(self.raw_bytes) or 1
-        for i in range(0, len(self.raw_bytes), size):
-            yield self.raw_bytes[i:i + size]
+    @property
+    def raw(self):
+        return self
+
+    def read1(self, amt=None, decode_content=None):
+        chunk, self.raw_bytes = self.raw_bytes[:amt], self.raw_bytes[amt:]
+        return chunk
 
     def close(self):
         self.closed = True
@@ -71,6 +77,8 @@ class Salesforce:
         self.calls.append({"method": method, "url": url, **kw})
         self.in_atomic.append(db_connection.in_atomic_block)
         what = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if callable(what):
+            what = what()
         if isinstance(what, Exception):
             raise what
         return what
@@ -315,7 +323,7 @@ def test_a_write_answers_needs_operation_for_now(w):
 # ---- what may be asked ----------------------------------------------------------------------
 
 def test_undeclared_refused_before_token(w):
-    with mock.patch.object(server_tokens, "access_token") as token, Salesforce() as sf:
+    with mock.patch.object(server_tokens, "access") as token, Salesforce() as sf:
         r = post(w, path="limits")
     assert r.status_code == 403 and error_of(r) == "not_declared"
     token.assert_not_called()
@@ -324,14 +332,14 @@ def test_undeclared_refused_before_token(w):
 
 @pytest.mark.parametrize("path", ["composite/batch", "../query", "query?x=y", "%2e%2e/query"])
 def test_outside_the_allowlist_refused_before_token(w, path):
-    with mock.patch.object(server_tokens, "access_token") as token:
+    with mock.patch.object(server_tokens, "access") as token:
         r = post(w, path=path)
     assert r.status_code == 403 and error_of(r) == "not_allowed"
     token.assert_not_called()
 
 
 def test_a_method_override_in_the_query_refused(w):
-    with mock.patch.object(server_tokens, "access_token") as token:
+    with mock.patch.object(server_tokens, "access") as token:
         r = post(w, query={"_HttpMethod": "DELETE"})
     assert r.status_code == 403 and error_of(r) == "not_allowed"
     token.assert_not_called()
@@ -342,17 +350,38 @@ def test_google_not_supported(w):
     assert r.status_code == 409 and error_of(r) == "provider_not_supported"
 
 
+def _redeclare(world, *reads):
+    entry = {**DECL, "reads": [{"method": "GET", "path": p} for p in reads]}
+    view_services.update(world.view, data={"connections": [entry]}, user=world.person)
+    world.view.refresh_from_db()
+
+
 def test_old_revision_declaration_is_the_one_used(w):
-    """v2 adds `limits` and drops `query`: a page still drawing v1 keeps v1's list, and v2 its own."""
-    wider = {**DECL, "reads": [{"method": "GET", "path": "limits"}]}
-    view_services.update(w.view, data={"connections": [wider]}, user=w.person)
-    w.view.refresh_from_db()
+    """v2 adds `limits`: a page still drawing v1 keeps v1's shorter list, and v2 has its own."""
+    _redeclare(w, "query", "limits")
     assert w.view.version == 2
     with FakeSF(), Salesforce():
         assert post(w, surface=view_surface(w, 1)).status_code == 200
-        assert error_of(post(w, surface=view_surface(w, 2))) == "not_declared"
-        assert post(w, surface=view_surface(w, 2), path="limits", query=None).status_code == 200
         assert error_of(post(w, surface=view_surface(w, 1), path="limits", query=None)) == "not_declared"
+        assert post(w, surface=view_surface(w, 2), path="limits", query=None).status_code == 200
+
+
+def test_a_narrowing_reaches_a_page_on_an_old_revision_at_once(w):
+    """v2 drops `query`. A page still drawing v1 gets no grace: both revisions must allow the call."""
+    _redeclare(w, "limits")
+    with Salesforce() as sf:
+        r = post(w, surface=view_surface(w, 1))
+    assert r.status_code == 403 and error_of(r) == "not_declared"
+    assert sf.calls == []
+
+
+def test_an_old_revision_call_inside_both_is_recorded_as_the_revision_named(w):
+    entry = {**DECL, "reads": [READ_QUERY, {"method": "GET", "path": "limits"}]}
+    view_services.update(w.view, data={"connections": [entry]}, user=w.person)
+    w.view.refresh_from_db()
+    with FakeSF(), Salesforce(Answer(status=204, raw=b"")):
+        assert lead_write(w, surface=view_surface(w, 1)).status_code == 200
+    assert Event.objects.get(kind="connections.connection_call").payload["revision"] == 1
 
 
 # ---- an app page ----------------------------------------------------------------------------
@@ -374,7 +403,7 @@ def test_public_app_door_refused(w):
     stranger = type(w.person).objects.create_user(username="stranger", email="stranger@example.com")
     c = Client()
     c.force_login(stranger)
-    with mock.patch.object(server_tokens, "access_token") as token, Salesforce() as sf:
+    with mock.patch.object(server_tokens, "access") as token, Salesforce() as sf:
         r = post(w, c, surface=app_surface(w))
     assert r.status_code == 404
     token.assert_not_called()
@@ -393,7 +422,7 @@ def test_a_switched_off_app_is_404_even_to_its_manager(w):
 
 def test_rate_limit_429(w):
     with mock.patch.object(call_service, "CALLS_PER_MINUTE", 2), \
-            mock.patch.object(server_tokens, "access_token", return_value=(ACCESS, INSTANCE)) as token, \
+            mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")) as token, \
             Salesforce() as sf:
         assert post(w).status_code == 200
         assert post(w).status_code == 200
@@ -428,7 +457,7 @@ def test_response_of_exactly_5mb_is_fine(w):
 def test_request_over_1mb_refused_on_the_raw_body(w):
     # All of it whitespace: what counts is what arrived, not what it parses to.
     raw = json.dumps(body_of(w)) + " " * (call_service.MAX_REQUEST_BYTES + 1)
-    with mock.patch.object(server_tokens, "access_token") as token, Salesforce() as sf:
+    with mock.patch.object(server_tokens, "access") as token, Salesforce() as sf:
         r = w.client.post(URL, raw, content_type=J)
     assert r.status_code == 413 and error_of(r) == "request_too_large"
     token.assert_not_called()
@@ -437,7 +466,7 @@ def test_request_over_1mb_refused_on_the_raw_body(w):
 
 def test_a_request_past_the_upload_limit_is_not_a_500(w):
     raw = json.dumps(body_of(w)) + " " * (3 * 1024 * 1024)
-    with mock.patch.object(server_tokens, "access_token") as token:
+    with mock.patch.object(server_tokens, "access") as token:
         r = w.client.post(URL, raw, content_type=J)
     assert r.status_code == 413
     token.assert_not_called()
@@ -504,16 +533,203 @@ def test_a_write_timeout_says_it_may_have_gone_through(w):
     assert event.payload["status"] is None and event.payload["outcome"] == "no_answer"
 
 
-def test_a_slow_drip_is_a_timeout_past_the_budget(w):
-    class Drip(Answer):
-        def iter_content(self, chunk_size=None):
-            yield b"{"
-            call_service._monotonic.return_value = 31.0
-            yield b"}"
+class SlowServer:
+    """A real socket on localhost: headers at once, then `behave(connection)`."""
 
-    with mock.patch.object(call_service, "_monotonic", return_value=0.0), FakeSF(), Salesforce(Drip()):
+    def __init__(self, behave, *, close=False):
+        self.behave, self.close = behave, close
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+
+    def _serve(self):
+        conn, _ = self.listener.accept()
+        with conn:
+            conn.recv(65536)
+            shut = b"Connection: close\r\n" if self.close else b""
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" + shut
+                         + b"Content-Length: 100000\r\n\r\n")
+            try:
+                self.behave(conn, self.done)
+            except OSError:
+                pass  # the route hung up, which is the point
+
+    def __enter__(self):
+        self.thread.start()
+        return f"http://127.0.0.1:{self.listener.getsockname()[1]}/x"
+
+    def __exit__(self, *exc):
+        self.done.set()
+        self.thread.join(5)
+        self.listener.close()
+
+
+def _drip(conn, done):
+    while not done.wait(0.02):
+        conn.sendall(b"x")
+
+
+def _stall(conn, done):
+    conn.sendall(b"x")
+    done.wait(10)
+
+
+@pytest.mark.parametrize("close", [False, True], ids=["keep_alive", "connection_close"])
+@pytest.mark.parametrize("behave", [_drip, _stall], ids=["drip", "stall"])
+def test_a_slow_answer_stops_at_the_wall_clock_limit_on_a_real_socket(w, behave, close):
+    budget = 0.5
+    with SlowServer(behave, close=close) as url, \
+            mock.patch.object(call_service, "TOTAL_SECONDS", budget), \
+            mock.patch.object(call_service.calls, "build_url", return_value=url), \
+            mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")):
+        started = time.monotonic()
         r = post(w)
+        elapsed = time.monotonic() - started
     assert r.status_code == 502 and error_of(r) == "provider_unavailable"
+    assert elapsed < budget + 1.5, f"took {elapsed:.1f}s against a {budget}s limit"
+
+
+def test_the_wall_clock_limit_is_35_seconds():
+    assert call_service.TOTAL_SECONDS == 35
+
+
+# ---- at most so many at once ----------------------------------------------------------------
+
+def test_ten_in_flight_for_one_person_is_the_most(w):
+    held = [call_service._in_flight(w.person.pk) for _ in range(call_service.MAX_IN_FLIGHT_PER_PERSON)]
+    for h in held:
+        h.__enter__()
+    try:
+        with mock.patch.object(server_tokens, "access") as token, Salesforce() as sf:
+            r = post(w)
+    finally:
+        for h in held:
+            h.__exit__(None, None, None)
+    assert r.status_code == 429 and error_of(r) == "rate_limited" and r.json()["detail"].endswith(".")
+    token.assert_not_called()
+    assert sf.calls == []
+    with FakeSF(), Salesforce():
+        assert post(w).status_code == 200
+
+
+def test_fifty_in_flight_in_a_process_is_the_most(w):
+    held = [call_service._in_flight(f"someone-{i}") for i in range(call_service.MAX_IN_FLIGHT)]
+    for h in held:
+        h.__enter__()
+    try:
+        with mock.patch.object(server_tokens, "access") as token:
+            r = post(w)
+    finally:
+        for h in held:
+            h.__exit__(None, None, None)
+    assert r.status_code == 429 and error_of(r) == "rate_limited"
+    token.assert_not_called()
+
+
+def test_the_caps_are_ten_and_fifty():
+    assert (call_service.MAX_IN_FLIGHT_PER_PERSON, call_service.MAX_IN_FLIGHT) == (10, 50)
+
+
+@pytest.mark.parametrize("failure", [requests.Timeout("slow"), server_tokens.Waiting(), RuntimeError("a bug")],
+                         ids=["provider", "token", "unexpected"])
+def test_a_failed_call_releases_its_place(w, failure):
+    w.client.raise_request_exception = False
+    token = mock.patch.object(server_tokens, "access", side_effect=failure) \
+        if not isinstance(failure, requests.Timeout) else \
+        mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d"))
+    with token, Salesforce(failure):
+        assert post(w).status_code >= 500
+    assert call_service._flying_total() == 0
+
+
+# ---- one forced refresh a minute ------------------------------------------------------------
+
+def test_a_burst_of_401s_makes_one_forced_refresh(w):
+    dead = Answer(status=401, body=[{"errorCode": "INVALID_SESSION_ID"}])
+    with FakeSF() as fake, Salesforce(dead) as sf:
+        replies = [post(w) for _ in range(5)]
+    assert [error_of(r) for r in replies] == ["session_ended"] * 5
+    assert len(fake.token_calls()) == 2, "the first token, and one forced refresh"
+    assert len(sf.calls) == 6, "one retry in the whole burst; after that a 401 is the answer"
+
+
+def test_a_token_another_request_refreshed_is_not_expired(w):
+    """This request's token is refused, but another has already stored a new one: use that one."""
+    tokens = [_resp(body=_token_body(refresh_token=None)),
+              _resp(body=_token_body(access_token="00D!access_2", refresh_token=None))]
+
+    def another_request_refreshes():
+        Connection.objects.filter(pk=w.conn.pk).update(access_expires_at=timezone.now())
+        server_tokens._forget_all()
+        server_tokens.access_token(w.conn)
+        return Answer(status=401, body=[])
+
+    with FakeSF(token=tokens) as fake, Salesforce(another_request_refreshes, Answer(body={"ok": True})) as sf:
+        r = post(w)
+    assert r.json() == {"status": 200, "body": {"ok": True}}
+    assert sf.bearer(1) == "Bearer 00D!access_2"
+    assert len(fake.token_calls()) == 2, "no refresh of its own"
+    w.conn.refresh_from_db()
+    assert w.conn.access_expires_at > timezone.now(), "the new token was left alone"
+    assert server_tokens._cached(w.conn) is not None
+
+
+def test_a_refused_token_that_is_not_stored_spends_no_forced_refresh(w):
+    with FakeSF():
+        got = server_tokens.access(w.conn)
+    assert server_tokens.forget(w.conn, "some-older-digest") is True
+    w.conn.refresh_from_db()
+    assert w.conn.access_expires_at > timezone.now()
+    assert server_tokens.forget(w.conn, got.digest) is True, "the minute's refresh is still there"
+    assert server_tokens.forget(w.conn, got.digest) is False, "and now it is spent"
+
+
+# ---- last used ------------------------------------------------------------------------------
+
+def test_a_call_marks_the_connection_used_at_most_once_a_minute(w):
+    with FakeSF(), Salesforce():
+        post(w)
+        w.conn.refresh_from_db()
+        first = w.conn.last_used_at
+        assert first is not None
+        post(w)
+    w.conn.refresh_from_db()
+    assert w.conn.last_used_at == first
+
+
+def test_a_refused_call_does_not_mark_it_used(w):
+    post(w, path="limits", query=None)
+    w.conn.refresh_from_db()
+    assert w.conn.last_used_at is None
+
+
+# ---- answers that cannot be passed on -------------------------------------------------------
+
+UNREADABLE = [b'{"n": ' + str(2 ** 70).encode() + b"}", b"[" * 400 + b"]" * 400, b"[" * 200000 + b"]" * 200000]
+
+
+@pytest.mark.parametrize("raw", UNREADABLE, ids=["over_64_bits", "too_deep", "deeper_than_the_parser"])
+def test_an_unreadable_answer_is_a_plain_502(w, raw):
+    with FakeSF(), Salesforce(Answer(raw=raw)):
+        r = post(w)
+    assert r.status_code == 502 and error_of(r) == "response_unreadable"
+    assert "gone through" not in r.json()["detail"]
+
+
+def test_an_unreadable_answer_to_a_write_says_it_may_have_landed(w):
+    with FakeSF(), Salesforce(Answer(raw=UNREADABLE[0])):
+        r = lead_write(w)
+    assert r.status_code == 502 and error_of(r) == "response_unreadable"
+    assert "may have gone through" in r.json()["detail"]
+    event = Event.objects.get(kind="connections.connection_call")
+    assert event.payload["status"] == 200 and event.payload["outcome"] == "unreadable"
+
+
+def test_a_too_large_answer_to_a_write_does_not_invite_a_repeat(w):
+    with FakeSF(), Salesforce(Answer(raw=b"x" * (call_service.MAX_RESPONSE_BYTES + 1))):
+        r = lead_write(w)
+    assert r.status_code == 502 and error_of(r) == "response_too_large"
+    assert r.json()["detail"] == "The change may have gone through, but the answer was too large to read."
 
 
 def test_kms_unavailable_sentence(w):
@@ -526,7 +742,7 @@ def test_kms_unavailable_sentence(w):
 
 
 def test_a_lease_held_elsewhere_is_a_sentence(w):
-    with mock.patch.object(server_tokens, "access_token", side_effect=server_tokens.Waiting()), Salesforce():
+    with mock.patch.object(server_tokens, "access", side_effect=server_tokens.Waiting()), Salesforce():
         r = post(w)
     assert r.status_code == 503 and error_of(r) == "waiting"
     assert "try again" in r.json()["detail"]

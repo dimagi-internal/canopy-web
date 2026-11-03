@@ -40,8 +40,10 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import NamedTuple
 from urllib.parse import quote, quote_plus
 
+from django.core.cache import cache
 from django.db import Error as DatabaseFailure
 from django.db import connection, transaction
 from django.utils import timezone
@@ -64,6 +66,8 @@ WAIT_SECONDS, POLL_SECONDS = 30, 1
 #: How long a write keeps trying when it holds the only copy of a rotated token, and its pauses:
 #: the CLI's budget (`orchestrator/connections/access.py`).
 ROTATED_WRITE_SECONDS, RETRY_SECONDS, RETRY_MAX_SECONDS = 90, 2, 15
+#: How often a provider's refusal of a token may force a refresh, per connection.
+FORCED_REFRESH_SECONDS = 60
 _KV = 0
 _REFRESH_KEYS = frozenset({"v", "provider", "refresh_token", "client_id", "login_host", "instance_url", "account_id",
                            "owner_key", "issued_at", "scopes", "statement_floor"})
@@ -82,6 +86,14 @@ _now = time.time
 _monotonic = time.monotonic
 
 logger = logging.getLogger(__name__)
+
+
+class Access(NamedTuple):
+    """A usable token, where to use it, and the digest of the access envelope it came from."""
+
+    token: str
+    instance_url: str
+    digest: str
 
 
 class ServerUseOff(services.ConnectionError):  # noqa: N818 — the name is the interface
@@ -132,15 +144,28 @@ def _forget(connection_id) -> None:
         _cache.pop(connection_id, None)
 
 
-def forget(conn: Connection) -> None:
-    """The provider refused the token `access_token` gave: its session ended before its stored expiry
-    said it would. Drop the cached copy and mark what is stored as spent, or the next `access_token`
-    would open the same dead token from the envelope. That one refreshes, under the lease, for
-    everyone: a machine reading this row sees the expiry too. A refresh that landed a moment ago is
-    spent as well, which costs one more refresh and loses nothing."""
-    _forget(conn.pk)
+def forget(conn: Connection, digest: str) -> bool:
+    """The provider refused the token whose access envelope has `digest` (`Access.digest`): its
+    session ended before its stored expiry said it would. True when it is worth asking `access` again.
+
+    If something newer is stored, another request or a machine already refreshed: that one is left
+    alone, and no refresh is spent. Otherwise this forces one, at most once a minute per connection, by
+    marking what is stored as spent, or `access` would open the same dead token from the envelope. A
+    machine reading this row sees the expiry too. False when this minute's refresh has been used: the
+    provider refused a token it was just given, and asking it again would only repeat that."""
+    with _cache_lock:
+        hit = _cache.get(conn.pk)
+        if hit is not None and hit[0] == digest:
+            del _cache[conn.pk]
+    stored = Connection.objects.filter(pk=conn.pk).values_list("access_sealed", flat=True).first()
+    if stored is None or vault_engine.value_digest(stored) != digest:
+        return True
+    if not cache.add(f"connections:forced_refresh:{conn.pk}", 1, timeout=FORCED_REFRESH_SECONDS):
+        return False
     now = timezone.now()
-    Connection.objects.filter(pk=conn.pk, access_expires_at__gt=now).update(access_expires_at=now)
+    Connection.objects.filter(pk=conn.pk, access_sealed=stored, access_expires_at__gt=now).update(
+        access_expires_at=now)
+    return True
 
 
 def _remember(connection_id, digest: str, token: str, instance_url: str, expires_at: float) -> None:
@@ -154,7 +179,7 @@ def _remember(connection_id, digest: str, token: str, instance_url: str, expires
             _cache.popitem(last=False)
 
 
-def _cached(conn: Connection) -> tuple[str, str] | None:
+def _cached(conn: Connection) -> Access | None:
     digest = vault_engine.value_digest(conn.access_sealed)
     now = _now()
     with _cache_lock:
@@ -165,7 +190,7 @@ def _cached(conn: Connection) -> tuple[str, str] | None:
             del _cache[conn.pk]
             return None
         _cache.move_to_end(conn.pk)
-        return hit[1], hit[2]
+        return Access(hit[1], hit[2], hit[0])
 
 
 # ---- what is opened is checked -----------------------------------------------------------
@@ -280,7 +305,7 @@ def _sealed_to_me(row: Connection, me: str) -> None:
                            "can connect it again to fix that.")
 
 
-def _live_access(row: Connection, me: str) -> tuple[str, str] | None:
+def _live_access(row: Connection, me: str) -> Access | None:
     """The stored access token when it is worth opening: sealed to canopy-web, a minute left."""
     if (not row.access_sealed or row.access_expires_at is None
             or ("device", me) not in zk_seal.sealed_targets(row.access_sealed)
@@ -289,9 +314,9 @@ def _live_access(row: Connection, me: str) -> tuple[str, str] | None:
     plain = _open_access(row, me)
     if plain["expires_at"] - _now() <= MIN_LIFE_SECONDS:
         return None
-    answer = plain["access_token"], plain["instance_url"]
-    _remember(row.pk, vault_engine.value_digest(row.access_sealed), *answer, plain["expires_at"])
-    return answer
+    digest = vault_engine.value_digest(row.access_sealed)
+    _remember(row.pk, digest, plain["access_token"], plain["instance_url"], plain["expires_at"])
+    return Access(plain["access_token"], plain["instance_url"], digest)
 
 
 def _lease_is_live(row: Connection) -> bool:
@@ -300,7 +325,13 @@ def _lease_is_live(row: Connection) -> bool:
 
 
 def access_token(conn: Connection, *, sleep=None) -> tuple[str, str]:
-    """`(access token, instance_url)` for `conn`, with at least a minute left.
+    """`(access token, instance_url)` for `conn`: `access`, for a caller who won't need `forget`."""
+    got = access(conn, sleep=sleep)
+    return got.token, got.instance_url
+
+
+def access(conn: Connection, *, sleep=None) -> Access:
+    """The token for `conn`, with at least a minute left, and which envelope it came from.
 
     Raises `services.NotConnected` (gone, being disconnected, or a refresh was refused for good),
     `ServerUseOff`, `Waiting` (another holder's lease outlasted 30 s), `server_key.Unavailable`, or
@@ -337,7 +368,7 @@ class _Lease:
     id: object
 
 
-def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> tuple[str, str] | None:
+def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> Access | None:
     """Take the lease and refresh. None when another holder got there first, or took over since:
     wait for its write. A rotated refresh token exists only here until it is stored, so if that fails
     the lease stays held, and its expiry says what may be lost (`lease_expired_unwritten`); if the
@@ -509,8 +540,8 @@ def _attempts(rotated: bool, sleep):
 
 
 def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, rotated: bool, writer: tokens.Writer,
-                  lease: _Lease, sleep) -> tuple[str, str] | None:
-    """`(token, instance_url)` once stored, keeping `lease` renewed. A row that moved is read again
+                  lease: _Lease, sleep) -> Access | None:
+    """`Access` once stored, keeping `lease` renewed. A row that moved is read again
     and sealed again: only the floor and recipients change. With a rotated token in hand, a KMS or
     database failure or a lease someone else holds is tried again too. None when this write no longer
     applies: without a rotation the lease went elsewhere; or a reconnect replaced the refresh token this
@@ -597,9 +628,9 @@ def _no_longer_a_recipient(row: Connection, writer: tokens.Writer, lease: _Lease
 
 
 def _stored(row: Connection, token: providers.TokenResponse, plain: dict, digest: str,
-            expires_at: int) -> tuple[str, str]:
+            expires_at: int) -> Access:
     _remember(row.pk, digest, token.access_token, plain["instance_url"], expires_at)
-    return token.access_token, plain["instance_url"]
+    return Access(token.access_token, plain["instance_url"], digest)
 
 
 # ---- revoking --------------------------------------------------------------------------------

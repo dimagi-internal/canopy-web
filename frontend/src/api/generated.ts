@@ -424,7 +424,8 @@ export interface paths {
          *     A provider's refusal is a 200 here with its own `status`. A refusal of the call itself is a problem
          *     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
          *     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
-         *     `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `provider_unavailable`.
+         *     `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
+         *     `provider_unavailable`.
          */
         readonly post: operations["request_connection_call"];
         readonly delete?: never;

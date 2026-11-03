@@ -50,12 +50,20 @@ _ENTRY_KEYS = {"provider", "as", "agent", "reads", "writes"}
 class Surface:
     """The screen a call comes from, once the caller is known to be allowed to open it.
     `declared` is what THAT screen declares: a view's named revision, an app's live manifest.
+    `revision` is what an audit line records: the one the page named.
     The connection comes from `workspace` and nowhere else."""
     kind: str
     ref: str  # what an audit line calls it, without the kind: a view's id, an app's key
     workspace: str
     revision: int | None
     declared: list[dict]
+    #: The view's current declaration, when the page is on an older revision. A call must fit both:
+    #: an old page never gets more than it drew, and a narrowing reaches it at once.
+    current: list[dict] | None = None
+
+    def allows(self, provider: str, as_: str, agent_slug: str | None, match_result: calls.Match, method: str) -> bool:
+        return all(allows(lists, provider, as_, agent_slug, match_result, method)
+                   for lists in (self.declared, *(() if self.current is None else (self.current,))))
 
 
 _surfaces: dict[str, Callable[..., Surface]] = {}

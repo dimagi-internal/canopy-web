@@ -63,15 +63,16 @@ def _view_or_404(request: HttpRequest, view_id: int) -> DynamicView:
 
 
 def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
-    """The view a Salesforce call comes from, by the gate that reads a view. What it may ask is
-    what the revision the page drew declares, so a saved change never reaches a page still on the
-    one before, either way."""
+    """The view a Salesforce call comes from, by the gate that reads a view. What it may ask is what
+    the revision the page drew declares and, on an older one, what the view declares now as well: a
+    widening waits for the page to catch up, and a narrowing applies at once."""
     view = _view_or_404(request, ref["id"])
     revision = view.revisions.filter(version=ref["version"]).first()
     if revision is None:
         raise HttpError(404, f"view {view.pk} has no version {ref['version']}")
     return declarations.Surface(kind="view", ref=str(view.pk), workspace=view.workspace_id,
-                                revision=revision.version, declared=revision.connections or [])
+                                revision=revision.version, declared=revision.connections or [],
+                                current=None if revision.version == view.version else view.connections or [])
 
 
 def _project_or_422(workspace: str, handle: str):

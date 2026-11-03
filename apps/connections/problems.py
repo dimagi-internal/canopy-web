@@ -74,6 +74,7 @@ _CALL_PROBLEMS: dict[str, tuple[int, str]] = {
     "rate_limited": (429, "Too many calls"),
     "session_ended": (409, "Connection needs connecting again"),
     "response_too_large": (502, "Answer too large"),
+    "response_unreadable": (502, "Answer could not be read"),
     "provider_unavailable": (502, "Provider unavailable"),
 }
 _CALL_TYPES = {"rate_limited": TYPE_RATE_LIMIT, "request_too_large": TYPE_PAYLOAD_TOO_LARGE}

@@ -4,11 +4,12 @@ A dynamic view or app page never holds a token. It asks here, on the signed-in p
 and this does the checks in order, each before anything more is read: a session, the surface and
 whether the person may open it, the allowlist (`calls`), what that surface declared
 (`declarations`), whose connection, a write's operation, the rate limit. Only then is a token read
-(`server_tokens`) and the provider called, with no transaction held, no redirect followed, and
-the answer capped.
+(`server_tokens`) and the provider called, with no transaction held, no redirect followed, the
+answer capped, and a limit on how many wait at once and how long each may take.
 
 The route is a plain `def`: Django runs it on a worker thread, as it does every route that calls a
-provider, so the wait for Salesforce blocks that thread and not the event loop.
+provider, so the wait for Salesforce blocks that thread and not the event loop. That is why
+`_in_flight` exists, and why the read has a wall-clock limit.
 
 Every refusal is a `services.ConnectionError` whose message is a sentence for the screen
 (`problems.problem_for_call`). A token appears in none of them, in no log and no Event: an answer
@@ -19,13 +20,22 @@ line. Neither says what was asked or answered, only where.
 from __future__ import annotations
 
 import json
+import threading
 import time
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from urllib.parse import quote, quote_plus
 
+import orjson
 import requests
+import urllib3
+from django.core.cache import cache
 from django.urls import reverse
+from django.utils import timezone
 
+from apps.api.renderers import OrjsonRenderer
 from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
 
@@ -35,6 +45,11 @@ from .models import Connection
 CALLS_PER_MINUTE = 300
 RATE_WINDOW_SECONDS = 60
 CONNECT_SECONDS, READ_SECONDS = 5, 30
+#: The whole call, however the bytes arrive: `READ_SECONDS` only bounds one wait for them.
+TOTAL_SECONDS = 35
+#: Calls waiting on a provider at once, each holding a worker thread, per person and per process.
+MAX_IN_FLIGHT_PER_PERSON, MAX_IN_FLIGHT = 10, 50
+LAST_USED_EVERY_SECONDS = 60
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_TEXT_CHARS = 1000
@@ -42,6 +57,9 @@ _CHUNK_BYTES = 64 * 1024
 _REDACTED = b"[redacted]"
 
 _monotonic = time.monotonic
+
+_flying_lock = threading.Lock()
+_flying: Counter = Counter()
 
 
 def _title(provider: str) -> str:
@@ -66,7 +84,7 @@ def call(request, provider: str, payload) -> dict:
     user = request.user
     surface = declarations.resolve_surface(request, payload.surface.model_dump())
     matched, query = _allowed(provider, payload)
-    if not declarations.allows(surface.declared, provider, payload.as_, payload.agent, matched, payload.method):
+    if not surface.allows(provider, payload.as_, payload.agent, matched, payload.method):
         raise services.ConnectionError("not_declared", f"This screen didn't declare that {_title(provider)} call, "
                                                        "so it can't make it.")
     try:
@@ -78,15 +96,46 @@ def call(request, provider: str, payload) -> dict:
             raise services.ConnectionError("rate_limited", f"Too many {_title(provider)} calls in the last minute; "
                                                            "wait a moment and try again.")
         sent = _Sent()
-        try:
-            return _exchange(conn, provider, matched, query, payload.body, sent)
-        finally:
-            if sent.sent:
-                _audit(conn, user, surface, matched, payload.operation_id, sent)
+        with _in_flight(user.pk):
+            try:
+                return _exchange(conn, provider, matched, query, payload.body, sent)
+            finally:
+                if sent.sent:
+                    _mark_used(conn)
+                    _audit(conn, user, surface, matched, payload.operation_id, sent)
     except services.NotConnected as exc:
         exc.members = {"connect_url": request.build_absolute_uri(
             reverse("connections_start", args=[provider, surface.workspace]))}
         raise
+
+
+@contextmanager
+def _in_flight(person) -> Iterator[None]:
+    """A place among the calls this process is waiting on, or `rate_limited`. Blocking on a provider
+    holds a worker thread, so one person or one slow provider can't take them all."""
+    with _flying_lock:
+        if _flying[person] >= MAX_IN_FLIGHT_PER_PERSON or _flying.total() >= MAX_IN_FLIGHT:
+            raise services.ConnectionError("rate_limited", "Too many calls are running at once; wait a moment and "
+                                                           "try again.")
+        _flying[person] += 1
+    try:
+        yield
+    finally:
+        with _flying_lock:
+            _flying[person] -= 1
+            if _flying[person] <= 0:
+                del _flying[person]
+
+
+def _flying_total() -> int:
+    with _flying_lock:
+        return _flying.total()
+
+
+def _mark_used(conn: Connection) -> None:
+    """What Settings shows as last used, at most once a minute per connection."""
+    if cache.add(f"connections:last_used:{conn.pk}", 1, timeout=LAST_USED_EVERY_SECONDS):
+        Connection.objects.filter(pk=conn.pk).update(last_used_at=timezone.now())
 
 
 def _require_session(request) -> None:
@@ -140,76 +189,108 @@ def _check_operation(user, conn: Connection, surface: declarations.Surface, matc
                                                       "on that screen first.")
 
 
-def _token(conn: Connection) -> tuple[str, str]:
+def _token(conn: Connection) -> server_tokens.Access:
     try:
-        return server_tokens.access_token(conn)
+        return server_tokens.access(conn)
     except server_key.Unavailable:
         raise services.ConnectionError("try_again", "canopy-web can't open this connection right now; try again in a "
                                                     "moment.") from None
 
 
 def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent) -> dict:
-    """Ask, and on a 401 once more with a new token. A 401 means the provider refused the call, so
+    """Ask, and on a 401 once more: with whatever newer token is stored, or after a forced refresh if
+    this minute's is unspent (`server_tokens.forget`). A 401 means the provider refused the call, so
     it did not land, whatever the method. Nothing else is ever asked twice."""
-    token, instance_url = _token(conn)
-    status, raw = _ask(provider, matched, query, body, token, instance_url, sent)
+    deadline = _monotonic() + TOTAL_SECONDS
+    got = _token(conn)
+    status, raw = _ask(provider, matched, query, body, got, deadline, sent)
     if status == 401:
-        server_tokens.forget(conn)
-        token, instance_url = _token(conn)
-        status, raw = _ask(provider, matched, query, body, token, instance_url, sent)
+        if server_tokens.forget(conn, got.digest):
+            got = _token(conn)
+            status, raw = _ask(provider, matched, query, body, got, deadline, sent)
         if status == 401:
             raise services.ConnectionError("session_ended", f"{_title(provider)} ended this connection's session. "
                                                              "Connect it again in Settings → Connections.")
-    return _answer(status, raw)
+    return _answer(status, raw, provider, matched, sent)
 
 
-def _ask(provider: str, matched: calls.Match, query: dict, body, token: str, instance_url: str,
+def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tokens.Access, deadline: float,
          sent: _Sent) -> tuple[int, bytes]:
     """One request: `(status, what came back, without the token)`."""
     try:
-        url = calls.build_url(provider, instance_url, matched.path, query, method=matched.rule.method)
+        url = calls.build_url(provider, got.instance_url, matched.path, query, method=matched.rule.method)
     except calls.NotAllowed as exc:
         raise services.ConnectionError("not_allowed", str(exc)) from None
     kwargs = {} if body is None else {"json": body}
     sent.sent, sent.status = True, None
     too_large, no_answer = False, False
     status, raw = 0, b""
+    # Identity: a decoder can sit on bytes across many socket reads, and the deadline is checked per read.
+    headers = {"Authorization": f"Bearer {got.token}", "Accept": "application/json", "Accept-Encoding": "identity"}
     try:
         resp = requests.request(matched.rule.method, url, allow_redirects=False, stream=True,
-                                timeout=(CONNECT_SECONDS, READ_SECONDS),
-                                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, **kwargs)
+                                timeout=(CONNECT_SECONDS, READ_SECONDS), headers=headers, **kwargs)
         try:
             status = sent.status = resp.status_code
-            raw, too_large, no_answer = _read(resp)
+            raw, too_large, no_answer = _read(resp, deadline)
         finally:
             resp.close()
-    except requests.RequestException:
+    except (requests.RequestException, urllib3.exceptions.HTTPError, OSError):
         no_answer = True
     if no_answer:
         sent.outcome = "no_answer"
         raise _no_answer(provider, matched)
     if too_large:
         sent.outcome = "too_large"
-        raise services.ConnectionError("response_too_large", f"{_title(provider)}'s answer is too large for a screen; "
-                                                             "ask for less of it.")
+        raise _too_large(provider, matched)
     if 300 <= status < 400:
         sent.outcome = "redirected"
         raise services.ConnectionError("provider_unavailable", f"{_title(provider)} could not be reached; try again.")
-    return status, _without(raw, token)
+    return status, _without(raw, got.token)
 
 
-def _read(resp) -> tuple[bytes, bool, bool]:
-    """`(what came, too large, ran out of time)`. The timeout only bounds each wait for bytes, so
-    the whole read has its own budget: a slow drip must not hold a worker for ever."""
-    deadline = _monotonic() + READ_SECONDS
+def _read(resp, deadline: float) -> tuple[bytes, bool, bool]:
+    """`(what came, too large, ran out of time)`. `read1` returns after one socket read, where
+    `iter_content` waits to fill its chunk, so a drip can't keep it from the deadline; and no wait
+    for bytes outlasts the time left, so a stall can't either."""
+    body = resp.raw
     raw = bytearray()
-    for chunk in resp.iter_content(chunk_size=_CHUNK_BYTES):
+    while True:
+        left = deadline - _monotonic()
+        if left <= 0:
+            return b"", False, True
+        _limit_wait(body, min(READ_SECONDS, left))
+        chunk = body.read1(_CHUNK_BYTES, decode_content=True)
+        if not chunk:
+            return bytes(raw), False, False
         raw += chunk
         if len(raw) > MAX_RESPONSE_BYTES:
             return b"", True, False
-        if _monotonic() > deadline:
-            return b"", False, True
-    return bytes(raw), False, False
+
+
+def _limit_wait(body, seconds: float) -> None:
+    """Set how long the next read may wait. The connection gives up its socket to the response when
+    the provider says it will close, so look in both places; without either, `READ_SECONDS` stands."""
+    sock = (getattr(getattr(body, "connection", None), "sock", None)
+            or getattr(getattr(getattr(getattr(body, "_fp", None), "fp", None), "raw", None), "_sock", None))
+    if sock is not None:
+        sock.settimeout(seconds)
+
+
+def _too_large(provider: str, matched: calls.Match) -> services.ConnectionError:
+    if matched.rule.kind == "write":  # it landed or may have, so this must not invite a repeat
+        return services.ConnectionError("response_too_large", "The change may have gone through, but the answer was "
+                                                              "too large to read.")
+    return services.ConnectionError("response_too_large", f"{_title(provider)}'s answer is too large for a screen; "
+                                                          "ask for less of it.")
+
+
+def _unreadable(provider: str, matched: calls.Match) -> services.ConnectionError:
+    if matched.rule.kind == "write":
+        return services.ConnectionError("response_unreadable", "The change may have gone through, but the answer "
+                                                               "could not be read. Check before trying again.")
+    return services.ConnectionError("response_unreadable", f"{_title(provider)} sent an answer that can't be read "
+                                                           "here.")
 
 
 def _no_answer(provider: str, matched: calls.Match) -> services.ConnectionError:
@@ -226,13 +307,20 @@ def _without(raw: bytes, token: str) -> bytes:
     return raw
 
 
-def _answer(status: int, raw: bytes) -> dict:
+def _answer(status: int, raw: bytes, provider: str, matched: calls.Match, sent: _Sent) -> dict:
+    """What goes back. JSON the API's own renderer can't write (a number over 64 bits, nesting too
+    deep) is refused here, where a sentence can still be said, not as a 500 after the view returns."""
     if not raw:
         return {"status": status, "body": None}
     try:
-        return {"status": status, "body": json.loads(raw)}
-    except (ValueError, RecursionError):
+        out = {"status": status, "body": json.loads(raw)}
+        OrjsonRenderer().render(None, out, response_status=200)
+    except (RecursionError, orjson.JSONEncodeError):
+        sent.outcome = "unreadable"
+        raise _unreadable(provider, matched) from None
+    except ValueError:
         return {"status": status, "body": None, "text": raw.decode("utf-8", "replace")[:MAX_TEXT_CHARS]}
+    return out
 
 
 def _audit(conn: Connection, user, surface: declarations.Surface, matched: calls.Match, operation_id: str | None,
