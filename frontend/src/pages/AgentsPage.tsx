@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { listAgentRoster, type AgentRosterRow } from '@/api/agents'
+import { agentSummary } from '@/lib/agentSummary'
 import { relativeAge } from '@/lib/relativeAge'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '../lib/scopedLinks'
 import { Td, Th, Tr } from '@/components/DataTable'
 
-// The workspace's agents, one row each: who it is and what it is doing — tasks
+// The workspace's agents, one row each: who it is, what it is for (About: its
+// description, shown whole, not clamped), and what it is doing — tasks
 // open and waiting on a person, active projects, and its turns (the last one and
 // how it ended, and how many ran and failed this week). A table, so the fleet
 // can be scanned; each row opens the agent's own workspace.
@@ -79,6 +81,7 @@ export function AgentsPage() {
             <thead className="bg-card text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <Th density="roomy">Agent</Th>
+                <Th density="roomy" title="What the agent is for (hover for its full description)">About</Th>
                 <Th density="roomy">Last turn</Th>
                 <Th density="roomy" className="text-right" title="Turns in the last 7 days">Turns 7d</Th>
                 <Th density="roomy" className="text-right" title="Failed or lost in the last 7 days">Failed</Th>
@@ -93,13 +96,20 @@ export function AgentsPage() {
               {agents.map((a) => (
                 <Tr rule="top" top key={a.slug} className="hover:bg-card/60">
                   <Td density="roomy">
-                    <Link to={a.url} className="flex items-start gap-2.5">
+                    <Link to={a.url} className="flex items-center gap-2.5">
                       <Avatar agent={a} />
-                      <span className="min-w-0">
-                        <span className="block font-medium text-foreground hover:text-primary">{a.name}</span>
-                        {a.description && <span className="line-clamp-1 max-w-md text-[12px] text-muted-foreground">{a.description}</span>}
-                      </span>
+                      <span className="font-medium text-foreground hover:text-primary">{a.name}</span>
                     </Link>
+                  </Td>
+                  <Td density="roomy">
+                    {agentSummary(a.name, a.description) ? (
+                      <span className="block min-w-[16rem] max-w-md whitespace-normal text-[12px] leading-snug text-foreground-secondary"
+                        title={a.description}>
+                        {agentSummary(a.name, a.description)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </Td>
                   <Td density="roomy" nowrap>
                     {a.last_turn_at ? (
