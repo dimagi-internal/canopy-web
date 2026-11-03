@@ -739,3 +739,85 @@ def test_an_unreviewed_turn_may_act_as_you_to_read_only(w):
 
 def test_a_reviewed_turn_may_still_ask_for_write(w):
     assert _ask(_login(w, _turn(w, turn_mode="manual")), scope="write").status_code in (200, 201)
+
+
+# --- an auto chat the person is attending may ask for write ----------------------------------
+
+
+def _attended(w, **kw):
+    """An auto turn typed by Jonathan in a canopy-web chat he is present in."""
+    from apps.canopy_sessions import presence
+
+    session = _chat(w)
+    presence.touch(session.id, w["jj"].pk)
+    return _turn(w, chat_session=session, turn_mode="auto", **kw)
+
+
+def test_an_attended_auto_chat_may_ask_for_write_and_the_passkey_approval_is_the_review(w):
+    turn = _attended(w)
+    login = _login(w, turn)
+    asked = _ask(login, scope="either")
+    assert asked.status_code == 201, asked.content
+    gid = asked.json()["id"]
+    # Still nothing without the person's passkey touch, and only the same person approves.
+    assert _status(login, gid).json().get("token") in (None, "")
+    assert _browser(w["col"]).post(f"{REQUESTS}{gid}/approve/begin").status_code == 404
+    assert _approve(w, gid, "write").status_code == 200
+    assert ActAsGrant.objects.get(pk=gid).scope == "write"
+    assert _status(login, gid).json()["token"].startswith(act_as.PREFIX)
+
+
+def test_an_attended_auto_chat_approval_survives_the_person_leaving_the_chat_tab(w):
+    from apps.canopy_sessions import presence
+
+    turn = _attended(w)
+    gid = _ask(_login(w, turn), scope="write").json()["id"]
+    presence.leave(turn.chat_session_id, w["jj"].pk)  # they went to the approval page
+    assert _approve(w, gid, "write").status_code == 200
+
+
+@pytest.mark.parametrize("change", [
+    {"initiator_kind": "system", "initiator_assurance": "internal", "initiator_via": "schedule"},
+    {"initiator_kind": "agent", "initiator_assurance": "internal", "initiator_via": "agent"},
+    {"origin": Turn.ORIGIN_EMAIL},
+    {"origin": Turn.ORIGIN_API},
+    {"origin": Turn.ORIGIN_CANOPY_SCHEDULER},
+    {"capability": "ask"},
+])
+def test_auto_turns_nobody_attends_stay_read_only(w, change):
+    from apps.canopy_sessions import presence
+
+    session = _chat(w)
+    presence.touch(session.id, w["jj"].pk)
+    turn = _turn(w, chat_session=session, turn_mode="auto")
+    login = _login(w, turn)  # issued first: a confined turn is never given one
+    Turn.objects.filter(pk=turn.pk).update(**change)
+    r = _ask(login, scope="write")
+    assert r.status_code == 403, (change, r.content)
+
+
+def test_an_auto_chat_with_the_person_absent_stays_read_only(w):
+    from apps.canopy_sessions import presence
+
+    turn = _attended(w)
+    presence.leave(turn.chat_session_id, w["jj"].pk)
+    r = _ask(_login(w, turn), scope="write")
+    assert r.status_code == 403 and "unreviewed" in r.json()["detail"]
+    assert _ask(_login(w, turn), scope="read").status_code == 201
+
+
+def test_an_auto_chat_present_for_someone_else_stays_read_only(w):
+    """Present means the asker, not any member of the chat."""
+    from apps.canopy_sessions import presence
+
+    session = _chat(w)
+    presence.touch(session.id, w["col"].pk)
+    turn = _turn(w, chat_session=session, turn_mode="auto")
+    assert _ask(_login(w, turn), scope="write").status_code == 403
+
+
+def test_an_unattended_auto_grant_cannot_be_approved_as_write_either(w):
+    """A read request raised to write is refused as before; and a write request from a
+    non-chat auto turn never exists to approve."""
+    login = _login(w, _turn(w, turn_mode="auto"))
+    assert _ask(login, scope="write").status_code == 403
