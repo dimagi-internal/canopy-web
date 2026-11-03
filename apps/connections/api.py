@@ -344,6 +344,9 @@ def my_connection_material(request: HttpRequest, provider: str, workspace: str |
     """What my enrolled computer needs to use the account I connected: the sealed
     envelopes (only machines they are sealed to can open them), my signed grant
     statement, and the app's client id and secret to refresh with. Never a token.
+    Each envelope's writer MAC is bound to the digest it replaces: for the refresh
+    envelope that is `sealed_digest`, for the access envelope the SHA-256 (hex) of the
+    stored `access_sealed` (empty string when there is none yet).
 
     Needs a personal access token over REST (403 `token_route_needs_pat` for a
     browser session, an MCP call, an OAuth connector's token or a caller token)

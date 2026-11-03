@@ -310,9 +310,13 @@ class WriteBackIn(StrictModel):
                                                          "rotated.")
     sealed_sig: dict[str, Any] | None = None
     access_sealed: str = Field(description="The new access envelope, to the same recipients.")
-    access_sig: dict[str, Any] | None = Field(description="Its writer MACs, by this machine's ECDH key.")
+    access_sig: dict[str, Any] | None = Field(description="Its writer MACs, by this machine's ECDH key. They bind "
+                                                          "the SHA-256 (hex) of the stored `access_sealed` it "
+                                                          "replaces (empty string when none), not `expect`.")
     access_expires_at: datetime
-    expect: str = Field(max_length=64, description="`sealed_digest` as read: the write replaces exactly that.")
+    expect: str = Field(max_length=64, description="`sealed_digest` as read: the refresh envelope's write replaces "
+                                                   "exactly that. (The access envelope's writer MAC names the "
+                                                   "digest of the stored `access_sealed` instead.)")
     rotated: bool = Field(description="The provider handed back a new refresh token.")
 
 

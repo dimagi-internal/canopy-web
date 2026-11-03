@@ -6,7 +6,10 @@ configured. Nothing about a provider lives in Django settings.
 
 ADDING A PROVIDER (Sage Intacct next) is one module here, and nothing else —
 services, views, routes, the frontend, the CLI and the runner all read
-providers from this registry. There is no settings step:
+providers from this registry. There is no settings step. A provider is this
+module plus `orchestrator/connections/providers/<name>.py` in the canopy CLI
+(the refresh and revoke a machine runs); the two agree on `required_scopes` and
+`rotates_refresh_token` (pinned by `tests/test_connections_shared_names.py`):
 
 1. `providers/<name>.py`: a `Provider` subclass (`base.py` says what to fill in;
    `salesforce.py` and `google.py` are the worked examples) with `identity()`

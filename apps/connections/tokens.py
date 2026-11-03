@@ -312,7 +312,10 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
         row.lease_written = True
         row.save(update_fields=["sealed", "sealed_sig", "sealed_digest", "access_sealed", "access_sig",
                                 "access_expires_at", "lease_written", "updated_at"])
+    # A day's refreshes of one connection coalesce into one Event (its count says how many);
+    # a rotation is its own Event so it is never overwritten by a plain refresh.
     services.record(services.Subject.of(row), "refreshed", rotated=bool(rotated), machine=device_key.runner.name,
+                    key=f"refreshed:{row.pk}:{'rotated' if rotated else 'plain'}:{timezone.now().date().isoformat()}",
                     summary=f"{row.owner_label}'s {_title(row)} refreshed on {device_key.runner.name}"
                             + (" (refresh token rotated)" if rotated else ""))
     return row.sealed_digest

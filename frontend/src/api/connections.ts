@@ -34,7 +34,7 @@ export async function listMyConnections(): Promise<ConnectionsView> {
   return view(unwrap(res, 'Could not read your connections.'))
 }
 
-export async function disconnectMine(id: number): Promise<void> {
+export async function disconnectMine(id: string): Promise<void> {
   const res = await apiV2.DELETE('/api/connections/{connection_id}', {
     params: { path: { connection_id: id } },
   })
@@ -46,25 +46,23 @@ export async function listAgentConnections(slug: string): Promise<ConnectionsVie
   return view(unwrap(res, 'Could not read the agent’s connections.'))
 }
 
-export async function disconnectAgentConnection(slug: string, id: number): Promise<void> {
+export async function disconnectAgentConnection(slug: string, id: string): Promise<void> {
   const res = await apiV2.DELETE('/api/agents/{slug}/connections/{connection_id}', {
     params: { path: { slug, connection_id: id } },
   })
   ensureOk(res, 'Could not disconnect.')
 }
 
-export async function grantConnection(slug: string, id: number, other: string): Promise<void> {
-  const res = await apiV2.PUT('/api/agents/{slug}/connections/{connection_id}/grants/{other_slug}', {
-    params: { path: { slug, connection_id: id, other_slug: other } },
-  })
-  ensureOk(res, 'Could not share the connection.')
+// Lending is now a signed statement the owner's browser writes (`PUT /api/connections/{id}/share`);
+// the per-agent grant routes are gone. These stay so the old panel compiles until it is rewritten.
+const LENDING_MOVED = 'Sharing a connection is now done from Settings → Connections (Share).'
+
+export async function grantConnection(_slug: string, _id: string, _other: string): Promise<void> {
+  throw new Error(LENDING_MOVED)
 }
 
-export async function revokeConnectionGrant(slug: string, id: number, other: string): Promise<void> {
-  const res = await apiV2.DELETE('/api/agents/{slug}/connections/{connection_id}/grants/{other_slug}', {
-    params: { path: { slug, connection_id: id, other_slug: other } },
-  })
-  ensureOk(res, 'Could not stop sharing the connection.')
+export async function revokeConnectionGrant(_slug: string, _id: string, _other: string): Promise<void> {
+  throw new Error(LENDING_MOVED)
 }
 
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an

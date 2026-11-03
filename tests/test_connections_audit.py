@@ -136,3 +136,96 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
                      + [json.dumps(e.payload) + e.summary for e in Event.objects.all()])
     leaked = [s for s in secrets if s in blob]
     assert not leaked, f"secrets in logs or events: {leaked}"
+
+
+# ---- the machines' side: material, lease, write-back, revoke ---------------------------
+
+@pytest.fixture
+def full_run(caplog):
+    """A shared connection used end to end by two boxes: material, refresh (rotated),
+    a crashed lease, then a disconnect the holding box revokes. Returns every
+    response by route kind, plus the secrets used."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tests.fixtures.connection_calls import (
+        TokensWorld,
+        _runner_of,
+        _turn,
+        lease,
+        machine_write,
+        material_for,
+        runner_call,
+        write_back,
+    )
+    from tests.fixtures.connections import FAKE_REFRESH
+
+    caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.DEBUG, logger="apps")
+    world = TokensWorld()
+    conn = world.conn = world.shared(world.evas(), agents=[world.eva])
+    responses: dict[str, list] = {"material": [], "other": []}
+    turn = _turn(world.eva, _runner_of(world, world.box_a))
+    responses["material"].append(material_for(world, world.box_a, turn=turn))
+    responses["material"].append(material_for(world, world.box_a, turn=turn))
+    lid = lease(world, world.box_a)
+    responses["other"].append(lid)
+    body = machine_write(world, conn, world.box_a, lid.json()["lease_id"], rotated=True)
+    responses["other"].append(write_back(world, world.box_a, body))
+    # A lease taken and never written, expired, then taken by the other box.
+    for name in (world.box_a, world.box_b):
+        type(conn).objects.filter(pk=conn.pk).update(lease_expires_at=timezone.now() - timedelta(seconds=5))
+        responses["other"].append(lease(world, name))
+        if name == world.box_a:
+            type(conn).objects.filter(pk=conn.pk).update(lease_written=False)
+    services.disconnect(conn, by=world.person)
+    responses["other"].append(runner_call(world, world.box_a, "POST", f"/connections/{conn.pk}/revoked",
+                                           {"revoked": True, "error": ""}))
+    secrets = ["00D!fresh", "5Aep_rotated", FAKE_REFRESH]
+    return world, responses, secrets, caplog
+
+
+def test_full_connection_lifecycle_writes_no_plaintext_token(full_run):
+    world, responses, secrets, caplog = full_run
+    kinds = {e.kind.removeprefix("connections.") for e in Event.objects.filter(source=services.EVENT_SOURCE)}
+    assert {"token_issued", "refreshed", "lease_expired_unwritten", "disconnected", "revoked"} <= kinds
+    blob = "\n".join([r.getMessage() for r in caplog.records]
+                     + [json.dumps(e.payload) + e.summary for e in Event.objects.all()]
+                     + [r.content.decode() for rs in responses.values() for r in rs]
+                     + [json.dumps(list(Connection.objects.values()), default=str)])
+    assert not [s for s in secrets if s in blob], "a plaintext token in a log, Event, response or row"
+    # Every audit record is in the vocabulary.
+    for e in Event.objects.filter(source=services.EVENT_SOURCE):
+        assert e.kind.removeprefix("connections.") in services.AUDITED
+    [issued] = Event.objects.filter(kind="connections.token_issued")
+    assert issued.count == 2 and {"to", "runner", "machine", "turn"} <= set(issued.payload)
+
+
+def test_app_secret_appears_only_in_material_responses(full_run):
+    world, responses, _, caplog = full_run
+    secret = "app-secret"
+    assert all(secret in r.content.decode() for r in responses["material"])
+    blob = "\n".join([r.getMessage() for r in caplog.records]
+                     + [json.dumps(e.payload) + e.summary for e in Event.objects.all()]
+                     + [r.content.decode() for r in responses["other"]])
+    assert secret not in blob
+
+
+def test_refreshes_coalesce_and_a_rotation_is_its_own_event(full_run):
+    world, _, _, _ = full_run
+    refreshed = Event.objects.filter(kind="connections.refreshed")
+    assert refreshed.count() == 1 and refreshed.get().payload["rotated"] is True
+
+
+def test_a_persons_lent_connection_leaves_granted_in_the_agents_workspace(caplog):
+    from tests.fixtures.connections import ShareWorld
+
+    world = ShareWorld()
+    conn = world.shared(world.persons(), agents=[world.eva])
+    [ev] = Event.objects.filter(kind="connections.granted")
+    assert ev.workspace_id == world.ws.pk and ev.payload["grantee"] == "eva"
+    assert ev.payload["owner"] == f"user:{world.person.pk}"
+    world.shared(conn, agents=[])
+    [gone] = Event.objects.filter(kind="connections.grant_revoked")
+    assert gone.workspace_id == world.ws.pk

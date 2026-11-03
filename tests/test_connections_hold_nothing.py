@@ -45,6 +45,13 @@ def test_fernet_is_used_only_for_the_app_client_secret():
             assert calls and all(_inside(tree, c, "ConnectionApp", "client_secret") for c in calls), path
         else:
             assert calls == [], path
+        # Nor any direct use of Fernet, imported or called.
+        fernet = [n for n in ast.walk(tree)
+                  if (isinstance(n, ast.ImportFrom) and (n.module or "").startswith("cryptography.fernet"))
+                  or (isinstance(n, ast.Import) and any(a.name.startswith("cryptography.fernet") for a in n.names))
+                  or (isinstance(n, ast.Name) and n.id == "Fernet")
+                  or (isinstance(n, ast.Attribute) and n.attr == "Fernet")]
+        assert fernet == [], f"{path} uses Fernet"
 
 
 def test_no_connection_column_holds_a_token():

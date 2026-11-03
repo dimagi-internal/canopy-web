@@ -43,8 +43,8 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [others, setOthers] = useState<string[]>([])
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<number | null>(null)
-  const [pick, setPick] = useState<Record<number, string>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const [pick, setPick] = useState<Record<string, string>>({})
   const [notice, setNotice] = useState('')
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
@@ -69,7 +69,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
     setParams(next, { replace: true })
   }
 
-  async function run(id: number, what: () => Promise<void>, done: string) {
+  async function run(id: string, what: () => Promise<void>, done: string) {
     setBusy(id)
     setError('')
     setNotice('')

@@ -92,7 +92,9 @@ def write_back_connection(request: HttpRequest, runner_id: uuid.UUID, connection
     `sealed_digest` it read. 409 `lease_lost` (another machine took the lease),
     `zk_value_changed`, `revoking` (disconnected mid-refresh: nothing stored; stage
     nothing); 422 `foreign_reader`, `zk_rewrap_required`, `bad_writer_sig`. Stage the
-    token only after this succeeds."""
+    token only after this succeeds. `expect` is the digest of the refresh envelope
+    as read (`sealed_digest`); the access envelope's writer MAC is bound to the SHA-256
+    (hex) of the stored `access_sealed` instead (empty string when there is none)."""
     conn, key = _box_connection(request, runner_id, connection_id)
     try:
         digest = tokens.write_back(conn, device_key=key, **payload.model_dump())

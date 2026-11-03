@@ -407,6 +407,48 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/connections/{connection_id}/share": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What sharing a connection needs
+         * @description Everything the owner's browser needs to share a connection: its sealed
+         *     envelopes (only their recipients can open them), the signed statement in
+         *     force, the owner's key, every machine the owner could seal it to (each with
+         *     the agent that admits it, or marked `mine`) and the endorsements to check
+         *     them by. Only the person whose vault key it is sealed to: anyone else who can
+         *     see it gets 403 `not_the_owner_key`; 409 `revoking` while it is being
+         *     disconnected.
+         */
+        readonly get: operations["get_share_state"];
+        /**
+         * Share a connection
+         * @description Store the owner's signed grant statement (which agents it is lent to, and
+         *     whether it is used on their own computers) and the envelope their browser
+         *     re-sealed to the machines it allows; the connection becomes `active`.
+         *     canopy-web never opens the envelope: it checks the signer is the owner
+         *     (403 `not_the_owner_key`), the signature (422 `bad_signature`), that the
+         *     version moves forward (409 `statement_stale`), that every agent added is one
+         *     the owner administers (403 `not_an_admin`) in the app's workspace (422
+         *     `agent_outside_workspace`), that listed computers are the owner's own (422
+         *     `not_your_machine`), that an agent's statement lists the agent (422
+         *     `statement_missing_owner_agent`), that `expect` is what is stored (409
+         *     `zk_value_changed`), that it is sealed only to the owner and allowed machines
+         *     (422 `foreign_reader`) and that its writer MACs are the owner's (422
+         *     `bad_writer_sig`). From a browser this needs a fresh passkey check.
+         */
+        readonly put: operations["share_connection"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/connections/{connection_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -419,7 +461,9 @@ export interface paths {
         readonly post?: never;
         /**
          * Disconnect one of my connections
-         * @description Stop canopy holding this connection, and ask the provider to revoke it.
+         * @description Disconnect it: it leaves every list at once and is handed to no machine; a
+         *     cloud box that holds it revokes it at the provider and it is then deleted (at
+         *     once, when no cloud box holds it).
          *
          *     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed.
          */
@@ -429,7 +473,43 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/me/connections/{provider}/token": {
+    readonly "/api/me/connections/{provider}/material": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My connection's sealed envelopes and app client, for my own computer (CLI)
+         * @description What my enrolled computer needs to use the account I connected: the sealed
+         *     envelopes (only machines they are sealed to can open them), my signed grant
+         *     statement, and the app's client id and secret to refresh with. Never a token.
+         *     Each envelope's writer MAC is bound to the digest it replaces: for the refresh
+         *     envelope that is `sealed_digest`, for the access envelope the SHA-256 (hex) of the
+         *     stored `access_sealed` (empty string when there is none yet).
+         *
+         *     Needs a personal access token over REST (403 `token_route_needs_pat` for a
+         *     browser session, an MCP call, an OAuth connector's token or a caller token)
+         *     and a device proof (`DPoP`) by one of my own enrolled computers (401
+         *     `device_proof_required` without one; 403 `machine_not_enrolled` for any other
+         *     key: enroll it with `canopy vault device --enroll`). The computer must be one
+         *     the connection's `Use on my computers` lists (403 `not_on_my_computers`).
+         *     `?workspace=` picks one when I connected in several (409 `ambiguous` lists them
+         *     in `workspaces`). 409 `not_connected` when there is none (or it is not shared
+         *     yet, or being disconnected), `needs_reconnect` when its refresh token is dead,
+         *     and `waiting` when this computer may use it but holds no copy yet.
+         */
+        readonly get: operations["my_connection_material"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/connections/{connection_id}/refresh-lease": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -439,21 +519,80 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * A fresh access token for my own connection (CLI)
-         * @description Mint a short-lived access token for the account I connected, for my own
-         *     command line. Needs a personal access token sent as a bearer: a browser
-         *     session, an MCP call, an OAuth connector's token and a conversation's caller
-         *     token are all refused (403 `token_route_needs_pat`), so neither a stolen
-         *     cookie nor a model holding my token can pull a provider token. Only a
-         *     connection made in a workspace I am still a member of counts; `?workspace=`
-         *     picks one when I connected in several (409 `ambiguous` lists them in
-         *     `workspaces`). 409 when I have not connected, or must reconnect
-         *     (`connect_url`, an absolute URL, says where: a workspace's connect page, or
-         *     Settings when I must first choose a workspace or disconnect a spare account). `?refresh=true` forces a new
-         *     token even when the cached one looks fresh (for a CLI whose token the
-         *     provider already rejected).
+         * Take the refresh lease on my connection (CLI)
+         * @description Take the one refresh lease (60 s; send `lease_id` to renew the one I hold)
+         *     before refreshing my connection at the provider on my own computer. 409
+         *     `lease_held` with `retry_after` while another machine holds it: wait for its new
+         *     access token instead of refreshing too. Renew on `ttl_seconds`, not
+         *     `expires_at`. PAT and device proof as for the material.
          */
-        readonly post: operations["my_connection_token"];
+        readonly post: operations["take_my_refresh_lease"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/connections/{connection_id}/refresh-lease/{lease_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Give up the refresh lease on my connection (CLI)
+         * @description Release the refresh lease this computer holds; harmless when it holds none.
+         */
+        readonly delete: operations["release_my_refresh_lease"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/connections/{connection_id}/sealed": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Write back my connection's refreshed envelopes (CLI)
+         * @description Store the access token my computer just minted, sealed to exactly who may open
+         *     the connection now (and the refresh token, when it rotated), against the
+         *     `sealed_digest` read. 409 `lease_lost`, `zk_value_changed`, `revoking`; 422
+         *     `foreign_reader`, `zk_rewrap_required`, `bad_writer_sig`. Only after this
+         *     succeeds is the token used.
+         */
+        readonly put: operations["write_back_my_connection"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/connections/{connection_id}/reconnect-required": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report my connection's refresh refused (CLI)
+         * @description The provider refused the refresh made under `lease_id`. `invalid_grant` marks
+         *     the connection `needs_reconnect` (connect it again); any other error is only
+         *     noted. 409 `lease_lost` unless this computer holds the lease.
+         */
+        readonly post: operations["my_connection_reconnect_required"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6353,37 +6492,10 @@ export interface paths {
         readonly post?: never;
         /**
          * Disconnect an agent's connection
-         * @description Stop canopy holding this agent's connection and ask the provider to
-         *     revoke it. From a browser this needs a fresh passkey check; agents sharing
-         *     it lose access too.
+         * @description Stop canopy holding this agent's connection. From a browser this needs a
+         *     fresh passkey check; agents it is lent to lose access too.
          */
         readonly delete: operations["disconnect_agent_connection"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/connections/{connection_id}/grants/{other_slug}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Share an agent's connection with another agent
-         * @description Let another agent act through this agent's connection. You must
-         *     administer both agents. Sharing again is harmless.
-         */
-        readonly put: operations["grant_connection"];
-        readonly post?: never;
-        /**
-         * Stop sharing an agent's connection with another agent
-         * @description Take the other agent's access away. An admin of either the owning agent or
-         *     the agent it was shared with may do this.
-         */
-        readonly delete: operations["revoke_connection_grant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -9552,9 +9664,10 @@ export interface paths {
         readonly post?: never;
         /**
          * Remove a workspace's connection app
-         * @description Remove this workspace's OAuth client for `provider`. Every account
-         *     connected with it is disconnected (each revoked at the provider) — people's
-         *     and agents' — and agents it was shared with lose it. Removing an app that is
+         * @description Remove this workspace's OAuth client for `provider`: hidden at once. Every
+         *     account connected with it is disconnected — people's and agents' — and agents
+         *     it was shared with lose it; the app is deleted once the machines holding them
+         *     have revoked them (or seven days pass). Removing an app that is
          *     not set up is harmless. A workspace cannot be deleted while it has apps.
          *     From a browser this needs a fresh passkey check. Workspace admins only; not
          *     an MCP tool.
@@ -11165,8 +11278,8 @@ export interface paths {
         /**
          * Which connections one claimed turn's agent can use
          * @description The providers the turn's AGENT has a connection for — its own, or one
-         *     granted to it — so the runner fetches a token for each of those and calls
-         *     nothing for an agent with none. No token here. 404 unless this runner holds
+         *     granted to it — so the runner stages each of those and calls nothing for an
+         *     agent with none. No token here. 404 unless this runner holds
          *     the turn (always for a caller's turn); 409 `no_agent` for a turn that runs
          *     as no agent.
          */
@@ -11179,7 +11292,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connection-token": {
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connections/{provider}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A claimed turn's agent connection: sealed envelopes and the app client
+         * @description What this box needs to stage the turn's AGENT connection for `provider` (its
+         *     own, else one lent to it — never the person who started the turn): the sealed
+         *     envelopes, which only machines they are sealed to can open, the owner's signed
+         *     grant statement and endorsements to check them by, and the app's client id and
+         *     secret to refresh with. Never a token. Each envelope's writer MAC is bound to the
+         *     digest it replaces: for the refresh envelope that is `sealed_digest`, for the
+         *     access envelope the SHA-256 (hex) of the stored `access_sealed` (empty string when
+         *     there is none yet). Requires a device proof (`DPoP`) by this runner's own approved key (401 `device_proof_required`). 404 unless this runner
+         *     holds the turn (always for a caller's turn), or for an unknown provider. 409
+         *     `not_connected` when the agent has none, it is not shared yet, it is being
+         *     disconnected, or this box no longer serves an agent it is lent to;
+         *     `needs_reconnect` when its refresh token is dead; `waiting` when this box may
+         *     use it but holds no copy yet; `ambiguous`, `no_agent`. Each turn's reads are
+         *     recorded once (`token_issued`, naming the runner).
+         */
+        readonly get: operations["turn_connection_material"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/connections/{connection_id}/refresh-lease": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -11189,17 +11335,155 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * One claimed turn's agent connection token
-         * @description A short-lived access token for the connection the turn's AGENT uses for
-         *     `provider`: its own, else one granted to it — never the person who started
-         *     the turn. 404 for an unknown provider, unless this runner holds the turn, and
-         *     always for a caller's turn (one confined to a capability). 409 with `error`
-         *     set to `no_agent`, `not_connected`, `ambiguous`, `reconnect_required` or
-         *     `not_configured`; 502 `provider_error`, 503 `provider_unavailable`.
-         *     `min_life_seconds` (default 300) is how long the token must still live;
-         *     `refresh` forces a new one.
+         * A box takes a connection's refresh lease
+         * @description Take the one refresh lease (60 s; send `lease_id` to renew the one this box
+         *     holds) before refreshing at the provider. 409 `lease_held` with `retry_after`
+         *     while another machine (or another process here, without the id) holds it: wait
+         *     for its new access token instead. Renew on `ttl_seconds`, not `expires_at`. 403
+         *     `not_a_recipient` unless this box serves an agent the connection is lent to;
+         *     401 `device_proof_required`; 409 `revoking`.
          */
-        readonly post: operations["turn_connection_token"];
+        readonly post: operations["take_refresh_lease"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/connections/{connection_id}/refresh-lease/{lease_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * A box gives up a connection's refresh lease
+         * @description Release the refresh lease this box holds; harmless when it holds none.
+         */
+        readonly delete: operations["release_refresh_lease"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/connections/{connection_id}/sealed": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * A box writes back a connection's refreshed envelopes
+         * @description Store the access token this box just minted, sealed to exactly who may open
+         *     the connection now, and the refresh token when it rotated, against the
+         *     `sealed_digest` it read. 409 `lease_lost` (another machine took the lease),
+         *     `zk_value_changed`, `revoking` (disconnected mid-refresh: nothing stored; stage
+         *     nothing); 422 `foreign_reader`, `zk_rewrap_required`, `bad_writer_sig`. Stage the
+         *     token only after this succeeds. `expect` is the digest of the refresh envelope
+         *     as read (`sealed_digest`); the access envelope's writer MAC is bound to the SHA-256
+         *     (hex) of the stored `access_sealed` instead (empty string when there is none).
+         */
+        readonly put: operations["write_back_connection"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/connections/{connection_id}/reconnect-required": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A box reports a connection's refresh refused
+         * @description The provider refused the refresh made under `lease_id`. `invalid_grant` marks
+         *     the connection `needs_reconnect` (its owner connects again); any other error is
+         *     only noted. 409 `lease_lost` unless this box holds the lease.
+         */
+        readonly post: operations["connection_reconnect_required"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/connections": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Connections this box holds that need its keeper
+         * @description Each connection this cloud box holds that machines are waiting for (`waiting`:
+         *     re-seal the same plaintext for those the signed statement allows, at
+         *     `reseal_path`) or that is being disconnected (`revoking`: revoke it — at the
+         *     provider only when `revoke_at_provider` — and confirm at `revoked_path`). Empty
+         *     for a machine that is not a cloud box. 401 `device_proof_required`.
+         */
+        readonly get: operations["get_connection_keeper_work"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/connections/{connection_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * A keeper re-seals a connection it holds for machines that were waiting
+         * @description The refresh envelope (and the access one, when stored) re-sealed by this box
+         *     to the owner and the machines the statement allows, against the `sealed_digest`
+         *     it read. 403 `zk_not_a_holder` unless this cloud box held it and still does; 409
+         *     `zk_value_changed`, `revoking`; 422 `foreign_reader`, `zk_rewrap_required`,
+         *     `bad_writer_sig`.
+         */
+        readonly put: operations["put_connection_reseal"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/connections/{connection_id}/revoked": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A holder confirms it revoked a disconnected connection
+         * @description This box revoked the disconnected connection (`revoked`), or tried and failed
+         *     (`error`); either way the row and its ciphertext are deleted. 404 once another
+         *     holder confirmed; 409 `not_revoking` unless it is being disconnected; 403
+         *     `zk_not_a_holder` unless this cloud box holds it.
+         */
+        readonly post: operations["post_connection_revoked"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -18168,8 +18452,11 @@ export interface components {
         };
         /** ConnectionOut */
         readonly ConnectionOut: {
-            /** Id */
-            readonly id: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
             /** Provider */
             readonly provider: string;
             /**
@@ -18208,6 +18495,29 @@ export interface components {
              */
             readonly needs_reconnect: boolean;
             /**
+             * State
+             * @description `unshared`: sealed to its owner only, so no agent or computer can use it yet (share it); `active`: shared as the owner's signed statement allows; `revoking`: being disconnected.
+             * @enum {string}
+             */
+            readonly state: "unshared" | "active" | "revoking";
+            /** @description What the owner's signed grant statement allows (version 0 and empty when never shared). */
+            readonly statement: components["schemas"]["ConnectionStatementOut"];
+            /**
+             * Holders
+             * @description Names of the runners whose machines hold it now, sorted. Empty while `unshared`.
+             */
+            readonly holders?: readonly string[];
+            /**
+             * Waiting
+             * @description Machines the statement allows that do not hold it yet: a machine that holds it gives them a copy, or the owner does from Settings. Empty unless `active`.
+             */
+            readonly waiting?: readonly components["schemas"]["WaitingOut"][];
+            /**
+             * My Machines
+             * @description The owner's own computers the statement lets it be used on (`Use on my computers`), named. Empty for an agent's connection.
+             */
+            readonly my_machines?: readonly components["schemas"]["MyMachineOut"][];
+            /**
              * Usable
              * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One shared with an agent: only while its owner is in `workspace`.
              */
@@ -18240,12 +18550,48 @@ export interface components {
              */
             readonly shared_with?: readonly string[];
         };
+        /** ConnectionStatementOut */
+        readonly ConnectionStatementOut: {
+            /**
+             * Version
+             * @description The owner's signed grant statement's version; 0 = never shared.
+             */
+            readonly version: number;
+            /**
+             * Agents
+             * @description Slugs of the agents the statement lends it to, sorted.
+             */
+            readonly agents?: readonly string[];
+            /**
+             * My Computers
+             * @description ECDH key thumbprints of the owner's own computers it may be used on.
+             */
+            readonly my_computers?: readonly string[];
+        };
         /** ConnectionsOut */
         readonly ConnectionsOut: {
             /** Providers */
             readonly providers: readonly components["schemas"]["ProviderOut"][];
             /** Connections */
             readonly connections: readonly components["schemas"]["ConnectionOut"][];
+        };
+        /** MyMachineOut */
+        readonly MyMachineOut: {
+            /**
+             * Jkt
+             * @description The machine's ECDH key thumbprint, as `statement.my_computers` lists it.
+             */
+            readonly jkt: string;
+            /**
+             * Name
+             * @description Its runner name.
+             */
+            readonly name: string;
+            /**
+             * Fingerprint
+             * @description The thumbprint as the owner compares it: eight groups of four.
+             */
+            readonly fingerprint: string;
         };
         /** ProviderOut */
         readonly ProviderOut: {
@@ -18290,22 +18636,466 @@ export interface components {
              */
             readonly label: string;
         };
-        /** AccessTokenOut */
-        readonly AccessTokenOut: {
-            /** Access Token */
-            readonly access_token: string;
+        /** WaitingOut */
+        readonly WaitingOut: {
             /**
-             * Instance Url
-             * @description The account's API base URL; empty when the provider's is fixed.
+             * Agent
+             * @description The slug of the agent the machine runs; empty for one of the owner's own computers.
              */
-            readonly instance_url: string;
+            readonly agent: string;
+            /**
+             * Runner
+             * @description The machine's runner name.
+             */
+            readonly runner: string;
+        };
+        /** ShareAgentOut */
+        readonly ShareAgentOut: {
+            /**
+             * Id
+             * @description The agent's pk, as a statement lists it.
+             */
+            readonly id: string;
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /** ShareCandidateOut */
+        readonly ShareCandidateOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /**
+             * Target
+             * @description The device's ECDH key thumbprint, or the owner's user id.
+             */
+            readonly target: string;
+            /**
+             * Public Jwk
+             * @description The key to seal to.
+             */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Agent Id
+             * @description The agent (pk) whose machine this is; empty for the owner and their own computers.
+             * @default
+             */
+            readonly agent_id: string;
+            /**
+             * Runner Name
+             * @description The machine's runner name; empty for the owner.
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Mine
+             * @description The owner's own: their member key, or a machine they own.
+             */
+            readonly mine: boolean;
+        };
+        /** ShareOwnerOut */
+        readonly ShareOwnerOut: {
+            /** User Id */
+            readonly user_id: string;
+            /**
+             * Public Jwk
+             * @description The owner's member public key, whose thumbprint is the `owner_key` sealed in the envelope.
+             */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** ShareStateOut */
+        readonly ShareStateOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Binding
+             * @description `connection:<uuid>`, the binding id both envelopes are sealed to.
+             */
+            readonly binding: string;
+            /** Provider */
+            readonly provider: string;
+            /** Account Id */
+            readonly account_id: string;
+            /** Account Label */
+            readonly account_label: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "unshared" | "active" | "revoking";
+            /**
+             * Sealed
+             * @description The refresh envelope (`zks1`); only its recipients can open it.
+             */
+            readonly sealed: string;
+            /**
+             * Sealed Sig
+             * @description Its writer MACs; null only on canopy-web's first seal, at connect.
+             */
+            readonly sealed_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Sealed Digest
+             * @description SHA-256 of `sealed`: the `expect` of the next write.
+             */
+            readonly sealed_digest: string;
+            /**
+             * Access Sealed
+             * @description The access envelope; empty until a machine first refreshes.
+             */
+            readonly access_sealed: string;
+            /** Access Sig */
+            readonly access_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Statement
+             * @description The stored signed grant statement; null before the first share.
+             */
+            readonly statement?: {
+                readonly [key: string]: unknown;
+            } | null;
+            readonly owner: components["schemas"]["ShareOwnerOut"];
+            /**
+             * Candidates
+             * @description Everyone the owner could seal to: their member key, each machine of an agent they could lend it to (one row per agent that admits it), and their own computers. A machine is sealed to only when the statement allows it AND the browser trusts its endorsement.
+             */
+            readonly candidates: readonly components["schemas"]["ShareCandidateOut"][];
+            /**
+             * Endorsements
+             * @description Endorsements of those machines' keys, each with its `agent_id`.
+             */
+            readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
+            /**
+             * Agents
+             * @description The agents the owner may lend it to.
+             */
+            readonly agents: readonly components["schemas"]["ShareAgentOut"][];
+        };
+        /**
+         * ZkEndorsementOut
+         * @description A person's §7 signature that `key_jkt` may read this agent.
+         */
+        readonly ZkEndorsementOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /** Target */
+            readonly target: string;
+            /** Key Jkt */
+            readonly key_jkt: string;
+            /** By */
+            readonly by: string;
+            /**
+             * By Email
+             * @default
+             */
+            readonly by_email: string;
+            /** By Jkt */
+            readonly by_jkt: string;
+            /** By Public Jwk */
+            readonly by_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Sig */
+            readonly sig: string;
+            /**
+             * Agent Id
+             * @default
+             */
+            readonly agent_id: string;
+        };
+        /** ShareIn */
+        readonly ShareIn: {
+            /**
+             * Statement
+             * @description The grant statement (contract §0.3), signed.
+             */
+            readonly statement: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Sig
+             * @description The owner's ECDSA P-256 signature over it (P1363, base64url).
+             */
+            readonly sig: string;
+            /**
+             * By Jkt
+             * @description The signer's member key thumbprint: the `owner_key`.
+             */
+            readonly by_jkt: string;
+            /**
+             * Sealed
+             * @description The refresh envelope, re-sealed to the owner and the machines the statement allows.
+             */
+            readonly sealed: string;
+            /**
+             * Sealed Sig
+             * @description Its writer MACs, by the owner's member key.
+             */
+            readonly sealed_sig: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Access Sealed
+             * @description The access envelope re-sealed likewise, when there is one.
+             */
+            readonly access_sealed?: string | null;
+            /** Access Sig */
+            readonly access_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Expect
+             * @description `sealed_digest` as read: the write replaces exactly that.
+             */
+            readonly expect: string;
+        };
+        /** ConnectionMaterialOut */
+        readonly ConnectionMaterialOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Provider */
+            readonly provider: string;
+            /**
+             * Workspace
+             * @description The workspace whose app made the connection.
+             */
+            readonly workspace: string;
+            /**
+             * Binding
+             * @description `connection:<uuid>`, the binding id both envelopes are sealed to.
+             */
+            readonly binding: string;
+            /** Account Id */
+            readonly account_id: string;
+            /** Account Label */
+            readonly account_label: string;
+            /**
+             * Sealed
+             * @description The refresh envelope (`zks1`); this machine opens it with its ECDH key.
+             */
+            readonly sealed: string;
+            /**
+             * Sealed Sig
+             * @description Its writer MACs.
+             */
+            readonly sealed_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Sealed Digest
+             * @description SHA-256 of `sealed`: the `expect` of a write-back.
+             */
+            readonly sealed_digest: string;
+            /**
+             * Access Sealed
+             * @description The access envelope; empty until a machine first refreshes.
+             */
+            readonly access_sealed: string;
+            /** Access Sig */
+            readonly access_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Access Expires At
+             * @description When the sealed access token expires, so a machine can decide without opening it.
+             */
+            readonly access_expires_at?: string | null;
+            /**
+             * Statement
+             * @description The owner's signed grant statement.
+             */
+            readonly statement?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Statement Sig
+             * @description Its signature, by the owner's key.
+             */
+            readonly statement_sig: string;
+            readonly owner: components["schemas"]["ShareOwnerOut"];
+            /**
+             * Endorsements
+             * @description Endorsements of the recipient machines' keys, each with its `agent_id`.
+             */
+            readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
+            /**
+             * Recipients
+             * @description Who canopy-web lets the envelopes reach now. A machine seals only to those the signed statement also allows: this list narrows, never widens.
+             */
+            readonly recipients: readonly components["schemas"]["MaterialRecipientOut"][];
+            readonly app: components["schemas"]["MaterialAppOut"];
+            /** @description The live refresh lease, if any; null when none is held. */
+            readonly lease?: components["schemas"]["MaterialLeaseOut"] | null;
+            /**
+             * Rotates Refresh Token
+             * @description A refresh may hand back a new refresh token (write it back as `sealed`).
+             */
+            readonly rotates_refresh_token: boolean;
+        };
+        /** MaterialAppOut */
+        readonly MaterialAppOut: {
+            /**
+             * Client Id
+             * @description The app's OAuth client id; a machine refuses material whose client id differs from the one sealed in the envelope.
+             */
+            readonly client_id: string;
+            /**
+             * Client Secret
+             * @description The app's client secret, to refresh with. Only ever in this response, to a machine that proved itself.
+             */
+            readonly client_secret: string;
+            /**
+             * Options
+             * @description The app's settings; only `access_token_seconds` is read.
+             */
+            readonly options?: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** MaterialLeaseOut */
+        readonly MaterialLeaseOut: {
+            /**
+             * Mine
+             * @description This machine holds the refresh lease.
+             */
+            readonly mine: boolean;
+            /**
+             * Ttl Seconds
+             * @description Seconds the lease has left, by canopy-web's clock.
+             */
+            readonly ttl_seconds: number;
+        };
+        /** MaterialRecipientOut */
+        readonly MaterialRecipientOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /**
+             * Target
+             * @description A device's ECDH key thumbprint, or the owner's user id.
+             */
+            readonly target: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Runner Name
+             * @description The device's runner name; empty for the owner.
+             * @default
+             */
+            readonly runner_name: string;
+        };
+        /** LeaseOut */
+        readonly LeaseOut: {
+            /**
+             * Lease Id
+             * Format: uuid
+             */
+            readonly lease_id: string;
+            /**
+             * Ttl Seconds
+             * @description How long the lease lasts from now; renew before it runs out, on the machine's own monotonic clock.
+             */
+            readonly ttl_seconds: number;
             /**
              * Expires At
              * Format: date-time
              */
             readonly expires_at: string;
-            /** Account Label */
-            readonly account_label: string;
+        };
+        /** LeaseIn */
+        readonly LeaseIn: {
+            /**
+             * Lease Id
+             * @description The lease this machine holds, to renew it.
+             */
+            readonly lease_id?: string | null;
+        };
+        /** WriteBackOut */
+        readonly WriteBackOut: {
+            /**
+             * Sealed Digest
+             * @description The digest now stored: the `expect` of the next write.
+             */
+            readonly sealed_digest: string;
+        };
+        /** WriteBackIn */
+        readonly WriteBackIn: {
+            /**
+             * Lease Id
+             * Format: uuid
+             */
+            readonly lease_id: string;
+            /**
+             * Sealed
+             * @description The refresh envelope, only when the refresh token rotated.
+             */
+            readonly sealed?: string | null;
+            /** Sealed Sig */
+            readonly sealed_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Access Sealed
+             * @description The new access envelope, to the same recipients.
+             */
+            readonly access_sealed: string;
+            /**
+             * Access Sig
+             * @description Its writer MACs, by this machine's ECDH key. They bind the SHA-256 (hex) of the stored `access_sealed` it replaces (empty string when none), not `expect`.
+             */
+            readonly access_sig: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Access Expires At
+             * Format: date-time
+             */
+            readonly access_expires_at: string;
+            /**
+             * Expect
+             * @description `sealed_digest` as read: the refresh envelope's write replaces exactly that. (The access envelope's writer MAC names the digest of the stored `access_sealed` instead.)
+             */
+            readonly expect: string;
+            /**
+             * Rotated
+             * @description The provider handed back a new refresh token.
+             */
+            readonly rotated: boolean;
+        };
+        /** ReconnectRequiredIn */
+        readonly ReconnectRequiredIn: {
+            /**
+             * Lease Id
+             * Format: uuid
+             */
+            readonly lease_id: string;
+            /**
+             * Error
+             * @description The provider's error code; only `invalid_grant` marks the connection `needs_reconnect`.
+             */
+            readonly error: string;
         };
         /** FeedbackIngestOut */
         readonly FeedbackIngestOut: {
@@ -28845,41 +29635,6 @@ export interface components {
             readonly value_zk: string;
         };
         /**
-         * ZkEndorsementOut
-         * @description A person's §7 signature that `key_jkt` may read this agent.
-         */
-        readonly ZkEndorsementOut: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "device" | "member";
-            /** Target */
-            readonly target: string;
-            /** Key Jkt */
-            readonly key_jkt: string;
-            /** By */
-            readonly by: string;
-            /**
-             * By Email
-             * @default
-             */
-            readonly by_email: string;
-            /** By Jkt */
-            readonly by_jkt: string;
-            /** By Public Jwk */
-            readonly by_public_jwk?: {
-                readonly [key: string]: unknown;
-            } | null;
-            /** Sig */
-            readonly sig: string;
-            /**
-             * Agent Id
-             * @default
-             */
-            readonly agent_id: string;
-        };
-        /**
          * ZkRecipientOut
          * @description A principal a `zks1` value may be sealed to (zk-v1 §6). `target` is what
          *     the seal binds: a device's ECDH thumbprint, or a member's user id.
@@ -36758,22 +37513,167 @@ export interface components {
              */
             readonly providers: readonly string[];
         };
-        /** TurnConnectionTokenIn */
-        readonly TurnConnectionTokenIn: {
+        /** ConnectionKeeperOut */
+        readonly ConnectionKeeperOut: {
+            /** Connections */
+            readonly connections: readonly components["schemas"]["ConnectionKeeperWorkOut"][];
+        };
+        /** ConnectionKeeperWorkOut */
+        readonly ConnectionKeeperWorkOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
             /** Provider */
             readonly provider: string;
             /**
-             * Min Life Seconds
-             * @description Hand out the cached token only if it lives at least this much longer; else refresh first.
-             * @default 300
+             * Workspace
+             * @description The workspace whose app made the connection.
              */
-            readonly min_life_seconds: number;
+            readonly workspace: string;
             /**
-             * Refresh
-             * @description Refresh even if the cached token looks fresh (the provider already rejected it).
-             * @default false
+             * Binding
+             * @description `connection:<uuid>`, the binding id both envelopes are sealed to.
              */
-            readonly refresh: boolean;
+            readonly binding: string;
+            /** Account Id */
+            readonly account_id: string;
+            /** Account Label */
+            readonly account_label: string;
+            /**
+             * Sealed
+             * @description The refresh envelope (`zks1`); this machine opens it with its ECDH key.
+             */
+            readonly sealed: string;
+            /**
+             * Sealed Sig
+             * @description Its writer MACs.
+             */
+            readonly sealed_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Sealed Digest
+             * @description SHA-256 of `sealed`: the `expect` of a write-back.
+             */
+            readonly sealed_digest: string;
+            /**
+             * Access Sealed
+             * @description The access envelope; empty until a machine first refreshes.
+             */
+            readonly access_sealed: string;
+            /** Access Sig */
+            readonly access_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Access Expires At
+             * @description When the sealed access token expires, so a machine can decide without opening it.
+             */
+            readonly access_expires_at?: string | null;
+            /**
+             * Statement
+             * @description The owner's signed grant statement.
+             */
+            readonly statement?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Statement Sig
+             * @description Its signature, by the owner's key.
+             */
+            readonly statement_sig: string;
+            readonly owner: components["schemas"]["ShareOwnerOut"];
+            /**
+             * Endorsements
+             * @description Endorsements of the recipient machines' keys, each with its `agent_id`.
+             */
+            readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
+            /**
+             * Recipients
+             * @description Who canopy-web lets the envelopes reach now. A machine seals only to those the signed statement also allows: this list narrows, never widens.
+             */
+            readonly recipients: readonly components["schemas"]["MaterialRecipientOut"][];
+            readonly app: components["schemas"]["MaterialAppOut"];
+            /** @description The live refresh lease, if any; null when none is held. */
+            readonly lease?: components["schemas"]["MaterialLeaseOut"] | null;
+            /**
+             * Rotates Refresh Token
+             * @description A refresh may hand back a new refresh token (write it back as `sealed`).
+             */
+            readonly rotates_refresh_token: boolean;
+            /**
+             * Waiting
+             * @description ECDH thumbprints of the machines the statement allows that hold no copy yet: re-seal for them.
+             */
+            readonly waiting?: readonly string[];
+            /**
+             * Revoking
+             * @description Being disconnected: revoke it and confirm at `revoked_path`.
+             */
+            readonly revoking: boolean;
+            /**
+             * Revoke At Provider
+             * @description Revoke at the provider too; false while another connection of the same account through the same app remains.
+             */
+            readonly revoke_at_provider: boolean;
+            /** Reseal Path */
+            readonly reseal_path: string;
+            /** Revoked Path */
+            readonly revoked_path: string;
+        };
+        /** ResealOut */
+        readonly ResealOut: {
+            /**
+             * Machines
+             * @description The machines it is now sealed to.
+             */
+            readonly machines: readonly string[];
+        };
+        /** ResealIn */
+        readonly ResealIn: {
+            /**
+             * Sealed
+             * @description The same refresh plaintext, re-sealed to the owner and allowed machines.
+             */
+            readonly sealed: string;
+            /**
+             * Sealed Sig
+             * @description Its writer MACs, by this box's ECDH key.
+             */
+            readonly sealed_sig: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Access Sealed
+             * @description The access envelope re-sealed likewise; empty only when none is stored.
+             * @default
+             */
+            readonly access_sealed: string;
+            /** Access Sig */
+            readonly access_sig?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Expect
+             * @description `sealed_digest` as read.
+             */
+            readonly expect: string;
+        };
+        /** RevokedIn */
+        readonly RevokedIn: {
+            /**
+             * Revoked
+             * @description Revoked at the provider (or told not to); false when that failed.
+             */
+            readonly revoked: boolean;
+            /**
+             * Error
+             * @description The provider's error code, when it failed.
+             * @default
+             */
+            readonly error: string;
         };
         /**
          * RunnerProjectRequestOut
@@ -45329,12 +46229,60 @@ export interface operations {
             };
         };
     };
+    readonly get_share_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ShareStateOut"];
+                };
+            };
+        };
+    };
+    readonly share_connection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+        };
+    };
     readonly disconnect_mine: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly connection_id: number;
+                readonly connection_id: string;
             };
             readonly cookie?: never;
         };
@@ -45349,10 +46297,9 @@ export interface operations {
             };
         };
     };
-    readonly my_connection_token: {
+    readonly my_connection_material: {
         readonly parameters: {
             readonly query?: {
-                readonly refresh?: boolean;
                 readonly workspace?: string | null;
             };
             readonly header?: never;
@@ -45369,8 +46316,105 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AccessTokenOut"];
+                    readonly "application/json": components["schemas"]["ConnectionMaterialOut"];
                 };
+            };
+        };
+    };
+    readonly take_my_refresh_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LeaseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LeaseOut"];
+                };
+            };
+        };
+    };
+    readonly release_my_refresh_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly write_back_my_connection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WriteBackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WriteBackOut"];
+                };
+            };
+        };
+    };
+    readonly my_connection_reconnect_required: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReconnectRequiredIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -53647,51 +54691,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
-                readonly connection_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    readonly grant_connection: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly connection_id: number;
-                readonly other_slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    readonly revoke_connection_grant: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly connection_id: number;
-                readonly other_slug: string;
+                readonly connection_id: string;
             };
             readonly cookie?: never;
         };
@@ -59848,19 +60848,43 @@ export interface operations {
             };
         };
     };
-    readonly turn_connection_token: {
+    readonly turn_connection_material: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly runner_id: string;
                 readonly turn_id: string;
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionMaterialOut"];
+                };
+            };
+        };
+    };
+    readonly take_refresh_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly connection_id: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["TurnConnectionTokenIn"];
+                readonly "application/json": components["schemas"]["LeaseIn"];
             };
         };
         readonly responses: {
@@ -59870,8 +60894,156 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AccessTokenOut"];
+                    readonly "application/json": components["schemas"]["LeaseOut"];
                 };
+            };
+        };
+    };
+    readonly release_refresh_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly connection_id: string;
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly write_back_connection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WriteBackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WriteBackOut"];
+                };
+            };
+        };
+    };
+    readonly connection_reconnect_required: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReconnectRequiredIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly get_connection_keeper_work: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionKeeperOut"];
+                };
+            };
+        };
+    };
+    readonly put_connection_reseal: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ResealIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResealOut"];
+                };
+            };
+        };
+    };
+    readonly post_connection_revoked: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RevokedIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

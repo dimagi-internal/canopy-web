@@ -24,7 +24,7 @@ import { Button } from 'canopy-ui/ui'
 export function ConnectionsPanel() {
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
@@ -189,7 +189,7 @@ function ProviderSection({
   /** The person has connections in more than one workspace: say which each is in. */
   nameWorkspaces: boolean
   startPath: (workspace: string) => string
-  busy: number | null
+  busy: string | null
   onDisconnect: (c: ConnectionOut) => void
 }) {
   const { name, title } = rows[0]

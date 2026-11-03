@@ -192,8 +192,7 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
 
     subject = services.Subject.of(conn)
     for agent in added:
-        services.record(subject, "granted", by=user, grantee=agent.slug,
-                        summary=f"{conn.owner_label}'s {conn.provider} granted to {agent.slug}")
+        services.record_granted(subject, agent, by=user)
     for agent in removed:
         services.record_grant_revoked(subject, agent, by=user)
     services.record(subject, "shared", by=user, version=statement["version"],

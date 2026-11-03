@@ -755,15 +755,26 @@ def _grantees(conn: Connection) -> list:
     return [g.agent for g in conn.grants.select_related("agent__workspace").order_by("agent__slug")]
 
 
-def record_grant_revoked(subject: Subject, grantee, *, by, **context) -> None:
-    """`grant_revoked` for one grantee: in the owner's workspace (whose connection
-    it is) and, when the grantee lives elsewhere, in the grantee's too, so the
-    workspace whose turns just lost it can see why."""
-    summary = f"{subject.owner}'s {subject.provider} no longer granted to {grantee.slug}"
-    record(subject, "grant_revoked", by=by, grantee=grantee.slug, summary=summary, **context)
-    if subject.workspace is not None and grantee.workspace_id != subject.workspace.pk:
-        record(dataclasses.replace(subject, workspace=grantee.workspace), "grant_revoked", by=by,
+def _record_for_grantee(subject: Subject, kind: str, grantee, *, by, summary: str, **context) -> None:
+    """`kind` (`granted` | `grant_revoked`) for one grantee: in the owner's workspace
+    (whose connection it is; a log line for a person's) and, when the grantee lives
+    in another workspace, in the grantee's too, so the workspace whose turns just
+    gained or lost the connection can see why. A person's connection lent to an
+    agent therefore always leaves an Event in the agent's workspace."""
+    record(subject, kind, by=by, grantee=grantee.slug, summary=summary, **context)
+    if subject.workspace is None or grantee.workspace_id != subject.workspace.pk:
+        record(dataclasses.replace(subject, workspace=grantee.workspace), kind, by=by,
                grantee=grantee.slug, summary=summary, **context)
+
+
+def record_granted(subject: Subject, grantee, *, by, **context) -> None:
+    _record_for_grantee(subject, "granted", grantee, by=by, **context,
+                        summary=f"{subject.owner}'s {subject.provider} granted to {grantee.slug}")
+
+
+def record_grant_revoked(subject: Subject, grantee, *, by, **context) -> None:
+    _record_for_grantee(subject, "grant_revoked", grantee, by=by, **context,
+                        summary=f"{subject.owner}'s {subject.provider} no longer granted to {grantee.slug}")
 
 
 # ---- which connection an agent uses; grants ----------------------------------
