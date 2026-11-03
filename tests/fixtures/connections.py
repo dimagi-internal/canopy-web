@@ -12,6 +12,7 @@ import hashlib
 import json
 from unittest import mock
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -361,6 +362,13 @@ class ShareWorld:
         return sharing.share(conn, user=self.person, **browser_share(
             conn, self.person, self.person_priv, agents=agents, my_computers=my_computers, to=to,
             endorsers=endorsers, canopy_web=canopy_web))
+
+
+def refused(conn, user, code, **kw):
+    with pytest.raises(sharing.WireError) as e:
+        sharing.share(conn, user=user, **kw)
+    assert e.value.code == code, e.value.detail
+    return e.value
 
 
 def revoke_admin(user, agent):

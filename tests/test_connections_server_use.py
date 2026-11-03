@@ -27,9 +27,16 @@ from apps.connections.providers.salesforce import SalesforceProvider
 from apps.connections.wire import WireError
 from apps.passkeys.testing import grant_step_up
 from tests.fixtures.connection_calls import TokensWorld, lease, machine_write, write_back
-from tests.fixtures.connections import REDIRECT, FakeGoogle, FakeSF, ShareWorld, browser_share, sealed_to_owner
+from tests.fixtures.connections import (
+    REDIRECT,
+    FakeGoogle,
+    FakeSF,
+    ShareWorld,
+    browser_share,
+    refused,
+    sealed_to_owner,
+)
 from tests.fixtures.vault_zk import ref as zk_ref
-from tests.test_connections_sharing import refused
 
 pytestmark = pytest.mark.django_db
 
