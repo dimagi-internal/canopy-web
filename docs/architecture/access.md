@@ -532,6 +532,11 @@ an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
 on any rung is for the agent's owner and agent admins.
 
+`auto` is a posture for outbound actions, not a claim that nobody is looking. A turn the
+person typed into the canopy-web chat while present in it is **attended**
+(`act_as.attended_by`); for act-as-you that is the one place `auto` does not mean unreviewed
+(next section). The mode itself is unchanged.
+
 ## Direct use of an agent
 
 A person may run an agent in their **own** Claude Code, with the agent's plugin and
@@ -999,6 +1004,18 @@ for 30 minutes, and does so only once you approve with your passkey
   "Allow read-only" / "Allow read + write" each run a WebAuthn assertion begun for this
   request (`…/approve/begin` + `/finish`); a session cookie, a step-up window or any token
   is not enough, and approve/decline refuse every token.
+- **Write is refused to an unattended `auto` turn.** An `auto` turn is unreviewed, and
+  write authority as you with no human in it is the one combination refused
+  (`act_as.unreviewed_write_refusal`: 403 at the request, 422 at the approval). A `manual`
+  turn is unaffected. An `auto` turn **you are attending** may ask for write: your message
+  typed in the canopy-web chat (`origin=canopy_web_chat`, asker kind `user` and that very
+  person, verified, not a chain on your behalf), not confined to a caller capability, with
+  you present in that chat when it asks (`presence.is_present`). The review it lacks is
+  yours, at the approval page, which shows the reason and scope and needs your passkey.
+  Not attended, so still read-only: a schedule or trigger firing, an inbound email or Slack
+  message, a dispatch or another agent's work, a confined turn, and a chat you are not
+  present in. Presence is checked when the agent asks; you may then leave for the approval
+  page, but the permission still dies with the conversation and every other limit below holds.
 - **Read or write, 30 minutes, dies with the turn.** `read` reaches GET routes and
   read-only tools only; `write` reaches every route canopy's MCP server serves as a tool
   except one list, `act_as.EXCLUDED_PREFIXES` / `EXCLUDED_PATTERNS` / `EXCLUDED_TOOLS`:
