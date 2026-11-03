@@ -82,8 +82,9 @@ def turn_connection_material(request: HttpRequest, runner_id: uuid.UUID, turn_id
     secret to refresh with. Never a token. Each envelope's writer MAC is bound to the
     digest it replaces: for the refresh envelope that is `sealed_digest`, for the
     access envelope the SHA-256 (hex) of the stored `access_sealed` (empty string when
-    there is none yet). Requires a device proof (`DPoP`) by this runner's own approved key (401 `device_proof_required`). 404 unless this runner
-    holds the turn (always for a caller's turn), or for an unknown provider. 409
+    there is none yet). Requires a device proof (`DPoP`) by this runner's own
+    approved key (401 `device_proof_required`). 404 unless this runner holds the turn
+    (always for a caller's turn), or for an unknown provider. 409
     `not_connected` when the agent has none, it is not shared yet, it is being
     disconnected, or this box no longer serves an agent it is lent to;
     `needs_reconnect` when its refresh token is dead; `waiting` when this box may
