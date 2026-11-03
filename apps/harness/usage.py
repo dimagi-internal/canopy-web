@@ -21,7 +21,13 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from .models import SessionUsage
+from apps.agents.credentials.delegations import agent_repo
+from apps.canopy_sessions.models import RunnerBinding
+from apps.events import activity
+from apps.events.models import SessionUsage
+
+from .models import Turn
+from .routing import agents_routed_to
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +37,6 @@ _TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation
 def scope(runner) -> list[str]:
     """The repos canopy knows for this box — the only ones it scans: the projects
     it declares, and the agents it serves (by slug and by repo name)."""
-    from apps.agents.credentials.delegations import agent_repo
-    from apps.harness.routing import agents_routed_to
-
     names = set(runner.project_names())
     for agent in agents_routed_to(runner):
         names.add(agent.slug)
@@ -47,9 +50,6 @@ def _match(claude_session: str):
     """(canopy Session, Turn) that recorded this Claude session, either may be None:
     a binding's `transcript_id` (laptop sessions), a turn's `session_key` or
     `cli_session_id` (cloud turns and agents' close-outs)."""
-    from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness.models import Turn
-
     binding = (RunnerBinding.objects.select_related("session", "session__agent", "session__created_by")
                .filter(transcript_id=claude_session).first())
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__agent",
@@ -66,8 +66,6 @@ def _attribution(runner, repo: str, session, turn) -> dict | None:
     """Whose this usage is, or None when canopy has no record of it. A turn says it
     best (its tenant, agent, and the person who asked); a session next (its
     workspace, agent, creator)."""
-    from . import activity
-
     if turn is not None and turn.tenant_slug:
         agent = turn.acting_agent
         return {"workspace_id": turn.tenant_slug, "session": session, "agent": agent,

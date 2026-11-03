@@ -113,9 +113,23 @@ api = CanopyNinjaAPI(
 # `SettingChange` row commit together. Registered here, before any router is
 # added, so it reaches every route — and so every entry point (web UI, CLI,
 # script, MCP tool) through the one place they all pass.
-from apps.events.audit import audited as _audited  # noqa: E402
+from apps.events import audit as _audit  # noqa: E402
 
-api.add_decorator(_audited)
+
+def _operation_id_of(func) -> str:
+    """A route's operationId — its explicit `operation_id=`, else the rule `CanopyNinjaAPI` uses.
+    Handed to the audit, which records the operation without importing this module."""
+    explicit = api.explicit_operation_ids().get(inspect.unwrap(func))
+    if explicit:
+        return explicit
+    name = func.__name__
+    if name in api._shared_view_names():
+        return f"{_app_label(func.__module__)}_{name}"
+    return name
+
+
+_audit.register_operation_id(_operation_id_of)
+api.add_decorator(_audit.audited)
 
 
 def _problem_response(request: HttpRequest, problem: Problem, members: dict | None = None) -> HttpResponse:
@@ -287,6 +301,8 @@ from apps.host_grants.grants_api import me_router as host_grants_me_router  # no
 from apps.agents.api_delegated import me_router as delegated_me_router  # noqa: E402
 from apps.embedding.embed_api import embed_router
 from apps.events.api import router as events_router  # noqa: E402
+from apps.events.api import settings_router as events_settings_router  # noqa: E402
+from apps.mcp.audit_api import router as mcp_audit_router  # noqa: E402
 from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.github_connect.api import router as github_router  # noqa: E402
 from apps.harness.api import router as harness_router  # noqa: E402
@@ -353,6 +369,8 @@ api.add_router("/connections", connections_router)  # server-held OAuth connecti
 api.add_router("/me/connections", connections_me_router)  # my CLI's material, lease, write-back — before "/me"
 api.add_router("/feedback", feedback_router)
 api.add_router("/events", events_router)
+api.add_router("/events", mcp_audit_router)  # the MCP call log, read where the event log is
+api.add_router("/events", events_settings_router)
 api.add_router("/inbound", inbound_router)
 api.add_router("/mail", mail_router)
 api.add_router("/slack-config", slack_config_router)

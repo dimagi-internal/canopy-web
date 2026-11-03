@@ -10,6 +10,9 @@ class HarnessConfig(AppConfig):
         from . import departure  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
 
         departure.register()
+        from apps.events import audit  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        audit.register_workspace_resolver("harness", _audit_workspace)
         from apps.workspaces import role_cap  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
 
         role_cap.register_turn_origin(_turn_origin_ref)
@@ -40,3 +43,13 @@ def _turn_origin_ref(turn_id, user):
 
     return (Turn.objects.filter(pk=turn_id, initiator_user=user)
             .values_list("origin_ref", flat=True).first())
+
+
+def _audit_workspace(request, path_args):
+    """The tenant of a setting changed on a runner (`{runner_id}`) — `events.audit`."""
+    if "runner_id" not in path_args:
+        return None
+    from .models import Runner  # noqa: PLC0415 — models load only after the app registry
+
+    runner = Runner.objects.filter(pk=path_args["runner_id"]).select_related("workspace").first()
+    return runner.workspace if runner is not None and runner.workspace_id else None

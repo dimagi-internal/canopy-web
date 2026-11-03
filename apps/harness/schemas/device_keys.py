@@ -127,4 +127,4 @@ class RunnerDeviceKeyOut(Schema):
     can_open: list[DeviceKeyAgentOut] = []
 
 
-# ---- the box's usage report (apps/events/usage.py) ---------------------------
+# ---- the box's usage report (apps/harness/usage.py) ---------------------------

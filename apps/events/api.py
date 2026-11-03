@@ -21,11 +21,15 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import services
 from apps.events.models import Event
-from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut, McpCallListOut, SettingChangeListOut
+from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut, SettingChangeListOut
+from apps.events.signals import runner_event_first_today
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 router = Router(auth=session_auth, tags=["events"])
+# The settings audit trail's reader is its own router so `apps/mcp/audit_api.py` (the MCP call
+# log, `/events/mcp-calls`) can be mounted between the two and keep the published path order.
+settings_router = Router(auth=session_auth, tags=["events"])
 
 
 def _out(ev: Event) -> dict:
@@ -82,11 +86,9 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     result = services.record(items, workspace=home, first_today=first_today)
     if rtok is not None:
         # Recording alone tells nobody: a box's credential alert also reaches
-        # the people who can fix it, once a day per alert.
-        from apps.harness import credential_notify
-
+        # the people who can fix it, once a day per alert — the harness listens.
         for index in first_today:
-            credential_notify.notify(rtok.runner, items[index])
+            runner_event_first_today.send(sender=None, runner=rtok.runner, item=items[index])
     return result
 
 
@@ -123,60 +125,11 @@ def list_events(
     return {"items": [_out(ev) for ev in qs]}
 
 
-# A different log from the event log, read on the same tier: the MCP audit log
-# (`apps/mcp/models.MCPAuditLog`), one row per tool call made through canopy's
-# MCP server — by a person's assistant, an agent session, or a script. Before
-# this it had no reader at all; only aggregates reached owners through a
-# connected site's traffic health.
-@router.get("/mcp-calls", response=McpCallListOut,
-            summary="MCP tool calls made in your workspaces (admins), and your own")
-@gate("logs.read", "self")  # the workspace's calls for admins; your own always
-def list_mcp_calls(
-    request: HttpRequest,
-    tool: str | None = None,
-    failed: bool = False,
-    since_minutes: int | None = None,
-    limit: int = 100,
-) -> dict:
-    """Newest first. A workspace admin or owner sees every call made in that
-    workspace; anyone sees their own calls. ``tool`` is a prefix match;
-    ``failed`` keeps only calls that errored."""
-    from django.db.models import Q
-
-    from apps.mcp.models import MCPAuditLog
-
-    # The workspace's calls on the logs tier; your own calls always, wherever
-    # they were filed (a call attributed to no workspace is its caller's alone).
-    scope = Q(workspace_slug__in=perms.request_read_slugs_with(request, perms.LOGS_READ))
-    pinned = getattr(request, "workspace_slug", None)
-    mine = Q(user=request.user) & (Q(workspace_slug=pinned) if pinned else Q())
-    qs = MCPAuditLog.objects.filter(scope | mine).select_related("user")
-    if tool:
-        qs = qs.filter(tool__startswith=tool)
-    if failed:
-        qs = qs.filter(ok=False)
-    if since_minutes:
-        qs = qs.filter(created_at__gte=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes)))
-    rows = qs.order_by("-created_at")[: max(1, min(limit, 500))]
-    return {"items": [{
-        "id": r.pk,
-        "created_at": r.created_at.isoformat(),
-        "workspace": r.workspace_slug,
-        "user_email": (r.user.email if r.user else ""),
-        "tool": r.tool,
-        "args_summary": r.args_summary,
-        "ok": r.ok,
-        "error": r.error,
-        "acting_agent": r.acting_agent,
-        "act_as_grant": r.act_as_grant,
-    } for r in rows]}
-
-
 # The settings audit trail (`apps/events/audit.py`): one row per change to a
 # setting, whichever entry point made it — web UI, CLI, script or MCP tool.
 # Read on the same tier as the MCP call log: a workspace's admins see its
 # changes; anyone sees the changes they made themselves.
-@router.get("/setting-changes", response=SettingChangeListOut,
+@settings_router.get("/setting-changes", response=SettingChangeListOut,
             summary="Changes to settings in your workspaces (admins), and your own")
 @gate("logs.read", "self")  # the workspace's changes for admins; your own always
 def list_setting_changes(

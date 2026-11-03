@@ -143,7 +143,10 @@ A new app gets a layer in both places; the test fails until it has one.
 A lower layer that needs something a higher one owns takes a **registry** the higher app fills from
 its `AppConfig.ready()`, rather than importing it: `workspaces.departure.register` (what leaving a
 workspace revokes; `tests/test_departure_revokers.py` lists the expected names),
-`workspaces.role_cap.register_turn_origin` and `workspaces.access_requests.register_push`.
+`workspaces.role_cap.register_turn_origin`, `workspaces.access_requests.register_push`,
+`events.audit.register_operation_id` (the API root) and `register_workspace_resolver` (agents, harness), and
+the `events.signals.runner_event_first_today` signal the harness listens to. A report that reads core
+models lives with them (`harness/usage.py`, `mcp/audit_api.py`, the `backfill_activity` command in `mcp`).
 
 ## Structural guards
 

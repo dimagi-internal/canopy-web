@@ -394,7 +394,7 @@ class TopologyRunnerOut(StrictModel):
     expected_code_sha: str = ""
     # The agents in the tree it serves.
     agents: list[RunnerAgentOut] = []
-    # When the box last sent its usage report (`events.usage`).
+    # When the box last sent its usage report (`harness.usage`).
     usage_reported_at: dt.datetime | None = None
     # The viewer administers it.
     can_administer: bool = False
@@ -654,7 +654,7 @@ class AnalyticsTotalsOut(StrictModel):
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
-    # Claude Code sessions whose boxes reported their tokens (`events.usage`).
+    # Claude Code sessions whose boxes reported their tokens (`harness.usage`).
     sessions_with_usage: int
 
 
