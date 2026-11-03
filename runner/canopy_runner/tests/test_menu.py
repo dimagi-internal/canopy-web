@@ -8,7 +8,7 @@ answered with a keystroke, and the file it asked about was actually deleted.
 """
 import pathlib
 
-from canopy_runner.menu import TAB, answer_keys, find_menu, find_menu_settled
+from canopy_runner.menu import TAB, answer_keys, find_menu, find_menu_settled, plan_step
 
 # Verbatim, as a terminal renders it. Note the leading spaces, the box rule, and
 # that option 2's text wraps concerns beyond the tool itself.
@@ -414,6 +414,56 @@ QUESTIONS = [
     {"index": 1, "question": "Which size?", "header": "Size", "multi_select": False,
      "options": [{"number": 1, "label": "Small"}, {"number": 2, "label": "Large"}]},
 ]
+
+
+# Captured shape: a tab whose question ends in a statement, with the person's own
+# earlier prompt (which does end in "?") sitting above the dialog in scrollback.
+STATEMENT_QUESTION = "November goals (2 of 2): which of these go on the list? Use Other to add your own."
+STATEMENT_TAB = f"""\
+❯ these are all fine lets do november goals, also, are you running the actual skill?
+
+⏺ After that I'll show you the final table, then we'll set November.
+
+{RULE}
+←  ☒ Nov goals 1  ☐ Nov goals 2  ☐ Oct Notes  ✔ Submit  →
+
+{STATEMENT_QUESTION}
+
+❯ 1. [ ] Good Tarrytown 2026 trip
+  New: calendar 11/9
+  2. [ ] Close GiveDirectly Connect Livelihoods
+  New: Stage 6
+  3. [ ] Type something
+     Next
+{RULE}
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+"""
+
+
+def test_a_question_ending_in_a_statement_is_read_from_under_its_tab_strip():
+    """Reading "the last line ending in ?" walked past it into scrollback, so the
+    person's own prompt became the question, no declared question matched, and the
+    web answer was refused on that tab, every time."""
+    menu = find_menu(STATEMENT_TAB)
+    assert menu.question == STATEMENT_QUESTION
+    assert menu.title == ""
+
+    questions = [
+        {"index": 0, "question": "November goals (1 of 2): which of these go on the list?",
+         "multi_select": True, "options": [{"number": 1, "label": "a"}]},
+        {"index": 1, "question": STATEMENT_QUESTION, "multi_select": True,
+         "options": [{"number": 1, "label": "b"}, {"number": 2, "label": "c"}]},
+    ]
+    assert plan_step(menu, questions, [[1], [1, 2]]) == ["1", "2"]
+
+
+def test_a_question_mark_on_the_strip_line_still_falls_back_to_the_whole_screen():
+    """A prompt with no strip keeps working when a stray tick sits right above the
+    options: nothing lies between them, so the search widens back out."""
+    screen = PERMISSION.replace("Do you want to proceed?", "Do you want to proceed? ✔")
+    assert find_menu(screen) is not None
 
 
 def test_a_checkbox_row_parses_its_box_separately_from_its_label():
