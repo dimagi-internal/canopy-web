@@ -6035,7 +6035,7 @@ _SCOPED_KEEP_SECONDS = 7 * 24 * 3600
 
 def _scoped_token_env(turn: dict) -> dict:
     """A full-profile turn asked by someone who is not the agent's owner, an admin
-    or canopy (a `full:` rule, an editor) reaches canopy's MCP as its ASKER, not as
+    or canopy (an editor line on the access list) reaches canopy's MCP as its ASKER, not as
     this box's PAT (who-is-asking phase 5, canopy-web#1332).
 
     canopy hands such a turn a caller token (`scoped`) with the claim. The MCP

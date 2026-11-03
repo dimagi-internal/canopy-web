@@ -516,8 +516,7 @@ In order, each a hard stop:
    update to CLAIMED inside its own `transaction.atomic()` (an `IntegrityError` from
    `one_executing_turn_per_session` means another box won that conversation). **An agent
    is not a lane:** any number of one agent's turns may be executing at once, each on
-   its own worktree; only a CONVERSATION serializes (the rule removed 2026-10-30 once held
-   a dispatch for 5 h behind one 9 h ACE turn). The claim event records
+   its own worktree; only a CONVERSATION serializes (one long turn never holds up a dispatch for the same agent). The claim event records
    why (`_routing_basis`: pin / actor / source / default).
 
 `claim.turn_reach` and `unclaimable_queued_turns` explain a stuck turn from the
@@ -861,7 +860,7 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
   canopy CLI's `git` falls back to `GH_TOKEN`), so its private plugin repos install. The
   first turn of each agent after every box-wide bootstrap prepares it again the same
   way (`_PREPARED_WITH_GITHUB`), so private plugins stay as fresh as the box-wide pass
-  used to keep them. A clone the box-wide pass could not make is not reported
+  keeps public ones. A clone the box-wide pass could not make is not reported
   unprepared — that would stop canopy-web sending the turn that clones it; a failed
   in-turn clone is.
 - **Agentless repo turns and project chats** (`Turn.project`, or the chat

@@ -6,8 +6,8 @@ canopy's own data. It is how someone gets a screen canopy does not have — "thi
 work by assignee", "which agents failed this week and on what" — without a deploy.
 
 The model is connect-labs' workflow and page engine (`connect_labs/workflow/page_mode.py`,
-`components/workflow/sandbox/`, spec `docs/superpowers/specs/2026-10-12-page-sandbox-design.md`
-in that repo): code as data, a sandboxed frame with no session, and data only through reads the
+`components/workflow/sandbox/`, and its page-sandbox design spec, all in the
+connect-labs repo): code as data, a sandboxed frame with no session, and data only through reads the
 page makes for it as the viewer.
 
 ## The pieces

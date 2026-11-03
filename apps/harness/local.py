@@ -8,7 +8,7 @@ Three objects (canopy-web#1704, `docs/architecture/access.md` § Direct use):
   agent, opened by the session's own SessionStart hook. It is a real turn: the
   person is its initiator, it carries the caller envelope, the turn mode, the
   credential reads and (when the session ends) the transcript;
-* a **license** (person × agent, `apps/agents/licenses.py`) — requested when the
+* a **license** (person × agent, `apps/agents/credentials/licenses.py`) — requested when the
   first direct turn opens, issued at once when the caller list gives the person
   the whole agent; the turn records it (`origin_ref.license`), and credential
   reads during the turn go out under it.
@@ -171,7 +171,7 @@ def private_runner_of(user, private_runner_id) -> PrivateRunner | None:
 
 
 def authorize(agent, user):
-    """The person's ACTIVE license for `agent` (`apps/agents/licenses.py`), issued now
+    """The person's ACTIVE license for `agent` (`apps/agents/credentials/licenses.py`), issued now
     when the caller list gives them the whole agent. Raises LocalRefusedError
     otherwise: a confined capability is a door canopy holds (the `ask` path), not
     something a session on someone's own machine can be held to."""

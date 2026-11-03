@@ -76,11 +76,6 @@ def agent_may_use(person, agent) -> bool:
     return hcp.may_use(person) and hcp.granted(person, agent)["use"]
 
 
-def agent_may_record(person, agent) -> bool:
-
-    return hcp.may_record(person) and hcp.granted(person, agent)["record"]
-
-
 def may_see_summary(person, reader: Reader) -> bool:
     """A human member sees it; an agent only under the person's `use`."""
     if not reader.is_agent:

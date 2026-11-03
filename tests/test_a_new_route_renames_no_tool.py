@@ -13,7 +13,11 @@ give the new view a name of its own.
 """
 from __future__ import annotations
 
+import pytest
+
 from apps.api.api import api
+
+pytestmark = pytest.mark.guard
 
 #: View names already shared between modules, each published under its qualified
 #: operationId. Only ever shrinks: removing a collision is fine, adding one is not.

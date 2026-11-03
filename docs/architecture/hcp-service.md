@@ -9,7 +9,7 @@ OAuth 2.0, for access to parts of their instance. That makes the profile `oauth2
 and the service eligible for HCP v1 Interop (spec 5.2.1).
 
 The model is implemented end to end and designed for outside use, but is used only
-internally for now — the owner's explicit choice ("Internal only — the one gate").
+internally: the one gate is internal only.
 
 This page records the design and every judgment call made building it. The
 self-audit against the spec is `hcp-conformance.md`.

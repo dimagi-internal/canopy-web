@@ -201,7 +201,7 @@ class Agent(models.Model):
                                 null=True, blank=True, related_name="+")
     # The agent's own login (`user`) may hold a personal vault key for TESTING, so a
     # headless harness signed in as the agent can take part in its own sensitive
-    # conversations (apps/agents/credentials/test_key.py). Off by default; an agent
+    # conversations (apps/agents/credentials/login_test_key.py). Off by default; an agent
     # admin turns it on from a browser behind a passkey step-up. The key opens nothing
     # but conversation keys of conversations that login is in — never a vault.
     test_vault_key = models.BooleanField(default=False)
@@ -445,7 +445,7 @@ class AgentLicense(models.Model):
     """A person's license to use an agent DIRECTLY — "Aathithya uses ACE directly, since …".
 
     The agent's caller list (`access.decide`) still decides who MAY hold one; this row
-    is who DOES (`apps/agents/licenses.py`, canopy-web#1704). Requested on first local
+    is who DOES (`apps/agents/credentials/licenses.py`). Requested on first local
     use and issued at once when `decide` gives the person the whole agent; an admin
     revokes it per person without touching the rule, and a revoked license is not
     re-issued automatically — only an admin's approve brings it back. Direct turns and
@@ -731,7 +731,7 @@ class AgentCredentialRead(models.Model):
 
 class AgentCredentialAlert(models.Model):
     """A read of an agent's secrets that looked wrong, and whether its owner was
-    told (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/vault_alerts.py`).
+    told (`apps/agents/credentials/vault_alerts.py`).
 
     At most one row per (agent, kind) per hour: a repeat inside the hour bumps
     `occurrences` on the open row instead of notifying again. Shown beside the
@@ -1241,7 +1241,7 @@ class ZkGrantNotice(models.Model):
 
 class AgentPatRotation(models.Model):
     """One automatic (or on-demand) rotation of an agent's `canopy-pat`
-    (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/pat_rotation.py`).
+    (`apps/agents/credentials/pat_rotation.py`).
 
     The new token is written to the agent's `canopy-pat` AgentCredential; the
     old one keeps working for the overlap (`revoke_after`, also set as its

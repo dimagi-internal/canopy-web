@@ -9,7 +9,11 @@ here AND in apps/storyboards/decisions.py in the same PR — that is the point.
 `needed_by` is deliberately NOT ACE's (`award`/`go-live`/…): a set of demos has
 its own two moments (owner decision 2026-10-15).
 """
+import pytest
+
 from apps.storyboards import decisions
+
+pytestmark = pytest.mark.guard
 
 ACE_STATUS = ("ai-default", "human-decided", "overridden", "deferred")
 ACE_REVIEW_ASKS = ("recommended-confirmation", "required-before")

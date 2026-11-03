@@ -32,7 +32,7 @@ gh workflow run "Deploy to Labs (AWS)" --ref main                          # dep
 gh workflow run "Deploy to Labs (AWS)" --ref main -f skip_migrations=true  # EMERGENCY ONLY
 ```
 
-**Migrations:** write them the obvious way. Drops, renames and type changes need no expand/contract split; a brief window of errors during a deploy is accepted. One exception, because it fails the deploy rather than erroring briefly: a `RunPython` that **deletes or updates rows other tables reference** goes in its own migration, ahead of any schema change to those tables. PostgreSQL queues deferred FK trigger events for those rows and then refuses the ALTER in the same transaction ("pending trigger events"); SQLite and CI's empty Postgres test DB never see it, because there are no rows to touch (#2221 → #2224).
+**Migrations:** write them the obvious way. Drops, renames and type changes need no expand/contract split; a brief window of errors during a deploy is accepted. One exception, because it fails the deploy rather than erroring briefly: a `RunPython` that **deletes or updates rows other tables reference** goes in its own migration, ahead of any schema change to those tables. PostgreSQL queues deferred FK trigger events for those rows and then refuses the ALTER in the same transaction ("pending trigger events"); SQLite and CI's empty Postgres test DB never see it, because there are no rows to touch.
 
 **A data migration's test lives until its migration deploys.** One that walks the graph back (`MigrationExecutor.migrate(BEFORE)`, marked `needs_migrations`) costs more with every later migration, and once the migration has run in production it guards nothing; delete it in a later PR once a deploy includes it. `tests/test_migrations_apply.py` stays: it proves the whole graph applies to an empty DB.
 
@@ -59,34 +59,11 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - **One URL per artifact, nothing forwarded** — except `/w/<ws>/review/<id>`, which forwards a narrative review to its storyboard (`apps/reviews/views.py`, `docs/architecture/pages.md`). Flat `/walkthrough/`, `/review/`, `/share/`, `/storyboard/`, `/narrative/`, `/ddd-release/` are a plain 404 (`config/views.py::flat_artifact_gone`). Build links with `scoped_path` / `useScopedPath` — no flat fallback.
 - **One registry of pages: `frontend/src/guide/surfaces.ts`.** A new page needs a descriptor there (the `/guide` coverage test fails without one), saying where it lives (`home`/`group`/`flat`); the guide, the workspace switcher and the tenancy test read it → `docs/architecture/pages.md`.
 
-**Tenant-scoped (`/w/:workspace/…`):**
-- (index) → `agents` — the workspace's agents (a table, `GET /api/agent-roster/`); `projects` — every project in the workspace
-- `agents/new` — create an agent: pushes the factory scaffold into an empty repo the person made, with their fine-grained token (which then becomes its GitHub identity), registers it, lands on its Settings setup checklist (persona + first skill are handed to Claude Code)
-- `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Triggers (schedules + inbound mail), Huddles, Mail, Skills (+ History), Capabilities, Settings
-- `tasks` (+ `/:key`), `triage` — the workspace's tasks as a table / board / calendar with saved views, one task's page (`?peek=KEY` beside a list), what waits for a decision; ⌘K is the command palette anywhere
-- `projects/:handle` is a project's ONE page, for teammates and editors alike; `agents/:slug/projects/:ref` and `projects/:agent/:ref` redirect there. An idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
-- `runners/:id/<tab>` (each tab a route) and `vaults/:id` (one page of collapsible sections; an old `/<tab>` opens the matching one) — one page per runner and per workspace vault; everything else links there (one editor per object, `components/objectPage/` → `docs/architecture/pages.md`)
-- `settings/<section>` — workspace settings: members, access-requests, slack, inbound, email, connected-apps, secrets, tasks, retention, admission-rules, topology (fleet map + runners/agents tables)
-- `sessions`, `sessions/:id` — the workspace's sessions; live multiplayer chat with an agent (`chat`, `chat/:id` redirect here)
-- `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
-- `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed
-- `health`, `analytics`, `network` — what is not set up right across the workspace; turns, outcomes and usage; who works with whom through which threads (`docs/architecture/analytics.md`)
-- `shareouts` (+ `/:period`), `walkthroughs`, `storyboards`, `ddd` (+ `/:narrative/:runId`) — briefings, demos, storyboard index, DDD operator console
-- `marketplace.json`, `plugins/…` — retired (410); the agent catalog is `/plugins/marketplace.json` (root, below)
-- Public with a token (the only `/w/` pages anonymous visitors reach, `apps/common/middleware.py::_SCOPED_VIEWER`): `walkthrough/:id` (+ `/content`), `review/:id`, `share/:token`, `storyboard/:slug`, `narrative/:slug?b=`, `ddd-release/:narrative/:runId`
-
-**Root:**
-- `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer; `/get-started` — public: how to use a canopy agent in your own Claude Code
-- `/home` — what is waiting on you across your workspaces (`/api/me/attention/`, one list every client reads; Hide takes a thing off your own Home, closing nothing, until something new happens on it); where `/app` lands
-- `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
-- `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
-- `/activity`, `/schedules` — turn log and schedules across your workspaces
-- `/plugins/marketplace.json` — your agents as ONE Claude Code catalog, `canopy-agents` (github sources, your own GitHub access; `docs/architecture/plugin-marketplace.md`)
-- `/settings/<section>` — your account (sections in `docs/architecture/pages.md`)
-- `/sessions` — your shared transcripts; `/system` — capability catalog; `/guide` — in-app guide
-- `/people/me` — what agents know about you; `/hcp-clients` — HCP client registry (superusers); `/beta-requests` — requests for access to Canopy
-- `/invite/:token` — accept an invite (pre-auth preview); `/new-workspace` — first run
-- `/api/` REST (`/api/docs/`), `/admin/`, `/health/`
+**The shape of the app** (the full list, with what each page is for, is `docs/architecture/pages.md`; the registry is `frontend/src/guide/surfaces.ts`):
+- `/w/:workspace/…` is the tenant shell: agents (`agents/:slug`), projects (`projects/:handle` is a project's ONE page; an idea is a task with `kind: "idea"`), tasks and triage, sessions and huddles, schedules, activity, health, analytics, runners and vaults (one page each, `components/objectPage/`), workspace apps, views, MCP servers, mail, approvals, sign-offs, and `settings/<section>`. `marketplace.json` and `plugins/…` under a workspace are retired (410).
+- Public with a token (the only `/w/` pages anonymous visitors reach, `apps/common/middleware.py::_SCOPED_VIEWER`): `walkthrough/:id` (+ `/content`), `review/:id`, `share/:token`, `storyboard/:slug`, `narrative/:slug?b=`, `ddd-release/:narrative/:runId`.
+- Root: `/` is the public product site (Astro, `site/`, `config/public_site.py`); `/app` is the door into the app (`LOGIN_REDIRECT_URL`); `/home` is what waits on you across workspaces (`/api/me/attention/`); `/supervisor` and `/ide` are the cross-fleet and desktop-IDE views; `/settings/<section>` is your account; `/plugins/marketplace.json` is your agents as ONE Claude Code catalog (`docs/architecture/plugin-marketplace.md`); personal approval pages (`/pair/:code`, `/act-as/:requestId`, `/confirm/page-permission/:grantId`), `/invite/:token` and `/new-workspace` are pre-tenant or personal.
+- `/api/` is REST (`/api/docs/`), plus `/admin/` and `/health/`.
 
 ## API
 

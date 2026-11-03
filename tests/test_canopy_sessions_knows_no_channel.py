@@ -4,7 +4,11 @@ reader Slack registers (apps/canopy_sessions/channel_bindings.py)."""
 
 import ast
 
+import pytest
+
 from tests._source import iter_app_sources
+
+pytestmark = pytest.mark.guard
 
 
 def test_canopy_sessions_never_imports_slack():

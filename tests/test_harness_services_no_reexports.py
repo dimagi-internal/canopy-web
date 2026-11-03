@@ -10,6 +10,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.guard
+
 ROOT = Path(__file__).resolve().parent.parent
 SERVICES = ROOT / "apps" / "harness" / "services.py"
 

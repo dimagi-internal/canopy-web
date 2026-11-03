@@ -25,7 +25,11 @@ import subprocess
 import sys
 from collections import Counter
 
+import pytest
+
 from tests._source import ROOT, is_migration, is_test_file
+
+pytestmark = pytest.mark.guard
 
 BASELINE = ROOT / "ruff-lazy-imports.toml"
 SCOPE = ("apps", "config")

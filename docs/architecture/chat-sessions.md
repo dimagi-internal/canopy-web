@@ -309,13 +309,13 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   byte-for-byte the row's text, in send order; `Message.author` / `source_turn_id`
   come from that turn's initiator. No match → `author=None` (correct for a line
   typed straight into emdash).
-- `authorship.parse` still reads the legacy `[canopy from="…" user=N turn=<hex>]`
-  marker (newline optional) for old and backfilled rows; don't emit it.
+- `authorship.parse` also reads the legacy `[canopy from="…" user=N turn=<hex>]`
+  marker (newline optional), which old and backfilled rows carry; never emit it.
 - A ledger-sourced session fans `chat.user_message` out on commit
   (`send._publish_user_message` → `consumers.chat_user_message`) so peers see a
   send live; transcript-sourced sessions get this from the streamed rows.
-- `onTakeOver` / `takeOverDraft` stay in `canopy-ui`'s public API as deprecated
-  no-ops — ace-web still passes them.
+- `onTakeOver` / `takeOverDraft` are deprecated no-ops in `canopy-ui`'s public API,
+  kept because ace-web still passes them.
 - Spec: `docs/superpowers/specs/2026-09-26-per-person-drafts-and-authored-messages-design.md`.
 
 ## Which box takes a chat's first turn
