@@ -167,7 +167,7 @@ def _runners(agent: Agent) -> tuple[list[Runner], list[Runner]]:
     reported = set(AgentBootstrapReport.objects.filter(agent=agent)
                    .values_list("runner_name", flat=True))
     ready = [r for r in takers if r.is_available
-             and (r.kind != Runner.CLOUD or r.name in reported)]
+             and (r.kind != Runner.CLOUD or r.report_names & reported)]
     return takers, ready
 
 

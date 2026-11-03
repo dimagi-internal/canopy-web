@@ -544,6 +544,13 @@ class Runner(models.Model):
         return self.status
 
     @property
+    def report_names(self) -> set[str]:
+        """The names a box's own reports for this runner may be filed under: the name it
+        paired as (`$RUNNER_NAME` on the box, which `AgentBootstrapReport.runner_name`
+        records) and the name people see now. They differ once the runner is renamed."""
+        return {n for n in (self.name, self.paired_as) if n}
+
+    @property
     def is_available(self) -> bool:
         """Can this runner take work RIGHT NOW — online (fresh heartbeat) AND
         self-reported ready. The cascade's availability probe (spec 2026-07-24)."""
