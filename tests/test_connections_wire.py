@@ -351,3 +351,16 @@ def test_keep_only_sig_leaves_no_sig_as_none():
 def test_names_and_prefix():
     assert (wire.REFRESH_NAME, wire.ACCESS_NAME) == ("refresh", "access")
     assert wire.STATEMENT_PREFIX == "canopy-connections/v1/grant|"
+
+
+@pytest.mark.parametrize("bad", [{"kind": "device", "target": ["x"]}, {"kind": {"a": 1}, "target": "x"},
+                                 {"kind": None, "target": "x"}, {"kind": "device", "target": 7}])
+def test_writer_sig_refuses_a_mac_naming_its_recipient_by_anything_but_strings(bad):
+    # An unhashable target would otherwise be a 500, not a 422.
+    jwk = zk_ref.jwk(ec.generate_private_key(ec.SECP256R1()).public_key())
+    sealed = zk_seal.seal_to("{}", agent_id="connection:x", name="refresh", kv=0, recipients=[("member", "7", jwk)])
+    sig = {"by": {"kind": "member", "target": "7", "public_jwk": jwk}, "expect": "",
+           "macs": [{**bad, "mac": "A" * 43}]}
+    with pytest.raises(wire.WireError) as e:
+        wire.check_writer_sig(sealed, sig)
+    assert (e.value.status, e.value.code) == (422, "bad_writer_sig")

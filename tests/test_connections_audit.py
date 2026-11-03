@@ -104,7 +104,7 @@ def test_every_record_is_in_the_vocabulary_and_carries_no_secret(world, caplog):
 
     # A person's connection, disconnected; an agent's, shared, unshared, disconnected.
     mine = Connection.objects.get(user=user)
-    assert browser.delete(f"/api/connections/{mine.pk}").status_code == 204
+    assert browser.delete(f"/api/connections/{mine.pk}").status_code == 200
     conn = Connection.objects.get(agent=eva)
     sharing.share(conn, user=user, **browser_share(conn, user, priv, agents=[eva, echo], to=[]))
     sharing.share(conn, user=user, **browser_share(conn, user, priv, agents=[eva], to=[]))
@@ -353,13 +353,15 @@ def test_app_secret_appears_only_in_material_responses(world_tokens, caplog):
     assert all(APP_SECRET in m.content.decode() for m in material)
     others += [admin.get(f"/api/connections/{eva_conn.pk}/share"), admin.get(f"/api/connections/{mine.pk}/share"),
                admin.get("/api/connections/"), admin.get("/api/agents/eva/connections")]
+    # The column is ciphertext: read while the row is still there.
+    stored = list(ConnectionApp.objects.values())
+    assert stored and stored[0]["client_secret_enc"]
+    assert APP_SECRET not in json.dumps(stored, default=str)
     others.append(admin.delete(f"{apps_url}/salesforce"))
     assert others[-1].status_code in (200, 204)
     assert {"app_configured", "app_removed"} <= _kinds()
     blob = _scan_blob(caplog, others)
     assert APP_SECRET not in blob
-    assert ConnectionApp.objects.count() == 0 or APP_SECRET not in json.dumps(
-        list(ConnectionApp.objects.values()), default=str)      # the column is ciphertext
 
 
 def test_a_persons_lent_connection_leaves_granted_in_the_agents_workspace(caplog):

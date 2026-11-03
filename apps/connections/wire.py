@@ -141,6 +141,8 @@ def check_writer_sig(value: str, sig: dict) -> dict:
     for i, m in enumerate(macs):
         if not isinstance(m, dict) or set(m) != {"kind", "target", "mac"}:
             raise _bad_sig(f"macs[{i}] must be an object with exactly ['kind', 'mac', 'target']")
+        if not isinstance(m["kind"], str) or not isinstance(m["target"], str):
+            raise _bad_sig(f"macs[{i}] must name its recipient by strings")
         try:
             if len(zk.b64u_bytes(m["mac"], f"macs[{i}].mac")) != _MAC_LEN:
                 raise _bad_sig(f"macs[{i}].mac must decode to {_MAC_LEN} bytes")

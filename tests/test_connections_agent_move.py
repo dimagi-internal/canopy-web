@@ -107,7 +107,8 @@ def test_a_grantee_that_moves_out_of_the_apps_workspace_loses_the_grant(user, di
 
 def test_a_moved_agents_turn_lists_no_connection(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
-    _stored({"agent": eva}, user, app=sf_app(dimagi))
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)))
+    assert services.providers_for_agent(eva) == ["salesforce"]  # it lists before the move, so its absence means something
     eva = _moved(eva, x)
     runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=user, workspace=x,
                                    last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
