@@ -1452,7 +1452,10 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             if restaging is None or not restaging.is_alive():
                 restaging = threading.Thread(target=_restage_connections, args=(turn_id,), daemon=True,
                                              name=f"restage-{turn_id[:8]}")
-                restaging.start()
+                try:
+                    restaging.start()
+                except RuntimeError as exc:  # no thread to be had: the next beat tries again
+                    _log(f"warn: could not start a re-stage for turn {turn_id}: {exc}")
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1794,14 +1797,17 @@ def _restage_delegated_google() -> None:
 # Log lines use the connections vocabulary: `warn: connections.stage_failed agent=
 # provider= turn= reason="…"` when a token could not be staged (the turn still runs;
 # `provider=*` when the listing itself failed, or the CLI is too old to open a sealed
-# connection). An agent with no connection is silent, and so is a canopy-web too old to
-# have the listing route (404).
+# connection), and one `connections.waiting agent= provider= turn=` when no copy has
+# reached this box yet. An agent with no connection is silent, and so is a canopy-web too
+# old to have the listing route (404).
 #: Seconds a staged token must still live; also given to the CLI (`--min-life`), so it
 #: refreshes rather than reuse an access token that lapses before the next re-stage.
 CONNECTION_TOKEN_MIN_LIFE = 900
-#: CLI exit code for "nothing to stage for this box": not connected, waiting for a holder
-#: to seal the token to this box, or being revoked. Silent.
+#: CLI exit code for "nothing to stage for this box": not connected, or being revoked. Silent.
 CONNECTION_NOT_CONNECTED_EXIT = 3
+#: CLI exit code for "no copy has reached this box yet": a keeper seals one to it within
+#: minutes, so the turn keeps its hold and the heartbeat tries again.
+CONNECTION_WAITING_EXIT = 4
 #: How long one stage may run. Holding a just-rotated refresh token, the CLI retries its
 #: write-back for up to 90 s, on top of its per-call timeouts; a kill there loses the
 #: token, and the person has to reconnect, so this is generous on purpose.
@@ -1814,6 +1820,8 @@ _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 #: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
 _CONN_HOLDS: dict = {}
 _CONN_LOCK = threading.Lock()
+#: (turn_id, provider) that has said it is waiting, so it says so once. Under _CONN_LOCK.
+_CONN_WAITING: set = set()
 #: CLI stages running now: {(slug, provider): how many}. A heartbeat does not start one
 #: over a file already being staged. Its own lock: nothing here touches a hold or a file.
 _CONN_STAGING: dict = {}
@@ -1911,7 +1919,9 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
     `refresh` stands aside for a stage already running for this file, which may take
     minutes; two first stages settle it in the CLI (one takes the refresh lease, the
     other waits for its result). Exit 3 from the CLI is silent (and clears a stale file);
-    any other failure is a warn line and the turn still runs. No token is ever logged."""
+    exit 4 keeps the hold, so the heartbeat retries (a held file that is missing always
+    counts as needing a stage), and says so once; any other failure is a warn line and
+    the turn still runs. No token is ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
@@ -1967,6 +1977,17 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
             if not _held_elsewhere(slug, provider, turn_id):
                 _unlink_quietly(target)
         return
+    if res.returncode == CONNECTION_WAITING_EXIT:
+        with _CONN_LOCK:
+            first = (provider in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2]
+                     and (turn_id, provider) not in _CONN_WAITING)
+            if first:
+                _CONN_WAITING.add((turn_id, provider))
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
+        if first:
+            _log(f"connections.waiting agent={slug} provider={provider} turn={turn_id}")
+        return
     if res.returncode != 0:
         _stage_failed_line(slug, provider, turn_id, (res.stderr or "").strip() or f"exit {res.returncode}")
         _stage_failed(turn_id, provider, refresh)
@@ -1995,6 +2016,7 @@ def _drop_holds(turn_id: str) -> None:
     """Release every hold of this turn, deleting (inside the lock) each file no other
     running turn of the same agent holds."""
     with _CONN_LOCK:
+        _CONN_WAITING.difference_update({w for w in _CONN_WAITING if w[0] == turn_id})
         held = _CONN_HOLDS.pop(turn_id, None)
         if not held:
             return

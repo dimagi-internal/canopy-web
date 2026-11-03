@@ -177,7 +177,7 @@ Bare views (paths unchanged): `auth/connections/<provider>/<workspace>/start/` (
 
 | Command | stdout (never a token) | Exit |
 |---|---|---|
-| `canopy cred connection-token <p> --runner --agent X --runner-id R --turn T [--min-life S]` | staged path (as today) | 0; 3 not connected / waiting / revoking (silent); 1 other |
+| `canopy cred connection-token <p> --runner --agent X --runner-id R --turn T [--min-life S]` | staged path (as today) | 0; 3 not connected / revoking (silent); 4 waiting (silent; the runner keeps its hold and retries on the heartbeat); 1 other |
 | `canopy cred connection-token <p> --agent X` | staged path (no network, unchanged) | 0 / 2 |
 | `canopy cred connection-token <p> [--workspace W] [--refresh]` (person) | cache path | 0; 2 refused with the sentence and the command |
 | `canopy vault zk keep` | text (unchanged), plus connection lines | 0 |

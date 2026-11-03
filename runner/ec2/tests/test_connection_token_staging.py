@@ -3,9 +3,9 @@ which opens the sealed token on this box and refreshes it here.
 
 Pinned: the runner asks canopy-web which providers the turn's agent has and calls the CLI
 once per provider listed (none for an agent without connections); the CLI is called with
-the runner bearer + runner/turn ids; exit 3 (not connected, waiting for a holder, revoking)
-is silent and clears a stale file; other failures warn (never with a token) and the turn
-runs; a CLI too old for sealed connections costs one warn line and is not run; the
+the runner bearer + runner/turn ids; exit 3 (not connected, revoking) is silent and clears
+a stale file; exit 4 (waiting for a holder to seal to this box) keeps the hold, so heartbeats
+retry, and says so once; other failures warn (never with a token) and the turn runs; a CLI too old for sealed connections costs one warn line and is not run; the
 heartbeat re-stages only near expiry, never over a stage already running for that file,
 and never at the lease's expense; each file goes when the turn ends.
 """
@@ -514,12 +514,87 @@ def test_the_bearer_outlives_the_whole_stage(cr, monkeypatch, tmp_path):
     assert asked and asked[0] > cr.CONNECTION_STAGE_TIMEOUT_SECONDS
 
 
-def test_waiting_for_a_holder_is_silent_and_leaves_no_file(cr, monkeypatch, tmp_path):
+def test_waiting_for_a_holder_keeps_the_hold_says_so_once_and_leaves_no_file(cr, monkeypatch, tmp_path):
     _path(tmp_path).parent.mkdir(parents=True)
     _path(tmp_path).write_text(json.dumps({"expires_at": 1}))
-    _cli(cr, monkeypatch, tmp_path, code=3, stderr="waiting")
+    _cli(cr, monkeypatch, tmp_path, code=4, stderr="waiting")
     cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
-    assert cr.logs == [] and not _path(tmp_path).exists() and cr._CONN_HOLDS == {}
+    assert cr._CONN_HOLDS == {"t1": _held()} and not _path(tmp_path).exists()
+    assert cr.logs == ["connections.waiting agent=eva provider=salesforce turn=t1"]
+
+
+def test_waiting_then_a_later_heartbeat_stages_the_file(cr, monkeypatch, tmp_path):
+    """No file to read counts as needing a stage: heartbeats retry until a keeper seals
+    the token to this box, and the waiting line is not repeated."""
+    _cli(cr, monkeypatch, tmp_path, code=4)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    cr._restage_connections("t1", now=60)
+    cr._restage_connections("t1", now=120)
+    assert len(cr.calls) == 3 and len(cr.logs) == 1 and not _path(tmp_path).exists()
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._restage_connections("t1", now=180)
+    assert len(cr.calls) == 4 and _path(tmp_path).exists() and cr._CONN_HOLDS == {"t1": _held()}
+    cr._restage_connections("t1", now=240)              # staged and fresh: left alone
+    assert len(cr.calls) == 4 and len(cr.logs) == 1
+    cr._unstage_connections("t1")
+    assert not _path(tmp_path).exists()
+
+
+def test_waiting_keeps_a_file_another_turn_relies_on(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "A", "eva", "salesforce", now=0)
+    _cli(cr, monkeypatch, tmp_path, code=4)
+    cr._stage_connection_token("r1", "B", "eva", "salesforce", now=0)
+    assert _path(tmp_path).exists() and set(cr._CONN_HOLDS) == {"A", "B"}
+
+
+def test_each_waiting_turn_and_provider_says_so_once(cr, monkeypatch, tmp_path):
+    _listing(cr, monkeypatch, body={"providers": ["intacct", "salesforce"]})
+    _cli(cr, monkeypatch, tmp_path, code=4)
+    assert cr._stage_connections("r1", "A", "eva") == {"intacct", "salesforce"}
+    cr._stage_connection_token("r1", "B", "eva", "salesforce", now=0)
+    assert cr.logs == ["connections.waiting agent=eva provider=intacct turn=A",
+                       "connections.waiting agent=eva provider=salesforce turn=A",
+                       "connections.waiting agent=eva provider=salesforce turn=B"]
+
+
+def test_a_turn_end_forgets_it_was_waiting(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, code=4)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    cr._unstage_connections("t1")
+    assert cr._CONN_WAITING == set() and cr._CONN_HOLDS == {}
+
+
+def test_a_turn_that_ended_during_a_waiting_restage_adds_no_hold_or_line(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+
+    def run(argv, **kw):
+        cr._unstage_connections("t1")
+        return subprocess.CompletedProcess(argv, 4, "", "")
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    cr._restage_connections("t1", now=9_900)
+    assert cr._CONN_HOLDS == {} and cr._CONN_WAITING == set() and cr.logs == []
+
+
+def test_waiting_on_a_restage_keeps_the_hold_in_one_lock_section(cr, monkeypatch, tmp_path):
+    lock = _CountingLock()
+    monkeypatch.setattr(cr, "_CONN_LOCK", lock)
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+
+    def run(argv, **kw):
+        lock.n = 0
+        return subprocess.CompletedProcess(argv, 4, "", "")
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    cr._restage_connections("t1", now=9_900)
+    assert lock.n == 1 and cr._CONN_HOLDS == {"t1": _held()}
+
+
+def test_not_connected_still_drops_the_hold_on_a_first_stage(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, code=3)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    assert cr._CONN_HOLDS == {} and cr.logs == []
 
 
 def test_heartbeat_restage_still_only_refreshes_held_files(cr, monkeypatch, tmp_path):
@@ -789,6 +864,26 @@ def test_the_lease_restages_again_after_a_restage_ends(cr, monkeypatch, tmp_path
     stop = cr._start_lease_renewal("r1", "t1")
     try:
         assert _until(lambda: len(cr.calls) >= n + 2)   # the file stays near expiry
+    finally:
+        stop.set()
+        assert _until(_no_lease_threads)
+
+
+def test_no_thread_for_a_restage_does_not_stop_the_lease(cr, monkeypatch):
+    """Thread exhaustion: `start()` raises RuntimeError, on a thread that must keep beating."""
+    real = threading.Thread
+
+    class Starved(real):
+        def start(self):
+            if self.name.startswith("restage-"):
+                raise RuntimeError("can't start new thread")
+            super().start()
+    monkeypatch.setattr(cr.threading, "Thread", Starved)
+    beats = _beating(cr, monkeypatch)
+    stop = cr._start_lease_renewal("r1", "t1")
+    try:
+        assert _until(lambda: len(beats) >= 3)
+        assert any("re-stage" in m and "can't start new thread" in m for m in cr.logs)
     finally:
         stop.set()
         assert _until(_no_lease_threads)
