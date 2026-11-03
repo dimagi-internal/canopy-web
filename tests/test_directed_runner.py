@@ -23,7 +23,7 @@ from apps.harness import routing, topology
 from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 

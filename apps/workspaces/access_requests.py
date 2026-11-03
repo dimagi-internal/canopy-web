@@ -48,6 +48,21 @@ AUTO_APPROVE_ROLES = (WorkspaceMembership.VIEWER, WorkspaceMembership.EDITOR)
 
 
 
+# The push app registers how a person is pushed (`register_push`) from its AppConfig.ready();
+# workspaces never imports it. With none registered, nothing is pushed.
+_pusher = None
+
+
+def register_push(fn) -> None:
+    """`fn(user, title, body, path)` -> how many devices were pushed."""
+    global _pusher
+    _pusher = fn
+
+
+def _push(user, title: str, body: str, path: str) -> int:
+    return _pusher(user, title, body, path) if _pusher else 0
+
+
 def _domain_matches(ws: Workspace, user) -> str:
     """The caller's login-email domain if it is on `ws`'s request list, else ""."""
     domain = _email_domain(getattr(user, "email", ""))
@@ -220,8 +235,6 @@ def notify_admins(req: WorkspaceAccessRequest) -> dict:
                 + _button(link, label)
                 + f'<p style="color:#78716c;font-size:13px">{escape(link)}<br>You are getting this '
                   f"because you are an admin or owner of {escape(ws.display_name)} on Canopy.</p>")
-        from apps.push.services import send_to_user
-
         # Owners and admins, not the workspace's superusers — never down to nobody.
         recipients = mail_recipients(access_request_recipients(ws), ws)
         for admin in recipients:
@@ -235,8 +248,8 @@ def notify_admins(req: WorkspaceAccessRequest) -> dict:
             else:
                 result["failed"].append(admin.email)
             try:
-                result["pushed"] += send_to_user(admin, f"Access request · {ws.display_name}",
-                                                 f"{who} — {outcome}", access_request_path(req))
+                result["pushed"] += _push(admin, f"Access request · {ws.display_name}",
+                                           f"{who} — {outcome}", access_request_path(req))
             except Exception:  # noqa: BLE001
                 _access_log.exception("access-request push failed: admin=%s", admin.pk)
         result["recipients"] = len(recipients)

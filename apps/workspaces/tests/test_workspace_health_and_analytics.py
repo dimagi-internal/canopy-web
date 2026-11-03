@@ -389,7 +389,7 @@ def test_health_lists_the_trees_runners_with_their_code_and_problems(tree, setti
     from django.utils import timezone
 
     from apps.harness.models import Runner, RunnerAssignment
-    from apps.workspaces.testing import enrolled
+    from apps.harness.testing import enrolled
 
     settings.RUNNER_CODE_SHA = "new"
     box = enrolled(Runner.objects.create(
@@ -413,7 +413,7 @@ def test_health_and_topology_serve_one_runner_row_with_its_reason_and_fix(tree):
     from django.utils import timezone
 
     from apps.harness.models import Runner
-    from apps.workspaces.testing import enrolled
+    from apps.harness.testing import enrolled
 
     enrolled(Runner.objects.create(
         name="laptop", kind=Runner.EMDASH, workspace_id="dimagi", owner=tree["ceo"], status=Runner.DEGRADED,

@@ -30,7 +30,8 @@ from apps.agents.models import Agent, AgentBootstrapReport, AgentCredential, Age
 from apps.agents.setup import scaffold_skill_names, setup_steps
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import WorkspaceMembership
-from apps.workspaces.testing import a_member, a_workspace, enrolled
+from apps.workspaces.testing import a_member, a_workspace
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 

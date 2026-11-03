@@ -23,7 +23,7 @@ from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db

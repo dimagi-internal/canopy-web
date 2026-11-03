@@ -18,7 +18,7 @@ from django.test.utils import CaptureQueriesContext
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()

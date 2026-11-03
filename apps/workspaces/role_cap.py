@@ -111,8 +111,18 @@ def turn_cap(turn_id, user) -> str:
         tid = uuid.UUID(raw)
     except ValueError:
         return ""
-    from apps.harness.models import Turn
-
-    ref = (Turn.objects.filter(pk=tid, initiator_user=user)
-           .values_list("origin_ref", flat=True).first())
+    if _turn_origin is None:
+        return ""
+    ref = _turn_origin(tid, user)
     return cap_from((ref or {}).get("acts_as"))
+
+
+# The harness owns turns; it registers how to read a turn's `origin_ref` (for a turn
+# `user` started) from its AppConfig.ready(), so workspaces never imports a Turn.
+_turn_origin = None
+
+
+def register_turn_origin(fn) -> None:
+    """`fn(turn_uuid, user)` -> that turn's `origin_ref` dict when `user` initiated it, else None."""
+    global _turn_origin
+    _turn_origin = fn

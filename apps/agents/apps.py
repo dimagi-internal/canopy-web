@@ -6,6 +6,10 @@ class AgentsConfig(AppConfig):
     name = "apps.agents"
 
     def ready(self) -> None:
+        from . import departure  # noqa: PLC0415 — ready(): the registry loads after the app registry
+
+        departure.register()
+
         # Vault-key holders are told an approved device or new admin waits for a
         # zero-knowledge agent's key; the canopy-pat rotation and stale-proposal
         # expiry run on the same off-request clock.
