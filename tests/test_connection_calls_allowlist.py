@@ -310,3 +310,12 @@ def test_ordinary_objects_with_similar_names_stay_writable():
 def test_post_deeper_under_a_report_is_refused_not_a_read(path):
     with pytest.raises(NotAllowed):
         calls.match("salesforce", "POST", path)
+
+
+@pytest.mark.parametrize("obj", ["MutingPermissionSet", "PermissionSetGroupComponent"])
+def test_permission_set_helpers_are_never_writable(obj):
+    for method, path in (("POST", f"sobjects/{obj}"), ("PATCH", f"sobjects/{obj}/{LEAD}"),
+                         ("DELETE", f"sobjects/{obj.lower()}/{LEAD}")):
+        with pytest.raises(NotAllowed):
+            calls.match("salesforce", method, path)
+    assert calls.match("salesforce", "GET", f"sobjects/{obj}/{LEAD}").rule.kind == "read"

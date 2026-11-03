@@ -34,7 +34,7 @@ MAX_LINES = 50
 METHODS = ("GET", "POST", "PATCH", "DELETE")
 AS_VALUES = ("viewer", "shared")
 #: An agent's slug as canopy-web makes one (a Django slug, at most 80 characters).
-AGENT_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 # One id-shaped segment standing in for `*` when a pattern is checked: it fits an
 # id and an object name both, so a read's `*` may be either.
@@ -117,7 +117,7 @@ def validate(raw, *, agent_exists: Callable[[str], bool] | None = None) -> list[
                 raise ValueError(f"{at}: an agent is only for as 'shared'; a viewer call uses the viewer's own")
             agent = None
         else:
-            if not isinstance(agent, str) or not AGENT_RE.match(agent):
+            if not isinstance(agent, str) or not AGENT_RE.fullmatch(agent):
                 raise ValueError(f"{at}: as 'shared' needs the agent (its slug) whose shared connection is used")
             if agent_exists is not None and not agent_exists(agent):
                 raise ValueError(f"{at}: no agent '{agent}' in this workspace")

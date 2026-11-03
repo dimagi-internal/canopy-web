@@ -99,7 +99,7 @@ GUARDED_OBJECTS = frozenset(n.lower() for n in (
     "User", "UserRole", "Profile", "PermissionSet", "PermissionSetAssignment", "PermissionSetGroup",
     "PermissionSetLicenseAssign", "Group", "GroupMember", "AuthSession", "ConnectedApplication",
     "ApexClass", "ApexTrigger", "ApexPage", "ApexComponent", "Organization", "SetupEntityAccess",
-    "ObjectPermissions", "FieldPermissions", "LoginIp", "UserLogin",
+    "MutingPermissionSet", "PermissionSetGroupComponent", "ObjectPermissions", "FieldPermissions", "LoginIp", "UserLogin",
 ))
 
 _REFUSED_PATH = "That is not a path this screen may call."

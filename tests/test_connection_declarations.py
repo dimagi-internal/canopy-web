@@ -211,3 +211,10 @@ def test_running_a_report_is_a_declarable_read():
     assert declarations.allows(declared, "salesforce", "viewer", None, _m("POST", f"analytics/reports/{LEAD}"), "POST")
     # Creating a report is a write, and is not covered.
     assert not declarations.allows(declared, "salesforce", "viewer", None, _m("POST", "analytics/reports"), "POST")
+
+
+@pytest.mark.parametrize("slug", ["ada\n", "ada ", "\nada", "a/b", ""])
+def test_an_agent_slug_must_be_exactly_a_slug(slug):
+    with pytest.raises(ValueError, match="agent"):
+        declarations.validate([{**DECL, "as": "shared", "agent": slug}])
+    assert declarations.validate([{**DECL, "as": "shared", "agent": "ada"}])
