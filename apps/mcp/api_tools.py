@@ -185,6 +185,10 @@ EXCLUDED: dict[str, str] = {
     # and an app secret for a machine, never a model's context. The person's routes
     # refuse an MCP call too (`_plain_pat`); the runner's take only a box's token.
     "my_connection_material": _SEALED_FOR_A_MACHINE,
+    # Sharing happens in the owner's browser, which opens the envelope and signs with their
+    # vault key. No tool could do either, and the read is sealed envelopes for that browser.
+    "get_share_state": "what the owner's browser opens and signs with their vault key, which no tool holds",
+    "share_connection": "signed and sealed in the owner's browser with their vault key, which no tool holds",
     "take_my_refresh_lease": _SEALED_FOR_A_MACHINE,
     "release_my_refresh_lease": _SEALED_FOR_A_MACHINE,
     "write_back_my_connection": _SEALED_FOR_A_MACHINE,
