@@ -77,11 +77,6 @@ FROZEN: dict[tuple[str, str], int] = {
     ("agents", "plugins"): 1,
     ("agents", "slack"): 3,
     ("agents", "timeline"): 1,
-    ("common", "canopy_sessions"): 2,
-    ("common", "contacts"): 2,
-    ("common", "harness"): 3,
-    ("common", "realtime"): 1,
-    ("common", "tokens"): 1,
     ("contacts", "host_grants"): 1,
     ("embedding", "host_grants"): 8,
     ("events", "agents"): 4,
@@ -104,14 +99,11 @@ FROZEN: dict[tuple[str, str], int] = {
     ("push", "host_grants"): 1,
     ("retention", "session_sharing"): 1,
     ("retention", "slack"): 1,
-    ("workspaces", "admission"): 6,
-    ("workspaces", "agents"): 3,
-    ("workspaces", "attention"): 1,
+    ("workspaces", "agents"): 1,
     ("workspaces", "canopy_sessions"): 1,
-    ("workspaces", "harness"): 8,
+    ("workspaces", "harness"): 3,
     ("workspaces", "push"): 1,
     ("workspaces", "realtime"): 1,
-    ("workspaces", "retention"): 7,
     # END FROZEN
 }
 

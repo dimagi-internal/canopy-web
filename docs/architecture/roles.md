@@ -2,7 +2,7 @@
 
 > Every term here — workspace roles, agent roles (`owner` / `admin` / `editor` /
 > `read_write` / `read_only`, plus `system`), the access list, access (`full` / `confined` /
-> `none`), capabilities, turn mode — is defined once, with THE rule that decides an
+> `none`), the agent's capabilities, turn mode — is defined once, with THE rule that decides an
 > agent turn, in [`access.md`](access.md). This page is about enforcement.
 
 There are six tiers. Each contains the one below it.
@@ -29,9 +29,9 @@ permissions (`read`, `write`, `agent_edit`, `admin`, `own`) and bundles
 a permission is a row in one table; `tests/test_rolesets.py` holds both to the engine.
 
 **What each role may DO lives in one table: `apps/workspaces/permissions.py`.** It maps every
-capability (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEGRATIONS`,
+permission (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEGRATIONS`,
 `OWN`, …) to the lowest role that holds it, and every gate outside `apps/workspaces/` asks
-`perms.can(user, workspace, perms.<CAPABILITY>)` — never a role name.
+`perms.can(user, workspace, perms.<PERMISSION>)` — never a role name.
 `tests/test_roles_named_only_in_workspaces.py` fails the build on a role constant, a
 `member_role(...)` comparison or a rank check anywhere else — a tier written by hand in a
 second place silently changes meaning the next time a role is inserted. The frontend mirrors the table in
@@ -119,7 +119,7 @@ fan one read out per workspace to put the organisation back together.
 - **Bulk writes pinned to W touch exactly W** (`services.write_scope` / `request_write_slugs`,
   and `perms.request_slugs_with`, which reads it): "clear every shareout" pinned to `dimagi`
   leaves `connect`'s alone, though the pinned read of the same feed shows both. The same scope
-  covers a bulk session reset and `purge_session_noise` with `apply`. A capability-gated LIST
+  covers a bulk session reset and `purge_session_noise` with `apply`. A permission-gated LIST
   (the event log's `LOGS_READ`) reads `perms.request_read_slugs_with`, which takes the subtree.
 - **By-id gates are unchanged** (`member_scope`: pinned → exactly the pin). A row a pinned list
   shows from a child workspace is opened under ITS workspace — the web client links each row to
@@ -297,7 +297,7 @@ once and answers every pair from them. It never calls `member_role`, `perms.can`
 `Agent.is_admin` or `access.decide` per pair in a loop: each of those reads memberships and walks
 the tree, so a loop over pairs is N² queries (the agent topology was 6,000+ for 24 agents).
 
-- **One person, many workspaces:** `perms.slugs_with(user, capability, within=…)` — one
+- **One person, many workspaces:** `perms.slugs_with(user, permission, within=…)` — one
   `wsvc.member_roles` read.
 - **Many people, their roles:** `wsvc.member_roles_of(users)`, then `perms.role_allows`.
 - **Many people × agents:** `access.Standings(users, agents)` (every role and every agent grant,

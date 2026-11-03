@@ -75,7 +75,6 @@
 "apps/capabilities/scheduler.py" = ["PLC0415"]  # 2
 "apps/capabilities/services.py" = ["PLC0415"]  # 6
 "apps/capabilities/signals.py" = ["PLC0415"]  # 3
-"apps/common/api.py" = ["PLC0415"]  # 11
 "apps/common/auth_adapter.py" = ["PLC0415"]  # 4
 "apps/common/email.py" = ["PLC0415"]  # 1
 "apps/common/legacy_prefix.py" = ["PLC0415"]  # 1
@@ -83,7 +82,6 @@
 "apps/common/management/commands/reencrypt_secrets.py" = ["PLC0415"]  # 1
 "apps/common/request_context.py" = ["PLC0415"]  # 1
 "apps/common/ticks.py" = ["PLC0415"]  # 1
-"apps/common/views_debug.py" = ["PLC0415"]  # 1
 "apps/contacts/api.py" = ["PLC0415"]  # 2
 "apps/contacts/apps.py" = ["PLC0415"]  # 2
 "apps/contacts/contact_api.py" = ["PLC0415"]  # 50
@@ -281,7 +279,7 @@
 "apps/walkthroughs/models.py" = ["PLC0415"]  # 1
 "apps/walkthroughs/timeline.py" = ["PLC0415"]  # 1
 "apps/workspaces/access_requests.py" = ["PLC0415"]  # 3
-"apps/workspaces/api.py" = ["PLC0415"]  # 25
+"apps/workspaces/api.py" = ["PLC0415"]  # 5
 "apps/workspaces/departure.py" = ["PLC0415"]  # 7
 "apps/workspaces/login_gate.py" = ["PLC0415"]  # 1
 "apps/workspaces/models.py" = ["PLC0415"]  # 1

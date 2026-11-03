@@ -1,13 +1,13 @@
 """What each workspace role may DO — the one table, and the only door to it.
 
-The roles and capabilities are defined, beside the agent roles they are often
+The roles and permissions are defined, beside the agent roles they are often
 confused with, in `docs/architecture/access.md`.
 
 `services` answers "what is this person's role here?" (`membership`,
 `member_role`), and `models.WorkspaceMembership.ROLE_RANK` orders the roles.
 This module answers the question every gate actually asks: **may this person
 do X in this workspace?** Code outside `apps/workspaces/` asks it here, by
-capability, and never names a role — `tests/test_roles_named_only_in_workspaces.py`
+permission, and never names a role — `tests/test_roles_named_only_in_workspaces.py`
 fails the build on a role constant, a `member_role(...)` comparison, or a role
 set anywhere else.
 
@@ -18,7 +18,7 @@ two of them silently changed meaning the moment a role was inserted between
 editor and owner. With the table, adding or moving a role is one edit here,
 and every gate follows.
 
-Capabilities are named for what they PROTECT, not for a page, so one is
+Permissions are named for what they PROTECT, not for a page, so one is
 reused across surfaces that share a trust decision (every product surface's
 writes are `CONTENT_WRITE`).
 """
@@ -126,8 +126,8 @@ MINIMUM_ROLE: dict[str, str] = {
 
 #: The one role -> permission-set engine (`apps/common/rolesets.py`, shared with the agent's
 #: roles), built from `MINIMUM_ROLE` and the ladder `models.WorkspaceMembership.ROLE_RANK`:
-#: each role holds every capability whose minimum is at or below it. Nothing here is a second
-#: table; `MINIMUM_ROLE` stays the one place a capability's tier is set.
+#: each role holds every permission whose minimum is at or below it. Nothing here is a second
+#: table; `MINIMUM_ROLE` stays the one place a permission's tier is set.
 ROLES = RoleSet.ladder(
     "workspace", MINIMUM_ROLE,
     [(role, [c for c, minimum in MINIMUM_ROLE.items() if minimum == role])
@@ -138,10 +138,10 @@ def _rank(role: str | None) -> int:
     return ROLES.rank(role)
 
 
-def role_allows(role: str | None, capability: str) -> bool:
-    """Does `role` hold `capability`? For a caller that already has the role in
-    hand (a listing that read every membership once). An unknown capability raises."""
-    return ROLES.allows(role, capability)
+def role_allows(role: str | None, permission: str) -> bool:
+    """Does `role` hold `permission`? For a caller that already has the role in
+    hand (a listing that read every membership once). An unknown permission raises."""
+    return ROLES.allows(role, permission)
 
 
 def role_meets(role: str | None, floor: str) -> bool:
@@ -159,21 +159,21 @@ def is_role(name: str) -> bool:
     return ROLES.is_role(name) and name != _M.SUPERUSER
 
 
-def can(user, workspace, capability: str) -> bool:
-    """May `user` exercise `capability` in `workspace` (a `Workspace` or slug)?
-    False for a non-member, an anonymous user, or an unknown capability's
+def can(user, workspace, permission: str) -> bool:
+    """May `user` exercise `permission` in `workspace` (a `Workspace` or slug)?
+    False for a non-member, an anonymous user, or an unknown permission's
     KeyError — which is raised, not swallowed: a typo must not read as "no"."""
     from . import services
 
     if not getattr(user, "is_authenticated", False):
         return False
-    minimum = MINIMUM_ROLE[capability]
+    minimum = MINIMUM_ROLE[permission]
     return services.has_role_at_least(user, workspace, minimum)
 
 
-def slugs_with(user, capability: str, within: set[str] | None = None) -> set[str]:
+def slugs_with(user, permission: str, within: set[str] | None = None) -> set[str]:
     """The workspaces (of `within`, default all of the user's) where `user`
-    holds `capability`. For listings and bulk writes that span tenants."""
+    holds `permission`. For listings and bulk writes that span tenants."""
     from . import services
 
     if not getattr(user, "is_authenticated", False):
@@ -182,35 +182,35 @@ def slugs_with(user, capability: str, within: set[str] | None = None) -> set[str
     # workspace — this runs on every runner's claim poll.
     roles = services.member_roles(user)
     candidates = within if within is not None else set(roles)
-    return {s for s in candidates if role_allows(roles.get(s), capability)}
+    return {s for s in candidates if role_allows(roles.get(s), permission)}
 
 
-def request_slugs_with(request, capability: str) -> set[str]:
+def request_slugs_with(request, permission: str) -> set[str]:
     """`slugs_with`, scoped like a BULK write: a pinned `/api/w/{ws}/` call
     considers exactly that workspace — never the ones below it, which a pinned
     READ covers — and an unpinned one by a caller in more than one tenant tree is
-    refused (`services.write_scope`). For a LIST gated by a capability use
+    refused (`services.write_scope`). For a LIST gated by a permission use
     `request_read_slugs_with`."""
     from . import services
 
-    return slugs_with(request.user, capability, within=services.request_write_slugs(request))
+    return slugs_with(request.user, permission, within=services.request_write_slugs(request))
 
 
-def request_read_slugs_with(request, capability: str) -> set[str]:
+def request_read_slugs_with(request, permission: str) -> set[str]:
     """`slugs_with` over a LIST's scope (`services.request_workspace_slugs`: a
     pinned read covers the caller's workspaces below the pin) — for a read gated
-    by a capability, e.g. the event log (`LOGS_READ`)."""
+    by a permission, e.g. the event log (`LOGS_READ`)."""
     from . import services
 
-    return slugs_with(request.user, capability, within=services.request_workspace_slugs(request))
+    return slugs_with(request.user, permission, within=services.request_workspace_slugs(request))
 
 
-def request_member_slugs_with(request, capability: str) -> set[str]:
+def request_member_slugs_with(request, permission: str) -> set[str]:
     """`request_slugs_with` for a BY-ID gate: never refused, because acting on
     one object you are a member of mixes no tenants (`services.member_scope`)."""
     from . import services
 
-    return slugs_with(request.user, capability, within=services.request_member_slugs(request))
+    return slugs_with(request.user, permission, within=services.request_member_slugs(request))
 
 
 def is_owner(user, workspace) -> bool:
