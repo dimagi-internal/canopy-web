@@ -18,6 +18,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.canopy_sessions import status_feed
 from apps.canopy_sessions.models import Session
 from apps.harness import claim, ledger, routing
 from apps.harness import initiator as _initiator
@@ -335,3 +336,50 @@ def test_a_busy_session_does_not_hold_another_sessions_turn():
     assert routing.blocking_turn(elsewhere) is None
     assert ts.resolve(elsewhere).state == ts.PICKING_UP
     assert claim.claim_next_turn(runner) == elsewhere
+
+
+# -- a turn an agent's session merely ran (`Turn.canopy_session`, not `chat_session`) ------------
+
+def _driven_turn(session, ws, agent, *, status, note="", key="d1"):
+    turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, agent=agent, origin=Turn.ORIGIN_API,
+                                   idempotency_key=key, prompt="hi", workspace=ws)
+    Turn.objects.filter(pk=turn.pk).update(canopy_session=session, status=status, result_note=note,
+                                           finished_at=timezone.now())
+    return Turn.objects.get(pk=turn.pk)
+
+
+def test_a_failed_turn_says_why_on_the_session_it_ran_in():
+    """Ada's debug turn 05590519 (2026-11-03) was aborted, and its session's page said nothing
+    about it: the note was on the turn, which only `canopy_session` links to that session."""
+    _, ws, agent, session = _ctx()
+    _driven_turn(session, ws, agent, status=Turn.FAILED, note="Aborted by canopy: because.")
+
+    status = status_feed.status_for_session(session)
+    assert status["state"] == "failed"
+    assert status["detail"] == "Aborted by canopy: because."
+
+
+def test_a_finished_turn_says_nothing_on_the_session_it_ran_in():
+    """A laptop turn is `done` seconds in while its session carries on working, so only a failure
+    is news here."""
+    _, ws, agent, session = _ctx()
+    _driven_turn(session, ws, agent, status=Turn.DONE)
+    assert status_feed.status_for_session(session) is None
+
+
+def test_a_newer_turn_replaces_an_old_failure_on_the_session_it_ran_in():
+    _, ws, agent, session = _ctx()
+    _driven_turn(session, ws, agent, status=Turn.FAILED, note="old", key="d1")
+    _driven_turn(session, ws, agent, status=Turn.DONE, key="d2")
+    assert status_feed.status_for_session(session) is None
+
+
+def test_a_failure_reaches_someone_already_watching_the_session_it_ran_in(monkeypatch):
+    _, ws, agent, session = _ctx()
+    turn = _driven_turn(session, ws, agent, status=Turn.FAILED, note="Aborted by canopy: because.")
+    sent = _capture(monkeypatch)
+
+    status_feed.publish_for_turn(turn)
+
+    [status] = _statuses(sent, session)
+    assert status["detail"] == "Aborted by canopy: because."
