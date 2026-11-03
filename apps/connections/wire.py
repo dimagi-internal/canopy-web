@@ -23,6 +23,8 @@ ACCESS_NAME = "access"
 STATEMENT_PREFIX = "canopy-connections/v1/grant|"
 
 _STATEMENT_KEYS = {"account_id", "agents", "connection", "endorsers", "my_computers", "v", "version"}
+#: Optional: the thumbprint of the canopy-web instance's key the owner lets serve this connection.
+_OPTIONAL_STATEMENT_KEYS = {"canopy_web"}
 #: Printable ASCII without '"' or '\', so the signed message has one spelling everywhere.
 _ACCOUNT_ID = re.compile(r'^[\x21\x23-\x5b\x5d-\x7e]{1,255}$')
 _AGENT_PK = re.compile(r"^[1-9][0-9]*$")
@@ -74,8 +76,9 @@ def check_statement(st: dict, *, connection_id, account_id: str) -> dict:
     """`st` if it is a well-formed statement about THIS connection and account; 422
     `bad_statement` otherwise. Its signature, version and agents are the caller's
     to judge."""
-    if not isinstance(st, dict) or set(st) != _STATEMENT_KEYS:
-        raise _bad_statement(f"must be an object with exactly {sorted(_STATEMENT_KEYS)}")
+    if not isinstance(st, dict) or not _STATEMENT_KEYS <= set(st) <= _STATEMENT_KEYS | _OPTIONAL_STATEMENT_KEYS:
+        raise _bad_statement(
+            f"must be an object with exactly {sorted(_STATEMENT_KEYS)} and optionally {sorted(_OPTIONAL_STATEMENT_KEYS)}")
     if type(st["v"]) is not int or st["v"] != 1:
         raise _bad_statement("v must be 1")
     if type(st["version"]) is not int or st["version"] < 1:
@@ -86,6 +89,8 @@ def check_statement(st: dict, *, connection_id, account_id: str) -> dict:
         raise _bad_statement("it names another account")
     if st["connection"] != str(uuid.UUID(str(connection_id))):
         raise _bad_statement("it names another connection")
+    if "canopy_web" in st and not (isinstance(st["canopy_web"], str) and _JKT.fullmatch(st["canopy_web"])):
+        raise _bad_statement("canopy_web must be a 43-character thumbprint when present")
     _sorted_unique(st["agents"], _AGENT_PK, "agents")
     _sorted_unique(st["my_computers"], _JKT, "my_computers")
     _sorted_unique(st["endorsers"], _JKT, "endorsers", limit=_MAX_ENDORSERS)
