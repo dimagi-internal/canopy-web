@@ -20,14 +20,30 @@ MAX_CHARS = 2000
 
 ELLIPSIS = "…"
 
+#: Where people read canopy. A box's machine address (`CANOPY_BASE_URL`) may still be
+#: the old one, which serves API/WS traffic in place but 302s browser pages: a link a
+#: person is meant to open is always built on this host (docs/architecture/deploy.md).
+CANONICAL_BASE = "https://canopy.dimagi.com"
+
+#: Machine addresses canopy has left; never put in a link for a person.
+FORMER_BASES = frozenset({"https://labs.connect.dimagi.com/canopy", "https://labs.connect.dimagi.com"})
+
+
+def public_base(base: str) -> str:
+    """`base` for a link a person opens: a former address becomes the canonical one,
+    anything else (a dev or staging box) is kept. "" stays ""."""
+    base = (base or "").strip().rstrip("/")
+    return CANONICAL_BASE if base.lower() in FORMER_BASES else base
+
 
 def turn_url(base: str, turn: dict) -> str:
     """Where a person can read this turn's whole reply on canopy-web, from the
     claimed-turn payload. Mirrors `apps.harness.auto_debug.turn_page_url`: a chat
     turn lives in its chat, an agent turn on the agent's Turns tab (anchored to
     its card, which shows the retained transcript), anything else in the
-    workspace's activity log. "" when there is no base to build on."""
-    base = (base or "").rstrip("/")
+    workspace's activity log. "" when there is no base to build on. Built on the
+    public address whatever machine address the box is configured with."""
+    base = public_base(base)
     if not base:
         return ""
     ws = turn.get("workspace_slug") or ""
@@ -35,7 +51,7 @@ def turn_url(base: str, turn: dict) -> str:
     agent = turn.get("agent_slug") or ""
     turn_id = str(turn.get("id") or "")
     if chat and ws:
-        return f"{base}/w/{ws}/chat/{chat}"
+        return f"{base}/w/{ws}/sessions/{chat}"
     if agent and ws:
         anchor = f"#{turn_id}" if turn_id else ""
         return f"{base}/w/{ws}/agents/{agent}/turns{anchor}"

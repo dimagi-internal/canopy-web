@@ -36,11 +36,23 @@ def test_the_url_names_the_page_holding_the_turn():
         f"{BASE}/w/connect/agents/ace/turns#{TID}"
     assert turn_url(BASE + "/", {"id": TID, "agent_slug": "ace", "workspace_slug": "connect",
                                  "origin_ref": {"chat_session_id": "s-1"}}) == \
-        f"{BASE}/w/connect/chat/s-1"
+        f"{BASE}/w/connect/sessions/s-1"
     assert turn_url(BASE, {"id": TID, "project": "p", "workspace_slug": "connect"}) == \
         f"{BASE}/w/connect/activity"
     assert turn_url(BASE, {"id": TID}) == f"{BASE}/activity"
     assert turn_url("", {"id": TID, "agent_slug": "ace", "workspace_slug": "connect"}) == ""
+
+
+def test_a_box_on_the_old_address_still_links_the_canonical_session_page():
+    chat = {"id": TID, "agent_slug": "trellis", "workspace_slug": "dimagi",
+            "origin_ref": {"chat_session_id": "s-1"}}
+    want = "https://canopy.dimagi.com/w/dimagi/sessions/s-1"
+    for old in ("https://labs.connect.dimagi.com/canopy", "https://labs.connect.dimagi.com/canopy/",
+                "https://labs.connect.dimagi.com"):
+        assert turn_url(old, chat) == want
+    assert turn_url("https://canopy.dimagi.com", {"id": TID}) == "https://canopy.dimagi.com/activity"
+    # A dev or staging box keeps its own address.
+    assert turn_url("http://localhost:8000", chat) == "http://localhost:8000/w/dimagi/sessions/s-1"
 
 
 def test_a_cut_keeps_the_runners_reason_the_turn_failed():
