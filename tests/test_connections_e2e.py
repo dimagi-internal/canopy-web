@@ -25,15 +25,18 @@ a failure, and the test fails at the end listing them. Run:
     uv run pytest tests/test_connections_e2e.py --nomigrations -s
 
 `CANOPY_CLI_ROOT` names the CLI's checkout (default: `canopy-connections-zk` beside this one,
-with its `.venv`); the test skips without it. `E2E_RESULTS` names a file for the results.
+with its `.venv`). Without one the test skips, so it never fails CI on absence: the CLI is another
+repo. `E2E_RESULTS` names a file for the results.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import stat
 import subprocess
+import sys
 import textwrap
 import time
 import traceback
@@ -158,6 +161,10 @@ WRAPPER = textwrap.dedent('''
         return 400, {"error": "unexpected_url", "error_description": url}
 
     base.post_form = fake_post_form
+
+    if os.environ.get("E2E_WAIT_SECONDS"):
+        from orchestrator.connections import access
+        access.WAIT_SECONDS = int(os.environ["E2E_WAIT_SECONDS"])
 
     if os.environ.get("E2E_MODE") == "probe":
         # One raw call as this machine, read the way the CLI reads an answer.
@@ -477,6 +484,17 @@ class World:
                                    idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=machine.runner)
 
 
+def _load_cloud_runner():
+    """The runner, whose stage is what actually starts the CLI on a box. Under its own name, so
+    nothing else in this process finds it."""
+    path = Path(__file__).resolve().parents[1] / "runner" / "ec2" / "cloud_runner.py"
+    spec = importlib.util.spec_from_file_location("cloud_runner_e2e", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["cloud_runner_e2e"] = module  # dataclasses look a module up by name
+    spec.loader.exec_module(module)
+    return module
+
+
 def _row_text(conn_id) -> str:
     return json.dumps(model_to_dict(Connection.objects.get(pk=conn_id)), default=str)
 
@@ -576,6 +594,14 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         story.check("sealed to the box", ("device", box1.key.ecdh_jkt) in {
             (e["kind"], e["target"]) for e in conn_ref.sealed_entries(conn.sealed)},
             conn_ref.sealed_entries(conn.sealed))
+
+    with story.step("C the agent's own tab right after lending: its other admin sees who lent it"):
+        r = Browser(live_server.url, world.op, None).req("GET", "/api/agents/eva/connections")
+        story.check("the tab answers 200", r.status_code == 200, f"{r.status_code} {r.text[:400]}")
+        rows = r.json().get("connections", []) if r.status_code == 200 else []
+        story.check("one lent row, named by its owner", [(c["id"], c["granted_from"], c["usable"]) for c in rows]
+                    == [(conn_id, "jj@dimagi.com", True)], rows)
+        story.check("nothing unreachable: the box is vouched for", rows and rows[0]["unreachable"] == [], rows)
 
     with story.step("3 stage on a box: lease, read, rotating refresh, write-back, release"):
         before = len(lab.calls())
@@ -712,13 +738,22 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         story.check("a browser session on the machines' route: 403 token_route_needs_pat", r.status_code == 403
                     and r.json().get("error") == "token_route_needs_pat", f"{r.status_code} {r.text[:300]}")
 
-    with story.step("B the runner's environment: CANOPY_BASE_URL alone reaches this canopy-web"):
-        # `cloud_runner._stage_connection_token` sets CANOPY_BASE_URL and not CANOPY_WEB_API_URL.
+    with story.step("B the runner's own stage reaches this canopy-web, not the CLI's default"):
+        # The runner's real `_stage_connection_token`, with nothing but its BASE_URL to go on.
         blocked = len(lab.blocked_hosts())
-        run = box1.stage(world.turn(box1), CANOPY_BASE_URL=lab.base_url, CANOPY_WEB_API_URL=None)
+        shim = lab.root / "canopy"
+        shim.write_text(f'#!/bin/sh\nexec "{CLI_PYTHON}" "{lab.wrapper}" "$@"\n')
+        shim.chmod(0o755)
+        runner = _load_cloud_runner()
+        box1.staged().unlink(missing_ok=True)
+        with mock.patch.dict(os.environ, box1.env(), clear=False), \
+                mock.patch.multiple(runner, BASE_URL=lab.base_url, AGENT_ROOT=str(box1.home),
+                                    _canopy_cli=lambda: str(shim), _bearer=lambda min_life=0: box1.runner_token()):
+            del os.environ["CANOPY_WEB_API_URL"]
+            runner._stage_connection_token(str(box1.runner.pk), str(world.turn(box1).pk), "eva", "salesforce")
         hosts = lab.blocked_hosts()[blocked:]
-        story.check("the CLI goes to CANOPY_BASE_URL, not its default", not hosts, f"tried {hosts}; {run}")
-        story.check("and stages", run.rc == 0, run)
+        story.check("the CLI goes to this canopy-web", not hosts, f"tried {hosts}")
+        story.check("and stages", box1.staged().exists())
 
     after_base_url_check = len(lab.blocked_hosts())
 
@@ -743,9 +778,6 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         story.check("a refresh under version 2 writes back", run.rc == 0, run)
 
     with story.step("E two machines at once: one refresh, the other waits for its result"):
-        # `_newer` compares whole-second expiries, and the last refresh was a moment ago: a
-        # second apart, as two refreshes are outside a test.
-        time.sleep(1.2)
         before = len(lab.calls())
         args = box1.stage_args(world.turn(box1), "--refresh")
         first = box1.start(*args, CANOPY_TOKEN=box1.runner_token(), E2E_PROVIDER_DELAY="4")
@@ -789,14 +821,9 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         before = len(lab.calls())
         run = box1.stage(world.turn(box1))
         story.check("a box stages right after, with no lease left over from the refused refresh", run.rc == 0, run)
-        if run.rc != 0:
-            # WORKAROUND, recorded as a bug: wait out the lease `refreshed` never gave up.
-            Connection.objects.filter(pk=conn_id).update(lease_expires_at=timezone.now() - timedelta(seconds=1))
-            run = box1.stage(world.turn(box1))
-            story.check("once that lease has lapsed, it stages", run.rc == 0, run)
-            story.check("and taking it over raises no false alarm: that holder wrote nothing because the "
-                        "provider refused, it did not die", "lease_expired_unwritten" not in caplog.text,
-                        [line for line in caplog.text.splitlines() if "lease_expired_unwritten" in line][:1])
+        story.check("and no false alarm: that holder wrote nothing because the provider refused, it did not die",
+                    "lease_expired_unwritten" not in caplog.text,
+                    [line for line in caplog.text.splitlines() if "lease_expired_unwritten" in line][:1])
         calls = lab.calls()[before:]
         story.check("with the new refresh token", bool(calls) and calls[0]["form"].get("refresh_token") == "5Aep_again",
                     calls)
@@ -818,6 +845,22 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
             box1.keep()
             run = box2.stage(world.turn(box2))
             story.check("after a keeper pass", run.rc == 0, run)
+
+    with story.step("W another box is slow: a stage out of time takes the token still alive, not a failure"):
+        before = len(lab.calls())
+        token_now = json.loads(box1.staged().read_text())["access_token"]
+        held = {"lease_id": uuid.uuid4(), "lease_holder": "another-box", "lease_written": False,
+                "lease_expires_at": timezone.now() + timedelta(seconds=60)}
+        Connection.objects.filter(pk=conn_id).update(**held)
+        box2.staged().unlink(missing_ok=True)
+        try:
+            run = box2.stage(world.turn(box2), "--min-life", "3600", E2E_WAIT_SECONDS="4")
+        finally:
+            Connection.objects.filter(pk=conn_id).update(lease_id=None, lease_holder="", lease_expires_at=None)
+        story.check("it stages", run.rc == 0, run)
+        story.check("no provider call", len(lab.calls()) == before, lab.calls()[before:])
+        story.check("with the token that was alive", run.rc == 0 and json.loads(
+            box2.staged().read_text())["access_token"] == token_now, token_now)
 
     with story.step("7 a forged recipient in the server's list: the box refuses"):
         real_fields = web_tokens.material_fields
@@ -883,7 +926,8 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
     with story.step("8 disconnect: revoking; the keeper revokes and confirms; the row is gone; a stage exits 3"):
         token_now = lab.provider()["live"][-1] if lab.provider()["live"] else ""
         r = browser.req("DELETE", f"/api/connections/{conn_id}")
-        story.check("DELETE answers 204", r.status_code == 204, f"{r.status_code} {r.text[:400]}")
+        story.check("DELETE says a machine will revoke it", r.status_code == 200
+                    and r.json() == {"outcome": "revoking"}, f"{r.status_code} {r.text[:400]}")
         conn = Connection.objects.filter(pk=conn_id).first()
         story.check("the row is revoking", conn is not None and conn.state == Connection.REVOKING,
                     conn.state if conn else "gone")
@@ -1018,7 +1062,8 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         run = box2.stage(world.turn(box2), provider="google")
         story.check("box 2 reuses it", run.rc == 0 and len(lab.calls()) == before, run)
         r = browser.req("DELETE", f"/api/agents/eva/connections/{google_id}")
-        story.check("disconnect answers 204", r.status_code == 204, f"{r.status_code} {r.text[:300]}")
+        story.check("disconnect says a machine will revoke it", r.status_code == 200
+                    and r.json() == {"outcome": "revoking"}, f"{r.status_code} {r.text[:300]}")
         keep = box1.keep()
         story.check("the keeper revokes at Google", GOOGLE_REFRESH in lab.provider()["revoked"], keep)
         story.check("the row is gone", not Connection.objects.filter(pk=google_id).exists(), keep)
@@ -1028,6 +1073,60 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         issued = Event.objects.filter(kind="connections.token_issued").first()
         story.check("token_issued names the machine", issued is not None and issued.payload.get("machine")
                     in ("eva-cloud-1", "eva-cloud-2"), issued.payload if issued else None)
+
+    with story.step("K an owner replaced their key: boxes still judge it, revoke it, and they connect again"):
+        # The one connection of eva's left: an agent uses one, or it is `ambiguous`.
+        for left in Connection.objects.filter(grants__agent=world.eva, provider="salesforce"):
+            story.check("clearing the way", browser.req("DELETE", f"/api/connections/{left.pk}").status_code == 200)
+        ann = get_user_model().objects.create_user(username="ann", email="ann@dimagi.com")
+        ann_priv = vault_key(ann)
+        WorkspaceMembership.objects.create(workspace=world.ws, user=ann, role=WorkspaceMembership.EDITOR)
+        AgentAdmin.objects.create(agent=world.eva, user=ann)
+        ann_browser = Browser(live_server.url, ann, ann_priv)
+        fake = FakeSF(token=[_resp(body=_token_body(refresh_token="5Aep_ann"))],
+                      identity=_resp(body=_identity_body(user_id="005ann", username="ann@dimagi.com")))
+        ann_id = ann_browser.connect("salesforce", "w", fake)
+        lab.seed_refresh("5Aep_ann")
+        r = ann_browser.share(ann_id, agents=[world.eva], endorsers=[ref.jkt(world.jj_priv.public_key())])
+        story.check("ann shares", r.status_code == 200, f"{r.status_code} {r.text[:600]}")
+
+        # Nothing alive and another box holding the lease: exit 4, so the runner keeps its hold.
+        Connection.objects.filter(pk=ann_id).update(lease_id=uuid.uuid4(), lease_holder="another-box",
+                                                    lease_expires_at=timezone.now() + timedelta(seconds=60))
+        run = box1.stage(world.turn(box1), E2E_WAIT_SECONDS="4")
+        story.check("waiting with nothing alive: exit 4", run.rc == 4, run)
+        Connection.objects.filter(pk=ann_id).update(lease_id=None, lease_holder="", lease_expires_at=None)
+
+        run = box1.stage(world.turn(box1))
+        story.check("a box stages, and rotates, before the key changes", run.rc == 0, run)
+        old_key = Connection.objects.get(pk=ann_id).owner_key
+        new_priv = vault_key(ann)
+        new_browser = Browser(live_server.url, ann, new_priv)
+        box1.staged().unlink(missing_ok=True)
+        run = box1.stage(world.turn(box1), "--refresh")
+        story.check("with the key replaced, a box still reads and refreshes it", run.rc == 0, run)
+        real_owner = web_tokens._owner
+        with mock.patch.object(web_tokens, "_owner", lambda c: {**real_owner(c), "public_jwk": ref.jwk(
+                ec.generate_private_key(ec.SECP256R1()).public_key())}):
+            run = box1.stage(world.turn(box1))
+        story.check("but a stored key is only a convenience: another key is refused against the sealed thumbprint",
+                    run.rc == 1 and "bad-owner-key" in run.err, run)
+        r = new_browser.req("GET", f"/api/connections/{ann_id}/share")
+        story.check("the share state says why", r.status_code == 403 and r.json().get("error") == "not_the_owner_key",
+                    f"{r.status_code} {r.text[:300]}")
+        r = new_browser.req("DELETE", f"/api/connections/{ann_id}")
+        story.check("disconnect: a machine will revoke it", r.status_code == 200
+                    and r.json() == {"outcome": "revoking"}, f"{r.status_code} {r.text[:300]}")
+        live_before = lab.provider()["live"][-1]
+        keep = box1.keep()
+        story.check("the keeper revokes it at the provider", live_before in lab.provider()["revoked"], keep)
+        story.check("the row is gone", not Connection.objects.filter(pk=ann_id).exists(), keep)
+        fake = FakeSF(token=[_resp(body=_token_body(refresh_token="5Aep_ann_2"))],
+                      identity=_resp(body=_identity_body(user_id="005ann", username="ann@dimagi.com")))
+        again = new_browser.connect("salesforce", "w", fake)
+        fresh = Connection.objects.get(pk=again)
+        story.check("connecting again makes a new row under the new key", again != ann_id
+                    and fresh.owner_key not in ("", old_key), (again, fresh.owner_key))
 
     with story.step("N nothing reached the outside; no token reached a log"):
         story.check("no host but this one was tried after scenario B", not lab.blocked_hosts()[after_base_url_check:],
