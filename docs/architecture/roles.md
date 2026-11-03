@@ -1,7 +1,7 @@
 # Roles — who can do what, and what actually enforces it
 
 > Every term here — workspace roles, agent roles (`owner` / `admin` / `editor` /
-> `user` / `viewer`, plus `system`), the access list, access (`full` / `confined` /
+> `read_write` / `read_only`, plus `system`), the access list, access (`full` / `confined` /
 > `none`), capabilities, turn mode — is defined once, with THE rule that decides an
 > agent turn, in [`access.md`](access.md). This page is about enforcement.
 
@@ -10,14 +10,23 @@ There are six tiers. Each contains the one below it.
 | Tier | Enforced as | Can |
 |---|---|---|
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a viewer or user line opens a capability; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
-| **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `access.decide` giving you the agent; the whole profile needs an editor line on its access list, and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
+| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a read_only line opens `ask`, a line naming a capability opens that one; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
+| **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `access.decide` giving you the agent; the whole profile needs a line on its access list that gives `write` (read_write or editor), and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
 | **Workspace admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |
 | **Superuser** | workspace member, `superuser` | Everything an owner can do, in the workspace and every one below it, as oversight: none of the owner's email. Owners and superusers manage each other. The system superuser (`User.is_superuser`, Supervisor → Runners → System superusers) is the same idea for the whole fleet, with no workspace access. |
 
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
 (`apps/workspaces/models.py`) is `{viewer: 0, editor: 1, admin: 2, owner: 3, superuser: 4}`.
+
+**Agent roles and workspace roles share one engine, not one vocabulary.**
+`apps/common/rolesets.py` (`RoleSet`) holds the mechanism both use: a vocabulary of permissions, a
+table of named roles, an implication rule closed when the table is built, `allows(role,
+permission)`, `holds(permissions, permission)` and rank. `apps/agents/roles.py` declares agent
+permissions (`read`, `write`, `agent_edit`, `admin`, `own`) and bundles
+(`read_only`, `read_write`, `editor`, `admin`, `owner`; `agent_edit` implies `write` implies `read`);
+`apps/workspaces/permissions.py` builds the workspace's ladder from `MINIMUM_ROLE`. Adding a role or
+a permission is a row in one table; `tests/test_rolesets.py` holds both to the engine.
 
 **What each role may DO lives in one table: `apps/workspaces/permissions.py`.** It maps every
 capability (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEGRATIONS`,

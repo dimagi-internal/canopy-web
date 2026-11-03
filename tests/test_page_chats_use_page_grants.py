@@ -214,14 +214,14 @@ def test_own_login_parses_and_answers_per_site(w):
     assert own_login_of(agent, "elsewhere") == []
     assert site_ceiling(agent, "connect-labs") == ["mcp__*connect_labs__marketplace_*"]
     # An interface published before the key existed parses exactly as it did.
-    plain = {"capabilities": {"connect": {"role": "viewer", "sites": ["connect-labs"]}}}
+    plain = {"capabilities": {"connect": {"sites": ["connect-labs"]}}}
     assert "own_login" not in parse(plain)["capabilities"]["connect"]
 
 
 def test_a_site_any_capability_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
     agent = Agent(interface=parse({"capabilities": {
-        "a": {"role": "viewer", "sites": ["connect-labs"], "ceiling": ["x_*"]},
-        "b": {"role": "user", "sites": ["connect-labs"]}}}))
+        "a": {"sites": ["connect-labs"], "ceiling": ["x_*"]},
+        "b": {"sites": ["connect-labs"]}}}))
     assert site_ceiling(agent, "connect-labs") == []
 
 
@@ -232,7 +232,7 @@ def test_a_site_any_capability_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
 ])
 def test_own_login_refuses_nonsense(own, match):
     with pytest.raises(InterfaceError, match=match):
-        parse({"capabilities": {"c": {"role": "viewer", "sites": ["connect-labs"],
+        parse({"capabilities": {"c": {"sites": ["connect-labs"],
                                       "own_login": own}}})
 
 

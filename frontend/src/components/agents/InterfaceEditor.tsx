@@ -140,7 +140,7 @@ export function InterfaceEditor({
           <section className="flex flex-col gap-2">
             <h3 className="m-0 text-[13px] font-medium text-foreground">Capabilities</h3>
             <p className="m-0 text-[11px] text-muted-foreground">
-              What viewers and users may do. Each capability names the lowest role that may use it; who has which role is set on the Access setting. Anything not listed here is refused.
+              A capability is a narrow door for people who should not drive the whole agent, and is rare: most agents are used in full by whoever has access. A capability says only what it may use; who may open it is a line on the Access setting (Settings, Roles, Access). The one named ask is what a read-only role opens. Anything not listed here is refused.
             </p>
             {names.map((n) => (
               <CapabilityCard
@@ -165,7 +165,7 @@ export function InterfaceEditor({
                   Add a {s} site capability
                 </button>
               ))}
-              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), { ...askCapability(agentSlug), description: '', entry: null, role: 'user' }))} className={smallButton}>
+              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), { ...askCapability(agentSlug), description: '', entry: null }))} className={smallButton}>
                 Add a blank capability
               </button>
             </div>

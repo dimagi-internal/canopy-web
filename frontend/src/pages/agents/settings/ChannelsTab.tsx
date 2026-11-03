@@ -16,7 +16,7 @@ export function ChannelsTab({ agent, isAdmin, admins }: { agent: AgentOutletCont
           title="Capabilities"
           who={admins}
           canEdit={isAdmin}
-          description={`What ${agent.name} offers: the capabilities a viewer or user may use.`}
+          description={`What ${agent.name} offers beyond using it whole: its optional capabilities, and the ask a read-only line opens.`}
         >
           <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
         </Setting>

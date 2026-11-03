@@ -36,7 +36,7 @@ export function AgentAccessPeople({ members }: { members: readonly AgentAccessRo
               email: r.email,
               detail: <span className="capitalize">workspace {r.workspace_role}</span>,
               role: r.role ?? 'none',
-              roleLabel: roleWord(r.role),
+              roleLabel: r.role ? roleWord(r.role) : r.capabilities.length > 0 ? `Uses ${r.capabilities.join(', ')}` : roleWord(r.role),
               options: [],
               editable: false,
               extra: [

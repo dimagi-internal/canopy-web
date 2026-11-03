@@ -41,8 +41,8 @@ function changeLabel(c: SettingChangeOut): string {
   return 'Saved'
 }
 
-// The agent's declared interface: the capabilities it offers viewers and users, each with the
-// lowest role that may use it. Who has which role is the Access setting, not this. LIVE STATE held
+// The agent's declared interface: the capabilities it offers beyond using the whole agent. Who may
+// open which is a line on the Access setting, not this. LIVE STATE held
 // by canopy-web — not a file in the agent's repo — so agent admins edit it here (a form, with the
 // YAML one click away), and anyone who can see the agent can read it.
 export function AgentInterfaceView({
@@ -123,13 +123,13 @@ export function AgentInterfaceView({
     <div className="flex flex-col gap-2">
       {isDefault && (
         <p data-testid="interface-default" className="m-0 text-[13px] text-foreground">
-          {agentName ?? agentSlug} offers no capabilities (default), so viewers and users cannot use it. Who may use
-          it is set on the Access setting.
+          {agentName ?? agentSlug} offers no capabilities (default), so a read-only line opens nothing; ask is off until it is published. Who
+          may use it is set on the Access setting.
         </p>
       )}
       {names.length > 0 && (
         <p className="m-0 text-[12px] text-muted-foreground">
-          Each capability names the lowest role that may use it. Who has which role is set on the Access setting.
+          Who may open a capability is set on the Access setting: read-only opens ask, a line can name any other.
         </p>
       )}
       {names.length > 0 && (
@@ -137,7 +137,6 @@ export function AgentInterfaceView({
           <thead>
             <tr className="text-left text-[11px] text-muted-foreground">
               <th className="py-1 font-medium">Capability</th>
-              <th className="py-1 font-medium">Lowest role</th>
               <th className="py-1 font-medium">Allows</th>
               <th className="py-1 font-medium">Sensitive data</th>
             </tr>
@@ -155,9 +154,6 @@ export function AgentInterfaceView({
                         Inputs: {Object.entries(c.input ?? {}).map(([k, t]) => `${k}: ${t}`).join(', ')}
                       </div>
                     )}
-                  </td>
-                  <td className="py-1.5 align-top text-[12px] text-foreground-secondary">
-                    {c.role === 'viewer' ? 'Viewer' : 'User'}
                   </td>
                   <td className="py-1.5 align-top font-mono text-[11px] text-foreground-secondary">
                     {[...(c.sites ?? []).map((s) => `site: ${s}`), ...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (

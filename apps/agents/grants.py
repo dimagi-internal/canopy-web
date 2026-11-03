@@ -1,10 +1,12 @@
 """The access list: who has which role on an agent.
 
-One list per agent says `(who, role)` — see
+One list per agent says `(who, what)` — see
 `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md` for the
-vocabulary. `who` is a person, everyone in a workspace (optionally "at least editor"
-there), or anyone whose address is at a domain. A person's role is the strongest of the
-lines that name them; this module is the only thing that reads the lines.
+vocabulary and `docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md` for
+roles and permissions. `who` is a person, everyone in a workspace (optionally "at least editor"
+there, optionally also every workspace below it), or anyone whose address is at a domain. `what`
+is ONE role (`roles.py`) or, rarely, ONE named capability. A person's permissions are the union
+of the lines that name them; this module is the only thing that reads the lines.
 
 The agent's own lines are joined by the lines of its workspace and the workspaces above
 it (a workspace-wide or Dimagi-wide default, set once), unless the agent opts out
@@ -45,6 +47,10 @@ class Asker:
     #: Their effective workspace roles by slug, when the caller read them in bulk
     #: (`wsvc.member_roles_of`). None = read them here, one workspace at a time.
     workspace_roles: Mapping[str, str] | None = field(default=None, compare=False)
+    #: {workspace: every workspace strictly below it}, when the caller read them in bulk
+    #: (`access.Standings`). None = read them here, once per workspace asked.
+    descendants: Mapping[str, frozenset[str]] | None = field(default=None, compare=False)
+    _memo: dict = field(default_factory=dict, compare=False, repr=False)
 
     @property
     def domain(self) -> str:
@@ -55,18 +61,36 @@ class Asker:
             return self.workspace_roles.get(slug)
         return wsvc.member_role(self.user, slug) if getattr(self.user, "is_authenticated", False) else None
 
+    def below(self, slug: str) -> frozenset[str]:
+        """Every workspace strictly below `slug` in its own tree (never another organisation's)."""
+        if self.descendants is not None and slug in self.descendants:
+            return self.descendants[slug]
+        if slug not in self._memo:
+            self._memo[slug] = frozenset(wsvc.descendant_map({slug}).get(slug, ()))
+        return self._memo[slug]
+
 
 @dataclass(frozen=True)
 class Resolution:
     """The answer for one asker on one agent."""
 
-    role: str | None                     # the strongest matching line's role; None = no line names them
-    manual_only: bool = False            # every line at that role demands approval (one without it frees them)
-    lines: tuple[AgentGrant, ...] = ()   # every line that matched, strongest first
+    role: str | None                     # the strongest ROLE line's role; None = no role line names them
+    manual_only: bool = False            # every line that gives `write` demands approval (one without it frees them)
+    lines: tuple[AgentGrant, ...] = ()   # every line that matched, strongest first (role lines, then capability lines)
+    #: The union of what every matching line grants, closed under the dependency rule.
+    permissions: frozenset[str] = frozenset()
 
     @property
     def basis(self) -> str:
         return f"grant:{self.lines[0].subject_key}" if self.lines else "none"
+
+    def line_for(self, permission: str) -> AgentGrant | None:
+        """The strongest matching line that holds `permission`."""
+        return next((ln for ln in self.lines if roles.holds(ln.permissions, permission)), None)
+
+    def line_opening(self, capability: str) -> AgentGrant | None:
+        """The strongest matching line that opens `capability`."""
+        return next((ln for ln in self.lines if roles.can_use(ln.permissions, capability)), None)
 
 
 def lines_for(agent) -> list[AgentGrant]:
@@ -106,8 +130,13 @@ def matches(line: AgentGrant, asker: Asker) -> bool:
     if line.kind == AgentGrant.PERSON:
         return asker.user is not None and getattr(asker.user, "pk", None) == line.user_id
     if line.kind == AgentGrant.WORKSPACE:
-        return (perms.role_meets(asker.role_in(line.subject_workspace_id), line.at_least)
-                and (not line.domain or asker.domain == line.domain))
+        if line.domain and asker.domain != line.domain:
+            return False
+        if perms.role_meets(asker.role_in(line.subject_workspace_id), line.at_least):
+            return True
+        # "...or any workspace below it": the subject's own subtree, at the same floor.
+        return line.include_below and any(perms.role_meets(asker.role_in(s), line.at_least)
+                                          for s in asker.below(line.subject_workspace_id))
     if line.kind == AgentGrant.DOMAIN:
         if line.verified and not asker.verified:
             return False
@@ -120,16 +149,20 @@ def matches(line: AgentGrant, asker: Asker) -> bool:
 
 
 def resolve(agent, asker: Asker, lines: list[AgentGrant] | None = None) -> Resolution:
-    """The strongest role the access list gives `asker` on `agent`.
+    """What the access list gives `asker` on `agent`: the union of their lines' permissions.
 
     `lines` is `lines_for(agent)` when the caller already read it (a roster resolving
     many people)."""
     found = [ln for ln in (lines_for(agent) if lines is None else lines) if matches(ln, asker)]
     if not found:
         return Resolution(None)
-    found.sort(key=lambda ln: -roles.rank(ln.role))
-    top = [ln for ln in found if ln.role == found[0].role]
-    return Resolution(found[0].role, manual_only=all(ln.manual_only for ln in top), lines=tuple(found))
+    # Role lines first, strongest first; then the capability lines by name.
+    found.sort(key=lambda ln: (-roles.rank(ln.role), ln.capability))
+    role = roles.highest(ln.role for ln in found)
+    writers = [ln for ln in found if roles.holds(ln.permissions, roles.WRITE)]
+    return Resolution(role, manual_only=bool(writers) and all(ln.manual_only for ln in writers),
+                      lines=tuple(found),
+                      permissions=roles.ROLES.close(set().union(*(ln.permissions for ln in found))))
 
 
 # --- editing the list -----------------------------------------------------------------
@@ -139,13 +172,20 @@ class LineError(ValueError):
 
 
 _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
+_CAPABILITY = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 #: Roles a person can ADD today. `admin` stays `Agent.is_admin` (owner, workspace owner,
-#: `AgentAdmin`); folding it into the list is the last step of the spec.
-ADDABLE = (roles.EDITOR, roles.USER, roles.VIEWER)
-#: Kinds whose members are identified only by an address a message can claim. They can open
-#: capabilities (viewer, user); they cannot run the whole agent — that takes a named person or a
-#: workspace's people. (Rules published before the list are carried over as they were.)
+#: `AgentAdmin`); folding it into the list is a follow-up.
+ADDABLE = roles.GRANTABLE
+#: Kinds whose members are identified only by an address a message can claim. They can give
+#: `read_only` or open a named capability; they can never give a role that contains `write`
+#: (that takes a named person or a workspace's people), whatever that role is called.
+#: (Rules published before the list are carried over as they were.)
 ADDRESS_ONLY = (AgentGrant.DOMAIN, AgentGrant.CONTACT)
+
+
+def grants_write(role: str | None) -> bool:
+    """Does `role` let its holder drive the whole agent? The permission the rails are about."""
+    return roles.allows(role, roles.WRITE)
 
 
 def _person(actor, user_id, email):
@@ -159,17 +199,36 @@ def _person(actor, user_id, email):
     return user
 
 
-def check_line(actor, *, kind, role, user_id=None, email=None, workspace="", at_least="", domain="",
-               verified=True, scope_is_workspace=False):
-    """Validate one line a person is adding; returns the normalised field dict."""
+def check_role(kind, role: str | None) -> None:
+    """The rails on WHICH role a kind of line may give. Raises LineError."""
     if role not in ADDABLE:
         raise LineError(f"role must be one of {list(ADDABLE)}; to make someone an admin of the agent, "
                         "add them as an admin")
-    if kind in ADDRESS_ONLY and role == roles.EDITOR:
-        raise LineError("a line that names people only by their address can give viewer or user, not "
-                        "editor: name the person, or everyone in a workspace")
+    if kind in ADDRESS_ONLY and grants_write(role):
+        raise LineError("a line that names people only by their address can give read_only or open a "
+                        f"named capability, not {role} (it lets them drive the whole agent): name the "
+                        "person, or everyone in a workspace")
+
+
+def check_line(actor, *, kind, role=None, capability=None, user_id=None, email=None, workspace="",
+               at_least="", domain="", verified=True, include_below=False, scope_is_workspace=False):
+    """Validate one line a person is adding; returns the normalised field dict.
+
+    A line grants ONE role or, rarely, ONE named capability (`capability`)."""
+    capability = (capability or "").strip()
+    if bool(role) == bool(capability):
+        raise LineError("a line gives either a role or one named capability, not both and not neither")
+    if capability:
+        if not _CAPABILITY.match(capability):
+            raise LineError(f"{capability!r} is not a capability name")
+        role = ""
+    else:
+        check_role(kind, role)
     domain = (domain or "").strip().lower().lstrip("@")
-    fields: dict = {"kind": kind, "role": role, "domain": "", "at_least": "", "verified": True}
+    if include_below and kind != AgentGrant.WORKSPACE:
+        raise LineError("'or any workspace below it' only applies to a line naming a workspace")
+    fields: dict = {"kind": kind, "role": role, "capability": capability, "domain": "", "at_least": "",
+                    "verified": True, "include_below": False}
     if kind == AgentGrant.PERSON:
         fields["user"] = _person(actor, user_id, email)
     elif kind == AgentGrant.WORKSPACE:
@@ -179,7 +238,8 @@ def check_line(actor, *, kind, role, user_id=None, email=None, workspace="", at_
             raise LineError(f"at_least must be a workspace role, not {at_least!r}")
         if domain and not _DOMAIN.match(domain):
             raise LineError(f"{domain!r} is not a domain")
-        fields.update(subject_workspace_id=workspace, at_least=at_least, domain=domain, verified=False)
+        fields.update(subject_workspace_id=workspace, at_least=at_least, domain=domain, verified=False,
+                      include_below=bool(include_below))
     elif kind in ADDRESS_ONLY:
         if domain and not _DOMAIN.match(domain):
             raise LineError(f"{domain!r} is not a domain")
@@ -201,7 +261,8 @@ def describe(line: AgentGrant) -> str:
         return getattr(line.user, "email", "") or f"user {line.user_id}"
     if line.kind == AgentGrant.WORKSPACE:
         floor = f", {line.at_least} or above" if line.at_least else ""
-        return f"Everyone in {line.subject_workspace_id}{floor}{d}"
+        below = " or any workspace below it" if line.include_below else ""
+        return f"Everyone in {line.subject_workspace_id}{below}{floor}{d}"
     if line.kind == AgentGrant.DOMAIN:
         return f"Anyone{d}{proof}"
     return f"A known visitor or sender{d}{proof}"

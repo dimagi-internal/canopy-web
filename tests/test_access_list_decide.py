@@ -21,10 +21,10 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 M, G = WorkspaceMembership, AgentGrant
 
-#: A viewer capability (`ask`, open to contacts) and a user one (`canopy`, members only).
+#: `ask` is what `read` opens; `canopy` is a door only a line that names it (or `write`) opens.
 IFACE = {"capabilities": {
-    "ask": {"role": "viewer", "tools": ["Read"]},
-    "canopy": {"role": "user", "tools": ["Read", "Grep"]},
+    "ask": {"tools": ["Read"]},
+    "canopy": {"tools": ["Read", "Grep"]},
 }}
 
 
@@ -45,6 +45,7 @@ def w():
 
 
 def _line(w, role, scope="agent", **kw):
+    """A line giving `role`, or (role "") the one capability in `capability=`."""
     where = {"agent": w["agent"]} if scope == "agent" else {"workspace": w[scope]}
     return G.objects.create(**where, role=role, **kw)
 
@@ -86,47 +87,59 @@ def test_a_line_that_says_manual_only_is_the_old_editor_tier(w):
     assert d.via == "Everyone in connect, editor or above"
 
 
-def test_a_confined_decision_is_a_viewer_or_a_user_by_the_capability_it_uses(w):
+def test_a_confined_decision_is_a_read_only_role_or_a_named_capability(w):
     d = access.decide(w["agent"], w["vw"], verified=True, capability="ask")
     assert (d.access, d.agent_role) == (access.NONE, None)        # nothing on the list names them
-    # A connect viewer with an explicit list line: the capability decides viewer vs user.
-    _line(w, roles.USER, kind=G.PERSON, user=w["vw"])
+    # A connect viewer with a line naming ONE capability: a door, not a role.
+    _line(w, "", kind=G.PERSON, user=w["vw"], capability="canopy")
     d = access.decide(w["agent"], w["vw"], verified=True, capability="canopy")
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", roles.USER)
+    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", None)
+    assert d.permissions == {roles.use("canopy")} and d.source.startswith("list:person:")
+    assert access.decide(w["agent"], w["vw"], verified=True, capability="ask").access == access.NONE
 
 
 # --- the list is a way in --------------------------------------------------------------
 
-def test_a_colleague_by_address_is_a_viewer_through_a_domain_line_with_slack_proof(w):
+def test_a_colleague_by_address_is_read_only_through_a_domain_line_with_slack_proof(w):
     """Ismaïla: an editor of `dimagi`, not a member of `connect`, writing in from Slack."""
     contact = _contact(w, "idiene@dimagi.com")
     turn = _slack_turn(w, contact)
     assert access.decide_for_turn(turn, w["agent"]).access == access.NONE        # nothing names him yet
-    _line(w, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
+    _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     d = access.decide_for_turn(turn, w["agent"])
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "ask", roles.VIEWER)
+    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "ask", roles.READ_ONLY)
     assert d.source.startswith("list:domain:dimagi.com")
 
 
 def test_an_address_that_is_not_proven_does_not_match_a_verified_domain_line(w):
-    _line(w, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
+    _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     guest = _slack_turn(w, _contact(w, "x@dimagi.com"), assurance="slack")        # a Slack guest: tier 2
     assert access.decide_for_turn(guest, w["agent"]).access == access.NONE
 
 
-def test_a_viewer_uses_viewer_capabilities_only_and_a_user_uses_both(w):
-    _line(w, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
+def test_read_only_opens_ask_and_a_second_line_opens_a_named_door(w):
+    _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
+    assert access.decide(w["agent"], contact, verified=True, capability="ask").access == access.CONFINED
     d = access.decide(w["agent"], contact, verified=True, capability="canopy")
-    assert d.access == access.NONE                                              # a viewer cannot use a user capability
-    G.objects.filter(agent=w["agent"]).update(role=roles.USER)
+    assert d.access == access.NONE                                              # read opens `ask` and nothing else
+    _line(w, "", kind=G.CONTACT, domain="dimagi.com", capability="canopy")
     d = access.decide(w["agent"], contact, verified=True, capability="canopy")
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", roles.USER)
+    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", roles.READ_ONLY)
+    assert d.permissions == {roles.READ, roles.use("canopy")}
+
+
+def test_write_drives_the_whole_agent_whatever_the_role_is_called(w):
+    _line(w, roles.READ_WRITE, kind=G.PERSON, user=w["vw"])
+    d = access.decide(w["agent"], w["vw"], verified=True)
+    assert (d.access, d.agent_role, d.manual_only, d.may_request_auto) == (
+        access.FULL, roles.READ_WRITE, False, False)
+    assert d.permissions >= {roles.READ, roles.WRITE} and roles.AGENT_EDIT not in d.permissions
 
 
 def test_a_line_cannot_use_a_capability_the_agent_does_not_have(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
-    _line({**w, "agent": bare}, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
+    _line({**w, "agent": bare}, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
     assert access.decide(bare, contact, verified=True).access == access.NONE
 
@@ -153,13 +166,13 @@ def test_the_strongest_line_wins_even_when_a_weaker_one_also_names_them(w):
     editor = get_user_model().objects.create_user("ce", "ce@elsewhere.org", "pw")
     M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
     _line(w, roles.EDITOR, kind=G.PERSON, user=editor)
-    _line(w, roles.VIEWER, kind=G.WORKSPACE, subject_workspace=w["connect"])
+    _line(w, roles.READ_ONLY, kind=G.WORKSPACE, subject_workspace=w["connect"])
     d = access.decide(w["agent"], editor, verified=True)
     assert (d.access, d.agent_role) == (access.FULL, roles.EDITOR)
 
 
 def test_a_workspace_default_reaches_the_agent_unless_it_opts_out(w):
-    G.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.VIEWER)
+    G.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.READ_ONLY)
     contact = _contact(w, "idiene@dimagi.com")
     assert access.decide(w["agent"], contact, verified=True).access == access.CONFINED
     Agent.objects.filter(pk=w["agent"].pk).update(inherit_workspace_defaults=False)
@@ -169,7 +182,7 @@ def test_a_workspace_default_reaches_the_agent_unless_it_opts_out(w):
 
 def test_the_sensitive_data_rule_still_confines_a_listed_editor(w):
     iface = {**IFACE, "capabilities": {**IFACE["capabilities"],
-             "data": {"role": "user", "tools": ["Read"], "data": "sensitive",
+             "data": {"tools": ["Read"], "data": "sensitive",
                      "sites": ["connect-labs"]}}}
     Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(iface))
     w["agent"].refresh_from_db()
@@ -180,10 +193,11 @@ def test_the_sensitive_data_rule_still_confines_a_listed_editor(w):
 
 
 def test_the_roster_shows_what_the_list_gives(w):
-    _line(w, roles.USER, kind=G.PERSON, user=w["vw"])
+    _line(w, roles.READ_ONLY, kind=G.PERSON, user=w["vw"])
+    _line(w, "", kind=G.PERSON, user=w["vw"], capability="canopy")
     row = next(r for r in access.roster(w["agent"]) if r["user_id"] == w["vw"].pk)
     assert row["access"] == access.CONFINED and row["capabilities"] == ["ask", "canopy"]
-    assert (row["role"], row["source"]) == (roles.USER, f"list:person:{w['vw'].pk}")
+    assert (row["role"], row["source"]) == (roles.READ_ONLY, f"list:person:{w['vw'].pk}")
     assert row["via"] == "vw@dimagi.com"
     rows = {r["user_id"]: r for r in access.roster(w["agent"])}
     assert (rows[w["owner"].pk]["role"], rows[w["owner"].pk]["source"]) == (roles.OWNER, roles.OWNER)
@@ -195,7 +209,7 @@ def test_the_envelope_tells_an_agent_the_role_and_why(w):
     turn = _slack_turn(w, _contact(w, "idiene@dimagi.com"))
     env = caller_context.build(turn)
     assert (env["role"], env["source"]) == (None, "")                          # refused: nothing names him
-    _line(w, roles.VIEWER, kind=G.DOMAIN, domain="dimagi.com")
+    _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     env = caller_context.build(turn)
-    assert env["role"] == roles.VIEWER and env["source"].startswith("list:domain:dimagi.com")
+    assert env["role"] == roles.READ_ONLY and env["source"].startswith("list:domain:dimagi.com")
     assert env["relationship"] == "contact"                                    # the older word is still sent

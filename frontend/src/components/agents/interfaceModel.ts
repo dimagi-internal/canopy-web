@@ -3,18 +3,9 @@
 // copy back, so whatever the form has no control for (`pages`, `version`, a field added to the
 // parser tomorrow) rides along untouched. ACE's published interface loads and saves unchanged.
 
-export type CapabilityRole = 'viewer' | 'user'
-
-// The lowest role that may open a capability. Who HAS a role is the agent's access list, not this.
-export const CAPABILITY_ROLES: readonly { value: CapabilityRole; label: string }[] = [
-  { value: 'viewer', label: 'Viewer — anyone the access list gives at least viewer' },
-  { value: 'user', label: 'User — only users and above' },
-]
-
 export type Capability = {
   description?: string
-  // Absent means 'user', the server's default.
-  role?: CapabilityRole
+  // A capability says what it is, never who may use it: that is a line on the access list.
   entry?: string | null
   tools?: string[]
   bash?: string[]
@@ -67,7 +58,6 @@ const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob', 'mcp__*canopy-web__who_is_askin
 export function askCapability(slug: string): Capability {
   return {
     description: `Ask ${slug} a question.`,
-    role: 'viewer',
     entry: `/${slug}:ask --thread {thread_id}`,
     tools: [...READ_ONLY_TOOLS],
     bash: [],
@@ -83,7 +73,6 @@ export function askCapability(slug: string): Capability {
 export function siteCapability(site: string): Capability {
   return {
     description: `Ask about what you are looking at on ${site}.`,
-    role: 'viewer',
     entry: null,
     tools: ['Read', 'Grep', 'Glob', 'Skill', 'ToolSearch', 'mcp__*canopy-web__who_is_asking', 'mcp__*canopy-web__current_page'],
     bash: [],

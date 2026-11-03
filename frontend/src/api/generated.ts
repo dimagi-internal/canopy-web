@@ -5143,9 +5143,11 @@ export interface paths {
         readonly put?: never;
         /**
          * Add a line to this agent's access list (an agent admin)
-         * @description A line says who has which role: a person, everyone in a workspace, anyone at an email
-         *     domain, or a known visitor or sender. Roles you can add are viewer, user and editor; a
-         *     line that names people only by address (domain, contact) can give viewer or user.
+         * @description A line says who has what: a person, everyone in a workspace (optionally also any workspace
+         *     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
+         *     (read_only, read_write, editor) or, rarely, one named capability. A line that names people only
+         *     by address (domain, contact) can give read_only or a capability, never a role that drives the
+         *     whole agent.
          */
         readonly post: operations["add_access_line"];
         readonly delete?: never;
@@ -25387,7 +25389,7 @@ export interface components {
              */
             readonly may_request_auto: boolean;
             /** Role */
-            readonly role?: ("owner" | "admin" | "editor" | "user" | "viewer" | "system") | null;
+            readonly role?: ("owner" | "admin" | "editor" | "read_write" | "read_only" | "system") | null;
             /**
              * Source
              * @default
@@ -26048,6 +26050,11 @@ export interface components {
             readonly who: string;
             /** Role */
             readonly role: string;
+            /**
+             * Capability
+             * @default
+             */
+            readonly capability: string;
             /** User Id */
             readonly user_id?: number | null;
             /** Subject Workspace */
@@ -26057,6 +26064,11 @@ export interface components {
              * @default
              */
             readonly at_least: string;
+            /**
+             * Include Below
+             * @default false
+             */
+            readonly include_below: boolean;
             /**
              * Domain
              * @default
@@ -26114,10 +26126,12 @@ export interface components {
             readonly role: string;
             /** Can */
             readonly can: readonly string[];
+            /** Permissions */
+            readonly permissions?: readonly string[];
         };
         /**
          * AccessLineIn
-         * @description One line to add: who, and what role they get.
+         * @description One line to add: who, and what they get: ONE role, or (rarely) ONE named capability.
          */
         readonly AccessLineIn: {
             /**
@@ -26125,11 +26139,13 @@ export interface components {
              * @enum {string}
              */
             readonly kind: "person" | "workspace" | "domain" | "contact";
+            /** Role */
+            readonly role?: ("read_only" | "read_write" | "editor") | null;
             /**
-             * Role
-             * @enum {string}
+             * Capability
+             * @default
              */
-            readonly role: "viewer" | "user" | "editor";
+            readonly capability: string;
             /** User Id */
             readonly user_id?: number | null;
             /** Email */
@@ -26144,6 +26160,11 @@ export interface components {
              * @default
              */
             readonly at_least: string;
+            /**
+             * Include Below
+             * @default false
+             */
+            readonly include_below: boolean;
             /**
              * Domain
              * @default
@@ -26168,7 +26189,7 @@ export interface components {
         /** AccessLinePatch */
         readonly AccessLinePatch: {
             /** Role */
-            readonly role?: ("viewer" | "user" | "editor") | null;
+            readonly role?: ("read_only" | "read_write" | "editor") | null;
             /** Manual Only */
             readonly manual_only?: boolean | null;
             /** Note */
@@ -26194,10 +26215,10 @@ export interface components {
              */
             readonly can_edit: boolean;
             /**
-             * Can Give Editor
+             * Can Give Write
              * @default false
              */
-            readonly can_give_editor: boolean;
+            readonly can_give_write: boolean;
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {

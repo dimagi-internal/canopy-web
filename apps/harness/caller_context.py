@@ -685,10 +685,9 @@ def _access_help(turn, agent, rel: str) -> dict | None:
     return {
         "your_role": grant.get("role") or rel,
         "workspace": agent.workspace_id,
-        "role_needed_for_full": roles.EDITOR,
+        "role_needed_for_full": roles.lowest_role_with(roles.WRITE),
         "who_can_grant": (f"{agent.slug}'s owner or an admin: add you to the agent's access list "
-                          f"as {roles.EDITOR}, or to the {agent.workspace_id} workspace as an "
-                          "editor or above"),
+                          f"as {roles.lowest_role_with(roles.WRITE)} or {roles.EDITOR}"),
     }
 
 

@@ -79,7 +79,7 @@ def test_a_confined_caller_is_told_what_would_change_it(ctx):
     turn = _email(agent, headers=HDRS)
     turn.capability = "ask"
     help_ = caller_context.build(turn)["access_help"]
-    assert help_["workspace"] == "canopy" and help_["role_needed_for_full"] == "editor"
+    assert help_["workspace"] == "canopy" and help_["role_needed_for_full"] == "read_write"
     assert help_["your_role"] and "owner or an admin" in help_["who_can_grant"]
     assert owner.email not in str(help_)
     turn.capability = ""

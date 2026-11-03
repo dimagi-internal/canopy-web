@@ -28,16 +28,15 @@ from tests.access_helpers import publish
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 
-DATA = {"role": "viewer", "sites": ["connect-labs"], "data": "sensitive",
+DATA = {"sites": ["connect-labs"], "data": "sensitive",
         "tools": ["Read", "Grep", "Glob", "Skill", "ToolSearch",
                   "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]}
 IFACE = {"capabilities": {"data": DATA,
-                          "ask": {"role": "user", "tools": ["Read", "Bash"]}}}
+                          "ask": {"tools": ["Read", "Bash"]}}}
 #: Who the access list lets in, by capability: the old `callers` the tests were written with.
 WHO = {"data": ["contact", "member"], "ask": ["member"], "connect": ["contact"]}
 SOURCE = """capabilities:
   data:
-    role: viewer
     sites: [connect-labs]
     data: sensitive
     tools: [Read, Grep, Glob, Skill, ToolSearch, "mcp__*canopy-web__current_page",
@@ -156,7 +155,7 @@ def test_a_person_sets_it_and_the_change_is_audited(w):
 def test_turning_it_off_is_audited(w):
     _put(_client(w["owner"]), "labsdata", source=SOURCE)
     r = _put(_client(w["owner"], stepped_up=False), "labsdata",
-             source="capabilities:\n  ask:\n    role: user\n")
+             source="capabilities:\n  ask:\n    description: Ask\n")
     assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
     assert not sensitive_data.handles_sensitive(w["agent"], "data")
@@ -224,8 +223,8 @@ def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
 def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
     # The sensitive door takes a user; a workspace viewer's line makes them only a viewer.
     _declare(w["agent"], w["owner"], doc={"capabilities": {
-        "data": {**DATA, "role": "user"},
-        "ask": {"role": "viewer", "tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})
+        "data": {**DATA},
+        "ask": {"tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})
     d = _turn(w, w["viewer"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
     assert d.access == access.NONE and "'data' does not list you" in d.reason
 
@@ -274,11 +273,9 @@ SWITCHABLE = """# who may read a host's data
 capabilities:
   data:
     # the site's data door
-    role: viewer
     sites: [connect-labs]
     tools: [Read, Grep, "mcp__*canopy-web__current_page"]
   ask:
-    role: user
     tools: [Read, Bash]
 """
 
@@ -303,7 +300,7 @@ def test_with_sensitive_writes_one_line_and_keeps_every_comment():
 
 
 def test_with_sensitive_refuses_a_layout_it_cannot_edit_by_line():
-    flow = 'capabilities: {data: {role: viewer, sites: [connect-labs]}}\n'
+    flow = 'capabilities: {data: {sites: [connect-labs]}}\n'
     with pytest.raises(sensitive_data.SourceEditError):
         sensitive_data.with_sensitive(flow, "data", True)
     with pytest.raises(sensitive_data.SourceEditError):

@@ -698,12 +698,12 @@ class AgentAccessRowOut(StrictModel):
     manual_only: bool = False
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False
-    # WHERE they stand on the agent's role ladder (owner | admin | editor | user | viewer;
-    # null when the agent lets them in nowhere) and what put them there (see
+    # WHERE they stand on the agent's role table (owner | admin | editor | read_write | read_only;
+    # null when the agent lets them in nowhere, or only through a named capability) and what put them there (see
     # `AccessListOut`). `agent_role` above is the older three-word view and stays for
     # readers that have not moved.
     # `system` is the agent's own login: not a person, and not on the ladder.
-    role: Literal["owner", "admin", "editor", "user", "viewer", "system"] | None = None
+    role: Literal["owner", "admin", "editor", "read_write", "read_only", "system"] | None = None
     source: str = ""
     # What put them there, in words ("Everyone in dimagi", "Anyone at @dimagi.com (verified)",
     # "Owns the workspace"); "" when it is just the role the workspace gives an editor.
@@ -3553,14 +3553,16 @@ AgentDetailOut.model_rebuild()
 # ---- The access list (docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md) ----
 
 class AccessLineIn(StrictModel):
-    """One line to add: who, and what role they get."""
+    """One line to add: who, and what they get: ONE role, or (rarely) ONE named capability."""
 
     kind: Literal["person", "workspace", "domain", "contact"]
-    role: Literal["viewer", "user", "editor"]
+    role: Literal["read_only", "read_write", "editor"] | None = None
+    capability: str = ""                # instead of a role: open just this capability
     user_id: int | None = None
     email: str | None = None            # a person, by the address on their canopy account
     workspace: str = ""                 # kind=workspace: everyone in this workspace
     at_least: str = ""                  # ... who hold at least this workspace role ("" = any)
+    include_below: bool = False         # ... or in any workspace below it (its own subtree)
     domain: str = ""                    # kind=domain/contact, or narrowing a workspace line
     verified: bool = True
     manual_only: bool = False
@@ -3568,7 +3570,7 @@ class AccessLineIn(StrictModel):
 
 
 class AccessLinePatch(StrictModel):
-    role: Literal["viewer", "user", "editor"] | None = None
+    role: Literal["read_only", "read_write", "editor"] | None = None
     manual_only: bool | None = None
     note: str | None = Field(default=None, max_length=300)
 
@@ -3580,10 +3582,14 @@ class AccessLineOut(StrictModel):
     scope_workspace: str | None = None
     kind: str
     who: str
+    #: The named role the line grants ("" on a line that opens one capability instead).
     role: str
+    #: The one capability the line opens ("" on a role line).
+    capability: str = ""
     user_id: int | None = None
     subject_workspace: str | None = None
     at_least: str = ""
+    include_below: bool = False
     domain: str = ""
     verified: bool = True
     manual_only: bool = False
@@ -3607,6 +3613,8 @@ class AccessImplicitOut(StrictModel):
 class AccessRoleOut(StrictModel):
     role: str
     can: list[str]
+    #: The permissions the role is made of (`read`, `write`, `agent_edit`, `admin`, `own`).
+    permissions: list[str] = Field(default_factory=list)
 
 
 class AccessListOut(StrictModel):
@@ -3628,6 +3636,6 @@ class AgentDefaultsOut(StrictModel):
     lines: list[AccessLineOut]
     roles: list[AccessRoleOut]
     can_edit: bool = False          # a workspace admin
-    can_give_editor: bool = False   # the workspace owner: a default that lets people run every agent
+    can_give_write: bool = False    # the workspace owner: a default that lets people drive every agent
 
 

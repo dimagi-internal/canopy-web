@@ -71,8 +71,8 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
         if d.access == access.FULL:
             out.update(access="full", basis=EDITOR)
         elif d.access == access.CONFINED:
-            caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
-                          if iface_mod.role_opens(d.agent_role, c))
+            caps = sorted(n for n in (iface.get("capabilities") or {})
+                          if iface_mod.opens(d.permissions, n))
             out.update(access="confined", basis=CAPABILITIES, capabilities=caps)
         else:
             out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE

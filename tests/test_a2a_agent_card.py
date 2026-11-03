@@ -44,7 +44,7 @@ ACE = {
             "input": {"opportunity_id": "integer"},
             "tools": ["Skill"],
         },
-        "deploy": {"description": "Ship it.", "role": "user", "bash": ["git push"]},
+        "deploy": {"description": "Ship it.", "bash": ["git push"]},
     },
 }
 INTERNAL = ["/ace:ask", "who_is_asking", "canopy email read", "{cwd}", "labs-marketplace://",
@@ -102,15 +102,16 @@ def test_public_card_lists_only_what_an_outsider_can_reach(w):
     ask = _skills(body)["ask"]
     assert ask["name"] == "Ask"
     assert ask["description"] == "Ask ACE about your programme."
-    # Only the lines that name outsiders become tags on the public card. Lines are the agent's,
-    # not a capability's: every viewer capability is open to every viewer line.
-    assert ask["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
+    # Only the lines that name outsiders become tags on the public card, and only the ones that
+    # open THIS capability: `ask` is read (the unverified contact line); `marketplace` is a door
+    # named by a verified partner.org line.
+    assert ask["tags"] == ["caller:contact"]
     assert ask["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
     mkt = _skills(body)["marketplace"]
     assert mkt["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
-    # A known visitor with no proof (the `contact` line) reaches both viewer capabilities, so both
-    # have a contact-token entry point; a capability reached only by verified lines would not.
-    assert mkt["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
+    # A known visitor with no proof (the `contact` line) reaches `ask`, so it has a contact-token
+    # entry point; a capability reached only by verified lines (`marketplace`) has none.
+    assert "securityRequirements" not in mkt
 
 
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE)
@@ -188,11 +189,12 @@ def test_a_member_sees_public_plus_their_own(w):
     r = _pat(w["mem"]).get(_ext_url("ace"))
     assert r.status_code == 200, r.content
     skills = _skills(r.json())
-    assert set(skills) == {"ask", "marketplace", "summarise_opportunity", "deploy"}   # every user capability
+    # Public plus the doors their lines name; `deploy` is named by no line, so only admins have it.
+    assert set(skills) == {"ask", "marketplace", "summarise_opportunity"}
     # A member-only skill has no A2A entry point: members use the agent's plugin.
     assert "securityRequirements" not in skills["summarise_opportunity"]
     assert "inputModes" not in skills["summarise_opportunity"]
-    assert skills["ask"]["tags"] == ["caller:contact", "caller:member", "domain:partner.org", "verified-sender"]
+    assert skills["ask"]["tags"] == ["caller:contact", "caller:member"]
     assert not any(i["url"].endswith("/api/mcp/") for i in r.json()["supportedInterfaces"])
     assert r["Cache-Control"] == "private, max-age=60"
     assert "Authorization" in r["Vary"]
@@ -207,7 +209,7 @@ def test_owner_and_admin_see_everything(w):
         c.force_login(w[who])
         skills = _skills(c.get(_ext_url("ace")).json())
         assert set(skills) == {"ask", "marketplace", "summarise_opportunity", "deploy"}, who
-        assert skills["deploy"]["tags"] == ["caller:member"]   # a user capability: every user line reaches it
+        assert skills["deploy"]["tags"] == ["caller:admin"]    # no line names it: only the agent's admins
 
 
 def test_a_full_rule_member_sees_everything(w):
