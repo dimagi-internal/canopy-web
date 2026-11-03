@@ -23,12 +23,12 @@ from apps.canopy_sessions.models import Session
 from apps.embedding import assertions, delegation
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
+from tests.token_helpers import bearer_client
 
 pytestmark = pytest.mark.django_db
 
-IFACE = {"capabilities": {"connect": {"callers": ["contact", "member"],
-                                      "tools": ["mcp__*canopy-web__who_is_asking"]}}}
+IFACE = {"capabilities": {"connect": {"tools": ["mcp__*canopy-web__who_is_asking"]}}}
 
 
 @pytest.fixture(autouse=True)
@@ -52,7 +52,10 @@ def site(key):
     labsdata = Agent.objects.create(slug="labsdata", name="Labs data", workspace=ws, owner=owner)
     hidden = Agent.objects.create(slug="hidden", name="Not offered", workspace=ws, owner=owner)
     for agent in (ace, labsdata, hidden):
-        publish(agent, IFACE)
+        declare(agent, IFACE["capabilities"])
+        allow(agent, capability="connect", contact=True)
+        allow(agent, capability="connect")
+        editors_run(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.public_keys = [public_pem(key)]
     app.save()
@@ -73,10 +76,6 @@ def _arrive(key, *, bound="", named=None, requirements=(), subject="u-42", email
                          data={"assertion": assertion,
                                "agent_slug": bound if named is None else named},
                          content_type="application/json")
-
-
-def _bearer(raw):
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
 def _token(response):
@@ -120,12 +119,12 @@ def test_a_member_arrival_is_bound_too(site, key):
     assert DelegatedToken.objects.get().bound_agent == site["labsdata"]
     raw = r.json()["token"]
     # The embed picker offers only the page's agent…
-    assert [a["slug"] for a in _bearer(raw).get("/api/embed/agents").json()] == ["labsdata"]
+    assert [a["slug"] for a in bearer_client(raw).get("/api/embed/agents").json()] == ["labsdata"]
     # …and no other agent's chat can be opened with this token.
-    refused = _bearer(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+    refused = bearer_client(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
                                 content_type="application/json")
     assert refused.status_code == 404
-    ok = _bearer(raw).post("/api/canopy-sessions/", {"agent_slug": "labsdata"},
+    ok = bearer_client(raw).post("/api/canopy-sessions/", {"agent_slug": "labsdata"},
                            content_type="application/json")
     assert ok.status_code == 200, ok.content
 
@@ -135,27 +134,27 @@ def test_a_member_arrival_is_bound_too(site, key):
 
 def test_a_bound_contact_reaches_only_its_agent(site, key):
     unbound = _token(_arrive(key, named="ace"))
-    ace_chat = _bearer(unbound).post("/api/contact/sessions", {"agent_slug": "ace"},
+    ace_chat = bearer_client(unbound).post("/api/contact/sessions", {"agent_slug": "ace"},
                                      content_type="application/json").json()["id"]
 
     raw = _token(_arrive(key, bound="labsdata"))
-    me = _bearer(raw).get("/api/contact/me").json()
+    me = bearer_client(raw).get("/api/contact/me").json()
     assert [a["slug"] for a in me["agents"]] == ["labsdata"]
-    assert _bearer(raw).post("/api/contact/sessions", {"agent_slug": "ace"},
+    assert bearer_client(raw).post("/api/contact/sessions", {"agent_slug": "ace"},
                              content_type="application/json").status_code == 404
-    mine = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "labsdata"},
+    mine = bearer_client(raw).post("/api/contact/sessions", {"agent_slug": "labsdata"},
                              content_type="application/json")
     assert mine.status_code == 200, mine.content
     # The visitor's earlier ACE conversation is neither listed nor reachable here.
-    listed = [s["id"] for s in _bearer(raw).get("/api/contact/sessions").json()]
+    listed = [s["id"] for s in bearer_client(raw).get("/api/contact/sessions").json()]
     assert listed == [mine.json()["id"]]
-    assert _bearer(raw).get(f"/api/contact/sessions/{ace_chat}").status_code == 404
-    send = _bearer(raw).post(f"/api/contact/sessions/{ace_chat}/send", {"text": "hi"},
+    assert bearer_client(raw).get(f"/api/contact/sessions/{ace_chat}").status_code == 404
+    send = bearer_client(raw).post(f"/api/contact/sessions/{ace_chat}/send", {"text": "hi"},
                              content_type="application/json")
     assert send.status_code == 404
     assert Session.objects.get(pk=ace_chat).messages.count() == 0
     # The unbound token still reaches both, as before.
-    assert _bearer(unbound).get(f"/api/contact/sessions/{ace_chat}").status_code == 200
+    assert bearer_client(unbound).get(f"/api/contact/sessions/{ace_chat}").status_code == 200
 
 
 def test_unlisting_the_bound_agent_does_not_widen_the_token(site):

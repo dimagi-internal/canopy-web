@@ -28,6 +28,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.sensitive import SENSITIVE, rewrap_for, unwrap, world
 from tests.fixtures.vault_zk import ref
+from tests.token_helpers import bearer_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -45,10 +46,6 @@ def w():
     x["login"], x["login_pat"] = login, raw
     grant_step_up(x["c"])
     return x
-
-
-def _bearer(raw):
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
 
 
 def _url(w):
@@ -76,7 +73,7 @@ def _passphrase_keyset(user, *, prf=False):
 
 def _make_key(w, **kw):
     body, priv = _passphrase_keyset(w["login"], **kw)
-    r = Client().put("/api/vault/keyset", body, content_type="application/json", **_bearer(w["login_pat"]))
+    r = Client().put("/api/vault/keyset", body, content_type="application/json", **bearer_headers(w["login_pat"]))
     return r, priv
 
 
@@ -93,7 +90,7 @@ def test_it_is_off_by_default_and_the_login_cannot_make_a_key(w):
 def test_only_an_admin_at_a_browser_after_a_step_up_turns_it_on(w):
     # A token cannot, the owner's included.
     owner_pat, _ = PersonalToken.create_for_user(user=w["user"], label="t")
-    r = Client().put(_url(w), {"enabled": True}, content_type="application/json", **_bearer(owner_pat))
+    r = Client().put(_url(w), {"enabled": True}, content_type="application/json", **bearer_headers(owner_pat))
     assert r.status_code == 403
     # A browser with no fresh step-up is asked for one.
     fresh = Client()
@@ -117,7 +114,7 @@ def test_only_an_admin_at_a_browser_after_a_step_up_turns_it_on(w):
 
 def test_an_agent_login_that_is_its_own_admin_still_cannot_turn_it_on(w):
     AgentAdmin.objects.create(agent=w["agent"], user=w["login"], granted_by=w["user"])
-    r = Client().put(_url(w), {"enabled": True}, content_type="application/json", **_bearer(w["login_pat"]))
+    r = Client().put(_url(w), {"enabled": True}, content_type="application/json", **bearer_headers(w["login_pat"]))
     assert r.status_code == 403
 
 
@@ -136,7 +133,7 @@ def test_with_it_on_the_login_makes_one_passphrase_key_without_a_step_up(w):
     r, _ = _make_key(w)
     assert r.status_code == 200, r.content
     assert r.json()["test_key"] is True
-    me = Client().get("/api/vault/keyset", **_bearer(w["login_pat"])).json()
+    me = Client().get("/api/vault/keyset", **bearer_headers(w["login_pat"])).json()
     assert me["test_key"] is True and me["exists"] is True
     state = w["c"].get(_url(w)).json()
     assert state["has_key"] and state["key_jkt"] == ecdh_es.jkt(me["public_jwk"])
@@ -157,7 +154,7 @@ def test_a_test_key_is_made_once_and_never_replaced(w):
     body, _ = _passphrase_keyset(w["login"])
     for replace in (False, True):
         r = Client().put("/api/vault/keyset", {**body, "replace": replace}, content_type="application/json",
-                         **_bearer(w["login_pat"]))
+                         **bearer_headers(w["login_pat"]))
         assert r.status_code == 409 and r.json()["error"] == "test_key_exists"
 
 
@@ -349,7 +346,7 @@ def test_turning_it_off_deletes_the_key_and_every_copy_it_was_given(w):
     assert w["c"].get(_url(w)).json()["conversations"] == 1
     # Turning it off needs no passkey: a token of an admin can.
     owner_pat, _ = PersonalToken.create_for_user(user=w["user"], label="t")
-    r = Client().put(_url(w), {"enabled": False}, content_type="application/json", **_bearer(owner_pat))
+    r = Client().put(_url(w), {"enabled": False}, content_type="application/json", **bearer_headers(owner_pat))
     assert r.status_code == 200, r.content
     assert r.json() == {**r.json(), "enabled": False, "has_key": False, "conversations": 0}
     assert not UserVaultKeyset.objects.filter(user=w["login"]).exists()

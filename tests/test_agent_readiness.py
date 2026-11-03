@@ -21,6 +21,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -40,18 +41,11 @@ def fleet(client):
     return {"client": client, "agent": agent, "user": jj, "ws": ws}
 
 
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
-
-
 def _post(user, body):
     return Client().post(
         "/api/agents/ace/bootstrap-report", data=body,
         content_type="application/json",
-        HTTP_AUTHORIZATION=f"Bearer {_pat(user)}",
+        HTTP_AUTHORIZATION=f"Bearer {pat_token(user)}",
     )
 
 

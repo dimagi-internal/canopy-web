@@ -20,8 +20,8 @@ from apps.harness import runner_protocol
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner, RunnerAccessToken, RunnerDeviceKey, RunnerFlag
 from apps.harness.schemas import HeartbeatIn
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -52,11 +52,6 @@ def _key_token(runner) -> str:
     return raw
 
 
-def _pat(user) -> str:
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
-
-
 def _beat(runner, raw):
     res = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").post(
         f"/api/harness/runners/{runner.pk}/heartbeat", data=BEAT, content_type="application/json")
@@ -72,19 +67,19 @@ def test_a_cloud_box_signed_in_with_its_device_key_is_believed(world):
 
 
 def test_the_same_report_with_its_admins_token_is_not(world):
-    assert _beat(world["cloud"], _pat(world["jj"])) == ("", "")
+    assert _beat(world["cloud"], pat_token(world["jj"])) == ("", "")
     assert not rr.runner_satisfies(world["cloud"], frozenset({rr.SENSITIVE_DATA}))
 
 
 def test_a_cloud_box_that_drops_to_a_persons_token_stops_counting(world):
     cloud = world["cloud"]
     _beat(cloud, _key_token(cloud))
-    assert _beat(cloud, _pat(world["jj"])) == ("", "")
+    assert _beat(cloud, pat_token(world["jj"])) == ("", "")
 
 
 def test_a_laptop_is_never_believed_even_with_its_own_key(world):
     assert _beat(world["laptop"], _key_token(world["laptop"])) == ("", "")
-    assert _beat(world["laptop"], _pat(world["jj"])) == ("", "")
+    assert _beat(world["laptop"], pat_token(world["jj"])) == ("", "")
     assert not rr.runner_satisfies(world["laptop"], frozenset({rr.SENSITIVE_DATA}))
 
 
@@ -121,4 +116,4 @@ async def _socket_beat(runner, raw):
 async def test_the_control_channel_follows_the_same_rule(world):
     cloud = world["cloud"]
     assert await _socket_beat(cloud, await database_sync_to_async(_key_token)(cloud)) == "sensitive_data"
-    assert await _socket_beat(cloud, await database_sync_to_async(_pat)(world["jj"])) == ""
+    assert await _socket_beat(cloud, await database_sync_to_async(pat_token)(world["jj"])) == ""

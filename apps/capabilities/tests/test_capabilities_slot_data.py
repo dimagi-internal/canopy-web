@@ -37,8 +37,9 @@ from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member
 from tests.fixtures.machines import a_machine
+from tests.token_helpers import pat_client
 
-from .helpers import MANIFEST, _as, _json, _pat, _publish
+from .helpers import MANIFEST, _as, _json, _publish
 
 pytestmark = pytest.mark.django_db
 
@@ -132,7 +133,7 @@ def test_put_permission_matrix(pool, tenancy, who, status):
 
 
 def test_the_agents_own_login_may_write_with_its_pat(pool, tenancy):
-    r = _put(_pat(tenancy["bot"]), public={"phone": "+1"}, secret={"pin": PIN})
+    r = _put(pat_client(tenancy["bot"]), public={"phone": "+1"}, secret={"pin": PIN})
     assert r.status_code == 200, r.content
     assert r.json()["updated_by"] == "ace@dimagi-ai.com"
 
@@ -149,9 +150,9 @@ def test_delete_permission_matrix(pool, tenancy, who, status):
 
 def test_the_agent_may_delete_its_own_slot_data(pool, tenancy):
     _seed(pool)
-    assert _pat(tenancy["bot"]).delete(f"{SLOTS}/worker-1").status_code == 204
+    assert pat_client(tenancy["bot"]).delete(f"{SLOTS}/worker-1").status_code == 204
     assert not CapabilitySlotData.objects.exists()
-    assert _pat(tenancy["bot"]).delete(f"{SLOTS}/worker-1").status_code == 204  # idempotent
+    assert pat_client(tenancy["bot"]).delete(f"{SLOTS}/worker-1").status_code == 204  # idempotent
 
 
 # ---- what a write may name ---------------------------------------------------
@@ -176,7 +177,7 @@ def test_a_browser_writes_a_slot_secret_only_after_a_passkey_step_up(tenancy, po
     r = _json(c, "put", f"{SLOTS}/worker-1", {"secret": {"pin": PIN}})
     assert r.status_code == 403 and r.json()["error"] == "step_up_required"
     assert not CapabilitySlotData.objects.exists()
-    assert _json(_pat(tenancy["owner"]), "put", f"{SLOTS}/worker-1", {"secret": {"pin": PIN}}).status_code == 200
+    assert _json(pat_client(tenancy["owner"]), "put", f"{SLOTS}/worker-1", {"secret": {"pin": PIN}}).status_code == 200
 
 
 def test_bad_values_are_refused_without_echoing_them(pool):
@@ -240,7 +241,7 @@ def test_the_listing_is_masked_for_everyone(pool, tenancy, who):
 
 def test_the_listing_says_who_holds_a_slot(pool, tenancy):
     _seed(pool)
-    lease = _take(_pat(tenancy["bot"])).json()
+    lease = _take(pat_client(tenancy["bot"])).json()
     one = pool.get(SLOTS).json()["slots"][0]
     assert one["held"] is True and one["lease_id"] == lease["lease_id"]
 
@@ -248,7 +249,7 @@ def test_the_listing_says_who_holds_a_slot(pool, tenancy):
 def test_the_listing_is_not_for_outsiders_and_is_open_to_the_agent(pool, tenancy):
     _seed(pool)
     assert _as(tenancy["outsider"]).get(SLOTS).status_code == 404
-    r = _pat(tenancy["bot"]).get(SLOTS)
+    r = pat_client(tenancy["bot"]).get(SLOTS)
     assert r.status_code == 200
     _no_secret_in(r.content.decode())
 
@@ -304,7 +305,7 @@ def test_nobody_to_seal_to_is_409_and_nothing_is_stored(pool, tenancy):
 
 def test_the_acquirer_gets_the_slot_data_on_acquire_and_on_get(pool, tenancy):
     _seed(pool)
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     lease = _take(bot).json()
     assert lease["status"] == "ready" and lease["slot"] == "worker-1"
     stored = CapabilitySlotData.objects.get().secret_zk
@@ -325,7 +326,7 @@ def test_the_acquirer_gets_the_slot_data_on_acquire_and_on_get(pool, tenancy):
 
 def test_a_long_poll_that_gets_the_slot_delivers_it(pool, tenancy, monkeypatch):
     _seed(pool)
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     held = _take(bot).json()
     queued = _take(bot, params={"slot": "worker-1"}).json()
     assert queued["status"] == "queued" and queued["slot_data"] is None
@@ -343,7 +344,7 @@ def test_a_long_poll_that_gets_the_slot_delivers_it(pool, tenancy, monkeypatch):
 
 def test_not_to_an_admin_or_another_editor_reading_the_lease(pool, tenancy):
     _seed(pool)
-    lease = _take(_pat(tenancy["bot"])).json()
+    lease = _take(pat_client(tenancy["bot"])).json()
     for who in ("owner", "editor"):
         r = _json(_as(tenancy[who]), "get", f"/api/capabilities/leases/{lease['lease_id']}")
         assert r.status_code == 200 and r.json()["slot_data"] is None
@@ -355,13 +356,13 @@ def test_an_editor_who_acquired_gets_it_and_the_agent_does_not(pool, tenancy):
     ed = _as(tenancy["editor"])
     lease = _take(ed).json()
     assert _open(tenancy, lease["slot_data"])["pin"] == PIN
-    r = _json(_pat(tenancy["bot"]), "get", f"/api/capabilities/leases/{lease['lease_id']}")
+    r = _json(pat_client(tenancy["bot"]), "get", f"/api/capabilities/leases/{lease['lease_id']}")
     assert r.json()["slot_data"] is None
 
 
 def test_never_in_a_list_or_capability_read(pool, tenancy):
     _seed(pool)
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     _take(bot)
     for path in ("/api/capabilities/leases", "/api/capabilities/leases?status=live",
                  "/api/agents/ace/capabilities"):
@@ -373,7 +374,7 @@ def test_never_in_a_list_or_capability_read(pool, tenancy):
 @pytest.mark.parametrize("end", ["release", "expire", "idle"])
 def test_not_once_the_lease_has_ended(pool, tenancy, end):
     _seed(pool)
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     lease = _take(bot).json()
     lid = lease["lease_id"]
     now = timezone.now()
@@ -392,21 +393,21 @@ def test_not_once_the_lease_has_ended(pool, tenancy, end):
 
 
 def test_a_slot_without_data_delivers_null(pool, tenancy):
-    lease = _take(_pat(tenancy["bot"])).json()
+    lease = _take(pat_client(tenancy["bot"])).json()
     assert lease["status"] == "ready" and lease["slot_data"] is None
     assert not Event.objects.filter(kind="capability.slot.secret_delivered").exists()
 
 
 def test_public_only_data_is_delivered_without_a_secret_event(pool, tenancy):
     _put(pool, public={"phone": "+1"})
-    lease = _take(_pat(tenancy["bot"])).json()
+    lease = _take(pat_client(tenancy["bot"])).json()
     assert lease["slot_data"] == {"public": {"phone": "+1"}, "sealed": {}, "agent_id": str(tenancy["agent"].pk)}
     assert not Event.objects.filter(kind="capability.slot.secret_delivered").exists()
 
 
 def test_data_for_a_slot_no_longer_declared_is_kept_but_never_delivered(pool, tenancy):
     _seed(pool, "worker-4")
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     lease = _take(bot, params={"slot": "worker-4"}).json()
     assert _open(tenancy, lease["slot_data"], "worker-4")["pin"] == PIN
     assert _publish(pool, {**POOL, "slots": ["worker-1", "worker-2", "worker-3"]}).status_code == 200
@@ -422,7 +423,7 @@ def test_data_for_a_slot_no_longer_declared_is_kept_but_never_delivered(pool, te
 def test_data_survives_a_republish_of_the_same_slots(pool, tenancy):
     _seed(pool)
     assert _publish(pool, {**POOL, "description": "changed"}).status_code == 200
-    assert _open(tenancy, _take(_pat(tenancy["bot"])).json()["slot_data"])["pin"] == PIN
+    assert _open(tenancy, _take(pat_client(tenancy["bot"])).json()["slot_data"])["pin"] == PIN
 
 
 # ---- never logged -------------------------------------------------------------
@@ -430,7 +431,7 @@ def test_data_survives_a_republish_of_the_same_slots(pool, tenancy):
 def test_no_secret_in_events_or_the_settings_audit(pool, tenancy):
     _seed(pool)
     _put(pool, secret={"pin": "OTHER-sentinel-2"})
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     lease = _take(bot).json()
     _json(bot, "get", f"/api/capabilities/leases/{lease['lease_id']}")
     bot.delete(f"/api/capabilities/leases/{lease['lease_id']}")

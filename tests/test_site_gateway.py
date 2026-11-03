@@ -25,7 +25,7 @@ from apps.host_grants import host_gateway
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
 from apps.tokens.models import AppCredential, AppCredentialAgent
-from tests.access_helpers import publish
+from tests.access_helpers import declare
 from tests.fixtures import site_gateway as sg
 
 pytestmark = pytest.mark.django_db
@@ -86,9 +86,8 @@ def test_with_no_ceiling_canopy_adds_no_narrowing_of_its_own(w, host):
     """An owner who sets no ceiling defers to the host: every tool the host lists for
     the visitor's grant (this stand-in host lists all three, a real one lists only its
     scopes' tools) is offered, and canopy names none of them."""
-    publish(w["agent"], {"capabilities": {
-        "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
-                    "tools": ["mcp__*canopy-web__who_is_asking"]}}})
+    declare(w["agent"], {"connect": {"sites": ["connect-labs"],
+                                     "tools": ["mcp__*canopy-web__who_is_asking"]}})
     _grant(w)
     with _visitor(w):
         out = _call(host, "site_tools", {}).structured_content
@@ -172,8 +171,7 @@ def test_a_conversation_on_another_site_is_refused(w, host):
 def test_a_capability_that_does_not_name_the_site_is_refused(w, host):
     _grant(w)
     Turn.objects.filter(pk=w["turn"].pk).update(capability="ask")
-    publish(w["agent"], {"capabilities": {
-        "ask": {"callers": ["contact", "member"], "tools": list(GATEWAY_TOOLS)}}})
+    declare(w["agent"], {"ask": {"tools": list(GATEWAY_TOOLS)}})
     _refused(w, host, "not set up to use")
 
 
@@ -310,7 +308,7 @@ def _declared(w):
     2026-10-22-sensitive-data-agents §6)."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    publish(w["agent"], {"capabilities": caps})
+    declare(w["agent"], caps)
 
 
 def test_the_same_turn_on_a_sensitive_runner_resolves(w):
@@ -394,7 +392,8 @@ def _reports_sensitive(runner):
 def _labsdata(w):
     agent = Agent.objects.create(slug="labsdata", name="Labs data", workspace=w["ws"],
                                  owner=w["owner"])
-    publish(agent, IFACE)
+    declare(agent, IFACE["capabilities"])
+    sg.let_visitors_in(agent)
     AppCredentialAgent.objects.create(app=w["app"], agent=agent)
     return agent
 

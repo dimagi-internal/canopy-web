@@ -14,8 +14,9 @@ from django.test import Client
 from apps.agents.models import Agent, PreferredAgent
 from apps.embedding import embed_apps
 from apps.passkeys.testing import grant_step_up
-from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
+from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import delegated_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -36,13 +37,8 @@ def site():
     return {"ws": ws, "owner": owner, "visitor": visitor, "app": app, **agents}
 
 
-def _bearer(app, user, bound=None):
-    raw, _ = DelegatedToken.issue(app=app, user=user, ttl_seconds=3600, bound_agent=bound)
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 def _default(site, user=None, bound=None):
-    body = Client().get("/api/embed/agents", **_bearer(site["app"], user or site["visitor"], bound)).json()
+    body = Client().get("/api/embed/agents", **delegated_headers(site["app"], user or site["visitor"], bound)).json()
     defaults = [a["slug"] for a in body if a["default"]]
     assert len(defaults) <= 1
     return defaults[0] if defaults else None
@@ -94,7 +90,7 @@ def test_a_preference_the_person_cannot_reach_is_passed_over(site):
 
 def test_the_preferred_flag_marks_the_persons_choice(site):
     PreferredAgent.objects.create(user=site["visitor"], agent=site["ada"])
-    body = Client().get("/api/embed/agents", **_bearer(site["app"], site["visitor"])).json()
+    body = Client().get("/api/embed/agents", **delegated_headers(site["app"], site["visitor"])).json()
     assert [a["slug"] for a in body if a["preferred"]] == ["ada"]
 
 
@@ -183,7 +179,7 @@ def test_a_person_cannot_prefer_an_agent_outside_their_workspaces(site):
 
 
 def test_the_panel_sets_the_visitors_default_among_the_sites_agents(site):
-    headers = _bearer(site["app"], site["visitor"])
+    headers = delegated_headers(site["app"], site["visitor"])
     r = Client().put("/api/embed/default-agent", data={"agent": "trellis"},
                      content_type="application/json", **headers)
     assert r.status_code == 200 and r.json()["agent"] == "trellis"
@@ -194,12 +190,12 @@ def test_the_panel_sets_the_visitors_default_among_the_sites_agents(site):
 def test_the_panel_cannot_set_an_agent_the_site_does_not_offer(site):
     Agent.objects.create(slug="elsewhere", name="Elsewhere", workspace=site["ws"])
     r = Client().put("/api/embed/default-agent", data={"agent": "elsewhere"},
-                     content_type="application/json", **_bearer(site["app"], site["visitor"]))
+                     content_type="application/json", **delegated_headers(site["app"], site["visitor"]))
     assert r.status_code == 404 and not PreferredAgent.objects.exists()
 
 
 def test_a_bound_panel_can_name_only_its_own_agent(site):
-    headers = _bearer(site["app"], site["visitor"], bound=site["labsdata"])
+    headers = delegated_headers(site["app"], site["visitor"], bound=site["labsdata"])
     r = Client().put("/api/embed/default-agent", data={"agent": "ada"},
                      content_type="application/json", **headers)
     assert r.status_code == 404

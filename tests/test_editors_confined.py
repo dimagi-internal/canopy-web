@@ -10,12 +10,11 @@ from django.contrib.auth.models import User
 from apps.agents import access, roles
 from apps.agents.interface import InterfaceError, parse, validate
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
-from apps.workspaces.models import Workspace, WorkspaceMembership as M
+from apps.workspaces.models import Workspace
+from apps.workspaces.models import WorkspaceMembership as M
+from tests.access_helpers import allow, declare, editors_run
 
-from tests.access_helpers import editors_run, publish
-
-ASK = {"ask": {"callers": ["member"], "tools": ["Read"]}}
-SUPPORT = {"editors": "confined", "capabilities": ASK}
+ASK = {"ask": {"tools": ["Read"]}}
 
 
 @pytest.mark.parametrize("value", ["confined", "full", "confine", "", None, True])
@@ -49,7 +48,8 @@ def _editors_are_users(agent, role=roles.READ_ONLY):
 
 
 def _support(w):
-    publish(w["agent"], {"capabilities": ASK}, editors=False)
+    declare(w["agent"], ASK)
+    allow(w["agent"], role=roles.READ_ONLY)
     _editors_are_users(w["agent"])
 
 
@@ -70,8 +70,7 @@ def test_editor_given_an_editor_line_is_full(w):
 
 
 def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
-    publish(w["agent"], {"capabilities": {"ask": {"tools": ["Read"]}, "data": {"tools": ["Read"]}}},
-            editors=False)
+    declare(w["agent"], {"ask": {"tools": ["Read"]}, "data": {"tools": ["Read"]}})
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE,
                               subject_workspace_id=w["agent"].workspace_id, at_least="editor",
                               capability="data")
@@ -82,7 +81,9 @@ def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
 
 
 def test_editors_who_run_the_agent_are_full_and_manual(w):
-    publish(w["agent"], {"capabilities": ASK})
+    declare(w["agent"], ASK)
+    allow(w["agent"], role=roles.READ_ONLY)
+    editors_run(w["agent"])
     d = access.decide(w["agent"], w["editor"], verified=True)
     assert (d.access, d.manual_only) == (access.FULL, True)
 
@@ -95,7 +96,8 @@ def test_owner_and_admins_unaffected(w, who):
 
 
 def test_viewer_unaffected_by_the_editor_line(w):
-    publish(w["agent"], {"capabilities": ASK}, editors=False)
+    declare(w["agent"], ASK)
+    allow(w["agent"], role=roles.READ_ONLY)
     before = access.decide(w["agent"], w["viewer"], verified=True)
     _editors_are_users(w["agent"])
     assert access.decide(w["agent"], w["viewer"], verified=True) == before

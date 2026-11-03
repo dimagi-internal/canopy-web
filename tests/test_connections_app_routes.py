@@ -24,7 +24,6 @@ from apps.agents.models import Agent
 from apps.connections.models import Connection, ConnectionApp
 from apps.events.models import Event, SettingChange
 from apps.passkeys.testing import grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connections import (
     CLIENT_SECRET,
@@ -36,6 +35,7 @@ from tests.fixtures.connections import (
     _token_body,
     sf_app,
 )
+from tests.token_helpers import pat_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -76,11 +76,6 @@ def _browser(user, *, step_up=True):
     if step_up:
         grant_step_up(c)
     return c
-
-
-def _pat(user) -> dict:
-    raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
 
 
 def _put(client, slug="w", provider="salesforce", **body):
@@ -167,9 +162,9 @@ def test_a_pat_write_needs_no_step_up(admin, ws):
     resp = Client().put(f"{APPS.format('w')}/salesforce",
                         {"client_id": "3MVG-new", "client_secret": "s3cret-value",
                          "options": {"login_url": "https://login.salesforce.com"}},
-                        content_type="application/json", **_pat(admin))
+                        content_type="application/json", **pat_headers(admin))
     assert resp.status_code == 200
-    assert Client().delete(f"{APPS.format('w')}/salesforce", **_pat(admin)).status_code == 204
+    assert Client().delete(f"{APPS.format('w')}/salesforce", **pat_headers(admin)).status_code == 204
 
 
 def test_unknown_provider_is_404(admin, ws):
@@ -204,7 +199,7 @@ def test_rotating_the_secret_carries_existing_connections(admin, ws):
     assert resp.status_code == 200 and resp.json()["has_secret"] is True
     assert _put(c, client_id=app.client_id).status_code == 200     # blank: keeps "rotated-secret"
     with FakeSF() as fake:
-        got = Client().post("/api/me/connections/salesforce/token", **_pat(admin))
+        got = Client().post("/api/me/connections/salesforce/token", **pat_headers(admin))
     assert got.status_code == 200, got.content
     (_, url, data), = fake.token_calls()
     assert url == TOKEN_URL and data["client_secret"] == "rotated-secret" and data["client_id"] == app.client_id
@@ -403,7 +398,7 @@ def test_an_agents_list_names_its_workspace(admin, ws):
 # ---- my CLI token, across workspaces ------------------------------------------------
 
 def _token(user, query=""):
-    return Client().post(f"/api/me/connections/salesforce/token{query}", **_pat(user))
+    return Client().post(f"/api/me/connections/salesforce/token{query}", **pat_headers(user))
 
 
 def test_a_person_who_left_the_workspace_gets_no_token(admin, editor, ws):

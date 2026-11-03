@@ -23,6 +23,7 @@ from apps.tokens.models import (
     PersonalToken,
 )
 from tests.site_tenant import host_workspace
+from tests.token_helpers import bearer_client
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -31,10 +32,6 @@ User = get_user_model()
 @pytest.fixture()
 def user():
     return User.objects.create_user("jj", "jj@dimagi.com", "pw")
-
-
-def _bearer(raw):
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
 def _oauth_token(user):
@@ -62,11 +59,11 @@ def _create_token(client):
 
 def test_a_deactivated_users_pat_stops_working(user):
     raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    assert _bearer(raw).get("/api/me/").status_code == 200
+    assert bearer_client(raw).get("/api/me/").status_code == 200
     user.is_active = False
     user.save(update_fields=["is_active"])
     assert PersonalToken.lookup(raw) is None
-    assert _bearer(raw).get("/api/me/").status_code in (401, 403)
+    assert bearer_client(raw).get("/api/me/").status_code in (401, 403)
 
 
 def test_a_deactivated_users_pat_is_refused_by_the_mcp_verifier(user):
@@ -97,7 +94,7 @@ def test_a_deactivated_users_pat_does_not_open_a_socket(user):
 # -- 2. minting a credential from a narrower one --------------------------
 
 def test_an_oauth_access_token_cannot_mint_a_pat(user):
-    resp = _create_token(_bearer(_oauth_token(user)))
+    resp = _create_token(bearer_client(_oauth_token(user)))
     assert resp.status_code == 403
     assert "oauth" in resp.json()["detail"]
     assert not PersonalToken.objects.filter(label="x").exists()
@@ -105,17 +102,17 @@ def test_an_oauth_access_token_cannot_mint_a_pat(user):
 
 def test_a_pat_and_a_browser_session_still_mint(user):
     raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    assert _create_token(_bearer(raw)).status_code == 201
+    assert _create_token(bearer_client(raw)).status_code == 201
     browser = Client()
     browser.force_login(user)
     assert _create_token(browser).status_code == 201
 
 
 def test_an_oauth_access_token_cannot_mint_a_session(user):
-    resp = _bearer(_oauth_token(user)).post("/api/debug/mint-session/")
+    resp = bearer_client(_oauth_token(user)).post("/api/debug/mint-session/")
     assert resp.status_code == 403
     raw, _ = PersonalToken.create_for_user(user=user, label="menubar")
-    assert _bearer(raw).post("/api/debug/mint-session/").status_code == 200
+    assert bearer_client(raw).post("/api/debug/mint-session/").status_code == 200
 
 
 def _cli_url():
@@ -124,7 +121,7 @@ def _cli_url():
 
 
 def test_an_oauth_access_token_cannot_use_the_cli_authorize_flow(user):
-    resp = _bearer(_oauth_token(user)).post(_cli_url())
+    resp = bearer_client(_oauth_token(user)).post(_cli_url())
     assert resp.status_code == 403
     assert not PersonalToken.objects.filter(label="canopy-cli").exists()
 
@@ -158,7 +155,7 @@ def test_a_delegated_token_cannot_mint_the_panels_token(user):
     app = _shown_app()
     raw, _ = DelegatedToken.issue(app=app, user=user, ttl_seconds=600)
     before = DelegatedToken.objects.count()
-    resp = _bearer(raw).post("/api/embed/token", data={}, content_type="application/json")
+    resp = bearer_client(raw).post("/api/embed/token", data={}, content_type="application/json")
     assert resp.status_code == 403
     assert DelegatedToken.objects.count() == before
 
@@ -166,7 +163,7 @@ def test_a_delegated_token_cannot_mint_the_panels_token(user):
 def test_a_pat_cannot_mint_the_panels_token_either(user):
     _shown_app()
     raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    resp = _bearer(raw).post("/api/embed/token", data={}, content_type="application/json")
+    resp = bearer_client(raw).post("/api/embed/token", data={}, content_type="application/json")
     assert resp.status_code == 403
 
 

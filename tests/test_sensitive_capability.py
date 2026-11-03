@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, sensitive_data
+from apps.agents import access, roles, sensitive_data
 from apps.agents.interface import InterfaceError, is_default, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
@@ -23,7 +23,7 @@ from apps.harness.models import RunnerAssignment, Turn
 from apps.passkeys import stepup
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -33,7 +33,7 @@ DATA = {"sites": ["connect-labs"], "data": "sensitive",
                   "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]}
 IFACE = {"capabilities": {"data": DATA,
                           "ask": {"tools": ["Read", "Bash"]}}}
-#: Who the access list lets in, by capability: the old `callers` the tests were written with.
+#: Who the access list lets in, by capability: "member" (the workspace's members) or "contact".
 WHO = {"data": ["contact", "member"], "ask": ["member"], "connect": ["contact"]}
 SOURCE = """capabilities:
   data:
@@ -75,9 +75,19 @@ def _put(c, slug, **body):
     return c.put(f"/api/agents/{slug}/interface", data=body, content_type="application/json")
 
 
+def _let_in(agent, who, capability):
+    """`ask` is what `read` opens, so it is a read-only line; any other capability a named line."""
+    line = dict(role=roles.READ_ONLY) if capability == roles.READ_CAPABILITY else dict(capability=capability)
+    allow(agent, contact=(who == "contact"), **line)
+
+
 def _declare(agent, by, doc=IFACE, who_=WHO):
-    """Publish `doc`'s capabilities and let `who_` (old-style callers per capability) in."""
-    publish(agent, {"capabilities": {n: {**c, "callers": who_[n]} for n, c in doc["capabilities"].items()}})
+    """Publish `doc`'s capabilities and let `who_` (members and/or contacts, per capability) in."""
+    declare(agent, doc["capabilities"])
+    for name in doc["capabilities"]:
+        for caller in who_[name]:
+            _let_in(agent, caller, name)
+    editors_run(agent)
     agent.interface_published_by = by
     agent.save(update_fields=["interface_published_by"])
 
@@ -207,7 +217,9 @@ def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
 
 
 def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the_owner(w):
-    publish(w["agent"], {"capabilities": {"ask": {"callers": ["member"]}}})
+    declare(w["agent"], {"ask": {}})
+    _let_in(w["agent"], "member", "ask")
+    editors_run(w["agent"])
     d = _turn(w, w["owner"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
     assert d.access == access.NONE and "handles sensitive data" in d.reason
 
@@ -230,8 +242,9 @@ def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
 
 
 def test_without_sensitive_nothing_changes(w):
-    publish(w["agent"], {"capabilities": {
-        "connect": {"callers": ["contact"], "sites": ["connect-labs"]}}})
+    declare(w["agent"], {"connect": {"sites": ["connect-labs"]}})
+    _let_in(w["agent"], "contact", "connect")
+    editors_run(w["agent"])
     assert _turn(w, w["owner"], _site_session(w)).access == access.FULL
 
 

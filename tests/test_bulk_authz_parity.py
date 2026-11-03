@@ -20,7 +20,7 @@ import itertools
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import access
+from apps.agents import access, roles
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import routing
 from apps.harness.models import Runner, RunnerAdmin
@@ -28,9 +28,10 @@ from apps.harness.runners import administered_runner_ids
 from apps.workspaces import permissions as perms
 from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import Workspace, WorkspaceMembership as M, ancestor_chains
+from apps.workspaces.models import Workspace, ancestor_chains
+from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import enrolled
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -60,11 +61,16 @@ def world():
     for ws, who, role in rows:
         M.objects.create(workspace=ws, user=people[who], role=role)
     role_cap.apply(people["capped"], role_cap.EDITOR)
-    ifaces = [{}, {"capabilities": {"ask": {"callers": ["member"]}}}, {"full": ["member"]}]
     agents = []
     for i, (ws, owner) in enumerate([(root, "jj"), (div, "divown"), (sub, "ed"), (sub, "vw"), (other, "out")]):
         a = Agent.objects.create(slug=f"agent{i}", name=f"A{i}", workspace=ws, owner=people[owner])
-        publish(a, ifaces[i % 3])
+        # three shapes in turn: nothing offered; members may ask; every member an editor
+        declare(a, {"ask": {}} if i % 3 == 1 else None)
+        if i % 3 == 1:
+            allow(a, role=roles.READ_ONLY)
+        elif i % 3 == 2:
+            allow(a, role=roles.EDITOR)
+        editors_run(a)
         agents.append(a)
     AgentAdmin.objects.create(agent=agents[2], user=people["vw"])
     AgentAdmin.objects.create(agent=agents[1], user=people["ed"])
