@@ -96,7 +96,12 @@ from __future__ import annotations
 import re
 
 from apps.agents import roles
-from apps.agents.interface_default import VERSION, default_interface  # noqa: F401  (re-exported)
+from apps.agents.interface_default import (  # noqa: F401  (re-exported)
+    READ_PROFILE_VERSION,
+    VERSION,
+    default_interface,
+    default_read_profile,
+)
 from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import initiator as who
 from apps.harness import invocations
