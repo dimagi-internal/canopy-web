@@ -96,7 +96,7 @@ def _route_one(rcpt: str, parsed, raw: bytes, key: str, verdicts: dict) -> str:
 def _keep_copy(route, parsed, key: str, verdicts: dict, raw_size: int) -> None:
     """The reader's own copy of a forwarded message. It is a safety net, so a failure to
     store it must never stop the forward itself."""
-    from . import agent_mail
+    from . import agent_mail  # noqa: PLC0415 — agent_mail pulls in the harness; inbound stays light, as deliver_agent does
 
     try:
         agent_mail.keep_forwarded(route, parsed, key, verdicts=verdicts, raw_size=raw_size)
