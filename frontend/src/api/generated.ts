@@ -589,8 +589,8 @@ export interface paths {
         /**
          * Report my connection's refresh refused (CLI)
          * @description The provider refused the refresh made under `lease_id`. `invalid_grant` marks
-         *     the connection `needs_reconnect` (connect it again); any other error is only
-         *     noted. 409 `lease_lost` unless this computer holds the lease.
+         *     the connection `needs_reconnect` (connect it again) and ends the lease; any other error is
+         *     only noted. `detail` is recorded with it. 409 `lease_lost` unless this computer holds the lease.
          */
         readonly post: operations["my_connection_reconnect_required"];
         readonly delete?: never;
@@ -11468,8 +11468,8 @@ export interface paths {
         /**
          * A box reports a connection's refresh refused
          * @description The provider refused the refresh made under `lease_id`. `invalid_grant` marks
-         *     the connection `needs_reconnect` (its owner connects again); any other error is
-         *     only noted. 409 `lease_lost` unless this box holds the lease.
+         *     the connection `needs_reconnect` (its owner connects again) and ends the lease; any other error
+         *     is only noted. `detail` is recorded with it. 409 `lease_lost` unless this box holds the lease.
          */
         readonly post: operations["connection_reconnect_required"];
         readonly delete?: never;
@@ -19238,6 +19238,12 @@ export interface components {
              * @description The provider's error code; only `invalid_grant` marks the connection `needs_reconnect`.
              */
             readonly error: string;
+            /**
+             * Detail
+             * @description The provider's description of the refusal, scrubbed of anything the machine sent it. Recorded with the error; never a token.
+             * @default
+             */
+            readonly detail: string;
         };
         /** FeedbackIngestOut */
         readonly FeedbackIngestOut: {

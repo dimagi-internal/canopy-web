@@ -338,22 +338,29 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
     return row.sealed_digest
 
 
-def mark_reconnect_required(conn: Connection, device_key: RunnerDeviceKey, lease_id, error: str) -> None:
+def mark_reconnect_required(conn: Connection, device_key: RunnerDeviceKey, lease_id, error: str,
+                            detail: str = "") -> None:
     """The lease holder's refresh was refused at the provider. Only `invalid_grant`
-    (the refresh token is dead) marks the connection `needs_reconnect` and records
-    `reconnect_required`; anything else is canopy's or the provider's trouble, a
-    `provider_error` log line. 409 `lease_lost` unless this machine holds `lease_id`."""
+    (the refresh token is dead) marks the connection `needs_reconnect`, ends the lease
+    (nothing was refreshed, so the next machine to take it has no holder to suspect)
+    and records `reconnect_required`; anything else is canopy's or the provider's
+    trouble, a `provider_error` log line. `detail` is the provider's own words, scrubbed by
+    the machine, because one code can mean several things (Salesforce's `ip restricted` is
+    `invalid_grant` too). 409 `lease_lost` unless this machine holds `lease_id`."""
     dead = error == INVALID_GRANT
     with transaction.atomic():
         row = _locked(conn)
         _check_lease(row, device_key, lease_id)
         if dead:
             row.refresh_failed_at = timezone.now()
-            row.save(update_fields=["refresh_failed_at", "updated_at"])
+            row.lease_id, row.lease_holder, row.lease_expires_at = None, "", None
+            row.save(update_fields=["refresh_failed_at", "lease_id", "lease_holder", "lease_expires_at",
+                                    "updated_at"])
     subject = services.Subject.of(row)
     if dead:
-        services.record(subject, "reconnect_required", warn=True, error=error, machine=device_key.runner.name,
+        services.record(subject, "reconnect_required", warn=True, error=error, detail=detail,
+                        machine=device_key.runner.name,
                         summary=f"{row.owner_label}'s {_title(row)} was refused on refresh; connect it again")
     else:
-        services.record(subject, "provider_error", warn=True, during="refresh", error=error,
+        services.record(subject, "provider_error", warn=True, during="refresh", error=error, detail=detail,
                         machine=device_key.runner.name)

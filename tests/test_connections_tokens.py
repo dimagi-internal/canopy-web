@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import timedelta
 
 import pytest
@@ -197,6 +198,35 @@ def test_lease_answers_ttl_seconds_not_only_a_timestamp(shared):
     """Review Focus 1: a box with a skewed clock renews on `ttl_seconds`."""
     body = lease(shared, shared.box_a).json()
     assert body["ttl_seconds"] == 60 and body["expires_at"]
+
+
+def test_a_refused_refresh_ends_the_lease_with_no_false_alarm_for_the_next_taker(shared, caplog):
+    """The holder was refused and is fine: it did not die between refreshing and writing back."""
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    world = shared
+    lease_id = lease(world, world.box_a).json()["lease_id"]
+    r = runner_call(world, world.box_a, "POST", f"/connections/{world.conn.pk}/reconnect-required",
+                    {"lease_id": lease_id, "error": "invalid_grant", "detail": "ip restricted"})
+    assert r.status_code == 204, r.content
+    world.conn.refresh_from_db()
+    assert world.conn.needs_reconnect and world.conn.lease_id is None and world.conn.lease_expires_at is None
+    assert "ip restricted" in caplog.text or _events("reconnect_required")[0].payload["detail"] == "ip restricted"
+    # Another machine, at once: it is not told to wait, and nobody is accused of dying.
+    assert lease(world, world.box_b).status_code == 200
+    assert _events("lease_expired_unwritten") == []
+    assert "lease_expired_unwritten" not in caplog.text
+
+
+def test_a_provider_error_is_noted_with_its_description_and_keeps_the_lease(shared, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    world = shared
+    lease_id = lease(world, world.box_a).json()["lease_id"]
+    r = runner_call(world, world.box_a, "POST", f"/connections/{world.conn.pk}/reconnect-required",
+                    {"lease_id": lease_id, "error": "invalid_client", "detail": "client disabled"})
+    assert r.status_code == 204, r.content
+    world.conn.refresh_from_db()
+    assert not world.conn.needs_reconnect and str(world.conn.lease_id) == lease_id
+    assert "connections.provider_error" in caplog.text and "client disabled" in caplog.text
 
 
 def test_taking_an_expired_unwritten_lease_records_lease_expired_unwritten(shared):

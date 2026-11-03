@@ -109,11 +109,11 @@ def write_back_connection(request: HttpRequest, runner_id: uuid.UUID, connection
 def connection_reconnect_required(request: HttpRequest, runner_id: uuid.UUID, connection_id: uuid.UUID,
                                   payload: ReconnectRequiredIn) -> Status:
     """The provider refused the refresh made under `lease_id`. `invalid_grant` marks
-    the connection `needs_reconnect` (its owner connects again); any other error is
-    only noted. 409 `lease_lost` unless this box holds the lease."""
+    the connection `needs_reconnect` (its owner connects again) and ends the lease; any other error
+    is only noted. `detail` is recorded with it. 409 `lease_lost` unless this box holds the lease."""
     conn, key = _box_connection(request, runner_id, connection_id)
     try:
-        tokens.mark_reconnect_required(conn, key, payload.lease_id, payload.error)
+        tokens.mark_reconnect_required(conn, key, payload.lease_id, payload.error, payload.detail)
     except WireError as exc:
         raise problem_for_wire(exc) from None
     return Status(204, None)

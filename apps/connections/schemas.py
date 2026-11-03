@@ -359,6 +359,9 @@ class ReconnectRequiredIn(StrictModel):
     lease_id: uuid.UUID
     error: str = Field(max_length=100, description="The provider's error code; only `invalid_grant` marks the "
                                                    "connection `needs_reconnect`.")
+    detail: str = Field(default="", max_length=300,
+                        description="The provider's description of the refusal, scrubbed of anything the machine "
+                                    "sent it. Recorded with the error; never a token.")
 
 
 class ConnectionKeeperWorkOut(ConnectionMaterialOut):
