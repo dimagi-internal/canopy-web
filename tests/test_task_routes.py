@@ -395,7 +395,7 @@ def test_case_variant_ext_id_is_refused_by_the_database_too():
 
 
 def test_a_raced_case_variant_maps_to_409(c, monkeypatch):
-    from apps.agents import services
+    from apps.agents.services import tasks as services
 
     client, agent, _u = c
     AgentTask.objects.create(agent=agent, ext_id="T1", title="a")

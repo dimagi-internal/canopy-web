@@ -30,9 +30,9 @@ def test_include_and_exclude():
     with_tests = {s.rel for s in iter_app_sources(("apps/workspaces",), include_tests=True,
                                                   include_migrations=True)}
     assert any("/tests/" in r for r in with_tests) and any("/migrations/" in r for r in with_tests)
-    out = {s.rel for s in iter_app_sources(("apps",), exclude=("apps/workspaces/", "apps/agents/models.py"))}
-    assert not any(r.startswith("apps/workspaces/") for r in out) and "apps/agents/models.py" not in out
-    assert "apps/agents/services.py" in out
+    out = {s.rel for s in iter_app_sources(("apps",), exclude=("apps/workspaces/", "apps/agents/models/agent.py"))}
+    assert not any(r.startswith("apps/workspaces/") for r in out) and "apps/agents/models/agent.py" not in out
+    assert "apps/agents/services/tasks.py" in out
 
 
 def test_a_source_unpacks_and_parses_once():

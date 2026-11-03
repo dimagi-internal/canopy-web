@@ -316,7 +316,7 @@ projects)** (an agent's repo, or any repo URL); and **Add repo** on `/ide`.
 
 ## Which agents a box may hold
 
-`apps/agents/services.py::runner_may_hold_agent(runner, agent)` — true only when
+`apps/agents/holding.py::runner_may_hold_agent(runner, agent)` (re-exported as `agents.services.runner_may_hold_agent`) — true only when
 the runner's OWNER is one of the agent's admins (`Agent.is_admin`: the owner, a
 workspace owner, or an `AgentAdmin`). A box running an agent holds its prompt,
 its caller's token, its secrets and its owner's GitHub identity, so this gates
