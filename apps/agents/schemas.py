@@ -655,7 +655,7 @@ class AgentAdminOut(StrictModel):
 
 
 class AgentLicenseOut(StrictModel):
-    """One person's license to use the agent directly (`apps/agents/licenses.py`)."""
+    """One person's license to use the agent directly (`apps/agents/credentials/licenses.py`)."""
 
     user_id: int
     email: str

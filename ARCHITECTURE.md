@@ -139,3 +139,23 @@ The upward imports that exist today are frozen in its `FROZEN` table as
   nothing your PR did not mean to.
 
 A new app gets a layer in both places; the test fails until it has one.
+
+## Structural guards
+
+A **guard** is a test that holds a structural rule over the source tree or the docs rather than
+checking behaviour: import direction (`test_architecture_boundary`, `test_layered_app_imports`,
+`test_lazy_import_baseline`), who may name a role or read membership
+(`test_roles_named_only_in_workspaces`, `test_workspace_authorizer_is_sole_gate`), that every route
+declares its gate (`test_every_route_declares_its_gate`), vocabulary that must not drift or return
+(`test_vocabulary_guard`, `test_origin_vocabulary`, `test_decision_vocabulary_matches_ace`,
+`test_retired_access_vocabulary`), and budgets and bounds on code and docs
+(`test_claude_md_budget`, `test_old_address_in_docs`, `test_logs_carry_no_request_detail`,
+`test_sealed_words_have_one_gate`, `test_harness_services_no_reexports`,
+`test_canopy_sessions_knows_no_channel`, `test_a_new_route_renames_no_tool`,
+`test_no_test_module_imports`).
+
+Each carries `pytestmark = pytest.mark.guard` (registered in `pyproject.toml`), so
+`uv run pytest -m guard` runs just them, fast, before a refactor that moves code between apps.
+The marker changes nothing about a normal run. Mark a new test `guard` when it scans files or
+the route table to enforce a rule; a test that drives behaviour and happens to prove a rule
+(for example `test_session_acl`) is not a guard.

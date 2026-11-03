@@ -32,6 +32,8 @@ import pytest
 from apps.api import route_gates
 from apps.api.api import api
 
+pytestmark = pytest.mark.guard
+
 MUTATING = {"post", "put", "patch", "delete"}
 
 

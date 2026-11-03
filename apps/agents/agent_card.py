@@ -93,11 +93,6 @@ def base_url() -> str:
     return (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
 
 
-def card_base(slug: str) -> str:
-    """The agent's A2A base URL; its card is `{this}/.well-known/agent-card.json`."""
-    return f"{base_url()}/api/a2a/agents/{slug}"
-
-
 # --- which capabilities appear -----------------------------------------------------
 
 def _capabilities(agent) -> dict:

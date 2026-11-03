@@ -1,5 +1,15 @@
 """An agent's DECLARED CAPABILITIES: what it offers people who are not its admins.
 
+"Capability" has five meanings in canopy; this module is (a):
+  (a) interface capability: a door an agent publishes (here; `docs/architecture/access.md`);
+  (b) workspace permission: a right a role holds (`apps/workspaces/permissions.py`,
+      `docs/architecture/roles.md`);
+  (c) cloud capability: a leased machine or pool slot (`apps/capabilities`,
+      `docs/architecture/capabilities.md`);
+  (d) `Runner.capabilities`: the JSON a box reports about itself
+      (`apps/harness/models.py`, `docs/architecture/runners.md`);
+  (e) `Storyboard.capability`: the level a share link grants (`apps/storyboards/models.py`).
+
 Who may use which capability is NOT here: it is the agent's access list
 (`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
 This says only what each capability IS — its tools, paths and sites — and never who may use

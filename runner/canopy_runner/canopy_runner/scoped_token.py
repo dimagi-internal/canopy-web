@@ -1,7 +1,7 @@
 """Leave a caller's canopy token where that session — and nothing else — finds it.
 
 A FULL-profile turn asked by someone who is not the agent's owner, an admin or
-canopy (a `full:` rule, a workspace editor) is not confined to a capability, but
+canopy (an editor line on the access list) is not confined to a capability, but
 its canopy tools must still run as the ASKER, never as this box's owner
 (who-is-asking phase 5, canopy-web#1332). canopy hands such a turn a caller token
 with the claim (`mcp_token`, `scoped` server-side).

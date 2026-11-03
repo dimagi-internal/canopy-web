@@ -214,7 +214,7 @@ waits for a person. Set to **viewer** or **editor** (never above), a request is
 approved the moment it is made — still an ordinary request record (`status:
 approved`, `auto: true`, `decided_by: null`), and every workspace admin and owner is still
 emailed the link, from which they can change the person's role or remove them.
-`dimagi` is set to **editor** for now while it bootstraps (`workspaces/0012`);
+The `dimagi` workspace is set to **editor** (`workspaces/0012`);
 every other workspace is off. Turning it off or lowering it is a settings
 change. The domains themselves are server-set, never client input.
 
@@ -235,7 +235,7 @@ What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** i
   `tests/test_agent_access_list.py`): `agent_edit` implies `write` implies `read`; `admin` implies
   everything except `own`; `write` also opens every capability. A role cannot hold a permission
   without the ones it depends on, so a future user-defined role gets the same guarantee by going
-  through the same constructor. Roles are fixed built-ins for now.
+  through the same constructor. Roles are fixed built-ins; there are no user-defined roles.
 * **One engine.** The closure, `allows(role, permission)`, `holds(permissions, permission)` and rank
   are `apps/common/rolesets.py`, shared with the workspace's roles
   (`apps/workspaces/permissions.py`, a ladder derived from `MINIMUM_ROLE`). The mechanism is shared;
@@ -896,8 +896,7 @@ tool; and beside every delivered prompt — the runner leaves
   `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
   one; a write failure refuses the turn. A scoped token does not serve a
   confined turn's conversation, and a confined token does not serve a full turn's.
-  **REST takes a scoped token too, but only where MCP would** (canopy-web#1782,
-  `tokens.middleware._authenticate_caller_token`): re-resolved on every request
+  **REST takes a scoped token too, but only where MCP would** (`tokens.middleware._authenticate_caller_token`): re-resolved on every request
   as above, it signs in as the asker on a route the MCP server serves as a tool
   (`api_tools.is_tool_route`) and is refused (403) on every other one. The routes
   MCP leaves out (minting a PAT, the person's own memory switches and grants, the

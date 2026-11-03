@@ -30,7 +30,11 @@ from __future__ import annotations
 import ast
 import re
 
+import pytest
+
 from tests._source import iter_app_sources
+
+pytestmark = pytest.mark.guard
 
 _ROLE_ATTRS = {"OWNER", "ADMIN", "EDITOR", "VIEWER"}
 _BANNED_CALLS = {"has_role_at_least", "request_workspace_slugs_at_least"}

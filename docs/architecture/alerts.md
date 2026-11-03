@@ -169,8 +169,8 @@ every 30 s.
   "Dismissed (n)" fold with who dismissed each and when, and Undo. Absent when
   nothing is open or dismissed.
 - **Topology** (`/w/:ws/settings/topology`): the side panel's "Alerts here"
-  (`workspace:<slug>`, which also matches every workspace below it) replaces the old can't-run list, badge and "lacks its
-  repo" line; "held to some capabilities" and "runners serving nobody" stay as
+  (`workspace:<slug>`, which also matches every workspace below it) is the one place a runner or agent
+  problem shows (no separate can't-run list, badge or "lacks its repo" line); "held to some capabilities" and "runners serving nobody" stay as
   plain facts.
 - **Agent page** (`/w/:ws/agents/:slug`): `agent:<slug>` above every section,
   nothing when empty.
