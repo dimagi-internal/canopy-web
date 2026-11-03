@@ -118,6 +118,20 @@ def test_an_entry_that_needs_a_thread_refuses_a_turn_without_one(monkeypatch):
     assert execute.execute_turn(_cfg(), client, "r-1", t).startswith("failed:")
 
 
+def test_an_api_turn_with_no_thread_starts_on_the_askers_words():
+    # 2026-11-03, turn f6749f74: the same refusal, on the cloud runner's copy of this rule.
+    t = _restricted(origin="api", origin_ref={},
+                    caller_context={"profile": "restricted", "capability": CAP, "conversation": {}})
+    assert caller.entry_prompt(t, "which file decides?") == "which file decides?"
+
+
+def test_an_email_turn_with_no_thread_is_still_refused():
+    t = _restricted(origin="email", origin_ref={},
+                    caller_context={"profile": "restricted", "capability": CAP, "conversation": {}})
+    with pytest.raises(caller.ProfileError):
+        caller.entry_prompt(t, "anything")
+
+
 def test_a_full_turn_is_untouched(monkeypatch, _isolated):
     seen = {}
     monkeypatch.setattr(cdp_control, "create_task",

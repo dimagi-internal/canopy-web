@@ -247,7 +247,8 @@ def entry_prompt(turn: dict, prompt: str) -> str:
     """A caller's session starts with the capability's `entry`, never the admin's turn.
 
     `{thread_id}` is filled from the conversation; an entry that needs one on a
-    turn that has none is refused rather than run with a hole in it.
+    turn that has none is refused rather than run with a hole in it, unless the turn
+    came in over the API, which has no thread to start on and runs the caller's words.
     """
     cap = capability(turn)
     if cap is None or not cap.get("entry"):
@@ -255,6 +256,10 @@ def entry_prompt(turn: dict, prompt: str) -> str:
     entry = str(cap["entry"])
     if "{thread_id}" in entry:
         tid = thread_id(turn)
+        if not tid and turn.get("origin") == "api":
+            # An API turn is a question with no thread (2026-11-03, turn f6749f74, which
+            # was refused): the caller's words start it, under the same profile.
+            return prompt
         if not tid:
             raise ProfileError(f"capability '{cap.get('name')}' starts on a thread, "
                                "and this turn has none")

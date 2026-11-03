@@ -11526,6 +11526,12 @@ def _confined_prompt_text(turn: dict) -> str:
         # it; the profile confines the session either way.
         return prompt
     if "{thread_id}" in entry and not tid:
+        if turn.get("origin") == "api":
+            # An API turn is a question with no thread: trellis's `ask` refused one that
+            # a person's own session enqueued (2026-11-03, turn f6749f74), so it never ran
+            # and the asker got a failure, not an answer. Its words go in as a chat's do,
+            # and the profile confines it the same; `{thread_id}` Bash rules match nothing.
+            return prompt
         # A thread-bound entry is how an EMAIL caller's session starts.
         raise ConfineError(f"capability '{cap.get('name')}' starts on a thread, and this turn has none")
     return entry.replace("{thread_id}", tid)

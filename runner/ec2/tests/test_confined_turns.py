@@ -112,6 +112,25 @@ def test_a_chat_turn_with_no_thread_runs_the_persons_own_words_confined(cr):
     assert calls["exec"]["profile"]            # still confined
 
 
+def test_an_api_turn_with_no_thread_runs_the_askers_words_confined(cr):
+    # Trellis's `ask`, enqueued over MCP by someone acting as an editor: 2026-11-03, turn
+    # f6749f74 failed with "starts on a thread, and this turn has none".
+    mod, calls = cr
+    t = _turn(prompt="which file decides who may make an agent work?", origin="api", origin_ref={},
+              caller_context={"profile": "confined", "capability": CAP, "conversation": {}})
+    mod._run_turn("r-1", t)
+    assert calls["exec"]["prompt"] == "which file decides who may make an agent work?"
+    assert calls["exec"]["profile"]            # still confined
+
+
+def test_an_email_turn_with_no_thread_is_still_refused(cr):
+    mod, calls = cr
+    t = _turn(prompt="anything", origin="email", origin_ref={},
+              caller_context={"profile": "confined", "capability": CAP, "conversation": {}})
+    mod._run_turn("r-1", t)
+    assert "exec" not in calls
+
+
 def _plugin(tmp_path, version, registered=True):
     root = tmp_path / "canopy"
     (root / "hooks").mkdir(parents=True)
