@@ -54,6 +54,8 @@ export function ShareConnectionPage(): JSX.Element | null {
   const { workspace = '', id = '' } = useParams()
   const [params] = useSearchParams()
   const returnTo = safeReturnTo(params.get('return_to'))
+  // Only ticks a box the owner can see and untick; the statement they sign is what counts.
+  const forAgent = params.get('agent') ?? ''
   const navigate = useNavigate()
   const vault = useVaultUnlock()
   const me = useRef<Unlocked | null>(null)
@@ -120,7 +122,11 @@ export function ShareConnectionPage(): JSX.Element | null {
   if (loadError) return <p className="max-w-2xl text-sm text-destructive">{loadError}</p>
   if (!state) return <div className="h-32 max-w-2xl animate-pulse rounded-lg bg-muted" />
 
-  const reconnect = connectionStartPath(state.provider, workspace, returnTo)
+  const expires = state.expires_at ? new Date(state.expires_at) : null
+  const reconnect = connectionStartPath(state.provider, workspace, returnTo) + (
+    // Reconnecting must not quietly lift the limits this one was made with.
+    (expires ? `&lend_minutes=${Math.min(10080, Math.max(5, Math.ceil((expires.getTime() - Date.now()) / 60000)))}` : '')
+    + (state.owner_turns_only ? '&owner_turns_only=1' : ''))
 
   /** Open `s` with `key` and seed the choices: `keep` (what is ticked now) or else what the
    *  verified statement last named, cut down to the agents and computers listed below. */
@@ -129,7 +135,8 @@ export function ShareConnectionPage(): JSX.Element | null {
     const trust = await trustFor(s, key, { accept: accepted.current })
     const listedAgents = new Set(s.agents.map((a) => a.id))
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
-    const wantAgents = keep ? keep.agents : statement?.agents ?? []
+    const asked = s.agents.filter((a) => a.slug === forAgent).map((a) => a.id)
+    const wantAgents = keep ? keep.agents : statement?.agents ?? asked
     const wantComputers = s.owner_agent ? [] : keep ? keep.myComputers : statement?.my_computers ?? []
     const lost = [
       ...wantAgents.filter((a) => !listedAgents.has(a)).map((a) => `agent ${a} (you no longer administer it)`),
@@ -260,6 +267,17 @@ export function ShareConnectionPage(): JSX.Element | null {
           </div>
           {reconnected && (
             <p role="alert" className="rounded border border-warning/40 bg-warning/10 p-3 text-[13px] text-foreground">{RECONNECTED}</p>
+          )}
+          {(expires || state.owner_turns_only) && (
+            <ul data-testid="lend-limits" className="list-disc space-y-1 rounded border border-border bg-muted/40 p-3 pl-7 text-[13px] text-foreground">
+              {expires && (
+                <li>
+                  It ends by itself at {expires.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}: canopy
+                  stops handing it out and the sign-in is revoked soon after. You can end it sooner.
+                </li>
+              )}
+              {state.owner_turns_only && <li>Agents use it only for work you start, never for anyone else who asks them.</li>}
+            </ul>
           )}
           <p className="text-sm text-muted-foreground">Choose who may use it.</p>
 

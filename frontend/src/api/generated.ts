@@ -18751,6 +18751,17 @@ export interface components {
              */
             readonly missing_scopes?: readonly components["schemas"]["ScopeChoiceOut"][];
             /**
+             * Expires At
+             * @description When a lend for a while ends: no machine is handed it from then on and it is disconnected soon after, which revokes it. Null: until it is disconnected.
+             */
+            readonly expires_at?: string | null;
+            /**
+             * Owner Turns Only
+             * @description It is staged only on turns its owner started, never anyone else's on that agent.
+             * @default false
+             */
+            readonly owner_turns_only: boolean;
+            /**
              * Connected At
              * Format: date-time
              */
@@ -19037,6 +19048,17 @@ export interface components {
              * @description The agents the owner may lend it to.
              */
             readonly agents: readonly components["schemas"]["ShareAgentOut"][];
+            /**
+             * Expires At
+             * @description When this lend ends and it is disconnected; null when it has no time limit.
+             */
+            readonly expires_at?: string | null;
+            /**
+             * Owner Turns Only
+             * @description Agents use it only on turns its owner started.
+             * @default false
+             */
+            readonly owner_turns_only: boolean;
         };
         /**
          * ZkEndorsementOut

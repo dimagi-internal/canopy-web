@@ -64,8 +64,8 @@ def turn_connections(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
     agent with none. No token here. 404 unless this runner holds
     the turn (always for a caller's turn); 409 `no_agent` for a turn that runs
     as no agent."""
-    _, _, agent = _turn_agent(request, runner_id, turn_id)
-    return TurnConnectionsOut(providers=services.providers_for_agent(agent))
+    _, turn, agent = _turn_agent(request, runner_id, turn_id)
+    return TurnConnectionsOut(providers=services.providers_for_agent(agent, turn=turn))
 
 
 @router.get("/runners/{runner_id}/turns/{turn_id}/connections/{provider}", response=ConnectionMaterialOut,
@@ -101,7 +101,7 @@ def turn_connection_material(request: HttpRequest, runner_id: uuid.UUID, turn_id
     except WireError as exc:
         raise problem_for_wire(exc) from None
     try:
-        conn = services.connection_for_agent(agent, cls.name)
+        conn = services.connection_for_agent(agent, cls.name, turn=turn)
     except services.ConnectionError as exc:
         raise problem_for(exc, title=cls.title, owner=f"{agent.slug}'s") from None
     try:

@@ -22,6 +22,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
 
@@ -176,6 +177,13 @@ class Connection(models.Model):
     # Whether the holder that confirms the revoke must also revoke at the provider
     # (not when another connection of that account through that app remains).
     revoke_at_provider = models.BooleanField(default=True)
+    # A lend with limits, chosen when the owner started connecting and shown on the share
+    # screen. `expires_at`: no machine is handed it from then on, and the sweep disconnects it,
+    # which revokes it at the provider. Null: until it is disconnected. `owner_turns_only`:
+    # staged only on a turn its owner started (`services.started_by_owner`). canopy-web enforces
+    # both, so neither is proof against a hacked canopy-web; that one still cannot read a token.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    owner_turns_only = models.BooleanField(default=False)
     # Who completed the sign-in. SET_NULL: an agent's connection outlives the
     # admin who connected it.
     connected_by = models.ForeignKey(
@@ -215,6 +223,11 @@ class Connection(models.Model):
     def needs_reconnect(self) -> bool:
         """True once a machine's refresh was rejected: the owner must connect again."""
         return self.refresh_failed_at is not None
+
+    @property
+    def expired(self) -> bool:
+        """True once a lend's time has run out, before the sweep has disconnected it."""
+        return self.expires_at is not None and self.expires_at <= timezone.now()
 
     @property
     def binding(self) -> str:

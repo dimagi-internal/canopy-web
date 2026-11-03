@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -74,6 +75,7 @@ from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
 from apps.events import services as events
 from apps.harness import device_keys
+from apps.harness import initiator as who
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
@@ -450,9 +452,12 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, return_to: str = "") -> str:
+def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, return_to: str = "",
+          lend_minutes: int | None = None, owner_turns_only: bool = False, for_agent: str = "") -> str:
     """Park a PKCE verifier, a CSRF `state` and `app` in the session; return the
-    authorize URL (with `app`'s client).
+    authorize URL (with `app`'s client). `lend_minutes` and `owner_turns_only` are the
+    limits the connection will carry (`complete`); `for_agent` is the slug the share
+    screen ticks for the owner.
 
     The verifier never leaves the server; only its S256 challenge goes to the
     provider, so an intercepted `code` cannot be exchanged by anyone else.
@@ -467,7 +472,8 @@ def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, retur
         pending.pop(next(iter(pending)))
     pending[state] = {"app": app.pk, "provider": app.provider, "workspace": app.workspace_id,
                       "client_id": app.client_id,
-                      "owner_kind": kind, "owner_id": owner_id, "verifier": verifier, "return_to": return_to}
+                      "owner_kind": kind, "owner_id": owner_id, "verifier": verifier, "return_to": return_to,
+                      "lend_minutes": lend_minutes, "owner_turns_only": owner_turns_only, "for_agent": for_agent}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
     owner_obj = (Agent if kind == "agent" else get_user_model()).objects.filter(pk=owner_id).first()
     return p.authorize_url(state, redirect_uri, challenge, owner_kind=kind, owner=owner_obj)
@@ -607,6 +613,11 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "signer": keyset.user,
         "refresh_failed_at": None,
         "connected_by": by,
+        # From the moment it connected, and replaced with everything else on a reconnect: a
+        # connect that names no limits makes a standing connection.
+        "expires_at": (timezone.now() + dt.timedelta(minutes=parked["lend_minutes"])
+                       if parked.get("lend_minutes") else None),
+        "owner_turns_only": bool(parked.get("owner_turns_only")),
     }
 
     def seal(connection_id) -> dict:
@@ -720,7 +731,7 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
 
 # ---- disconnecting -----------------------------------------------------------
 
-def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
+def disconnect(conn: Connection, *, by, lapsed: bool = False) -> Literal["revoking", "deleted"]:
     """Disconnect `conn`, and say which of the two below happened. canopy-web holds no token, so it revokes nothing at the
     provider itself: a machine that holds it does (spec §4.5).
 
@@ -736,7 +747,7 @@ def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
 
     Records `disconnected` (in the app's workspace too, for a moved agent's) and
     `grant_revoked` for every agent it was lent to. Disconnecting a row already
-    `revoking` changes nothing."""
+    `revoking` changes nothing. `lapsed`: nobody asked, its time ran out (the sweep)."""
     with transaction.atomic():
         row = (Connection.objects.select_for_update(of=("self",)).select_related("app__workspace", "agent__workspace")
                .filter(pk=conn.pk).first())
@@ -756,7 +767,8 @@ def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
                                     "lease_expires_at", "updated_at"])
         else:
             row.delete()  # its grants go with it (CASCADE)
-    summary = f"{subject.owner} disconnected {subject.provider} ({subject.account_label})"
+    summary = (f"{subject.owner}'s {subject.provider} ({subject.account_label}) ended: its time ran out" if lapsed
+               else f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
     record(subject, "disconnected", by=by, summary=summary)
     # A moved agent's connection belongs to the app's workspace as much as the
     # agent's: the admins removing that app see it go too.
@@ -821,39 +833,59 @@ def agent_connection_usable(conn: Connection) -> bool:
     return conn.agent_id is not None and conn.agent.workspace_id == conn.app.workspace_id
 
 
-def _in_force_for(agent, rows) -> list[Connection]:
-    """Those of `rows` that `agent` may use now: shared (`active` — an `unshared` row
-    reaches no machine, a `revoking` one is never handed out) and with `agent` among
-    the statement's grants still in force (`recipients.grants_in_force`: in the app's
-    workspace and, for a person's, still administered by them; the owner agent
-    counts as granted to itself)."""
-    return [c for c in rows if c.state == Connection.ACTIVE
+#: How an `owner_turns_only` connection's owner must have asked: signed in to canopy, or their
+#: own token. Not email or a host's signature, which say less about who is asking.
+_OWNER_TURN_ASSURANCE = frozenset({who.SESSION, who.PAT})
+#: canopy's own follow-up to an agent task, still accountable to the person who started the task.
+_OWNER_TURN_SYSTEM_VIA = "agent-task"
+
+
+def started_by_owner(conn: Connection, turn) -> bool:
+    """Whether `conn`'s owner asked for `turn`, for an `owner_turns_only` connection. A person
+    only: `turn.initiator_user` on a schedule or a trigger is who set it up, so canopy's own
+    turns count only as a follow-up to the task they started, and no turn is no."""
+    if turn is None or conn.user_id is None or turn.initiator_user_id != conn.user_id:
+        return False
+    if turn.initiator_kind == who.USER:
+        return turn.initiator_assurance in _OWNER_TURN_ASSURANCE
+    return turn.initiator_kind == who.SYSTEM and turn.initiator_via == _OWNER_TURN_SYSTEM_VIA
+
+
+def _in_force_for(agent, rows, turn=None) -> list[Connection]:
+    """Those of `rows` that `agent` may use now, on `turn`: shared (`active` — an `unshared`
+    row reaches no machine, a `revoking` one is never handed out), its time not run out, for its
+    owner's turn if it is `owner_turns_only`, and with `agent` among the statement's grants
+    still in force (`recipients.grants_in_force`: in the app's workspace and, for a person's,
+    still administered by them; the owner agent counts as granted to itself)."""
+    return [c for c in rows if c.state == Connection.ACTIVE and not c.expired
+            and (not c.owner_turns_only or started_by_owner(c, turn))
             and any(a.pk == agent.pk for a in rcpt.grants_in_force(c))]
 
 
-def _agent_candidates(agent, provider: str | None = None) -> tuple[list[Connection], list[Connection]]:
-    """`(own, granted)`: the connections `agent` may use now (`_in_force_for`), its
+def _agent_candidates(agent, provider: str | None = None, *, turn=None) -> tuple[list[Connection], list[Connection]]:
+    """`(own, granted)`: the connections `agent` may use now, on `turn` (`_in_force_for`), its
     own and those lent to it (by another agent or a person), for `provider` when given."""
     base = Connection.objects.filter(state=Connection.ACTIVE).select_related("app", "agent", "user")
     if provider is not None:
         base = base.filter(provider=provider)
-    own = _in_force_for(agent, base.filter(agent=agent).order_by("pk"))
-    granted = _in_force_for(agent, base.filter(grants__agent=agent).distinct().order_by("pk"))
+    own = _in_force_for(agent, base.filter(agent=agent).order_by("pk"), turn)
+    granted = _in_force_for(agent, base.filter(grants__agent=agent).distinct().order_by("pk"), turn)
     return own, granted
 
 
-def connection_for_agent(agent, provider: str) -> Connection:
+def connection_for_agent(agent, provider: str, *, turn=None) -> Connection:
     """The agent's own connection for `provider`, else one granted to it (another
-    agent's, or a person's lent to it) — each only while the agent may use it now
-    (`_in_force_for`: shared, and the grant still in force). A stale grant (a lender
-    who stopped administering the agent, an owner that moved) or an own connection
-    not shared yet is no candidate, so it neither answers nor makes the answer
-    `ambiguous`.
+    agent's, or a person's lent to it) — each only while the agent may use it now, on
+    `turn` (`_in_force_for`: shared, not run out, the owner's turn if it asks for that,
+    and the grant still in force). A stale grant (a lender who stopped administering
+    the agent, an owner that moved), one kept for its owner's turns on anyone else's, or an
+    own connection not shared yet is no candidate, so it neither answers nor makes the
+    answer `ambiguous`.
 
     Never a person's connection that was not lent to it. More than one candidate
     at the level that answers is `ambiguous` rather than a guess.
     """
-    own, granted = _agent_candidates(agent, provider)
+    own, granted = _agent_candidates(agent, provider, turn=turn)
     if len(own) == 1:
         return own[0]
     if len(own) > 1:
@@ -872,7 +904,8 @@ def person_connections(user, provider: str, *, workspace: str | None = None) -> 
     if workspace is not None:
         readable &= {workspace}
     return list(connections_for(("user", user.pk)).filter(provider=provider, app__workspace_id__in=readable)
-                .exclude(state=Connection.REVOKING).select_related("app__workspace"))
+                .exclude(state=Connection.REVOKING)
+                .exclude(expires_at__lte=timezone.now()).select_related("app__workspace"))
 
 
 def connection_for_person(user, provider: str, *, workspace: str | None = None) -> Connection:
@@ -889,10 +922,10 @@ def connection_for_person(user, provider: str, *, workspace: str | None = None) 
     return rows[0]
 
 
-def providers_for_agent(agent) -> list[str]:
-    """The providers `agent` may use a connection for now — its own or one lent to
-    it, by the same rule as `connection_for_agent` — sorted. What a runner stages
+def providers_for_agent(agent, *, turn=None) -> list[str]:
+    """The providers `agent` may use a connection for now, on `turn` — its own or one lent
+    to it, by the same rule as `connection_for_agent` — sorted. What a runner stages
     for a turn; never a person's connection that was not lent to it."""
-    own, granted = _agent_candidates(agent)
+    own, granted = _agent_candidates(agent, turn=turn)
     # A row for a provider no longer registered here has nothing to stage.
     return sorted({c.provider for c in own + granted if c.provider in providers.CLASSES})

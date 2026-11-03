@@ -340,6 +340,35 @@ describe('ShareConnectionPage: fixes', () => {
   })
 })
 
+describe('ShareConnectionPage: a lend with limits', () => {
+  const open_ = async (over: object, query: string) => {
+    getShareState.mockResolvedValue({ ...STATE, ...over })
+    open(query)
+    fireEvent.click(await screen.findByRole('button', { name: /unlock/i }))
+    await screen.findByText(/Connected as/)
+  }
+
+  it('says when it ends and who it is for, before the owner shares', async () => {
+    await open_({ expires_at: '2030-01-01T15:00:00Z', owner_turns_only: true }, '?return_to=%2Fsettings')
+    const limits = screen.getByTestId('lend-limits')
+    expect(limits.textContent).toMatch(/ends by itself/)
+    expect(limits.textContent).toMatch(/only for work you start/)
+  })
+
+  it('shows no limits on a standing connection', async () => {
+    await unlocked()
+    expect(screen.queryByTestId('lend-limits')).toBeNull()
+  })
+
+  it('ticks the agent the page asked for, and only one the owner may lend to', async () => {
+    await open_({}, '?return_to=%2Fsettings&agent=eva')
+    expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(true)
+    cleanup()
+    await open_({}, '?return_to=%2Fsettings&agent=nobody')
+    expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(false)
+  })
+})
+
 describe('safeReturnTo', () => {
   it.each([
     ['/settings/connections', '/settings/connections'],

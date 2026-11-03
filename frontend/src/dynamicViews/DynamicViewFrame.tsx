@@ -17,6 +17,7 @@ import { cancelAgentTask, createAgentTask, getAgentTask, type AgentTask } from '
 import { apiUrl } from '@/api/base'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
+import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
 import {
@@ -236,6 +237,28 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
           const ask = checkAsk(req, agents)
           if (typeof ask === 'string') return reply(false, null, ask)
           setAccessAsk({ id, ask })
+          return
+        }
+        case 'connections': {
+          const id = msg.id
+          const req = (msg.request ?? {}) as LendRequest & { action?: string; id?: string }
+          const agents = [...new Set(declared.current.map((t) => t.agent))]
+          const reply = (ok: boolean, data: unknown, error = '') =>
+            post(ok ? { channel: CHANNEL, type: 'read-result', id, ok: true, data } : { channel: CHANNEL, type: 'read-result', id, ok: false, error })
+          if (req.action === 'outcome') return reply(true, connectOutcome(window.location.search))
+          if (req.action === 'disconnect') {
+            disconnectLent(String(req.id || ''), String(req.agent || ''), agents)
+              .then(async (outcome) => {
+                post({ channel: CHANNEL, type: 'data', data: await load() })
+                reply(true, { outcome })
+              })
+              .catch((e) => reply(false, null, message(e)))
+            return
+          }
+          const ask = checkConnect(req, agents)
+          if (typeof ask === 'string') return reply(false, null, ask)
+          // Google's screen and canopy's share screen, passkey and all, are what stand behind this.
+          window.location.assign(lendStartPath(ask, ctx.workspace, window.location.pathname))
           return
         }
         case 'navigate': {
