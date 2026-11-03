@@ -566,9 +566,10 @@ def granted_by(turn, agent) -> str:
 
 def grant_facts(turn, agent) -> dict:
     """The envelope's account of the asker's standing, from ONE decision: `granted_by`
-    (the older why-word above), `role` (where they stand on the agent's role ladder, None
+    (the older one-word why above), `role` (where they stand on the agent's role ladder, None
     when refused), `source` (what put them there: owner | admin | system |
-    capability:<name> | session | list:<access-list line>)."""
+    capability:<name> | session | list:<access-list line>), `permissions` (what they hold on
+    THIS turn, sorted; see `_held_permissions`) and `manual_only`."""
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     d = access.decide_for_turn(turn, agent, turn.capability or None)
@@ -577,7 +578,33 @@ def grant_facts(turn, agent) -> dict:
     # The capability the turn was STAMPED with at enqueue (a requested one may differ from
     # the free-form one `decide` falls back to).
     why = f"capability:{turn.capability or d.capability}" if d.access == access.CONFINED else d.basis
-    return {"granted_by": why, "role": d.agent_role, "source": d.source}
+    return {"granted_by": why, "role": d.agent_role, "source": d.source,
+            "permissions": _held_permissions(d, turn.capability or None),
+            "manual_only": bool(d.manual_only)}
+
+
+def _held_permissions(d, stamped: str | None) -> list[str]:
+    # What the asker holds on this agent for THIS turn, from the one decision `d`. A full turn
+    # holds everything their role or lines give (closed under the dependency rule, so `write`
+    # is in it exactly when the turn is full). A confined turn holds `read` and its
+    # capability's `use:<name>` only, even for an owner a sensitive conversation confined.
+    # A refusal holds nothing.
+    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
+
+    if d.access == access.NONE:
+        return []
+    # `system` is not in the role table: it may do what an admin may.
+    role = roles.ADMIN if d.agent_role == roles.SYSTEM else d.agent_role
+    held = d.permissions or roles.permissions_of(role)
+    # `profile` in the envelope is "confined" iff the turn carries a capability stamp, so the
+    # stamp confines here too: `profile == full` iff `write` is in the list.
+    if d.access == access.FULL and not stamped:
+        return sorted(held)
+    kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
+    name = stamped or d.capability
+    if name:
+        kept.add(roles.use(name))
+    return sorted(kept)
 
 
 def offered_to(user, agent) -> list[str]:
