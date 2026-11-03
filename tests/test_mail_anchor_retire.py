@@ -17,8 +17,8 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import mail_anchor, services, session_sync
-from apps.harness.closing import close_turn
 from apps.harness.models import Runner, Turn
+from apps.harness.turn_close import close_turn
 
 pytestmark = pytest.mark.django_db
 

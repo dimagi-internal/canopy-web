@@ -10,7 +10,7 @@ its turn is a SYSTEM turn accountable to the person who set it up, so the access
 rule and the turn-mode ladder bound it by them (`turn_mode._accountable_cap`,
 `turn_mode.trigger_posture`). And a trigger whose creator no longer holds the right
 to set it up does not fire at all — `refusal` says why, every firing path asks it,
-and `alerts_trigger` raises an alert for each one, so it never stops silently.
+and `alerts.trigger` raises an alert for each one, so it never stops silently.
 """
 from __future__ import annotations
 

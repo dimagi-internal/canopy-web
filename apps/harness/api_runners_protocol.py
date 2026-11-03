@@ -103,8 +103,8 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
                                     acts_as=role_cap.header_cap(request))
     if turn is None:
         return Status(204, None)
-    # The same credentials the WebSocket claim carries — see `claiming.py`,
+    # The same credentials the WebSocket claim carries — see `claim_payload.py`,
     # which exists because the two channels once disagreed about them.
-    from .claiming import issue_credentials
+    from .claim_payload import issue_credentials
 
     return Status(200, issue_credentials(turn))

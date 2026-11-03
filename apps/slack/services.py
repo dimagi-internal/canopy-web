@@ -1260,7 +1260,7 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
     that is still there is left alone, and the move then refuses as before.
     """
     from apps.harness import routing
-    from apps.harness.closing import close_turn
+    from apps.harness.turn_close import close_turn
 
     from . import status
 

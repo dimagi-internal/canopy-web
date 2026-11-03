@@ -17,7 +17,7 @@ this only for an item that is news today (`events.services.record`'s
 fails the recording.
 
 `claude_auth_required` is mailed only where the `runner_credential` alert
-(`alerts_runner_credential`) cannot cover it: a runner that source does not
+(`alerts.runner_credential`) cannot cover it: a runner that source does not
 reconcile (private — no workspace — or retired), or one whose health reports no
 signed-out `claude.probe.*` check — a laptop, which posts no probe checks, or a
 box whose probe was inconclusive. Where such a check exists the alert's own
@@ -31,7 +31,7 @@ from html import escape
 
 from django.conf import settings
 
-from .alerts_runner_credential import out_of_credit_checks, runner_path, signed_out_checks, watches
+from .alerts.runner_credential import out_of_credit_checks, runner_path, signed_out_checks, watches
 
 logger = logging.getLogger(__name__)
 

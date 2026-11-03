@@ -31,10 +31,10 @@ from __future__ import annotations
 
 from apps.realtime import groups
 
-from .closing import close_turn
 from .ledger import append_events
 from .models import Turn
 from .routing import EXECUTING
+from .turn_close import close_turn
 
 #: The statuses an abort moves to FAILED (see the module docstring for DONE).
 ABORTABLE = (*EXECUTING, Turn.DONE)

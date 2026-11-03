@@ -1,6 +1,6 @@
 """/api/agents/{slug}/… — an agent's board: projects, tasks and the action queue.
 
-Tasks and projects are the workspace's (`tasks_api` is their own address);
+Tasks and projects are the workspace's (`api_tasks` is their own address);
 these routes are an agent's VIEW of them, kept so the fleet names work as it
 always has: a task by its key or this agent's alias ("T12"), a project by its
 handle or this agent's alias ("P5")."""
@@ -37,7 +37,7 @@ from .gates import (
     visible_agent_workspaces,
 )
 from .models import AgentTask
-from .proposals_api import resolve_task_ref
+from .api_proposals import resolve_task_ref
 from .schemas import (
     ActionAppliedIn,
     ActOut,

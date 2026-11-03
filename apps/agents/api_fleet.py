@@ -3,7 +3,7 @@ and every project's own address, `/api/workspace-projects/<workspace>/<handle>/`
 
 The same filters as the per-agent routes, across every workspace the caller
 can see. "Waiting on you" is `GET /api/tasks/?waiting=me`; "My tasks" is
-`?assignee=me`. One task by key is `tasks_api`.
+`?assignee=me`. One task by key is `api_tasks`.
 """
 from __future__ import annotations
 

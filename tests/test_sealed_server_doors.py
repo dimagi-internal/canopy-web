@@ -286,7 +286,7 @@ def test_current_page_over_mcp_leaves_out_a_sensitive_conversations_page(w):
 
 
 def test_a_sensitive_conversations_page_is_forgotten_when_its_turn_ends(w):
-    from apps.harness.closing import close_turn
+    from apps.harness.turn_close import close_turn
 
     page_state.set_page_state(w["hot"], PHI)
     turn = _turn(w["hot"], status=Turn.RUNNING, claimed_by=w["runner"])

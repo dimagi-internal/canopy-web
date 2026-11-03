@@ -56,8 +56,8 @@ from apps.agents.models import Agent
 from apps.attention.alerts import Action, Raise
 from apps.workspaces import services as wsvc
 
-from . import auto_debug
-from .models import FailureInvestigation, Runner
+from .. import auto_debug
+from ..models import FailureInvestigation, Runner
 
 KIND = "turn_failure"
 SEVERITY = "action"

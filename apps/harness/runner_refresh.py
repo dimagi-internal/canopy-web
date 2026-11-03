@@ -15,7 +15,7 @@ box's CLI is behind the release, which has no asker). This module is the account
 - `finished` — the one notice the asker gets when the server sees the request
   discharged, by email and Web Push, linking to the runner's page. A refresh
   that never finishes is the `runner_refresh` alert's
-  (`alerts_runner_refresh`), handed to the same person.
+  (`alerts.runner_refresh`), handed to the same person.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from django.utils import timezone
 from apps.push.services import send_to_user
 
 from . import clis as cli_vocab
-from .alerts_runner_credential import runner_path
+from .alerts.runner_credential import runner_path
 from .credential_notify import runner_url
 from .models import Runner, Turn
 

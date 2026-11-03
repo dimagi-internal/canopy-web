@@ -12,14 +12,14 @@ from django.utils import timezone
 
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_device_key as src
+from apps.harness.alerts import device_key as src
 from apps.harness.models import Runner, RunnerAdmin, RunnerDeviceKey
 from apps.push import services as push_services
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-SOURCE = "apps.harness.alerts_device_key"
+SOURCE = "apps.harness.alerts.device_key"
 
 
 def _user(name):

@@ -354,7 +354,7 @@ def reject(turn, rule: AdmissionRule, *, runner=None, detail: str = "",
     turn would start a debugger turn (`harness.auto_debug`). Guarded on the
     status so a turn another runner claimed in the meantime is left alone.
     """
-    from apps.harness.closing import close_turn
+    from apps.harness.turn_close import close_turn
     from apps.harness.models import Turn
 
     note = result_note(rule, detail)

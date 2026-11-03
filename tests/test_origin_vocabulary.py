@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.django_db, pytest.mark.guard]
 def test_the_vocabulary_is_exactly_seven_values():
     assert {v for v, _label in Turn.ORIGIN_CHOICES} == {
         "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack",
-        "local",  # a person's own session on their private runner (apps/harness/local.py)
+        "local",  # a person's own session on their private runner (apps/harness/local_turns.py)
     }
 
 

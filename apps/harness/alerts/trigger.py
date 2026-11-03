@@ -17,8 +17,8 @@ import hashlib
 
 from apps.attention.alerts import Action, Raise
 
-from . import triggers
-from .models import AgentSchedule
+from .. import triggers
+from ..models import AgentSchedule
 
 KIND = "trigger_stopped"
 SEVERITY = "action"

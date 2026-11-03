@@ -99,7 +99,7 @@ PUBLIC_PATH_PREFIXES = (
     # credential — that is what the card is for. The public card is served only
     # for an agent that offers outsiders something (404 otherwise, same as no
     # such slug); the extended card requires a session or PAT via Ninja's
-    # `session_auth`. See apps/agents/a2a_api.py.
+    # `session_auth`. See apps/agents/api_a2a.py.
     "/api/a2a/",
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/mail/ses/",         # auth=None — SNS-signed; apps/mail/sns.verify checks signature + topic, 404 otherwise

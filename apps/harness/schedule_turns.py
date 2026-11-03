@@ -99,7 +99,7 @@ def fire_after_of(schedule) -> dt.datetime:
 def _refuse_if_stopped(schedule, *, slot: dt.datetime | None = None) -> None:
     """Raise `triggers.TriggerRefused` when the trigger's creator no longer holds the
     right to it (`triggers.refusal`). Loud, never silent: the refusal is written to
-    the workspace event log here, and `alerts_trigger` keeps an alert open on the
+    the workspace event log here, and `alerts.trigger` keeps an alert open on the
     agent until it is fixed. A refused SLOT is consumed (`last_slot`), so the clock
     and every runner stop re-reporting it each tick; the next slot is judged afresh."""
     reason = triggers.refusal(schedule)

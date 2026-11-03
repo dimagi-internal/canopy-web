@@ -23,11 +23,11 @@ import uuid
 
 from apps.attention.alerts import Action, Raise
 
-from . import device_keys
-from .api_device_keys import approve_path
-from .models import Runner, RunnerDeviceKey
-from .routing import agents_routed_to
-from .runners import can_administer_runner, may_trust_device_keys
+from .. import device_keys
+from ..api_device_keys import approve_path
+from ..models import Runner, RunnerDeviceKey
+from ..routing import agents_routed_to
+from ..runners import can_administer_runner, may_trust_device_keys
 
 KIND = "device_key_pending"
 SEVERITY = "blocking"

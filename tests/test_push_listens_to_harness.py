@@ -5,7 +5,7 @@ import ast
 
 from tests._source import iter_app_sources
 
-NO_PUSH = {"apps/harness/services.py", "apps/harness/closing.py"}
+NO_PUSH = {"apps/harness/services.py", "apps/harness/turn_close.py"}
 
 
 def test_harness_turn_paths_do_not_import_push():

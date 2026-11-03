@@ -12,13 +12,13 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_agent_routing as src
+from apps.harness.alerts import agent_routing as src
 from apps.harness.models import Runner, RunnerAssignment, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-SOURCE = "apps.harness.alerts_agent_routing"
+SOURCE = "apps.harness.alerts.agent_routing"
 
 
 def _user(name):

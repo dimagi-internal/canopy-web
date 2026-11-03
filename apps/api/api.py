@@ -221,7 +221,7 @@ def _auth_smoke(request: HttpRequest) -> dict:
 
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
 from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
-from apps.agents.a2a_api import router as a2a_router  # noqa: E402
+from apps.agents.api_a2a import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
 from apps.agents.api_board import router as agent_board_router  # noqa: E402
@@ -239,15 +239,15 @@ from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.api_vault_keeper import router as vault_keeper_router  # noqa: E402
 from apps.agents.api_vaults import router as workspace_vaults_router  # noqa: E402
-from apps.agents.contributors_api import router as contributors_router  # noqa: E402
+from apps.agents.api_contributors import router as contributors_router  # noqa: E402
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agents.api_aws import router as agent_aws_router  # noqa: E402
-from apps.agents.engagement_api import router as engagement_router  # noqa: E402
-from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
-from apps.agents.tasks_api import router as workspace_tasks_router  # noqa: E402
-from apps.agents.kb_api import router as kb_router  # noqa: E402
-from apps.agents.proposals_api import router as proposals_router  # noqa: E402
+from apps.agents.api_engagement import router as engagement_router  # noqa: E402
+from apps.agents.api_fleet import router as fleet_tasks_router  # noqa: E402
+from apps.agents.api_tasks import router as workspace_tasks_router  # noqa: E402
+from apps.agents.api_kb import router as kb_router  # noqa: E402
+from apps.agents.api_proposals import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
 from apps.agents.api_login_requests import router as agent_login_requests_router  # noqa: E402
@@ -292,7 +292,7 @@ from apps.harness.api import router as harness_router  # noqa: E402
 from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
-from apps.harness.api_local import local_turns_router, private_runners_router  # noqa: E402
+from apps.harness.api_local_turns import local_turns_router, private_runners_router  # noqa: E402
 from apps.harness.api_project_opt_in import router as project_opt_in_router  # noqa: E402
 from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
 from apps.harness.api_box_egress import box_egress_router  # noqa: E402
@@ -402,7 +402,7 @@ api.add_router("/agents", agent_pat_rotation_router)
 api.add_router("/agents", connections_agents_router)  # an agent's connections + grants
 api.add_router("/agents", agent_readiness_router)
 # A2A Agent Card discovery — public in the login middleware; each route
-# self-enforces (apps/agents/a2a_api.py).
+# self-enforces (apps/agents/api_a2a.py).
 api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
 api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent

@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_runner_refresh as src
+from apps.harness.alerts import runner_refresh as src
 from apps.harness import runner_refresh, runners
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -55,7 +55,7 @@ def box(django_user_model, monkeypatch, django_capture_on_commit_callbacks):
     pushes = []
     monkeypatch.setattr("apps.harness.runner_refresh.send_to_user",
                         lambda user, title, body, url, *a, **k: pushes.append((title, url)) or True)
-    monkeypatch.setattr(alerts, "SOURCES", ["apps.harness.alerts_runner_refresh"])
+    monkeypatch.setattr(alerts, "SOURCES", ["apps.harness.alerts.runner_refresh"])
     monkeypatch.setattr(alerts, "send_to_user", lambda *a, **k: True)
     _beat(c, r, health=_health())
     # The finish notice and an alert's hand-off are sent after the commit.

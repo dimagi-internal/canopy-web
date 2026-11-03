@@ -46,9 +46,9 @@ from apps.attention.alerts import Action, Raise
 from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
 
-from . import claim, services
-from .api_turns import _cancel_refusal
-from .models import Turn
+from .. import claim, services
+from ..api_turns import _cancel_refusal
+from ..models import Turn
 
 KIND = "unclaimable_turns"
 SEVERITY = "blocking"

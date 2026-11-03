@@ -10,7 +10,7 @@ store and its sources.
     PUT  …/kb/settings                  the Drive replica option (off by default)
     GET/POST …/kb/sources               where its documents come from (a curator's crawler)
 
-The whole-file publish (`…/kb/upload`, `…/kb/publish`) stays in `fleet_api.py`.
+The whole-file publish (`…/kb/upload`, `…/kb/publish`) stays in `api_fleet.py`.
 Services: `kb_versions`, `kb_store`. canopy-web never builds an index (#1971).
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 
 from . import kb_store, kb_versions
-from .fleet_api import _kb_call, _workspace_project_or_404
+from .api_fleet import _kb_call, _workspace_project_or_404
 from .gates import agent_for_work
 from .models import KbSource, KbVersion
 from .schemas import (

@@ -351,7 +351,7 @@ def test_a_recurrence_on_a_runner_without_the_fix_only_counts(ada, ws, runner, d
 
     # The box updates past the fix: the alert closes on the tick, by itself, silently.
     _code(runner, "2222222bbbb", fixed_at + dt.timedelta(minutes=5))
-    from apps.harness import alerts_turn_failure
+    from apps.harness.alerts import turn_failure as alerts_turn_failure
 
     alerts_turn_failure.reconcile(timezone.now())
     inv.refresh_from_db()

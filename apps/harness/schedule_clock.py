@@ -72,7 +72,7 @@ def tick(*, now: dt.datetime | None = None) -> dict:
             failed.append(schedule.id)
             continue
         except TriggerRefused as exc:
-            # Recorded and alerted where it is refused (schedule_turns, alerts_trigger).
+            # Recorded and alerted where it is refused (schedule_turns, alerts.trigger).
             logger.info("schedule %s (%s): slot %s not fired — %s",
                         schedule.id, schedule.agent.slug, slot.isoformat(), exc.reason)
             failed.append(schedule.id)

@@ -10,7 +10,7 @@ same way, not as an archive (spec
   (`plain_key`), only until the turn that claimed it (`send.claim_pending_attachments`
   → `bind_turn`) fetches it — the runner's download route serves it ONCE, to the box
   holding that turn, and deletes it as it does (`take_for_runner`) — or ends
-  (`closing.close_turn` → `forget_turn`), whichever comes first. One never sent, or
+  (`turn_close.close_turn` → `forget_turn`), whichever comes first. One never sent, or
   whose turn never ran, goes on the sensitive deadline (`sweep`). Forgetting deletes
   the object and blanks the row's `filename`, `storage_key` and exact type.
 * **The people's copy is sealed in their browser** to the conversation's public key

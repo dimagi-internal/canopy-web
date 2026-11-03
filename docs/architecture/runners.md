@@ -273,7 +273,7 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
   project). A chosen list covers only the repos it names.
 - Migration `harness.0104` gave every existing runner owner `everything`. A
   person who pairs a box after it starts at nothing until they choose, and the
-  `canopy_projects_off` alert (`apps/harness/alerts_project_opt_in.py`, setup,
+  `canopy_projects_off` alert (`apps/harness/alerts/project_opt_in.py`, setup,
   owner only) tells them so on Home and on the runner's page.
 - **The canopy plugin needs no gate.** Its Claude Code hooks act only inside a
   canopy turn, an agent session or a direct turn (an envelope, `$CANOPY_AGENT`, a
