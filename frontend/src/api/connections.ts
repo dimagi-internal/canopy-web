@@ -1,4 +1,4 @@
-// Server-held OAuth connections: `apps/connections/api.py`. Which providers exist
+// OAuth connections, whose tokens canopy-web cannot read: `apps/connections/api.py`. Which providers exist
 // (and what to call them) comes from the API's `providers`, never from here.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
@@ -16,6 +16,8 @@ import type { components } from './generated'
 
 export type ConnectionOut = components['schemas']['ConnectionOut']
 export type ProviderOut = components['schemas']['ProviderOut']
+export type ShareStateOut = components['schemas']['ShareStateOut']
+export type ShareIn = components['schemas']['ShareIn']
 
 export interface ConnectionsView {
   providers: ProviderOut[]
@@ -41,6 +43,25 @@ export async function disconnectMine(id: string): Promise<void> {
   ensureOk(res, 'Could not disconnect.')
 }
 
+// ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----
+// canopy-web never opens these envelopes. Sharing needs a fresh passkey; the step-up
+// middleware answers that, and refusals carry their `code` on the `ApiError`.
+
+export async function getShareState(id: string): Promise<ShareStateOut> {
+  const res = await apiV2.GET('/api/connections/{connection_id}/share', {
+    params: { path: { connection_id: id } },
+  })
+  return unwrap(res, 'Could not read this connection.') as unknown as ShareStateOut
+}
+
+export async function putShare(id: string, body: ShareIn): Promise<ConnectionOut> {
+  const res = await apiV2.PUT('/api/connections/{connection_id}/share', {
+    params: { path: { connection_id: id } },
+    body,
+  })
+  return unwrap(res, 'Could not share this connection.') as unknown as ConnectionOut
+}
+
 export async function listAgentConnections(slug: string): Promise<ConnectionsView> {
   const res = await apiV2.GET('/api/agents/{slug}/connections', { params: { path: { slug } } })
   return view(unwrap(res, 'Could not read the agent’s connections.'))
@@ -51,18 +72,6 @@ export async function disconnectAgentConnection(slug: string, id: string): Promi
     params: { path: { slug, connection_id: id } },
   })
   ensureOk(res, 'Could not disconnect.')
-}
-
-// Lending is now a signed statement the owner's browser writes (`PUT /api/connections/{id}/share`);
-// the per-agent grant routes are gone. These stay so the old panel compiles until it is rewritten.
-const LENDING_MOVED = 'Sharing a connection is now done from Settings → Connections (Share).'
-
-export async function grantConnection(_slug: string, _id: string, _other: string): Promise<void> {
-  throw new Error(LENDING_MOVED)
-}
-
-export async function revokeConnectionGrant(_slug: string, _id: string, _other: string): Promise<void> {
-  throw new Error(LENDING_MOVED)
 }
 
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an

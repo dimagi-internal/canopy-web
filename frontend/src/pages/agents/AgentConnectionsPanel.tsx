@@ -3,9 +3,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartAction,
   disconnectAgentConnection,
-  grantConnection,
   listAgentConnections,
-  revokeConnectionGrant,
   type ConnectionOut,
   type ConnectionsView,
 } from '@/api/connections'
@@ -16,6 +14,10 @@ import { Button } from 'canopy-ui/ui'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+
+// Lending is a statement the owner's browser signs (`vault/connectionShare.ts`), not a
+// call this panel can make: these controls say where it moved until they are rebuilt.
+const LENDING_MOVED = 'Sharing a connection is now done from Settings → Connections (Share).'
 
 /**
  * What an agent can act as through canopy-held connections: its own, and ones
@@ -110,8 +112,8 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 picked={pick[c.id] ?? ''}
                 onPick={(v) => setPick((s) => ({ ...s, [c.id]: v }))}
                 onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id), 'Disconnected.')}
-                onGrant={(to) => run(c.id, () => grantConnection(agent.slug, c.id, to), `Shared with ${to}.`)}
-                onRevoke={(to) => run(c.id, () => revokeConnectionGrant(c.granted_from ?? agent.slug, c.id, to), c.granted_from ? 'Stopped using it.' : `Stopped sharing with ${to}.`)}
+                onGrant={() => { setNotice(''); setError(LENDING_MOVED) }}
+                onRevoke={() => { setNotice(''); setError(LENDING_MOVED) }}
                 self={agent.slug}
               />
             ))}

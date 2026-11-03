@@ -6,8 +6,6 @@ import { MemoryRouter } from 'react-router-dom'
 const m = vi.hoisted(() => ({
   listAgentConnections: vi.fn(),
   disconnectAgentConnection: vi.fn(),
-  grantConnection: vi.fn(),
-  revokeConnectionGrant: vi.fn(),
   listAgents: vi.fn(),
   role: { current: null as string | null },
 }))
@@ -15,8 +13,6 @@ vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
   listAgentConnections: m.listAgentConnections,
   disconnectAgentConnection: m.disconnectAgentConnection,
-  grantConnection: m.grantConnection,
-  revokeConnectionGrant: m.revokeConnectionGrant,
 }))
 vi.mock('@/api/agents', () => ({ listAgents: m.listAgents }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => m.role.current }))
@@ -39,7 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   m.role.current = null
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
-  for (const k of ['disconnectAgentConnection', 'grantConnection', 'revokeConnectionGrant'] as const) m[k].mockResolvedValue(undefined)
+  m.disconnectAgentConnection.mockResolvedValue(undefined)
 })
 afterEach(cleanup)
 
@@ -107,13 +103,8 @@ describe('AgentConnectionsPanel', () => {
     expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
-  it('shares with another agent (chip appears, picker clears), then stops sharing (chip goes)', async () => {
-    let sharedWith: string[] = []
-    m.listAgentConnections.mockImplementation(async () => ({
-      providers: [PROVIDER], connections: [conn({ shared_with: sharedWith })],
-    }))
-    m.grantConnection.mockImplementation(async (_s: string, _i: number, to: string) => { sharedWith = [to] })
-    m.revokeConnectionGrant.mockImplementation(async () => { sharedWith = [] })
+  it('says lending moved to Settings instead of calling a route that is gone', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ shared_with: [] })] })
     show()
     const sel = (await screen.findByLabelText('Share with')) as HTMLSelectElement
     await screen.findByRole('option', { name: 'echo' })
@@ -121,18 +112,10 @@ describe('AgentConnectionsPanel', () => {
     expect(screen.queryByRole('option', { name: 'eva' })).toBeNull()
     fireEvent.change(sel, { target: { value: 'echo' } })
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
-    await waitFor(() => expect(m.grantConnection).toHaveBeenCalledWith('eva', 3, 'echo'))
-    const stop = await screen.findByRole('button', { name: 'Stop sharing with echo' })
-    expect(screen.getByText('Shared with echo.')).toBeTruthy()
-    // Already shared: not offered again, so the picker has nothing left.
-    expect(screen.queryByLabelText('Share with')).toBeNull()
-    fireEvent.click(stop)
-    await waitFor(() => expect(m.revokeConnectionGrant).toHaveBeenCalledWith('eva', 3, 'echo'))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop sharing with echo' })).toBeNull())
-    expect(((await screen.findByLabelText('Share with')) as HTMLSelectElement).value).toBe('')
+    expect(await screen.findByText(/Settings → Connections \(Share\)/)).toBeTruthy()
   })
 
-  it('shows a connection shared by another agent and lets the admin stop using it', async () => {
+  it('shows a connection shared by another agent; stopping points at the same place', async () => {
     m.listAgentConnections.mockResolvedValue({
       providers: [PROVIDER], connections: [conn({ id: 9, granted_from: 'hal' })],
     })
@@ -140,7 +123,7 @@ describe('AgentConnectionsPanel', () => {
     expect(await screen.findByText(/shared by hal/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Stop using' }))
-    await waitFor(() => expect(m.revokeConnectionGrant).toHaveBeenCalledWith('hal', 9, 'eva'))
+    expect(await screen.findByText(/Settings → Connections \(Share\)/)).toBeTruthy()
   })
 
   it('never prints query-string text it does not know', async () => {
