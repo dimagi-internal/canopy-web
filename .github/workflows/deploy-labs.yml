@@ -318,6 +318,12 @@ jobs:
           else
             git diff --name-only "$LIVE" "$SHA" -- '*/migrations/*' pyproject.toml uv.lock
             echo "migrate=true" >> "$GITHUB_OUTPUT"
+            # A drop gets the split below (#2447). Everything else, including the
+            # unknown-live branch above, runs exactly the plain migrate it always did.
+            if git diff "$LIVE" "$SHA" -- '*/migrations/*' | grep -qE '^\+.*migrations\.(RemoveField|DeleteModel)\('; then
+              echo "::notice::This deploy drops a column or table; holding pure drops until after the rollout."
+              echo "drops=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Register migration task definition (image swap only)
@@ -377,7 +383,7 @@ jobs:
             --task-definition "${{ steps.register-task.outputs.task-def-arn }}" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.LABS_SUBNET }}],securityGroups=[${{ secrets.LABS_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
-            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["python","manage.py","migrate","--noinput"]}]}' \
+            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["python","manage.py","${{ steps.pending.outputs.drops == 'true' && 'migrate_for_rollout' || 'migrate' }}","--noinput"]}]}' \
             --query 'tasks[0].taskArn' --output text)
           echo "Migration task: $TASK_ARN"
 
@@ -552,6 +558,36 @@ jobs:
               exit 1
           fi
           echo "Rollout complete — new tasks running and healthy."
+
+      - name: Apply the drops held back from before the rollout
+        # migrate_for_rollout held these back so the old task kept its columns while
+        # it drained (#2447). Runs only after a rollout that succeeded: a failed one
+        # rolls back to code that still reads them. If this step fails, the new code
+        # is live and only needs the columns gone eventually, so nothing is broken;
+        # the job goes red so someone sees it, and `-f force=true` runs it again.
+        # Same task as "Run database migrations"; keep the two in step.
+        if: ${{ inputs.skip_migrations != true && steps.pending.outputs.drops == 'true' }}
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --task-definition "${{ steps.register-task.outputs.task-def-arn }}" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.LABS_SUBNET }}],securityGroups=[${{ secrets.LABS_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
+            --overrides '{"containerOverrides":[{"name":"${{ env.CONTAINER_NAME }}","command":["python","manage.py","migrate","--noinput"]}]}' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "${{ env.ECS_CLUSTER }}" --tasks "$TASK_ARN"
+
+          EXIT=$(aws ecs describe-tasks --cluster "${{ env.ECS_CLUSTER }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[?name==`'"${{ env.CONTAINER_NAME }}"'`].exitCode | [0]' --output text)
+          if [ "$EXIT" != "0" ]; then
+            REASON=$(aws ecs describe-tasks --cluster "${{ env.ECS_CLUSTER }}" --tasks "$TASK_ARN" \
+              --query 'tasks[0].stoppedReason' --output text)
+            echo "::error::The held-back drops did not apply (exit=$EXIT): $REASON. The new code is live and unaffected; re-run with force=true."
+            exit 1
+          fi
+          echo "Held-back drops applied."
 
       - name: Deploy timeline (where the rollout's time went)
         # The CloudFormation step has been a flat ~10.4 min on every deploy since
