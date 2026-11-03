@@ -463,7 +463,7 @@ export interface paths {
          * Disconnect one of my connections
          * @description Disconnect it: it leaves every list at once and is handed to no machine; a
          *     cloud box that holds it revokes it at the provider and it is then deleted
-         *     (`outcome` `revoking`). With none up to do that it is deleted at once (`deleted`).
+         *     (`outcome` `revoking`). With none to do that it is deleted at once (`deleted`).
          *
          *     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed.
          */
@@ -19018,7 +19018,7 @@ export interface components {
         readonly DisconnectOut: {
             /**
              * Outcome
-             * @description `revoking`: a machine that holds it will revoke it at the provider, then it is deleted. `deleted`: no machine that holds it is there to revoke it, so canopy deleted its copy; the provider may keep the old sign-in alive until it idles out.
+             * @description `revoking`: a machine that holds it will revoke it at the provider, then it is deleted. `deleted`: no machine that holds it has been heard from recently enough to revoke it, so canopy deleted its copy; the provider may keep the old sign-in alive until it idles out.
              * @enum {string}
              */
             readonly outcome: "revoking" | "deleted";

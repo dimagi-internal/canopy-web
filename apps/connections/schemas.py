@@ -138,7 +138,7 @@ class ConnectionOut(StrictModel):
 class DisconnectOut(StrictModel):
     outcome: Literal["revoking", "deleted"] = Field(
         description="`revoking`: a machine that holds it will revoke it at the provider, then it is deleted. "
-                    "`deleted`: no machine that holds it is there to revoke it, so canopy deleted its copy; the "
+                    "`deleted`: no machine that holds it has been heard from recently enough to revoke it, so canopy deleted its copy; the "
                     "provider may keep the old sign-in alive until it idles out.")
 
 

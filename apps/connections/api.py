@@ -269,7 +269,7 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
 def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> DisconnectOut:
     """Disconnect it: it leaves every list at once and is handed to no machine; a
     cloud box that holds it revokes it at the provider and it is then deleted
-    (`outcome` `revoking`). With none up to do that it is deleted at once (`deleted`).
+    (`outcome` `revoking`). With none to do that it is deleted at once (`deleted`).
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
     conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,

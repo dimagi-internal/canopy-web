@@ -724,7 +724,7 @@ def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
     """Disconnect `conn`, and say which of the two below happened. canopy-web holds no token, so it revokes nothing at the
     provider itself: a machine that holds it does (spec §4.5).
 
-    When a cloud box that is up holds it (`recipients.revokers`; only cloud runners revoke),
+    When a cloud box still heard from holds it (`recipients.revokers`; only cloud runners revoke),
     the row becomes `revoking` at once: it leaves every list, is handed to no
     machine, and its holders are told to revoke it (`keeper.work`) — at the provider
     only when no other connection of that account through that app remains
