@@ -111,13 +111,13 @@ def runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     return runner
 
 
-def turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+def turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *, own_turn_ok: bool = False) -> Turn:
     """`_tenant_turn_or_404`, then `site ∩ user`: a connected site acting for its
     visitor sees only its own agents' turns (apps/embedding/delegation.py). Same
     uniform 404, so a site cannot learn another agent's turn exists."""
     from apps.embedding import delegation
 
-    turn = _tenant_turn_or_404(request, turn_id)
+    turn = _tenant_turn_or_404(request, turn_id, own_turn_ok=own_turn_ok)
     offered = delegation.offered_for(request)
     if offered is not None and delegation.turn_agent_id(turn) not in offered:
         raise HttpError(404, "turn not found")
@@ -132,6 +132,17 @@ def turn_content_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
     turn = turn_or_404(request, turn_id)
     if not turn_access.can_read_turn_content(request.user, turn):
+        raise HttpError(404, "turn not found")
+    return turn
+
+
+def caller_context_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """`turn_content_or_404`, widened by the one rule `turn_access.can_read_caller_context`
+    (the agent reading its own running turn's envelope). Same uniform 404."""
+    from . import turn_access  # noqa: PLC0415 — as this module's other turn_access imports
+
+    turn = turn_or_404(request, turn_id, own_turn_ok=True)
+    if not turn_access.can_read_caller_context(request.user, turn):
         raise HttpError(404, "turn not found")
     return turn
 
@@ -196,7 +207,8 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     return turn
 
 
-def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
+                        own_turn_ok: bool = False) -> Turn:
     """Resolve a turn, gated by its tenant.
 
     An AGENT turn derives its tenant one hop away, via agent.workspace (spec
@@ -244,7 +256,12 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
         # that conversation. Tenant membership alone let any co-tenant read a
         # private web chat here that canopy_sessions/access.py hides from them.
         if not session_access.can_read(request.user, turn.chat_session):
-            raise HttpError(404, "turn not found")
+            # The caller envelope alone is also the running agent's to read, in a chat
+            # it cannot read (`turn_access.can_read_caller_context`).
+            from . import turn_access  # noqa: PLC0415 — as this module's other turn_access imports
+
+            if not (own_turn_ok and turn_access.is_own_running_turn(request.user, turn)):
+                raise HttpError(404, "turn not found")
         return turn
 
     # Project turn: gate on its own workspace, mirroring agent_for_read's checks.
