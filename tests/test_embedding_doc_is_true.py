@@ -131,8 +131,9 @@ def test_the_doc_matches_whether_actions_actually_work(doc):
     pins the other direction: actions work, so the doc says so, and if the
     frame ever stops calling them the doc has to stop claiming it.
     """
-    frame_app = DOC.parent.parent.parent / "frontend" / "src" / "embed" / "EmbedApp.tsx"
-    agent_can_act = frame_app.exists() and "runAction" in frame_app.read_text()
+    frame_dir = DOC.parent.parent.parent / "frontend" / "src" / "embed"
+    frame_sources = [p for p in frame_dir.glob("*.ts*") if ".test." not in p.name]
+    agent_can_act = any("runAction" in p.read_text() for p in frame_sources)
     claims_it_works = "Agent actions work" in doc
     warns_it_does_not = "cannot yet call a host action" in doc
 
