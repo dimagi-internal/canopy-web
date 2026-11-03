@@ -21,7 +21,7 @@ close).
   `signed_out` / `unrouted`) because the remedy differs — wait (for a runner, or
   for the turn ahead of it), open the laptop, sign Claude in on the box, or fix the
   agent's routing — and no client can derive those facts itself. `signed_out` is a
-  runner that is online but reports `Runner.signed_out` (see runners.md § Runner
+  runner that is online but reports `Runner.signed_out` (see runner-fleets.md § Runner
   readiness); it claims nothing, so "picking this up" would be a lie. A channel may collapse states, but only
   from the full set.
 - **Not a column.** It is a function of rows that change on their own clock
@@ -86,7 +86,7 @@ close).
 ## Recording: one path, keyed on whether a transcript exists
 
 - A conversation runs on one agent CLI for life (`Session.cli`, set by its first claim;
-  `runners.md` § Which CLI runs a turn): its transcript lives in that CLI's own store.
+  `runner-routing.md` § Which CLI runs a turn): its transcript lives in that CLI's own store.
 
 - `services.transcript_sourced(session)` is the one question: is a real runner
   driving this, so does a transcript exist? `Session.origin` means only "how this
@@ -322,13 +322,13 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 
 - **A bound chat** claims only on its binding's runner (stickiness, below).
 - **An unbound chat with an agent** follows the agent's runner list and rules
-  (`runners.md` → "An agent's runner list").
+  (`runner-routing.md` → "An agent's runner list").
 - **An unbound project chat** (no agent, only `Session.project`) runs on a box that
   declares the repo and that the workspace's runner order shares — or, with no
   order, one the person who sent it administers. A teammate's project chat in a
   workspace with no order does not land on your box; it waits, and `/supervisor`'s
   unclaimable report says "no runner order in <ws>, and <person> administers no box
-  with <repo>" (`runners.md` → "Project chats"). A chat with neither an agent nor a
+  with <repo>" (`runner-routing.md` → "Project chats"). A chat with neither an agent nor a
   repo follows the same order-or-your-box rule.
 - **Picking a box** for a chat is one rule, `canopy_sessions.placement.may_place`,
   asked by every door that chooses: the "Run on" picker's `runner_id`, a send's

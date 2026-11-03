@@ -43,7 +43,7 @@ def issue_credentials(turn):
         # canopy as its asker rather than as the runner's owner (who-is-asking
         # phase 5, canopy-web#1332).
         # A project's turn (no agent) asked by a verified person reads canopy as
-        # them too: it has no agent to act as (access.md → "Projects run as the
+        # them too: it has no agent to act as (access-confinement-and-act-as.md → "Projects run as the
         # person who asked").
         from .caller_tokens import is_caller_scoped, mint
 

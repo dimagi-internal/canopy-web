@@ -229,7 +229,7 @@ This is Part 4 because each site's login form must be checked by hand (fields, C
 ## 5. Routing, readiness and rollout
 
 - **A box says whether it can seal.** The runner's heartbeat reports `sealing: {version, ready}`; `ready` is true when the proxy is up, the runner is locked, and turn users are in place. Trust follows the existing rule for data mode: believed only from a cloud runner's beat signed with its own device key (`runner_protocol.data_mode_trusted`), never from a laptop or a person's token.
-- **Sealed-only entries need a sealing box.** If any of an agent's declared names is `sealed_only`, its full turns get a runner requirement `sealing`, through the existing runner-requirements floor (`docs/architecture/runners.md` § Runner flags and host requirements). A turn nothing can serve says so and waits. It never falls back to a box that would hand the value out in plain text (anti-goal: silent fallback).
+- **Sealed-only entries need a sealing box.** If any of an agent's declared names is `sealed_only`, its full turns get a runner requirement `sealing`, through the existing runner-requirements floor (`docs/architecture/runner-flags-and-schedules.md` § Runner flags and host requirements). A turn nothing can serve says so and waits. It never falls back to a box that would hand the value out in plain text (anti-goal: silent fallback).
 - **Entries that are sealed but not sealed-only** are given as stand-ins on a box that can seal, and as plain values elsewhere (a laptop). The vault page shows where each one was last given held.
 - **Rollout order:**
   1. Part 1 (turn users), all cloud boxes. Held values unchanged.

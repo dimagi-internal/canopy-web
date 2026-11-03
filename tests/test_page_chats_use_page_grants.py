@@ -1,5 +1,5 @@
 """A chat held on a site's page reaches that site only as the person who sent — owners
-included (access.md → "A chat on a page reaches its site only as the person").
+included (access-confinement-and-act-as.md → "A chat on a page reaches its site only as the person").
 
 The agent's owner (or an admin) chatting with it on a connect-labs page used to run in
 the agent's full profile with no capability, so the gateway refused it ("site tools

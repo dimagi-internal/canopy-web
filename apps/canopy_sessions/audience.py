@@ -9,7 +9,7 @@ in `readers(session)` is exactly `access.can_read`. If a leg changes in
 
 The line is for people, so it names what they would recognise — the email
 thread, the Slack channel, the machine, the project team, the agent — and says
-"you" when the viewer is the one it is about. docs/architecture/access.md
+"you" when the viewer is the one it is about. docs/architecture/access-sessions-and-people.md
 § Who can see a session.
 """
 from __future__ import annotations

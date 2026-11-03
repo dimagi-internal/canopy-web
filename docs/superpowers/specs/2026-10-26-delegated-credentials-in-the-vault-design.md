@@ -256,7 +256,7 @@ No agent loses a credential between steps. Each phase ships alone.
 - **Agents with no eligible device** (no box with an approved ECDH key) are listed for their owner. Their old row keeps serving until it is fixed.
 
 **Phase 3: remove the old path.** Drop `AgentDelegation` and the special resolve extras, and regenerate `generated.ts`. `RepoIdentity` stays: it picks the agent, and the agent's delegated GitHub entry follows. Update the docs:
-- `runners.md` § "The GitHub identity a turn gets";
+- `runner-credentials.md` § "The GitHub identity a turn gets";
 - `vault.md`, with a new § "Whose account an entry is";
 - `access.md` § Credentials.
 

@@ -12,8 +12,8 @@ import { RunnerAccessTab, RunnerCredentialsTab, RunnerRoutingTab, RunnerSettings
 
 // A RUNNER'S ONE PAGE, `/w/:workspace/runners/:runnerId` — every control for one
 // box, behind tabs, at one address that alerts, mail, the supervisor, the runner
-// tables and the fleet map all link to (docs/architecture/pages.md § One editor
-// per object). It was a single column in the supervisor: facts, health, eight
+// tables and the fleet map all link to (docs/architecture/pages.md, "One editor
+// per object"). It was a single column in the supervisor: facts, health, eight
 // settings, credentials, admins, workspaces, readiness checks, retire and the
 // routing matrix, one under the other.
 //

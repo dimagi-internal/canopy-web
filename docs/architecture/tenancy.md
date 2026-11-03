@@ -225,7 +225,7 @@ failure again.
   the latest grade kept beside it so a drop stays visible.
 - Recorded best-effort from the email door (`apps/harness/channels/email.py`) — mail
   is answered even when the bookkeeping fails.
-- What agents learn about a person (`PersonFact`, HCP): `access.md` → "What agents know about
+- What agents learn about a person (`PersonFact`, HCP): `access-sessions-and-people.md` → "What agents know about
   a person".
 
 ## The chat-session ACL (CI-enforced)
@@ -244,7 +244,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   session; editor, may pull). Per person × project, opt-in, revocable, each change an
   audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
   `/api/me/session-sharing/`, the Settings → Opted-in repos panel). Who sees what per
-  channel: `access.md` § Who can see a session.
+  channel: `access-sessions-and-people.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
   (`POST /{id}/backfill`) is for the box owner and anyone the rule lets write in it.
