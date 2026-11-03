@@ -121,9 +121,11 @@ def test_work_no_turn_owns_is_read_from_the_engine(ctx):
     assert session_state.activity(s) == session_state.WORKING
 
 
-def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_capture_on_commit_callbacks):
+@pytest.mark.parametrize("stopped", ["completed", "interrupted"])
+def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_capture_on_commit_callbacks, stopped):
     """The agent kept working after its turn settled, so the turn's end could not
-    say idle; the laptop's next report, with the engine stopped, does."""
+    say idle; the laptop's next report, with the engine stopped, does. `interrupted`
+    is the runner's word for a turn Escape ended, where emdash's flag never moves."""
     from apps.canopy_sessions import status_feed
 
     _session(ctx, ctx.laptop, agent_status="working")
@@ -135,7 +137,7 @@ def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_
         session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
     assert frames == []  # still working: nothing to say
 
-    task.agent_status = "completed"
+    task.agent_status = stopped
     with django_capture_on_commit_callbacks(execute=True):
         session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
     assert [f["event"]["kind"] for f in frames] == ["activity:idle"]

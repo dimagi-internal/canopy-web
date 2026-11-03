@@ -100,7 +100,8 @@ class ReportedSessionIn(Schema):
     task_uid: str = ""
     project: str = ""
     status: str = ""
-    # Emdash's own per-conversation liveness flag: "working" | "awaiting-input" | "".
+    # Emdash's own per-conversation liveness flag: "working" | "awaiting-input" | "",
+    # or the runner's "interrupted" where emdash says working over a turn Escape ended.
     # Defaulted because "" is a real and common answer — a runner that predates this,
     # a cloud runner with no emdash, or an emdash whose schema drifted all send
     # nothing, and the server falls back to its activity-recency heuristic for them
