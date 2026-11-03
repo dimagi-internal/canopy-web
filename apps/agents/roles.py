@@ -11,6 +11,7 @@ These are AGENT roles; a workspace has its own.
 """
 from __future__ import annotations
 
+from apps.agents.interface_default import READ_MODE_NAMES, is_read_mode
 from apps.common.rolesets import RoleSet
 
 OWNER, ADMIN, EDITOR, READ_WRITE, READ_ONLY = "owner", "admin", "editor", "read_write", "read_only"
@@ -33,7 +34,7 @@ OWN = "own"
 #: The scope of a named-capability permission: `use:<capability>` opens that one capability.
 USE = "use"
 
-#: The one capability `read` opens.
+#: The published name read mode resolves to today (`is_read_mode`: `ask` and `read` are one).
 READ_CAPABILITY = "ask"
 
 _PLAIN = (READ, WRITE, AGENT_EDIT, ADMINISTER, OWN)
@@ -98,10 +99,12 @@ def use(capability: str) -> str:
 
 def can_use(permissions, capability: str) -> bool:
     """May someone holding `permissions` use the capability `capability`? `write` opens all of
-    them; `read` opens `ask`; `use:<name>` opens `<name>`."""
-    if ROLES.holds(permissions, use(capability)):
-        return True
-    return capability == READ_CAPABILITY and ROLES.holds(permissions, READ)
+    them; `read` opens read mode; `use:<name>` opens `<name>`. Read mode is `read` and `ask`
+    alike (`is_read_mode`): a line naming either opens both."""
+    if is_read_mode(capability):
+        return ROLES.holds(permissions, READ) or any(ROLES.holds(permissions, use(n))
+                                                      for n in READ_MODE_NAMES)
+    return ROLES.holds(permissions, use(capability))
 
 
 def lowest_role_with(permission: str) -> str | None:

@@ -97,10 +97,13 @@ import re
 
 from apps.agents import roles
 from apps.agents.interface_default import (  # noqa: F401  (re-exported)
+    READ_MODE,
+    READ_MODE_NAMES,
     READ_PROFILE_VERSION,
     VERSION,
     default_interface,
     default_read_profile,
+    is_read_mode,
 )
 from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import initiator as who
@@ -126,6 +129,25 @@ PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
 FULL = ""
+
+def read_mode_override(iface: dict | None) -> str | None:
+    """The name of the agent's own published read-mode profile (`ask`, else `read`), or None
+    when it published none. While read mode resolves only through a published capability this
+    is the one a `read`-named ask finds."""
+    caps = (iface or {}).get("capabilities") or {}
+    return next((n for n in READ_MODE_NAMES if n in caps), None)
+
+
+def published_capability(iface: dict | None, name: str) -> tuple[str, dict] | tuple[None, None]:
+    """`(published name, capability)` for `name`, with `read` and `ask` standing for each other
+    (`is_read_mode`), or `(None, None)`. The published name is what a turn is stamped with."""
+    caps = (iface or {}).get("capabilities") or {}
+    if name in caps:
+        return name, caps[name]
+    if is_read_mode(name) and (own := read_mode_override(iface)):
+        return own, caps[own]
+    return None, None
+
 
 def opens(permissions, name: str) -> bool:
     """May someone holding `permissions` (the union of their access-list lines) use the capability
@@ -641,7 +663,7 @@ def profile(agent, capability: str) -> dict | None:
     """
     if capability == FULL:
         return None
-    cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
+    _published, cap = published_capability(getattr(agent, "interface", None), capability)
     cap = cap or {"description": "", "entry": None,
                   "tools": [], "bash": [], "read_paths": [], "write_paths": [], "input": {},
                   "pages": [], "sites": [], "ceiling": []}
