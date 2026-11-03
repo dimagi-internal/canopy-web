@@ -1138,6 +1138,7 @@ def health_report() -> dict:
         _data_mode_check()
         _claim_check()
         _update_check()
+        _clones_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -6631,6 +6632,97 @@ def _git_quiet(*args: str, timeout: float = 60, env: dict | None = None) -> bool
         return False
 
 
+#: How long a clone may go without a successful fetch before the box says so (the
+#: `clones` health check). A session's worktree is cut from the clone's origin/main,
+#: so a clone that cannot fetch hands every new conversation the agent's OLD skills
+#: and rails (Trellis, 2026-11: PRs merged to main never reached its confined chats).
+CLONE_STALE_SECONDS = int(os.environ.get("CLONE_STALE_SECONDS", "1800"))
+_CLONE_FETCH: dict[str, dict] = {}   # clone path -> {ok_at, failed_at, error}
+_CLONE_FETCH_LOCK = threading.Lock()
+
+
+def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = False) -> bool:
+    """Bring `clone` up to its origin — `fetch`, or `pull --ff-only` for an agent's own
+    checkout — and RECORD how it went. A failed fetch used to be swallowed (a private
+    repo fetched without a token fails, and a confined turn has none), leaving the
+    clone stale with nothing logged; now it is logged and turns the `clones` health
+    check amber once the clone is older than CLONE_STALE_SECONDS."""
+    key = str(clone)
+    cmd = ["git", "-C", key, *(["pull", "--ff-only", "--quiet"] if pull else ["fetch", "--quiet", "origin"])]
+    error = ""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
+        if r.returncode != 0:
+            error = " ".join((r.stderr or r.stdout or f"exit {r.returncode}").split())[-300:]
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)[:300]
+    now = time.time()
+    with _CLONE_FETCH_LOCK:
+        rec = _CLONE_FETCH.setdefault(key, {"ok_at": 0.0, "failed_at": 0.0, "error": ""})
+        if error:
+            rec.update(failed_at=now, error=error)
+        else:
+            rec.update(ok_at=now, error="")
+    if error:
+        _log(f"warn: could not update {clone} from its origin ({error}); new sessions on it run "
+             "the last commit this box fetched")
+    return not error
+
+
+def _clone_age(clone: pathlib.Path, now: float) -> float:
+    """Seconds since `clone` last took anything from its origin: our own record, else the
+    mtime of .git/FETCH_HEAD (what a fetch or pull from an earlier process left)."""
+    with _CLONE_FETCH_LOCK:
+        ok_at = float(_CLONE_FETCH.get(str(clone), {}).get("ok_at") or 0.0)
+    if not ok_at:
+        for head in (clone / ".git" / "FETCH_HEAD", clone / "FETCH_HEAD"):
+            try:
+                ok_at = max(ok_at, head.stat().st_mtime)
+            except OSError:
+                pass
+    return now - ok_at if ok_at else float("inf")
+
+
+def _clones_check(now: float | None = None) -> None:
+    """The `clones` health check: amber when a clone whose fetch is FAILING is older than
+    CLONE_STALE_SECONDS. Silent (ok) otherwise — a clone nobody has tried to update lately
+    is just idle."""
+    now = time.time() if now is None else now
+    with _CLONE_FETCH_LOCK:
+        failing = {k: dict(v) for k, v in _CLONE_FETCH.items() if v.get("error")}
+    stale = []
+    for key, rec in sorted(failing.items()):
+        age = _clone_age(pathlib.Path(key), now)
+        if age > CLONE_STALE_SECONDS:
+            how = "never fetched" if age == float("inf") else f"last fetched {int(age // 60)} min ago"
+            stale.append(f"{pathlib.Path(key).name} ({how}): {rec['error']}")
+    if stale:
+        _set_check("clones", "warn", "new sessions run STALE skills and rails — " + "; ".join(stale) +
+                   ". A private repo needs the agent's GitHub token (its owner lends one at the "
+                   "agent's Settings → External accounts → GitHub).")
+    else:
+        _set_check("clones", "ok", "")
+
+
+def _clone_refresh_env(slug: str, env: dict | None) -> dict | None:
+    """The environment for the RUNNER'S OWN `git fetch` of `slug`'s clone — never a turn's.
+
+    A full turn already carries its GitHub identity in `env`. A caller's (confined) turn
+    carries none, by design, so its fetch of a private repo failed and its session was
+    cut from whatever a full turn last fetched. The runner may use the delegation the
+    agent's owner lent THE AGENT (the box opens it from its own resolve; `_delegated_value`)
+    to keep the agent's own checkout current: it goes into this one git subprocess,
+    read-only in effect, and is never part of the turn's environment (the confined env is an
+    allowlist built before and apart from this). Not on a sensitive-data box, which holds
+    nothing it need not."""
+    if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug:
+        return env
+    token = _delegated_value(slug, "github-token")
+    if not token:
+        return env
+    return {**(env if env is not None else _child_safe_env()), **github_env(token)}
+
+
 def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
                              env: dict | None = None) -> None:
     """Give an agent chat session its OWN worktree of the agent's repo, at the
@@ -6659,11 +6751,11 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
             return
         if dirty or _git_quiet("-C", str(path), "symbolic-ref", "-q", "HEAD"):
             return
-        _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
+        _fetch_clone(clone, env)
         _git_quiet("-C", str(path), "checkout", "--quiet", "--detach", "origin/main")
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
+    _fetch_clone(clone, env)
     for ref in ("origin/main", "HEAD"):
         if _git_quiet("-C", str(clone), "worktree", "add", "--quiet", "--detach", str(path), ref):
             _log(f"session worktree: {path} from {clone.name} {ref}")
@@ -6953,7 +7045,12 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
         clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
         if clone is not None and (clone / ".git").exists():
-            _ensure_session_worktree(clone, path, env=env)
+            # Fetched with the runner's own refresh identity when the turn has none (a
+            # caller's confined turn): the session is cut from origin/main, so a fetch that
+            # fails leaves it on the agent's old skills. Never put in the turn's env.
+            fetch_env = _clone_refresh_env(slug, env)
+            _fetch_clone(clone, fetch_env, pull=True)
+            _ensure_session_worktree(clone, path, env=fetch_env)
         elif project:
             _project_worktree(project, path, env)
         return path
@@ -6961,13 +7058,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
         if (agent_dir / ".git").is_dir() and _safe_session_dirname(slug) == slug:
             # The clone is still pulled: the agent's plugin is installed from it.
-            try:
-                subprocess.run(
-                    ["git", "-C", str(agent_dir), "pull", "--ff-only"],
-                    check=False, capture_output=True, timeout=60, env=env,
-                )
-            except Exception as exc:
-                _log(f"warn: git pull in {agent_dir} failed (using clone as-is): {exc}")
+            _fetch_clone(agent_dir, _clone_refresh_env(slug, env), pull=True)
             return _agent_turn_worktree(slug, agent_dir, turn_id, env=env)
     path = pathlib.Path(WORK_DIR) / turn_id[:8]
     if project:
