@@ -54,6 +54,9 @@
 - **R12 Removing an app** sets `removed_at` and hides it; the sweep deletes it once its connections are revoked (a cascade would delete revoking rows before any holder revoked them).
 - **R13 A write-back on an expired lease is accepted if nobody took the lease since.**
 - **R14 The browser trusts devices** by endorsements from people it trusts (`vault/trust.ts`, as `sealAndStore`/`approveAndGrant` do), and the owner's own machines by the owner's choice (name + fingerprint).
+- **R16 Getting a token reads twice** (amends Task B4's call order): material → (live access? return it) → lease → material again with full validation → (a newer access landed? release and return it) → refresh from the second read → write back with its digest → release the lease. Once a box holds the lease no earlier holder can land a rotation, so it can never refresh with a token already rotated away, which would mark a healthy connection `needs_reconnect`.
+- **R17 A rotated token gets a time budget, not a retry count** (amends Task B4's "up to 3 times"): holding a rotated refresh token, a box retries the write-back with backoff for up to 90 s, renewing the lease, on transient answers and on `device_proof_required`.
+- **R18 A laptop's write-back seals to the envelope's current recipients narrowed by what the statement allows**, never to machines still waiting (§3: a laptop never re-seals for others).
 - **R15 Release safety:** the runner logs one `stage_failed` when its CLI is older than `CONNECTIONS_ZK_MIN_CLI`, and a new CLI treats a missing material route (404) as "not connected".
 
 ---
