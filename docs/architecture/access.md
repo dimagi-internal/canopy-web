@@ -363,7 +363,7 @@ An agent's **published interface** (`apps/agents/interface.py`, live state on ca
 repo file) is its set of **capabilities**: named profiles it offers people who do not run the
 whole agent. It says what each one *is*, and nothing about who may use it.
 
-* A capability has a profile (`tools`, `bash`, `read_paths`, `write_paths`, `entry`, `input`,
+* A capability has a profile (`tools`, `bash`, `read_paths`, `write_paths`, `entry`,
   `description`), optionally the resources it serves (`pages`, superseded; `sites` and `ceiling`;
   `own_login`; `data: sensitive`). It carries **no `role:`**: who may open it is a line on the
   access list (`interface.opens(permissions, name)`: `write` opens all, `read` opens read mode,
@@ -383,7 +383,7 @@ whole agent. It says what each one *is*, and nothing about who may use it.
   default**. An agent that has published nothing is reached by its owner, its agent admins, the
   people whose lines give `write`, and, in read mode, the people whose lines give `read`.
 * **Retired keys are refused.** `full:`, `editors:` and a capability's `callers:` or `role:` are a
-  422 naming the access list; `callers_default` may only be `none`. Strict on purpose: an unknown key
+  422 naming the access list; `callers_default: none`, `version` and a capability's `input` are accepted and ignored (published interfaces still carry them; a republish must not 422), and are not written back. Strict on purpose: an unknown key
   is refused, not ignored.
 * The page edits it as a form (Settings → Channels → Capabilities) with the YAML under
   "Advanced"; a draft is checked by `POST /interface/validate`, which asks `interface.parse` per

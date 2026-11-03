@@ -105,7 +105,7 @@ def test_parse_refuses_what_it_does_not_understand(doc, msg):
 
 def test_parse_normalises():
     got = parse({"capabilities": {"ask": ASK_CAP}})
-    assert got["version"] == 1 and "callers_default" not in got
+    assert "version" not in got and "callers_default" not in got
     assert "role" not in got["capabilities"]["ask"]     # a capability says what it is, never who may use it
     assert got["capabilities"]["ask"]["bash"] == ["canopy email read --repo . {thread_id}"]
 
@@ -678,3 +678,16 @@ def test_a_session_a_member_started_themselves_grants_nothing(w):
     SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.EDITOR)
     assert _in_session(session, other, "s4").capability == ASK
     assert _in_session(session, w["ed"], "s5").capability == ASK
+
+
+def test_retired_fields_are_ignored_not_refused_so_a_stored_interface_republishes(caplog):
+    """Every interface saved before `input` and `version` were retired carries them (`input: {}` on
+    each capability, `version: 1`); loading one and saving it back must not 422."""
+    stored = {"version": 1, "callers_default": "none",
+              "capabilities": {"ask": {**ASK_CAP, "input": {"opportunity_id": "integer"}}, "x": {"input": {}}}}
+    with caplog.at_level("WARNING"):
+        got = parse(stored)
+    assert "version" not in got and "callers_default" not in got
+    assert all("input" not in cap for cap in got["capabilities"].values())
+    assert "ask.input" in caplog.text and "version" in caplog.text
+    assert parse(got) == got                                   # and what is written back parses to itself

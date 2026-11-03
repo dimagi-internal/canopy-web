@@ -241,11 +241,6 @@ export function AgentInterfaceView({
                     <span className="font-mono">{n}</span>
                     {isReadMode(n) && <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">read mode override</span>}
                     {c.description && <div className="text-[12px] text-muted-foreground">{c.description}</div>}
-                    {Object.keys(c.input ?? {}).length > 0 && (
-                      <div className="text-[11px] text-muted-foreground">
-                        Inputs: {Object.entries(c.input ?? {}).map(([k, t]) => `${k}: ${t}`).join(', ')}
-                      </div>
-                    )}
                   </Td>
                   <Td density="cozy" tone="secondary" mono className="align-top text-[11px]">
                     {[...(c.sites ?? []).map((s) => `site: ${s}`), ...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (

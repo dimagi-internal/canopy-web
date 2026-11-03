@@ -8,13 +8,9 @@ from __future__ import annotations
 
 import re
 
-VERSION = 1
-
-
 def default_interface() -> dict:
-    """No capability — the owner, the admins and
-    the workspace's editors reach the agent, and nobody else. A fresh dict every call."""
-    return {"version": VERSION, "capabilities": {}}
+    """No door and no read-mode override. A fresh dict every call."""
+    return {"capabilities": {}}
 
 
 # --- the default read profile ---------------------------------------------------------------
@@ -103,7 +99,6 @@ def default_read_profile(agent, *, skills=None) -> dict:
         "bash": bash,
         "read_paths": ["{cwd}/**"],
         "write_paths": [scratch],
-        "input": {},
         "pages": [],
         "sites": [],
         "ceiling": [],

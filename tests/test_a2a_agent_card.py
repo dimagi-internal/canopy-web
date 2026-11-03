@@ -2,7 +2,7 @@
 
 The card is discovery only: these tests pin what it SHOWS — which agents are
 discoverable, which skills appear for whom, and that nothing internal leaks —
-because the policy itself is enforced elsewhere (interface.capability_for).
+because the policy itself is enforced elsewhere (access.decide).
 """
 from __future__ import annotations
 
