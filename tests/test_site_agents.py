@@ -21,7 +21,7 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentBootstrapReport
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
 from apps.host_grants import client_identity, site_needs
 from apps.passkeys.testing import grant_step_up
@@ -245,6 +245,34 @@ def test_an_offline_runner_is_listed_but_not_ready(w):
     data = _agents(w).agent("labsdata")
     assert data.flags_available == ("sensitive_data",) and not data.ready_with_flag("sensitive_data") and not data.ready
     assert any("is ready now" in p for p in data.problems)
+
+
+def _cloud_runner(w, agent, *, paired_as, renamed_to=None):
+    runner = enrolled(Runner.objects.create(
+        name=paired_as, kind=Runner.CLOUD, host=paired_as, owner=w["owner"], status=Runner.ONLINE,
+        ready=True, last_heartbeat_at=timezone.now()))
+    if renamed_to:
+        Runner.objects.filter(pk=runner.pk).update(name=renamed_to)  # a person renames it; paired_as stays
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=1, enabled=True)
+    return runner
+
+
+def test_a_renamed_cloud_runner_is_ready_on_the_report_its_box_filed_under_the_name_it_paired_as(w):
+    # The box reports as $RUNNER_NAME ("cloud-ec2-2"); a person later renamed the runner
+    # ("cloud-ec2-live"). The report is still that runner's.
+    ace = w["ace"]
+    _cloud_runner(w, ace, paired_as="cloud-ec2-2", renamed_to="cloud-ec2-live")
+    AgentBootstrapReport.objects.create(agent=ace, runner_name="cloud-ec2-2", mailbox_ok=True)
+    got = _agents(w).agent("ace")
+    assert got.ready and got.problems == ()
+
+
+def test_a_cloud_runner_with_no_report_under_either_of_its_names_is_still_not_ready(w):
+    ace = w["ace"]
+    _cloud_runner(w, ace, paired_as="cloud-ec2-2", renamed_to="cloud-ec2-live")
+    AgentBootstrapReport.objects.create(agent=ace, runner_name="some-other-box", mailbox_ok=True)
+    got = _agents(w).agent("ace")
+    assert not got.ready and any("is ready now" in p for p in got.problems)
 
 
 def test_runner_flags_are_every_known_flag_with_its_meaning(w):
