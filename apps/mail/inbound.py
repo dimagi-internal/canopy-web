@@ -34,9 +34,14 @@ class Transient(Exception):  # noqa: N818 - carries the outcomes of a notificati
         self.outcomes = outcomes
 
 
-def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
-    from . import agent_mail
+def _agent_mail():
+    from . import agent_mail  # the harness it pulls in stays out of this module's import
 
+    return agent_mail
+
+
+def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
+    agent_mail = _agent_mail()
     return agent_mail.deliver(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size)
 
 
@@ -96,12 +101,8 @@ def _route_one(rcpt: str, parsed, raw: bytes, key: str, verdicts: dict) -> str:
 def _keep_copy(route, parsed, key: str, verdicts: dict, raw_size: int) -> None:
     """The reader's own copy of a forwarded message. It is a safety net, so a failure to
     store it must never stop the forward itself."""
-    from . import (
-        agent_mail,  # noqa: PLC0415 — agent_mail pulls in the harness; inbound stays light, as deliver_agent does
-    )
-
     try:
-        agent_mail.keep_forwarded(route, parsed, key, verdicts=verdicts, raw_size=raw_size)
+        _agent_mail().keep_forwarded(route, parsed, key, verdicts=verdicts, raw_size=raw_size)
     except Exception:  # noqa: BLE001
         logger.exception("mail %s: could not keep a copy for %s", parsed.message_id, route.address)
 
