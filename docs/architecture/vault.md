@@ -64,8 +64,10 @@ Every record goes through one function, `apps/connections/services.record`, in o
 | `connections.app_removed` | info | yes | a workspace's app was removed (same shape) |
 | `connections.shared` | info | yes | the owner's signed grant statement and the envelope sealed to it were stored (`sharing.share`); `version` |
 | `connections.refreshed` | info | yes | a machine refreshed it and wrote back; `machine`, `rotated` (yes/no; one a day per kind) |
+| `connections.server_refreshed` | info | yes | canopy-web refreshed it through its own key and wrote back (`server_tokens`); `machine` (`canopy-web`), `rotated` (yes/no; one a day per kind) |
+| `connections.server_use_on` / `connections.server_use_off` | info | yes | the owner turned canopy-web's use of it on or off |
 | `connections.resealed` | info | yes | a keeper re-sealed it to machines that were waiting; `machine`, `added` |
-| `connections.revoked` | info | yes | a cloud box revoked it at the provider and confirmed; `machine`, `at_provider` |
+| `connections.revoked` | info | yes | a cloud box, or canopy-web through its own key, revoked it at the provider and confirmed; `machine`, `at_provider` |
 | `connections.revoke_unconfirmed` | info, warn from the sweep | yes | the row was deleted with no confirmation: no machine held it, or none confirmed within 7 days; `reason` |
 | `connections.lease_expired_unwritten` | warn | yes | a refresh lease expired before its holder wrote back, so the rotated token may be lost; `machine`, `taken_by` |
 | `connections.granted` | info | yes | the statement lends it to an agent it did not before; `grantee` |
@@ -73,7 +75,8 @@ Every record goes through one function, `apps/connections/services.record`, in o
 | `connections.token_issued` | info | yes | a machine read the sealed material (canopy-web hands out no token); `to` (`cli` \| `turn`), `machine` (the box or computer), and for a turn `agent`, `turn`, `runner` (one turn's re-reads coalesce into one Event) |
 | `connections.reconnect_required` | warn | yes | a machine reported the provider answered `invalid_grant`; `machine`, `error`, `detail` (the provider's own words, scrubbed by the machine: Salesforce's `ip restricted` is `invalid_grant` too) |
 | `connections.provider_error` | warn | no (log) | the provider refused or could not be reached; `during` (`authorize`: its `?error=` at the callback, never for `access_denied` · `connect`: the exchange or identity failed, or `no_refresh_token`, or `insufficient_scope` with `missing`, or `wrong_account` · `refresh`), `error` (the provider's code, `provider_unavailable`, or one of canopy's; an `?error=` that is not code-shaped is `unrecognised`). Before a row exists `connection` is empty and `owner` is the would-be owner |
-| `connections.revoke_failed` | warn | no (log) | a holder's revoke at the provider failed (the row is deleted anyway); `machine`, `error` |
+| `connections.server_refused` | warn | no (log) | canopy-web opened or tried to write a connection through its own key and refused what it found, as a machine would; `reason` (a fixed phrase, never a value from the envelope) |
+| `connections.revoke_failed` | warn | no (log) | a holder's revoke at the provider failed (the row is deleted anyway; canopy-web's own failure leaves it `revoking`, and the sweep retries); `machine`, `error` |
 
 Common keys: `connection` (row id), `provider`, `owner` (`agent:<slug>` or `user:<id>`), `account_label`, `by` (the acting person's email, empty for a runner). A log line is `connections.<kind> key=value key=value …`, in that key order. A value that is empty, not printable (a newline, a control character) or contains whitespace, `=` or `"` is written as a JSON string with every non-printable character escaped as `\uXXXX` (so U+2028, U+2029 and U+0085 never split a line) and printable non-ASCII kept readable: `by=""`, `missing="api chatter_api"`. A line is always one line; `services.parse_log_line` recovers the exact values (tested with newlines, tabs, line and paragraph separators, quotes, `=` and non-ASCII). Example:
 

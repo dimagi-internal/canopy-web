@@ -85,7 +85,7 @@ class FakeSF:
             raise what
         return what
 
-    def post(self, url, data=None, headers=None, timeout=None):
+    def post(self, url, data=None, headers=None, timeout=None, allow_redirects=True):
         assert timeout == 15
         self.calls.append(("POST", url, dict(data or {})))
         if url == TOKEN_URL:
@@ -132,7 +132,7 @@ class FakeGoogle:
         r.json.return_value = body
         return r
 
-    def post(self, url, data=None, headers=None, timeout=None):
+    def post(self, url, data=None, headers=None, timeout=None, allow_redirects=True):
         assert timeout == 15
         self.calls.append(("POST", url, dict(data or {})))
         if url == _google.TOKEN_URL:

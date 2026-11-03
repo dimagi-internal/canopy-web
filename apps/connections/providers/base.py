@@ -1,11 +1,12 @@
 """The provider contract: one OAuth 2.0 authorization-code provider (with PKCE).
 
 `Provider` implements what canopy-web does with the OAuth spec — the authorize
-URL, the code exchange, revoking a grant refused at connect time, error
-parsing, the timeout on every call — from a handful of class attributes.
-canopy-web never refreshes or revokes a stored token (it holds none): the
-machines that hold a connection do, in the canopy CLI. A provider module subclasses
-it, fills in those attributes, implements `identity()` and overrides only
+URL, the code exchange, refresh, revocation, error parsing, the timeout on every
+call — from a handful of class attributes. Machines that hold a connection refresh
+and revoke it with the canopy CLI's own providers; canopy-web does so only for a
+connection sealed to its own key (`server_tokens`), and a test on each side pins that
+both agree on the token URLs and on `rotates_refresh_token`. A provider module
+subclasses it, fills in those attributes, implements `identity()` and overrides only
 what its service does differently (see `salesforce.py`).
 
 A provider is a class; an instance is that provider bound to one workspace's
@@ -43,8 +44,8 @@ What a provider declares, and where providers differ:
 - Expiry: a token response's `expires_in` when it sends one; otherwise the
   app's `access_token_seconds` option, else `default_access_token_seconds`.
 - `rotates_refresh_token`: whether a refresh may hand back a NEW refresh token
-  (Salesforce, Intacct) that replaces the old one. The refreshing machine keeps
-  a returned refresh token either way; the flag documents the provider and is
+  (Salesforce, Intacct) that replaces the old one. Whoever refreshes keeps a
+  returned refresh token either way; the flag documents the provider and is
   what the tests pin.
 - `revokes_refused_grant`: whether a grant refused after the code exchange is
   revoked at the provider before it is dropped (default yes). Google: no — revoking
@@ -57,7 +58,8 @@ What a provider declares, and where providers differ:
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
 - `sealed_hosts(token)`: the `login_host` and `instance_url` sealed in the envelope
   at connect, or a `ProviderError` when no machine would accept them (Salesforce's
-  host rule); `("", token.instance_url)` by default.
+  host rule); `("", token.instance_url)` by default. `check_sealed_hosts` is the same
+  rule read back: what canopy-web checks before it calls a host an envelope names.
 - `identity(token)`: who the account is — a stable `account_id`, a label, and
   the verified `email` when the provider vouches for one (what `check_owner`
   compares; the label is display only).
@@ -199,6 +201,13 @@ class Provider:
         for a value every machine would refuse, so it never connects."""
         return "", token.instance_url
 
+    def check_sealed_hosts(self, *, login_host: Any = None, instance_url: Any = None) -> None:
+        """Refuse, with `ProviderError(code="bad_host")`, a host an opened envelope names (None: that
+        one was not given) that the provider's rules do not allow. By default no provider has a host
+        of its own, so both must be empty, as a machine requires of Google."""
+        if login_host not in (None, "") or instance_url not in (None, ""):
+            raise ProviderError(f"A {self.title} connection names no host of its own", code="bad_host")
+
     def identity(self, token: TokenResponse) -> Identity:
         raise NotImplementedError
 
@@ -294,6 +303,14 @@ class Provider:
             data["code_verifier"] = code_verifier
         return self._token_response(self._token(data, "code exchange"))
 
+    def refresh(self, refresh_token: str) -> TokenResponse:
+        """A new access token, with the app's client. `refresh_token` on the answer is "" unless the
+        provider sent one; the caller keeps the old one then. Goes to `token_url()` and nowhere
+        else: the form carries a refresh token and the client secret, so a redirect is no answer."""
+        body = self._token({"grant_type": "refresh_token", "refresh_token": refresh_token}, "refresh",
+                           allow_redirects=False)
+        return self._token_response(body)
+
     def missing_scopes(self, granted: tuple[str, ...]) -> tuple[str, ...]:
         """The required scopes a grant lacks: the provider's own required ones
         and every extra scope the app chose. An empty `granted` means the
@@ -311,7 +328,7 @@ class Provider:
         if not url:
             return
         data, auth = self._authenticated({"token": token, "token_type_hint": hint})
-        resp = self._call(requests.post, url, "revoke", data=data, **auth)
+        resp = self._call(requests.post, url, "revoke", data=data, allow_redirects=False, **auth)
         if resp.status_code != 200:
             raise self._error(resp, "revoke")
 
@@ -339,10 +356,10 @@ class Provider:
             return data, {"auth": (self.client_id, self.client_secret)}
         return {**data, "client_id": self.client_id, "client_secret": self.client_secret}, {}
 
-    def _token(self, data: dict, what: str) -> dict:
+    def _token(self, data: dict, what: str, **kw) -> dict:
         data, auth = self._authenticated(data)
         resp = self._call(requests.post, self.token_url(), what, data=data,
-                          headers={"Accept": "application/json"}, **auth)
+                          headers={"Accept": "application/json"}, **kw, **auth)
         if resp.status_code != 200:
             raise self._error(resp, what)
         body = self._json(resp, what)
@@ -371,9 +388,10 @@ class Provider:
         return body
 
     def _error(self, resp: requests.Response, what: str) -> ProviderError:
-        """A failed response as an exception: a 5xx or a non-JSON body is the provider
-        being unavailable; anything else is a rejection, carrying the provider's code."""
-        if resp.status_code >= 500:
+        """A failed response as an exception: a 5xx, a rate limit, a redirect or a non-JSON body
+        is the provider being unavailable, which says nothing about the grant; anything else is a
+        rejection, carrying the provider's code."""
+        if resp.status_code >= 500 or resp.status_code == 429 or 300 <= resp.status_code < 400:
             return ProviderUnavailable(f"{self.title} {what} failed ({resp.status_code})")
         try:
             body = self._json(resp, what)

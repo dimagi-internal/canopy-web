@@ -14,12 +14,14 @@ WHERE THINGS LIVE
 - `sharing.py` the signed statement and the envelope sealed to it
 - `recipients.py` who may open a connection; `wire.py` the envelope wire format
 - `tokens.py` / `proofs.py` material, lease, write-back; device proof
+- `server_tokens.py` canopy-web opening, refreshing and revoking through its own key (`server_key.py`)
 - `keeper.py` re-seal, revoke confirmation, the sweeps
 - `providers/` one module per provider
 
 AUDIT. One vocabulary, `services.AUDITED`: `connected`, `disconnected`,
 `shared`, `granted`, `grant_revoked`, `token_issued` (names `to`, the `runner`
-and `machine`, and the `turn`), `refreshed` (`rotated`), `resealed`, `revoked`,
+and `machine`, and the `turn`), `refreshed` (`rotated`), `server_refreshed`,
+`server_use_on`, `server_use_off`, `resealed`, `revoked`,
 `revoke_unconfirmed`, `lease_expired_unwritten`, `reconnect_required`,
 `app_configured`, `app_removed`. Never a token, code, verifier or client secret
 in any event, log line or response other than the material response's `app`.

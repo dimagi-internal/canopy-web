@@ -8,10 +8,10 @@ runner routes all come through here, so they cannot disagree about what a
 usable connection is. Nothing here names a provider: what differs between
 providers lives in `providers/`.
 
-canopy-web HOLDS NO TOKEN IT CAN USE. The only plaintext token it ever sees is
-the one in hand during the callback's code exchange; it never refreshes and
-never revokes a stored token (it has none). Machines the owner allows refresh
-and revoke, with the app's client.
+A CONNECTION IS SEALED, AND canopy-web STORES NOTHING READABLE. Here the only plaintext token is
+the one in hand during the callback's code exchange. Machines the owner allows refresh and revoke,
+with the app's client; and, only for a connection sealed to its own KMS key (the `server_use`
+switch), so does canopy-web, in `server_tokens`.
 
 CONNECTING SEALS TO THE OWNER. `complete` exchanges the code, runs every policy
 check, then seals the refresh token (the `refresh` plaintext of
@@ -357,8 +357,9 @@ def delete_removed_app(app: ConnectionApp) -> bool:
 # Verbs that are the owner's history: an Event for an agent's connection, a log
 # line for a person's. The rest are canopy's operational trouble: always a log line.
 AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_revoked", "token_issued",
-                     "refreshed", "lease_expired_unwritten", "reconnect_required", "resealed", "revoked",
-                     "revoke_unconfirmed", "app_configured", "app_removed"})
+                     "refreshed", "server_refreshed", "server_use_on", "server_use_off", "lease_expired_unwritten",
+                     "reconnect_required", "resealed", "revoked", "revoke_unconfirmed", "app_configured",
+                     "app_removed"})
 
 
 @dataclass(frozen=True)
@@ -757,23 +758,31 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
 
 # ---- disconnecting -----------------------------------------------------------
 
-def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
-    """Disconnect `conn`, and say which of the two below happened. canopy-web holds no token, so it revokes nothing at the
-    provider itself: a machine that holds it does (spec §4.5).
+def disconnect(conn: Connection, *, by, revoke_now: bool = True) -> Literal["revoking", "deleted"]:
+    """Disconnect `conn`, and say which of the two below happened (spec §4.5).
 
-    When a cloud box still heard from holds it (`recipients.revokers`; only cloud runners revoke),
-    the row becomes `revoking` at once: it leaves every list, is handed to no
-    machine, and its holders are told to revoke it (`keeper.work`) — at the provider
-    only when no other connection of that account through that app remains
-    (`revoke_at_provider`: revoking at Google ends every token of the account on the
-    client). The first holder to confirm deletes it (`keeper.confirm_revoked`); the
-    sweep deletes one nobody confirms. When none does (never shared, only laptops, or
+    When canopy-web's own key can open it (`server_tokens.may_revoke`) or a cloud box still heard
+    from holds it (`recipients.revokers`; only cloud runners revoke), the row becomes `revoking` at
+    once: it leaves every list, is handed to no machine, and its holders are told to revoke it
+    (`keeper.work`) — at the provider only when no other connection of that account through that
+    app remains (`revoke_at_provider`: revoking at Google ends every token of the account on the
+    client). canopy-web then revokes it itself, after the commit (`server_tokens.revoke_if_able`),
+    finishing as a holder's confirmation does, so this answers `deleted`; when it can't, the row stays
+    `revoking`, and the sweep retries while any holder may confirm first. The sweep deletes one
+    nobody finishes. When neither can (never shared and not sealed to canopy-web, only laptops, or
     every holder stopped), nothing is there to revoke it, so it is deleted now and recorded
     `revoke_unconfirmed` (R7): the provider's own idle expiry finishes it.
+
+    `revoke_now` false: the caller is in a transaction, where a network call must not be, so
+    canopy-web's revoke waits for the sweep. A failed revoke never raises out of here.
 
     Records `disconnected` (in the app's workspace too, for a moved agent's) and
     `grant_revoked` for every agent it was lent to. Disconnecting a row already
     `revoking` changes nothing."""
+    from . import server_tokens  # noqa: PLC0415 — it builds on this module
+
+    if revoke_now:  # under the row lock only the cache is read
+        rcpt.warm_server_key(conn)
     with transaction.atomic():
         row = (Connection.objects.select_for_update(of=("self",)).select_related("app__workspace", "agent__workspace")
                .filter(pk=conn.pk).first())
@@ -784,7 +793,8 @@ def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
         subject = Subject.of(row)
         grantees = _grantees(row)
         held = rcpt.revokers(row)
-        if held:
+        ours = server_tokens.may_revoke(row)
+        if held or ours:
             row.state, row.revoking_since = Connection.REVOKING, timezone.now()
             row.revoke_at_provider = not other_live_connections(row).exists()
             # A lease in flight ends here: its write-back is refused (`revoking`).
@@ -802,11 +812,40 @@ def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
         record(dataclasses.replace(subject, workspace=app_ws), "disconnected", by=by, summary=summary)
     for grantee in grantees:
         record_grant_revoked(subject, grantee, by=by, during="disconnected")
-    if not held:
+    if not held and not ours:
         record(subject, "revoke_unconfirmed", by=by, reason="no_holder",
                summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: no machine "
                        "holds it to revoke it")
-    return "revoking" if held else "deleted"
+        return "deleted"
+    if ours and revoke_now and server_tokens.revoke_if_able(row):
+        return "deleted"
+    return "revoking"
+
+
+def finish_revoking(conn: Connection, *, machine: str, revoked: bool, error: str = "", check=None) -> None:
+    """Whoever held `conn` did what it could: delete the row and record it. `revoked`: it revoked
+    at the provider, or was told not to because another connection of that account remains; else it
+    tried and failed (`error`), the operational `revoke_failed`. `check(row)` may refuse by raising,
+    under the row's lock. 409 `not_revoking` unless it is being disconnected. Gone already: nothing."""
+    with transaction.atomic():
+        row = (Connection.objects.select_for_update(of=("self",)).select_related("app", "agent__workspace", "user")
+               .filter(pk=conn.pk).first())
+        if row is None:  # another holder confirmed a moment ago
+            return
+        if row.state != Connection.REVOKING:
+            raise wire.WireError(409, "not_revoking", "This connection is not being disconnected.")
+        if check is not None:
+            check(row)
+        subject = Subject.of(row)
+        title = getattr(providers.CLASSES.get(row.provider), "title", row.provider)
+        at_provider = not other_live_connections(row).exists()
+        row.delete()
+    if revoked:
+        record(subject, "revoked", machine=machine, at_provider=at_provider,
+               summary=f"{subject.owner}'s {title} ({subject.account_label}) revoked by {machine}")
+    else:
+        record(subject, "revoke_failed", warn=True, during="disconnect", machine=machine,
+               error=error if _ERROR_CODE.fullmatch(error or "") else "unrecognised")
 
 
 def other_live_connections(conn: Connection) -> QuerySet[Connection]:

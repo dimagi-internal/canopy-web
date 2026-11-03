@@ -3,16 +3,24 @@ writer-authenticated envelopes.
 
 The normative definition is `docs/vault/zk-v1/connections_v1_reference.py` (with
 vectors beside it); the canopy CLI and the owner's browser make these bytes and
-are what the design relies on. canopy-web never opens an envelope and never
-signs: it refuses junk early (a statement of the wrong shape, a signature that
-does not verify, a writer MAC list that does not cover the envelope), so a
-machine is not the first to find it.
+are what the design relies on. canopy-web refuses junk early (a statement of the
+wrong shape, a signature that does not verify, a writer MAC list that does not
+cover the envelope), so a machine is not the first to find it. It makes and checks
+a writer MAC itself only for its own key, through `server_tokens`: `writer_sig`
+and `mac_verifies` take the ECDH secret from the caller, which is KMS's to derive.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import re
 import uuid
+from collections.abc import Callable
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from apps.agents.credentials import zk, zk_endorse, zk_seal
 from apps.agents.credentials.zk import ZkError
@@ -171,3 +179,52 @@ def keep_only_sig(sig: dict | None, allowed: set[tuple[str, str]]) -> dict | Non
     if sig is None:
         return None
     return {**sig, "macs": [m for m in sig["macs"] if (m["kind"], m["target"]) in allowed]}
+
+
+# ---- writer MACs, for canopy-web's own key (contract §0.4) -----------------------------
+
+def sealed_entries(value: str) -> list[dict]:
+    """The recipient entries of a `zks1:` value, as stored; empty when it is not one."""
+    if not isinstance(value, str) or not value.startswith(zk_seal.SEALED_PREFIX):
+        return []
+    try:
+        return json.loads(zk.b64u_bytes(value[len(zk_seal.SEALED_PREFIX):], "value_zk"))["r"]
+    except (ValueError, KeyError, TypeError, ZkError):
+        return []
+
+
+def _entry_digest(entry: dict) -> str:
+    return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def envelope_msg(binding: str, name: str, expect: str, entry: dict) -> str:
+    return f"canopy-connections/v1/envelope|{binding}|{name}|{expect}|{_entry_digest(entry)}"
+
+
+def _envelope_mac(z: bytes, binding: str, name: str, expect: str, entry: dict) -> str:
+    info = f"canopy-connections/v1/envelope-mac|{binding}|{name}|{entry['kind']}:{entry['target']}"
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"", info=info.encode()).derive(z)
+    mac = hmac.new(key, envelope_msg(binding, name, expect, entry).encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(mac).rstrip(b"=").decode()
+
+
+def writer_sig(value: str, *, binding: str, name: str, expect: str, by_kind: str, by_target: str, public_jwk: dict,
+               keys: dict[tuple[str, str], dict], derive: Callable[[dict], bytes]) -> dict:
+    """The sig stored beside the envelope `value`, one MAC per recipient. `keys`: each recipient's
+    public JWK by `(kind, target)`. `derive(jwk)`: the raw ECDH secret between the writer's key and
+    that public key. Never keep what it returns."""
+    macs = [{"kind": e["kind"], "target": e["target"],
+             "mac": _envelope_mac(derive(keys[(e["kind"], e["target"])]), binding, name, expect, e)}
+            for e in sealed_entries(value)]
+    return {"by": {"kind": by_kind, "target": by_target, "public_jwk": public_jwk}, "expect": expect, "macs": macs}
+
+
+def mac_verifies(value: str, sig: dict, *, binding: str, name: str, kind: str, target: str, z: bytes) -> bool:
+    """Does the MAC `sig` holds for recipient `(kind, target)` of `value` verify? `z`: the raw ECDH
+    secret between that recipient's key and `sig`'s writer. In constant time; never raises for a
+    missing entry or MAC, which is just False."""
+    entry = next((e for e in sealed_entries(value) if (e.get("kind"), e.get("target")) == (kind, target)), None)
+    mac = next((m["mac"] for m in sig.get("macs", []) if (m["kind"], m["target"]) == (kind, target)), None)
+    if entry is None or not isinstance(mac, str):
+        return False
+    return hmac.compare_digest(_envelope_mac(z, binding, name, sig["expect"], entry).encode(), mac.encode())

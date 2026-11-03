@@ -399,11 +399,12 @@ def test_canopy_web_is_no_machine_and_no_revoker(world, key):
     assert rcpt._last_holder(set(), {("device", jkt)}) is None
 
 
-def test_an_envelope_held_only_by_canopy_web_and_the_owner_deletes_at_once(world, key):
-    with FakeSF():
+def test_an_envelope_held_only_by_canopy_web_and_the_owner_is_revoked_by_canopy_web(world, key):
+    with FakeSF() as sf:
         conn = connect(world)
-    assert rcpt.revokers(conn) == []
-    assert services.disconnect(conn, by=world.person) == "deleted"
+        assert rcpt.revokers(conn) == []
+        assert services.disconnect(conn, by=world.person) == "deleted"
+    assert sf.calls[-1][1].endswith("/services/oauth2/revoke")
 
 
 def test_keeper_work_keeps_canopy_web_and_never_waits_for_it(world, key):

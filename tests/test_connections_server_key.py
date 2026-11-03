@@ -11,8 +11,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from apps.agents.credentials import zk, zk_seal
 from apps.connections import server_key
+from tests.fixtures.cfn import load_template
 from tests.fixtures.vault_zk import VECTORS, ref
-from tests.test_task_role_stack import _load
 
 AGENT = "conn-binding-1"
 
@@ -220,7 +220,7 @@ def test_public_key_from_kms_is_cached_per_process(settings):
 
 # --- the stack ---------------------------------------------------------------------------
 def test_the_key_stack_is_a_p256_key_agreement_key_only_the_task_role_derives_with():
-    t = _load("canopy-web-connections-key.cfn.yaml")
+    t = load_template("canopy-web-connections-key.cfn.yaml")
     key = next(r for r in t["Resources"].values() if r["Type"] == "AWS::KMS::Key")
     p = key["Properties"]
     assert p["KeySpec"] == "ECC_NIST_P256" and p["KeyUsage"] == "KEY_AGREEMENT"

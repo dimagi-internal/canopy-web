@@ -302,7 +302,7 @@ def test_the_exchange_and_revoke_go_to_the_apps_login_host(ws):
     app = sf_app(ws, login_url="https://test.salesforce.com")
     seen = []
 
-    def post(url, data=None, headers=None, timeout=None):
+    def post(url, data=None, headers=None, timeout=None, allow_redirects=True):
         seen.append(url)
         return _resp(body=_token_body())
     p = providers.for_app(app)

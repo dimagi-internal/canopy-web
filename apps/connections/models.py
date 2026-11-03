@@ -90,13 +90,14 @@ class ConnectionApp(models.Model):
 
 class Connection(models.Model):
     """One account an owner connected: the sealed refresh token and the metadata
-    around it. canopy-web cannot open `sealed` or `access_sealed`.
+    around it. canopy-web can open `sealed` and `access_sealed` only when they name its own KMS key
+    (`server_use`, `server_tokens`).
 
     `sealed` is a `zks1` envelope (name `refresh`) bound to `binding`; at connect
     it is sealed to the owner's member key only (`state = unshared`), and the
     owner's browser re-seals it to the machines its signed grant statement
     allows (`active`). `access_sealed` (name `access`) is the current access
-    token, written by the machine that last refreshed. `sealed_sig` /
+    token, written by whoever last refreshed. `sealed_sig` /
     `access_sig` are each envelope's writer MACs (null only on canopy-web's
     first seal). `sealed_digest` is SHA-256 of `sealed`, for compare-and-swap
     writes. The `lease_*` columns are the one refresh lease. The wire format is

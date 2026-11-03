@@ -81,7 +81,7 @@ class FakeAcme:
         r.json.return_value = body
         return r
 
-    def post(self, url, data=None, headers=None, timeout=None):
+    def post(self, url, data=None, headers=None, timeout=None, allow_redirects=True):
         assert timeout == 15
         self.calls.append((url, dict(data or {})))
         if url == TOKEN:

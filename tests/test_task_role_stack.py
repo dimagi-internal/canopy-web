@@ -4,26 +4,11 @@ deployed by the pipeline — a hand-edit is the only way it changes."""
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 
-import yaml
+from tests.fixtures.cfn import AWS
+from tests.fixtures.cfn import load_template as _load
 
-AWS = Path(__file__).resolve().parent.parent / "deploy" / "aws"
 ROLE = "canopy-web-task-role"
-
-
-class _L(yaml.SafeLoader):
-    pass
-
-
-_L.add_multi_constructor("!", lambda loader, suffix, node: {
-    suffix: loader.construct_scalar(node) if isinstance(node, yaml.ScalarNode)
-    else loader.construct_sequence(node, deep=True) if isinstance(node, yaml.SequenceNode)
-    else loader.construct_mapping(node, deep=True)})
-
-
-def _load(name: str) -> dict:
-    return yaml.load((AWS / name).read_text(), Loader=_L)
 
 
 def _statements(role_props: dict) -> dict:
