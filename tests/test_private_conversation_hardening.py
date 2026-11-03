@@ -211,7 +211,7 @@ def test_an_agent_turn_that_ran_in_a_conversation_is_held_to_its_seal(w):
     assert sensitivity.is_sensitive(live)
     ledger.append_events(live, [{"kind": "assistant", "payload": {"text": REPLY}}])
     assert REPLY not in str(list(TurnEvent.objects.filter(turn=live).values_list("payload", flat=True)))
-    from apps.harness.closing import close_turn
+    from apps.harness.turn_close import close_turn
 
     close_turn(live, Turn.DONE, "done", from_states=[Turn.RUNNING])
     live.refresh_from_db()

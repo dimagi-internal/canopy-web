@@ -19,7 +19,7 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 from apps.agents import roles
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.harness import caller_tokens, claiming, services
+from apps.harness import caller_tokens, claim_payload, services
 from apps.harness import initiator as who
 from apps.harness.models import CallerToken, Turn
 from apps.mcp.auth import CanopyPATVerifier
@@ -91,7 +91,7 @@ def test_an_editor_line_members_turn_is_scoped_and_claims_a_token(w):
     t = _asked_by(w["matt"], w["agent"], "m1")
     assert t.capability == ""                                  # full, not confined
     assert caller_tokens.is_caller_scoped(t)
-    assert claiming.issue_credentials(t).mcp_token.startswith("cct_")
+    assert claim_payload.issue_credentials(t).mcp_token.startswith("cct_")
     assert CallerToken.objects.get().scoped is True
 
 
@@ -99,7 +99,7 @@ def test_the_owners_turn_keeps_the_runners_own_credential(w):
     t = _asked_by(w["op"], w["agent"], "o1")
     assert t.capability == ""
     assert not caller_tokens.is_caller_scoped(t)
-    assert getattr(claiming.issue_credentials(t), "mcp_token", None) is None
+    assert getattr(claim_payload.issue_credentials(t), "mcp_token", None) is None
     assert not CallerToken.objects.exists()
 
 

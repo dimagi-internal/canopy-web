@@ -9,7 +9,7 @@ import pytest
 from apps.agent_runs.models import AgentRun
 from apps.agents import services
 from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask
-from apps.harness import closeout
+from apps.harness import agent_report
 from apps.harness.models import Turn
 from apps.workspaces.testing import a_workspace
 
@@ -89,9 +89,9 @@ def _turn(**kw):
 
 def test_turn_is_idempotent_per_cli_session_id():
     agent = _agent()
-    closeout.upsert_turn(agent, _turn(title="Turn 1", task_ext_ids=["t1"]))
+    agent_report.upsert_turn(agent, _turn(title="Turn 1", task_ext_ids=["t1"]))
     # re-package the same session (e.g. after the transcript uploads) → updates in place
-    closeout.upsert_turn(agent, _turn(title="Turn 1 (transcript added)",
+    agent_report.upsert_turn(agent, _turn(title="Turn 1 (transcript added)",
                                       task_ext_ids=["t1", "t2"],
                                       session_slug="abc123", share_token="tok999"))
     assert Turn.objects.filter(agent=agent).count() == 1
@@ -100,13 +100,13 @@ def test_turn_is_idempotent_per_cli_session_id():
     assert turn.task_ext_ids == ["t1", "t2"]
     assert turn.share_token == "tok999"
     # a different session is a separate turn
-    closeout.upsert_turn(agent, _turn(cli_session_id="sess-2", title="Turn 2"))
+    agent_report.upsert_turn(agent, _turn(cli_session_id="sess-2", title="Turn 2"))
     assert Turn.objects.filter(agent=agent).count() == 2
 
 
 def test_turn_transcript_is_optional():
     agent = _agent()
-    turn = closeout.upsert_turn(agent, _turn(session_slug="", share_token=""))
+    turn = agent_report.upsert_turn(agent, _turn(session_slug="", share_token=""))
     assert turn.session_slug == "" and turn.share_token == ""
     assert turn.task_ext_ids == ["t1"]  # the unit of work is still packaged
 
@@ -115,8 +115,8 @@ def test_agent_detail_counts_turns():
     agent = _agent()
     assert services.agent_detail(agent)["turn_count"] == 0
     assert services.agent_detail(agent)["latest_turn_at"] is None
-    closeout.upsert_turn(agent, _turn(cli_session_id="s1"))
-    closeout.upsert_turn(agent, _turn(cli_session_id="s2"))
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s1"))
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s2"))
     detail = services.agent_detail(agent)
     assert detail["turn_count"] == 2
     assert detail["latest_turn_at"] is not None
@@ -191,7 +191,7 @@ def test_card_counts_the_same_turns_the_harness_lists():
 def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
     agent = _agent()
     dispatched = _dispatch(agent, key="k1", task="echo-api-1234-0810-1805")
-    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="Did the thing",
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s1", title="Did the thing",
                                       session_key="echo-api-1234-0810-1805"))
     assert Turn.objects.filter(agent=agent).count() == 1  # not two halves, one turn
     dispatched.refresh_from_db()
@@ -203,7 +203,7 @@ def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
 def test_close_out_without_a_matching_dispatch_row_still_records():
     """A turn a human started by hand has no queue row. The report must not vanish."""
     agent = _agent()
-    turn = closeout.upsert_turn(agent, _turn(cli_session_id="s9", title="Hand-run"))
+    turn = agent_report.upsert_turn(agent, _turn(cli_session_id="s9", title="Hand-run"))
     assert turn.report_title == "Hand-run"
     assert turn.status == Turn.DONE
     assert Turn.objects.filter(agent=agent).count() == 1
@@ -215,9 +215,9 @@ def test_close_out_does_not_reclaim_an_already_reported_turn():
     agent = _agent()
     task = "echo-api-1234-0810-1805"
     first = _dispatch(agent, key="k1", task=task)
-    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="First", session_key=task))
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s1", title="First", session_key=task))
     second = _dispatch(agent, key="k2", task=task)
-    closeout.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", session_key=task))
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", session_key=task))
     first.refresh_from_db()
     second.refresh_from_db()
     assert first.report_title == "First"
@@ -231,9 +231,9 @@ def test_close_out_names_its_turn_when_one_session_serves_two():
     is what puts the second close on the second turn (ada, 2026-10-27)."""
     agent = _agent()
     first = _dispatch(agent, key="k1")
-    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="First", turn_id=first.pk))
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s1", title="First", turn_id=first.pk))
     second = _dispatch(agent, key="k2")
-    landed = closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="Second",
+    landed = agent_report.upsert_turn(agent, _turn(cli_session_id="s1", title="Second",
                                                turn_id=second.pk))
     first.refresh_from_db()
     second.refresh_from_db()
@@ -241,7 +241,7 @@ def test_close_out_names_its_turn_when_one_session_serves_two():
     assert first.report_title == "First" and first.cli_session_id == "s1"
     assert second.report_title == "Second"
     # re-posting the second close updates it in place, never the first
-    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="Second, again",
+    agent_report.upsert_turn(agent, _turn(cli_session_id="s1", title="Second, again",
                                       turn_id=second.pk))
     first.refresh_from_db()
     second.refresh_from_db()
@@ -258,7 +258,7 @@ def test_close_out_names_a_chat_turn_of_its_agent():
     session = Session.objects.create(agent=agent, workspace=agent.workspace, title="chat")
     chat_turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
                                     idempotency_key="c1", status=Turn.DONE)
-    landed = closeout.upsert_turn(agent, _turn(cli_session_id="s7", title="Answered",
+    landed = agent_report.upsert_turn(agent, _turn(cli_session_id="s7", title="Answered",
                                                turn_id=chat_turn.pk))
     chat_turn.refresh_from_db()
     assert landed.pk == chat_turn.pk and chat_turn.report_title == "Answered"
@@ -267,7 +267,7 @@ def test_close_out_names_a_chat_turn_of_its_agent():
 def test_close_out_ignores_a_turn_id_from_another_agent():
     agent, other = _agent(), _agent(slug="hal")
     foreign = _dispatch(other, key="kx")
-    turn = closeout.upsert_turn(agent, _turn(cli_session_id="s5", turn_id=foreign.pk))
+    turn = agent_report.upsert_turn(agent, _turn(cli_session_id="s5", turn_id=foreign.pk))
     foreign.refresh_from_db()
     assert turn.agent_id == agent.pk and foreign.report_title == ""
 

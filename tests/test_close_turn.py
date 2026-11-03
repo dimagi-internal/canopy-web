@@ -1,4 +1,4 @@
-"""Every terminal transition of a turn goes through `harness.closing.close_turn`,
+"""Every terminal transition of a turn goes through `harness.turn_close.close_turn`,
 so every one of them reaches analytics as exactly one `turn.finished` fact with
 the status it ended in — a stop, a rider's end, an admission refusal and an
 expired lease included, not only a runner's finish."""

@@ -31,7 +31,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions import chat_keys
 from apps.canopy_sessions.models import Session
 from apps.harness import caller_tokens
-from apps.harness.claiming import claim_payload
+from apps.harness.claim_payload import claim_payload
 from apps.harness.models import Turn
 from apps.host_grants import host_gateway
 from apps.mcp.server import mcp

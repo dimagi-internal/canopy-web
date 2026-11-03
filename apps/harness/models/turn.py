@@ -42,7 +42,7 @@ class Turn(models.Model):
     # a real producer got named.
     ORIGIN_API, ORIGIN_ACE_WEB, ORIGIN_CANOPY_WEB_CHAT = "api", "ace_web", "canopy_web_chat"
     ORIGIN_CANOPY_SCHEDULER, ORIGIN_EMAIL, ORIGIN_SLACK = "canopy_scheduler", "email", "slack"
-    # A person's own Claude Code session on their private runner (`apps/harness/local.py`).
+    # A person's own Claude Code session on their private runner (`apps/harness/local_turns.py`).
     # Opened by the session itself, never claimed, never routed — so it is neither
     # postable nor routable, and it does not serialize the agent (the constraint below).
     ORIGIN_LOCAL = "local"

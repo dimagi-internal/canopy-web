@@ -162,9 +162,9 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
         # direct turns opened on it — never on a turn its owner's other boxes hold.
         turn = Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL).select_related(
             "private_runner").first()
-        from . import local
+        from . import local_turns
 
-        if turn is None or not local.may_report(turn, request):
+        if turn is None or not local_turns.may_report(turn, request):
             raise HttpError(404, "turn not found")
         return turn
     if delegation.offered_for(request) is None:
@@ -175,11 +175,11 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     turn = turn_or_404(request, turn_id)
     if turn.origin == Turn.ORIGIN_LOCAL:
         # A direct turn has no box: the person whose session it is reports on it
-        # (apps/harness/local.py), and nobody else — not even an editor, nor their
+        # (apps/harness/local_turns.py), and nobody else — not even an editor, nor their
         # shared runner's token.
-        from . import local
+        from . import local_turns
 
-        if not local.may_report(turn, request):
+        if not local_turns.may_report(turn, request):
             raise HttpError(404, "turn not found")
         return turn
     if turn.claimed_by_id is not None:

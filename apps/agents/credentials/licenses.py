@@ -15,7 +15,7 @@ they read. The rules, in order (`request`):
    re-asks `decide`, so an admin cannot license someone the caller list does not
    give the whole agent: raise their role on its access list first.
 
-What a license admits: a direct turn (`apps/harness/local.py`) and the credential
+What a license admits: a direct turn (`apps/harness/local_turns.py`) and the credential
 reads made during it (`/credentials/resolve` with that turn's `X-Canopy-Turn-Id`,
 `credential_principal`). Usage and cost roll up to it later.
 """

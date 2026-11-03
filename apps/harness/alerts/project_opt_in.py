@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from apps.attention.alerts import DISMISS, Action, Raise
 
-from .models import ProjectOptIn, Runner
+from ..models import ProjectOptIn, Runner
 
 KIND = "canopy_projects_off"
 SEVERITY = "setup"

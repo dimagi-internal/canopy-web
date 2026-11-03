@@ -193,7 +193,8 @@ def test_auth_required_still_mails_a_runner_the_alert_source_skips(box, skipped)
     """`alert_covers` uses the source's own runner filter (in a workspace, not
     retired): a signed-out box the `runner_credential` reconcile skips raises no
     alert, so it must keep its mail."""
-    from apps.harness import alerts_runner_credential, credential_notify
+    from apps.harness import credential_notify
+    from apps.harness.alerts import runner_credential as alerts_runner_credential
 
     runner = box["runner"]
     runner.health = _SIGNED_OUT
@@ -209,7 +210,8 @@ def test_auth_required_still_mails_a_runner_the_alert_source_skips(box, skipped)
 
 
 def test_alert_covers_a_signed_out_runner_the_source_reconciles(box):
-    from apps.harness import alerts_runner_credential, credential_notify
+    from apps.harness import credential_notify
+    from apps.harness.alerts import runner_credential as alerts_runner_credential
 
     box["runner"].health = _SIGNED_OUT
     box["runner"].save(update_fields=["health"])

@@ -7,7 +7,7 @@ Its explanations live in `claim_reach.py` (re-exported here) because they must a
 same rules: `turn_reach` (will a live runner pick this up? — what the turn status and
 Slack say) and `unclaimable_queued_turns` (the web's stuck-turn warning).
 
-Not `claiming.py`, which builds the payload a claimed turn is SENT as. Split out
+Not `claim_payload.py`, which builds the payload a claimed turn is SENT as. Split out
 of `services.py`.
 """
 from __future__ import annotations
@@ -42,7 +42,6 @@ from .claim_reach import (  # noqa: F401  (the diagnostics live in claim_reach; 
     turn_workspace_slug,
     unclaimable_queued_turns,
 )
-from .closing import close_turn
 from .ledger import append_events
 from .models import (
     FleetHold,
@@ -73,6 +72,7 @@ from .routing import (
     turn_workspace_q,
 )
 from .turn_agent_tokens import revoke_stale
+from .turn_close import close_turn
 
 logger = logging.getLogger(__name__)
 

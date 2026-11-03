@@ -345,7 +345,7 @@ class Runner(models.Model):
     #: A PRIVATE runner is its owner's own machine (canopy-web#1705): it takes no fleet
     #: work — nothing routed, no workspace order, no source rule — only what its owner
     #: puts on it (a pin, a session bound to it) and the direct sessions opened on it
-    #: (`apps/harness/local.py`). Set by its owner, never reported by the box.
+    #: (`apps/harness/local_turns.py`). Set by its owner, never reported by the box.
     private = models.BooleanField(default=False)
     #: The agents this box is DEDICATED to: when any are listed it runs only their
     #: turns and chats — no other agent's, no repo turn, no agentless chat — however

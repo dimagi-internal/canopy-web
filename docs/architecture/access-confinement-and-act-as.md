@@ -39,7 +39,7 @@ tool; and beside every delivered prompt — the runner leaves
   never grants. Exact-argument scoping stays the hook's job.
 * **A confined session never holds the runner owner's PAT.** It reaches canopy's
   MCP with a **caller token** (`apps/harness/caller_tokens.py`, issued by
-  `harness.claiming.issue_credentials`, `cct_…`), minted per confined turn at claim
+  `harness.claim_payload.issue_credentials`, `cct_…`), minted per confined turn at claim
   and bound to its conversation; the canopy plugin's `headersHelper` sends it from
   the session's profile. It resolves to the conversation's CURRENT turn: tools run as
   that turn's caller (no canopy user at all for an outside contact), and only the

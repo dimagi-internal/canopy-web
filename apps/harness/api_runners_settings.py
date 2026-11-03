@@ -110,10 +110,10 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
         # The box IS its owner's private runner: link the registration here, so the
         # runner writes it on its next heartbeat and no one runs `canopy private-runner
         # register` on the machine. Its OWN registration — never another machine's
-        # that shares its name (`local.private_runner_for_runner`).
-        from . import local
+        # that shares its name (`local_turns.private_runner_for_runner`).
+        from . import local_turns
 
-        local.private_runner_for_runner(runner)
+        local_turns.private_runner_for_runner(runner)
     else:
         # Shared again: the registration stops naming a box whose token now speaks
         # for the fleet. Making it private again links (or makes) one afresh.

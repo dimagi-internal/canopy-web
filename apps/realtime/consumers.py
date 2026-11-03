@@ -349,8 +349,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # THE claim payload — the one the REST route returns, credentials and
         # caller envelope included. This socket used to build its own subset,
         # and a confined turn arrived without the envelope the runner confines
-        # by (apps/harness/claiming.py).
-        from apps.harness.claiming import claim_payload
+        # by (apps/harness/claim_payload.py).
+        from apps.harness.claim_payload import claim_payload
 
         return claim_payload(turn)
 

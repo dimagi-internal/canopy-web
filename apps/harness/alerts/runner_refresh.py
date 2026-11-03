@@ -22,11 +22,11 @@ from datetime import timedelta
 
 from apps.attention.alerts import DISMISS, Action, Raise
 
-from .alerts_runner_credential import runner_path, watches
-from .models import Runner
-from .routing import agents_routed_to
-from .runner_refresh import status
-from .runners import can_administer_runner
+from ..models import Runner
+from ..routing import agents_routed_to
+from ..runner_refresh import status
+from ..runners import can_administer_runner
+from .runner_credential import runner_path, watches
 
 KIND = "runner_refresh"
 SEVERITY = "action"

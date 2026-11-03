@@ -38,7 +38,7 @@ from apps.api.route_gates import gate
 from apps.canopy_sessions.control import close_agent_sessions
 from apps.contacts.hcp.sensitive import _context_turn
 from apps.events import audit
-from apps.harness import clis, closeout, turn_access
+from apps.harness import agent_report, clis, turn_access
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.passkeys import stepup
@@ -1213,8 +1213,8 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
 
     # Everyone sees what the agent did; a turn's prompt and transcript link are
     # a log (turn_access).
-    turns = turn_access.redact(list(closeout.list_turns(agent, limit=limit)), request.user)
-    closeout.stamp_share_urls(turns)
+    turns = turn_access.redact(list(agent_report.list_turns(agent, limit=limit)), request.user)
+    agent_report.stamp_share_urls(turns)
     items = [AgentTurnOut.model_validate(t) for t in turns]
     return paginate(items, offset=0, limit=limit)
 
@@ -1227,7 +1227,7 @@ def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status
 
     # A report-only row (no dispatch matched) is a turn someone ran by hand; the
     # caller posting its close-out is the best account of who that was.
-    turn = closeout.upsert_turn(agent, payload,
+    turn = agent_report.upsert_turn(agent, payload,
                                 initiator=who.for_request(request, via="closeout"))
-    closeout.stamp_share_urls([turn])
+    agent_report.stamp_share_urls([turn])
     return Status(201, AgentTurnOut.model_validate(turn))

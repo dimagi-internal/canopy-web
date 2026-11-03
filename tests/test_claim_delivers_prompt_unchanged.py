@@ -135,7 +135,7 @@ def test_the_websocket_claim_payload_matches_the_rest_claim(chat_session_with_ag
     """A cloud runner claims over its control socket, which builds its answer
     through `claiming.claim_payload` rather than the REST route. Both must
     deliver the exact same prompt."""
-    from apps.harness.claiming import claim_payload
+    from apps.harness.claim_payload import claim_payload
 
     _msg, turn = session_send.send_message(session=chat_session_with_agent, text="over the socket",
                                    user=owner, client_id="ws1")
