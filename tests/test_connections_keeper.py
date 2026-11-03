@@ -263,13 +263,31 @@ def test_revoke_at_provider_false_when_another_connection_of_that_account_remain
     services.disconnect(evas, by=world.person)
     evas.refresh_from_db()
     assert evas.revoke_at_provider is False
+    [item] = work(world, "eva-cloud").json()["connections"]
+    assert item["id"] == str(evas.pk) and item["revoke_at_provider"] is False
     # The last one of that account through that app: revoked at the provider.
     services.disconnect(theirs, by=world.person)
     theirs.refresh_from_db()
     assert theirs.revoke_at_provider is True
-    # And work says so per row, never revoking while a live connection of the account appears.
     flags = {i["id"]: i["revoke_at_provider"] for i in work(world, "eva-cloud").json()["connections"]}
-    assert flags == {str(evas.pk): False, str(theirs.pk): True}
+    assert flags == {str(evas.pk): True, str(theirs.pk): True}
+
+
+def test_revoke_at_provider_is_decided_when_the_holder_reads_it(world):
+    """A revoking with the flag false because B was live; B then goes without any
+    revoke at the provider (deleted at once, R7). A must now be revoked there, or
+    nothing ever revokes its token."""
+    a = world.shared(world.evas(), agents=[world.eva])
+    b = sealed_to_owner({"user": world.person}, world.person, app=world.app)     # live, held by nobody
+    services.disconnect(a, by=world.person)
+    [item] = work(world, "eva-cloud").json()["connections"]
+    assert item["revoke_at_provider"] is False
+    services.disconnect(b, by=world.person)                                      # deleted at once
+    assert not Connection.objects.filter(pk=b.pk).exists()
+    [item] = work(world, "eva-cloud").json()["connections"]
+    assert item["revoke_at_provider"] is True
+    assert confirm(world, "eva-cloud", a).status_code == 204
+    assert events("revoked")[0].payload["at_provider"] is True
 
 
 # ---- confirming a revoke (route 15) --------------------------------------------------
@@ -360,6 +378,24 @@ def test_setting_a_removed_app_up_again_brings_it_back(world):
     assert Connection.objects.get().state == Connection.REVOKING
 
 
+def test_an_app_set_up_again_during_the_sweep_keeps_its_connections(world, monkeypatch):
+    """The sweep listed the removed app; an admin set it up again and someone
+    connected through it before the sweep got to it: nothing of it is touched."""
+    world.shared(world.evas(), agents=[world.eva])
+    services.remove_app(world.app, by=world.person)
+    real = keeper._finish_removal
+
+    def restored_first(app):
+        services.configure_app("w", "salesforce", client_id=world.app.client_id, by=world.person)
+        sealed_to_owner({"user": world.person}, world.person, app=ConnectionApp.objects.get())
+        return real(app)
+    monkeypatch.setattr(keeper, "_finish_removal", restored_first)
+    assert keeper.sweep()["apps_deleted"] == 0
+    app = ConnectionApp.objects.get()
+    assert app.removed_at is None
+    assert Connection.objects.get(user=world.person).state == Connection.UNSHARED
+
+
 def test_the_sweep_command_runs_the_sweep(world, capsys):
     conn = world.shared(world.evas(), agents=[world.eva])
     services.disconnect(conn, by=world.person)
@@ -393,6 +429,27 @@ def test_reconnecting_an_account_being_revoked_is_refused_and_the_new_grant_revo
     assert (after.state, after.sealed, after.revoking_since) == (Connection.REVOKING, before.sealed,
                                                                   before.revoking_since)
     # Salesforce: the grant just issued is revoked; the old one is the holder's to revoke.
+    assert [c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL] == ["5Aep_refresh_1"]
+
+
+def test_a_disconnect_committing_during_the_connect_is_seen_by_the_upsert(world, monkeypatch):
+    """The row is `active` when the callback starts; a disconnect commits between
+    then and the upsert's row lock. The upsert must refuse on the row it locked."""
+    conn = world.shared(world.persons(), agents=[world.eva])
+    real = services._upsert_connection
+
+    def racing(lookup, defaults, seal):
+        services.disconnect(Connection.objects.get(pk=conn.pk), by=world.person)
+        return real(lookup, defaults, seal)
+    monkeypatch.setattr(services, "_upsert_connection", racing)
+    before = Connection.objects.get()
+    with FakeSF() as fake, pytest.raises(services.ConnectionError) as e:
+        _connect(world, ("user", world.person.pk), world.person)
+    assert e.value.code == "revoking"
+    after = Connection.objects.get()
+    assert after.state == Connection.REVOKING
+    assert (after.sealed, after.sealed_digest, after.statement_version) == (
+        before.sealed, before.sealed_digest, before.statement_version)
     assert [c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL] == ["5Aep_refresh_1"]
 
 

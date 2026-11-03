@@ -608,10 +608,14 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
             pk=app.pk, client_id=parked["client_id"], removed_at__isnull=True).exists()
         # The same account's row being revoked is never resurrected: replacing its
         # envelope would orphan the refresh token its holder is about to revoke.
-        revoking = not changed and Connection.objects.select_for_update().filter(
-            **lookup, state=Connection.REVOKING).exists()
-        if not changed and not revoking:
-            conn = _upsert_connection(lookup, defaults, seal)
+        # Decided on the row `_upsert_connection` locks, so a disconnect that
+        # commits during the exchange is seen.
+        revoking = False
+        if not changed:
+            try:
+                conn = _upsert_connection(lookup, defaults, seal)
+            except _RowRevoking:
+                revoking = True
     if changed or revoking:
         # Discarded outside the transaction: a network call never holds a row lock.
         _discard_grant(p, subject, token)
@@ -638,11 +642,16 @@ def refresh_plaintext(app: ConnectionApp, token: providers.TokenResponse, *, acc
     }, separators=(",", ":"))
 
 
+class _RowRevoking(Exception):  # noqa: N818 - a signal inside `complete`, never raised out of it
+    """The row `_upsert_connection` locked is being revoked: refuse, change nothing."""
+
+
 def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
     """Insert or update the grant's row with its envelope; the caller holds the
     transaction. `seal(connection_id)` gives the envelope fields: the binding is the
     row's id, so the row is always sealed to the id it ends up with — its own when
-    the same owner, app and account already has one, else the id it is created with."""
+    the same owner, app and account already has one, else the id it is created with.
+    Raises `_RowRevoking`, writing nothing, when the row it locks is `revoking`."""
     conn = Connection.objects.select_for_update().filter(**lookup).first()
     if conn is None:
         pk = uuid.uuid4()
@@ -654,6 +663,8 @@ def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
             # our lookup and insert. It exists now: update it with this grant,
             # sealed to ITS binding.
             conn = Connection.objects.select_for_update().get(**lookup)
+    if conn.state == Connection.REVOKING:
+        raise _RowRevoking
     for k, v in {**defaults, **seal(conn.pk)}.items():
         setattr(conn, k, v)
     conn.save()

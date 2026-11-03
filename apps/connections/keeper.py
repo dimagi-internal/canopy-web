@@ -90,10 +90,11 @@ def work(runner: Runner) -> list[dict]:
             **tokens.material_fields(conn, key),
             "waiting": waiting,
             "revoking": revoking,
-            # Narrowed again now: a live connection of the same account through the
-            # same app that appeared since the disconnect would die with a revoke.
-            "revoke_at_provider": (revoking and conn.revoke_at_provider
-                                   and not services.other_live_connections(conn).exists()),
+            # Decided now, not at the disconnect (spec §4.5): revoke at the provider
+            # exactly when no other live connection of the account through the app
+            # remains — one that appeared since would die with it, and one that was
+            # deleted since without a revoke must not leave this token live.
+            "revoke_at_provider": revoking and not services.other_live_connections(conn).exists(),
             **_paths(runner, conn),
         })
     return out
@@ -167,7 +168,8 @@ def confirm_revoked(conn: Connection, runner: Runner, device_key: RunnerDeviceKe
             raise WireError(409, "not_revoking", "This connection is not being disconnected.")
         if not _keeps(runner) or ("device", device_key.ecdh_jkt) not in zk_seal.sealed_targets(row.sealed):
             raise _not_a_holder("Only a cloud box that holds the connection revokes it.")
-        subject, at_provider, title = services.Subject.of(row), row.revoke_at_provider, tokens._title(row)
+        subject, title = services.Subject.of(row), tokens._title(row)
+        at_provider = not services.other_live_connections(row).exists()
         row.delete()
     machine = device_key.runner.name
     if revoked:
@@ -200,10 +202,21 @@ def sweep(now: datetime | None = None) -> dict:
         services.record(subject, "revoke_unconfirmed", reason=reason,
                         summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: "
                                 + ("no machine confirmed revoking it" if stale else "no machine holds it any more"))
-    apps = 0
-    for app in ConnectionApp.objects.filter(removed_at__isnull=False).order_by("pk"):
-        for conn in (Connection.objects.filter(app=app).exclude(state=Connection.REVOKING)
+    apps = sum(_finish_removal(app)
+               for app in list(ConnectionApp.objects.filter(removed_at__isnull=False).order_by("pk")))
+    return {"revoke_unconfirmed": gone, "apps_deleted": apps}
+
+
+def _finish_removal(app: ConnectionApp) -> bool:
+    """Disconnect what is still live on removed `app`, then delete it if nothing is
+    left. Under the app's lock, re-read: an admin who set the app up again since the
+    sweep listed it (`configure_app` clears `removed_at` under the same lock) keeps
+    it and every connection made through it. True when the app was deleted."""
+    with transaction.atomic():
+        locked = ConnectionApp.objects.select_for_update().filter(pk=app.pk, removed_at__isnull=False).first()
+        if locked is None:
+            return False
+        for conn in (Connection.objects.filter(app=locked).exclude(state=Connection.REVOKING)
                      .select_related("app__workspace", "agent__workspace").order_by("pk")):
             services.disconnect(conn, by=None)
-        apps += services.delete_removed_app(app)
-    return {"revoke_unconfirmed": gone, "apps_deleted": apps}
+        return services.delete_removed_app(locked)
