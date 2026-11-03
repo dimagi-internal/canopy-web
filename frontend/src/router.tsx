@@ -34,6 +34,7 @@ import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
 import { ActAsApprovalPage } from './pages/ActAsApprovalPage'
+import { ConnectedPage } from './pages/connections/ConnectedPage'
 import { ShareConnectionPage } from './pages/connections/ShareConnectionPage'
 import { PagePermissionConfirmPage } from './pages/PagePermissionConfirmPage'
 import { SignOffPage } from './pages/SignOffPage'
@@ -405,6 +406,7 @@ export const routeTable: RouteObject[] = [
         { path: `/w/:workspace/${to}`, element: <SettingsRedirect to={to} /> })),
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       // Where the OAuth callback lands: "Connected as …", then who may use it (one passkey touch).
+      { path: '/w/:workspace/connections/:id/connected', element: <ConnectedPage /> },
       { path: '/w/:workspace/connections/:id/share', element: <ShareConnectionPage /> },
       // The approve link up.sh prints for a new cloud box (one passkey touch).
       { path: '/w/:workspace/runner-invitations/:invitationId', element: <RunnerInvitationApprovePage /> },

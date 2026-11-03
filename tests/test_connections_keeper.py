@@ -266,7 +266,7 @@ def test_a_persons_disconnect_route_hides_it_from_their_list(world):
     conn = world.shared(world.persons(), agents=[world.eva])
     c = Client()
     c.force_login(world.person)
-    assert c.delete(f"/api/connections/{conn.pk}").json() == {"outcome": "revoking"}
+    assert c.delete(f"/api/connections/{conn.pk}").json() == {"outcome": "revoking", "machine_revokes": True}
     assert Connection.objects.get().state == Connection.REVOKING
     assert c.get("/api/connections/").json()["connections"] == []
 
@@ -540,7 +540,7 @@ def test_a_stopped_holder_is_no_revoker_so_a_disconnect_deletes_at_once(world):
     c = Client()
     c.force_login(world.person)
     grant_step_up(c)
-    assert c.delete(f"/api/agents/eva/connections/{conn.pk}").json() == {"outcome": "deleted"}
+    assert c.delete(f"/api/agents/eva/connections/{conn.pk}").json() == {"outcome": "deleted", "machine_revokes": False}
     assert not Connection.objects.exists()
 
 
@@ -593,7 +593,7 @@ def test_a_person_who_replaced_their_key_disconnects_a_holder_revokes_and_they_c
     assert e.value.code == "owner_changed"
 
     # The way out: disconnect, a holder can read it and revokes it, connect again.
-    assert c.delete(f"/api/connections/{conn.pk}").json() == {"outcome": "revoking"}
+    assert c.delete(f"/api/connections/{conn.pk}").json() == {"outcome": "revoking", "machine_revokes": True}
     [item] = work(world, "eva-cloud").json()["connections"]
     assert item["revoking"] is True
     _validates_as_a_box_does(item, old_key)

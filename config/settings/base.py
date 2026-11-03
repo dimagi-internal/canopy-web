@@ -732,6 +732,16 @@ HARNESS_QUEUE_SWEEP_TICK_S = env.int("HARNESS_QUEUE_SWEEP_TICK_S", default=15)
 # Seconds between the canopy-pat rotation's off-request ticks
 # (apps/common/ticks.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
 CANOPY_PAT_ROTATION_TICK_S = env.int("CANOPY_PAT_ROTATION_TICK_S", default=900)
+
+# True only under config.settings.test (and so pgtest): gates test-only hooks such as
+# apps.connections.server_key.use_software_key_for_tests.
+TESTING = False
+# canopy-web's own KMS key as a sealed-connection recipient (deploy/aws/canopy-web-connections-key.cfn.yaml):
+# a key id, ARN or alias. Unset, canopy-web can't use any connection on its own.
+CONNECTIONS_SERVER_KMS_KEY = env("CONNECTIONS_SERVER_KMS_KEY", default="")
+# Accept a `canopy_web` key in a connection's signed share statement. Off until the CLI that
+# understands it has shipped to every machine.
+CONNECTIONS_SERVER_STATEMENTS = env.bool("CONNECTIONS_SERVER_STATEMENTS", default=False)
 # How often canopy-web evaluates every schedule's cron and fires the due slots
 # (apps/harness/schedule_clock.py). <= 0 turns the server clock off.
 CANOPY_SCHEDULE_TICK_S = env.int("CANOPY_SCHEDULE_TICK_S", default=60)

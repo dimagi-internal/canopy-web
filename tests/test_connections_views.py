@@ -87,7 +87,7 @@ def test_full_person_flow_connects_and_lands_on_the_share_screen(client, user):
         resp = _callback(client, state)
     conn = Connection.objects.get()
     assert conn.user_id == user.pk and conn.agent_id is None
-    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/settings?tab=x"})
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/settings?tab=x"})
 
 
 def test_a_refused_person_flow_lands_back_and_stores_nothing(client, user):
@@ -115,7 +115,7 @@ def test_agent_flow_stores_agent_owned_connection(client, eva):
         resp = _callback(client, state)
     conn = Connection.objects.get()
     assert conn.agent_id == eva.pk
-    assert _landing(resp)[0] == f"/w/w/connections/{conn.pk}/share"
+    assert _landing(resp)[0] == f"/w/w/connections/{conn.pk}/connected"
 
 
 def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):
@@ -296,6 +296,36 @@ def test_a_lend_with_limits_carries_them_through_to_the_share_screen(client, eva
     left = (conn.expires_at - conn.created_at).total_seconds()
     assert 239 * 60 < left <= 240 * 60
     assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/w/w/views/2", "agent": "eva"})
+
+
+def test_a_connect_with_nothing_asked_lands_on_the_connected_screen(client):
+    with FakeSF():
+        resp = _callback(client, _state(_start(client, return_to="/w/w/views/2")))
+    conn = Connection.objects.get()
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/w/w/views/2"})
+
+
+def test_a_connect_naming_an_agent_lands_on_share_with_it_ticked(client, eva):
+    with FakeSF():
+        resp = _callback(client, _state(_start(client, for_agent="eva", return_to="/w/w/views/2")))
+    conn = Connection.objects.get()
+    assert not conn.limited
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/w/w/views/2", "agent": "eva"})
+
+
+@pytest.mark.parametrize("limit", [{"lend_minutes": "60"}, {"owner_turns_only": "1"}])
+def test_a_connect_naming_limits_lands_on_share(client, limit):
+    with FakeSF():
+        resp = _callback(client, _state(_start(client, return_to="/w/w/views/2", **limit)))
+    conn = Connection.objects.get()
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/w/w/views/2"})
+
+
+def test_a_reconnect_lifting_the_limits_lands_on_the_connected_screen(client):
+    with FakeSF():
+        _callback(client, _state(_start(client, lend_minutes="60")))
+        resp = _callback(client, _state(_start(client)))
+    assert _landing(resp)[0].endswith("/connected")
 
 
 def test_a_reconnect_naming_no_limits_is_a_standing_connection(client):

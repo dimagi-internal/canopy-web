@@ -302,7 +302,7 @@ def test_the_exchange_and_revoke_go_to_the_apps_login_host(ws):
     app = sf_app(ws, login_url="https://test.salesforce.com")
     seen = []
 
-    def post(url, data=None, headers=None, timeout=None):
+    def post(url, data=None, headers=None, timeout=None, allow_redirects=True):
         seen.append(url)
         return _resp(body=_token_body())
     p = providers.for_app(app)
@@ -487,8 +487,8 @@ def test_remove_catches_a_connection_made_while_it_ran(ws, user, eva, monkeypatc
     _stored({"agent": eva}, user, app=app)
     real = services.disconnect
 
-    def racing(conn, *, by):
-        real(conn, by=by)
+    def racing(conn, *, by, **kw):
+        real(conn, by=by, **kw)
         # Another request's connect commits now, after the snapshot was taken.
         _stored({"user": user}, user, app=app)
     monkeypatch.setattr(services, "disconnect", racing)
@@ -507,7 +507,7 @@ def test_late_connections_are_disconnected_by_the_sweep(ws, user, eva, monkeypat
     caplog.set_level(logging.INFO, logger="apps.connections.services")
     app = _configure(ws, user)
     real = services.disconnect
-    monkeypatch.setattr(services, "disconnect", lambda conn, *, by: None)   # removal "misses" them
+    monkeypatch.setattr(services, "disconnect", lambda conn, *, by, **kw: None)   # removal "misses" them
     _stored({"user": user}, user, app=app)
     with FakeSF():
         services.remove_app(app, by=user)

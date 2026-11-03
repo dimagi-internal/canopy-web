@@ -8,10 +8,10 @@ runner routes all come through here, so they cannot disagree about what a
 usable connection is. Nothing here names a provider: what differs between
 providers lives in `providers/`.
 
-canopy-web HOLDS NO TOKEN IT CAN USE. The only plaintext token it ever sees is
-the one in hand during the callback's code exchange; it never refreshes and
-never revokes a stored token (it has none). Machines the owner allows refresh
-and revoke, with the app's client.
+A CONNECTION IS SEALED, AND canopy-web STORES NOTHING READABLE. Here the only plaintext token is
+the one in hand during the callback's code exchange. Machines the owner allows refresh and revoke,
+with the app's client; and, only for a connection sealed to its own KMS key (the `server_use`
+switch), so does canopy-web, in `server_tokens`.
 
 CONNECTING SEALS TO THE OWNER. `complete` exchanges the code, runs every policy
 check, then seals the refresh token (the `refresh` plaintext of
@@ -20,7 +20,12 @@ only — the person's, or for an agent the admin connecting it (`owner_keyset`) 
 drops the access token and keeps no readable copy. The row is `unshared` until
 the owner's browser signs a grant statement and re-seals it to the machines
 that statement allows. Without a vault key there is nothing to seal to:
-`no_vault_key`, before anything is exchanged.
+`no_vault_key`, before anything is exchanged. When `server_use` is on (a new row:
+the provider's default, if canopy-web's key can be read) it is sealed to
+canopy-web's key too (`server_key`, spec "Connecting"); a KMS failure never costs the
+sign-in, which then seals to the owner alone. A connect naming limits (`lend_minutes`,
+`owner_turns_only`) is a person lending narrowly: it is sealed to the owner alone
+whatever the provider's default, and turns an on row off.
 
 THE APP. Every flow runs against one workspace's `ConnectionApp` (`app_for`):
 its client id and secret, its options, its chosen scopes. A connection keeps the
@@ -80,7 +85,7 @@ from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
 
-from . import providers, wire
+from . import providers, server_key, wire
 from . import recipients as rcpt
 from .models import Connection, ConnectionApp
 
@@ -331,7 +336,8 @@ def remove_app(app: ConnectionApp, *, by) -> None:
             locked.save(update_fields=["removed_at", "updated_at"])
     for conn in list(Connection.objects.filter(app_id=app.pk).exclude(state=Connection.REVOKING)
                      .select_related("app__workspace", "agent__workspace").order_by("pk")):
-        disconnect(conn, by=by)
+        # Not one provider call per connection in an admin's request: the sweep revokes them.
+        disconnect(conn, by=by, revoke_now=False)
     delete_removed_app(app)
     if newly:
         title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
@@ -356,8 +362,10 @@ def delete_removed_app(app: ConnectionApp) -> bool:
 # Verbs that are the owner's history: an Event for an agent's connection, a log
 # line for a person's. The rest are canopy's operational trouble: always a log line.
 AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_revoked", "token_issued",
-                     "refreshed", "lease_expired_unwritten", "reconnect_required", "resealed", "revoked",
-                     "revoke_unconfirmed", "app_configured", "app_removed"})
+                     "refreshed", "server_refreshed", "server_write_failed", "server_use_on", "server_use_off",
+                     "lease_expired_unwritten",
+                     "reconnect_required", "resealed", "revoked", "revoke_unconfirmed", "app_configured",
+                     "app_removed"})
 
 
 @dataclass(frozen=True)
@@ -520,9 +528,12 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     the required scopes, the provider's `check_owner` and its `sealed_hosts`
     succeed; a grant refused after the exchange is discarded (`_discard_grant`). On
     success the refresh plaintext is sealed to the owner's member key only
-    (`owner_keyset`), the access token is dropped, and the row (inserted, or the
+    (`owner_keyset`), and to canopy-web's key when the switch is on
+    (`_server_key_to_seal_to`), the access token is dropped, and the row (inserted, or the
     same account's row for this owner and app, replaced) is `unshared`; records
-    `connected`. An existing row sealed to another key is left as it is
+    `connected`. A connect naming limits starts a new row off and turns an on row off (recorded
+    `server_use_off`), so it is sealed to the owner alone and KMS is not asked; one naming none
+    leaves an existing row's switch as its owner chose. An existing row sealed to another key is left as it is
     (`owner_changed`): boxes pin a connection's owner key, and only that pin catches
     a self-consistent forgery, so it never changes.
     """
@@ -603,7 +614,9 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "instance_url": instance_url,
         "scopes": scopes,
         "state": Connection.UNSHARED,
-        "sealed_sig": None,  # canopy-web has no writer key: only the owner's browser accepts this seal
+        # A first seal carries no writer MACs: no machine reads a row until the owner shares it, and
+        # only the owner's browser opens this one.
+        "sealed_sig": None,
         "access_sealed": "",
         "access_sig": None,
         "access_expires_at": None,
@@ -620,10 +633,29 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "owner_turns_only": bool(parked.get("owner_turns_only")),
     }
 
-    def seal(connection_id) -> dict:
+    # A lend with limits is the owner's alone, so the switch can't stay on or start on.
+    limited = bool(defaults["expires_at"] or defaults["owner_turns_only"])
+    # Read now: the transaction below holds row locks, and a network call never does.
+    server_jwk = None if limited else _server_key_to_seal_to(p, lookup, subject, by)
+    turned_off = False
+
+    def seal(connection_id, server_use) -> dict:
+        """The envelope fields for the row. `server_use`: the locked row's switch, None for a
+        new row, whose own is decided here and returned with them. An existing row's is returned
+        only when limits turn it off: a reconnect naming none keeps the owner's choice. Its key
+        failing this time seals to the owner only and leaves an on row on, as the owner chose;
+        the next reconnect or share reaches canopy-web again."""
+        nonlocal turned_off
+        new = server_use is None
+        on = False if limited else (p.server_use_default and server_jwk is not None) if new else server_use
+        turned_off = bool(server_use) and not on
+        to = [("member", str(keyset.user_id), keyset.public_jwk)]
+        if on and server_jwk is not None:
+            to.append(("device", device_keys.thumbprint(server_jwk), server_jwk))
         sealed = zk_seal.seal_to(plaintext, agent_id=wire.binding_id(connection_id), name=wire.REFRESH_NAME,
-                                 kv=0, recipients=[("member", str(keyset.user_id), keyset.public_jwk)])
-        return {"sealed": sealed, "sealed_digest": hashlib.sha256(sealed.encode()).hexdigest()}
+                                 kv=0, recipients=to)
+        return {"sealed": sealed, "sealed_digest": hashlib.sha256(sealed.encode()).hexdigest(),
+                **({"server_use": on} if new or limited else {})}
 
     with transaction.atomic():
         # The app row, locked, is still the client that issued this grant: a client
@@ -655,7 +687,26 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         raise ConnectionError("bad_state", "that app has changed; start the connection again")
     record(Subject.of(conn), "connected", by=by,
            summary=f"{conn.owner_label} connected {p.title} as {conn.account_label}")
+    if turned_off:
+        record(Subject.of(conn), "server_use_off", by=by,
+               summary=f"{conn.owner_label} lent {p.title} ({conn.account_label}) with limits, which turned off "
+                       "canopy-web's use of it")
     return conn
+
+
+def _server_key_to_seal_to(p: providers.Provider, lookup: dict, subject: Subject, by) -> dict | None:
+    """canopy-web's public key, if this connect may seal to it: a new row the provider turns on
+    by default, or the same account's row already on. None otherwise, when no key is configured,
+    and when KMS fails: that is a warning, never a failed sign-in. Google's connect asks KMS nothing."""
+    if not server_key.available():
+        return None
+    if not p.server_use_default and not Connection.objects.filter(**lookup, server_use=True).exists():
+        return None
+    try:
+        return server_key.public_jwk()
+    except server_key.Unavailable:
+        record(subject, "server_key_unavailable", by=by, warn=True, during="connect")
+        return None
 
 
 def refresh_plaintext(app: ConnectionApp, token: providers.TokenResponse, *, account_id: str,
@@ -682,9 +733,12 @@ class _OwnerChanged(Exception):  # noqa: N818 - a signal inside `complete`, neve
 
 def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
     """Insert or update the grant's row with its envelope; the caller holds the
-    transaction. `seal(connection_id)` gives the envelope fields: the binding is the
-    row's id, so the row is always sealed to the id it ends up with — its own when
-    the same owner, app and account already has one, else the id it is created with.
+    transaction. `seal(connection_id, server_use)` gives the envelope fields: the binding
+    is the row's id, so the row is always sealed to the id it ends up with — its own when
+    the same owner, app and account already has one, else the id it is created with. It is
+    told the locked row's `server_use` (None for a new row, whose fields then carry one, as
+    they do when limits turn an existing row off), and `defaults` never holds it, so a
+    reconnect does not reset the owner's choice.
     Raises, writing nothing, `_RowRevoking` when the row it locks is `revoking` and
     `_OwnerChanged` when its `owner_key` is not the key about to be sealed to."""
     conn = Connection.objects.select_for_update().filter(**lookup).first()
@@ -692,7 +746,7 @@ def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
         pk = uuid.uuid4()
         try:
             with transaction.atomic():
-                return Connection.objects.create(id=pk, **lookup, **defaults, **seal(pk))
+                return Connection.objects.create(id=pk, **lookup, **defaults, **seal(pk, None))
         except IntegrityError:
             # A concurrent completion for the same account inserted the row between
             # our lookup and insert. It exists now: update it with this grant,
@@ -702,7 +756,7 @@ def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
         raise _RowRevoking
     if conn.owner_key != defaults["owner_key"]:
         raise _OwnerChanged
-    for k, v in {**defaults, **seal(conn.pk)}.items():
+    for k, v in {**defaults, **seal(conn.pk, conn.server_use)}.items():
         setattr(conn, k, v)
     conn.save()
     return conn
@@ -731,23 +785,36 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
 
 # ---- disconnecting -----------------------------------------------------------
 
-def disconnect(conn: Connection, *, by, lapsed: bool = False) -> Literal["revoking", "deleted"]:
-    """Disconnect `conn`, and say which of the two below happened. canopy-web holds no token, so it revokes nothing at the
-    provider itself: a machine that holds it does (spec §4.5).
+def disconnect(conn: Connection, *, by, revoke_now: bool = True,
+               lapsed: bool = False) -> Literal["revoking", "deleted", "revoked"]:
+    """Disconnect `conn`, and say which of the outcomes below happened (spec §4.5).
 
-    When a cloud box still heard from holds it (`recipients.revokers`; only cloud runners revoke),
-    the row becomes `revoking` at once: it leaves every list, is handed to no
-    machine, and its holders are told to revoke it (`keeper.work`) — at the provider
-    only when no other connection of that account through that app remains
-    (`revoke_at_provider`: revoking at Google ends every token of the account on the
-    client). The first holder to confirm deletes it (`keeper.confirm_revoked`); the
-    sweep deletes one nobody confirms. When none does (never shared, only laptops, or
+    When canopy-web's own key can open it (`server_tokens.may_revoke`) or a cloud box still heard
+    from holds it (`recipients.revokers`; only cloud runners revoke), the row becomes `revoking` at
+    once: it leaves every list, is handed to no machine, and its holders are told to revoke it
+    (`keeper.work`) — at the provider only when no other connection of that account through that
+    app remains (`revoke_at_provider`: revoking at Google ends every token of the account on the
+    client). canopy-web then revokes it itself, after the commit (`server_tokens.try_revoke`),
+    finishing as a holder's confirmation does. This answers `revoked` when that ended it at the
+    provider, and `deleted` when the row went without doing so (another connection of the account
+    needs the sign-in, or a revoke that can never work); when it can't, the row stays
+    `revoking`, and the sweep retries while any holder may confirm first. The sweep deletes one
+    nobody finishes. When neither can (never shared and not sealed to canopy-web, only laptops, or
     every holder stopped), nothing is there to revoke it, so it is deleted now and recorded
     `revoke_unconfirmed` (R7): the provider's own idle expiry finishes it.
 
+    `revoke_now` false: the caller is in a transaction, where a network call must not be, or is
+    disconnecting many at once, so canopy-web's revoke waits for the sweep. A failed revoke never raises
+    out of here. `lapsed`: nobody asked, its time ran out; only the sweep says so, and it passes
+    `revoke_now` false too, then retries the revoke itself (`keeper._server_revokes`).
+
     Records `disconnected` (in the app's workspace too, for a moved agent's) and
     `grant_revoked` for every agent it was lent to. Disconnecting a row already
-    `revoking` changes nothing. `lapsed`: nobody asked, its time ran out (the sweep)."""
+    `revoking` changes nothing."""
+    from . import server_tokens  # noqa: PLC0415 — it builds on this module
+
+    if revoke_now:  # under the row lock only the cache is read
+        rcpt.warm_server_key(conn)
     with transaction.atomic():
         row = (Connection.objects.select_for_update(of=("self",)).select_related("app__workspace", "agent__workspace")
                .filter(pk=conn.pk).first())
@@ -758,7 +825,8 @@ def disconnect(conn: Connection, *, by, lapsed: bool = False) -> Literal["revoki
         subject = Subject.of(row)
         grantees = _grantees(row)
         held = rcpt.revokers(row)
-        if held:
+        ours = server_tokens.may_revoke(row)
+        if held or ours:
             row.state, row.revoking_since = Connection.REVOKING, timezone.now()
             row.revoke_at_provider = not other_live_connections(row).exists()
             # A lease in flight ends here: its write-back is refused (`revoking`).
@@ -777,11 +845,42 @@ def disconnect(conn: Connection, *, by, lapsed: bool = False) -> Literal["revoki
         record(dataclasses.replace(subject, workspace=app_ws), "disconnected", by=by, summary=summary)
     for grantee in grantees:
         record_grant_revoked(subject, grantee, by=by, during="disconnected")
-    if not held:
+    if not held and not ours:
         record(subject, "revoke_unconfirmed", by=by, reason="no_holder",
                summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: no machine "
                        "holds it to revoke it")
-    return "revoking" if held else "deleted"
+        return "deleted"
+    if ours and revoke_now:
+        result = server_tokens.try_revoke(row)
+        if result is not None:
+            return "revoked" if result == server_tokens.REVOKED else "deleted"
+    return "revoking"
+
+
+def finish_revoking(conn: Connection, *, machine: str, revoked: bool, error: str = "", check=None) -> None:
+    """Whoever held `conn` did what it could: delete the row and record it. `revoked`: it revoked
+    at the provider, or was told not to because another connection of that account remains; else it
+    tried and failed (`error`), the operational `revoke_failed`. `check(row)` may refuse by raising,
+    under the row's lock. 409 `not_revoking` unless it is being disconnected. Gone already: nothing."""
+    with transaction.atomic():
+        row = (Connection.objects.select_for_update(of=("self",)).select_related("app", "agent__workspace", "user")
+               .filter(pk=conn.pk).first())
+        if row is None:  # another holder confirmed a moment ago
+            return
+        if row.state != Connection.REVOKING:
+            raise wire.WireError(409, "not_revoking", "This connection is not being disconnected.")
+        if check is not None:
+            check(row)
+        subject = Subject.of(row)
+        title = getattr(providers.CLASSES.get(row.provider), "title", row.provider)
+        at_provider = not other_live_connections(row).exists()
+        row.delete()
+    if revoked:
+        record(subject, "revoked", machine=machine, at_provider=at_provider,
+               summary=f"{subject.owner}'s {title} ({subject.account_label}) revoked by {machine}")
+    else:
+        record(subject, "revoke_failed", warn=True, during="disconnect", machine=machine,
+               error=error if _ERROR_CODE.fullmatch(error or "") else "unrecognised")
 
 
 def other_live_connections(conn: Connection) -> QuerySet[Connection]:

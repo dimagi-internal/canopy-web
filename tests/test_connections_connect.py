@@ -368,9 +368,9 @@ def test_a_concurrent_first_connect_is_sealed_to_the_winners_row(world, fake_pro
     assert _plain(conn, world.person_priv, world.person)["refresh_token"] == FAKE_REFRESH
 
 
-# ---- the browser lands on the share screen ----------------------------------------------
+# ---- the browser lands on the connected screen ----------------------------------------------
 
-def test_callback_redirects_to_the_share_screen(world, fake_provider):
+def test_callback_lands_on_connected(world, fake_provider):
     client = Client()
     client.force_login(world.person)
     start = client.get(reverse("connections_start", args=["salesforce", "w"]), {"return_to": "/settings?tab=x"})
@@ -379,18 +379,18 @@ def test_callback_redirects_to_the_share_screen(world, fake_provider):
     conn = Connection.objects.get()
     landed = urlparse(resp["Location"])
     assert resp.status_code == 302
-    assert landed.path == f"/w/w/connections/{conn.pk}/share"
+    assert landed.path == f"/w/w/connections/{conn.pk}/connected"
     assert parse_qs(landed.query) == {"return_to": ["/settings?tab=x"]}
 
 
-def test_an_agents_callback_redirects_to_its_share_screen(world, fake_provider):
+def test_an_agents_callback_lands_on_its_connected_screen(world, fake_provider):
     client = Client()
     client.force_login(world.ada)
     start = client.post(reverse("connections_start", args=["salesforce", "w"]), {"agent": "eva"})
     state = parse_qs(urlparse(start["Location"]).query)["state"][0]
     resp = client.get(reverse("connections_callback", args=["salesforce", "w"]), {"code": "c0de", "state": state})
     conn = Connection.objects.get(agent=world.eva)
-    assert urlparse(resp["Location"]).path == f"/w/w/connections/{conn.pk}/share"
+    assert urlparse(resp["Location"]).path == f"/w/w/connections/{conn.pk}/connected"
 
 
 def test_unshared_connection_is_listed_as_not_shared_yet(world, fake_provider):
@@ -402,6 +402,7 @@ def test_unshared_connection_is_listed_as_not_shared_yet(world, fake_provider):
     assert row["state"] == "unshared"
     assert row["statement"] == {"version": 0, "agents": [], "my_computers": [], "endorsers": []}
     assert row["holders"] == []
+    assert row["provider_calls"] is False  # no key here: canopy-web can't be used, so the lists show no switch
 
 
 # ---- a row's owner key never changes -------------------------------------------------
@@ -516,7 +517,7 @@ def test_a_missing_login_url_seals_the_default_login_host(world):
 def test_a_stored_login_url_that_bypassed_the_settings_check_is_refused(world):
     ConnectionApp.objects.filter(pk=world.app.pk).update(options={"login_url": "https://evil.example"})
     fake = FakeSF()
-    fake.post = lambda url, data=None, headers=None, timeout=None: (
+    fake.post = lambda url, data=None, headers=None, timeout=None, allow_redirects=True: (
         _resp(body=_token_body()) if url.endswith("/token") else _resp())
     with fake, pytest.raises(services.ConnectionError) as e:
         connect(world)

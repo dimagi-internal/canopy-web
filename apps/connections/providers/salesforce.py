@@ -68,6 +68,8 @@ class SalesforceProvider(Provider):
     # A Connected App set to `full` reports "full refresh_token": `full` includes `api`.
     scope_implies = {"full": ("api",)}
     rotates_refresh_token = True
+    server_use_default = True
+    server_calls = True
     default_access_token_seconds = 1800
     option_fields = (
         OptionField("login_url", "Login URL", "url", required=True, default=DEFAULT_LOGIN_URL),
@@ -130,6 +132,15 @@ class SalesforceProvider(Provider):
             raise ProviderError(f"Salesforce instance URL (host {host!r}) is not https://<My Domain>{MY_DOMAIN_SUFFIX}",
                                 code="bad_instance_url")
         return login_host, instance_url
+
+    def check_sealed_hosts(self, *, login_host: Any = None, instance_url: Any = None) -> None:
+        # A refresh token is only good at the login host that issued it, and `token_url` comes from
+        # the app: the sealed host must be allowed, and be the one the call would go to.
+        if login_host is not None and not (isinstance(login_host, str) and _login_host_ok(login_host)
+                                           and self._base == f"https://{login_host}"):
+            raise ProviderError("The sealed login host is not this app's Salesforce login host", code="bad_host")
+        if instance_url is not None and not (isinstance(instance_url, str) and _instance_url(instance_url)[0]):
+            raise ProviderError("The sealed instance URL is not a Salesforce My Domain", code="bad_host")
 
     def _identity_host_ok(self, url: str) -> bool:
         parsed = urlparse(url)

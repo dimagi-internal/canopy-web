@@ -123,7 +123,7 @@ describe('ShareConnectionPage', () => {
     expect(share.disabled).toBe(false)
     fireEvent.click(share)
     await waitFor(() => expect(putShare).toHaveBeenCalledWith('c1', { sig: 's' }))
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [], canopyWeb: false })
   })
 
   it('offers to trust a person vouching for a chosen machine, by name and fingerprint, and reads again', async () => {
@@ -148,7 +148,7 @@ describe('ShareConnectionPage', () => {
     fireEvent.click(screen.getByLabelText(/jj-laptop/))
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(putShare).toHaveBeenCalledWith('c1', { sig: 's' }))
-    expect(buildShare).toHaveBeenCalledWith(STATE, ME, { agents: ['12'], myComputers: [T1] }, TRUST)
+    expect(buildShare).toHaveBeenCalledWith(STATE, ME, { agents: ['12'], myComputers: [T1], canopyWeb: false }, TRUST)
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/settings/connections'))
   })
 
@@ -167,7 +167,7 @@ describe('ShareConnectionPage', () => {
     expect(box.disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(buildShare).toHaveBeenCalled())
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [], canopyWeb: false })
   })
 
   it('Not now leaves it unshared and says so', async () => {
@@ -197,7 +197,7 @@ describe('ShareConnectionPage', () => {
     expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(false)
     expect((screen.getByLabelText(/jj-laptop/) as HTMLInputElement).checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
-    await waitFor(() => expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['40'], myComputers: [T1] }))
+    await waitFor(() => expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['40'], myComputers: [T1], canopyWeb: false }))
     expect(screen.queryByText(/was reconnected/)).toBeNull()
   })
 
@@ -277,7 +277,7 @@ describe('ShareConnectionPage: fixes', () => {
     expect(screen.getByTestId('dropped').textContent).toContain('BBBB')
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(buildShare).toHaveBeenCalled())
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [T1] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [T1], canopyWeb: false })
   })
 
   it('sends no computers for an agent-owned connection', async () => {
@@ -288,7 +288,7 @@ describe('ShareConnectionPage: fixes', () => {
     await unlocked()
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(buildShare).toHaveBeenCalled())
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [], canopyWeb: false })
   })
 
   it.each(['no-scalar', 'bad-owner-key'])('%s asks to unlock again, not to Reconnect', async (code) => {
@@ -380,4 +380,161 @@ describe('safeReturnTo', () => {
     ['', '/settings'],
     [null, '/settings'],
   ])('%s -> %s', (given, want) => expect(safeReturnTo(given)).toBe(want))
+})
+
+describe('ShareConnectionPage: project screens and apps', () => {
+  const SERVER = { available: true, thumbprint: T1, public_jwk: {}, on: false, statements_enabled: true, provider_calls: true, reachable: true }
+  const withServer = (over: Record<string, unknown> = {}, rest: Record<string, unknown> = {}) =>
+    getShareState.mockResolvedValue({ ...STATE, server: { ...SERVER, ...over }, ...rest })
+  const box = () => screen.queryByLabelText('Project screens and apps') as HTMLInputElement | null
+
+  it('offers no canopy-web box on a lend with limits, and says its limits', async () => {
+    getShareState.mockResolvedValue({
+      ...STATE, owner_turns_only: true, expires_at: '2030-01-01T15:00:00Z',
+      server: { ...SERVER, provider_calls: false },
+    })
+    open('?return_to=%2Fsettings&agent=eva')
+    fireEvent.click(await screen.findByRole('button', { name: /unlock/i }))
+    await screen.findByText(/Connected as/)
+    expect(screen.queryByLabelText('Project screens and apps')).toBeNull()
+    expect(screen.queryByTestId('canopy-web-unavailable')).toBeNull()
+    expect(screen.getByTestId('lend-limits').textContent).toMatch(/only for work you start/)
+    expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(true)
+  })
+
+
+  it('before unlocking, says canopy never sees the sign-in only while that is true', async () => {
+    withServer({ on: true })
+    const { unmount } = open()
+    expect(await screen.findByText(/canopy-web can also use this sign-in, because Project screens and apps is on\./)).toBeTruthy()
+    expect(screen.queryByText(/canopy never sees/)).toBeNull()
+    unmount()
+    withServer({ on: false })
+    open()
+    expect(await screen.findByText(/canopy never sees the sign-in it holds while Project screens and apps is off\./)).toBeTruthy()
+  })
+
+  it('before unlocking, with no switch at all, keeps the plain claim', async () => {
+    withServer({ available: false, provider_calls: false, on: false })
+    open()
+    expect(await screen.findByText('Touch your passkey to open it here. canopy never sees the sign-in it holds.')).toBeTruthy()
+  })
+
+  it('shows the box with its one sentence, unticked when the row is off', async () => {
+    withServer()
+    await unlocked()
+    expect(box()?.checked).toBe(false)
+    expect(box()?.disabled).toBe(false)
+    expect(screen.getByText('canopy-web can use this account for you, with nobody present. If canopy-web were ever hacked, this account could be taken until you disconnect it.')).toBeTruthy()
+  })
+
+  it('starts ticked on an unshared row that is on', async () => {
+    withServer({ on: true })
+    await unlocked()
+    expect(box()?.checked).toBe(true)
+  })
+
+  it('hides the box when canopy-web has no key', async () => {
+    withServer({ available: false })
+    await unlocked()
+    expect(box()).toBeNull()
+  })
+
+  it('hides the box when canopy-web makes no calls for this provider', async () => {
+    withServer({ provider_calls: false })
+    await unlocked()
+    expect(box()).toBeNull()
+  })
+
+  it('is disabled and unticked, with its sentence, when statements are off and the row is on', async () => {
+    withServer({ statements_enabled: false, on: true })
+    await unlocked()
+    expect(box()?.checked).toBe(false)
+    expect(box()?.disabled).toBe(true)
+    expect(screen.getByTestId('canopy-web-unavailable').textContent)
+      .toBe('Sharing with agents or your computers turns off project screens and apps for now.')
+  })
+
+  it('is disabled with the other sentence when statements are off and the row is off', async () => {
+    withServer({ statements_enabled: false })
+    await unlocked()
+    expect(box()?.disabled).toBe(true)
+    expect(screen.getByTestId('canopy-web-unavailable').textContent).toBe("This isn't available yet.")
+  })
+
+  it('nothingToShare is false with only canopy-web ticked, and the choice carries it', async () => {
+    withServer()
+    await unlocked()
+    const share = screen.getByRole('button', { name: 'Share' }) as HTMLButtonElement
+    expect(share.disabled).toBe(true)
+    fireEvent.click(box() as HTMLInputElement)
+    expect(share.disabled).toBe(false)
+    fireEvent.click(share)
+    await waitFor(() => expect(putShare).toHaveBeenCalled())
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [], canopyWeb: true })
+  })
+
+  it('says a mismatched key in a sentence, without calling the connection unsafe', async () => {
+    withServer()
+    buildShare.mockRejectedValue(new ShareRefused('server-key', 'The key canopy-web gave does not match its fingerprint: nothing was sent.'))
+    await unlocked()
+    fireEvent.click(box() as HTMLInputElement)
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('does not match its fingerprint')
+    expect(screen.queryByRole('link', { name: 'Reconnect' })).toBeNull()
+  })
+
+  it('seeds an active row from the verified statement, not from a forged server.on', async () => {
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['12'], my_computers: [] } })
+    withServer({ on: true }, { state: 'active' })
+    await unlocked()
+    expect(box()?.checked).toBe(false)
+  })
+
+  it('ticks an active row whose verified statement names canopy-web, even if server.on is false', async () => {
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['12'], my_computers: [], canopy_web: T1 } })
+    withServer({ on: false }, { state: 'active' })
+    await unlocked()
+    expect(box()?.checked).toBe(true)
+    expect(screen.queryByTestId('canopy-web-key-changed')).toBeNull()
+  })
+
+  it('warns once, and keeps the box, when the statement names another key than the one canopy-web has now', async () => {
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['12'], my_computers: [], canopy_web: T2 } })
+    withServer({}, { state: 'active' })
+    await unlocked()
+    expect(box()?.disabled).toBe(false)
+    expect(screen.getByTestId('canopy-web-key-changed').textContent)
+      .toBe("canopy-web's lock has changed. Turn this off, or check with your administrator before keeping it on.")
+    fireEvent.click(box() as HTMLInputElement)
+    expect(screen.queryByTestId('canopy-web-key-changed')).toBeNull()
+  })
+
+  it('does not call the key changed when canopy-web has no key to compare (unreachable)', async () => {
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['12'], my_computers: [], canopy_web: T2 } })
+    withServer({ thumbprint: '' }, { state: 'active' })
+    await unlocked()
+    expect(screen.queryByTestId('canopy-web-key-changed')).toBeNull()
+  })
+
+  it('still warns about a reconnect after canopy-web wrote while unshared', async () => {
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['40'], my_computers: [], version: 2 } })
+    withServer({}, { sealed_sig: { by: { kind: 'device', target: T1 } } })
+    await unlocked()
+    expect(screen.getByText(/was reconnected/)).toBeTruthy()
+  })
+
+  it('says sharing now turns it off when canopy-web cannot be reached and the row is on', async () => {
+    withServer({ available: false, on: true })
+    await unlocked()
+    expect(box()).toBeNull()
+    expect(screen.getByTestId('canopy-web-unreachable').textContent)
+      .toBe("Sharing now turns off project screens and apps, because canopy-web can't be reached right now.")
+  })
+
+  it('says nothing about it when canopy-web cannot be reached and the row is off', async () => {
+    withServer({ available: false, on: false })
+    await unlocked()
+    expect(screen.queryByTestId('canopy-web-unreachable')).toBeNull()
+  })
 })

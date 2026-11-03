@@ -32,20 +32,34 @@ const RELOCK = 'Unlock your vault key and try again.'
 const NOT_YOURS = "This connection isn't yours to share."
 const KEY_MOVED = 'To share it, disconnect it in Settings, then connect it again.'
 const CANNOT_OPEN = "You can't open this connection's sharing right now."
+const CANOPY_WEB_WHY = 'canopy-web can use this account for you, with nobody present. '
+  + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+const CANOPY_WEB_TURNS_OFF = 'Sharing with agents or your computers turns off project screens and apps for now.'
+const CANOPY_WEB_NOT_YET = "This isn't available yet."
+const CANOPY_WEB_CHANGED = "canopy-web's lock has changed. Turn this off, or check with your administrator before keeping it on."
+const CANOPY_WEB_UNREACHABLE = "Sharing now turns off project screens and apps, because canopy-web can't be reached right now."
 const UNSAFE = "This connection can't be opened safely. Reconnect it."
+
+/** What canopy can read, true for this row: the claim holds only with the switch off. */
+function whoCanRead(server: ShareStateOut['server'] | undefined): string {
+  if (server?.on) return 'canopy-web can also use this sign-in, because Project screens and apps is on.'
+  if (server?.available && server.provider_calls) return 'canopy never sees the sign-in it holds while Project screens and apps is off.'
+  return 'canopy never sees the sign-in it holds.'
+}
 
 interface Opened {
   account: OpenedAccount
   /** The statement the owner last signed, verified by `openForOwner`: the only source of earlier choices. */
-  statement: { agents: string[]; my_computers: string[] } | null
+  statement: { agents: string[]; my_computers: string[]; canopy_web?: string } | null
   trust: Trust
 }
 
 /**
- * "Connected as …" (`/w/:workspace/connections/:id/share`): where the owner lands after an
- * OAuth sign-in. Your passkey opens the envelope in this browser, which shows which
+ * "Share this connection" (`/w/:workspace/connections/:id/share`): where the Connected screen
+ * and Settings lead, and where a sign-in lands that named limits or an agent to tick. Your passkey opens the envelope in this browser, which shows which
  * account was connected; the owner then chooses which agents and computers may use it
- * and shares (`vault/connectionShare.ts` signs and seals). canopy-web never sees the token.
+ * and shares (`vault/connectionShare.ts` signs and seals). canopy-web sees the token only if the
+ * owner's share names it (the "Project screens and apps" box, never offered on a lend with limits).
  * Not now leaves it unshared. Settings links here to finish a share later.
  *
  * The unlocked key lives in a ref for this flow only: not in state, not rendered, not sent.
@@ -74,6 +88,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [agents, setAgents] = useState<Set<string>>(new Set())
   const [computers, setComputers] = useState<Set<string>>(new Set())
+  const [canopyWebTicked, setCanopyWebTicked] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -94,10 +109,17 @@ export function ShareConnectionPage(): JSX.Element | null {
     () => (state?.candidates ?? []).filter((c) => c.kind === 'device' && !c.agent_id && c.mine),
     [state],
   )
+  // The box exists only when canopy-web has a key and makes calls for this connection (for this
+  // provider, and not lent with limits: the server says so in `provider_calls`); it can be
+  // ticked only while this deployment accepts a share that names it.
+  const server = state?.server
+  const canopyWebShown = !!server?.available && !!server.provider_calls
+  const canopyWebEnabled = canopyWebShown && !!server?.statements_enabled
   const choice: ShareChoice = useMemo(() => ({
     agents: [...new Set([...(ownerAgent ? [ownerAgent] : []), ...agents])].sort(),
     myComputers: ownerAgent ? [] : [...computers].sort(),
-  }), [agents, computers, ownerAgent])
+    canopyWeb: canopyWebEnabled && canopyWebTicked,
+  }), [agents, computers, ownerAgent, canopyWebEnabled, canopyWebTicked])
   const leftOut = useMemo(() => (state && opened ? leftOutOf(state, choice, opened.trust) : []), [state, opened, choice])
   const changed = useMemo(() => (opened ? changedEndorser(opened.trust, choice) : undefined), [opened, choice])
   const vouchers = useMemo(() => (opened ? vouchersToDecide(opened.trust, choice) : []), [opened, choice])
@@ -135,6 +157,9 @@ export function ShareConnectionPage(): JSX.Element | null {
     const trust = await trustFor(s, key, { accept: accepted.current })
     const listedAgents = new Set(s.agents.map((a) => a.id))
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
+    // The box starts from what the owner signed, never from the row's served `on`. Only an
+    // unshared row has no statement in force, and there `on` is canopy-web's own sealing at sign-in.
+    setCanopyWebTicked(keep ? !!keep.canopyWeb : s.state === 'unshared' ? !!s.server?.on : !!statement?.canopy_web)
     const asked = s.agents.filter((a) => a.slug === forAgent).map((a) => a.id)
     const wantAgents = keep ? keep.agents : statement?.agents ?? asked
     const wantComputers = s.owner_agent ? [] : keep ? keep.myComputers : statement?.my_computers ?? []
@@ -194,7 +219,8 @@ export function ShareConnectionPage(): JSX.Element | null {
         me.current = null
         setOpened(null)
         setError(RELOCK)
-      } else if (e instanceof ShareRefused && e.code !== 'key-changed' && e.code !== 'too-many') setUnsafe(true)
+      } else if (e instanceof ShareRefused && e.code !== 'key-changed' && e.code !== 'too-many'
+                 && e.code !== 'server-key' && e.code !== 'server-unavailable') setUnsafe(true)
       else setError(e instanceof Error ? e.message : 'Could not share this connection.')
     } finally {
       setBusy(false)
@@ -227,7 +253,13 @@ export function ShareConnectionPage(): JSX.Element | null {
   // A first share has to reach someone. Once shared, unticking everyone is how the last
   // grant is withdrawn: a statement naming nobody, signed like any other.
   const nothingToShare = !opened?.statement && choice.agents.length === 0 && choice.myComputers.length === 0
-  const reconnected = !!opened?.statement && state.sealed_sig == null
+    && !choice.canopyWeb
+  // A reconnect clears the writer's signature; canopy-web may then write its own (a device) while
+  // the row is still unshared, which must not hide the warning.
+  const writerKind = (state.sealed_sig as { by?: { kind?: string } } | null | undefined)?.by?.kind
+  const reconnected = !!opened?.statement && state.state === 'unshared' && (state.sealed_sig == null || writerKind === 'device')
+  const keyChanged = !!opened?.statement?.canopy_web && choice.canopyWeb && !!state.server?.thumbprint && state.server.thumbprint !== opened.statement.canopy_web
+  const unreachableOn = !!server && !server.available && !!server.on
 
   return (
     <div className="max-w-2xl space-y-4" data-testid="share-connection">
@@ -243,7 +275,7 @@ export function ShareConnectionPage(): JSX.Element | null {
       ) : !opened ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Touch your passkey to open it here. canopy never sees the sign-in it holds.
+            Touch your passkey to open it here. {whoCanRead(state.server)}
           </p>
           {state.state === 'unshared' && <p className="text-[13px] text-muted-foreground">{NOT_SHARED}</p>}
           <Button onClick={() => void unlock(state)} disabled={busy}>Unlock with your passkey</Button>
@@ -328,6 +360,38 @@ export function ShareConnectionPage(): JSX.Element | null {
                 </p>
               )}
             </fieldset>
+          )}
+
+          {canopyWebShown && (
+            <fieldset className="space-y-1">
+              <legend className="text-sm font-semibold text-foreground">Project screens and apps</legend>
+              <div className="flex items-start gap-2 text-sm">
+                <input
+                  id="canopy-web"
+                  type="checkbox"
+                  aria-label="Project screens and apps"
+                  aria-describedby="canopy-web-why"
+                  checked={canopyWebEnabled && canopyWebTicked}
+                  disabled={busy || !canopyWebEnabled}
+                  onChange={() => setCanopyWebTicked(!canopyWebTicked)}
+                />
+                <label htmlFor="canopy-web" id="canopy-web-why" className="space-y-0.5 text-[13px] text-muted-foreground">
+                  {CANOPY_WEB_WHY}
+                </label>
+              </div>
+              {!canopyWebEnabled && (
+                <p data-testid="canopy-web-unavailable" className="text-[13px] text-muted-foreground">
+                  {server?.on ? CANOPY_WEB_TURNS_OFF : CANOPY_WEB_NOT_YET}
+                </p>
+              )}
+            </fieldset>
+          )}
+
+          {keyChanged && (
+            <p data-testid="canopy-web-key-changed" role="alert" className="text-[13px] text-destructive">{CANOPY_WEB_CHANGED}</p>
+          )}
+          {unreachableOn && (
+            <p data-testid="canopy-web-unreachable" className="text-[13px] text-foreground">{CANOPY_WEB_UNREACHABLE}</p>
           )}
 
           {leftOut.length > 0 && (

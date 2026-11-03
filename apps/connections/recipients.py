@@ -18,7 +18,10 @@ never this list; what this module computes can only NARROW it:
   person the statement lists in `endorsers` vouches for its exact key for that
   agent (`_vouched`, contract §0.5): what is listed here is never something a box
   would refuse;
-- plus the owner's member key, the one the envelope names (`owner_member`).
+- plus the owner's member key, the one the envelope names (`owner_member`), and
+  canopy-web's own key while the switch is on (`server_recipient`). That one is a `device`
+  target with no `RunnerDeviceKey` and no runner: it is never a machine (`device_reasons`,
+  `holders`, `waiting`) and, here, never a revoker (`_revokers`).
 
 A recipient that stops qualifying is pruned from both envelopes without
 decrypting anything (`prune`), except one active cloud box when no remaining
@@ -39,7 +42,7 @@ from apps.harness.models import Runner, RunnerDeviceKey
 from apps.harness.routing import ServingFacts
 from apps.passkeys.models import UserVaultKeyset
 
-from . import wire
+from . import server_key, wire
 from .models import Connection
 
 Recipient = tuple[str, str, dict]
@@ -261,12 +264,83 @@ def owner_member(conn: Connection) -> Recipient | None:
     return ("member", conn.owner_user_id, conn.owner_public_jwk)
 
 
-def recipients(conn: Connection, statement: dict | None = None) -> list[Recipient]:
-    """THE rule: everyone `conn` may be sealed to — the owner's member key and the
-    machines `statement` (default: the stored one) still allows."""
+def server_recipient(conn: Connection, statement: dict | None = None, *,
+                     cached_only: bool = False) -> Recipient | None:
+    """`("device", thumbprint, public JWK)` of canopy-web's key while `conn` may be sealed to it:
+    the switch is on, the key is configured, and a statement in force names exactly this key. A
+    row `unshared` with no statement passed needs none: the one it kept from before a reconnect
+    decides nothing. A `statement` passed is the one about to be in force, so it decides even
+    there. None while the key can't be read (a machine can't seal to a key it wasn't shown);
+    `unconfirmed_server_target` keeps that from costing canopy-web its copy. `cached_only`: a
+    caller holding a row lock, where a key not yet cached counts as unreadable (no KMS call)."""
+    if not conn.server_use or not server_key.available():
+        return None
+    any_statement = statement is None and conn.state == Connection.UNSHARED
+    named = (conn.statement or {} if statement is None else statement).get("canopy_web")
+    if not any_statement and not named:  # asks KMS nothing
+        return None
+    if cached_only:
+        jwk = server_key.cached_public_jwk()
+    else:
+        try:
+            jwk = server_key.public_jwk()
+        except server_key.Unavailable:
+            jwk = None
+    if jwk is None:
+        return None
+    jkt = device_keys.thumbprint(jwk)
+    return ("device", jkt, jwk) if any_statement or named == jkt else None
+
+
+def unconfirmed_server_target(conn: Connection) -> set[tuple[str, str]]:
+    """canopy-web's target as the stored statement names it, when nothing can say it is the wrong
+    key: the key is unset, or not cached (KMS failing, or not read yet). Only the owner's statement,
+    or a key readable and different, drops canopy-web, so a `prune` keeps it and a write may still
+    reach it, though no write must. Reads the cache only: callers hold a row lock."""
+    named = (conn.statement or {}).get("canopy_web")
+    if not (named and conn.server_use and conn.state == Connection.ACTIVE):
+        return set()
+    if not server_key.available() or server_key.cached_public_jwk() is None:
+        return {("device", named)}
+    return set()
+
+
+def server_reachable(conn: Connection) -> bool | None:
+    """Whether canopy-web can use the connection: the switch is on and the stored refresh envelope is
+    sealed to its key now. False: it can't (off, no key set up, or sealed without canopy-web). None:
+    the key can't be read right now, so nobody can say, and that is no reason to tell its owner to
+    reconnect, which would stop an active row's machines."""
+    if not conn.server_use or not server_key.available():
+        return False
+    jwk = server_key.cached_public_jwk()
+    if jwk is None:
+        try:
+            jwk = server_key.public_jwk()
+        except server_key.Unavailable:
+            return None
+    return ("device", device_keys.thumbprint(jwk)) in zk_seal.sealed_targets(conn.sealed)
+
+
+def warm_server_key(conn: Connection, *, wanted: bool = False) -> None:
+    """Read canopy-web's public key into the process's cache before a caller takes `conn`'s row
+    lock, since under the lock only the cache is read (`cached_only`). A best effort: `conn` may
+    be stale and KMS may be down, and a miss then only counts as unavailable for that write.
+    `wanted`: the caller means to switch it on, whatever the row says now."""
+    if (conn.server_use or wanted) and server_key.available():
+        try:
+            server_key.public_jwk()
+        except server_key.Unavailable:
+            pass
+
+
+def recipients(conn: Connection, statement: dict | None = None, *, cached_only: bool = False) -> list[Recipient]:
+    """THE rule: everyone `conn` may be sealed to — the owner's member key, the machines
+    `statement` (default: the stored one) still allows, and canopy-web (`server_recipient`).
+    `cached_only`: the caller holds a row lock, so no KMS call."""
     out = [("device", k.ecdh_jkt, k.ecdh_public_jwk) for k in devices(conn, statement)]
     owner = owner_member(conn)
-    return ([owner] if owner else []) + out
+    server = server_recipient(conn, statement, cached_only=cached_only)
+    return ([owner] if owner else []) + out + ([server] if server else [])
 
 
 def owner_keys_replaced(conns) -> set:
@@ -345,8 +419,9 @@ def _revokers(jkts, *, up: bool = False) -> list[str]:
 
 def _writer_provable(conn: Connection, sig: dict | None) -> bool:
     """Could a machine accept the envelope `sig` belongs to? Its writer must be the owner's
-    key, one of the statement's computers, or a device a key the statement names vouches
-    for: the check a box makes before it uses, or revokes, anything (contract §0.4)."""
+    key, one of the statement's computers, canopy-web's key if the statement names it, or a
+    device a key the statement names vouches for: the check a box makes before it uses, or
+    revokes, anything (contract §0.4)."""
     by = (sig or {}).get("by") or {}
     if by.get("kind") == "member":
         return by.get("target") == conn.owner_user_id
@@ -354,7 +429,7 @@ def _writer_provable(conn: Connection, sig: dict | None) -> bool:
     if by.get("kind") != "device" or not target:
         return False
     st = conn.statement or {}
-    if target in st.get("my_computers", []):
+    if target in st.get("my_computers", []) or target == st.get("canopy_web"):
         return True
     trusted = {conn.owner_key, *st.get("endorsers", [])} - {""}
     for e in as_signed(conn, zk_endorse.endorsements_of_device(statement_agent_pks(st), target)):
@@ -397,13 +472,16 @@ def prune(conn: Connection) -> list[str]:
     nothing. When no kept machine could revoke it, one dropped machine that could (an
     active cloud box) stays, so a revoke still has a holder. Only an `active` row:
     nothing while `unshared` (sealed to the owner alone) or `revoking` (its holders
-    are revoking it). Returns what was dropped (runner names,
-    `person <id>`); empty when nothing changed."""
+    are revoking it). canopy-web's key goes only because the statement stopped naming it or a
+    readable key differs, never because its key can't be read or is unset
+    (`unconfirmed_server_target`). Returns what was dropped (runner names, `person <id>`);
+    empty when nothing changed."""
+    warm_server_key(conn)
     with transaction.atomic():
         fresh = Connection.objects.select_for_update().filter(pk=conn.pk).first()
         if fresh is None or fresh.state != Connection.ACTIVE or not fresh.sealed:
             return []
-        allowed = targets(recipients(fresh))
+        allowed = targets(recipients(fresh, cached_only=True)) | unconfirmed_server_target(fresh)
         _, dropped = zk_seal.keep_only(fresh.sealed, allowed)
         if dropped:
             last = _last_holder(zk_seal.sealed_targets(fresh.sealed) - dropped, dropped)

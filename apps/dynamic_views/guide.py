@@ -45,7 +45,7 @@ PROPS
                                          brought them back here went (a failure's `reason` is a code; for
                                          `no_vault_key`, canopy.navigate("/settings#vault-key") sets one up)
     canopy.connections.disconnect({id, agent}) -> Promise<{outcome}>  end one the viewer lent `agent`:
-                                         a machine revokes it at the provider
+                                         a machine, or canopy-web, revokes it at the provider
 - Plain <a href="/tasks/CON-12"> links work too: the frame routes them through navigate.
 
 SOURCES (declared on the view, read for it as the viewer before it draws; `example_sources` beside

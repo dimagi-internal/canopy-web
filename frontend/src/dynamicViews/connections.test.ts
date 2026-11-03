@@ -1,5 +1,22 @@
-import { describe, expect, it } from 'vitest'
-import { checkConnect, connectOutcome, lendStartPath } from './connections'
+import { describe, expect, it, vi } from 'vitest'
+
+const disconnectMine = vi.fn()
+const listMyConnections = vi.fn()
+vi.mock('@/api/connections', async (orig) => ({
+  ...(await orig<typeof import('@/api/connections')>()),
+  disconnectMine: (id: string) => disconnectMine(id),
+  listMyConnections: () => listMyConnections(),
+}))
+
+import { checkConnect, connectOutcome, disconnectLent, lendStartPath } from './connections'
+
+describe('disconnectLent', () => {
+  it('answers the outcome alone, which is what a view is promised', async () => {
+    listMyConnections.mockResolvedValue({ connections: [{ id: 'c1', state: 'active', statement: { agents: ['bailey'] } }] })
+    disconnectMine.mockResolvedValue({ outcome: 'revoked', machine_revokes: false })
+    await expect(disconnectLent('c1', 'bailey', ['bailey'])).resolves.toBe('revoked')
+  })
+})
 
 describe('checkConnect', () => {
   it('refuses an agent the view does not declare', () => {

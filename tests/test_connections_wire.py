@@ -198,6 +198,41 @@ def test_a_statement_missing_a_member_or_not_an_object_is_refused():
         assert (e.value.status, e.value.code) == (422, "bad_statement")
 
 
+CW = V["statement_canopy_web"]
+
+
+def test_a_statement_with_canopy_web_matches_its_vector():
+    st = CW["statement"]
+    assert st == {**GOOD, "canopy_web": st["canopy_web"]}
+    assert wire.statement_msg(st) == CW["msg"].encode()
+    assert wire.verify_statement(st, CW["sig"], V["statement"]["signer_jwk"])
+    other = {**st, "canopy_web": GOOD["my_computers"][0]}
+    assert not wire.verify_statement(other, CW["sig"], V["statement"]["signer_jwk"])
+    # The key is part of what is signed: the old statement's signature does not cover it.
+    assert not wire.verify_statement(st, V["statement"]["sig"], V["statement"]["signer_jwk"])
+
+
+def test_statement_accepts_canopy_web_absent_or_a_thumbprint():
+    assert wire.check_statement(dict(GOOD), connection_id=CID, account_id=GOOD["account_id"]) == GOOD
+    st = CW["statement"]
+    assert wire.check_statement(dict(st), connection_id=CID, account_id=st["account_id"]) == st
+
+
+@pytest.mark.parametrize("name", ["empty", "malformed", "null"])
+def test_a_bad_canopy_web_is_refused(name):
+    bad = CW["must_fail"][name]
+    with pytest.raises(wire.WireError) as e:
+        wire.check_statement(dict(bad), connection_id=CID, account_id=bad["account_id"])
+    assert (e.value.status, e.value.code) == (422, "bad_statement")
+    assert "canopy_web" in bad
+
+
+def test_the_reference_refuses_the_same_bad_canopy_webs():
+    for bad in CW["must_fail"].values():
+        assert not ref.canopy_web_ok(bad["canopy_web"])
+    assert ref.canopy_web_ok(CW["statement"]["canopy_web"])
+
+
 def test_statement_for_another_account_or_connection_is_refused():
     for kwargs in ({"connection_id": uuid.uuid4(), "account_id": GOOD["account_id"]},
                    {"connection_id": CID, "account_id": "00D000000000002AAA/005000000000001AAA"}):

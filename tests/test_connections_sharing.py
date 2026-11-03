@@ -26,7 +26,15 @@ from apps.events.models import Event
 from apps.harness.models import Runner
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FAKE_REFRESH, ShareWorld, browser_share, endorse, revoke_admin, vault_key
+from tests.fixtures.connections import (
+    FAKE_REFRESH,
+    ShareWorld,
+    browser_share,
+    endorse,
+    refused,
+    revoke_admin,
+    vault_key,
+)
 from tests.fixtures.vault_zk import conn_ref
 from tests.fixtures.vault_zk import ref as zk_ref
 
@@ -36,13 +44,6 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def world():
     return ShareWorld()
-
-
-def refused(conn, user, code, **kw):
-    with pytest.raises(sharing.WireError) as e:
-        sharing.share(conn, user=user, **kw)
-    assert e.value.code == code, e.value.detail
-    return e.value
 
 
 def log_lines(caplog, verb):

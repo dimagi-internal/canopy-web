@@ -32,7 +32,7 @@ from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 
-from . import proofs, providers, services, sharing, tokens
+from . import proofs, providers, server_key, services, sharing, tokens
 from . import recipients as rcpt
 from .models import Connection, ConnectionApp
 from .problems import problem_for, problem_for_wire
@@ -52,6 +52,7 @@ from .schemas import (
     ProviderOut,
     ReconnectRequiredIn,
     ScopeChoiceOut,
+    ServerUseIn,
     ShareIn,
     ShareStateOut,
     UnreachableOut,
@@ -143,6 +144,14 @@ def _lent_by(conn: Connection) -> str:
     return conn.user.get_full_name() or conn.user.email or conn.user.get_username()
 
 
+def _switch_shown(conn: Connection) -> bool:
+    # Only when canopy-web can actually be used for it: with no key, Turn on would lead to a Share
+    # screen with no box. A row already on keeps its switch, so that it can be turned off. A lend
+    # with limits has none: it is never canopy-web's.
+    calls = getattr(providers.CLASSES.get(conn.provider), "server_calls", False)
+    return bool(calls and not conn.limited and (server_key.available() or conn.server_use))
+
+
 def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None,
          replaced=None) -> ConnectionOut:
     lent = granted_from is not None
@@ -156,6 +165,8 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
         waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, pairs=pairs)
                  if w["agent"] or not lent],
         owner_key_replaced=not lent and conn.pk in (replaced or ()),
+        server_use=conn.server_use, server_reachable=rcpt.server_reachable(conn),
+        provider_calls=_switch_shown(conn),
         unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
         my_machines=[] if lent else _my_machines(conn),
         expires_at=conn.expires_at,
@@ -169,6 +180,11 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
         shared_with=(sorted(g.agent.slug for g in conn.grants.all())
                      if conn.agent_id and not lent else []),
     )
+
+
+def _disconnected(conn: Connection, by) -> DisconnectOut:
+    outcome = services.disconnect(conn, by=by)
+    return DisconnectOut(outcome=outcome, machine_revokes=outcome == "revoking" and bool(rcpt.revokers(conn)))
 
 
 def _start_url(request: HttpRequest, provider: str, workspace: str) -> str:
@@ -242,7 +258,9 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
     """Store the owner's signed grant statement (which agents it is lent to, and
     whether it is used on their own computers) and the envelope their browser
     re-sealed to the machines it allows; the connection becomes `active`.
-    canopy-web never opens the envelope: it checks the signer is the owner
+    canopy-web opens nothing to do this, and can open the envelope afterwards only
+    if the statement names it (`canopy_web`, the "Project screens and apps" box).
+    It checks the signer is the owner
     (403 `not_the_owner_key`), the signature (422 `bad_signature`), that the
     version moves forward (409 `statement_stale`), that every agent added is one
     the owner administers (403 `not_an_admin`) in the app's workspace (422
@@ -267,17 +285,45 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
     return _out(conn, usable=usable)
 
 
+@router.post("/{connection_id}/server-use", response=ConnectionOut, summary="Stop canopy-web using a connection")
+@gate("self", setting=True)
+def set_server_use(request: HttpRequest, connection_id: uuid.UUID, payload: ServerUseIn) -> ConnectionOut:
+    """Turn off canopy-web's use of a connection, so screens and apps can no longer act as this account:
+    canopy-web removes itself from the stored sign-in. Mine, or an agent's I administer (anyone else's
+    id is a 404). No passkey: giving up access is always easy. Already off changes nothing. 422 when
+    `on` is true (turning it on goes through Share, where it is part of the signed statement); 409
+    `needs_share` when the connection is shared, since removing canopy-web then needs a new signed
+    statement (share it again without canopy-web); 409 `revoking` while it is being disconnected."""
+    conn = _visible(request, connection_id)
+    if payload.on:
+        raise ProblemError(422, "Turning it on goes through Share",
+                           detail="Choose \"Project screens and apps\" when you share the connection.",
+                           members={"error": "use_share"})
+    try:
+        conn = sharing.turn_off_server_use(conn, user=request.user)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")
+            .prefetch_related("grants__agent").get(pk=conn.pk))
+    usable = (conn.app.workspace_id in services.readable_workspaces(request.user) if conn.user_id
+              else services.agent_connection_usable(conn))
+    return _out(conn, usable=usable)
+
+
 @router.delete("/{connection_id}", response=DisconnectOut, summary="Disconnect one of my connections")
 @gate("self", setting=True)
 def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> DisconnectOut:
-    """Disconnect it: it leaves every list at once and is handed to no machine; a
-    cloud box that holds it revokes it at the provider and it is then deleted
-    (`outcome` `revoking`). With none to do that it is deleted at once (`deleted`).
+    """Disconnect it: it leaves every list at once and is handed to no machine.
+    canopy-web's own key, where it is sealed to it, ends it at the provider now
+    (`outcome` `revoked`). Otherwise a cloud box that holds it (`machine_revokes`) or
+    canopy-web's retries revoke it and it is then deleted (`revoking`). With nothing to
+    revoke it, or another connection of the account needing the sign-in, it is deleted
+    at once (`deleted`).
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
     conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
                              user=request.user)
-    return DisconnectOut(outcome=services.disconnect(conn, by=request.user))
+    return _disconnected(conn, request.user)
 
 
 # ---- an agent's ------------------------------------------------------------------
@@ -315,14 +361,14 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
 @gate("agent-admin", setting=True, step_up=True)
 def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: uuid.UUID) -> DisconnectOut:
     """Stop this agent using this connection; agents it is lent to lose it too. `outcome`
-    says whether a machine will revoke it or its copy was deleted at once, as for a
+    says whether it was revoked, will be, or its copy was deleted at once, as for a
     person's. From a browser this needs a fresh passkey check."""
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
                              agent=agent)
-    return DisconnectOut(outcome=services.disconnect(conn, by=request.user))
+    return _disconnected(conn, request.user)
 
 
 # ---- my CLI, on my own enrolled computer -------------------------------------------

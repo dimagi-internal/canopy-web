@@ -380,7 +380,7 @@ class Browser:
             r = self.req("GET", f"/auth/connections/{provider}/{workspace}/callback/?"
                          + urllib.parse.urlencode({"code": "the-code", "state": state}))
         assert r.status_code == 302, f"callback: {r.status_code} {r.text[:300]}"
-        found = re.match(r"/w/[^/]+/connections/([0-9a-f-]{36})/share", r.headers["Location"])
+        found = re.match(r"/w/[^/]+/connections/([0-9a-f-]{36})/connected", r.headers["Location"])
         assert found, f"callback landed on {r.headers['Location']}"
         return found.group(1)
 
@@ -927,7 +927,7 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         token_now = lab.provider()["live"][-1] if lab.provider()["live"] else ""
         r = browser.req("DELETE", f"/api/connections/{conn_id}")
         story.check("DELETE says a machine will revoke it", r.status_code == 200
-                    and r.json() == {"outcome": "revoking"}, f"{r.status_code} {r.text[:400]}")
+                    and r.json() == {"outcome": "revoking", "machine_revokes": True}, f"{r.status_code} {r.text[:400]}")
         conn = Connection.objects.filter(pk=conn_id).first()
         story.check("the row is revoking", conn is not None and conn.state == Connection.REVOKING,
                     conn.state if conn else "gone")
@@ -1063,7 +1063,7 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         story.check("box 2 reuses it", run.rc == 0 and len(lab.calls()) == before, run)
         r = browser.req("DELETE", f"/api/agents/eva/connections/{google_id}")
         story.check("disconnect says a machine will revoke it", r.status_code == 200
-                    and r.json() == {"outcome": "revoking"}, f"{r.status_code} {r.text[:300]}")
+                    and r.json() == {"outcome": "revoking", "machine_revokes": True}, f"{r.status_code} {r.text[:300]}")
         keep = box1.keep()
         story.check("the keeper revokes at Google", GOOGLE_REFRESH in lab.provider()["revoked"], keep)
         story.check("the row is gone", not Connection.objects.filter(pk=google_id).exists(), keep)
@@ -1120,7 +1120,7 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
                     f"{r.status_code} {r.text[:300]}")
         r = new_browser.req("DELETE", f"/api/connections/{ann_id}")
         story.check("disconnect: a machine will revoke it", r.status_code == 200
-                    and r.json() == {"outcome": "revoking"}, f"{r.status_code} {r.text[:300]}")
+                    and r.json() == {"outcome": "revoking", "machine_revokes": True}, f"{r.status_code} {r.text[:300]}")
         live_before = lab.provider()["live"][-1]
         keep = box1.keep()
         story.check("the keeper revokes it at the provider", live_before in lab.provider()["revoked"], keep)

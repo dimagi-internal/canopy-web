@@ -163,3 +163,14 @@ def test_salesforce_authorize_url_shape(app):
     assert q["code_challenge"] == "chal"
     assert q["code_challenge_method"] == "S256"
     assert q["scope"] == "api refresh_token id"
+
+
+def test_server_use_has_a_database_default_so_an_image_rollback_can_still_insert():
+    """An image older than the column inserts without it: NOT NULL with no default would refuse a
+    first-time connect."""
+    from importlib import import_module  # noqa: PLC0415
+
+    migration = import_module("apps.connections.migrations.0009_connection_server_use").Migration
+    field = next(op.field for op in migration.operations if getattr(op, "name", "") == "server_use")
+    assert field.db_default is False
+    assert Connection._meta.get_field("server_use").db_default is False

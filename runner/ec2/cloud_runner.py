@@ -1832,7 +1832,7 @@ CONNECTION_WAITING_EXIT = 4
 CONNECTION_STAGE_TIMEOUT_SECONDS = 300
 #: The CLI that opens sealed connections (`cred connection-token --runner` through the
 #: material route). An older one knows only a route canopy-web no longer has.
-CONNECTIONS_ZK_MIN_CLI = (0, 2, 833)
+CONNECTIONS_ZK_MIN_CLI = (0, 2, 838)
 #: A provider key canopy-web may name; anything else never becomes a path or an argv.
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 #: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.

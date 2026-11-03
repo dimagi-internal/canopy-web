@@ -1,7 +1,7 @@
 """What a machine needs to use a connection, the one refresh lease, and the
 compare-and-swap write-back (spec §4.2; contract §0.6 routes 7-12).
 
-canopy-web never sees a token. A machine the owner's statement allows reads the
+Here canopy-web sees no token. A machine the owner's statement allows reads the
 MATERIAL: both envelopes, the signed statement, the owner's key, the
 endorsements, the recipients, and the app's client id and secret (the one
 place the secret leaves canopy-web). It opens the envelopes itself; when the
@@ -10,7 +10,8 @@ renewable — answered with `ttl_seconds` so a box with a skewed clock renews on
 its own monotonic clock), refreshes at the provider and WRITES BACK a new access
 envelope (and refresh envelope, when the refresh token rotated) against the
 `sealed_digest` it read. Another machine that wants a token waits for that
-write instead of refreshing in parallel.
+write instead of refreshing in parallel. canopy-web, when a connection is sealed to its own key,
+takes the same lease and writes back the same way (`server_tokens`), as a `Writer`.
 
 Admission is decided here, from `recipients` (THE rule), never from who the
 envelope happens to be sealed to: `prune` keeps one dropped cloud box only so
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import math
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from django.db import transaction
@@ -32,7 +34,7 @@ from apps.agents.credentials import delegations, vault_engine, zk_endorse, zk_se
 from apps.agents.credentials.zk import ZkError
 from apps.harness.models import RunnerDeviceKey
 
-from . import providers, services, wire
+from . import providers, server_key, services, wire
 from . import recipients as rcpt
 from .models import Connection
 from .wire import WireError
@@ -170,6 +172,12 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None, f
                   else [])
     recipients += [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
                     "runner_name": k.runner.name} for k in devices]
+    # A machine seals only to who is listed here, and a write-back must keep whoever may still
+    # open it (`check_write`): left out, canopy-web would make every refresh refused.
+    server = rcpt.server_recipient(conn)
+    if server is not None:
+        recipients.append({"kind": server[0], "target": server[1], "public_jwk": server[2],
+                           "runner_name": "canopy-web"})
     agents = {a.pk: a for _, a in pairs if a is not None}
     endorsements = with_writer_endorsements(conn, [
         {**e, "agent_id": str(a.pk)} for a in agents.values() for e in rcpt.endorsements_for(a, facts)
@@ -207,21 +215,49 @@ def with_writer_endorsements(conn: Connection, endorsements: list[dict]) -> list
 
 # ---- the lease ----------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class Writer:
+    """Who holds the lease and writes an envelope when it is not a `RunnerDeviceKey`: canopy-web's
+    own key, which no runner carries. `jkt` is what `lease_holder` and a writer sig's `by.target`
+    name, `name` what a record shows, `refreshed` the kind its write-back records."""
+
+    jkt: str
+    name: str
+    refreshed: str = "refreshed"
+
+
+def _jkt(who: RunnerDeviceKey | Writer) -> str:
+    return who.jkt if isinstance(who, Writer) else who.ecdh_jkt
+
+
+def _name(who: RunnerDeviceKey | Writer) -> str:
+    return who.name if isinstance(who, Writer) else who.runner.name
+
+
 def _locked(conn: Connection) -> Connection:
     return Connection.objects.select_for_update(of=("self",)).select_related("app", "agent").get(pk=conn.pk)
 
 
-def _same_lease(row: Connection, key: RunnerDeviceKey, lease_id) -> bool:
+def _same_lease(row: Connection, who: RunnerDeviceKey | Writer, lease_id) -> bool:
     return (lease_id is not None and row.lease_id is not None and str(row.lease_id) == str(lease_id)
-            and row.lease_holder == key.ecdh_jkt)
+            and row.lease_holder == _jkt(who))
+
+
+def _is_canopy_web(jkt: str) -> bool:
+    try:
+        return server_key.available() and server_key.thumbprint() == jkt
+    except server_key.Unavailable:
+        return False
 
 
 def _machine_name(jkt: str) -> str:
-    return (RunnerDeviceKey.objects.filter(ecdh_jkt=jkt).values_list("runner__name", flat=True).first()
-            or jkt)
+    """What a record calls a lease holder. Asks KMS at most for a holder no runner carries, so
+    never call it holding a row lock."""
+    name = RunnerDeviceKey.objects.filter(ecdh_jkt=jkt).values_list("runner__name", flat=True).first()
+    return name or ("canopy-web" if _is_canopy_web(jkt) else jkt)
 
 
-def take_lease(conn: Connection, device_key: RunnerDeviceKey, lease_id=None) -> dict:
+def take_lease(conn: Connection, device_key: RunnerDeviceKey | Writer, lease_id=None) -> dict:
     """Take (or, with the `lease_id` this machine holds, renew) the one refresh lease
     for `LEASE_SECONDS`. Another live holder — another machine, or another process on
     this one without the id — is 409 `lease_held` with `retry_after` seconds: wait
@@ -240,18 +276,18 @@ def take_lease(conn: Connection, device_key: RunnerDeviceKey, lease_id=None) -> 
                             retry_after=max(1, math.ceil((row.lease_expires_at - now).total_seconds())))
         crashed = row.lease_holder if (not same and row.lease_id is not None and not row.lease_written) else ""
         if not same:
-            row.lease_id, row.lease_holder, row.lease_written = uuid.uuid4(), device_key.ecdh_jkt, False
+            row.lease_id, row.lease_holder, row.lease_written = uuid.uuid4(), _jkt(device_key), False
         row.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
         row.save(update_fields=["lease_id", "lease_holder", "lease_written", "lease_expires_at", "updated_at"])
     if crashed:
         services.record(services.Subject.of(row), "lease_expired_unwritten", warn=True,
-                        machine=_machine_name(crashed), taken_by=device_key.runner.name,
+                        machine=_machine_name(crashed), taken_by=_name(device_key),
                         summary=f"{row.owner_label}'s {_title(row)} lease expired before "
                                 f"{_machine_name(crashed)} wrote back")
     return {"lease_id": row.lease_id, "ttl_seconds": LEASE_SECONDS, "expires_at": row.lease_expires_at}
 
 
-def release_lease(conn: Connection, device_key: RunnerDeviceKey, lease_id) -> None:
+def release_lease(conn: Connection, device_key: RunnerDeviceKey | Writer, lease_id) -> None:
     """Give the lease up; a no-op unless this machine holds `lease_id`."""
     with transaction.atomic():
         row = _locked(conn)
@@ -260,7 +296,7 @@ def release_lease(conn: Connection, device_key: RunnerDeviceKey, lease_id) -> No
             row.save(update_fields=["lease_id", "lease_holder", "lease_expires_at", "updated_at"])
 
 
-def _check_lease(row: Connection, key: RunnerDeviceKey, lease_id) -> None:
+def _check_lease(row: Connection, key: RunnerDeviceKey | Writer, lease_id) -> None:
     # R13: an expired lease still counts while nobody took it since (taking it
     # replaces the id).
     if not _same_lease(row, key, lease_id):
@@ -269,7 +305,8 @@ def _check_lease(row: Connection, key: RunnerDeviceKey, lease_id) -> None:
 
 # ---- write-back ---------------------------------------------------------------------
 
-def check_write(value, sig, *, name: str, allowed: set, keep: set, writer: RunnerDeviceKey, expect: str) -> None:
+def check_write(value, sig, *, name: str, allowed: set, keep: set, writer: RunnerDeviceKey | Writer,
+                expect: str) -> None:
     """One envelope a machine writes (a write-back, or a keeper's re-seal): well
     formed, sealed only to `allowed` (422 `foreign_reader`), still to everyone in
     `keep` (422 `zk_rewrap_required`), with writer MACs by `writer`'s ECDH key over
@@ -292,13 +329,13 @@ def check_write(value, sig, *, name: str, allowed: set, keep: set, writer: Runne
         raise WireError(422, "bad_writer_sig", f"{name}: every envelope a machine writes carries its writer MACs.")
     wire.check_writer_sig(value, sig)
     by = sig["by"]
-    if by["kind"] != "device" or by["target"] != writer.ecdh_jkt:
+    if by["kind"] != "device" or by["target"] != _jkt(writer):
         raise WireError(422, "bad_writer_sig", f"{name}: the writer must be this machine, by its ECDH key.")
     if sig["expect"] != expect:
         raise WireError(422, "bad_writer_sig", f"{name}: the writer MACs name another value to replace.")
 
 
-def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, access_sealed: str, access_sig,
+def write_back(conn: Connection, *, device_key: RunnerDeviceKey | Writer, lease_id, access_sealed: str, access_sig,
                access_expires_at: datetime, expect: str, rotated: bool, sealed: str | None = None,
                sealed_sig=None) -> str:
     """Store what the lease holder minted: the new access envelope and, when the
@@ -313,14 +350,18 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
     if rotated != (sealed is not None):
         raise WireError(422, "rotation_mismatch",
                         "Send `sealed` exactly when the refresh token rotated (`rotated`).")
+    rcpt.warm_server_key(conn)
     with transaction.atomic():
         row = _locked(conn)
         _not_revoking(row)
         _check_lease(row, device_key, lease_id)
         if (expect or "").strip().lower() != row.sealed_digest:
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
-        allowed = rcpt.targets(rcpt.recipients(row))
+        allowed = rcpt.targets(rcpt.recipients(row, cached_only=True))
         keep = zk_seal.sealed_targets(row.sealed) & allowed
+        # Never refused because canopy-web's key can't be read: this machine's new token may be
+        # the only copy.
+        allowed |= rcpt.unconfirmed_server_target(row)
         check_write(access_sealed, access_sig, name=wire.ACCESS_NAME, allowed=allowed, keep=keep,
                      writer=device_key, expect=vault_engine.value_digest(row.access_sealed))
         if sealed is not None:
@@ -329,18 +370,20 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
             row.sealed, row.sealed_sig, row.sealed_digest = sealed, sealed_sig, vault_engine.value_digest(sealed)
         row.access_sealed, row.access_sig, row.access_expires_at = access_sealed, access_sig, access_expires_at
         row.lease_written = True
+        row.refresh_failed_at = None  # a token just landed: whatever was refused before, this one works
         row.save(update_fields=["sealed", "sealed_sig", "sealed_digest", "access_sealed", "access_sig",
-                                "access_expires_at", "lease_written", "updated_at"])
+                                "access_expires_at", "lease_written", "refresh_failed_at", "updated_at"])
     # A day's refreshes of one connection coalesce into one Event (its count says how many);
     # a rotation is its own Event so it is never overwritten by a plain refresh.
-    services.record(services.Subject.of(row), "refreshed", rotated=bool(rotated), machine=device_key.runner.name,
-                    key=f"refreshed:{row.pk}:{'rotated' if rotated else 'plain'}:{timezone.now().date().isoformat()}",
-                    summary=f"{row.owner_label}'s {_title(row)} refreshed on {device_key.runner.name}"
+    kind = device_key.refreshed if isinstance(device_key, Writer) else "refreshed"
+    services.record(services.Subject.of(row), kind, rotated=bool(rotated), machine=_name(device_key),
+                    key=f"{kind}:{row.pk}:{'rotated' if rotated else 'plain'}:{timezone.now().date().isoformat()}",
+                    summary=f"{row.owner_label}'s {_title(row)} refreshed on {_name(device_key)}"
                             + (" (refresh token rotated)" if rotated else ""))
     return row.sealed_digest
 
 
-def mark_reconnect_required(conn: Connection, device_key: RunnerDeviceKey, lease_id, error: str,
+def mark_reconnect_required(conn: Connection, device_key: RunnerDeviceKey | Writer, lease_id, error: str,
                             detail: str = "") -> None:
     """The lease holder's refresh was refused at the provider. Only `invalid_grant`
     (the refresh token is dead) marks the connection `needs_reconnect`, ends the lease
@@ -361,8 +404,8 @@ def mark_reconnect_required(conn: Connection, device_key: RunnerDeviceKey, lease
     subject = services.Subject.of(row)
     if dead:
         services.record(subject, "reconnect_required", warn=True, error=error, detail=detail,
-                        machine=device_key.runner.name,
+                        machine=_name(device_key),
                         summary=f"{row.owner_label}'s {_title(row)} was refused on refresh; connect it again")
     else:
         services.record(subject, "provider_error", warn=True, during="refresh", error=error, detail=detail,
-                        machine=device_key.runner.name)
+                        machine=_name(device_key))

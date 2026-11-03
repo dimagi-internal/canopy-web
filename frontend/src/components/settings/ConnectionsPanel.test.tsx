@@ -3,14 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { listMyConnections, disconnectMine } = vi.hoisted(() => ({
+const { listMyConnections, disconnectMine, turnOffServerUse } = vi.hoisted(() => ({
   listMyConnections: vi.fn(),
   disconnectMine: vi.fn(),
+  turnOffServerUse: vi.fn(),
 }))
 vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
   listMyConnections,
   disconnectMine,
+  turnOffServerUse,
 }))
 
 import { ConnectionsPanel } from './ConnectionsPanel'
@@ -28,7 +30,7 @@ function conn(over: Record<string, unknown> = {}) {
 const at = (url: string) =>
   render(<MemoryRouter initialEntries={[url]}><ConnectionsPanel /></MemoryRouter>)
 
-beforeEach(() => { vi.clearAllMocks(); disconnectMine.mockResolvedValue('revoking') })
+beforeEach(() => { vi.clearAllMocks(); disconnectMine.mockResolvedValue({ outcome: 'revoking', machine_revokes: true }) })
 afterEach(cleanup)
 
 describe('ConnectionsPanel', () => {
@@ -42,7 +44,7 @@ describe('ConnectionsPanel', () => {
 
   it('shows account and instance when connected, and disconnect calls DELETE', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
-    disconnectMine.mockResolvedValue('revoking')
+    disconnectMine.mockResolvedValue({ outcome: 'revoking', machine_revokes: true })
     at('/settings')
     expect(await screen.findByText('jj@dimagi.com')).toBeTruthy()
     expect(screen.getByText(/dimagi\.my\.salesforce\.com/)).toBeTruthy()
@@ -53,7 +55,7 @@ describe('ConnectionsPanel', () => {
 
   it('warns when a connection is sealed to a key its owner replaced, and says to revoke it by hand if nothing will', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ owner_key_replaced: true })] })
-    disconnectMine.mockResolvedValue('deleted')
+    disconnectMine.mockResolvedValue({ outcome: 'deleted', machine_revokes: false })
     at('/settings')
     expect(await screen.findByText('Sealed to a vault key you replaced. New tokens stay readable by the old key until you disconnect and connect again. If it may have leaked, disconnect now.')).toBeTruthy()
     fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
@@ -69,10 +71,28 @@ describe('ConnectionsPanel', () => {
 
   it('says plainly when nothing will revoke it', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
-    disconnectMine.mockResolvedValue('deleted')
+    disconnectMine.mockResolvedValue({ outcome: 'deleted', machine_revokes: false })
     at('/settings')
     fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
     expect(await screen.findByText('Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.')).toBeTruthy()
+  })
+
+  it('says plainly when canopy-web ended the sign-in, with nothing left to do even after a key change', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ owner_key_replaced: true })] })
+    disconnectMine.mockResolvedValue({ outcome: 'revoked', machine_revokes: false })
+    at('/settings')
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText('Disconnected. The sign-in has been ended at Salesforce or Google.')).toBeTruthy()
+    expect(screen.queryByText(/idles out|yourself/)).toBeNull()
+  })
+
+  it('names no machine when none holds it: a failed revoke of canopy-web\'s own', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
+    disconnectMine.mockResolvedValue({ outcome: 'revoking', machine_revokes: false })
+    at('/settings')
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText('Disconnected. canopy will keep trying to end this sign-in.')).toBeTruthy()
+    expect(screen.queryByText(/A machine/)).toBeNull()
   })
 
   it('says which lent agent a connection is not reaching, with a link to the share page', async () => {
@@ -302,5 +322,181 @@ describe('ConnectionsPanel', () => {
       await screen.findByTestId('connection-provider-salesforce')
       expect(screen.queryByText('gone@dimagi.com')).toBeNull()
     })
+  })
+})
+
+describe('ConnectionsPanel: Used by canopy-web', () => {
+  const WHY = 'With this on, project screens and apps can use this account with nobody present. '
+    + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+  const PASSKEY = 'Changing this needs your passkey.'
+  const sw = () => screen.queryByRole('switch', { name: 'Used by canopy-web' }) as HTMLButtonElement | null
+
+  beforeEach(() => { turnOffServerUse.mockResolvedValue(conn()) })
+
+  it('no switch for Google (a provider canopy-web never calls)', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [{ ...PROVIDER, name: 'google', title: 'Google' }],
+      connections: [conn({ provider: 'google', provider_calls: false, server_use: false })],
+    })
+    at('/settings')
+    await screen.findByText('jj@dimagi.com')
+    expect(screen.queryByText(/Used by canopy-web/)).toBeNull()
+    expect(screen.queryByText(WHY)).toBeNull()
+  })
+
+  it('turning off an unshared connection calls server-use', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
+    })
+    at('/settings')
+    expect(await screen.findByText(WHY)).toBeTruthy()
+    expect(sw()?.getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByText(PASSKEY)).toBeNull()
+    fireEvent.click(sw()!)
+    await waitFor(() => expect(turnOffServerUse).toHaveBeenCalledWith(7))
+    await waitFor(() => expect(listMyConnections).toHaveBeenCalledTimes(2))
+  })
+
+  it('turning off a shared one goes to Share, with the passkey sentence', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'active', provider_calls: true, server_use: true, server_reachable: true })],
+    })
+    at('/settings/connections')
+    expect(await screen.findByText(WHY)).toBeTruthy()
+    expect(sw()).toBeNull()
+    expect(screen.getByText(PASSKEY)).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Turn off Used by canopy-web' })
+    expect(a.getAttribute('href')).toBe('/w/w/connections/7/share?return_to=%2Fsettings%2Fconnections')
+    expect(turnOffServerUse).not.toHaveBeenCalled()
+  })
+
+  it.each(['unshared', 'active'])('turning it on (%s) always goes to Share, with the passkey sentence', async (state) => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state, provider_calls: true, server_use: false })],
+    })
+    at('/settings/connections')
+    expect(await screen.findByText(WHY)).toBeTruthy()
+    expect(sw()).toBeNull()
+    expect(screen.getByText(PASSKEY)).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Turn on Used by canopy-web' })
+    expect(a.getAttribute('href')).toBe('/w/w/connections/7/share?return_to=%2Fsettings%2Fconnections')
+    expect(turnOffServerUse).not.toHaveBeenCalled()
+  })
+
+  it('shows a failed turn-off and leaves the switch', async () => {
+    turnOffServerUse.mockRejectedValue(new Error('Could not turn this off.'))
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
+    })
+    at('/settings')
+    await screen.findByText(WHY)
+    fireEvent.click(sw()!)
+    expect(await screen.findByText('Could not turn this off.')).toBeTruthy()
+    expect(sw()?.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('on but unreachable reads Not working beside Turn off, with the connect-again text', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: false })],
+    })
+    at('/settings')
+    expect(await screen.findByText("canopy-web couldn't be reached when this was connected. Connect again to fix it.")).toBeTruthy()
+    expect(screen.queryByText(/Share it again/)).toBeNull()
+    expect(screen.getByText('Not working')).toBeTruthy()
+    expect(screen.queryByText('Off')).toBeNull()
+    expect(screen.queryByText('On')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off Used by canopy-web' }))
+    await waitFor(() => expect(turnOffServerUse).toHaveBeenCalledWith(7))
+  })
+
+  it('on and shared but unreachable also reads Not working beside Turn off', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'active', provider_calls: true, server_use: true, server_reachable: false })],
+    })
+    at('/settings')
+    expect(await screen.findByText('Not working')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Turn off Used by canopy-web' })).toBeTruthy()
+    expect(screen.getByText("canopy-web can't open this sign-in. Share it again to fix it; connecting again would stop your machines.")).toBeTruthy()
+    expect(screen.queryByText(/Connect again to fix it/)).toBeNull()
+  })
+
+  describe('the key cannot be read right now (null)', () => {
+    const CLEARS = "canopy-web can't be reached right now. Nothing needs doing; this usually clears on its own."
+
+    it('an active row reads On, with no reconnect prompt', async () => {
+      listMyConnections.mockResolvedValue({
+        providers: [PROVIDER],
+        connections: [conn({ state: 'active', provider_calls: true, server_use: true, server_reachable: null })],
+      })
+      at('/settings')
+      expect(await screen.findByText(CLEARS)).toBeTruthy()
+      expect(screen.getByText('On')).toBeTruthy()
+      expect(screen.queryByText(/Connect again/)).toBeNull()
+      expect(screen.queryByText('Not working')).toBeNull()
+      expect(screen.queryByRole('link', { name: 'Reconnect' })).toBeNull()
+    })
+
+    it('an unshared row keeps its switch on and no warning', async () => {
+      listMyConnections.mockResolvedValue({
+        providers: [PROVIDER],
+        connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: null })],
+      })
+      at('/settings')
+      expect(await screen.findByText(CLEARS)).toBeTruthy()
+      expect(screen.getByRole('switch', { name: 'Used by canopy-web' }).getAttribute('aria-checked')).toBe('true')
+      expect(screen.queryByText(/Not shared yet/)).toBeNull()
+      expect(screen.getByText(/No agents or computers can use it yet/)).toBeTruthy()
+      expect(screen.queryByText(/Project screens and apps can use it/)).toBeNull()
+    })
+  })
+
+  it('with no switch (no key set up), the row and the claim at the top are as they were', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: false, server_use: false, server_reachable: false })],
+    })
+    at('/settings')
+    expect(await screen.findByText(/Not shared yet: no agent or computer can use it/)).toBeTruthy()
+    expect(screen.queryByText('Used by canopy-web')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByText(/sealed to your vault key, so canopy cannot read them\. You choose/)).toBeTruthy()
+  })
+
+  it('does not claim canopy cannot read an account that has Used by canopy-web on', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
+    })
+    at('/settings')
+    expect(await screen.findByText(/so canopy cannot read them, except any with Used by canopy-web on\./)).toBeTruthy()
+  })
+
+  it('a dead sign-in says what that means where canopy-web can use one', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ provider_calls: true, needs_reconnect: true })],
+    })
+    at('/settings')
+    expect(await screen.findByText('Reconnect required. This sign-in stopped working, so nothing can use it until you connect it again.')).toBeTruthy()
+  })
+
+  it('an unshared row canopy-web can use says so, neutrally', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
+    })
+    at('/settings')
+    expect(await screen.findByText('Project screens and apps can use it. No agents or computers can yet.')).toBeTruthy()
+    expect(screen.queryByText(/Not shared yet/)).toBeNull()
+  })
+
+  it('other unshared rows keep the warning', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: false })],
+    })
+    at('/settings')
+    expect(await screen.findByText(/Not shared yet: no agent or computer can use it/)).toBeTruthy()
   })
 })

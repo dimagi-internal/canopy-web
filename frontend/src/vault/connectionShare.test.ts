@@ -25,6 +25,7 @@ import {
   verifyStatement,
   writerSig,
   ShareRefused,
+  type ShareChoice,
   type Statement,
   type Trust,
 } from './connectionShare'
@@ -67,11 +68,11 @@ async function who(hex: string): Promise<Who> {
   return { scalar, pub, jkt: await jkt(pub), priv: await importPrivateScalar(scalar, pub) }
 }
 
-let owner: Who, ada: Who, stranger: Who, evaBox: Who, adaBox: Who, echoBox: Who, strangerBox: Who, computer: Who, me: Unlocked
+let owner: Who, ada: Who, stranger: Who, evaBox: Who, adaBox: Who, echoBox: Who, strangerBox: Who, computer: Who, cwBox: Who, me: Unlocked
 
 beforeAll(async () => {
-  ;[owner, ada, stranger, evaBox, adaBox, echoBox, strangerBox, computer] = await Promise.all(
-    ['7a', 'ad', 'be', '8b', '9c', 'd1', 'e2', 'f3'].map(who))
+  ;[owner, ada, stranger, evaBox, adaBox, echoBox, strangerBox, computer, cwBox] = await Promise.all(
+    ['7a', 'ad', 'be', '8b', '9c', 'd1', 'e2', 'f3', 'c4'].map(who))
   me = { userId: OWNER, privateKey: owner.priv, publicJwk: owner.pub, scalar: owner.scalar }
 })
 
@@ -124,6 +125,11 @@ async function unshared(over: Record<string, unknown> = {}, plain: Record<string
     ...over,
   } as unknown as ShareStateOut
 }
+
+/** What `server` says when canopy-web can use this connection: its key is `cwBox`. */
+const serverOf = (over: Record<string, unknown> = {}) => ({
+  available: true, thumbprint: cwBox.jkt, public_jwk: { ...cwBox.pub }, on: true, statements_enabled: true,
+  provider_calls: true, reachable: true, ...over })
 
 const PINS = (): Pins => ({ [ADA]: { jkt: ada.jkt, email: 'ada@x', pinned_at: '2026-01-01T00:00:00Z' } })
 
@@ -508,6 +514,54 @@ describe('openForOwner', () => {
   })
 })
 
+describe('canopy-web as a writer', () => {
+  /** An envelope canopy-web wrote itself, sealed to the owner and to its own key. */
+  const byServer = async (state: ShareStateOut, over: Record<string, unknown> = {}) => {
+    const recipients = [ownerRecipient(), toDevice(cwBox)]
+    const sealed = await sealValue(JSON.stringify(refreshPlain({ statement_floor: 0, ...over })), BINDING, 'refresh', 0, recipients)
+    const by = { kind: 'device' as const, target: cwBox.jkt, privateKey: cwBox.priv, publicJwk: cwBox.pub }
+    return { ...state, sealed, sealed_sig: await writerSig(BINDING, 'refresh', state.sealed_digest, sealed, by, recipients),
+             sealed_digest: await valueDigest(sealed) } as ShareStateOut
+  }
+  const statementNaming = async (canopy_web: string | undefined) => {
+    const statement = { ...statementOf({ version: 1 }), ...(canopy_web ? { canopy_web } : {}) } as Statement
+    return { statement, statement_sig: await signStatement(statement, owner.scalar, owner.pub) }
+  }
+
+  it('opens server-written envelope while unshared', async () => {
+    const state = await byServer(await unshared({ server: serverOf() }))
+    expect((await openForOwner(state, me)).account.account_id).toBe(ACCOUNT)
+  })
+
+  it('still checks the MAC of a server-written envelope while unshared', async () => {
+    const state = await byServer(await unshared({ server: serverOf() }))
+    const sig = state.sealed_sig as unknown as { macs: { mac: string }[] }
+    const forged = { ...sig, macs: sig.macs.map((m) => ({ ...m, mac: 'A'.repeat(43) })) }
+    await refused(openForOwner({ ...state, sealed_sig: forged } as unknown as ShareStateOut, me), 'bad-mac')
+  })
+
+  it.each([['not available', { available: false, thumbprint: '', public_jwk: null }], ['another key', { thumbprint: 'S'.repeat(43) }]])(
+    'opens a device-written envelope while unshared when its MAC verifies, server key %s', async (_n, over) => {
+      const state = await byServer(await unshared({ server: serverOf(over) }))
+      await expect(openForOwner(state, me)).resolves.toBeTruthy()
+    })
+
+  it('refuses server-written envelope under a statement not naming it', async () => {
+    const base = await byServer(await unshared({ server: serverOf() }))
+    for (const named of [undefined, strangerBox.jkt]) {
+      const active = { ...base, state: 'active', ...(await statementNaming(named)) } as unknown as ShareStateOut
+      await refused(openForOwner(active, me), 'bad-writer')
+    }
+  })
+
+  it('opens server-written envelope under a statement naming its key, not the reported thumbprint', async () => {
+    const base = await byServer(await unshared({ server: serverOf({ thumbprint: strangerBox.jkt }) }),
+      { statement_floor: 1 })
+    const active = { ...base, state: 'active', ...(await statementNaming(cwBox.jkt)) } as unknown as ShareStateOut
+    await expect(openForOwner(active, me)).resolves.toBeTruthy()
+  })
+})
+
 describe('chooseRecipients', () => {
   let state: ShareStateOut, trust: Trust
 
@@ -619,7 +673,7 @@ describe('chooseRecipients', () => {
 })
 
 describe('buildShare', () => {
-  const withPins = async (state: ShareStateOut, choice = { agents: [EVA, ECHO], myComputers: [computer.jkt] }) =>
+  const withPins = async (state: ShareStateOut, choice: ShareChoice = { agents: [EVA, ECHO], myComputers: [computer.jkt] }) =>
     (await buildShare(state, me, choice, await trustFor(state, me, { pins: PINS() }))).share
   const open = async (stored: string, name: string, kind: string, target: string, priv: CryptoKey) =>
     JSON.parse(await openSealedValue(stored, BINDING, name, kind, target, priv))
@@ -634,6 +688,66 @@ describe('buildShare', () => {
     expect(await verifyStatement(st, share.sig, owner.pub)).toBe(true)
     expect(share.by_jkt).toBe(owner.jkt)
     expect(share.expect).toBe(state.sealed_digest)
+  })
+
+  it('names canopy_web only when ticked and omits the key otherwise', async () => {
+    const state = await unshared({ server: serverOf() })
+    const none = await withPins(state, { agents: [EVA], myComputers: [] })
+    expect(Object.keys(none.statement)).toEqual(['account_id', 'agents', 'connection', 'endorsers', 'my_computers', 'v', 'version'])
+    expect(statementMessage(none.statement as unknown as Statement)).not.toContain('canopy_web')
+    const ticked = await withPins(state, { agents: [], myComputers: [], canopyWeb: true })
+    const st = ticked.statement as unknown as Statement
+    expect(Object.keys(st)).toEqual(['account_id', 'agents', 'canopy_web', 'connection', 'endorsers', 'my_computers', 'v', 'version'])
+    expect(st.canopy_web).toBe(cwBox.jkt)
+    expect(await verifyStatement(st, ticked.sig, owner.pub)).toBe(true)
+    expect(sealedTargets(ticked.sealed)).toEqual([`device:${cwBox.jkt}`, `member:${OWNER}`].sort())
+    // the same bytes the reference writes for a statement naming canopy-web
+    expect(statementMessage(v.statement_canopy_web.statement)).toBe(v.statement_canopy_web.msg)
+  })
+
+  it('refuses statements that name canopy-web badly', () => {
+    for (const bad of Object.values(v.statement_canopy_web.must_fail)) {
+      expect(() => statementMessage(bad as Statement)).toThrow(ShareRefused)
+    }
+  })
+
+  it('seals both envelopes to canopy-web when ticked', async () => {
+    const access = await written(await unshared({ server: serverOf() }), evaBox, { statement: statementOf({ my_computers: [evaBox.jkt] }) })
+    const share = (await buildShare(access, me, { agents: [EVA], myComputers: [], canopyWeb: true }, await trustFor(access, me, { pins: PINS() }))).share
+    for (const stored of [share.sealed, share.access_sealed as string]) expect(sealedTargets(stored)).toContain(`device:${cwBox.jkt}`)
+  })
+
+  it('refuses to name a key whose thumbprint differs from the reported one', async () => {
+    const state = await unshared({ server: serverOf({ thumbprint: strangerBox.jkt }) })
+    await refused(buildShare(state, me, { agents: [], myComputers: [], canopyWeb: true }, await trustFor(state, me, { pins: {} })), 'server-key')
+  })
+
+  it.each([
+    ['not available', { available: false }],
+    ['statements off', { statements_enabled: false }],
+    ['no provider calls', { provider_calls: false }],
+  ])('never names canopy-web when %s', async (_n, over) => {
+    const state = await unshared({ server: serverOf(over) })
+    await refused(buildShare(state, me, { agents: [], myComputers: [], canopyWeb: true }, await trustFor(state, me, { pins: {} })), 'server-unavailable')
+  })
+
+  it('ticking off rewrites both envelopes as the owner, leaving canopy-web out', async () => {
+    const statement = { ...statementOf({ version: 3 }), canopy_web: cwBox.jkt } as Statement
+    const state = await written(await unshared({ server: serverOf() }), cwBox, { statement })
+    const { share } = await buildShare(state, me, { agents: [EVA], myComputers: [], canopyWeb: false },
+      await trustFor(state, me, { pins: PINS() }))
+    const st = share.statement as unknown as Statement
+    expect('canopy_web' in st).toBe(false)
+    for (const [stored, sig] of [[share.sealed, share.sealed_sig], [share.access_sealed as string, share.access_sig]] as const) {
+      expect(sealedTargets(stored)).toContain(`member:${OWNER}`)
+      expect(sealedTargets(stored)).not.toContain(`device:${cwBox.jkt}`)
+      const by = (sig as unknown as { by: { kind: string; target: string } }).by
+      expect(by).toMatchObject({ kind: 'member', target: OWNER })
+    }
+    // a machine reading afterwards finds an owner-written envelope under an owner-signed statement
+    const after = { ...state, statement: st, statement_sig: share.sig, sealed: share.sealed, sealed_sig: share.sealed_sig,
+                    access_sealed: share.access_sealed, access_sig: share.access_sig } as unknown as ShareStateOut
+    await expect(openForOwner(after, me)).resolves.toBeTruthy()
   })
 
   it('moves the version on from the stored statement', async () => {
@@ -850,6 +964,11 @@ async function browserShareFixture() {
   const { share: secondShare } = await buildShare(second, me, { agents: [EVA], myComputers: [] },
     await trustFor(second, me, { pins: PINS() }))
 
+  // The first share again, this time naming canopy-web (its key is `cwBox`).
+  const withServerKey = { ...first, server: serverOf() } as unknown as ShareStateOut
+  const { share: thirdShare } = await buildShare(withServerKey, me, { ...choice, canopyWeb: true },
+    await trustFor(withServerKey, me, { pins: PINS() }))
+
   const key = (w: Who) => ({ scalar_hex: Array.from(w.scalar, (b) => b.toString(16).padStart(2, '0')).join(''),
                              public_jwk: w.pub, jkt: w.jkt })
   return {
@@ -857,9 +976,10 @@ async function browserShareFixture() {
     connection: CONNECTION, account_id: ACCOUNT, refresh_token: REFRESH_TOKEN, access_token: ACCESS_TOKEN,
     users: { owner: OWNER, ada: ADA, stranger: STRANGER }, agents: { eva: EVA },
     keys: { owner: key(owner), ada: key(ada), stranger: key(stranger), eva_box: key(evaBox), ada_box: key(adaBox),
-            stranger_box: key(strangerBox), computer: key(computer) },
+            stranger_box: key(strangerBox), computer: key(computer), canopy_web: key(cwBox) },
     first: { state: first, share: firstShare, msg: statementMessage(statement) },
     second: { state: second, share: secondShare, msg: statementMessage(secondShare.statement as unknown as Statement) },
+    third: { state: withServerKey, share: thirdShare, msg: statementMessage(thirdShare.statement as unknown as Statement) },
   }
 }
 
@@ -879,7 +999,7 @@ describe('the share the Python side checks', () => {
       typeof val === 'string' && (val.length > 40 || /^[A-Za-z0-9_-]{43}$/.test(val)) ? 'x' : val)
     expect(shapeOf(fresh)).toBe(shapeOf(held))
     expect(held.keys.owner.jkt).toBe(owner.jkt)
-    for (const c of [held.first, held.second]) {
+    for (const c of [held.first, held.second, held.third]) {
       const st = c.share.statement as unknown as Statement
       expect(statementMessage(st)).toBe(c.msg)
       expect(await verifyStatement(st, c.share.sig, owner.pub)).toBe(true)

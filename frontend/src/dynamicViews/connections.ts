@@ -4,7 +4,7 @@
  * connect is a full-page trip through the provider's sign-in and canopy's share screen,
  * where the viewer sees the limits and touches their passkey.
  */
-import { connectionStartPath, disconnectMine, listMyConnections, type DisconnectOutcome } from '@/api/connections'
+import { connectionStartPath, disconnectMine, listMyConnections, type DisconnectOut } from '@/api/connections'
 
 export interface LendRequest {
   agent?: string
@@ -52,10 +52,10 @@ export function connectOutcome(search: string): { provider: string; status: stri
 
 /** End one of the viewer's connections, if it is lent to `agent` and the view declares that
  *  agent, or has not been shared with anyone yet. The server's own check is that it is theirs. */
-export async function disconnectLent(id: string, agent: string, declaredAgents: readonly string[]): Promise<DisconnectOutcome> {
+export async function disconnectLent(id: string, agent: string, declaredAgents: readonly string[]): Promise<DisconnectOut['outcome']> {
   if (!declaredAgents.includes(agent)) throw new Error(`this view declares no task for ${agent || 'that agent'}`)
   const row = (await listMyConnections()).connections.find((c) => c.id === id)
   if (!row) throw new Error('no such connection of yours')
   if (row.state !== 'unshared' && !row.statement.agents?.includes(agent)) throw new Error(`that connection is not lent to ${agent}`)
-  return disconnectMine(id)
+  return (await disconnectMine(id)).outcome
 }

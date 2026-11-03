@@ -61,7 +61,7 @@ def _connect_in_browser(client, secrets, **agent):
     with FakeSF():
         landed = client.get(reverse("connections_callback", args=["salesforce", "w"]),
                             {"code": "c0de-secret", "state": state})
-    assert "/share?" in landed["Location"]                       # sealed to its owner
+    assert "/connected?" in landed["Location"]                       # sealed to its owner
 
 
 @pytest.fixture
@@ -288,7 +288,7 @@ def test_connect_exchange_leaves_no_token_in_logs_events_responses_or_rows(world
             landed = browser.get(reverse("connections_callback", args=["salesforce", "w"]),
                                  {"code": CODE_SENTINEL, "state": state})
         seen.append(landed)
-        assert "/share?" in landed["Location"]
+        assert "/connected?" in landed["Location"]
     for c in Connection.objects.all():
         seen.append(browser.get(f"/api/connections/{c.pk}/share"))
         assert seen[-1].status_code == 200
@@ -382,3 +382,50 @@ def world_tokens():
     from tests.fixtures.connection_calls import TokensWorld
 
     return TokensWorld()
+
+
+def test_canopy_web_using_a_connection_leaves_no_token(caplog):
+    """`server_tokens`: every path that opens or writes a token, then its refusals, disconnect and
+    revoke. A token is the answer to `access_token` and nowhere else; nor the app's secret."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.connections import keeper, server_key, server_tokens
+    from tests.fixtures.connection_calls import TokensWorld
+    from tests.fixtures.connections import FAKE_REFRESH, sealed_to_owner, sf_app
+
+    _debug(caplog)
+    server_key.use_software_key_for_tests(ec.generate_private_key(ec.SECP256R1()))
+    server_tokens._forget_all()
+    try:
+        w = TokensWorld()
+        sf_app(w.ws, secret=APP_SECRET)
+        conn = w.shared(sealed_to_owner({"agent": w.eva}, w.person, app=w.app, server_use=True), agents=[w.eva],
+                        canopy_web=server_key.thumbprint())
+        no_wait = {"sleep": lambda _: None}
+        raised = []
+        rotates = _token_body(access_token=ACCESS_SENTINEL, refresh_token=REFRESH_SENTINEL)
+        with FakeSF(token=[_resp(body=rotates)]):
+            assert server_tokens.access_token(conn, **no_wait) == (ACCESS_SENTINEL, conn.instance_url)
+        server_tokens._forget_all()
+        assert server_tokens.access_token(conn, **no_wait)[0] == ACCESS_SENTINEL  # opened
+        said = f"{REFRESH_SENTINEL} {APP_SECRET} {FAKE_REFRESH}"
+        for status, body in ((400, {"error": "invalid_client", "error_description": said}),
+                             (400, {"error": "invalid_grant", "error_description": said}), (503, {})):
+            Connection.objects.filter(pk=conn.pk).update(access_sealed="", access_sig=None, access_expires_at=None,
+                                                         refresh_failed_at=None)
+            with FakeSF(token=[_resp(status=status, body=body)]), pytest.raises(services.ConnectionError) as e:
+                server_tokens.access_token(conn, **no_wait)
+            raised += [str(e.value), repr(e.value)]
+        Connection.objects.filter(pk=conn.pk).update(refresh_failed_at=None)
+        with FakeSF(revoke=_resp(status=400, body={"error": "x", "error_description": said})):
+            assert services.disconnect(conn, by=w.person) == "revoking"
+        with FakeSF():
+            keeper.sweep()
+        assert not Connection.objects.filter(pk=conn.pk).exists()
+    finally:
+        server_key.use_software_key_for_tests(None)
+        server_tokens._forget_all()
+    assert {"connections.server_refreshed", "connections.reconnect_required", "connections.revoked"} <= {
+        e.kind for e in Event.objects.filter(source=services.EVENT_SOURCE)}
+    blob = _scan_blob(caplog) + "\n".join(raised)
+    assert [s for s in (ACCESS_SENTINEL, REFRESH_SENTINEL, APP_SECRET) if s in blob] == []

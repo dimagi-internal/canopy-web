@@ -1,4 +1,4 @@
-// OAuth connections, whose tokens canopy-web cannot read: `apps/connections/api.py`. Which providers exist
+// OAuth connections, whose tokens canopy-web can read only with the owner's switch on: `apps/connections/api.py`. Which providers exist
 // (and what to call them) comes from the API's `providers`, never from here.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
@@ -36,17 +36,17 @@ export async function listMyConnections(): Promise<ConnectionsView> {
   return view(unwrap(res, 'Could not read your connections.'))
 }
 
-export type DisconnectOutcome = components['schemas']['DisconnectOut']['outcome']
+export type DisconnectOut = components['schemas']['DisconnectOut']
 
-export async function disconnectMine(id: string): Promise<DisconnectOutcome> {
+export async function disconnectMine(id: string): Promise<DisconnectOut> {
   const res = await apiV2.DELETE('/api/connections/{connection_id}', {
     params: { path: { connection_id: id } },
   })
-  return unwrap(res, 'Could not disconnect.').outcome
+  return unwrap(res, 'Could not disconnect.')
 }
 
 // ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----
-// canopy-web never opens these envelopes. Sharing needs a fresh passkey; the step-up
+// canopy-web opens these envelopes only if the owner's statement names it. Sharing needs a fresh passkey; the step-up
 // middleware answers that, and refusals carry their `code` on the `ApiError`.
 
 export async function getShareState(id: string): Promise<ShareStateOut> {
@@ -64,16 +64,26 @@ export async function putShare(id: string, body: ShareIn): Promise<ConnectionOut
   return unwrap(res, 'Could not share this connection.') as unknown as ConnectionOut
 }
 
+/** Stop canopy-web using a connection (no passkey: giving up access is always easy). Turning it on is
+ *  part of the signed share, so only `false` is sent. A shared connection answers 409 `needs_share`. */
+export async function turnOffServerUse(id: string): Promise<ConnectionOut> {
+  const res = await apiV2.POST('/api/connections/{connection_id}/server-use', {
+    params: { path: { connection_id: id } },
+    body: { on: false },
+  })
+  return unwrap(res, 'Could not turn this off.') as unknown as ConnectionOut
+}
+
 export async function listAgentConnections(slug: string): Promise<ConnectionsView> {
   const res = await apiV2.GET('/api/agents/{slug}/connections', { params: { path: { slug } } })
   return view(unwrap(res, 'Could not read the agent’s connections.'))
 }
 
-export async function disconnectAgentConnection(slug: string, id: string): Promise<DisconnectOutcome> {
+export async function disconnectAgentConnection(slug: string, id: string): Promise<DisconnectOut> {
   const res = await apiV2.DELETE('/api/agents/{slug}/connections/{connection_id}', {
     params: { path: { slug, connection_id: id } },
   })
-  return unwrap(res, 'Could not disconnect.').outcome
+  return unwrap(res, 'Could not disconnect.')
 }
 
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an

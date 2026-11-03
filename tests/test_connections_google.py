@@ -88,7 +88,7 @@ def test_a_person_connects_with_offline_access_and_the_chosen_scopes(google, use
     assert query["scope"] == f"{BASE} {READ_MAIL} {CALENDAR}"
     assert query["client_id"] == "123.apps.googleusercontent.com"
     assert query["code_challenge_method"] == "S256"
-    assert "/share?" in landed
+    assert "/connected?" in landed
     exchange = [c for c in google.calls if c[1] == TOKEN_URL][0][2]
     assert exchange == {"grant_type": "authorization_code", "code": "4/code",
                         "redirect_uri": "http://testserver/auth/connections/google/w/callback/",
@@ -111,7 +111,7 @@ def test_a_person_connects_with_offline_access_and_the_chosen_scopes(google, use
 def test_with_no_domain_rule_any_google_account_connects(google, user, ws, email):
     google.user = {"sub": "1", "email": email, "email_verified": True}
     _, _, landed = _connect(user)
-    assert "/share?" in landed
+    assert "/connected?" in landed
     assert Connection.objects.get(provider="google").account_label == email
 
 
@@ -147,7 +147,7 @@ def test_an_unverified_or_incomplete_identity_is_refused(google, user, ws, user_
 def test_the_legacy_string_email_verified_is_accepted(google, user, ws):
     google.user = {"sub": "1", "email": "someone@gmail.com", "email_verified": "true"}
     _, _, landed = _connect(user)
-    assert "/share?" in landed
+    assert "/connected?" in landed
 
 
 # ---- allowed domains ----------------------------------------------------------------
@@ -162,7 +162,7 @@ def test_one_allowed_domain_hints_it_and_refuses_another(google, user, ws):
 
     google.user = {"sub": "2", "email": "JJ@Dimagi.com", "email_verified": True, "hd": "dimagi.com"}
     _, _, landed = _connect(user)
-    assert "/share?" in landed
+    assert "/connected?" in landed
     assert Connection.objects.get().account_label == "jj@dimagi.com"
 
 
@@ -171,7 +171,7 @@ def test_several_allowed_domains_send_no_hd(google, user, ws):
     google.user = {"sub": "3", "email": "eva@dimagi-ai.com", "email_verified": True, "hd": "dimagi-ai.com"}
     _, query, landed = _connect(user)
     assert "hd" not in query
-    assert "/share?" in landed
+    assert "/connected?" in landed
 
 
 @pytest.mark.parametrize("hd", [None, "", "other.org"])
@@ -191,7 +191,7 @@ def test_a_secondary_domain_user_is_admitted_when_the_primary_is_listed_too(goog
     _domains(ws, user, "dimagi.com, dimagi-ai.com")
     google.user = {"sub": "7", "email": "eva@dimagi-ai.com", "email_verified": True, "hd": "dimagi.com"}
     _, _, landed = _connect(user)
-    assert "/share?" in landed
+    assert "/connected?" in landed
     assert Connection.objects.count() == 1
 
 
@@ -209,7 +209,7 @@ def test_a_consumer_domain_matches_by_address_and_sends_no_hd(google, user, ws, 
     google.user = {"sub": "6", "email": email, "email_verified": True}     # consumer: no `hd`
     _, query, landed = _connect(user)
     assert "hd" not in query
-    assert "/share?" in landed
+    assert "/connected?" in landed
 
 
 def test_allowed_domains_are_normalised_and_checked(user, ws):
@@ -256,7 +256,7 @@ def test_an_agent_is_hinted_and_must_sign_in_as_its_own_account(google, user, ws
 
     google.user = {"sub": "4", "email": "EVA@dimagi-ai.com", "email_verified": True}
     _, _, landed = _connect(user, agent="eva")
-    assert "/share?" in landed
+    assert "/connected?" in landed
     assert Connection.objects.get(agent=eva).account_label == "eva@dimagi-ai.com"
 
 
@@ -275,7 +275,7 @@ def test_an_agent_with_no_google_identity_is_not_hinted_and_takes_any_account(go
     assert eva.google_identity() == ""
     _, query, landed = _connect(user, agent="eva")
     assert query["prompt"] == "consent select_account" and "login_hint" not in query
-    assert "/share?" in landed
+    assert "/connected?" in landed
 
 
 # ---- disconnect ---------------------------------------------------------------------

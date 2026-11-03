@@ -4,9 +4,10 @@ import {
   connectionStartPath,
   disconnectMine,
   listMyConnections,
+  turnOffServerUse,
   type ConnectionOut,
   type ConnectionsView,
-  type DisconnectOutcome,
+  type DisconnectOut,
   type ProviderOut,
 } from '@/api/connections'
 import { Button } from 'canopy-ui/ui'
@@ -64,7 +65,8 @@ export function ConnectionsPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Connections</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Accounts you sign in to here are sealed to your vault key, so canopy cannot read them. You choose which
+          Accounts you sign in to here are sealed to your vault key, so canopy cannot read them
+          {data.connections.some((c) => c.server_use) ? ', except any with Used by canopy-web on.' : '.'} You choose which
           of your agents and enrolled computers may use each one.
         </p>
       </div>
@@ -81,15 +83,22 @@ export function ConnectionsPanel() {
           returnTo={pathname}
           busy={busy}
           onDisconnect={disconnect}
+          onChanged={load}
         />
       ))}
     </div>
   )
 }
 
-/** What a disconnect did: a machine, not canopy, revokes at the provider, when one that holds it is up. */
-export function disconnected(outcome: DisconnectOutcome, keyReplaced = false): string {
-  if (outcome === 'revoking') return 'Disconnected. A machine will revoke it shortly.'
+/** What a disconnect did, and who is left to end the sign-in at the provider: canopy-web already
+ *  did (`revoked`), a machine that holds it, or canopy-web's own retries. */
+export function disconnected({ outcome, machine_revokes }: DisconnectOut, keyReplaced = false): string {
+  if (outcome === 'revoked') return 'Disconnected. The sign-in has been ended at Salesforce or Google.'
+  if (outcome === 'revoking') {
+    return machine_revokes
+      ? 'Disconnected. A machine will revoke it shortly.'
+      : 'Disconnected. canopy will keep trying to end this sign-in.'
+  }
   const idles = 'Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.'
   // Nothing else kills that token now, and the old key can still read it.
   return keyReplaced ? `${idles} Revoke it at Salesforce or Google yourself.` : idles
@@ -222,7 +231,7 @@ const NOT_REACHING: Record<string, string> = {
  * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
  * are not in this view, so the share page explains them and this links to it.
  */
-export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void }) {
   const { c, canChange = true } = props
   return (
     <>
@@ -234,9 +243,13 @@ export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canCh
   )
 }
 
-function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+function Sharing({ c, returnTo, canChange = true, onChanged }: {
+  c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void
+}) {
   if (!c.usable) return null
-  if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
+  if (c.needs_reconnect) {
+    return <p className="text-[12px] text-warning">{c.provider_calls ? DEAD_SIGN_IN : 'Reconnect required.'}</p>
+  }
   const only = canChange ? null : (
     <span className="block">
       {c.connected_by_email
@@ -247,11 +260,28 @@ function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo
   const href = sharePath(c, returnTo)
   if (c.state === 'unshared') {
     return (
-      <p className="text-[12px] text-warning">
-        Not shared yet: no agent or computer can use it.{' '}
-        {canChange && <Link to={href} className={shareLink}>Share</Link>}
-        {only}
-      </p>
+      <>
+        {c.server_use && c.server_reachable ? (
+          <p className="text-[12px] text-muted-foreground">
+            Project screens and apps can use it. No agents or computers can yet.{' '}
+            {canChange && <Link to={href} className={shareLink}>Share</Link>}
+            {only}
+          </p>
+        ) : c.server_use && c.server_reachable === null ? (
+          <p className="text-[12px] text-muted-foreground">
+            No agents or computers can use it yet.{' '}
+            {canChange && <Link to={href} className={shareLink}>Share</Link>}
+            {only}
+          </p>
+        ) : (
+          <p className="text-[12px] text-warning">
+            Not shared yet: no agent or computer can use it.{' '}
+            {canChange && <Link to={href} className={shareLink}>Share</Link>}
+            {only}
+          </p>
+        )}
+        <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
+      </>
     )
   }
   const agents = c.statement?.agents ?? []
@@ -279,12 +309,91 @@ function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo
           {canChange && <p><Link to={href} className={shareLink}>Give waiting machines a copy</Link></p>}
         </>
       )}
+      <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
       {canChange ? (
         <p className="flex flex-wrap gap-x-3">
           <Link to={href} className={shareLink}>Change who can use it</Link>
           <Link to={href} className={shareLink}>Open to check its machines</Link>
         </p>
       ) : only}
+    </div>
+  )
+}
+
+const USED_BY = 'Used by canopy-web'
+const NOT_WORKING = 'Not working'
+const USED_BY_WHY = 'With this on, project screens and apps can use this account with nobody present. '
+  + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+const UNREACHED = "canopy-web couldn't be reached when this was connected. Connect again to fix it."
+const UNREACHED_SHARED = "canopy-web can't open this sign-in. Share it again to fix it; connecting again would stop your machines."
+const UNREACHABLE_NOW = "canopy-web can't be reached right now. Nothing needs doing; this usually clears on its own."
+const DEAD_SIGN_IN = 'Reconnect required. This sign-in stopped working, so nothing can use it until you connect it again.'
+const NEEDS_PASSKEY = 'Changing this needs your passkey.'
+
+/**
+ * "Used by canopy-web": whether project screens and apps may use this account. Shown only for a
+ * provider canopy-web makes calls for. Off is the one change made here: on an unshared connection
+ * nothing is signed, so it is a plain switch. Anything else (turning it on, or off once shared)
+ * needs a signed share, so it links to Share and says a passkey is needed there; none is asked here.
+ */
+function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
+  c: ConnectionOut; href: string; canChange: boolean; onChanged?: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  if (!c.provider_calls) return null
+  // Null: the key can't be read right now, so it stays on and nobody is told to reconnect, which
+  // would stop an active row's machines. Otherwise switched on with nothing sealed to canopy-web:
+  // it can't use it, so don't show it as on.
+  const unknown = !!c.server_use && c.server_reachable === null
+  const stuck = !!c.server_use && !c.server_reachable && !unknown
+  const on = !!c.server_use && !stuck
+  async function turnOff() {
+    setBusy(true)
+    setError('')
+    try {
+      await turnOffServerUse(c.id)
+      onChanged?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not turn this off.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="space-y-0.5 text-[12px] text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-x-2">
+        <span className="font-medium text-foreground">{USED_BY}</span>
+        {canChange && stuck && c.state === 'unshared' ? (
+          <>
+            <span>{NOT_WORKING}</span>
+            <button type="button" aria-label={`Turn off ${USED_BY}`} disabled={busy} onClick={turnOff} className={shareLink}>
+              Turn off
+            </button>
+          </>
+        ) : canChange && on && c.state === 'unshared' ? (
+          <button
+            type="button" role="switch" aria-checked="true" aria-label={USED_BY} disabled={busy} onClick={turnOff}
+            className="inline-flex h-4 w-7 items-center justify-end rounded-full bg-primary px-0.5 disabled:opacity-50"
+          >
+            <span className="h-3 w-3 rounded-full bg-primary-foreground" />
+          </button>
+        ) : (
+          <>
+            <span>{stuck ? NOT_WORKING : on ? 'On' : 'Off'}</span>
+            {canChange && (
+              <Link to={href} aria-label={`${on || stuck ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
+                {on || stuck ? 'Turn off' : 'Turn on'}
+              </Link>
+            )}
+          </>
+        )}
+      </p>
+      {stuck && <p className="text-warning">{c.state === 'active' ? UNREACHED_SHARED : UNREACHED}</p>}
+      {unknown && <p>{UNREACHABLE_NOW}</p>}
+      <p>{USED_BY_WHY}</p>
+      {canChange && !((on || stuck) && c.state === 'unshared') && <p>{NEEDS_PASSKEY}</p>}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
     </div>
   )
 }
@@ -308,6 +417,7 @@ function ProviderSection({
   returnTo,
   busy,
   onDisconnect,
+  onChanged,
 }: {
   rows: ProviderOut[]
   connections: ConnectionOut[]
@@ -317,6 +427,7 @@ function ProviderSection({
   returnTo: string
   busy: string | null
   onDisconnect: (c: ConnectionOut) => void
+  onChanged: () => void
 }) {
   const { name, title } = rows[0]
   const configured = rows.filter((r) => r.configured)
@@ -344,7 +455,7 @@ function ProviderSection({
                 </p>
               ) : (
                 <>
-                  <SharingStatus c={c} returnTo={returnTo} />
+                  <SharingStatus c={c} returnTo={returnTo} onChanged={onChanged} />
                   {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
                 </>
               )}

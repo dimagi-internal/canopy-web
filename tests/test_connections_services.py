@@ -470,7 +470,7 @@ def test_basic_client_auth_is_used_for_the_exchange_and_revoke(user, monkeypatch
     monkeypatch.setattr(providers.get_class("salesforce"), "client_auth", "basic")
     seen = []
 
-    def post(url, data=None, headers=None, timeout=None, auth=None):
+    def post(url, data=None, headers=None, timeout=None, auth=None, allow_redirects=True):
         seen.append((url, dict(data or {}), auth))
         return _resp(body=_token_body())
     p = providers.for_app(_app_of(("user", user.pk)))

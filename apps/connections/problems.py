@@ -24,6 +24,12 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "no_vault_key": (409, "No vault key"),
     "owner_changed": (409, "Connected with another vault key"),
     "revoking": (409, "Being disconnected"),
+    "server_use_off": (409, "canopy-web may not use this"),
+    "waiting": (503, "Another refresh is under way"),
+    "server_refused": (409, "canopy-web could not trust this connection"),
+    "needs_share": (409, "Share it again to change this"),
+    "bad_canopy_web": (422, "canopy-web cannot be given this"),
+    "try_again": (503, "Try again in a moment"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),
 }
@@ -69,6 +75,9 @@ _WIRE_TITLES = {
     "foreign_reader": "Sealed to someone the statement does not allow",
     "bad_writer_sig": "Invalid writer MACs",
     "revoking": "Being disconnected",
+    "needs_share": _PROBLEMS["needs_share"][1],
+    "bad_canopy_web": _PROBLEMS["bad_canopy_web"][1],
+    "try_again": _PROBLEMS["try_again"][1],
     # A machine's material, lease and write-back (`tokens`, `proofs`).
     "device_proof_required": "Device proof required",
     "machine_not_enrolled": "Computer not enrolled",

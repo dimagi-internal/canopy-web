@@ -91,13 +91,14 @@ class ConnectionApp(models.Model):
 
 class Connection(models.Model):
     """One account an owner connected: the sealed refresh token and the metadata
-    around it. canopy-web cannot open `sealed` or `access_sealed`.
+    around it. canopy-web can open `sealed` and `access_sealed` only when they name its own KMS key
+    (`server_use`, `server_tokens`).
 
     `sealed` is a `zks1` envelope (name `refresh`) bound to `binding`; at connect
     it is sealed to the owner's member key only (`state = unshared`), and the
     owner's browser re-seals it to the machines its signed grant statement
     allows (`active`). `access_sealed` (name `access`) is the current access
-    token, written by the machine that last refreshed. `sealed_sig` /
+    token, written by whoever last refreshed. `sealed_sig` /
     `access_sig` are each envelope's writer MACs (null only on canopy-web's
     first seal). `sealed_digest` is SHA-256 of `sealed`, for compare-and-swap
     writes. The `lease_*` columns are the one refresh lease. The wire format is
@@ -159,6 +160,11 @@ class Connection(models.Model):
     # the live row, and every machine would then refuse a writer only the old signature vouches
     # for, including for a revoke. Readers verify these as any other: never on the server's word.
     owner_endorsements = models.JSONField(default=list, blank=True)
+    # The switch: canopy-web's own key (`server_key`) may open this connection. Only the owner's
+    # choice moves it: a reconnect never resets it to the provider's default, though one naming
+    # limits turns it off (`limited`). A machine trusts
+    # the statement's `canopy_web`, never this (`recipients.server_recipient`).
+    server_use = models.BooleanField(default=False, db_default=False)
     # The owner's signed grant statement (the machines it may reach); version 0 = none yet.
     statement = models.JSONField(null=True, blank=True)
     statement_sig = models.CharField(max_length=128, blank=True, default="")
@@ -170,7 +176,7 @@ class Connection(models.Model):
     lease_expires_at = models.DateTimeField(null=True, blank=True)
     lease_written = models.BooleanField(default=False)
 
-    # Set when a machine's refresh is rejected (`invalid_grant`); cleared by a reconnect.
+    # Set when a refresh is rejected (`invalid_grant`); cleared by a reconnect or a good write-back.
     refresh_failed_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoking_since = models.DateTimeField(null=True, blank=True)
@@ -228,6 +234,12 @@ class Connection(models.Model):
     def expired(self) -> bool:
         """True once a lend's time has run out, before the sweep has disconnected it."""
         return self.expires_at is not None and self.expires_at <= timezone.now()
+
+    @property
+    def limited(self) -> bool:
+        """Lent with limits, so narrowly that canopy-web never uses it: no switch, no canopy-web box
+        on the share screen, and a statement naming canopy-web is refused."""
+        return self.expires_at is not None or self.owner_turns_only
 
     @property
     def binding(self) -> str:

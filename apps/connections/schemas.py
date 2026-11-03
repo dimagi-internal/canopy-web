@@ -109,6 +109,19 @@ class ConnectionOut(StrictModel):
         default=False,
         description="It is sealed to a vault key whoever connected it has since replaced: new tokens stay readable "
                     "by the old key until it is disconnected and connected again. False on a row lent to an agent.")
+    server_use: bool = Field(
+        default=False, description="canopy-web may use this connection for screens and apps (the owner's switch).")
+    server_reachable: bool | None = Field(
+        default=False, description="canopy-web can open the stored sign-in now: the switch is on and the envelope "
+                                    "is sealed to its key. False: it is sealed without canopy-web (a sign-in while "
+                                    "the key service was failing; connect again to fix) or the switch is off. Null: "
+                                    "the switch is on and the key can't be read right now, so nobody can say; "
+                                    "nothing needs doing.")
+    provider_calls: bool = Field(
+        default=False, description="canopy-web can be used for this connection, so it has a \"Used by canopy-web\" "
+                                   "switch: canopy-web makes calls for the provider (Salesforce; not Google), it "
+                                   "is not lent with limits (`expires_at`, `owner_turns_only`), and canopy-web has "
+                                   "a key set up or the switch is already on.")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "
@@ -142,10 +155,18 @@ class ConnectionOut(StrictModel):
 
 
 class DisconnectOut(StrictModel):
-    outcome: Literal["revoking", "deleted"] = Field(
-        description="`revoking`: a machine that holds it will revoke it at the provider, then it is deleted. "
-                    "`deleted`: no machine that holds it has been heard from recently enough to revoke it, so canopy deleted its copy; the "
-                    "provider may keep the old sign-in alive until it idles out.")
+    outcome: Literal["revoking", "revoked", "deleted"] = Field(
+        description="`revoked`: canopy-web revoked it at the provider itself and the row is gone. `revoking`: it "
+                    "will be revoked at the provider, then deleted: by a machine that holds it "
+                    "(`machine_revokes`), or by canopy-web's own retries. `deleted`: canopy deleted its copy without "
+                    "revoking it, because nothing could, or another connection of that account still needs the "
+                    "sign-in (the provider may then keep it alive until it idles out).")
+    machine_revokes: bool = Field(
+        default=False, description="`revoking` only: a machine that holds it, heard from recently, can revoke it.")
+
+
+class ServerUseIn(StrictModel):
+    on: bool = Field(description="Only `false` is accepted here; turning canopy-web on goes through Share.")
 
 
 class ConnectionsOut(StrictModel):
@@ -236,6 +257,25 @@ class ShareAgentOut(StrictModel):
     name: str
 
 
+class ShareServerOut(StrictModel):
+    available: bool = Field(
+        description="canopy-web has a key it can be sealed to and could read it just now. False when none is set "
+                    "up or the key service is failing; then `thumbprint` is empty and `public_jwk` null.")
+    thumbprint: str = Field(description="The key's thumbprint, which a statement's `canopy_web` names; empty when "
+                                        "not `available`.")
+    public_jwk: dict[str, Any] | None = Field(
+        default=None, description="The key (P-256 public JWK) to seal to; null when not `available`.")
+    on: bool = Field(description="canopy-web may use this connection now (the switch on the row).")
+    statements_enabled: bool = Field(
+        description="This deployment accepts a statement naming canopy-web. When false, sharing with it is refused.")
+    provider_calls: bool = Field(description="canopy-web makes calls for this provider and this connection is not "
+                                             "lent with limits; the switch is shown only when true.")
+    reachable: bool | None = Field(
+        description="The stored envelope is sealed to canopy-web's key now, so it can use the connection. False "
+                    "when the switch is off, or on but the key could not be used at sign-in. Null when the switch "
+                    "is on and the key can't be read right now.")
+
+
 class ShareStateOut(StrictModel):
     id: uuid.UUID
     binding: str = Field(description="`connection:<uuid>`, the binding id both envelopes are sealed to.")
@@ -271,6 +311,7 @@ class ShareStateOut(StrictModel):
                                           "each envelope, each with its `agent_id` and its signer's "
                                           "`by_public_jwk`, whose thumbprint is what `endorsers` lists.")
     agents: list[ShareAgentOut] = Field(description="The agents the owner may lend it to.")
+    server: ShareServerOut = Field(description="canopy-web as a reader of this connection.")
     expires_at: datetime | None = Field(
         default=None, description="When this lend ends and it is disconnected; null when it has no time limit.")
     owner_turns_only: bool = Field(default=False, description="Agents use it only on turns its owner started.")

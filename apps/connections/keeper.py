@@ -8,37 +8,41 @@ work (`work`): each connection one of its device keys holds that is either
 (`reseal`, compare-and-swap on `sealed_digest`, checked as a write-back is); for
 the second it revokes at the provider (only when `revoke_at_provider`) and
 confirms (`confirm_revoked`), which deletes the row. Only cloud runners keep or
-revoke (R3): a laptop holding a copy gets no work and may not confirm.
+revoke (R3): a laptop holding a copy gets no work and may not confirm. canopy-web's
+own key, where a row is sealed to it, revokes too (`server_tokens.revoke_if_able`), but keeps
+nothing and is no machine.
 
 `sweep` (the off-request clock, `scheduler.py`, and `manage.py connections_sweep`)
-deletes what no holder will ever finish: a `revoking` row unconfirmed after
-`REVOKE_GRACE`, or one no cloud box holds any more, each recorded
-`revoke_unconfirmed`; and a removed app once its connections are gone (R12).
+retries canopy-web's own revoke, then deletes what no holder will ever finish: a `revoking`
+row unconfirmed after `REVOKE_GRACE`, or one neither canopy-web nor any cloud box holds any more,
+each recorded `revoke_unconfirmed`; and a removed app once its connections are gone (R12).
 
 This is its own route in `apps/connections` (R2), not a field on the agents
 keeper's answer: agents and harness never import connections.
 """
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta
 
+from django.core.cache import cache
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk_seal
 from apps.harness.models import Runner, RunnerDeviceKey
 
 from . import recipients as rcpt
-from . import services, tokens, wire
+from . import server_key, server_tokens, services, tokens, wire
 from .models import Connection, ConnectionApp
 from .wire import WireError
 
 #: How long a `revoking` row waits for a holder to confirm before the sweep deletes it.
 REVOKE_GRACE = timedelta(days=7)
-
-# A provider error code a box reports is written to the log only when code-shaped.
-_ERROR_CODE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+#: canopy-web's own revokes in one sweep, and how long a row waits before it is tried again: each
+#: can cost KMS and provider timeouts, and the tick is shared.
+SERVER_REVOKES_PER_TICK = 25
+SERVER_REVOKE_EVERY_S = 60 * 60
 
 
 def _keeps(runner: Runner) -> bool:
@@ -116,6 +120,7 @@ def reseal(conn: Connection, runner: Runner, device_key: RunnerDeviceKey, *, sea
     `zk_rewrap_required`, `bad_writer_sig`). A stored access envelope must be
     re-sealed with it (422 `zk_rewrap_required`). Records `resealed`."""
     mine = ("device", device_key.ecdh_jkt)
+    rcpt.warm_server_key(conn)
     with transaction.atomic():
         row = (Connection.objects.select_for_update(of=("self",)).select_related("app", "agent", "user")
                .get(pk=conn.pk))
@@ -127,8 +132,9 @@ def reseal(conn: Connection, runner: Runner, device_key: RunnerDeviceKey, *, sea
             raise _not_a_holder("This machine holds no copy of the connection to re-seal.")
         if (expect or "").strip().lower() != row.sealed_digest:
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
-        allowed = rcpt.targets(rcpt.recipients(row))
+        allowed = rcpt.targets(rcpt.recipients(row, cached_only=True))
         keep = old & allowed
+        allowed |= rcpt.unconfirmed_server_target(row)  # an unreadable key refuses nobody's write
         tokens.check_write(sealed, sealed_sig, name=wire.REFRESH_NAME, allowed=allowed, keep=keep,
                            writer=device_key, expect=row.sealed_digest)
         if row.access_sealed:
@@ -159,46 +165,36 @@ def confirm_revoked(conn: Connection, runner: Runner, device_key: RunnerDeviceKe
     the holder did what it could. 409 `not_revoking` unless it is being disconnected;
     403 `zk_not_a_holder` unless this cloud box holds it. Records `revoked`, or the
     operational `revoke_failed`."""
-    with transaction.atomic():
-        row = (Connection.objects.select_for_update(of=("self",)).select_related("app", "agent__workspace", "user")
-               .filter(pk=conn.pk).first())
-        if row is None:  # another holder confirmed a moment ago
-            return
-        if row.state != Connection.REVOKING:
-            raise WireError(409, "not_revoking", "This connection is not being disconnected.")
+    def holder_only(row: Connection) -> None:
         if not _keeps(runner) or ("device", device_key.ecdh_jkt) not in zk_seal.sealed_targets(row.sealed):
             raise _not_a_holder("Only a cloud box that holds the connection revokes it.")
-        subject, title = services.Subject.of(row), tokens._title(row)
-        at_provider = not services.other_live_connections(row).exists()
-        row.delete()
-    machine = device_key.runner.name
-    if revoked:
-        services.record(subject, "revoked", machine=machine, at_provider=at_provider,
-                        summary=f"{subject.owner}'s {title} ({subject.account_label}) revoked by {machine}")
-    else:
-        services.record(subject, "revoke_failed", warn=True, during="disconnect", machine=machine,
-                        error=error if _ERROR_CODE.fullmatch(error or "") else "unrecognised")
+
+    services.finish_revoking(conn, machine=device_key.runner.name, revoked=revoked, error=error, check=holder_only)
 
 
 def sweep(now: datetime | None = None) -> dict:
-    """Delete what no holder will ever finish: each `revoking` row unconfirmed for
-    `REVOKE_GRACE`, or held by no cloud box still heard from (`recipients.revokers`), recorded
+    """Try canopy-web's own revoke of the `revoking` rows sealed to its key (`_server_revokes`), then
+    delete what no holder will ever finish: each `revoking` row unconfirmed for `REVOKE_GRACE`, or that neither
+    canopy-web nor a cloud box still heard from holds (`recipients.revokers`), recorded
     `revoke_unconfirmed`; then each removed app with no connection left — after
     disconnecting any still live there (one that slipped past `remove_app`), so a
     removal always finishes. First, every lend whose time has run out is disconnected, so a
-    holder revokes it at the provider. Returns the counts `{lapsed, revoke_unconfirmed,
+    holder revokes it at the provider, or canopy-web does: many at once, so with no revoke in that
+    call, and `_server_revokes` below takes it this same tick and retries it on later ones. Returns the counts `{lapsed, revoke_unconfirmed,
     apps_deleted}`."""
     now = now or timezone.now()
     lapsed = 0
     for conn in (Connection.objects.filter(expires_at__lte=now).exclude(state=Connection.REVOKING)
                  .select_related("app__workspace", "agent__workspace").order_by("pk")):
-        services.disconnect(conn, by=None, lapsed=True)
+        services.disconnect(conn, by=None, revoke_now=False, lapsed=True)
         lapsed += 1
     gone = 0
+    _server_revokes()
     for conn in (Connection.objects.filter(state=Connection.REVOKING)
                  .select_related("app", "agent__workspace", "user").order_by("pk")):
+        ours = server_tokens.may_revoke(conn)
         stale = conn.revoking_since is None or conn.revoking_since <= now - REVOKE_GRACE
-        if not stale and rcpt.revokers(conn):
+        if not stale and (ours or rcpt.revokers(conn)):
             continue
         subject = services.Subject.of(conn)
         deleted, _ = Connection.objects.filter(pk=conn.pk, state=Connection.REVOKING).delete()
@@ -214,6 +210,27 @@ def sweep(now: datetime | None = None) -> dict:
     return {"lapsed": lapsed, "revoke_unconfirmed": gone, "apps_deleted": apps}
 
 
+def _server_revokes() -> None:
+    """At most `SERVER_REVOKES_PER_TICK` of canopy-web's own revokes, oldest first, each row at most
+    once in `SERVER_REVOKE_EVERY_S` so failing rows can't hold up the rest. KMS down stops them all
+    until the next tick, and costs that row no wait: it says nothing about the row."""
+    tried = 0
+    for conn in (Connection.objects.filter(state=Connection.REVOKING)
+                 .select_related("app", "agent__workspace", "user")
+                 .order_by(F("revoking_since").asc(nulls_first=True), "pk")):
+        if tried >= SERVER_REVOKES_PER_TICK:
+            return
+        key = f"connections:revoke-attempt:{conn.pk}"
+        if not server_tokens.may_revoke(conn) or not cache.add(key, 1, SERVER_REVOKE_EVERY_S):
+            continue
+        tried += 1
+        try:
+            server_tokens.revoke_if_able(conn, stop_on_kms=True)
+        except server_key.Unavailable:
+            cache.delete(key)
+            return
+
+
 def _finish_removal(app: ConnectionApp) -> bool:
     """Disconnect what is still live on removed `app`, then delete it if nothing is
     left. Under the app's lock, re-read: an admin who set the app up again since the
@@ -225,5 +242,6 @@ def _finish_removal(app: ConnectionApp) -> bool:
             return False
         for conn in (Connection.objects.filter(app=locked).exclude(state=Connection.REVOKING)
                      .select_related("app__workspace", "agent__workspace").order_by("pk")):
-            services.disconnect(conn, by=None)
+            # Holding the app's lock: canopy-web's own revoke waits for the next sweep.
+            services.disconnect(conn, by=None, revoke_now=False)
         return services.delete_removed_app(locked)

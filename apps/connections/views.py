@@ -37,9 +37,13 @@ A person's start may name limits, which the owner then sees on the share screen:
 with no limit) and `owner_turns_only=1` (`Connection`). `for_agent=<slug>` only ticks
 that agent on the share screen; it grants nothing.
 
-A connect that succeeds lands on the share screen,
-`/w/<workspace>/connections/<id>/share?return_to=<return_to>`, where the owner's
-browser opens the sealed token and shares it. Any other outcome lands back on a
+A connect that succeeds lands on the success screen,
+`/w/<workspace>/connections/<id>/connected?return_to=<return_to>`, which says plainly
+what was connected and who can use it now, and links on to the share screen for the
+rest. One that names limits or `for_agent` exists to be shared, so it lands straight on
+the share screen, `/w/<workspace>/connections/<id>/share?return_to=<return_to>` (plus
+`&agent=<for_agent>` when named), where the owner's browser opens the sealed token and
+shares it. Any other outcome lands back on a
 same-site `return_to` with `?connection=<provider>&status=error&reason=<code>`;
 reasons: `not_configured`, `no_vault_key`, `bad_lend`, `bad_state`, `forbidden` (the caller
 no longer administers the agent, the agent left the workspace, or the person
@@ -211,14 +215,16 @@ def connections_callback(request: HttpRequest, provider: str, workspace: str) ->
     except services.ConnectionError as e:  # the service logs a provider failure itself
         extra = {"setup": services.VAULT_KEY_SETUP} if e.code == "no_vault_key" else {}
         return _land(request, return_to, provider, "error", e.code, **extra)
-    return _share(request, workspace, conn, return_to, for_agent=parked.get("for_agent") or "")
+    return _connected(request, workspace, conn, return_to, for_agent=parked.get("for_agent") or "")
 
 
-def _share(request: HttpRequest, workspace: str, conn, return_to: str, *, for_agent: str = ""):
-    """Redirect to the connection's share screen (under SCRIPT_NAME), carrying
-    `return_to` for where the browser goes after it and `agent` to tick there."""
+def _connected(request: HttpRequest, workspace: str, conn, return_to: str, *, for_agent: str = ""):
+    """Redirect (under SCRIPT_NAME) to the connection's success screen, or its share screen when the
+    connect named limits or an agent, carrying `return_to` for where the browser goes after it and
+    `agent` to tick on the share screen."""
+    screen = "share" if for_agent or conn.limited else "connected"
     query = urlencode({"return_to": _safe_return_to(return_to), **({"agent": for_agent} if for_agent else {})})
-    url = f"{request.META.get('SCRIPT_NAME', '')}/w/{quote(workspace, safe='')}/connections/{conn.pk}/share?{query}"
+    url = f"{request.META.get('SCRIPT_NAME', '')}/w/{quote(workspace, safe='')}/connections/{conn.pk}/{screen}?{query}"
     if not url_has_allowed_host_and_scheme(url, allowed_hosts=set(), require_https=True):
         url = DEFAULT_RETURN
     return HttpResponseRedirect(url)

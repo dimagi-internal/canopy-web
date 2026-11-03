@@ -1,6 +1,6 @@
 # Connections hold nothing canopy-web can use: the server finishes sign-in, seals to the owner, runners refresh
 
-**Status:** design 2026-10-31; approved 2026-11-01 with two decisions: the owner signs grants with a passkey touch (§4.3), and the older Google paths fold in later. Simplified 2026-11-02 (Jonathan): canopy-web finishes the sign-in itself and seals the token to the owner at once; runners no longer mint. It replaces the storage and token paths of the server-held Connections feature (#2287, #2311, #2347). The workspace apps, per-workspace callbacks, providers, grants and the Settings screens stay.
+**Status:** design 2026-10-31; approved 2026-11-01 with two decisions: the owner signs grants with a passkey touch (§4.3), and the older Google paths fold in later. Simplified 2026-11-02 (Jonathan): canopy-web finishes the sign-in itself and seals the token to the owner at once; runners no longer mint. Amended 2026-11-03 by `2026-11-03-connections-server-use-calls-jobs-design.md`: a per-connection switch lets canopy-web open, refresh and revoke through its own KMS key; the guarantee below holds in full only while a connection's switch is off. It replaces the storage and token paths of the server-held Connections feature (#2287, #2311, #2347). The workspace apps, per-workspace callbacks, providers, grants and the Settings screens stay.
 
 ## Intent
 
@@ -35,7 +35,7 @@ The pattern already exists twice in canopy: **Connect Google mailbox** (`apps/ag
 
 ## Anti-goals
 
-- A fallback where canopy-web refreshes or revokes "when no runner is online". The point is that it cannot.
+- A fallback where canopy-web refreshes or revokes "when no runner is online". The point is that it cannot. This now holds only for a connection whose "canopy-web can use this" switch is off; with it on, canopy-web refreshes and revokes through its own key (see `2026-11-03-connections-server-use-calls-jobs-design.md`).
 - A runner sealing to recipients only because canopy-web listed them. A compromised server must not be able to add its own key to a seal (§4.3).
 
 ## The design

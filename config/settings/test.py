@@ -6,6 +6,9 @@ Uses SQLite in-memory database for fast test execution.
 from .base import *  # noqa: F401, F403
 
 DEBUG = True
+TESTING = True
+# Tests share statements naming canopy-web; in production the flag stays off until CLIs ship.
+CONNECTIONS_SERVER_STATEMENTS = True
 
 # No real OAuth client keys here: generate throwaway ones per process
 # (apps/host_grants/client_identity.py). A deployment never does this.
