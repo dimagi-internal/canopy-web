@@ -39821,6 +39821,11 @@ export interface components {
              * @default 0
              */
             readonly refresh_floor_until: number;
+            /**
+             * Setting Up
+             * @default
+             */
+            readonly setting_up: string;
         };
         /** UsageScopeOut */
         readonly UsageScopeOut: {

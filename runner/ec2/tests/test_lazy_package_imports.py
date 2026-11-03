@@ -82,6 +82,6 @@ def test_main_exposes_the_clone_before_the_startup_probes(cloud_runner, monkeypa
     monkeypatch.setattr(cloud_runner, "_retire_shared_github_credentials", lambda: None)
     monkeypatch.setattr(cloud_runner, "_expose_repo_packages", lambda repo: order.append("expose"))
     monkeypatch.setattr(cloud_runner, "fetch_and_stage_credential",
-                        lambda rid: order.append("stage") or False)
+                        lambda rid, **kw: order.append("stage") or False)
     cloud_runner.main()
     assert order == ["expose", "stage"]

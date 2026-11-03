@@ -80,6 +80,12 @@ describe("pendingLabel", () => {
     expect(pendingLabel({ status: status({ state: "working" }) })).toBe("Thinking on jj-mbp…");
   });
 
+  it("says the runner is restarting rather than that it is picking this up", () => {
+    expect(pendingLabel({ status: status({ state: "picking_up", setting_up: true }) })).toBe(
+      "jj-mbp is restarting; this starts when it's back…",
+    );
+  });
+
   it("says a follow-up is queued behind the turn ahead, not being picked up (#1147)", () => {
     const s = status({ state: "queued_behind", behind: "session", claimed_by: null });
     expect(agentHasFloor({ status: s })).toBe(true);
