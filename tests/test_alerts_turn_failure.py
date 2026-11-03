@@ -88,6 +88,20 @@ def test_escalated_is_the_persons_with_the_ask(fleet, ada):
     assert r.body.startswith("Sign Claude back in on cloud-ec2-2.") and r.ask == r.body.split("\n")[0]
 
 
+@pytest.mark.parametrize("occurrences, escalated, lead", [
+    (1, True, "Needs you — a turn failed on cloud-ec2-2"),
+    (2, True, "Needs you — turns keep failing on cloud-ec2-2"),
+    (1, False, "A turn failed on cloud-ec2-2"),
+    (5, False, "Turns keep failing on cloud-ec2-2"),
+])
+def test_the_title_says_keep_failing_only_when_it_has_recurred(fleet, ada, occurrences, escalated, lead):
+    """Investigation 26: one test turn read as "turns keep failing", and its owner went looking for an outage."""
+    kw = {"handler": fleet["jj"], "ask": "Look."} if escalated else {"status": FailureInvestigation.OPEN}
+    _inv(fleet, occurrences=occurrences, **kw)
+    (r,) = src.reconcile(timezone.now())
+    assert r.title.startswith(lead)
+
+
 def test_an_agent_held_alert_is_silent_and_a_hand_off_tells_one_person(fleet, ada, monkeypatch,
                                                                          django_capture_on_commit_callbacks):
     """The rule on the framework, not just this source: a BLOCKING alert an agent
