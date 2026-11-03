@@ -181,7 +181,7 @@ def confirm_revoked(conn: Connection, runner: Runner, device_key: RunnerDeviceKe
 
 def sweep(now: datetime | None = None) -> dict:
     """Delete what no holder will ever finish: each `revoking` row unconfirmed for
-    `REVOKE_GRACE`, or held by no cloud box that is up (`recipients.revokers`), recorded
+    `REVOKE_GRACE`, or held by no cloud box still heard from (`recipients.revokers`), recorded
     `revoke_unconfirmed`; then each removed app with no connection left — after
     disconnecting any still live there (one that slipped past `remove_app`), so a
     removal always finishes. Returns the counts `{revoke_unconfirmed, apps_deleted}`."""
@@ -198,7 +198,7 @@ def sweep(now: datetime | None = None) -> dict:
             continue
         gone += 1
         reason = "unconfirmed" if stale else "no_holder"
-        services.record(subject, "revoke_unconfirmed", reason=reason,
+        services.record(subject, "revoke_unconfirmed", warn=True, reason=reason,
                         summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: "
                                 + ("no machine confirmed revoking it" if stale else "no machine holds it any more"))
     apps = sum(_finish_removal(app)

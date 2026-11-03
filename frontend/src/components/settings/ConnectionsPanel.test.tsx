@@ -51,6 +51,22 @@ describe('ConnectionsPanel', () => {
     expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
   })
 
+  it('warns when a connection is sealed to a key its owner replaced, and says to revoke it by hand if nothing will', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ owner_key_replaced: true })] })
+    disconnectMine.mockResolvedValue('deleted')
+    at('/settings')
+    expect(await screen.findByText('Sealed to a vault key you replaced. New tokens stay readable by the old key until you disconnect and connect again. If it may have leaked, disconnect now.')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText('Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out. Revoke it at Salesforce or Google yourself.')).toBeTruthy()
+  })
+
+  it('a machine revoking it needs no such note', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ owner_key_replaced: true })] })
+    at('/settings')
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
+  })
+
   it('says plainly when nothing will revoke it', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
     disconnectMine.mockResolvedValue('deleted')

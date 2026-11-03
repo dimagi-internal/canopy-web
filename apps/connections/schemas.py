@@ -105,6 +105,10 @@ class ConnectionOut(StrictModel):
         default_factory=list,
         description="The owner's own computers the statement lets it be used on (`Use on my computers`), "
                     "named. Empty for an agent's connection.")
+    owner_key_replaced: bool = Field(
+        default=False,
+        description="It is sealed to a vault key whoever connected it has since replaced: new tokens stay readable "
+                    "by the old key until it is disconnected and connected again. False on a row lent to an agent.")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "

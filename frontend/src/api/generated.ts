@@ -18630,6 +18630,12 @@ export interface components {
              */
             readonly my_machines?: readonly components["schemas"]["MyMachineOut"][];
             /**
+             * Owner Key Replaced
+             * @description It is sealed to a vault key whoever connected it has since replaced: new tokens stay readable by the old key until it is disconnected and connected again. False on a row lent to an agent.
+             * @default false
+             */
+            readonly owner_key_replaced: boolean;
+            /**
              * Usable
              * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One lent to an agent: only while that grant is in force (the agent is in `workspace`, the lender still administers it, and an owning agent has not moved).
              */

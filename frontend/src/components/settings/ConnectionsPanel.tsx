@@ -48,7 +48,7 @@ export function ConnectionsPanel() {
     setError('')
     setNotice('')
     try {
-      setNotice(disconnected(await disconnectMine(c.id)))
+      setNotice(disconnected(await disconnectMine(c.id), c.owner_key_replaced))
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not disconnect.')
@@ -88,11 +88,17 @@ export function ConnectionsPanel() {
 }
 
 /** What a disconnect did: a machine, not canopy, revokes at the provider, when one that holds it is up. */
-export function disconnected(outcome: DisconnectOutcome): string {
-  return outcome === 'revoking'
-    ? 'Disconnected. A machine will revoke it shortly.'
-    : 'Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.'
+export function disconnected(outcome: DisconnectOutcome, keyReplaced = false): string {
+  if (outcome === 'revoking') return 'Disconnected. A machine will revoke it shortly.'
+  const idles = 'Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.'
+  // Nothing else kills that token now, and the old key can still read it.
+  return keyReplaced ? `${idles} Revoke it at Salesforce or Google yourself.` : idles
 }
+
+const KEY_REPLACED = 'Sealed to a vault key you replaced. New tokens stay readable by the old key until you '
+  + 'disconnect and connect again. If it may have leaked, disconnect now.'
+const THEIR_KEY_REPLACED = 'Sealed to a vault key the person who connected it replaced. New tokens stay readable by '
+  + 'the old key until it is disconnected and connected again. If that key may have leaked, disconnect now.'
 
 /** What a callback `reason` code says, as a fixed sentence (never the query text). */
 const REASONS: Record<string, string> = {
@@ -216,7 +222,19 @@ const NOT_REACHING: Record<string, string> = {
  * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
  * are not in this view, so the share page explains them and this links to it.
  */
-export function SharingStatus({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+  const { c, canChange = true } = props
+  return (
+    <>
+      {c.owner_key_replaced && (
+        <p role="alert" className="text-[12px] text-warning">{canChange ? KEY_REPLACED : THEIR_KEY_REPLACED}</p>
+      )}
+      <Sharing {...props} />
+    </>
+  )
+}
+
+function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
   if (!c.usable) return null
   if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
   const only = canChange ? null : (

@@ -26,7 +26,10 @@ recipient could revoke it: a revoke still needs one.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.db import transaction
+from django.utils import timezone
 
 from apps.agents import access
 from apps.agents.credentials import accounts, vault_engine, zk_endorse, zk_seal
@@ -34,11 +37,18 @@ from apps.agents.models import Agent
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerDeviceKey
 from apps.harness.routing import ServingFacts
+from apps.passkeys.models import UserVaultKeyset
 
 from . import wire
 from .models import Connection
 
 Recipient = tuple[str, str, dict]
+
+#: How long a holder may go unheard before it counts as gone, so nothing will revoke through
+#: it. Far longer than a runner's own online window, which answers "can it take work now", not
+#: "will it ever come back": a reboot must not lose a revoke, and a canopy-web outage leaves
+#: every box unheard at once, when a sweep must not delete every `revoking` row unrevoked.
+REVOKER_GONE_AFTER = timedelta(minutes=15)
 
 
 def statement_agent_pks(statement: dict | None) -> list[int]:
@@ -223,6 +233,15 @@ def recipients(conn: Connection, statement: dict | None = None) -> list[Recipien
     return ([owner] if owner else []) + out
 
 
+def owner_keys_replaced(conns) -> set:
+    """The pks of `conns` sealed to a key their signer no longer holds: new tokens stay readable
+    by the old key until the row is disconnected. Not a signer who was deleted, who holds none."""
+    conns = [c for c in conns if c.signer_id is not None and c.owner_key]
+    keys = dict(UserVaultKeyset.objects.filter(user_id__in={c.signer_id for c in conns})
+                .values_list("user_id", "public_jwk")) if conns else {}
+    return {c.pk for c in conns if c.signer_id in keys and device_keys.thumbprint(keys[c.signer_id]) != c.owner_key}
+
+
 def targets(rs: list[Recipient]) -> set[tuple[str, str]]:
     return {(kind, target) for kind, target, _ in rs}
 
@@ -278,13 +297,14 @@ def unreachable(conn: Connection, *, pairs=None, facts: ServingFacts | None = No
 
 def _revokers(jkts, *, up: bool = False) -> list[str]:
     """Those of `jkts` that could revoke at the provider: an ACTIVE, ECDH-ready key on
-    a cloud runner (only cloud runners keep or revoke). `up`: and that runner is there now
-    (`Runner.is_reachable`, a recent heartbeat). Sorted."""
+    a cloud runner (only cloud runners keep or revoke). `up`: and that runner has been heard
+    from within `REVOKER_GONE_AFTER`. Sorted."""
+    heard = timezone.now() - REVOKER_GONE_AFTER
     keys = (RunnerDeviceKey.objects.filter(
         ecdh_jkt__in=list(jkts), status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False,
         runner__kind=Runner.CLOUD).exclude(ecdh_jkt="").exclude(runner__status=Runner.RETIRED)
         .select_related("runner"))
-    return sorted(k.ecdh_jkt for k in keys if not up or k.runner.is_reachable)
+    return sorted(k.ecdh_jkt for k in keys if not up or (k.runner.last_heartbeat_at or heard) > heard)
 
 
 def _writer_provable(conn: Connection, sig: dict | None) -> bool:
@@ -313,7 +333,7 @@ def _writer_provable(conn: Connection, sig: dict | None) -> bool:
 
 def revokers(conn: Connection) -> list[str]:
     """The machines holding `conn` that could revoke it now: an active cloud box it is
-    sealed to and that is up (`_revokers`), and an envelope that box can accept. A signer
+    sealed to and not long gone (`_revokers`), and an envelope that box can accept. A signer
     deleted with their endorsements can leave one no machine will read, and a stopped box
     revokes nothing: waiting on either would refuse a reconnect for days. None means
     nothing will: a disconnect deletes it at once, and the sweep any it was waiting on."""

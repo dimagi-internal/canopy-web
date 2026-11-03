@@ -115,9 +115,11 @@ def _statement(conn: Connection, *, lent: bool = False) -> ConnectionStatementOu
                                   endorsers=sorted(st.get("endorsers", [])))
 
 
-def _holders(conn: Connection) -> list[str]:
-    # The runners whose device keys the refresh envelope is sealed to now.
-    return sorted({k.runner.name for k in rcpt.holders(conn)})
+def _holders(conn: Connection, *, lent: bool = False) -> list[str]:
+    # The runners whose device keys the refresh envelope is sealed to now. Which computers
+    # its owner uses it on is not the business of a grantee's admins.
+    hidden = set((conn.statement or {}).get("my_computers") or []) if lent else set()
+    return sorted({k.runner.name for k in rcpt.holders(conn) if k.ecdh_jkt not in hidden})
 
 
 def _fingerprint(jkt: str) -> str:
@@ -141,7 +143,8 @@ def _lent_by(conn: Connection) -> str:
     return conn.user.get_full_name() or conn.user.email or conn.user.get_username()
 
 
-def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None) -> ConnectionOut:
+def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None,
+         replaced=None) -> ConnectionOut:
     lent = granted_from is not None
     pairs = rcpt.device_reasons(conn, facts=facts)
     return ConnectionOut(
@@ -149,8 +152,10 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
-        state=conn.state, statement=_statement(conn, lent=lent), holders=_holders(conn),
-        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, pairs=pairs)],
+        state=conn.state, statement=_statement(conn, lent=lent), holders=_holders(conn, lent=lent),
+        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, pairs=pairs)
+                 if w["agent"] or not lent],
+        owner_key_replaced=not lent and conn.pk in (replaced or ()),
         unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
         my_machines=[] if lent else _my_machines(conn),
         connected_at=conn.created_at,
@@ -197,8 +202,10 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
             .select_related("connected_by", "app__workspace"))
     readable = services.readable_workspaces(request.user)
     facts = rcpt.facts_for(rows)
+    replaced = rcpt.owner_keys_replaced(rows)
     return ConnectionsOut(providers=_person_provider_rows(request.user),
-                          connections=[_out(c, usable=c.app.workspace_id in readable, facts=facts) for c in rows])
+                          connections=[_out(c, usable=c.app.workspace_id in readable, facts=facts, replaced=replaced)
+                                       for c in rows])
 
 
 def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
@@ -291,9 +298,11 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
                .order_by("provider", "account_label", "pk").distinct())
     facts = rcpt.facts_for([*own, *granted])
     in_force = rcpt.lent_in_force(agent, granted)
+    replaced = rcpt.owner_keys_replaced(own)
     return ConnectionsOut(
         providers=_agent_provider_rows(agent),
-        connections=([_out(c, usable=services.agent_connection_usable(c), facts=facts) for c in own]
+        connections=([_out(c, usable=services.agent_connection_usable(c), facts=facts, replaced=replaced)
+                       for c in own]
                      + [_out(c, usable=c.pk in in_force, granted_from=_lent_by(c), facts=facts) for c in granted]),
     )
 

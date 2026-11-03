@@ -508,9 +508,28 @@ def test_a_person_with_a_row_deleted_at_once_connects_again_freely(world):
 
 # ---- a holder that stopped -----------------------------------------------------------
 
-def _stopped(*boxes):
+def _silent_for(minutes, *boxes):
     Runner.objects.filter(pk__in=[b.runner_id for b in boxes]).update(
-        last_heartbeat_at=timezone.now() - timedelta(minutes=5))
+        last_heartbeat_at=timezone.now() - timedelta(minutes=minutes))
+
+
+def _stopped(*boxes):
+    _silent_for(20, *boxes)
+
+
+def test_a_box_silent_for_two_minutes_still_counts_and_for_twenty_does_not(world):
+    """A reboot must not lose a revoke, and an outage of canopy-web leaves every box silent."""
+    conn = world.only_on_box_a()
+    _silent_for(2, world.eva_box)
+    assert rcpt.revokers(conn) == [world.eva_box.ecdh_jkt]
+    services.disconnect(conn, by=world.person)
+    assert keeper.sweep()["revoke_unconfirmed"] == 0
+    assert Connection.objects.get().state == Connection.REVOKING
+    _silent_for(20, world.eva_box)
+    assert rcpt.revokers(conn) == []
+    assert keeper.sweep()["revoke_unconfirmed"] == 1
+    [ev] = events("revoke_unconfirmed")
+    assert ev.level == "warn" and ev.payload["reason"] == "no_holder"
 
 
 def test_a_stopped_holder_is_no_revoker_so_a_disconnect_deletes_at_once(world):

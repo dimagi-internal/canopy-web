@@ -26,7 +26,7 @@ from apps.events.models import Event
 from apps.harness.models import Runner
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FAKE_REFRESH, ShareWorld, browser_share, endorse, revoke_admin
+from tests.fixtures.connections import FAKE_REFRESH, ShareWorld, browser_share, endorse, revoke_admin, vault_key
 from tests.fixtures.vault_zk import conn_ref
 from tests.fixtures.vault_zk import ref as zk_ref
 
@@ -390,6 +390,36 @@ def test_an_agents_tab_lists_a_persons_connection_lent_to_it(world):
     assert row["usable"] is True
     # The owner's own computers are their business, not this agent's other admins'.
     assert row["my_machines"] == [] and row["statement"]["my_computers"] == []
+    assert world.computer.runner.name not in row["holders"] and "eva-cloud" in row["holders"]
+
+
+def test_a_lent_row_does_not_show_the_owners_computers_waiting(world):
+    world.shared(world.persons(), agents=[world.eva], my_computers=[world.computer.ecdh_jkt],
+                 to=[("device", world.eva_box.ecdh_jkt, world.eva_box.ecdh_public_jwk)])
+    [mine] = client(world.person).get("/api/connections/").json()["connections"]
+    assert {"agent": "", "runner": world.computer.runner.name} in mine["waiting"]  # its owner sees it
+    [row] = client(world.op).get("/api/agents/eva/connections").json()["connections"]
+    assert [w for w in row["waiting"] if not w["agent"]] == []
+    assert world.computer.runner.name not in [w["runner"] for w in row["waiting"]]
+
+
+def test_settings_says_when_a_connection_is_sealed_to_a_replaced_key(world):
+    world.shared(world.persons(), agents=[world.eva])
+    [row] = client(world.person).get("/api/connections/").json()["connections"]
+    assert row["owner_key_replaced"] is False
+    vault_key(world.person)
+    [row] = client(world.person).get("/api/connections/").json()["connections"]
+    assert row["owner_key_replaced"] is True
+    # Not told to the admins of an agent it is lent to.
+    [lent] = client(world.op).get("/api/agents/eva/connections").json()["connections"]
+    assert lent["owner_key_replaced"] is False
+
+
+def test_an_agents_own_connection_says_its_key_was_replaced(world):
+    world.shared(world.evas(), agents=[world.eva])
+    vault_key(world.person)
+    [row] = client(world.op).get("/api/agents/eva/connections").json()["connections"]
+    assert row["owner_key_replaced"] is True
 
 
 def test_a_lent_persons_connection_is_unusable_once_the_grant_lapses(world):

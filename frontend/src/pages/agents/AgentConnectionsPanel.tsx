@@ -97,7 +97,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 busy={busy === c.id}
                 returnTo={pathname}
                 canChange={!!email && !!c.connected_by_email && c.connected_by_email.toLowerCase() === email.toLowerCase()}
-                onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id)))}
+                onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id), c.owner_key_replaced))}
               />
             ))}
             {!p.configured ? (
