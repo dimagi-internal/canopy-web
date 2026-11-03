@@ -101,7 +101,7 @@ class MailRouteIn(Schema):
     enabled: bool = True
     keep_copy: bool | None = None
     """Forward routes: also keep each message in the destination's canopy inbox. Omitted on
-    an existing route: unchanged (a new one starts off)."""
+    an existing forward route: unchanged. A new one starts on."""
 
 
 class MailInboundLogOut(Schema):

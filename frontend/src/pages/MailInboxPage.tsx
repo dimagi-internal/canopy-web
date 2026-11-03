@@ -20,9 +20,8 @@ export function MailInboxPage(): JSX.Element {
       sendNote="Plain text, sent from your own address."
       empty={({ addresses }) => addresses.length > 0 ? null : (
         <p className="text-[13px] text-muted-foreground">
-          Nothing yet. An admin turns this on per address with “Keep a copy in canopy” in{' '}
+          Nothing yet. Mail forwarded to you is kept here, and only you can see it. An admin adds an address for you in{' '}
           <Link to={scopedPath(workspace, '/settings/email')} className="text-primary underline">Settings → Email</Link>.
-          Only mail that arrives after that is kept. Only you can see it.
         </p>
       )}
     />

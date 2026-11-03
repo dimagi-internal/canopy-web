@@ -135,6 +135,17 @@ def test_route_keep_copy_round_trips_and_survives_an_edit_that_omits_it(w):
     assert _c(w.owner).put(url, agent_body, content_type="application/json").json()["keep_copy"] is False
 
 
+def test_a_new_forward_keeps_a_copy_unless_told_not_to(w):
+    url = f"/api/mail/domains/marshellis/{w.d.pk}/routes"
+    put = lambda body: _c(w.owner).put(url, body, content_type="application/json").json()  # noqa: E731
+    fwd = {"kind": "forward", "forward_to_user_id": w.owner.pk}
+    assert put({**fwd, "local_part": "fresh"})["keep_copy"] is True
+    assert put({**fwd, "local_part": "optout", "keep_copy": False})["keep_copy"] is False
+    assert put({**fwd, "local_part": "optout"})["keep_copy"] is False  # an opt-out survives an edit
+    assert put({"local_part": "was-drop", "kind": "drop"})["keep_copy"] is False
+    assert put({**fwd, "local_part": "was-drop"})["keep_copy"] is True  # now a forward for the first time
+
+
 # --- the inbox as a mail client: search, archive, reply, compose ------------------------------
 
 def _post(u, url, body):

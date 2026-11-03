@@ -385,6 +385,8 @@ def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: st
         defaults["keep_copy"] = False
     elif keep_copy is not None:
         defaults["keep_copy"] = keep_copy
+    elif held is None or held.kind != MailRoute.FORWARD:
+        defaults["keep_copy"] = True  # a new forward keeps a copy unless someone says not to
     try:
         with transaction.atomic():
             route, _ = MailRoute.objects.update_or_create(

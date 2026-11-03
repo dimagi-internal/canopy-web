@@ -112,6 +112,6 @@ describe('MailInboxPage', () => {
   it('shows setup guidance when there is nothing and no address', async () => {
     vi.mocked(mail.fetchInbox).mockResolvedValueOnce({ items: [], unread_total: 0, addresses: [], agent_address: '' })
     renderPage()
-    expect(await screen.findByText(/Keep a copy in canopy/)).toBeTruthy()
+    expect(await screen.findByText(/Mail forwarded to you is kept here/)).toBeTruthy()
   })
 })
