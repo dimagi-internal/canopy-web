@@ -18,7 +18,7 @@ import pytest
 from django.test import Client
 
 from apps.agents.credentials import zk, zk_seal
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentVaultEndorsement
 from apps.connections import recipients as rcpt
 from apps.connections import services, sharing
 from apps.connections.models import Connection
@@ -416,3 +416,11 @@ def test_withdrawing_the_last_grant_through_the_route_empties_the_statement(worl
     assert not conn.grants.exists()
     assert zk_seal.sealed_targets(conn.sealed) == {("member", str(world.person.pk))}
     assert services.providers_for_agent(world.eva) == []
+
+
+def test_settings_lists_an_agent_a_share_cannot_reach(world):
+    AgentVaultEndorsement.objects.filter(target=world.echo_box.ecdh_jkt).delete()
+    world.shared(world.persons(), agents=[world.eva, world.echo])
+    [row] = client(world.person).get("/api/connections/").json()["connections"]
+    assert row["unreachable"] == [{"agent": "echo", "reason": "unvouched"}]
+    assert row["statement"]["agents"] == ["echo", "eva"] and row["waiting"] == []

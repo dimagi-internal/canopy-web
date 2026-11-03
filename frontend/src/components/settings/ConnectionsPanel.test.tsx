@@ -51,6 +51,16 @@ describe('ConnectionsPanel', () => {
     expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
   })
 
+  it('says which lent agent a connection is not reaching, with a link to the share page', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({
+      id: 'c1', statement: { version: 1, agents: ['eva'], my_computers: [], endorsers: [] },
+      unreachable: [{ agent: 'eva', reason: 'unvouched' }],
+    })] })
+    at('/settings')
+    const line = (await screen.findByText(/Not reaching eva: no machine is vouched for yet\./))
+    expect(line.querySelector('a')?.getAttribute('href')).toContain('/connections/c1/share')
+  })
+
   it('names the owner_changed refusal exactly', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     at('/settings?connection=salesforce&status=error&reason=owner_changed')

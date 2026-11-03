@@ -56,6 +56,14 @@ class WaitingOut(StrictModel):
     runner: str = Field(description="The machine's runner name.")
 
 
+class UnreachableOut(StrictModel):
+    agent: str = Field(description="The slug of an agent the statement lends it to.")
+    reason: Literal["unvouched", "no_machine", "lapsed"] = Field(
+        description="Why no machine can receive it for that agent. `unvouched`: machines run it, and nobody the "
+                    "statement names vouches for one yet (re-share, trusting who vouches). `no_machine`: nothing "
+                    "that may hold it runs the agent. `lapsed`: this grant is no longer in force.")
+
+
 class MyMachineOut(StrictModel):
     jkt: str = Field(description="The machine's ECDH key thumbprint, as `statement.my_computers` lists it.")
     name: str = Field(description="Its runner name.")
@@ -89,6 +97,10 @@ class ConnectionOut(StrictModel):
         default_factory=list,
         description="Machines the statement allows that do not hold it yet: a machine that holds it gives them "
                     "a copy, or the owner does from Settings. Empty unless `active`.")
+    unreachable: list[UnreachableOut] = Field(
+        default_factory=list,
+        description="Agents in the statement that no machine can receive it for, so lending to them has reached "
+                    "nothing yet. Empty unless `active`.")
     my_machines: list[MyMachineOut] = Field(
         default_factory=list,
         description="The owner's own computers the statement lets it be used on (`Use on my computers`), "

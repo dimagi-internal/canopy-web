@@ -465,7 +465,7 @@ async function keyMatches(target: string, jwk: Jwk): Promise<boolean> {
 
 /** Read every candidate's key and every agent's endorsements through `vault/trust.ts`, for
  *  the page to show and `buildShare` to seal by. `pins`: this browser's, unless a test says otherwise. */
-export async function trustFor(state: ShareStateOut, me: Unlocked, opts: { pins?: Pins } = {}): Promise<Trust> {
+export async function trustFor(state: ShareStateOut, me: Unlocked, opts: { pins?: Pins; accept?: Set<string> } = {}): Promise<Trust> {
   const owner = await ownerOf(state, me)
   const keys = new Map<string, Jwk>()
   const byAgent = new Map<string, ZkRecipientsOut['recipients'][number][]>()
@@ -483,7 +483,7 @@ export async function trustFor(state: ShareStateOut, me: Unlocked, opts: { pins?
     const data = { agent: a.slug, agent_id: a.id, kv: KV, recipients: byAgent.get(a.id) ?? [],
                    endorsements: (state.endorsements ?? []).filter((e) => e.agent_id === a.id), declared: [], stored: [] }
     assessments.set(a.id, await assess(data as unknown as ZkRecipientsOut,
-      { self: { userId: owner.userId, publicJwk: owner.publicJwk }, pins }))
+      { self: { userId: owner.userId, publicJwk: owner.publicJwk }, pins, accept: opts.accept }))
   }
   return { owner, keys, assessments }
 }
@@ -544,6 +544,21 @@ export function changedEndorser(trust: Trust, choice: ShareChoice): Endorser | u
     if (hit) return hit
   }
   return undefined
+}
+
+/** People this browser has not decided about, vouching under a chosen agent for a machine
+ *  nobody it trusts vouches for: what stands between the owner and that machine (R14). Each
+ *  once. The owner accepts one by name and fingerprint; `vault/trust.ts` pins them. */
+export function vouchersToDecide(trust: Trust, choice: ShareChoice): Endorser[] {
+  const out = new Map<string, Endorser>()
+  for (const a of choice.agents) {
+    const verdict = trust.assessments.get(a)
+    const trusted = new Set(verdict?.sealTo.map((r) => `${r.kind}:${r.target}`))
+    for (const e of verdict?.endorsers ?? []) {
+      if (e.status === 'new' && e.covers.some((c) => !trusted.has(c))) out.set(e.by, e)
+    }
+  }
+  return [...out.values()]
 }
 
 /** The people, besides the owner, whose endorsements this browser trusts for the machines

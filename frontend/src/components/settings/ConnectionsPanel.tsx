@@ -198,6 +198,13 @@ export function listed(cs: readonly ConnectionOut[]): ConnectionOut[] {
 
 const shareLink = 'text-primary hover:underline'
 
+/** Why no machine can receive a connection for an agent it is lent to (`unreachable`). */
+const NOT_REACHING: Record<string, string> = {
+  unvouched: 'no machine is vouched for yet.',
+  no_machine: 'no machine runs it yet.',
+  lapsed: 'this lending no longer holds.',
+}
+
 /**
  * What a connection of the viewer's (or an agent's own) is shared as, in plain words, and the
  * links to the share page. Everything here is read from the list view; nothing signs. Machines
@@ -231,6 +238,12 @@ export function SharingStatus({ c, returnTo, canChange = true }: { c: Connection
         <p>Used on your computers: {machines.map((m) => `${m.name || 'Unnamed computer'} (${m.fingerprint})`).join(', ')}</p>
       )}
       {holders.length > 0 && <p>Held by: {holders.join(', ')}</p>}
+      {(c.unreachable ?? []).map((u) => (
+        <p key={u.agent} className="text-warning">
+          Not reaching {u.agent}: {NOT_REACHING[u.reason]}{' '}
+          {canChange && <Link to={href} className={shareLink}>Open to fix it</Link>}
+        </p>
+      ))}
       {waiting.length > 0 && (
         <>
           <p className="text-warning">

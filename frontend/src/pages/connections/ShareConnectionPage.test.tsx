@@ -28,6 +28,12 @@ vi.mock('@/vault/connectionShare', async (orig) => ({
   changedEndorser: (...a: unknown[]) => changedEndorser(...a),
 }))
 
+const pinPerson = vi.fn()
+vi.mock('@/vault/trust', async (orig) => ({
+  ...(await orig<typeof import('@/vault/trust')>()),
+  pinPerson: (...a: unknown[]) => pinPerson(...a),
+}))
+
 import { ShareConnectionPage, safeReturnTo } from './ShareConnectionPage'
 import { ShareRefused } from '@/vault/connectionShare'
 import { ApiError } from '@/api/problem'
@@ -118,6 +124,22 @@ describe('ShareConnectionPage', () => {
     fireEvent.click(share)
     await waitFor(() => expect(putShare).toHaveBeenCalledWith('c1', { sig: 's' }))
     expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [] })
+  })
+
+  it('offers to trust a person vouching for a chosen machine, by name and fingerprint, and reads again', async () => {
+    const ada = { by: '9', email: 'ada@dimagi.com', jkt: T1, status: 'new', covers: [`device:${T2}`] }
+    const verdict = (status: string) => ({ endorsers: [{ ...ada, status }], sealTo: status === 'new' ? [] : [{ kind: 'device', target: T2 }] })
+    trustFor.mockResolvedValueOnce({ ...TRUST, assessments: new Map([['12', verdict('new')]]) })
+    trustFor.mockResolvedValueOnce({ ...TRUST, assessments: new Map([['12', verdict('pinned')]]) })
+    await unlocked()
+    expect(screen.queryByTestId('vouchers')).toBeNull() // nothing chosen yet
+    fireEvent.click(screen.getByLabelText('Eva'))
+    const offer = await screen.findByRole('button', { name: 'Trust ada@dimagi.com’s vouching' })
+    expect(screen.getByTestId('vouchers').textContent).toContain('AAAA AAAA')
+    fireEvent.click(offer)
+    await waitFor(() => expect(screen.queryByTestId('vouchers')).toBeNull())
+    expect(trustFor.mock.calls[1][2].accept.has('9')).toBe(true)
+    expect(pinPerson).toHaveBeenCalledWith('9', T1, 'ada@dimagi.com')
   })
 
   it('sends a signed statement and a re-sealed envelope with the chosen agents', async () => {

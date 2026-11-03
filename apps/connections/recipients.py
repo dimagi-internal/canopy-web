@@ -252,6 +252,30 @@ def waiting(conn: Connection, *, pairs=None, facts: ServingFacts | None = None) 
     return out
 
 
+def unreachable(conn: Connection, *, pairs=None, facts: ServingFacts | None = None) -> list[dict]:
+    """The agents the stored statement lends `conn` to that no machine can receive it for
+    (`{agent, reason}`, by slug), by the same rule as `device_reasons`. `reason`:
+    `lapsed` (its grant is no longer in force), `no_machine` (nothing runs it that may
+    hold it), `unvouched` (something does, and nobody the statement names vouches for it).
+    Empty unless `active`. `pairs`: this connection's `device_reasons`, when already read."""
+    if conn.state != Connection.ACTIVE:
+        return []
+    pairs = device_reasons(conn, facts=facts) if pairs is None else pairs
+    missing = set(statement_agent_pks(conn.statement)) - {a.pk for _, a in pairs if a is not None}
+    if not missing:
+        return []
+    in_force = {a.pk: a for a in grants_in_force(conn) if a.pk in missing}
+    facts = facts or (device_keys.serving_facts(list(in_force.values())) if in_force else None)
+    out = []
+    for slug, pk in Agent.objects.filter(pk__in=missing).order_by("slug").values_list("slug", "pk"):
+        if pk not in in_force:
+            out.append({"agent": slug, "reason": "lapsed"})
+        else:
+            out.append({"agent": slug,
+                        "reason": "unvouched" if _agent_devices(conn, in_force[pk], facts) else "no_machine"})
+    return out
+
+
 def _revokers(jkts) -> list[str]:
     """Those of `jkts` that could revoke at the provider: an ACTIVE, ECDH-ready key on
     a cloud runner (only cloud runners keep or revoke). Sorted."""

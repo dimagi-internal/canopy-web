@@ -109,6 +109,31 @@ def test_holders_and_waiting(world):
     assert rcpt.waiting(conn) == [{"agent": "echo", "runner": "echo-cloud", "target": world.echo_box.ecdh_jkt}]
 
 
+def test_unreachable_names_each_lent_agent_no_machine_can_receive_it_for(world):
+    conn = world.shared(world.persons(), agents=[world.eva, world.echo])
+    assert rcpt.unreachable(conn) == []
+    # Machines run echo, and nobody the statement names vouches for them.
+    AgentVaultEndorsement.objects.filter(target=world.echo_box.ecdh_jkt).delete()
+    assert rcpt.unreachable(conn) == [{"agent": "echo", "reason": "unvouched"}]
+    # Nothing runs it.
+    RunnerAssignment.objects.filter(agent=world.echo).delete()
+    assert rcpt.unreachable(conn) == [{"agent": "echo", "reason": "no_machine"}]
+    # jj no longer administers it.
+    revoke_admin(world.person, world.echo)
+    assert rcpt.unreachable(conn) == [{"agent": "echo", "reason": "lapsed"}]
+
+
+def test_unreachable_is_empty_until_shared(world):
+    conn = world.persons()
+    assert rcpt.unreachable(conn) == [] and conn.state == "unshared"
+
+
+def test_a_machine_only_waiting_for_its_copy_is_not_unreachable(world):
+    conn = world.shared(world.persons(), agents=[world.eva, world.echo],
+                        to=[("device", world.eva_box.ecdh_jkt, world.eva_box.ecdh_public_jwk)])
+    assert [w["agent"] for w in rcpt.waiting(conn)] == ["echo"] and rcpt.unreachable(conn) == []
+
+
 def test_prune_drops_a_machine_that_no_longer_qualifies_from_both_envelopes(world):
     conn = world.shared(world.persons(), agents=[world.eva, world.echo])
     revoke_admin(world.person, world.echo)

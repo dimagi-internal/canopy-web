@@ -18618,6 +18618,11 @@ export interface components {
              */
             readonly waiting?: readonly components["schemas"]["WaitingOut"][];
             /**
+             * Unreachable
+             * @description Agents in the statement that no machine can receive it for, so lending to them has reached nothing yet. Empty unless `active`.
+             */
+            readonly unreachable?: readonly components["schemas"]["UnreachableOut"][];
+            /**
              * My Machines
              * @description The owner's own computers the statement lets it be used on (`Use on my computers`), named. Empty for an agent's connection.
              */
@@ -18745,6 +18750,20 @@ export interface components {
              * @description What it allows, in words.
              */
             readonly label: string;
+        };
+        /** UnreachableOut */
+        readonly UnreachableOut: {
+            /**
+             * Agent
+             * @description The slug of an agent the statement lends it to.
+             */
+            readonly agent: string;
+            /**
+             * Reason
+             * @description Why no machine can receive it for that agent. `unvouched`: machines run it, and nobody the statement names vouches for one yet (re-share, trusting who vouches). `no_machine`: nothing that may hold it runs the agent. `lapsed`: this grant is no longer in force.
+             * @enum {string}
+             */
+            readonly reason: "unvouched" | "no_machine" | "lapsed";
         };
         /** WaitingOut */
         readonly WaitingOut: {

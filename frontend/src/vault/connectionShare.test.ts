@@ -21,6 +21,7 @@ import {
   signStatement,
   statementMessage,
   trustFor,
+  vouchersToDecide,
   verifyStatement,
   writerSig,
   ShareRefused,
@@ -531,6 +532,18 @@ describe('chooseRecipients', () => {
     expect(leftOut(state, { agents: [EVA], myComputers: [] }, trust)).toEqual([
       { target: strangerBox.jkt, runner_name: 'stranger-cloud', agent_id: EVA, why: 'not vouched for by anyone you trust' },
     ])
+  })
+
+  it('offers whoever vouches for a chosen machine, and accepting them reaches it and names them', async () => {
+    const choice = { agents: [EVA], myComputers: [] }
+    const [voucher] = vouchersToDecide(trust, choice)
+    expect(voucher.jkt).toBe(stranger.jkt)
+    expect(vouchersToDecide(trust, { agents: [], myComputers: [] })).toEqual([])
+    const accepted = await trustFor(state, me, { pins: PINS(), accept: new Set([voucher.by]) })
+    expect(vouchersToDecide(accepted, choice)).toEqual([])
+    expect(chooseRecipients(state, choice, accepted).map((r) => r.target)).toContain(strangerBox.jkt)
+    const { share } = await buildShare(state, me, choice, accepted)
+    expect((share.statement as unknown as Statement).endorsers).toContain(stranger.jkt)
   })
 
   it('takes nobody for an agent that was not chosen', () => {

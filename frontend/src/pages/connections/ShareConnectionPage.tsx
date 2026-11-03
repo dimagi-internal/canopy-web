@@ -4,9 +4,10 @@ import { Button } from 'canopy-ui/ui'
 import { connectionStartPath, getShareState, putShare, type ShareStateOut } from '@/api/connections'
 import { ApiError } from '@/api/problem'
 import {
-  buildShare, changedEndorser, leftOut as leftOutOf, openForOwner, ShareRefused, trustFor,
+  buildShare, changedEndorser, leftOut as leftOutOf, openForOwner, ShareRefused, trustFor, vouchersToDecide,
   type OpenedAccount, type ShareChoice, type Trust,
 } from '@/vault/connectionShare'
+import { pinPerson, type Endorser } from '@/vault/trust'
 import type { Unlocked } from '@/vault/userKey'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { fingerprint } from '@/vault/zk'
@@ -56,6 +57,8 @@ export function ShareConnectionPage(): JSX.Element | null {
   const navigate = useNavigate()
   const vault = useVaultUnlock()
   const me = useRef<Unlocked | null>(null)
+  // Whom the owner accepted here: pinned too, but this holds while storage does not.
+  const accepted = useRef<Set<string>>(new Set())
 
   const [state, setState] = useState<ShareStateOut | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -95,6 +98,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   }), [agents, computers, ownerAgent])
   const leftOut = useMemo(() => (state && opened ? leftOutOf(state, choice, opened.trust) : []), [state, opened, choice])
   const changed = useMemo(() => (opened ? changedEndorser(opened.trust, choice) : undefined), [opened, choice])
+  const vouchers = useMemo(() => (opened ? vouchersToDecide(opened.trust, choice) : []), [opened, choice])
 
   if (notYours) {
     return (
@@ -122,7 +126,7 @@ export function ShareConnectionPage(): JSX.Element | null {
    *  verified statement last named, cut down to the agents and computers listed below. */
   async function openWith(s: ShareStateOut, key: Unlocked, keep?: ShareChoice) {
     const { account, statement } = await openForOwner(s, key)
-    const trust = await trustFor(s, key)
+    const trust = await trustFor(s, key, { accept: accepted.current })
     const listedAgents = new Set(s.agents.map((a) => a.id))
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
     const wantAgents = keep ? keep.agents : statement?.agents ?? []
@@ -185,6 +189,24 @@ export function ShareConnectionPage(): JSX.Element | null {
         setError(RELOCK)
       } else if (e instanceof ShareRefused && e.code !== 'key-changed' && e.code !== 'too-many') setUnsafe(true)
       else setError(e instanceof Error ? e.message : 'Could not share this connection.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** The owner read this person's name and fingerprint and accepted them: pin them, as
+   *  everywhere else, and read again. `buildShare` then names them in `endorsers`. */
+  async function trustVoucher(s: ShareStateOut, o: Opened, voucher: Endorser) {
+    const key = me.current
+    if (!key) return
+    setBusy(true)
+    setError('')
+    try {
+      pinPerson(voucher.by, voucher.jkt, voucher.email)
+      accepted.current.add(voucher.by)
+      setOpened({ ...o, trust: await trustFor(s, key, { accept: accepted.current }) })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not trust them.')
     } finally {
       setBusy(false)
     }
@@ -296,6 +318,22 @@ export function ShareConnectionPage(): JSX.Element | null {
                 <li key={d.target}>{d.runner_name || 'A computer'} will be left out: {d.why}.</li>
               ))}
             </ul>
+          )}
+          {vouchers.length > 0 && !changed && (
+            <div data-testid="vouchers" className="space-y-2 rounded border border-warning/40 bg-warning/10 p-3 text-[13px] text-foreground">
+              {vouchers.map((v) => (
+                <div key={v.by} className="space-y-1">
+                  <p>
+                    {v.email || 'Someone'} vouches for machines you have chosen, and this browser has not trusted
+                    them yet. Check this fingerprint with them first:
+                  </p>
+                  <p className="font-mono text-[12px] text-muted-foreground">{fingerprint(v.jkt)}</p>
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => void trustVoucher(state, opened, v)}>
+                    Trust {v.email || 'this person'}’s vouching
+                  </Button>
+                </div>
+              ))}
+            </div>
           )}
           {changed && (
             <p role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive">

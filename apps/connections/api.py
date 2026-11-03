@@ -53,6 +53,7 @@ from .schemas import (
     ScopeChoiceOut,
     ShareIn,
     ShareStateOut,
+    UnreachableOut,
     WaitingOut,
     WriteBackIn,
     WriteBackOut,
@@ -141,13 +142,15 @@ def _lent_by(conn: Connection) -> str:
 
 def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None) -> ConnectionOut:
     lent = granted_from is not None
+    pairs = rcpt.device_reasons(conn, facts=facts)
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
         state=conn.state, statement=_statement(conn, lent=lent), holders=_holders(conn),
-        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, facts=facts)],
+        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, pairs=pairs)],
+        unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
         my_machines=[] if lent else _my_machines(conn),
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
