@@ -10,6 +10,7 @@ import {
 } from '@/api/harness'
 import { errorText } from '@/api/problem'
 import { usePolled } from '@/hooks/usePolled'
+import { Td, Tr } from '@/components/DataTable'
 
 // "Add a repo to this runner" (canopy-web `runner_projects`): a laptop runs an
 // agent in the emdash project named after it, and routing skips a laptop without
@@ -159,13 +160,13 @@ export function RunnerProjects({
         <table className="w-full text-[12px]">
           <tbody>
             {data.requests.map((r) => (
-              <tr key={r.id} className="border-t border-border align-top" data-testid={`runner-project-${r.name}`}>
-                <td className="py-1 pr-2 font-mono text-foreground">{r.name}</td>
-                <td className="py-1 pr-2"><StatusText request={r} /></td>
-                <td className="py-1 pr-2 text-muted-foreground">
+              <Tr rule="top" top key={r.id} data-testid={`runner-project-${r.name}`}>
+                <Td density="compact-gutter" tone="foreground" mono>{r.name}</Td>
+                <Td density="compact-gutter"><StatusText request={r} /></Td>
+                <Td density="compact-gutter" tone="muted">
                   <span className="break-all">{r.detail || r.repo_url}</span>
-                </td>
-                <td className="py-1 text-right">
+                </Td>
+                <Td align="right">
                   {data.can_add && (
                     <span className="inline-flex gap-2">
                       {r.status === 'failed' && (
@@ -180,8 +181,8 @@ export function RunnerProjects({
                       </button>
                     </span>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

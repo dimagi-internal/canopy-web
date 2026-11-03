@@ -19,6 +19,7 @@ import type { AddableRole } from './accessWords'
 import { ADDABLE_ROLES, ADDRESS_ONLY_KINDS, WRITE_ROLES, ascending, canText, lineWhat, roleWord } from './accessWords'
 import { AgentAccessPeople } from './AgentAccessPeople'
 import { AgentAdmins } from './AgentAdmins'
+import { Td, Tr } from '@/components/DataTable'
 
 // WHO HAS WHICH ROLE ON THIS AGENT — one list.
 //
@@ -108,11 +109,11 @@ export function AgentAccessList({
         <table className="w-full text-[12px]" data-testid="access-lines">
           <tbody>
             {data.implicit.map((i) => (
-              <tr key={`${i.role}:${i.who}`} data-testid="access-line-implicit" className="border-b border-border/50">
-                <td className="py-1 pr-3 text-foreground">{i.who}</td>
-                <td className="py-1 pr-3 text-foreground">{roleWord(i.role)}</td>
-                <td className="py-1 text-muted-foreground">{i.why} · not a line, cannot be removed here</td>
-              </tr>
+              <Tr rule="bottom-soft" key={`${i.role}:${i.who}`} data-testid="access-line-implicit">
+                <Td density="compact-gap" tone="foreground">{i.who}</Td>
+                <Td density="compact-gap" tone="foreground">{roleWord(i.role)}</Td>
+                <Td tone="muted">{i.why} · not a line, cannot be removed here</Td>
+              </Tr>
             ))}
             {own.map((l) => (
               <OwnLine
@@ -125,10 +126,10 @@ export function AgentAccessList({
               />
             ))}
             {inherited.map((l) => (
-              <tr key={`ws-${l.id}`} data-testid="access-line-inherited" className="border-b border-border/50">
-                <td className="py-1 pr-3 text-foreground">{l.who}</td>
-                <td className="py-1 pr-3 text-foreground">{lineWhat(l)}</td>
-                <td className="py-1 text-muted-foreground">
+              <Tr rule="bottom-soft" key={`ws-${l.id}`} data-testid="access-line-inherited">
+                <Td density="compact-gap" tone="foreground">{l.who}</Td>
+                <Td density="compact-gap" tone="foreground">{lineWhat(l)}</Td>
+                <Td tone="muted">
                   set on {l.scope_workspace}
                   {l.manual_only ? ' · needs approval before anything goes out' : ''}
                   {l.scope_workspace && (
@@ -139,12 +140,12 @@ export function AgentAccessList({
                       </Link>
                     </>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
             {own.length === 0 && inherited.length === 0 && data.implicit.length === 0 && (
               <tr>
-                <td className="py-1 text-muted-foreground">Nobody yet.</td>
+                <Td tone="muted">Nobody yet.</Td>
               </tr>
             )}
           </tbody>
@@ -215,9 +216,9 @@ function OwnLine({
 }) {
   const addressOnly = ADDRESS_ONLY_KINDS.includes(line.kind as never)
   return (
-    <tr data-testid="access-line" className="border-b border-border/50">
-      <td className="py-1 pr-3 text-foreground">{line.who}</td>
-      <td className="py-1 pr-3">
+    <Tr rule="bottom-soft" data-testid="access-line">
+      <Td density="compact-gap" tone="foreground">{line.who}</Td>
+      <Td density="compact-gap">
         {editable && line.role ? (
           <select
             value={line.role}
@@ -235,8 +236,8 @@ function OwnLine({
         ) : (
           <span className="text-foreground">{lineWhat(line)}</span>
         )}
-      </td>
-      <td className="py-1 text-muted-foreground">
+      </Td>
+      <Td tone="muted">
         {editable ? (
           <span className="flex flex-wrap items-center gap-3">
             {line.role && (
@@ -264,7 +265,7 @@ function OwnLine({
         ) : (
           <span>set on this agent{line.manual_only ? ' · needs approval before anything goes out' : ''}</span>
         )}
-      </td>
-    </tr>
+      </Td>
+    </Tr>
   )
 }

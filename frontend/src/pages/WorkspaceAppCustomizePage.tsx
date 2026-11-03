@@ -35,6 +35,7 @@ import { roleOptions } from '@/components/people/roles'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /**
  * Customize an installed app — built for someone who is not a developer (the
@@ -176,18 +177,18 @@ export default function WorkspaceAppCustomizePage() {
 
       <Section title="Versions">
         <table className="w-full text-sm">
-          <thead><tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="py-1.5">Version</th><th>What</th><th>Template</th><th>Changes</th><th>Published</th><th />
-          </tr></thead>
+          <thead><Tr rule="bottom" head="xs">
+            <Th density="cozy" weight="inherit">Version</Th><Th density="none" weight="inherit">What</Th><Th density="none" weight="inherit">Template</Th><Th density="none" weight="inherit">Changes</Th><Th density="none" weight="inherit">Published</Th><Th density="none" weight="inherit" />
+          </Tr></thead>
           <tbody>
             {versions.map((v) => (
-              <tr key={v.number} className="border-b border-border last:border-0">
-                <td className="py-1.5">{v.number} {v.status === 'published' && <span className="ml-1 rounded bg-success/15 px-1.5 text-xs text-success">live</span>}{v.status === 'draft' && <span className="ml-1 rounded bg-warning/15 px-1.5 text-xs">draft</span>}</td>
+              <Tr rule="bottom-last" key={v.number}>
+                <Td density="cozy">{v.number} {v.status === 'published' && <span className="ml-1 rounded bg-success/15 px-1.5 text-xs text-success">live</span>}{v.status === 'draft' && <span className="ml-1 rounded bg-warning/15 px-1.5 text-xs">draft</span>}</Td>
                 <td>{v.origin}{v.note ? ` — ${v.note}` : ''}</td>
                 <td>{v.template_version}</td>
                 <td>{v.changes}</td>
                 <td>{v.published_at ? `${v.published_at.slice(0, 10)} by ${v.published_by ?? '—'}` : '—'}</td>
-                <td className="text-right">
+                <Td density="none" align="right">
                   {(v.status === 'superseded') && !draft && (
                     <button type="button" className="text-primary hover:underline" disabled={busy}
                       onClick={() => window.confirm(`Make version ${v.number} live again? (It becomes a new version; nothing is lost.)`)
@@ -195,8 +196,8 @@ export default function WorkspaceAppCustomizePage() {
                       Restore
                     </button>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>
@@ -226,13 +227,13 @@ function Privacy({ workspace, app }: { workspace: string; app: InstalledApp }) {
       </p>
       {rules && rules.length > 0 ? (
         <table className="mt-3 w-full text-sm">
-          <thead><tr className="text-left text-muted-foreground"><th className="py-1">Rule</th><th>Due now</th><th>Examples</th></tr></thead>
+          <thead><Tr head="plain"><Th weight="inherit">Rule</Th><Th density="none" weight="inherit">Due now</Th><Th density="none" weight="inherit">Examples</Th></Tr></thead>
           <tbody>
             {rules.map((r) => (
               <tr key={r.name} className="border-t">
-                <td className="py-1.5">{r.label}</td>
+                <Td density="cozy">{r.label}</Td>
                 <td>{r.count} to {r.does}</td>
-                <td className="text-muted-foreground">{r.examples.map((x) => x.title).filter(Boolean).slice(0, 3).join(', ')}</td>
+                <Td density="none" tone="muted">{r.examples.map((x) => x.title).filter(Boolean).slice(0, 3).join(', ')}</Td>
               </tr>
             ))}
           </tbody>

@@ -7,6 +7,7 @@ import { useMemoryVisible } from '@/auth/memoryRollout'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '@/lib/scopedLinks'
 import { SETTINGS_SECTIONS } from '@/pages/settingsSections'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /**
  * Settings: one frame over everything about YOU, the same in every workspace —
@@ -106,29 +107,29 @@ export function ProfileSection(): JSX.Element | null {
         ) : (
           <table className="w-full text-[13px]">
             <thead>
-              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-                <th className="py-2 pr-4 font-medium">Workspace</th>
-                <th className="py-2 pr-4 font-medium">Your role</th>
-                <th className="py-2" />
-              </tr>
+              <Tr rule="bottom" head="small" className="uppercase tracking-wider">
+                <Th density="roomy-gutter">Workspace</Th>
+                <Th density="roomy-gutter">Your role</Th>
+                <Th density="none" weight="inherit" className="py-2" />
+              </Tr>
             </thead>
             <tbody>
               {workspaces.map((w) => (
-                <tr key={w.slug} className="border-b border-border last:border-b-0">
-                  <td className="py-2 pr-4">
+                <Tr rule="bottom-last" key={w.slug}>
+                  <Td density="roomy-gutter">
                     <Link to={scopedPath(w.slug, '')} className="font-medium text-foreground hover:text-primary">
                       {w.display_name || w.slug}
                     </Link>
-                  </td>
-                  <td className="py-2 pr-4 capitalize text-muted-foreground">{w.role}</td>
-                  <td className="py-2 text-right">
+                  </Td>
+                  <Td density="roomy-gutter" tone="muted" className="capitalize">{w.role}</Td>
+                  <Td density="none" align="right" className="py-2">
                     {me.user_id != null && (
                       <Link to={scopedPath(w.slug, `/members/${me.user_id}`)} className="text-primary hover:underline">
                         How members see you →
                       </Link>
                     )}
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
             </tbody>
           </table>

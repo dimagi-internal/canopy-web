@@ -9,7 +9,7 @@ import {
   RunnerInvitationError,
   type RunnerInvitationOut,
 } from '@/api/runnerInvitations'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 const STATUS_TEXT: Record<RunnerInvitationOut['status'], string> = {
   pending: 'Waiting for your approval.',
@@ -160,12 +160,12 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
               </thead>
               <tbody>
                 {runners.map((r) => (
-                  <tr key={r.name} className="border-t border-border" data-testid="invitation-runner">
-                    <td className="py-1 pr-3 font-mono">{r.name}</td>
-                    <td className="py-1 pr-3">{r.kind === 'agent' ? `only agent ${r.slug}` : 'its workspace tree'}</td>
-                    <td className="py-1 pr-3">{r.workspace}</td>
-                    <td className="py-1 font-mono text-[12px]">{r.runner_id ?? '—'}</td>
-                  </tr>
+                  <Tr rule="top" key={r.name} data-testid="invitation-runner">
+                    <Td density="compact-gap" mono>{r.name}</Td>
+                    <Td density="compact-gap">{r.kind === 'agent' ? `only agent ${r.slug}` : 'its workspace tree'}</Td>
+                    <Td density="compact-gap">{r.workspace}</Td>
+                    <Td mono className="text-[12px]">{r.runner_id ?? '—'}</Td>
+                  </Tr>
                 ))}
               </tbody>
             </table>

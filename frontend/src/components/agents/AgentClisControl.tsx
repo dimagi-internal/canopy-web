@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { setAgentClis } from '@/api/agents'
 import { CLIS, type Cli, cliLabel } from '@/lib/clis'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /** Which agent CLIs the agent is set up for, its default first, and the model each
  *  starts on (blank = the runner's own default). A new chat or schedule may pick any
@@ -70,37 +71,37 @@ export function AgentClisControl({ slug, initialClis, initialModels, canEdit }: 
     <div data-testid="agent-clis">
       <table className="w-full text-[13px]">
         <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className="w-8 py-1 font-normal">On</th>
-            <th className="py-1 font-normal">CLI</th>
-            <th className="py-1 font-normal">Model (blank = its default)</th>
-            <th className="py-1" />
-          </tr>
+          <Tr head="label">
+            <Th weight="normal" className="w-8">On</Th>
+            <Th weight="normal">CLI</Th>
+            <Th weight="normal">Model (blank = its default)</Th>
+            <Th weight="inherit" />
+          </Tr>
         </thead>
         <tbody>
           {rows.map((cli) => {
             const on = order.includes(cli)
             const rank = order.indexOf(cli)
             return (
-              <tr key={cli} className="border-t border-border">
-                <td className="py-1.5">
+              <Tr rule="top" key={cli}>
+                <Td density="cozy">
                   <input type="checkbox" checked={on} onChange={() => toggle(cli)} aria-label={`Run on ${cliLabel(cli)}`} />
-                </td>
-                <td className="py-1.5 text-foreground">{on ? `${rank + 1}. ` : ''}{cliLabel(cli)}</td>
-                <td className="py-1.5">
+                </Td>
+                <Td density="cozy" tone="foreground">{on ? `${rank + 1}. ` : ''}{cliLabel(cli)}</Td>
+                <Td density="cozy">
                   <input value={models[cli] ?? ''} disabled={!on} aria-label={`${cliLabel(cli)} model`}
                          onChange={(e) => { touch(); setModels((m) => ({ ...m, [cli]: e.target.value })) }}
                          className="min-h-8 w-48 rounded-md border border-border bg-input px-2 font-mono text-[12px] disabled:opacity-50" />
-                </td>
-                <td className="py-1.5 text-right">
+                </Td>
+                <Td density="cozy" align="right">
                   {on && rank > 0 && (
                     <button type="button" onClick={() => prefer(cli)}
                             className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground hover:bg-muted">
                       Prefer {cliLabel(cli)}
                     </button>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             )
           })}
         </tbody>

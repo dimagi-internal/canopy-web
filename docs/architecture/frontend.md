@@ -44,7 +44,15 @@ The whole authenticated app styles off semantic tokens. `frontend/src/index.css`
 
 ## Tables
 
-Dense app tables write a header cell as `<Th density="…">` from `frontend/src/components/DataTable.tsx`, not a hand-copied `<th className="py-1 font-medium">`. Densities: `compact` (default, `py-1`), `compact-gap` (`py-1 pr-3`), `roomy` (`px-3 py-2`, a page's main table), `tight` (`px-2 py-1.5`, inline in a panel); extra classes go in `className` (`<Th density="roomy" className="text-right">`). Semantic tokens only. `frontend/src/dataTableConvention.test.ts` fails on a raw `<th>` carrying a standard combination, and on any new hand-written `<th>` in a file beyond its `NOT_YET_MIGRATED` count; migrating one means lowering or deleting that entry. A header with its own padding or breakpoint-hidden cells stays raw until it gets a density of its own (the `canopy-ui` `Table` primitives are a separate, card-bordered style and are not used here).
+Dense app tables are written with `<Th>`, `<Td>` and `<Tr>` from `frontend/src/components/DataTable.tsx`, not hand-copied `<th className="py-1 font-medium">` / `<td className="py-1.5 pr-3 text-muted-foreground">` / `<tr className="border-b border-border last:border-0">`.
+
+- **Density** is the cell padding, shared by `Th` and `Td` so a column lines up (`density="…"`, default `compact` = `py-1`; the full list is `PAD_CLASS`): `compact-gap` (`py-1 pr-3`), `cozy` (`py-1.5`), `tight` (`px-2 py-1.5`, inline in a panel), `roomy` (`px-3 py-2`, a page's main table), `none` (the table spaces it, or the cell is empty), and the rest.
+- **`Th`**: `weight` (`normal` | `inherit`; default `font-medium`), `align`, `hideBelow` (`sm`/`md`/`lg`/`xl`, hides the cell below that breakpoint), `srOnly` (an actions or priority column), `label` (small uppercase header).
+- **`Td`**: `tone` (`foreground` | `secondary` | `muted`), `align`, `hideBelow`, `nowrap`, `numeric` (tabular-nums), `mono`.
+- **`Tr`**: `rule` (`bottom` | `bottom-last` | `bottom-soft` | `top`), `head` (`plain` | `xs` | `small` | `label`, a header row's text), `top` (align-top).
+- A row-dependent class (a status colour, `opacity-60`, a selected background) goes in `className` and is appended after the convention's classes. Semantic tokens only.
+
+`frontend/src/dataTableConvention.test.ts` fails on a raw `<th>`/`<td>`/`<tr>` whose `className` carries anything those props own, on any hand-written `<th>`, and on a raw `<td>`/`<tr>` with a computed `className` (`cn(...)`, a template) beyond the counts in `NOT_YET_MIGRATED` / `COMPUTED_CLASS` (both empty today; they can only shrink). A genuinely different cell (its own padding like `p-3`, a one-off width) keeps its extra classes in `className` on a `Td`. A pattern that repeats across files gets a prop here, not a copy (the `canopy-ui` `Table` primitives are a separate, card-bordered style and are not used here).
 
 ## Light and dark themes
 

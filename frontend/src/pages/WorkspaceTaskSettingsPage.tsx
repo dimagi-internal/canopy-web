@@ -23,6 +23,7 @@ import { DEFAULT_CATEGORY_NAMES, LABEL_COLORS, type Category } from '@/component
 import { invalidateDirectory } from '@/components/work/useDirectory'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 const CATEGORIES = Object.keys(DEFAULT_CATEGORY_NAMES) as Category[]
 
@@ -133,12 +134,12 @@ export function WorkspaceTaskSettingsPage(): JSX.Element {
               <table className="mt-1 w-full max-w-lg text-[13px]">
                 <tbody>
                   {CATEGORIES.map((c) => (
-                    <tr key={c} className="border-b border-border last:border-0">
-                      <td className="w-40 py-1 pr-3 text-foreground-secondary">
+                    <Tr rule="bottom-last" key={c}>
+                      <Td density="compact-gap" tone="secondary" className="w-40">
                         {DEFAULT_CATEGORY_NAMES[c]}
                         <div className="text-[11px] text-muted-foreground">{CATEGORY_HINT[c]}</div>
-                      </td>
-                      <td className="py-1">
+                      </Td>
+                      <Td>
                         <input
                           value={names[c] ?? ''}
                           onChange={(e) => setNames((n) => ({ ...n, [c]: e.target.value }))}
@@ -147,8 +148,8 @@ export function WorkspaceTaskSettingsPage(): JSX.Element {
                           maxLength={40}
                           className={cn(input, 'w-full')}
                         />
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   ))}
                 </tbody>
               </table>
@@ -229,26 +230,26 @@ function Labels({ slug, canEdit }: { slug: string; canEdit: boolean }): JSX.Elem
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <table className="w-full text-[13px]">
           <thead>
-            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 py-1.5 font-medium">Label</th>
-              <th className="py-1.5 font-medium">Colour</th>
-              <th className="py-1.5 pr-3 text-right font-medium">Tasks</th>
-              {canEdit && <th className="w-16" />}
-            </tr>
+            <Tr rule="bottom" head="label">
+              <Th density="snug">Label</Th>
+              <Th density="cozy">Colour</Th>
+              <Th density="cozy-gap" align="right">Tasks</Th>
+              {canEdit && <Th density="none" weight="inherit" className="w-16" />}
+            </Tr>
           </thead>
           <tbody>
             {labels === null && (
               <tr>
-                <td colSpan={4} className="px-3 py-3 text-muted-foreground">
+                <Td density="none" tone="muted" colSpan={4} className="px-3 py-3">
                   Loading…
-                </td>
+                </Td>
               </tr>
             )}
             {labels?.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-3 py-3 text-muted-foreground">
+                <Td density="none" tone="muted" colSpan={4} className="px-3 py-3">
                   No labels yet.
-                </td>
+                </Td>
               </tr>
             )}
             {labels?.map((l) => (
@@ -300,8 +301,8 @@ function LabelRow({
     void run(() => updateLabel(label.id, { name: next }))
   }
   return (
-    <tr className="border-b border-border last:border-0">
-      <td className="px-3 py-1">
+    <Tr rule="bottom-last">
+      <Td density="compact" className="px-3">
         {canEdit ? (
           <input
             value={name}
@@ -314,8 +315,8 @@ function LabelRow({
         ) : (
           <LabelChip name={label.name} color={label.color} />
         )}
-      </td>
-      <td className="py-1">
+      </Td>
+      <Td>
         {canEdit ? (
           <ColorPicker
             value={label.color}
@@ -325,10 +326,10 @@ function LabelRow({
         ) : (
           <span className="text-[12px] capitalize text-muted-foreground">{label.color}</span>
         )}
-      </td>
-      <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">{label.task_count}</td>
+      </Td>
+      <Td density="compact-gap" tone="muted" numeric align="right">{label.task_count}</Td>
       {canEdit && (
-        <td className="py-1 pr-2 text-right">
+        <Td density="compact-gutter" align="right">
           <button
             type="button"
             onClick={() => {
@@ -339,9 +340,9 @@ function LabelRow({
           >
             Delete
           </button>
-        </td>
+        </Td>
       )}
-    </tr>
+    </Tr>
   )
 }
 

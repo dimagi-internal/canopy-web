@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { createWorkspaceVault, listWorkspaceVaults, type WorkspaceVaultOut } from '@/api/vault'
 import { vaultHref } from '@/lib/scopedLinks'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // A workspace's own vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md
 // §4): shared secrets its agents read, layered under each agent's own, and a runner's own
@@ -42,20 +43,20 @@ export function WorkspaceVaultsSection({ slug }: { slug: string }): JSX.Element 
       {vaults.length > 0 && (
         <table className="w-full text-[12px]" data-testid="ws-vault-list">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="py-1 font-normal">Vault</th><th className="py-1 font-normal">Key</th>
-              <th className="py-1 font-normal">Secrets</th><th className="py-1 font-normal">Serves</th>
-            </tr>
+            <Tr head="label">
+              <Th weight="normal">Vault</Th><Th weight="normal">Key</Th>
+              <Th weight="normal">Secrets</Th><Th weight="normal">Serves</Th>
+            </Tr>
           </thead>
           <tbody className="divide-y divide-border">
             {vaults.map((v) => (
               <tr key={v.vault_id} data-testid={`ws-vault-${v.vault_id}`}>
-                <td className="py-1.5">
+                <Td density="cozy">
                   <Link to={vaultHref(v.workspace, v.vault_id)} className="font-medium text-primary hover:underline">{v.name}</Link>
-                </td>
-                <td className={`py-1.5 ${v.kv ? 'text-muted-foreground' : 'text-warning'}`}>{v.kv ? `version ${v.kv}` : 'none yet'}</td>
-                <td className="py-1.5 text-muted-foreground">{v.secrets.length}</td>
-                <td className="py-1.5 text-muted-foreground">{serves(v)}</td>
+                </Td>
+                <Td density="cozy" className={v.kv ? 'text-muted-foreground' : 'text-warning'}>{v.kv ? `version ${v.kv}` : 'none yet'}</Td>
+                <Td density="cozy" tone="muted">{v.secrets.length}</Td>
+                <Td density="cozy" tone="muted">{serves(v)}</Td>
               </tr>
             ))}
           </tbody>

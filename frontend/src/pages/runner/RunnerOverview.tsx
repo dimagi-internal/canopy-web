@@ -6,6 +6,7 @@ import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
 import { RunnerRefreshStatus } from '@/components/supervisor/RunnerRefresh'
 import type { RunnerOutletContext } from './RunnerPage'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /** The agent CLIs the box has, as the server reads its report (`RunnerOut.agent_clis`). */
 export function runnerClisText(runner: RunnerOut): string {
@@ -56,12 +57,12 @@ export function RunnerFacts({ runner }: { runner: RunnerOut }): JSX.Element {
     <table className="w-full text-[13px]" data-testid="runner-facts">
       <tbody>
         {rows.map(([label, value, testId]) => (
-          <tr key={label} className="border-b border-border last:border-b-0">
-            <th scope="row" className="w-32 py-1.5 pr-3 text-left text-[11px] font-normal uppercase tracking-wide text-muted-foreground">
+          <Tr rule="bottom-last" key={label}>
+            <Th density="cozy-gap" weight="normal" align="left" scope="row" className="w-32 text-[11px] uppercase tracking-wide text-muted-foreground">
               {label}
-            </th>
-            <td className="min-w-0 truncate py-1.5 text-foreground" data-testid={testId}>{value}</td>
-          </tr>
+            </Th>
+            <Td density="cozy" tone="foreground" className="min-w-0 truncate" data-testid={testId}>{value}</Td>
+          </Tr>
         ))}
       </tbody>
     </table>

@@ -25,6 +25,7 @@ import {
   statusName,
 } from './meta'
 import type { Directory } from './useDirectory'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 export type GroupBy = '' | 'status' | 'project' | 'assignee' | 'priority'
 
@@ -155,11 +156,11 @@ export function TaskTable({
         {groups.map((g) => (
           <tbody key={g.key || 'all'}>
             {groupBy && (
-              <tr className="border-b border-border bg-muted/40">
-                <th colSpan={99} scope="colgroup" className="px-3 py-1.5 text-left text-[12px] font-semibold text-foreground">
+              <Tr rule="bottom" className="bg-muted/40">
+                <Th density="snug" weight="inherit" align="left" colSpan={99} scope="colgroup" className="text-[12px] font-semibold text-foreground">
                   {g.label} <span className="font-normal text-muted-foreground">{g.tasks.length}</span>
-                </th>
-              </tr>
+                </Th>
+              </Tr>
             )}
             {(nest ? nested(g.tasks) : g.tasks.map((task) => ({ task, depth: 0 }))).map(({ task, depth }) => (
               <TaskRow
@@ -213,11 +214,12 @@ function TaskRow({
   const done = STATUS_CATEGORY[task.status] === 'completed' || STATUS_CATEGORY[task.status] === 'canceled'
   const asking = asksSomething(task)
   return (
-    <tr
+    <Tr
+      rule="bottom-last"
       data-task={task.key}
       aria-selected={selected}
       className={cn(
-        'group border-b border-border last:border-0 hover:bg-muted/50',
+        'group hover:bg-muted/50',
         selected && 'bg-primary/5',
         focused && 'outline outline-1 -outline-offset-1 outline-primary/60',
       )}
@@ -233,23 +235,23 @@ function TaskRow({
           />
         </td>
       )}
-      <td className="px-1 py-1.5">
+      <Td density="narrow">
         <PriorityPicker
           priority={task.priority ?? 0}
           disabled={!editable}
           onChange={(priority) => onPatch(task.key, { priority }, { priority })}
         />
-      </td>
-      <td className="px-1 py-1.5">
+      </Td>
+      <Td density="narrow">
         <StatusPicker
           status={task.status}
           names={names}
           disabled={!editable}
           onChange={(status) => onPatch(task.key, { status }, { status })}
         />
-      </td>
-      <td className="whitespace-nowrap px-1 py-1.5 font-mono text-[11.5px] text-muted-foreground">{task.key}</td>
-      <td className="min-w-0 py-1.5 pr-2">
+      </Td>
+      <Td density="narrow" tone="muted" nowrap mono className="text-[11.5px]">{task.key}</Td>
+      <Td density="cozy-gutter" className="min-w-0">
         <div className="flex min-w-0 items-center gap-2" style={depth ? { paddingLeft: `${depth * 1.1}rem` } : undefined}>
           {onOpen ? (
             <button
@@ -273,14 +275,14 @@ function TaskRow({
             <span className="shrink-0 rounded border border-special/30 bg-special/10 px-1 text-[10.5px] text-special">Idea</span>
           )}
         </div>
-      </td>
+      </Td>
       {show.has('labels') && (
-        <td className="hidden py-1.5 pr-2 md:table-cell">
+        <Td density="cozy-gutter" hideBelow="md">
           <LabelChips labels={task.labels ?? []} max={2} />
-        </td>
+        </Td>
       )}
       {show.has('project') && (
-        <td className="hidden truncate py-1.5 pr-2 text-[12px] text-foreground-secondary lg:table-cell">
+        <Td density="cozy-gutter" tone="secondary" hideBelow="lg" className="truncate text-[12px]">
           {task.project_handle ? (
             <Link to={scopedPath(task.project_address?.split('/')[0] ?? task.workspace, `/projects/${task.project_handle}`)} className="hover:text-primary">
               {task.project_name}
@@ -288,10 +290,10 @@ function TaskRow({
           ) : (
             <span className="text-foreground-subtle">—</span>
           )}
-        </td>
+        </Td>
       )}
       {show.has('assignee') && (
-        <td className="truncate py-1.5 pr-2 text-[12px]">
+        <Td density="cozy-gutter" className="truncate text-[12px]">
           <AssigneePicker
             task={task}
             directory={directory}
@@ -302,18 +304,18 @@ function TaskRow({
                 : { agent_slug: null, assignee_email: assignee || null })
             }
           />
-        </td>
+        </Td>
       )}
       {show.has('due') && (
-        <td className="hidden py-1.5 pr-1 sm:table-cell">
+        <Td density="none" hideBelow="sm" className="py-1.5 pr-1">
           <DueInput value={task.due} disabled={!editable} onChange={(due) => onPatch(task.key, { due }, { due })} />
-        </td>
+        </Td>
       )}
       {show.has('updated') && (
-        <td className="hidden whitespace-nowrap py-1.5 pr-3 text-right text-[11.5px] text-muted-foreground md:table-cell" title={task.updated_at}>
+        <Td density="cozy-gap" tone="muted" nowrap align="right" hideBelow="md" className="text-[11.5px]" title={task.updated_at}>
           {relativeAge(task.updated_at, new Date(), { seconds: false })}
-        </td>
+        </Td>
       )}
-    </tr>
+    </Tr>
   )
 }

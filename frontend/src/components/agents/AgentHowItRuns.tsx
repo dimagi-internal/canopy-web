@@ -14,6 +14,7 @@ import { getZkState, type ZkStateOut } from '@/api/vault'
 import { useAuth } from '@/auth/AuthProvider'
 import { relativeAge } from '@/lib/relativeAge'
 import { CopyCommand } from './CopyCommand'
+import { Td } from '@/components/DataTable'
 
 // THE TWO WAYS AN AGENT RUNS, side by side (docs/architecture/runners.md →
 // "Two ways an agent runs"):
@@ -215,11 +216,11 @@ export function AgentHowItRuns({
               <tbody className="divide-y divide-border">
                 {using.slice(0, 5).map((l) => (
                   <tr key={l.user_id}>
-                    <td className="py-1 pr-2 text-foreground" title={l.email}>{l.name}</td>
-                    <td className="py-1 pr-2 text-muted-foreground">{l.private_runners?.join(', ') || '—'}</td>
-                    <td className="py-1 text-right text-muted-foreground">
+                    <Td density="compact-gutter" tone="foreground" title={l.email}>{l.name}</Td>
+                    <Td density="compact-gutter" tone="muted">{l.private_runners?.join(', ') || '—'}</Td>
+                    <Td tone="muted" align="right">
                       {l.last_used_at ? relativeAge(l.last_used_at) : '—'}
-                    </td>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -251,25 +252,25 @@ export function AgentHowItRuns({
                   const vault = zkOn ? VAULT_LABEL[vaultReach(r.id, zk!, agentKeys ?? [])] : null
                   return (
                     <tr key={r.id} data-runner={r.name}>
-                      <td className="py-1 pr-2">
+                      <Td density="compact-gutter">
                         <span className="flex items-center gap-1.5 text-foreground">
                           <Dot light={state} label={r.online ? (r.ready ? 'online, ready' : 'online, not ready') : 'offline'} />
                           {r.name}
                         </span>
-                      </td>
-                      <td className="py-1 pr-2 text-muted-foreground">
+                      </Td>
+                      <Td density="compact-gutter" tone="muted">
                         {box ? (box.private ? 'private' : 'shared') : ''}
                         {' · '}
                         {r.online ? (r.ready ? 'ready' : 'not ready') : 'offline'}
-                      </td>
-                      <td className="py-1 pr-2 text-muted-foreground">{r.why}</td>
+                      </Td>
+                      <Td density="compact-gutter" tone="muted">{r.why}</Td>
                       {zkOn && (
-                        <td className="py-1 text-right" data-testid={`vault-${r.name}`}>
+                        <Td align="right" data-testid={`vault-${r.name}`}>
                           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                             <Dot light={vault!.light} label={vault!.text} />
                             {vault!.text}
                           </span>
-                        </td>
+                        </Td>
                       )}
                     </tr>
                   )

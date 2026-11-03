@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { disconnectApp, listConnectedApps, type ConnectedApps } from '@/api/tokens'
 import { CopyBlock } from '@/components/CopyBlock'
 import { copyText } from 'canopy-ui/lib'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /**
  * Apps connected to canopy's MCP server by signing in, and how to connect one.
@@ -64,28 +64,28 @@ export function ConnectedAppsPanel() {
       ) : data ? (
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-left text-muted-foreground">
+            <Tr head="plain">
               <Th>App</Th>
               <Th>Connected</Th>
               <Th>Last used</Th>
-              <th />
-            </tr>
+              <Th density="none" weight="inherit" />
+            </Tr>
           </thead>
           <tbody>
             {data.apps.map((a) => (
-              <tr key={a.id} className="border-t border-border">
-                <td className="py-1.5 text-foreground-secondary">{a.client_name}</td>
-                <td className="py-1.5 text-muted-foreground">{a.connected_at.slice(0, 10)}</td>
-                <td className="py-1.5 text-muted-foreground">
+              <Tr rule="top" key={a.id}>
+                <Td density="cozy" tone="secondary">{a.client_name}</Td>
+                <Td density="cozy" tone="muted">{a.connected_at.slice(0, 10)}</Td>
+                <Td density="cozy" tone="muted">
                   {a.last_used_at ? a.last_used_at.slice(0, 10) : 'never'}
-                </td>
-                <td className="py-1.5 text-right">
+                </Td>
+                <Td density="cozy" align="right">
                   <button type="button" onClick={() => void onDisconnect(a.id, a.client_name)}
                           className="text-destructive hover:underline">
                     Disconnect
                   </button>
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

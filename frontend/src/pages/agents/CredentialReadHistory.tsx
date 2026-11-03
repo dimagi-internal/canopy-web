@@ -7,6 +7,7 @@ import {
 } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
 import { AlertRows } from '@/pages/agents/AgentCredentialAlertsSection'
+import { Td } from '@/components/DataTable'
 
 // Who has been handed one credential's value (Canopy Vault, canopy-web#1538), shown
 // in the row's Activity panel — never the value. Grouped by person and machine, so
@@ -89,10 +90,10 @@ export function CredentialReadHistory({
             <tbody className="divide-y divide-border">
               {groups.map((g) => (
                 <tr key={`${g.who}|${g.where}`}>
-                  <td className="py-1 text-foreground">{g.who}</td>
-                  <td className="py-1 text-foreground">{g.where}</td>
-                  <td className="py-1 text-muted-foreground">{g.count}×</td>
-                  <td className="py-1 text-right text-muted-foreground">last {relativeAge(g.lastAt)}</td>
+                  <Td tone="foreground">{g.who}</Td>
+                  <Td tone="foreground">{g.where}</Td>
+                  <Td tone="muted">{g.count}×</Td>
+                  <Td tone="muted" align="right">last {relativeAge(g.lastAt)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -110,10 +111,10 @@ export function CredentialReadHistory({
               <tbody className="divide-y divide-border">
                 {reads.map((r, i) => (
                   <tr key={`${r.created_at}-${i}`} title={r.turn_id || undefined}>
-                    <td className="py-1 text-muted-foreground">{relativeAge(r.created_at)}</td>
-                    <td className="py-1 text-foreground">{r.user_email || '—'}</td>
-                    <td className="py-1 text-foreground">{r.runner_name || '—'}</td>
-                    <td className="py-1 text-muted-foreground">{r.via}</td>
+                    <Td tone="muted">{relativeAge(r.created_at)}</Td>
+                    <Td tone="foreground">{r.user_email || '—'}</Td>
+                    <Td tone="foreground">{r.runner_name || '—'}</Td>
+                    <Td tone="muted">{r.via}</Td>
                   </tr>
                 ))}
               </tbody>

@@ -1,5 +1,6 @@
 import type { AgentCredentialAlertOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
+import { Td } from '@/components/DataTable'
 
 // Read-anomaly alerts (Canopy Vault, canopy-web#1549): reads of this agent's
 // secrets that looked wrong. The owner was emailed/pushed for each; at most one
@@ -96,8 +97,8 @@ export function AlertRows({ alerts }: { alerts: readonly AgentCredentialAlertOut
       <tbody className="divide-y divide-border">
         {groups.map((g) => (
           <tr key={g.key} data-testid={`credential-alert-${g.latest.id}`}>
-            <td className="whitespace-nowrap py-1 pr-2 text-muted-foreground">{relativeAge(g.lastAt)}</td>
-            <td className="py-1 pr-2">
+            <Td density="compact-gutter" tone="muted" nowrap>{relativeAge(g.lastAt)}</Td>
+            <Td density="compact-gutter">
               <span
                 className={`rounded border px-1.5 py-0.5 ${
                   isExpected(g.kind)
@@ -107,11 +108,11 @@ export function AlertRows({ alerts }: { alerts: readonly AgentCredentialAlertOut
               >
                 {ALERT_LABEL[g.kind] ?? g.kind}
               </span>
-            </td>
-            <td className="py-1 pr-2 text-foreground">
+            </Td>
+            <Td density="compact-gutter" tone="foreground">
               <Sentence g={g} />
-            </td>
-            <td className="whitespace-nowrap py-1 text-right text-muted-foreground">{g.count > 1 ? `${g.count}×` : ''}</td>
+            </Td>
+            <Td tone="muted" nowrap align="right">{g.count > 1 ? `${g.count}×` : ''}</Td>
           </tr>
         ))}
       </tbody>

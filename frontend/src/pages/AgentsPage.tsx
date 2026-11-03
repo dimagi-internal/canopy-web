@@ -5,7 +5,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '../lib/scopedLinks'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // The workspace's agents, one row each: who it is and what it is doing — tasks
 // open and waiting on a person, active projects, and its turns (the last one and
@@ -91,8 +91,8 @@ export function AgentsPage() {
             </thead>
             <tbody>
               {agents.map((a) => (
-                <tr key={a.slug} className="border-t border-border align-top hover:bg-card/60">
-                  <td className="px-3 py-2">
+                <Tr rule="top" top key={a.slug} className="hover:bg-card/60">
+                  <Td density="roomy">
                     <Link to={a.url} className="flex items-start gap-2.5">
                       <Avatar agent={a} />
                       <span className="min-w-0">
@@ -100,8 +100,8 @@ export function AgentsPage() {
                         {a.description && <span className="line-clamp-1 max-w-md text-[12px] text-muted-foreground">{a.description}</span>}
                       </span>
                     </Link>
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2">
+                  </Td>
+                  <Td density="roomy" nowrap>
                     {a.last_turn_at ? (
                       <span className={FAILED.has(a.last_turn_status) ? 'text-destructive' : 'text-foreground-secondary'}
                         title={`${a.last_turn_status} · ${new Date(a.last_turn_at).toLocaleString()}`}>
@@ -111,17 +111,17 @@ export function AgentsPage() {
                     ) : (
                       <span className="text-muted-foreground">never</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-right"><Num n={a.turns_7d} /></td>
-                  <td className="px-3 py-2 text-right">
+                  </Td>
+                  <Td density="roomy" align="right"><Num n={a.turns_7d} /></Td>
+                  <Td density="roomy" align="right">
                     {a.failed_7d ? <span className="tabular-nums font-medium text-destructive">{a.failed_7d}</span> : <Num n={0} />}
-                  </td>
-                  <td className="px-3 py-2 text-right"><Num n={a.open_tasks} /></td>
-                  <td className="px-3 py-2 text-right"><Num n={a.waiting_tasks} warn /></td>
-                  <td className="px-3 py-2 text-right"><Num n={a.active_projects} /></td>
-                  <td className="px-3 py-2 text-foreground-secondary">{a.turn_mode}</td>
-                  <td className="px-3 py-2 text-foreground-secondary">{a.owner_email ?? '—'}</td>
-                </tr>
+                  </Td>
+                  <Td density="roomy" align="right"><Num n={a.open_tasks} /></Td>
+                  <Td density="roomy" align="right"><Num n={a.waiting_tasks} warn /></Td>
+                  <Td density="roomy" align="right"><Num n={a.active_projects} /></Td>
+                  <Td density="roomy" tone="secondary">{a.turn_mode}</Td>
+                  <Td density="roomy" tone="secondary">{a.owner_email ?? '—'}</Td>
+                </Tr>
               ))}
             </tbody>
           </table>

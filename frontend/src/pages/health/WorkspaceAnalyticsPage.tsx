@@ -6,7 +6,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { DailyBars } from './DailyBars'
 import { AdminOnly, HealthViews } from './HealthViews'
 import { useTreeRead } from './useTreeRead'
-import { Th } from '@/components/DataTable'
+import { Td, Th } from '@/components/DataTable'
 
 // WORKSPACE ANALYTICS: turns, chats, messages, tokens and people over time,
 // across this workspace and (by default) every one below it. Every number comes
@@ -109,19 +109,19 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
           <thead className="text-left text-muted-foreground">
             <tr><Th>Person</Th><NumHead>Active days</NumHead><NumHead>Messages</NumHead><NumHead>Turns</NumHead>
               <NumHead>Chats</NumHead><NumHead>Settings changed</NumHead><NumHead>MCP calls</NumHead>
-              <th className="font-medium">Works with most</th><NumHead>From cache</NumHead><NumHead>Input · output</NumHead>
-              <th className="font-medium">Last active</th></tr>
+              <Th density="none">Works with most</Th><NumHead>From cache</NumHead><NumHead>Input · output</NumHead>
+              <Th density="none">Last active</Th></tr>
           </thead>
           <tbody className="divide-y divide-border">
             {a.users.map((u) => (
               <tr key={u.user_id}>
-                <td className="py-1.5 text-foreground">{u.email}</td>
+                <Td density="cozy" tone="foreground">{u.email}</Td>
                 <Num>{u.active_days}</Num><Num>{u.messages}</Num><Num>{u.turns}</Num><Num>{u.sessions}</Num>
                 <Num>{u.settings}</Num><Num>{u.mcp_calls}</Num>
-                <td className="font-mono text-foreground-secondary">{u.top.join(', ') || '—'}</td>
+                <Td density="none" tone="secondary" mono>{u.top.join(', ') || '—'}</Td>
                 <Num>{compact(u.cache_read_tokens)}</Num>
                 <Num>{compact(u.input_tokens)} · {compact(u.output_tokens)}</Num>
-                <td className="text-foreground-secondary">{u.last_at ? relativeAge(u.last_at, new Date(), { seconds: false }) : '—'}</td>
+                <Td density="none" tone="secondary">{u.last_at ? relativeAge(u.last_at, new Date(), { seconds: false }) : '—'}</Td>
               </tr>
             ))}
           </tbody>
@@ -154,16 +154,16 @@ function Breakdown({ title, column, testid, rows, note, empty }: {
           <tr><Th>{column}</Th>
             <NumHead>Turns</NumHead><NumHead>Failed or lost</NumHead><NumHead>Chats</NumHead>
             <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>From cache</NumHead>
-            <NumHead>Input · output</NumHead><th className="font-medium">Last activity</th></tr>
+            <NumHead>Input · output</NumHead><Th density="none">Last activity</Th></tr>
         </thead>
         <tbody className="divide-y divide-border">
           {rows.map(({ name, row: r }) => (
             <tr key={name}>
-              <td className="py-1.5 font-mono text-foreground">{name}</td>
+              <Td density="cozy" tone="foreground" mono>{name}</Td>
               <Num>{r.turns}</Num><Num>{r.failed}</Num><Num>{r.sessions}</Num><Num>{r.messages}</Num>
               <Num>{r.people}</Num><Num>{compact(r.cache_read_tokens)}</Num>
               <Num>{compact(r.input_tokens)} · {compact(r.output_tokens)}</Num>
-              <td className="text-foreground-secondary">{r.last_at ? relativeAge(r.last_at, now, { seconds: false }) : '—'}</td>
+              <Td density="none" tone="secondary">{r.last_at ? relativeAge(r.last_at, now, { seconds: false }) : '—'}</Td>
             </tr>
           ))}
         </tbody>
@@ -184,9 +184,9 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 function Num({ children }: { children: ReactNode }): JSX.Element {
-  return <td className="text-right tabular-nums">{children}</td>
+  return <Td density="none" numeric align="right">{children}</Td>
 }
 
 function NumHead({ children }: { children: ReactNode }): JSX.Element {
-  return <th className="text-right font-medium">{children}</th>
+  return <Th density="none" align="right">{children}</Th>
 }

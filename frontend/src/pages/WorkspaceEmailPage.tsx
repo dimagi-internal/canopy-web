@@ -21,7 +21,7 @@ import { listMembers, type MemberOut } from '@/api/workspaces'
 import { scopedPath } from '@/lib/scopedLinks'
 import { InboundMailLog } from '@/pages/InboundMailLog'
 import { errorText } from '../api/problem'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // A workspace's own email domain run through canopy (apps/mail, SES). Any member
 // can read it; the server answers `can_manage` for the list and per domain, so this
@@ -154,33 +154,33 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
       {(!dnsOk || showDns) && (
         <table className="mt-1 w-full text-[12px]" data-testid="mail-records">
           <thead className="text-left text-muted-foreground">
-            <tr className="border-b border-border">
+            <Tr rule="bottom">
               <Th density="compact-gap">Purpose</Th>
               <Th density="compact-gap">Type</Th>
               <Th density="compact-gap">Name</Th>
               <Th density="compact-gap">Value</Th>
               <Th density="compact-gap">Priority</Th>
               <Th>Status</Th>
-            </tr>
+            </Tr>
           </thead>
           <tbody>
             {domain.records.map((r, i) => (
-              <tr key={`${r.purpose}-${i}`} className="border-b border-border align-top">
-                <td className="py-1.5 pr-3 text-foreground">{r.purpose}</td>
-                <td className="py-1.5 pr-3 text-foreground-secondary">{r.type}</td>
-                <td className="break-all py-1.5 pr-3 font-mono text-foreground-secondary">{r.name}</td>
-                <td className="py-1.5 pr-3">
+              <Tr rule="bottom" top key={`${r.purpose}-${i}`}>
+                <Td density="cozy-gap" tone="foreground">{r.purpose}</Td>
+                <Td density="cozy-gap" tone="secondary">{r.type}</Td>
+                <Td density="cozy-gap" tone="secondary" mono className="break-all">{r.name}</Td>
+                <Td density="cozy-gap">
                   <span className="break-all font-mono text-foreground">{r.value}</span>{' '}
                   <CopyButton text={r.value} aria-label={`Copy ${r.purpose} value`} />
-                </td>
-                <td className="py-1.5 pr-3 text-foreground-secondary">{r.priority ?? ''}</td>
-                <td className="py-1.5">
+                </Td>
+                <Td density="cozy-gap" tone="secondary">{r.priority ?? ''}</Td>
+                <Td density="cozy">
                   {r.ok ? <span className="text-success">✓</span> : <span className="text-destructive">✗</span>}
                   {!r.ok && r.found.length > 0 && (
                     <span className="ml-1 break-all text-muted-foreground">found: {r.found.join(', ')}</span>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>
@@ -276,20 +276,20 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         ) : (
           <table className="mt-1 w-full text-[12px]" data-testid="mail-routes">
             <thead className="text-left text-muted-foreground">
-              <tr className="border-b border-border">
+              <Tr rule="bottom">
                 <Th density="compact-gap">Address</Th>
                 <Th density="compact-gap">Goes to</Th>
                 <Th density="compact-gap">Enabled</Th>
                 <Th density="compact-gap" title="Also keep each forwarded message in the member's canopy inbox, readable only by them">
                   Keep a copy in canopy
                 </Th>
-                {manage && <th className="py-1" />}
-              </tr>
+                {manage && <Th weight="inherit" />}
+              </Tr>
             </thead>
             <tbody>
               {domain.routes.map((r) => (
-                <tr key={r.id} className="border-b border-border">
-                  <td className="py-1.5 pr-3 text-foreground">
+                <Tr rule="bottom" key={r.id}>
+                  <Td density="cozy-gap" tone="foreground">
                     {r.address}
                     {r.auto && (
                       <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
@@ -297,17 +297,17 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                         automatic
                       </span>
                     )}
-                  </td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary">{goesTo(r)}</td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary">
+                  </Td>
+                  <Td density="cozy-gap" tone="secondary">{goesTo(r)}</Td>
+                  <Td density="cozy-gap" tone="secondary">
                     {manage ? (
                       <label className="-my-2.5 inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center">
                         <input type="checkbox" checked={r.enabled} disabled={busy} className="h-3.5 w-3.5 accent-primary"
                           aria-label={`Enabled: ${r.address}`} onChange={() => void toggleRoute(r)} />
                       </label>
                     ) : (r.enabled ? 'Yes' : 'No')}
-                  </td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary" data-testid={`keep-copy-${r.local_part}`}>
+                  </Td>
+                  <Td density="cozy-gap" tone="secondary" data-testid={`keep-copy-${r.local_part}`}>
                     {r.kind !== 'forward' ? (
                       <span className="text-muted-foreground" title="Only forwarding addresses can keep a copy">—</span>
                     ) : manage ? (
@@ -318,9 +318,9 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                         {r.keep_copy ? 'On' : 'Off'}
                       </label>
                     ) : (r.keep_copy ? 'On' : 'Off')}
-                  </td>
+                  </Td>
                   {manage && (
-                    <td className="whitespace-nowrap py-1.5 text-right">
+                    <Td density="cozy" nowrap align="right">
                       <button type="button" className="px-2 text-primary hover:underline"
                         onClick={() => {
                           setLocal(r.local_part); setKind(r.kind as Kind); setAgent(r.agent_slug)
@@ -334,9 +334,9 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                         }}>
                         Remove
                       </button>}
-                    </td>
+                    </Td>
                   )}
-                </tr>
+                </Tr>
               ))}
             </tbody>
           </table>

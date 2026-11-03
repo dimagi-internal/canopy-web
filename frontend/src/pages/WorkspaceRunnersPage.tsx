@@ -16,6 +16,7 @@ import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
 import { scopedPath } from '../lib/scopedLinks'
 import { ApiError } from '@/api/problem'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // THE RUNNER TOPOLOGY of this workspace and every workspace below it: which box
 // each agent's turns land on, and what stops if a box goes dark.
@@ -122,38 +123,37 @@ function Topology({ slug }: { slug: string }): JSX.Element {
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]" data-testid="topology-agents">
             <thead className="text-left text-muted-foreground">
-              <tr className="border-b border-border">
-                <th className="py-1.5 pr-3 font-medium">Agent</th>
-                <th className="py-1.5 pr-3 font-medium">In order</th>
-                <th className="py-1.5 pr-3 font-medium">Rules</th>
-                <th className="py-1.5 font-medium">Now</th>
-              </tr>
+              <Tr rule="bottom">
+                <Th density="cozy-gap">Agent</Th>
+                <Th density="cozy-gap">In order</Th>
+                <Th density="cozy-gap">Rules</Th>
+                <Th density="cozy">Now</Th>
+              </Tr>
             </thead>
             <tbody>
               {topo.workspaces.map((ws) => [
-                <tr key={`ws-${ws.slug}`} className="border-b border-border bg-muted/50" data-testid={`topology-ws-${ws.slug}`}>
-                  <td colSpan={4} className="py-1.5 font-medium text-foreground" style={{ paddingLeft: `${ws.depth * 16 + 4}px` }}>
+                <Tr rule="bottom" key={`ws-${ws.slug}`} className="bg-muted/50" data-testid={`topology-ws-${ws.slug}`}>
+                  <Td density="cozy" tone="foreground" colSpan={4} className="font-medium" style={{ paddingLeft: `${ws.depth * 16 + 4}px` }}>
                     {ws.depth > 0 && <span className="text-muted-foreground">└ </span>}
                     {ws.display_name} <span className="font-normal text-muted-foreground">{ws.slug}</span>
                     {ws.agents.length === 0 && (
                       <span className="ml-2 font-normal text-muted-foreground">no agents</span>
                     )}
-                  </td>
-                </tr>,
+                  </Td>
+                </Tr>,
                 ...ws.agents.map((a) => {
                   const health = agentHealth(a, runners)
                   const touches = selected !== null && a.routes.some((r) => r.runner_id === selected)
                   const sole = selected !== null && dependsSolelyOn(a, selected, runners)
                   return (
-                    <tr
+                    <Tr
+                      rule="bottom"
+                      top
                       key={`${ws.slug}-${a.slug}`}
-                      className={clsx(
-                        'border-b border-border align-top',
-                        selected !== null && !touches && 'opacity-40',
-                      )}
+                      className={clsx(selected !== null && !touches && 'opacity-40')}
                       data-testid={`topology-agent-${a.slug}`}
                     >
-                      <td className="py-1.5 pr-3" style={{ paddingLeft: `${ws.depth * 16 + 16}px` }}>
+                      <Td density="cozy-gap" style={{ paddingLeft: `${ws.depth * 16 + 16}px` }}>
                         <Link
                           to={scopedPath(ws.slug, `/agents/${a.slug}/settings`)}
                           className={clsx('hover:underline', sole ? 'font-semibold text-destructive' : 'text-foreground')}
@@ -161,11 +161,11 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                           {a.name}
                         </Link>{' '}
                         <span className="text-muted-foreground">{a.turn_mode}</span>
-                      </td>
-                      <td className="py-1.5 pr-3">
+                      </Td>
+                      <Td density="cozy-gap">
                         <RouteChips routes={defaultRoutes(a)} runners={runners} selected={selected} ordered />
-                      </td>
-                      <td className="py-1.5 pr-3">
+                      </Td>
+                      <Td density="cozy-gap">
                         {ruleRoutes(a).length === 0 ? (
                           <span className="text-muted-foreground">—</span>
                         ) : (
@@ -183,13 +183,13 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                             ))}
                           </ul>
                         )}
-                      </td>
-                      <td className="py-1.5">
+                      </Td>
+                      <Td density="cozy">
                         <span className={clsx('rounded border px-1.5 py-0.5', HEALTH_LABEL[health].className)}>
                           {HEALTH_LABEL[health].text}
                         </span>
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   )
                 }),
               ])}
@@ -284,18 +284,18 @@ function PrivateRunners({ slug }: { slug: string }): JSX.Element | null {
       <table className="w-full text-[12px]">
         <tbody className="divide-y divide-border">
           {rows.map((w) => (
-            <tr key={w.id} className={clsx(w.retired && 'opacity-60')}>
-              <td className="py-1.5 pr-3 text-foreground">
+            <Tr key={w.id} className={clsx(w.retired && 'opacity-60')}>
+              <Td density="cozy-gap" tone="foreground">
                 {w.name} <span className="text-muted-foreground">— {w.owner_name}&rsquo;s computer</span>
-              </td>
-              <td className="py-1.5 pr-3">{w.agents.join(', ')}</td>
-              <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
+              </Td>
+              <Td density="cozy-gap">{w.agents.join(', ')}</Td>
+              <Td density="cozy-gap" tone="muted" numeric align="right">
                 {w.local_turns} direct turn{w.local_turns === 1 ? '' : 's'}
-              </td>
-              <td className="py-1.5 text-right text-muted-foreground">
+              </Td>
+              <Td density="cozy" tone="muted" align="right">
                 {w.last_seen_at ? relativeAge(w.last_seen_at) : '—'}
-              </td>
-            </tr>
+              </Td>
+            </Tr>
           ))}
         </tbody>
       </table>

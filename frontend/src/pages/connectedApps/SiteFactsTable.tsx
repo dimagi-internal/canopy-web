@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react'
 import { Button, Input } from 'canopy-ui/ui'
 import { discoverSite, type ConnectedApp, type SiteDiscovery, type SiteFacts } from '@/api/connectedApps'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 const FACT_ROWS: { key: keyof SiteFacts; label: string }[] = [
   { key: 'origins', label: 'Site URLs' },
@@ -34,28 +35,28 @@ export function SiteFactsTable({ discovery }: { discovery: SiteDiscovery }): JSX
   return (
     <table className="w-full border-collapse text-xs">
       <thead>
-        <tr className="border-b border-border text-left text-muted-foreground">
-          <th className="py-1 pr-2 font-normal">Setting</th>
-          {current && <th className="py-1 pr-2 font-normal">In canopy now</th>}
-          <th className="py-1 pr-2 font-normal">The site says</th>
-        </tr>
+        <Tr rule="bottom" head="plain">
+          <Th density="compact-gutter" weight="normal">Setting</Th>
+          {current && <Th density="compact-gutter" weight="normal">In canopy now</Th>}
+          <Th density="compact-gutter" weight="normal">The site says</Th>
+        </Tr>
       </thead>
       <tbody>
         {FACT_ROWS.map(({ key, label }) => (
-          <tr key={key} className="border-b border-border align-top last:border-0">
-            <td className="py-1 pr-2 text-foreground">
+          <Tr rule="bottom-last" top key={key}>
+            <Td density="compact-gutter" tone="foreground">
               {label}
               {changed.has(key) && <span className="ml-1 text-warning">changes</span>}
-            </td>
+            </Td>
             {current && (
-              <td className="break-all py-1 pr-2 font-mono text-[11px] text-muted-foreground">
+              <Td density="compact-gutter" tone="muted" mono className="break-all text-[11px]">
                 {factText(current, key)}
-              </td>
+              </Td>
             )}
-            <td className="break-all py-1 pr-2 font-mono text-[11px] text-foreground">
+            <Td density="compact-gutter" tone="foreground" mono className="break-all text-[11px]">
               {factText(discovery.site, key)}
-            </td>
-          </tr>
+            </Td>
+          </Tr>
         ))}
       </tbody>
     </table>

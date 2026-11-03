@@ -12,6 +12,7 @@ import { relativeAge } from '@/lib/relativeAge'
 
 import { PROJECT_STATUSES } from './meta'
 import { AgentList, AgentName, HealthBadge, PersonName, ProgressBar, ProjectStatusBadge } from './projectBits'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /** Still in play: what "Open" means on the Projects page (the server's `status=open`). */
 export const OPEN_PROJECT_STATUSES: readonly Project['status'][] = ['proposed', 'planned', 'active', 'paused']
@@ -147,75 +148,74 @@ export function ProjectTable({
   if (projects.length === 0) {
     return <div className="rounded-lg border border-border bg-card px-4 py-6 text-[13px] text-muted-foreground">{empty ?? 'No projects.'}</div>
   }
-  const th = 'px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground'
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card" data-testid="project-table">
       <table className="w-full border-collapse text-[13px]">
         <thead className="border-b border-border">
           <tr>
-            <th className={cn(th, 'pl-3')}>Project</th>
-            <th className={th}>Status</th>
-            <th className={th}>Health</th>
-            <th className={cn(th, 'hidden md:table-cell')}>Lead</th>
-            {showLeadAgent && <th className={cn(th, 'hidden md:table-cell')}>Lead agent</th>}
-            <th className={cn(th, 'hidden lg:table-cell')}>Agents</th>
-            <th className={th}>Progress</th>
-            <th className={cn(th, 'text-right')}>Open</th>
-            <th className={cn(th, 'text-right')}>Waiting</th>
-            <th className={cn(th, 'hidden sm:table-cell')}>Target</th>
-            <th className={cn(th, 'hidden pr-3 text-right md:table-cell')}>Updated</th>
+            <Th density="tight" align="left" label className="pl-3">Project</Th>
+            <Th density="tight" align="left" label>Status</Th>
+            <Th density="tight" align="left" label>Health</Th>
+            <Th density="tight" align="left" label hideBelow="md">Lead</Th>
+            {showLeadAgent && <Th density="tight" align="left" label hideBelow="md">Lead agent</Th>}
+            <Th density="tight" align="left" label hideBelow="lg">Agents</Th>
+            <Th density="tight" align="left" label>Progress</Th>
+            <Th density="tight" align="right" label>Open</Th>
+            <Th density="tight" align="right" label>Waiting</Th>
+            <Th density="tight" align="left" label hideBelow="sm">Target</Th>
+            <Th density="tight" align="right" label hideBelow="md" className="pr-3">Updated</Th>
           </tr>
         </thead>
         <tbody>
           {projects.map((p) => {
             const others = (p.member_agents ?? []).filter((s) => s !== p.agent_slug)
             return (
-              <tr key={p.id} data-project={p.address || p.id} className="border-b border-border last:border-0 hover:bg-muted/50">
-                <td className="max-w-[22rem] py-1.5 pl-3 pr-2">
+              <Tr rule="bottom-last" key={p.id} data-project={p.address || p.id} className="hover:bg-muted/50">
+                <Td density="cozy-gutter" className="max-w-[22rem] pl-3">
                   <Link to={p.url} className="block truncate font-medium text-foreground hover:text-primary">
                     {p.name}
                   </Link>
                   {p.outcome && <div className="truncate text-[12px] text-muted-foreground">{p.outcome}</div>}
-                </td>
-                <td className="px-2 py-1.5">
+                </Td>
+                <Td density="tight">
                   <ProjectStatusBadge status={p.status} />
-                </td>
-                <td className="px-2 py-1.5">
+                </Td>
+                <Td density="tight">
                   <HealthBadge project={p} /> {!p.update_missing && !p.health && <span className="text-foreground-subtle">—</span>}
-                </td>
-                <td className="hidden max-w-[9rem] px-2 py-1.5 md:table-cell">
+                </Td>
+                <Td density="tight" hideBelow="md" className="max-w-[9rem]">
                   {p.owner_email ? <PersonName email={p.owner_email} /> : <span className="text-foreground-subtle">—</span>}
-                </td>
+                </Td>
                 {showLeadAgent && (
-                  <td className="hidden max-w-[9rem] px-2 py-1.5 md:table-cell">
+                  <Td density="tight" hideBelow="md" className="max-w-[9rem]">
                     {p.agent_slug ? <AgentName slug={p.agent_slug} /> : <span className="text-foreground-subtle">—</span>}
-                  </td>
+                  </Td>
                 )}
-                <td className="hidden max-w-[10rem] px-2 py-1.5 lg:table-cell">
+                <Td density="tight" hideBelow="lg" className="max-w-[10rem]">
                   {others.length ? <AgentList slugs={others} max={2} /> : <span className="text-foreground-subtle">—</span>}
-                </td>
-                <td className="px-2 py-1.5">
+                </Td>
+                <Td density="tight">
                   <ProgressBar done={p.done_task_count} total={p.task_count} />
-                </td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{p.open_task_count}</td>
-                <td
-                  className={cn(
-                    'px-2 py-1.5 text-right tabular-nums',
-                    p.waiting_task_count ? 'font-medium text-warning' : 'text-muted-foreground',
-                  )}
+                </Td>
+                <Td density="tight" numeric align="right">{p.open_task_count}</Td>
+                <Td
+                  density="tight"
+                  align="right"
+                  numeric
+                  className={p.waiting_task_count ? 'font-medium text-warning' : 'text-muted-foreground'}
                 >
                   {p.waiting_task_count}
-                </td>
-                <td className="hidden whitespace-nowrap px-2 py-1.5 text-[12px] text-foreground-secondary sm:table-cell">
+                </Td>
+                <Td density="tight" tone="secondary" nowrap hideBelow="sm" className="text-[12px]">
                   {shortDate(p.target_date) || <span className="text-foreground-subtle">—</span>}
-                </td>
-                <td
-                  className="hidden whitespace-nowrap py-1.5 pl-2 pr-3 text-right text-[11.5px] text-muted-foreground md:table-cell"
+                </Td>
+                <Td density="cozy" tone="muted" nowrap align="right" hideBelow="md"
+                  className="pl-2 pr-3 text-[11.5px]"
                   title={p.updated_at}
                 >
                   {relativeAge(p.updated_at, new Date(), { seconds: false })}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             )
           })}
         </tbody>

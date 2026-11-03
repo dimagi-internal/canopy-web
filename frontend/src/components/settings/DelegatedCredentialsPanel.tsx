@@ -4,7 +4,7 @@ import {
   withdrawMyDelegatedCredential,
   type MyDelegatedCredential,
 } from '@/api/delegatedCredentials'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 const REVOKE: Record<string, string> = {
   github: 'https://github.com/settings/personal-access-tokens',
@@ -66,27 +66,27 @@ export function DelegatedCredentialsPanel() {
       ) : (
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-left text-muted-foreground">
+            <Tr head="plain">
               <Th>Agent</Th>
               <Th>Account</Th>
               <Th>Machines that can open it</Th>
               <Th>Status</Th>
-              <th />
-            </tr>
+              <Th density="none" weight="inherit" />
+            </Tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} className="border-t border-border align-top">
-                <td className="py-1.5 text-foreground-secondary">{r.agent_name || r.agent}</td>
-                <td className="py-1.5 text-muted-foreground">{account(r)}</td>
-                <td className="py-1.5 text-muted-foreground">
+              <Tr rule="top" top key={r.id}>
+                <Td density="cozy" tone="secondary">{r.agent_name || r.agent}</Td>
+                <Td density="cozy" tone="muted">{account(r)}</Td>
+                <Td density="cozy" tone="muted">
                   {(r.machines ?? []).join(', ') || 'none yet'}
                   {(r.waiting ?? []).length ? <> · waiting: {(r.waiting ?? []).join(', ')}</> : null}
-                </td>
-                <td className={`py-1.5 ${r.in_force ? 'text-muted-foreground' : 'text-destructive'}`}>
+                </Td>
+                <Td density="cozy" className={r.in_force ? 'text-muted-foreground' : 'text-destructive'}>
                   {r.in_force ? r.label.split(' · ').slice(2).join(' · ') || 'In use' : 'Not used: you are no longer its admin'}
-                </td>
-                <td className="py-1.5 text-right whitespace-nowrap">
+                </Td>
+                <Td density="cozy" nowrap align="right">
                   <button
                     type="button"
                     onClick={() => void onWithdraw(r)}
@@ -99,8 +99,8 @@ export function DelegatedCredentialsPanel() {
                       Revoke at {providerName(r.provider)}
                     </a>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>
