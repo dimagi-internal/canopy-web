@@ -197,6 +197,20 @@ def _serving(user, credential: dict | None, *, session_login_live: bool = False)
     return grant, current, agent
 
 
+def serving_turn(user) -> Turn | None:
+    """The one turn `user`'s request is made INSIDE: `user` is an agent's own login and the
+    request carries the per-turn login canopy-web issued for a turn of that agent that is
+    running now (not a stored token, a session login, a finished or confined turn). Worked
+    out from the server's own record, never from anything the agent sends. None otherwise."""
+    cred = getattr(user, CREDENTIAL_ATTR, None) if user is not None else None
+    if not cred:
+        return None
+    try:
+        return _serving(user, cred)[1]
+    except Refused:
+        return None
+
+
 def _check(user, credential: dict | None, email: str | None, *,
            session_login_live: bool = False) -> OnBehalf:
     grant, current, agent = _serving(user, credential, session_login_live=session_login_live)

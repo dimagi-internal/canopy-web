@@ -46,6 +46,28 @@ def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
     return can_read_turn_log(user, turn, _memo)
 
 
+def can_read_caller_context(user, turn) -> bool:
+    """Who may read a turn's caller envelope: whoever may read its content, and the agent
+    itself, from the login canopy-web issued for THIS turn while it runs (never another
+    turn, a finished one, a stored token, or a sensitive conversation's). The envelope is
+    the document the runner already put in that agent's hands at the claim (who asked,
+    verified, role, permissions, turn_mode, what canopy knows of the asker) — no prompt,
+    no transcript — and an agent's own login cannot read a person's chat, so without this
+    the mid-turn re-read `who_is_asking` documents could never answer there."""
+    return can_read_turn_content(user, turn) or is_own_running_turn(user, turn)
+
+
+def is_own_running_turn(user, turn) -> bool:
+    """`user` is the agent's own login, making this request with the per-turn login
+    canopy-web issued for `turn`, which is running now, and it is not sensitive."""
+    if sensitivity.is_sensitive(turn):
+        return False
+    from . import turn_asker
+
+    running = turn_asker.serving_turn(user)
+    return running is not None and running.pk == turn.pk
+
+
 def can_read_turn_log(user, turn, _memo: dict | None = None) -> bool:
     """Who may read a turn's LOG — the people listed above — whether or not the turn
     is sensitive. Ask it only where what is served holds no words: a sensitive

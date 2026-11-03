@@ -7,7 +7,7 @@ a contact's notes may have been corrected, or the person blocked, since.
 
 Gated exactly like `GET /api/harness/turns/{id}/caller-context`: the caller
 must be a member of the turn's tenant who may read the turn's content
-(`turn_access.can_read_turn_content`, never for a sensitive turn), and a turn
+(`turn_access.can_read_caller_context`: the content gate, or an agent's own login on the turn it is running; never for a sensitive turn), and a turn
 they cannot see is "not found", never "forbidden", so a guessed id confirms
 nothing.
 """
@@ -49,7 +49,7 @@ def _envelope_for_caller_token(turn_id: str) -> dict:
     return build(turn)
 
 
-def _envelope_sync(user_id, turn_id: str) -> dict:
+def _envelope_sync(user_id, turn_id: str, credential: dict | None = None) -> dict:
     from apps.harness import turn_access  # noqa: PLC0415 — as its neighbours: tools load before apps
     from apps.harness.caller_context import build
     from apps.harness.models import Turn
@@ -63,15 +63,29 @@ def _envelope_sync(user_id, turn_id: str) -> dict:
                                         "initiator_contact")
             .filter(pk=pk).first())
     user = User.objects.filter(pk=user_id).first() if user_id is not None else None
+    if user is not None and credential:
+        # The agent's per-turn login, as the REST door notes it (`turn_asker.remember`).
+        from apps.harness import turn_asker  # noqa: PLC0415
+
+        turn_asker.remember(user, credential)
     # Fail CLOSED on a tenant-less turn: no tenant must never read as "ungated".
     slug = _tenant_of(turn) if turn is not None else None
     if turn is None or user is None or not slug or not wsvc.is_member(user, slug):
         raise TurnNotFound("turn not found")
     # ...and the REST twin's content gate (`turn_content_or_404`): a turn's envelope
     # is its content, and a sensitive turn's is no one's to read through a tool.
-    if not turn_access.can_read_turn_content(user, turn):
+    if not turn_access.can_read_caller_context(user, turn):
         raise TurnNotFound("turn not found")
     return build(turn, reader_user=user)
+
+
+def _credential() -> dict | None:
+    from apps.mcp.api_tools import _principal  # noqa: PLC0415
+
+    try:
+        return _principal()["credential"]
+    except Exception:  # noqa: BLE001 — no credential just means no own-turn read
+        return None
 
 
 @mcp.tool(annotations={"readOnlyHint": True})
@@ -91,7 +105,7 @@ async def who_is_asking(turn_id: str) -> dict:
         if _turn_claims() is not None:
             env = await sync_to_async(_envelope_for_caller_token, thread_sensitive=True)(turn_id)
         else:
-            env = await sync_to_async(_envelope_sync, thread_sensitive=True)(user_id, turn_id)
+            env = await sync_to_async(_envelope_sync, thread_sensitive=True)(user_id, turn_id, _credential())
     except Exception as exc:  # noqa: BLE001
         await write_audit(user_id=user_id, tool="who_is_asking",
                           args_summary=f"turn={turn_id}", ok=False, error=str(exc))
