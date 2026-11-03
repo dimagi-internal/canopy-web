@@ -53,26 +53,28 @@ def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser
     return verify_p1363(endorse_msg(agent_id, kind, target, key_jkt).encode(), sig, endorser_jwk)
 
 
-def recipients(agent) -> list[dict]:
+def recipients(agent, facts=None) -> list[dict]:
     """Every principal a `zks1` value for `agent` may be sealed to, with the
-    public key and its thumbprint — `zk_seal.recipients_for`, labelled."""
+    public key and its thumbprint — `zk_seal.recipients_for`, labelled. `facts`:
+    `device_keys.serving_facts`, when asking for several agents."""
 
     out = [{"kind": "device", "target": k.ecdh_jkt, "label": f"{k.runner.name} · {k.label or k.kind}",
             "public_jwk": k.ecdh_public_jwk, "key_jkt": device_keys.thumbprint(k.ecdh_public_jwk)}
-           for k in zk.eligible_device_keys(agent)]
+           for k in zk.eligible_device_keys(agent, facts)]
     out += [{"kind": "member", "target": str(ks.user_id), "label": ks.user.email,
              "public_jwk": ks.public_jwk, "key_jkt": device_keys.thumbprint(ks.public_jwk)}
-            for ks in zk.eligible_members(agent)]
+            for ks in zk.eligible_members(agent, facts)]
     return out
 
 
-def endorsements(agent) -> list[dict]:
+def endorsements(agent, facts=None) -> list[dict]:
     """Every endorsement of a CURRENT recipient's CURRENT key, with the
-    endorser's public key so a client can verify it without a second read."""
+    endorser's public key so a client can verify it without a second read.
+    `facts`: `device_keys.serving_facts`, when asking for several agents."""
 
-    live = {(r["kind"], r["target"], r["key_jkt"]) for r in recipients(agent)}
+    live = {(r["kind"], r["target"], r["key_jkt"]) for r in recipients(agent, facts)}
     # Vouched for by someone who is a member NOW: an endorser who left vouches for nobody.
-    endorsers = vault_members.agent_member_ids(agent)
+    endorsers = zk.member_ids(agent, facts)
     rows = [e for e in AgentVaultEndorsement.objects.filter(agent=agent, endorser_id__in=endorsers)
             .select_related("endorser")
             if (e.kind, e.target, e.key_jkt) in live]

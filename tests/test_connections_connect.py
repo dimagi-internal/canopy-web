@@ -333,12 +333,14 @@ def test_connecting_the_same_account_again_replaces_the_envelope_and_unshares(wo
     assert again.statement_version == 3
 
 
-def test_a_concurrent_first_connect_is_sealed_to_the_winners_row(world, fake_provider):
+@pytest.mark.parametrize("winner_key_is_mine", [True, False])
+def test_a_concurrent_first_connect_is_sealed_to_the_winners_row(world, fake_provider, winner_key_is_mine):
     """Another completion for the same account inserted the row between our lookup
-    and our insert: we update the winner, and the envelope names ITS binding."""
+    and our insert: we update the winner, and the envelope names ITS binding. A winner
+    sealed to another key is not ours to replace, on this path either (R10)."""
+    winner_key = zk_ref.jkt(world.person_priv.public_key()) if winner_key_is_mine else "someone-elses-key"
     winner = Connection.objects.create(app=world.app, provider="salesforce", user=world.person,
-                                       account_id="00Dorg/005user", sealed="zks1:theirs",
-                                       owner_key=zk_ref.jkt(world.person_priv.public_key()))
+                                       account_id="00Dorg/005user", sealed="zks1:theirs", owner_key=winner_key)
     real = Connection.objects.select_for_update
     misses = []
 
@@ -347,6 +349,15 @@ def test_a_concurrent_first_connect_is_sealed_to_the_winners_row(world, fake_pro
             misses.append(1)
             return Connection.objects.none()
         return real(*a, **kw)
+    if not winner_key_is_mine:
+        with mock.patch.object(Connection.objects, "select_for_update", side_effect=select_for_update), \
+                pytest.raises(services.ConnectionError) as e:
+            connect(world)
+        assert e.value.code == "owner_changed" and misses
+        winner.refresh_from_db()
+        assert (winner.sealed, winner.owner_key) == ("zks1:theirs", "someone-elses-key")
+        assert [c[2]["token"] for c in fake_provider.calls if c[1] == REVOKE_URL] == [FAKE_REFRESH]
+        return
     with mock.patch.object(Connection.objects, "select_for_update", side_effect=select_for_update):
         conn = connect(world)
     assert misses and conn.pk == winner.pk and Connection.objects.count() == 1

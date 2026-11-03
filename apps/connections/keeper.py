@@ -61,8 +61,11 @@ def work(runner: Runner) -> list[dict]:
     that needs it: `revoking` (revoke and confirm), or `active` with machines waiting
     (`recipients.waiting`) while this box is itself still one the statement allows
     (a box `prune` kept only so it can revoke re-seals for nobody). The material is
-    `tokens.material_fields`: the endorsements of every agent in force, each tagged
-    `agent_id`. Nothing for a box that does not keep."""
+    `tokens.material_fields`: the endorsements of every agent in force and of the
+    device that last wrote each envelope (even one since pruned, so this box can still
+    validate what it re-seals), each tagged `agent_id`. Nothing for a box that does
+    not keep. Each connection's `device_reasons` is read once, and one read of the
+    fleet serves them all."""
     if not _keeps(runner):
         return []
     keys = {k.ecdh_jkt: k for k in RunnerDeviceKey.objects.filter(
@@ -73,21 +76,24 @@ def work(runner: Runner) -> list[dict]:
     out = []
     rows = (Connection.objects.filter(state__in=[Connection.ACTIVE, Connection.REVOKING]).exclude(sealed="")
             .select_related("app__workspace", "agent", "user").order_by("pk"))
+    held_rows = []
     for conn in rows:
         held = sorted(t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device" and t in keys)
-        if not held:
-            continue
-        key = keys[held[0]]
+        if held:
+            held_rows.append((conn, keys[held[0]]))
+    facts = rcpt.facts_for([conn for conn, _ in held_rows])
+    for conn, key in held_rows:
         revoking = conn.state == Connection.REVOKING
+        pairs = rcpt.device_reasons(conn, facts=facts)
         waiting: list[str] = []
         if not revoking:
-            if ("device", key.ecdh_jkt) not in rcpt.targets(rcpt.recipients(conn)):
+            if key.ecdh_jkt not in {k.ecdh_jkt for k, _ in pairs}:
                 continue
-            waiting = sorted({w["target"] for w in rcpt.waiting(conn)})
+            waiting = sorted({w["target"] for w in rcpt.waiting(conn, pairs=pairs)})
             if not waiting:
                 continue
         out.append({
-            **tokens.material_fields(conn, key),
+            **tokens.material_fields(conn, key, pairs, facts),
             "waiting": waiting,
             "revoking": revoking,
             # Decided now, not at the disconnect (spec §4.5): revoke at the provider

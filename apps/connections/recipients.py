@@ -32,9 +32,9 @@ from django.db import transaction
 from apps.agents import access
 from apps.agents.credentials import accounts, vault_engine, zk_endorse, zk_seal
 from apps.agents.models import Agent
-from apps.agents.services import runner_may_hold_agent
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerDeviceKey
+from apps.harness.routing import ServingFacts
 from apps.passkeys.models import UserVaultKeyset
 
 from . import wire
@@ -89,13 +89,30 @@ def _ready(keys):
             .exclude(ecdh_jkt="").select_related("runner__owner"))
 
 
-def _agent_devices(conn: Connection, agent: Agent) -> list[RunnerDeviceKey]:
+def facts_for(conns) -> ServingFacts | None:
+    """One read of the fleet and each agent's facts for everything `conns`' stored
+    statements name, to pass to the calls below when asking about the same connections
+    several times (each of them otherwise reads its own). Read per request and dropped
+    with it, so never across a write. None when no statement names an agent."""
+    pks = {pk for c in conns for pk in statement_agent_pks(c.statement)}
+    agents = list(Agent.objects.filter(pk__in=pks)) if pks else []
+    return device_keys.serving_facts(agents) if agents else None
+
+
+def endorsements_for(agent: Agent, facts: ServingFacts | None = None) -> list[dict]:
+    """`zk_endorse.endorsements(agent)`, read once per `facts`."""
+    if facts is None:
+        return zk_endorse.endorsements(agent)
+    return facts.once(("endorsements", agent.pk), lambda: zk_endorse.endorsements(agent, facts))
+
+
+def _agent_devices(conn: Connection, agent: Agent, facts: ServingFacts) -> list[RunnerDeviceKey]:
     if conn.agent_id is not None:
         # An agent's own: every machine that runs it and whose owner may hold it. A
         # computer with no runner app runs no turn, so it is none of them.
-        keys = _ready(device_keys.keys_for_agent(agent)).exclude(runner__kind=Runner.COMPUTER)
-        return [k for k in keys if runner_may_hold_agent(k.runner, agent)]
-    return accounts.delegated_devices(agent, conn.user)
+        keys = _ready(device_keys.keys_for_agent(agent, facts)).exclude(runner__kind=Runner.COMPUTER)
+        return [k for k in keys if facts.may_hold(k.runner, agent)]
+    return accounts.delegated_devices(agent, conn.user, facts)
 
 
 def my_machines(user, jkts=None) -> list[RunnerDeviceKey]:
@@ -108,12 +125,12 @@ def my_machines(user, jkts=None) -> list[RunnerDeviceKey]:
             if accounts.may_hold_for(k.runner, user, own_use=True)]
 
 
-def _vouched(agent: Agent, trusted: set[str]) -> set[str]:
+def _vouched(agent: Agent, trusted: set[str], facts: ServingFacts) -> set[str]:
     """The ECDH thumbprints of the machines a person key in `trusted` vouches for, for
     `agent`, by the check a box makes (contract §0.5) on the endorsements it is handed:
     the endorser is who the key that verifies the signature says, not what a row claims."""
     out = set()
-    for e in zk_endorse.endorsements(agent):
+    for e in endorsements_for(agent, facts):
         jwk = e["by_public_jwk"]
         if (e["kind"] == "device" and e["target"] == e["key_jkt"] and jwk
                 and device_keys.thumbprint(jwk) in trusted
@@ -123,17 +140,20 @@ def _vouched(agent: Agent, trusted: set[str]) -> set[str]:
     return out
 
 
-def device_reasons(conn: Connection, statement: dict | None = None) -> list[tuple[RunnerDeviceKey, Agent | None]]:
+def device_reasons(conn: Connection, statement: dict | None = None,
+                   facts: ServingFacts | None = None) -> list[tuple[RunnerDeviceKey, Agent | None]]:
     """Each device `statement` (default: the stored one, through `grants_in_force`)
     lets `conn` reach, with the agent that admits it (None: one of the owner's own
-    computers). A device admitted twice is listed twice."""
+    computers). A device admitted twice is listed twice. `facts` (`facts_for`) must
+    cover the statement's agents."""
     agents = _in_force(conn, statement_agent_pks(statement)) if statement is not None else grants_in_force(conn)
     st = statement if statement is not None else (conn.statement or {})
     trusted = {conn.owner_key, *st.get("endorsers", [])} - {""}
     out: list[tuple[RunnerDeviceKey, Agent | None]] = []
+    facts = facts or (device_keys.serving_facts(agents) if agents else None)
     for a in agents:
-        vouched = _vouched(a, trusted)
-        out += [(k, a) for k in _agent_devices(conn, a) if k.ecdh_jkt in vouched]
+        vouched = _vouched(a, trusted, facts)
+        out += [(k, a) for k in _agent_devices(conn, a, facts) if k.ecdh_jkt in vouched]
     if conn.user_id is not None and st.get("my_computers"):
         out += [(k, None) for k in my_machines(conn.user, st["my_computers"])]
     return out
@@ -144,7 +164,10 @@ def candidate_reasons(conn: Connection, agents, user) -> list[tuple[RunnerDevice
     for a person's connection their own computers, with the agent that admits it (None:
     their computer). Not narrowed by who vouches: that is the owner's browser's to
     decide (it names them in `endorsers`), so it is shown what it has not yet trusted."""
-    out: list[tuple[RunnerDeviceKey, Agent | None]] = [(k, a) for a in agents for k in _agent_devices(conn, a)]
+    agents = list(agents)
+    facts = device_keys.serving_facts(agents) if agents else None
+    out: list[tuple[RunnerDeviceKey, Agent | None]] = [(k, a) for a in agents
+                                                       for k in _agent_devices(conn, a, facts)]
     if conn.user_id is not None:
         out += [(k, None) for k in my_machines(user)]
     return out
@@ -193,15 +216,16 @@ def holders(conn: Connection) -> list[RunnerDeviceKey]:
     return list(RunnerDeviceKey.objects.filter(ecdh_jkt__in=jkts).select_related("runner").order_by("runner__name"))
 
 
-def waiting(conn: Connection) -> list[dict]:
+def waiting(conn: Connection, *, pairs=None, facts: ServingFacts | None = None) -> list[dict]:
     """Machines the statement allows that do not hold it yet: `{agent, runner,
     target}` (`agent` is "" for one of the owner's own computers). Empty while
-    `unshared` or `revoking`: nothing is waiting for a connection nobody may use."""
+    `unshared` or `revoking`: nothing is waiting for a connection nobody may use.
+    `pairs`: this connection's `device_reasons`, when the caller already read them."""
     if conn.state != Connection.ACTIVE:
         return []
     held = {t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"}
     out, seen = [], set()
-    for k, agent in device_reasons(conn):
+    for k, agent in (device_reasons(conn, facts=facts) if pairs is None else pairs):
         row = (agent.slug if agent else "", k.runner.name, k.ecdh_jkt)
         if k.ecdh_jkt not in held and row not in seen:
             seen.add(row)

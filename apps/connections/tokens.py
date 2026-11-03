@@ -127,7 +127,8 @@ def material(conn: Connection, device_key: RunnerDeviceKey, *, turn=None, runner
     machine the statement allows that holds no copy yet."""
     if conn.state != Connection.ACTIVE:
         raise _not_connected(conn)
-    pairs = rcpt.device_reasons(conn)
+    facts = rcpt.facts_for([conn])
+    pairs = rcpt.device_reasons(conn, facts=facts)
     reasons = _reasons(conn, device_key, pairs)
     if turn is not None:
         agent = delegations.turn_agent(turn)
@@ -143,20 +144,20 @@ def material(conn: Connection, device_key: RunnerDeviceKey, *, turn=None, runner
                         "This machine may use the connection but holds no copy yet: a machine that holds it "
                         "gives it one, or the owner does from Settings.")
 
-    out = material_fields(conn, device_key, pairs)
+    out = material_fields(conn, device_key, pairs, facts)
     now = timezone.now()
     Connection.objects.filter(pk=conn.pk).update(last_used_at=now)
     _record_issued(conn, device_key, turn=turn, runner=runner)
     return out
 
 
-def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None) -> dict:
+def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None, facts=None) -> dict:
     """`ConnectionMaterialOut` for `conn` as `device_key`'s machine reads it, with no
     admission check and no record: `material` (a machine about to use it) and the
     keeper (`keeper.work`: a box that holds it, re-sealing or revoking) both answer it.
     `recipients` and the endorsements are those of the statement in force
-    (`pairs`, default `recipients.device_reasons`), plus what vouches for the last
-    writer (`_writer_endorsements`)."""
+    (`pairs`, default `recipients.device_reasons`; `facts`, what they were read with),
+    plus what vouches for the last writer (`_writer_endorsements`)."""
     pairs = rcpt.device_reasons(conn) if pairs is None else pairs
     devices, seen = [], set()
     for k, _ in pairs:
@@ -169,7 +170,7 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None) -
     recipients += [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
                     "runner_name": k.runner.name} for k in devices]
     agents = {a.pk: a for _, a in pairs if a is not None}
-    endorsements = [{**e, "agent_id": str(a.pk)} for a in agents.values() for e in zk_endorse.endorsements(a)
+    endorsements = [{**e, "agent_id": str(a.pk)} for a in agents.values() for e in rcpt.endorsements_for(a, facts)
                     if e["kind"] == "device" and e["target"] in seen]
     have = {(e["agent_id"], e["by"], e["target"]) for e in endorsements}
     endorsements += [e for e in _writer_endorsements(conn) if (e["agent_id"], e["by"], e["target"]) not in have]

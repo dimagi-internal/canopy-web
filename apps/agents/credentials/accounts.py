@@ -84,7 +84,8 @@ def delegated_devices(agent, person, facts=None) -> list:
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
             .exclude(ecdh_jkt="").exclude(runner__kind=Runner.COMPUTER)
             .select_related("runner__owner"))
-    return [k for k in keys if may_hold_for(k.runner, person) and runner_may_hold_agent(k.runner, agent)]
+    may_hold = facts.may_hold if facts else runner_may_hold_agent
+    return [k for k in keys if may_hold_for(k.runner, person) and may_hold(k.runner, agent)]
 
 
 def may_hold_for(runner, person, *, own_use: bool = False) -> bool:

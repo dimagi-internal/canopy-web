@@ -131,14 +131,14 @@ def _my_machines(conn: Connection) -> list[MyMachineOut]:
             for k in rcpt.my_machines(conn.user, jkts)]
 
 
-def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> ConnectionOut:
+def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None) -> ConnectionOut:
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
         state=conn.state, statement=_statement(conn), holders=_holders(conn),
-        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn)],
+        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, facts=facts)],
         my_machines=_my_machines(conn),
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
@@ -183,8 +183,9 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     rows = (services.connections_for(("user", request.user.pk))
             .select_related("connected_by", "app__workspace"))
     readable = services.readable_workspaces(request.user)
+    facts = rcpt.facts_for(rows)
     return ConnectionsOut(providers=_person_provider_rows(request.user),
-                          connections=[_out(c, usable=c.app.workspace_id in readable) for c in rows])
+                          connections=[_out(c, usable=c.app.workspace_id in readable, facts=facts) for c in rows])
 
 
 def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
@@ -276,10 +277,11 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     granted = (Connection.objects.filter(grants__agent=agent).exclude(state=Connection.REVOKING)
                .select_related("connected_by", "agent", "app__workspace")
                .order_by("provider", "account_label", "pk").distinct())
+    facts = rcpt.facts_for([*own, *granted])
     return ConnectionsOut(
         providers=_agent_provider_rows(agent),
-        connections=([_out(c, usable=services.agent_connection_usable(c)) for c in own]
-                     + [_out(c, usable=services.agent_connection_usable(c), granted_from=c.agent.slug)
+        connections=([_out(c, usable=services.agent_connection_usable(c), facts=facts) for c in own]
+                     + [_out(c, usable=services.agent_connection_usable(c), granted_from=c.agent.slug, facts=facts)
                         for c in granted]),
     )
 

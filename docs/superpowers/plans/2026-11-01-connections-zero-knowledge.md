@@ -92,7 +92,7 @@ Object (ASCII values; `account_id` matches `^[\x21-\x7e]{1,255}$` without `"` or
 ```json
 {"account_id":"00D…/005…","agents":["12","40"],"connection":"<uuid>","endorsers":["<person key jkt>"],"my_computers":["<ecdh jkt>"],"v":1,"version":3}
 ```
-- Keys are exactly these six; `v` is 1.
+- Keys are exactly these seven; `v` is 1.
 - `agents`: agent pks as decimal strings, sorted as strings, unique; agent-owned MUST contain the owner agent. `my_computers`: ECDH thumbprints, sorted, unique (empty for agent-owned). `endorsers`: RFC 7638 thumbprints of person public keys, sorted, unique, at most 64, same pattern as `my_computers`; may be empty, and then only the owner vouches. `version` ≥ 1, strictly greater than the stored one.
 - Message: `"canopy-connections/v1/grant|" + json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`, UTF-8. The browser writes keys in that sorted order.
 - Signature: ECDSA P-256/SHA-256 by the owner's person scalar (as `endorse` in `frontend/src/vault/zk.ts`), P1363 `r‖s` 64 bytes, b64u. Stored `{statement, sig, by_jkt}`; `by_jkt` must equal `owner_key`.
