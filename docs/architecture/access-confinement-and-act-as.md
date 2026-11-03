@@ -37,6 +37,15 @@ tool; and beside every delivered prompt — the runner leaves
   sessions run with `--dangerously-skip-permissions`, so only deny rules take
   effect natively: whole tools, MCP servers and high-risk programs the capability
   never grants. Exact-argument scoping stays the hook's job.
+* **Confined sessions have `Read`; a cloud runner has no `Grep` or `Glob`.** The cloud box
+  installs the current `@anthropic-ai/claude-code` from npm (`runner/ec2/runner.cfn.yaml`,
+  `bootstrap_agents.sh`), and that build answers "No such tool available" to both. A profile that
+  lists them grants nothing there and sends the model reaching for a tool that does not exist, so
+  canopy's default read profile (`interface.default_read_profile`) does not list them. File search
+  in a confined session needs an explicit bash pattern in the profile. Laptop runners run whatever
+  Claude Code the person installed, and the runner reports no per-tool inventory; the runner's
+  native rules still scope `Grep`/`Glob` by `read_paths` when a published profile lists them
+  (`native_permissions.py`).
 * **A confined session never holds the runner owner's PAT.** It reaches canopy's
   MCP with a **caller token** (`apps/harness/caller_tokens.py`, issued by
   `harness.claim_payload.issue_credentials`, `cct_…`), minted per confined turn at claim
