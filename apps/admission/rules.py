@@ -9,6 +9,8 @@ import logging
 
 from django.core.exceptions import ValidationError
 
+from apps.agents.interface import is_read_mode
+
 from .models import AdmissionRule, AdmissionSettings
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ def summary(rule: AdmissionRule) -> str:
     elif rule.access:
         extra.append(rule.access)
     if rule.capability:
-        extra.append(f"capability {rule.capability}")
+        extra.append("read mode" if is_read_mode(rule.capability) else f"capability {rule.capability}")
     if rule.turn_mode:
         extra.append(rule.turn_mode)
     if rule.runner_kind:

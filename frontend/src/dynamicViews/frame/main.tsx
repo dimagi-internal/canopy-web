@@ -91,6 +91,19 @@ const canopy = {
       return ask((id) => ({ channel: CHANNEL, type: 'google-access', id, request: { ...request, action: 'end' } }))
     },
   },
+  /** The viewer connects an account of their own and lends it to an agent: the page leaves for
+   * the provider and canopy's share screen, and comes back. Ends it, and reads how it went. */
+  connections: {
+    connect(request: { agent: string; provider: string; minutes?: number; ownerTurnsOnly?: boolean }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { ...request, action: 'connect' } }))
+    },
+    disconnect(request: { id: string; agent: string }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { ...request, action: 'disconnect' } }))
+    },
+    outcome() {
+      return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { action: 'outcome' } }))
+    },
+  },
   /** Re-read a task this view started: its status, error and, once done, result. */
   agentTask(id: string): Promise<AgentTaskStatus> {
     return ask((n) => ({ channel: CHANNEL, type: 'agent-task-read', id: n, taskId: id })) as Promise<AgentTaskStatus>

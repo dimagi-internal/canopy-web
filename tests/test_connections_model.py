@@ -170,7 +170,7 @@ def test_server_use_has_a_database_default_so_an_image_rollback_can_still_insert
     first-time connect."""
     from importlib import import_module  # noqa: PLC0415
 
-    migration = import_module("apps.connections.migrations.0008_connection_server_use").Migration
+    migration = import_module("apps.connections.migrations.0009_connection_server_use").Migration
     field = next(op.field for op in migration.operations if getattr(op, "name", "") == "server_use")
     assert field.db_default is False
     assert Connection._meta.get_field("server_use").db_default is False

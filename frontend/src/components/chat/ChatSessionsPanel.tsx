@@ -29,15 +29,18 @@ function FilterToggle({
   checked,
   onChange,
   testId,
+  title,
   children,
 }: {
   checked: boolean
   onChange: () => void
   testId?: string
+  title?: string
   children: ReactNode
 }) {
   return (
     <label
+      title={title}
       className={`inline-flex min-h-11 cursor-pointer items-center gap-1.5 sm:min-h-0 ${
         checked ? 'text-foreground' : 'text-muted-foreground hover:text-foreground-secondary'
       }`}
@@ -363,7 +366,8 @@ export function ChatSessionsPanel({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <FilterToggle checked={mineOnly} onChange={toggleMineOnly} testId="toggle-mine-only">
+            <FilterToggle checked={mineOnly} onChange={toggleMineOnly} testId="toggle-mine-only"
+              title="Sessions you started, on your own machine, or that an agent you asked dispatched from one of your chats">
               Started by me
             </FilterToggle>
             <FilterToggle checked={showArchived} onChange={() => setShowArchived((v) => !v)}>

@@ -48,6 +48,8 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from apps.agents.interface import is_read_mode
+
 from .models import AdmissionRule
 
 logger = logging.getLogger(__name__)
@@ -95,8 +97,8 @@ def match(rule: AdmissionRule, known: dict) -> bool | None:
         have = known.get(field)
         if have is None:
             unknown = True
-        elif have != want:
-            return False
+        elif have != want and not (field == "capability" and is_read_mode(have) and is_read_mode(want)):
+            return False   # (`read` and `ask` are one read mode: a rule naming either fits both)
         elif field == "reach" and want == AdmissionRule.OFFLINE \
                 and known.get("waited_hours", 0) < rule.wait_hours:
             return False  # down, but not for as long as this rule waits

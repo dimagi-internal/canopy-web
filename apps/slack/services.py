@@ -167,7 +167,7 @@ RESTART_LABEL = "Start a new session with this thread's context"
 RESTART_NOTICE, RESTART_ASK = "slack_restart_notice", "slack_restart_ask"
 #: A message into a thread whose conversation is private (sensitive): never sent.
 PRIVATE = "private"
-#: The agent's interface offers this caller nothing; the turn was written cancelled.
+#: The agent's access list gives this caller nothing; the turn was written cancelled.
 REFUSED = "refused"
 #: A `--history N` ask canopy would not, or could not, read the channel for.
 WINDOW_REFUSED = "window_refused"
@@ -1192,7 +1192,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         origin_ref=origin_ref,
     )
     if turn is not None and turn.status == Turn.CANCELLED and agent is not None:
-        # Written already-cancelled: the agent's interface offers this caller
+        # Written already-cancelled: the agent's access list gives this caller
         # nothing (harness `_apply_capability`). The public line says "not run";
         # the sender is owed the why, privately.
         return Outcome(REFUSED, refusal_message(agent, turn, named=named,

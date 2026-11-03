@@ -111,6 +111,7 @@ export function pendingLabel({
   }
   if (status?.state === "picking_up") {
     const [first] = status.runners;
+    if (status.setting_up && first) return `${first} is restarting; this starts when it's back…`;
     if (status.pinned && first) return `Sent to ${first}…`;
     return first ? `Picking this up on ${first}…` : "Queued…";
   }

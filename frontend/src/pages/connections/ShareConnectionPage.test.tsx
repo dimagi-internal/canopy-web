@@ -340,6 +340,35 @@ describe('ShareConnectionPage: fixes', () => {
   })
 })
 
+describe('ShareConnectionPage: a lend with limits', () => {
+  const open_ = async (over: object, query: string) => {
+    getShareState.mockResolvedValue({ ...STATE, ...over })
+    open(query)
+    fireEvent.click(await screen.findByRole('button', { name: /unlock/i }))
+    await screen.findByText(/Connected as/)
+  }
+
+  it('says when it ends and who it is for, before the owner shares', async () => {
+    await open_({ expires_at: '2030-01-01T15:00:00Z', owner_turns_only: true }, '?return_to=%2Fsettings')
+    const limits = screen.getByTestId('lend-limits')
+    expect(limits.textContent).toMatch(/ends by itself/)
+    expect(limits.textContent).toMatch(/only for work you start/)
+  })
+
+  it('shows no limits on a standing connection', async () => {
+    await unlocked()
+    expect(screen.queryByTestId('lend-limits')).toBeNull()
+  })
+
+  it('ticks the agent the page asked for, and only one the owner may lend to', async () => {
+    await open_({}, '?return_to=%2Fsettings&agent=eva')
+    expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(true)
+    cleanup()
+    await open_({}, '?return_to=%2Fsettings&agent=nobody')
+    expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(false)
+  })
+})
+
 describe('safeReturnTo', () => {
   it.each([
     ['/settings/connections', '/settings/connections'],
@@ -358,6 +387,21 @@ describe('ShareConnectionPage: project screens and apps', () => {
   const withServer = (over: Record<string, unknown> = {}, rest: Record<string, unknown> = {}) =>
     getShareState.mockResolvedValue({ ...STATE, server: { ...SERVER, ...over }, ...rest })
   const box = () => screen.queryByLabelText('Project screens and apps') as HTMLInputElement | null
+
+  it('offers no canopy-web box on a lend with limits, and says its limits', async () => {
+    getShareState.mockResolvedValue({
+      ...STATE, owner_turns_only: true, expires_at: '2030-01-01T15:00:00Z',
+      server: { ...SERVER, provider_calls: false },
+    })
+    open('?return_to=%2Fsettings&agent=eva')
+    fireEvent.click(await screen.findByRole('button', { name: /unlock/i }))
+    await screen.findByText(/Connected as/)
+    expect(screen.queryByLabelText('Project screens and apps')).toBeNull()
+    expect(screen.queryByTestId('canopy-web-unavailable')).toBeNull()
+    expect(screen.getByTestId('lend-limits').textContent).toMatch(/only for work you start/)
+    expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(true)
+  })
+
 
   it('before unlocking, says canopy never sees the sign-in only while that is true', async () => {
     withServer({ on: true })

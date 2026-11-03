@@ -259,7 +259,7 @@ def _usable(row: Connection) -> None:
     if row.needs_reconnect:
         title = tokens._title(row)
         raise services.NotConnected(f"This {title} connection no longer works; its owner must connect it again.")
-    if not row.server_use or not server_key.available():
+    if row.limited or not row.server_use or not server_key.available():
         raise ServerUseOff()
 
 

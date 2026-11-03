@@ -165,7 +165,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   subtasks finishing never ship it — its owner or its person marks it done (the
   person may, on `act_on_task`). Every tally on every page is a count over
   `ideas.of_project` (top-level idea tasks), so the views cannot disagree.
-- **`/agents`** — the workspace's agents as a table (`GET /api/agent-roster/`): last turn and whether it failed, turns and failures in 7 days, open and waiting tasks, active projects, mode, owner; editors get **New agent**.
+- **`/agents`** — the workspace's agents as a table (`GET /api/agent-roster/`): an **About** column (the description, shown whole, minus the factory's `<Name> — ` lead and operating-model sentence; full text on hover), last turn and whether it failed, turns and failures in 7 days, open and waiting tasks, active projects, mode, owner; editors get **New agent**.
 - **`/agents/new`** — create an agent (`NewAgentPage`). Name, slug, mandate,
   optional mailbox; then the GitHub owner + repo name and a fine-grained token,
   with links to GitHub's new-repo and new-token forms filled in (the token steps

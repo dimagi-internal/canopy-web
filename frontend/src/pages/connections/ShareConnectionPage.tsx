@@ -56,10 +56,10 @@ interface Opened {
 
 /**
  * "Share this connection" (`/w/:workspace/connections/:id/share`): where the Connected screen
- * and Settings lead. Your passkey opens the envelope in this browser, which shows which
+ * and Settings lead, and where a sign-in lands that named limits or an agent to tick. Your passkey opens the envelope in this browser, which shows which
  * account was connected; the owner then chooses which agents and computers may use it
  * and shares (`vault/connectionShare.ts` signs and seals). canopy-web sees the token only if the
- * owner's share names it (the "Project screens and apps" box).
+ * owner's share names it (the "Project screens and apps" box, never offered on a lend with limits).
  * Not now leaves it unshared. Settings links here to finish a share later.
  *
  * The unlocked key lives in a ref for this flow only: not in state, not rendered, not sent.
@@ -68,6 +68,8 @@ export function ShareConnectionPage(): JSX.Element | null {
   const { workspace = '', id = '' } = useParams()
   const [params] = useSearchParams()
   const returnTo = safeReturnTo(params.get('return_to'))
+  // Only ticks a box the owner can see and untick; the statement they sign is what counts.
+  const forAgent = params.get('agent') ?? ''
   const navigate = useNavigate()
   const vault = useVaultUnlock()
   const me = useRef<Unlocked | null>(null)
@@ -107,7 +109,8 @@ export function ShareConnectionPage(): JSX.Element | null {
     () => (state?.candidates ?? []).filter((c) => c.kind === 'device' && !c.agent_id && c.mine),
     [state],
   )
-  // The box exists only when canopy-web has a key and makes calls for this provider; it can be
+  // The box exists only when canopy-web has a key and makes calls for this connection (for this
+  // provider, and not lent with limits: the server says so in `provider_calls`); it can be
   // ticked only while this deployment accepts a share that names it.
   const server = state?.server
   const canopyWebShown = !!server?.available && !!server.provider_calls
@@ -141,7 +144,11 @@ export function ShareConnectionPage(): JSX.Element | null {
   if (loadError) return <p className="max-w-2xl text-sm text-destructive">{loadError}</p>
   if (!state) return <div className="h-32 max-w-2xl animate-pulse rounded-lg bg-muted" />
 
-  const reconnect = connectionStartPath(state.provider, workspace, returnTo)
+  const expires = state.expires_at ? new Date(state.expires_at) : null
+  const reconnect = connectionStartPath(state.provider, workspace, returnTo) + (
+    // Reconnecting must not quietly lift the limits this one was made with.
+    (expires ? `&lend_minutes=${Math.min(10080, Math.max(5, Math.ceil((expires.getTime() - Date.now()) / 60000)))}` : '')
+    + (state.owner_turns_only ? '&owner_turns_only=1' : ''))
 
   /** Open `s` with `key` and seed the choices: `keep` (what is ticked now) or else what the
    *  verified statement last named, cut down to the agents and computers listed below. */
@@ -153,7 +160,8 @@ export function ShareConnectionPage(): JSX.Element | null {
     // The box starts from what the owner signed, never from the row's served `on`. Only an
     // unshared row has no statement in force, and there `on` is canopy-web's own sealing at sign-in.
     setCanopyWebTicked(keep ? !!keep.canopyWeb : s.state === 'unshared' ? !!s.server?.on : !!statement?.canopy_web)
-    const wantAgents = keep ? keep.agents : statement?.agents ?? []
+    const asked = s.agents.filter((a) => a.slug === forAgent).map((a) => a.id)
+    const wantAgents = keep ? keep.agents : statement?.agents ?? asked
     const wantComputers = s.owner_agent ? [] : keep ? keep.myComputers : statement?.my_computers ?? []
     const lost = [
       ...wantAgents.filter((a) => !listedAgents.has(a)).map((a) => `agent ${a} (you no longer administer it)`),
@@ -291,6 +299,17 @@ export function ShareConnectionPage(): JSX.Element | null {
           </div>
           {reconnected && (
             <p role="alert" className="rounded border border-warning/40 bg-warning/10 p-3 text-[13px] text-foreground">{RECONNECTED}</p>
+          )}
+          {(expires || state.owner_turns_only) && (
+            <ul data-testid="lend-limits" className="list-disc space-y-1 rounded border border-border bg-muted/40 p-3 pl-7 text-[13px] text-foreground">
+              {expires && (
+                <li>
+                  It ends by itself at {expires.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}: canopy
+                  stops handing it out and the sign-in is revoked soon after. You can end it sooner.
+                </li>
+              )}
+              {state.owner_turns_only && <li>Agents use it only for work you start, never for anyone else who asks them.</li>}
+            </ul>
           )}
           <p className="text-sm text-muted-foreground">Choose who may use it.</p>
 

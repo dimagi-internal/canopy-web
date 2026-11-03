@@ -259,7 +259,17 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   own that are not an agent's own work (`access.sessions_of_q`). Read-only (`role_for`
   gives the agent a viewer), never a sensitive conversation (any runner requirement keeps
   it out, failing closed), and never anyone but that agent's login — its admins, other
-  agents and co-tenants gain nothing. The agent lists who let it in
+  agents and co-tenants gain nothing. **The read answers to the turn's asker**
+  (`access._review_grantors`, the one rule; the asker is `harness.turn_asker.standing`,
+  worked out from the server's `Turn.initiator_*` and its stamped `on_behalf_of`, never
+  from anything the agent sends): the agent's login reads only inside a running turn of
+  that agent (its per-turn or session login, over REST, MCP alike). A turn a verified
+  person asked reads that person's grant alone ("coach me" is me only); a turn nobody
+  asked (a schedule, a trigger, canopy or another agent with no person behind it) or one
+  an administrator of the agent asked reads every grantor's, the coaching sweep; a
+  contact's or unverified user's turn, a stored token, a browser session, a socket, a
+  finished or confined turn reads nothing by grant. `of_user` only narrows what this
+  allows. The agent lists who let it in
   (`GET /api/people/session-reviewers/granted-to-me/`) and one person's sessions with
   `GET /api/canopy-sessions/?of_user=<id>`. Which agent canopy offers as the coach (the
   first-run checkbox, the Settings switch) is `settings.COACHING_AGENT_SLUG`, offered only

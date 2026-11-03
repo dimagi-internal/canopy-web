@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("connections", "0007_sealed_connections"),
+        ("connections", "0008_connection_lend_limits"),
     ]
 
     operations = [

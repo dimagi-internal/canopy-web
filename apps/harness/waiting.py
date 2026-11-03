@@ -57,6 +57,10 @@ def _runner_phrase(runner, turn: Turn, now: datetime) -> str:
     polled = runner.last_claim_poll_at
     beat = runner.last_heartbeat_at
     seen = f"heartbeat {_ago(now - beat)} ago" if beat else "no heartbeat recorded"
+    if runner.setting_up:
+        # Before the poll's age: a box mid-restart has not asked for work lately, and
+        # that says nothing about whether it is stuck.
+        return f"{runner.name} is {runner.setting_up} ({seen}) and takes new turns as soon as that finishes."
     if polled is None:
         return (f"{runner.name} is online ({seen}) but canopy has no record of it ever asking for work — "
                 f"a heartbeat alone does not take turns, so the app that does may be asleep, stuck or closed.")

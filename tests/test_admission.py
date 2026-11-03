@@ -230,6 +230,23 @@ def test_a_new_workspace_is_seeded_and_seeding_is_idempotent(fleet):
     assert defaults.seed(ws.pk) == 0
 
 
+def test_migration_0011_rewrites_only_an_unedited_offered_nothing_reason(fleet):
+    # Deletable once migration 0011 has deployed (CLAUDE.md: a data migration's test).
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    mig = importlib.import_module("apps.admission.migrations.0011_rewrite_offered_nothing_reason")
+    a = Workspace.objects.create(slug="mig-a", display_name="A", created_by=fleet["jj"])
+    b = Workspace.objects.create(slug="mig-b", display_name="B", created_by=fleet["jj"])
+    AdmissionRule.objects.filter(workspace=a, seed_key="offered-nothing").update(reason=mig.OLD[0])
+    AdmissionRule.objects.filter(workspace=b, seed_key="offered-nothing").update(reason="edited by a person")
+    mig.rewrite(django_apps, None)
+    assert AdmissionRule.objects.get(workspace=a, seed_key="offered-nothing").reason == mig.NEW
+    assert AdmissionRule.objects.get(workspace=b, seed_key="offered-nothing").reason == "edited by a person"
+    assert mig.NEW == next(d for d in defaults.DEFAULTS if d["seed_key"] == "offered-nothing")["reason"]
+
+
 def test_origin_choices_track_the_turn_vocabulary():
     assert dict(AdmissionRule.ORIGIN_CHOICES).keys() == dict(Turn.ORIGIN_CHOICES).keys()
 

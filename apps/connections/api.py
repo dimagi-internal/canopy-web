@@ -146,9 +146,10 @@ def _lent_by(conn: Connection) -> str:
 
 def _switch_shown(conn: Connection) -> bool:
     # Only when canopy-web can actually be used for it: with no key, Turn on would lead to a Share
-    # screen with no box. A row already on keeps its switch, so that it can be turned off.
+    # screen with no box. A row already on keeps its switch, so that it can be turned off. A lend
+    # with limits has none: it is never canopy-web's.
     calls = getattr(providers.CLASSES.get(conn.provider), "server_calls", False)
-    return bool(calls and (server_key.available() or conn.server_use))
+    return bool(calls and not conn.limited and (server_key.available() or conn.server_use))
 
 
 def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None,
@@ -168,6 +169,8 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
         provider_calls=_switch_shown(conn),
         unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
         my_machines=[] if lent else _my_machines(conn),
+        expires_at=conn.expires_at,
+        owner_turns_only=conn.owner_turns_only,
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())
@@ -219,7 +222,8 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     facts = rcpt.facts_for(rows)
     replaced = rcpt.owner_keys_replaced(rows)
     return ConnectionsOut(providers=_person_provider_rows(request.user),
-                          connections=[_out(c, usable=c.app.workspace_id in readable, facts=facts, replaced=replaced)
+                          connections=[_out(c, usable=c.app.workspace_id in readable and not c.expired, facts=facts,
+                                            replaced=replaced)
                                        for c in rows])
 
 

@@ -18784,7 +18784,7 @@ export interface components {
             readonly server_reachable: boolean | null;
             /**
              * Provider Calls
-             * @description canopy-web can be used for this connection, so it has a "Used by canopy-web" switch: canopy-web makes calls for the provider (Salesforce; not Google), and has a key set up or the switch is already on.
+             * @description canopy-web can be used for this connection, so it has a "Used by canopy-web" switch: canopy-web makes calls for the provider (Salesforce; not Google), it is not lent with limits (`expires_at`, `owner_turns_only`), and canopy-web has a key set up or the switch is already on.
              * @default false
              */
             readonly provider_calls: boolean;
@@ -18798,6 +18798,17 @@ export interface components {
              * @description Scopes the app now asks for that this grant lacks (an admin chose them after it was connected), with what each allows; reconnect to allow them. Empty when nothing is missing.
              */
             readonly missing_scopes?: readonly components["schemas"]["ScopeChoiceOut"][];
+            /**
+             * Expires At
+             * @description When a lend for a while ends: no machine is handed it from then on and it is disconnected soon after, which revokes it. Null: until it is disconnected.
+             */
+            readonly expires_at?: string | null;
+            /**
+             * Owner Turns Only
+             * @description It is staged only on turns its owner started, never anyone else's on that agent.
+             * @default false
+             */
+            readonly owner_turns_only: boolean;
             /**
              * Connected At
              * Format: date-time
@@ -19031,7 +19042,7 @@ export interface components {
             readonly statements_enabled: boolean;
             /**
              * Provider Calls
-             * @description canopy-web makes calls for this provider; the switch is shown only when true.
+             * @description canopy-web makes calls for this provider and this connection is not lent with limits; the switch is shown only when true.
              */
             readonly provider_calls: boolean;
             /**
@@ -19127,6 +19138,17 @@ export interface components {
             readonly agents: readonly components["schemas"]["ShareAgentOut"][];
             /** @description canopy-web as a reader of this connection. */
             readonly server: components["schemas"]["ShareServerOut"];
+            /**
+             * Expires At
+             * @description When this lend ends and it is disconnected; null when it has no time limit.
+             */
+            readonly expires_at?: string | null;
+            /**
+             * Owner Turns Only
+             * @description Agents use it only on turns its owner started.
+             * @default false
+             */
+            readonly owner_turns_only: boolean;
         };
         /**
          * ZkEndorsementOut
@@ -39903,6 +39925,11 @@ export interface components {
              * @default 0
              */
             readonly refresh_floor_until: number;
+            /**
+             * Setting Up
+             * @default
+             */
+            readonly setting_up: string;
         };
         /** UsageScopeOut */
         readonly UsageScopeOut: {

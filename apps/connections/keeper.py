@@ -178,8 +178,16 @@ def sweep(now: datetime | None = None) -> dict:
     canopy-web nor a cloud box still heard from holds (`recipients.revokers`), recorded
     `revoke_unconfirmed`; then each removed app with no connection left — after
     disconnecting any still live there (one that slipped past `remove_app`), so a
-    removal always finishes. Returns the counts `{revoke_unconfirmed, apps_deleted}`."""
+    removal always finishes. First, every lend whose time has run out is disconnected, so a
+    holder revokes it at the provider, or canopy-web does: many at once, so with no revoke in that
+    call, and `_server_revokes` below takes it this same tick and retries it on later ones. Returns the counts `{lapsed, revoke_unconfirmed,
+    apps_deleted}`."""
     now = now or timezone.now()
+    lapsed = 0
+    for conn in (Connection.objects.filter(expires_at__lte=now).exclude(state=Connection.REVOKING)
+                 .select_related("app__workspace", "agent__workspace").order_by("pk")):
+        services.disconnect(conn, by=None, revoke_now=False, lapsed=True)
+        lapsed += 1
     gone = 0
     _server_revokes()
     for conn in (Connection.objects.filter(state=Connection.REVOKING)
@@ -199,7 +207,7 @@ def sweep(now: datetime | None = None) -> dict:
                                 + ("no machine confirmed revoking it" if stale else "no machine holds it any more"))
     apps = sum(_finish_removal(app)
                for app in list(ConnectionApp.objects.filter(removed_at__isnull=False).order_by("pk")))
-    return {"revoke_unconfirmed": gone, "apps_deleted": apps}
+    return {"lapsed": lapsed, "revoke_unconfirmed": gone, "apps_deleted": apps}
 
 
 def _server_revokes() -> None:

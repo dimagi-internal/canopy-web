@@ -119,8 +119,9 @@ class ConnectionOut(StrictModel):
                                     "nothing needs doing.")
     provider_calls: bool = Field(
         default=False, description="canopy-web can be used for this connection, so it has a \"Used by canopy-web\" "
-                                   "switch: canopy-web makes calls for the provider (Salesforce; not Google), and "
-                                   "has a key set up or the switch is already on.")
+                                   "switch: canopy-web makes calls for the provider (Salesforce; not Google), it "
+                                   "is not lent with limits (`expires_at`, `owner_turns_only`), and canopy-web has "
+                                   "a key set up or the switch is already on.")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "
@@ -131,6 +132,12 @@ class ConnectionOut(StrictModel):
         default_factory=list,
         description="Scopes the app now asks for that this grant lacks (an admin chose them after it was "
                     "connected), with what each allows; reconnect to allow them. Empty when nothing is missing.")
+    expires_at: datetime | None = Field(
+        default=None,
+        description="When a lend for a while ends: no machine is handed it from then on and it is disconnected "
+                    "soon after, which revokes it. Null: until it is disconnected.")
+    owner_turns_only: bool = Field(
+        default=False, description="It is staged only on turns its owner started, never anyone else's on that agent.")
     connected_at: datetime
     last_used_at: datetime | None = None
     connected_by_email: str = Field(
@@ -261,8 +268,8 @@ class ShareServerOut(StrictModel):
     on: bool = Field(description="canopy-web may use this connection now (the switch on the row).")
     statements_enabled: bool = Field(
         description="This deployment accepts a statement naming canopy-web. When false, sharing with it is refused.")
-    provider_calls: bool = Field(description="canopy-web makes calls for this provider; the switch is shown only "
-                                             "when true.")
+    provider_calls: bool = Field(description="canopy-web makes calls for this provider and this connection is not "
+                                             "lent with limits; the switch is shown only when true.")
     reachable: bool | None = Field(
         description="The stored envelope is sealed to canopy-web's key now, so it can use the connection. False "
                     "when the switch is off, or on but the key could not be used at sign-in. Null when the switch "
@@ -305,6 +312,9 @@ class ShareStateOut(StrictModel):
                                           "`by_public_jwk`, whose thumbprint is what `endorsers` lists.")
     agents: list[ShareAgentOut] = Field(description="The agents the owner may lend it to.")
     server: ShareServerOut = Field(description="canopy-web as a reader of this connection.")
+    expires_at: datetime | None = Field(
+        default=None, description="When this lend ends and it is disconnected; null when it has no time limit.")
+    owner_turns_only: bool = Field(default=False, description="Agents use it only on turns its owner started.")
 
 
 class ShareIn(StrictModel):

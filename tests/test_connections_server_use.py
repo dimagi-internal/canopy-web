@@ -4,22 +4,25 @@ A new Salesforce connection is sealed to its owner and canopy-web; Google's, or 
 connection when the key is missing or KMS is down, to the owner alone, and the sign-in
 never fails for it. A reconnect keeps the owner's choice. On an `active` row only the
 signed statement lets canopy-web stay; while `unshared`, an old statement decides nothing.
+A connection lent with limits is never canopy-web's.
 """
 from __future__ import annotations
 
 import json
 import logging
 from unittest import mock
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives.asymmetric import ec
+from django.core.cache import cache
 from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk_seal
-from apps.connections import keeper, server_key, services, sharing, tokens
+from apps.connections import keeper, server_key, server_tokens, services, sharing, tokens
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection, ConnectionApp
 from apps.connections.providers.google import GoogleProvider
@@ -32,6 +35,7 @@ from tests.fixtures.connections import (
     FakeGoogle,
     FakeSF,
     ShareWorld,
+    _resp,
     browser_share,
     refused,
     sealed_to_owner,
@@ -70,10 +74,10 @@ def world():
     return ShareWorld()
 
 
-def connect(world, *, provider="salesforce") -> Connection:
+def connect(world, *, provider="salesforce", **limits) -> Connection:
     session = {}
     app = ConnectionApp.objects.get(workspace=world.ws, provider=provider)
-    url = services.begin(session, app=app, owner=("user", world.person.pk), redirect_uri=REDIRECT)
+    url = services.begin(session, app=app, owner=("user", world.person.pk), redirect_uri=REDIRECT, **limits)
     state = parse_qs(urlparse(url).query)["state"][0]
     return services.complete(session, provider=provider, workspace=world.ws.slug, code="c0de", state=state,
                              redirect_uri=REDIRECT, by=world.person)
@@ -562,6 +566,125 @@ def test_a_cold_cache_in_share_asks_no_kms_and_says_try_again(world, key):
     assert (e.value.status, e.value.code) == (503, "try_again")
     client.get_public_key.assert_not_called()
     server_key._reset()
+
+
+# ---- a lend with limits is never canopy-web's -----------------------------------------
+
+LIMITS = [{"lend_minutes": 60}, {"owner_turns_only": True}, {"lend_minutes": 60, "owner_turns_only": True}]
+
+
+@pytest.mark.parametrize("limits", LIMITS)
+def test_a_new_limited_row_is_sealed_to_its_owner_only_whatever_the_provider_says(world, key, limits):
+    assert SalesforceProvider.server_use_default is True
+    with FakeSF():
+        conn = connect(world, **limits)
+    conn.refresh_from_db()
+    assert conn.limited and conn.server_use is False
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world)}
+    assert rcpt.server_reachable(conn) is False
+
+
+def test_a_limited_connect_never_asks_kms(world, kms_down):
+    with FakeSF():
+        connect(world, owner_turns_only=True)
+    kms_down.get_public_key.assert_not_called()
+
+
+@pytest.mark.parametrize("limits", LIMITS)
+def test_a_limited_reconnect_of_an_on_row_seals_without_canopy_web_and_turns_it_off(world, key, caplog, limits):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    assert ("device", server_key.thumbprint()) in zk_seal.sealed_targets(conn.sealed)
+    with caplog.at_level(logging.INFO, logger="apps.connections.services"), FakeSF():
+        again = connect(world, **limits)
+    again.refresh_from_db()
+    assert again.pk == conn.pk and again.limited and again.server_use is False
+    assert again.state == Connection.UNSHARED and again.access_sealed == ""
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world)}
+    assert rcpt.server_recipient(again) is None and rcpt.server_reachable(again) is False
+    assert switch_lines(caplog) == ["server_use_off"]
+
+
+def test_a_reconnect_naming_no_limits_keeps_on_and_records_no_switch(world, key, caplog):
+    on_row(world)
+    with caplog.at_level(logging.INFO, logger="apps.connections.services"), FakeSF():
+        again = connect(world)
+    again.refresh_from_db()
+    assert again.server_use is True and not again.limited
+    assert switch_lines(caplog) == []
+
+
+def test_a_reconnect_lifting_the_limits_leaves_the_switch_off(world, key):
+    with FakeSF():
+        connect(world, lend_minutes=60)
+        again = connect(world)
+    again.refresh_from_db()
+    assert not again.limited and again.server_use is False  # turning it on is still the owner's, on Share
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world)}
+
+
+@pytest.mark.parametrize("limit", [{"owner_turns_only": True},
+                                   {"expires_at": timezone.now() + timedelta(hours=1)}])
+def test_sharing_a_limited_row_with_canopy_web_is_refused(world, key, limit):
+    conn = sealed_to_owner({"user": world.person}, world.person, app=world.app, **limit)
+    e = refused(conn, world.person, "bad_canopy_web",
+                **browser_share(conn, world.person, world.person_priv, agents=[world.eva], to=[],
+                                canopy_web=server_key.thumbprint()))
+    assert e.status == 422
+    conn.refresh_from_db()
+    assert conn.state == Connection.UNSHARED and conn.server_use is False
+    # Without canopy-web it shares as any other.
+    sharing.share(conn, user=world.person,
+                  **browser_share(conn, world.person, world.person_priv, agents=[world.eva], to=[]))
+    conn.refresh_from_db()
+    assert conn.state == Connection.ACTIVE and conn.server_use is False
+
+
+def test_access_token_on_a_limited_row_is_server_use_off(world, key):
+    with FakeSF():
+        conn = connect(world, owner_turns_only=True)
+    with pytest.raises(server_tokens.ServerUseOff):
+        server_tokens.access_token(conn)
+    # Even with the switch and the envelope saying otherwise: the limits win.
+    forced = on_row(world, account_id="acct-forced", expires_at=timezone.now() + timedelta(hours=1))
+    with pytest.raises(server_tokens.ServerUseOff):
+        server_tokens.access_token(forced)
+
+
+def test_a_limited_row_shows_no_switch_and_no_canopy_web_box(world, key):
+    with FakeSF():
+        conn = connect(world, lend_minutes=60, owner_turns_only=True)
+    state = sharing.share_state(conn, world.person)
+    assert state["server"]["provider_calls"] is False and state["server"]["on"] is False
+    assert state["owner_turns_only"] is True and state["expires_at"] == conn.expires_at
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["provider_calls"] is False and row["server_use"] is False and row["owner_turns_only"] is True
+
+
+def test_a_lapsed_row_sealed_to_canopy_web_is_revoked_by_the_sweep_not_the_disconnect(world, key):
+    conn = _sf_unshared_on(world)
+    Connection.objects.filter(pk=conn.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
+    with FakeSF() as sf, mock.patch.object(services, "disconnect", wraps=services.disconnect) as disconnect, \
+            mock.patch.object(server_tokens, "try_revoke", wraps=server_tokens.try_revoke) as revoke:
+        out = keeper.sweep()
+    assert disconnect.call_args.kwargs == {"by": None, "revoke_now": False, "lapsed": True}
+    assert revoke.call_count == 1 and revoke.call_args.kwargs == {"stop_on_kms": True}  # the sweep's own try
+    assert out["lapsed"] == 1 and out["revoke_unconfirmed"] == 0
+    assert sf.calls[-1][1].endswith("/services/oauth2/revoke")
+    assert not Connection.objects.filter(pk=conn.pk).exists()
+
+
+def test_a_lapsed_row_whose_revoke_fails_is_retried_by_later_sweeps(world, key):
+    conn = _sf_unshared_on(world)
+    Connection.objects.filter(pk=conn.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
+    with FakeSF(revoke=_resp(status=503)):
+        assert keeper.sweep()["lapsed"] == 1
+    conn.refresh_from_db()
+    assert conn.state == Connection.REVOKING
+    cache.delete(f"connections:revoke-attempt:{conn.pk}")  # an hour later
+    with FakeSF() as sf:
+        assert keeper.sweep()["lapsed"] == 0  # already `revoking`: not disconnected twice
+    assert sf.calls[-1][1].endswith("/services/oauth2/revoke")
+    assert not Connection.objects.filter(pk=conn.pk).exists()
 
 
 # ---- the switch: share ---------------------------------------------------------------

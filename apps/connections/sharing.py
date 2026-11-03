@@ -21,7 +21,8 @@ a writer MAC per recipient (§0.4). Here canopy-web checks what it can:
 - the writer MAC list covers the envelope and names the owner as the writer;
 - a `canopy_web` key the statement names is canopy-web's own current key, and the deployment
   accepts it (`CONNECTIONS_SERVER_STATEMENTS`): the statement then switches `server_use` on, and
-  one that omits it switches it off. Naming only canopy-web is a valid first share.
+  one that omits it switches it off. Naming only canopy-web is a valid first share. A connection
+  lent with limits (`Connection.limited`) is never canopy-web's: naming it is refused.
 
 Then the `ConnectionGrant` rows follow the statement, the row is `active`, and
 recipients that no longer qualify are pruned.
@@ -84,8 +85,9 @@ def _agent_out(agent: Agent) -> dict:
 def server_state(conn: Connection) -> dict:
     """What the browser needs to offer canopy-web as a reader: whether its key can be read (a KMS
     failure is `available` false, never an error), the key, the row's switch, whether the deployment
-    accepts it in a statement, whether the provider is one canopy-web calls, and `reachable`:
-    whether the stored envelope is sealed to it now."""
+    accepts it in a statement, whether canopy-web can be offered it at all (`provider_calls`: a
+    provider it calls, and not lent with limits), and `reachable`: whether the stored envelope is
+    sealed to it now."""
     jwk = None
     if server_key.available():
         try:
@@ -96,7 +98,8 @@ def server_state(conn: Connection) -> dict:
     return {"available": jwk is not None, "thumbprint": device_keys.thumbprint(jwk) if jwk else "",
             "public_jwk": jwk, "on": conn.server_use,
             "statements_enabled": bool(getattr(settings, "CONNECTIONS_SERVER_STATEMENTS", False)),
-            "provider_calls": bool(cls and cls.server_calls), "reachable": rcpt.server_reachable(conn)}
+            "provider_calls": bool(cls and cls.server_calls and not conn.limited),
+            "reachable": rcpt.server_reachable(conn)}
 
 
 def share_state(conn: Connection, user) -> dict:
@@ -129,6 +132,7 @@ def share_state(conn: Connection, user) -> dict:
         "candidates": candidates, "endorsements": endorsements,
         "agents": [_agent_out(a) for a in agents],
         "server": server_state(conn),
+        "expires_at": conn.expires_at, "owner_turns_only": conn.owner_turns_only,
     }
 
 
@@ -200,7 +204,7 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
             raise WireError(409, "statement_stale",
                             f"This connection is already shared at version {conn.statement_version}; "
                             "reload and share again.")
-        named = _check_canopy_web(statement)
+        named = _check_canopy_web(conn, statement)
         agent_pks = [int(a) for a in statement["agents"]]
         _check_agents(conn, user, agent_pks)
         _check_machines(conn, user, statement["my_computers"])
@@ -245,13 +249,17 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
     return conn
 
 
-def _check_canopy_web(statement: dict) -> bool:
-    """Whether `statement` names canopy-web, after checking it may: the deployment accepts it and it
-    is exactly canopy-web's current key. 422 `bad_canopy_web` otherwise; 503 `try_again` while the key
-    is not cached (this runs under a row lock, so KMS is not asked): a key we cannot read yet is not
-    a forged one."""
+def _check_canopy_web(conn: Connection, statement: dict) -> bool:
+    """Whether `statement` names canopy-web, after checking it may: `conn` is not lent with limits,
+    the deployment accepts it and it is exactly canopy-web's current key. 422 `bad_canopy_web`
+    otherwise; 503 `try_again` while the key is not cached (this runs under a row lock, so KMS is not
+    asked): a key we cannot read yet is not a forged one."""
     if "canopy_web" not in statement:
         return False
+    if conn.limited:
+        raise WireError(422, "bad_canopy_web",
+                        "This connection is lent with limits, so canopy-web can't be given it. Leave \"Project "
+                        "screens and apps\" off and share again.")
     if not getattr(settings, "CONNECTIONS_SERVER_STATEMENTS", False) or not server_key.available():
         raise WireError(422, "bad_canopy_web",
                         "canopy-web can't be given this connection here yet, so leave \"Project screens and "

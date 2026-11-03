@@ -76,6 +76,8 @@ export function resolveRead(catalog: CatalogModel[], ctx: ReadContext, req: Read
   return { ok: true, url: `/api/w/${encodeURIComponent(ctx.workspace)}${path}${qs ? `?${qs}` : ''}` }
 }
 
+const VAULT_KEY_SETUP = '/settings#vault-key'
+
 /** Where a view's navigate() lands: a canopy page, under the view's workspace
  * unless it names one; or an outside https or mailto: link, which the page confirms
  * first (a mailto: only opens the viewer's own mail app; nothing is sent for them). */
@@ -93,5 +95,7 @@ export function resolveNavigation(workspace: string, path: string):
   }
   if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/api/')) return { kind: 'refused' }
   if (path.startsWith('/w/')) return { kind: 'app', to: path }
+  // Your own vault key is not a workspace's: where a connect refused for want of one sends you.
+  if (path === VAULT_KEY_SETUP) return { kind: 'app', to: path }
   return { kind: 'app', to: scopedPath(workspace, path) }
 }

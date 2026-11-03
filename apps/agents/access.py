@@ -224,7 +224,12 @@ def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.As
 
 def _capability_for(agent, iface: dict, permissions, capability, turn):
     """The capability someone confined is held to: the one named, else the page's or the
-    site's, else `ask` — among those their permissions open."""
+    site's, else read mode — among those their permissions open.
+
+    Read mode (`read`/`ask`, one thing: `interface.is_read_mode`) exists on every agent. It is
+    the agent's own published `ask` when it has one (the stamp is that name), else canopy's
+    default (`interface.default_read_profile`, stamped `read`). Any other name is a door and
+    must be published; an unknown or retired door is refused here, never widened."""
     def opens(name, cap):
         return iface_mod.opens(permissions, name)
 
@@ -232,8 +237,10 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     if name is None and turn is not None:
         name = iface_mod._page_capability(turn, iface, opens) or iface_mod._site_capability(turn, iface, opens)
     name = name or iface_mod.ASK
-    cap = (iface.get("capabilities") or {}).get(name)
-    return (name, cap) if cap and opens(name, cap) else (None, None)
+    published, cap = iface_mod.published_capability(iface, name)
+    if published is None and iface_mod.is_read_mode(name):
+        published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built at claim (`profile`)
+    return (published, cap) if cap is not None and opens(published, cap) else (None, None)
 
 
 def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
@@ -396,8 +403,7 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
         if held == MEMBER:
             d = decide(agent, user, verified=True, origin="canopy_web", standing=standings.of(user, agent),
                        lines=lines)
-            caps = (sorted(n for n in (iface.get("capabilities") or {})
-                           if iface_mod.opens(d.permissions, n)) if d.access == CONFINED else [])
+            caps = iface_mod.reachable(d.permissions, iface) if d.access == CONFINED else []
             access, manual_only, may_auto = d.access, d.manual_only, False
             role, source, via = d.agent_role, d.source, d.via
             if d.source == "system":

@@ -310,11 +310,12 @@ def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
             _check(turn, want)
 
 
-def test_ask_is_off_until_the_owner_publishes_it(w):
-    """`read` opens the `ask` capability: with none published, a read_only line opens nothing."""
+def test_read_mode_is_on_for_every_agent_and_a_published_ask_overrides_it(w):
+    """`read` opens read mode on every agent: canopy's default (stamp `read`) until the owner
+    publishes an `ask` of their own (stamp `ask`)."""
     declare(w["agent"], None)
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["viewer"], role=roles.READ_ONLY)
-    _check(_via_chat(w, w["viewer"], "off"), REFUSED)
+    _check(_via_chat(w, w["viewer"], "off"), ("confined", "capability:read", "auto"))
     declare(w["agent"], {"ask": {"tools": ["Read"]}})
     _check(_via_chat(w, w["viewer"], "on"), ("confined", "capability:ask", "auto"))
 

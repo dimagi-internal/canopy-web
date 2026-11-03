@@ -66,7 +66,7 @@ The settings screen says this in one plain sentence beside the switch.
 
 ### Connecting
 
-The callback seals to the owner, plus canopy-web when `server_use` is true (on a new row, `Provider.server_use_default and server_key.available()`), then redirects to a new **connected** screen, `/w/<ws>/connections/<id>/connected`. This replaces the redirect to Share. It needs no vault unlock (the label is plain metadata) and shows one of:
+The callback seals to the owner, plus canopy-web when `server_use` is true (on a new row, `Provider.server_use_default and server_key.available()`), then redirects to a new **connected** screen, `/w/<ws>/connections/<id>/connected`. This replaces the redirect to Share, except for a connect that names limits or an agent to tick (`lend_minutes`, `owner_turns_only`, `for_agent`), which exists to be shared, goes straight there, and is sealed to the owner alone whatever `server_use` was. It needs no vault unlock (the label is plain metadata) and shows one of:
 
 - **Person, switch on:** "Connected as X. Project screens and apps you use can use it now." Secondary links: "Also let agents or my computers use it" (the Share screen) and the switch.
 - **Agent, switch on:** "Connected Eva as X. Screens can use it now. One step left for Eva's own runs:" and a "Turn on for Eva's machines" button that opens Share. The passkey is unavoidable here: machines trust only a signed statement.

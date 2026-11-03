@@ -83,7 +83,7 @@ def test_after_a_box_wide_bootstrap_the_first_turn_prepares_again_with_its_token
 def test_prepare_hands_the_cli_the_turns_github_identity(cloud_runner, monkeypatch):
     got = {}
     monkeypatch.setattr(cloud_runner, "_bearer", lambda **k: "rt")
-    monkeypatch.setattr(cloud_runner, "_run_teed", lambda cmd, env, timeout: got.update(env) or (0, []))
+    monkeypatch.setattr(cloud_runner, "_run_teed", lambda cmd, env, timeout, **kw: got.update(env) or (0, []))
     monkeypatch.setenv("GH_TOKEN", "leftover")
     cloud_runner.prepare_agent("hal", {"GH_TOKEN": "t", "OTHER": "x"})
     # Only the CLI's own git calls get it, under a name of its own; never GH_TOKEN.

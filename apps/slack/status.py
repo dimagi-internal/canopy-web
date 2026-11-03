@@ -159,6 +159,9 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     elif st.state == ts.QUEUED_BEHIND:
         line = (f":hourglass: Queued — this conversation is moving to {_runner_names(st.runners)}; "
                 f"this one runs there once its work has been handed over.")
+    elif st.state == ts.PICKING_UP and st.setting_up:
+        line = (f":hourglass_flowing_sand: {_runner_names(st.runners)} is restarting — "
+                f"{agent} picks this up as soon as it is back.")
     elif st.state == ts.PICKING_UP and st.pinned:
         line = f":hourglass_flowing_sand: Sent to *{st.runners[0]}* — {agent} will pick this up there."
     elif st.state == ts.PICKING_UP:
@@ -218,7 +221,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     elif st.state == ts.DONE:
         line = f":white_check_mark: {agent} finished this on {runner}."
     elif st.state == ts.CANCELLED and (turn.result_note or "").startswith("not run:"):
-        # Refused at the door (its interface offers this caller nothing), never
+        # Refused at the door (its access list gives this caller nothing), never
         # started — not someone pressing stop. The sender gets the why privately.
         line = f":no_entry_sign: Not run — {agent} doesn't take requests from this person here."
     elif st.state == ts.CANCELLED and st.detail:

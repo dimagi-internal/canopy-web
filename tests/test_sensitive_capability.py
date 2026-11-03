@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import access, roles, sensitive_data
-from apps.agents.interface import InterfaceError, is_default, parse
+from apps.agents.interface import InterfaceError, is_default, is_read_mode, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
 from apps.events.models import SettingChange
@@ -77,7 +77,7 @@ def _put(c, slug, **body):
 
 def _let_in(agent, who, capability):
     """`ask` is what `read` opens, so it is a read-only line; any other capability a named line."""
-    line = dict(role=roles.READ_ONLY) if capability == roles.READ_CAPABILITY else dict(capability=capability)
+    line = dict(role=roles.READ_ONLY) if is_read_mode(capability) else dict(capability=capability)
     allow(agent, contact=(who == "contact"), **line)
 
 

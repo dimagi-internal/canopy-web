@@ -950,14 +950,42 @@ def test_a_read_only_line_holds_read_and_is_confined(ctx):
     u = _line_user(ctx, "ro", role=roles.READ_ONLY)
     env = caller_context.build(_user_turn(ctx[2], u, "p-ro"))
     assert env["profile"] == "confined"
-    assert env["permissions"] == ["read", "use:ask"]
+    assert env["permissions"] == ["read"]          # read mode is `read`, not a door named `ask`
+    assert env["capability"]["name"] == "ask"        # the stamp: the capability actually run
 
 
 def test_a_capability_only_line_holds_just_that_capability(ctx):
     u = _line_user(ctx, "cap", capability="ask")
     env = caller_context.build(_user_turn(ctx[2], u, "p-cap"))
     assert env["profile"] == "confined"
-    assert env["permissions"] == ["use:ask"]
+    assert env["permissions"] == ["read"]          # a `use:ask` line is a read-mode line
+
+
+def test_read_mode_on_an_agent_with_no_ask_is_stamped_read_and_holds_only_read(ctx):
+    _o, ws, agent = ctx
+    agent.interface = {"version": 1, "capabilities": {}}
+    agent.save(update_fields=["interface"])
+    u = User.objects.create_user("dflt", "dflt@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=u, role=roles.READ_ONLY)
+    turn = _user_turn(agent, u, "p-default")
+    assert turn.capability == "read"
+    env = caller_context.build(turn)
+    assert env["profile"] == "confined" and env["permissions"] == ["read"]
+    assert env["capability"]["name"] == "read"
+    assert env["capability"]["write_paths"] == [f"{{cwd}}/.{agent.slug}-read/*"]
+    assert env["capability"]["default_profile_version"] == 1
+    assert env["granted_by"] == "capability:read"
+
+
+def test_a_published_ask_overrides_the_default_whole_and_is_stamped_ask(ctx):
+    u = _line_user(ctx, "ovr", role=roles.READ_ONLY)             # publishes `ask` (tools: Read)
+    turn = _user_turn(ctx[2], u, "p-override")
+    assert turn.capability == "ask"
+    env = caller_context.build(turn)
+    assert env["permissions"] == ["read"] and env["capability"]["name"] == "ask"
+    assert env["capability"]["tools"] == ["Read"] and env["capability"]["write_paths"] == []
+    assert "default_profile_version" not in env["capability"]
 
 
 def test_a_refused_asker_holds_nothing(ctx):
@@ -1016,7 +1044,8 @@ def test_contract_full_profile_iff_write_in_permissions(ctx):
     AgentAdmin.objects.create(agent=agent, user=adm)
     turns = [_user_turn(agent, owner, "k-owner"), _user_turn(agent, adm, "k-admin")]
     lines = ({"role": roles.EDITOR}, {"role": roles.READ_WRITE}, {"role": roles.READ_ONLY},
-             {"capability": "ask"}, {"capability": "status"}, {"role": roles.EDITOR, "manual_only": True})
+             {"capability": "ask"}, {"capability": "read"}, {"capability": "status"},
+             {"role": roles.EDITOR, "manual_only": True})
     for i, line in enumerate(lines):
         u = User.objects.create_user(f"c{i}", f"c{i}@dimagi.com", "pw")
         WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
@@ -1030,6 +1059,8 @@ def test_contract_full_profile_iff_write_in_permissions(ctx):
     turns.append(_email(agent, key="k-contact", headers=HDRS))
     for t in turns:
         env = caller_context.build(t)
+        if env["profile"] == "confined" and env["capability"]["name"] in ("ask", "read"):
+            assert env["permissions"] == ["read"], t.idempotency_key
         if env["granted_by"] == "refused":
             assert env["permissions"] == [], t.idempotency_key
             continue

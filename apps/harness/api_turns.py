@@ -38,6 +38,7 @@ from . import (
 from .api import (  # noqa: E402
     ALLOWED_EVENT_KINDS,
     TRANSCRIPT_APPEND_MAX_BYTES,
+    caller_context_turn_or_404,
     reporting_turn_or_404,
     router,
     turn_content_or_404,
@@ -232,7 +233,7 @@ def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
     # /api/contacts/, which any member of the tenant can already read.
     from .caller_context import build
 
-    return {"envelope": build(turn_content_or_404(request, turn_id), reader_user=request.user)}
+    return {"envelope": build(caller_context_turn_or_404(request, turn_id), reader_user=request.user)}
 
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)

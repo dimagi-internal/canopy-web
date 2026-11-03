@@ -496,3 +496,35 @@ def test_material_refuses_a_machine_the_statement_does_not_vouch_for(world):
 ])
 def test_token_adjacent_routes_are_not_mcp_tools(op):
     assert op in api_tools.EXCLUDED
+
+
+# ---- a lend kept for its owner's turns ----------------------------------------------
+
+def _owner_turn_world(world, owner=None):
+    world.conn = world.shared(world.persons(), agents=[world.eva])
+    Connection.objects.filter(pk=world.conn.pk).update(owner_turns_only=True)
+    runner = _runner_of(world, world.box_a)
+    return runner, _turn(world.eva, runner)
+
+
+def test_a_box_is_handed_nothing_on_a_turn_its_owner_did_not_start(world):
+    runner, turn = _owner_turn_world(world)
+    listed = runner_call(world, world.box_a, "GET", f"/turns/{turn.pk}/connections")
+    assert listed.json()["providers"] == []
+    refused = material_for(world, world.box_a, turn=turn)
+    assert refused.status_code == 409 and refused.json()["error"] == "not_connected"
+
+
+def test_a_box_is_handed_it_on_a_turn_its_owner_started(world):
+    runner, turn = _owner_turn_world(world)
+    turn.initiator_user_id, turn.initiator_kind, turn.initiator_assurance = world.conn.user_id, "user", "session"
+    turn.save(update_fields=["initiator_user", "initiator_kind", "initiator_assurance"])
+    assert runner_call(world, world.box_a, "GET", f"/turns/{turn.pk}/connections").json()["providers"] == ["salesforce"]
+    assert material_for(world, world.box_a, turn=turn).status_code == 200
+
+
+def test_time_running_out_stops_the_box_at_once(world):
+    world.conn = world.shared(world.persons(), agents=[world.eva])
+    Connection.objects.filter(pk=world.conn.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+    refused = material_for(world, world.box_a)
+    assert refused.status_code == 409 and refused.json()["error"] == "not_connected"

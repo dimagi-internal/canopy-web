@@ -129,3 +129,14 @@ def test_an_offline_runner_is_named(fleet):
     turn = _queued(fleet["agent"])
     waiting.note_waiting_turns()
     assert "No runner that could take it is online" in _waiting(turn)[0]["why"]
+
+
+def test_a_runner_mid_restart_says_so_rather_than_sounding_stuck(fleet):
+    cloud = fleet["cloud"]
+    cloud.last_claim_poll_at = timezone.now() - dt.timedelta(minutes=5)
+    cloud.health = {"setting_up": "installing updated tools"}
+    cloud.save()
+    why = waiting.explain(_queued(fleet["agent"]))
+    assert "cloud-1 is installing updated tools" in why
+    assert "takes new turns as soon as that finishes" in why
+    assert "asleep" not in why

@@ -42,6 +42,14 @@ afterEach(() => {
 })
 
 describe('ConnectedPage', () => {
+  it('passes the agent it was asked for through to its Share link', async () => {
+    open('?return_to=%2Fsettings%2Fconnections&agent=eva')
+    await screen.findByText(/Connected as/)
+    expect(href('Also let agents or my computers use it')).toBe(
+      '/w/dimagi/connections/c1/share?return_to=%2Fsettings%2Fconnections&agent=eva',
+    )
+  })
+
   it('says a person can use it now, with the two links', async () => {
     open()
     expect(await screen.findByText('Connected as jj@dimagi.com. Project screens and apps you use can use it now.')).toBeTruthy()

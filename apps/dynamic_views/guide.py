@@ -34,6 +34,18 @@ PROPS
                                          refresh token: it ends by itself (read `my_connected_accounts`
                                          for `session_until`). Rejects when they cancel.
     canopy.googleAccess.end({agent, account?})  end it now
+    canopy.connections.connect({agent, provider, minutes?, ownerTurnsOnly?})
+                                         the VIEWER connects their own account and lends it to an agent
+                                         the view declares tasks for: this page leaves for the provider's
+                                         sign-in and canopy's share screen (agent ticked, limits shown,
+                                         their passkey) and comes back here. `minutes` 5-10080 ends it by
+                                         itself and revokes it; `ownerTurnsOnly` keeps it to turns they
+                                         started. Read `my_connections` for its state and `expires_at`.
+    canopy.connections.outcome() -> Promise<{provider, status, reason} | null>  how the connect that
+                                         brought them back here went (a failure's `reason` is a code; for
+                                         `no_vault_key`, canopy.navigate("/settings#vault-key") sets one up)
+    canopy.connections.disconnect({id, agent}) -> Promise<{outcome}>  end one the viewer lent `agent`:
+                                         a machine, or canopy-web, revokes it at the provider
 - Plain <a href="/tasks/CON-12"> links work too: the frame routes them through navigate.
 
 SOURCES (declared on the view, read for it as the viewer before it draws; `example_sources` beside

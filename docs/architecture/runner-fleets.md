@@ -158,3 +158,20 @@ work for 5h16m"; offline / paused / signed-out runners; unroutable). They are `w
 the turn — `GET /api/harness/turns/{id}/events`, or `canopy agent turns --slug <agent>`, which
 prints the newest under each queued turn. They are their own event kind so Slack and chat status
 reactions to `status` rows are not triggered.
+
+**A restart does not stop a box taking work.** A cloud runner restarts often: a box behind canopy's
+release refreshes, and canopy releases on every merge. A box that has bootstrapped before
+(`~/.canopy-bootstrapped-at`) starts claiming within seconds of a restart and runs the pass on a thread,
+at low CPU and disk priority (`start_bootstrap_beside_claims`); the credential probes go with it. Only a
+box's first pass comes before its claims. `BOOTSTRAP_BESIDE_CLAIMS=0` puts the pass first again.
+
+Claims wait only while what a starting turn needs is being replaced (`setting_up`, the `setup` reason of
+`claim_gate`): the daemon's first seconds, the runner clone's checkout, and `claude` or `canopy` being
+reinstalled, which `bootstrap_agents.sh` announces in `.canopy-setup-hold`. An agent's turns also wait
+while that agent is prepared; other agents' do not. A turn for an agent with no clone waits for the pass.
+A daemon that leaves stops its pass (`stop_bootstrap`), so two never run side by side, and a refresh due
+mid-pass waits for it to end.
+
+The box reports `health.setting_up` while it holds its claims. A turn waiting on it says so
+(`Runner.setting_up`, read by `waiting.py`), and `TurnStatus.setting_up` makes the chat and Slack say the
+runner is restarting instead of that it is picking the turn up.

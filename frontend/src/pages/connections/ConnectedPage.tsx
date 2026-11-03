@@ -75,7 +75,11 @@ export function ConnectedPage(): JSX.Element | null {
     return () => { cancelled = true }
   }, [id])
 
-  const share = `${scopedPath(workspace, `/connections/${id}/share`)}?${new URLSearchParams({ return_to: returnTo })}`
+  // Only ticks a box on Share the owner can see and untick; carried, never acted on here.
+  const agentAsked = params.get('agent')
+  const share = `${scopedPath(workspace, `/connections/${id}/share`)}?${new URLSearchParams({
+    return_to: returnTo, ...(agentAsked ? { agent: agentAsked } : {}),
+  })}`
 
   if (notYours) {
     return (

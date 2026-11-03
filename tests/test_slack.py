@@ -1237,6 +1237,15 @@ def _line(slack):
     return slack.said("chat.postMessage")[-1]
 
 
+def test_a_restarting_runner_says_so(slack, linked, hal, alice):
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
+    runner.health = {"setting_up": "restarting"}
+    runner.save(update_fields=["health"])
+    mention("hal summarise")
+    text = _line(slack)["text"]
+    assert "*jj-mbp* is restarting" in text and "`hal` picks this up as soon as it is back" in text
+
+
 def test_a_live_runner_says_it_is_picking_it_up(slack, linked, hal, alice):
     _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
