@@ -79,7 +79,8 @@ def check_statement(st: dict, *, connection_id, account_id: str) -> dict:
     allowed = _STATEMENT_KEYS | _OPTIONAL_STATEMENT_KEYS
     if not isinstance(st, dict) or not _STATEMENT_KEYS <= set(st) <= allowed:
         raise _bad_statement(
-            f"must be an object with exactly {sorted(_STATEMENT_KEYS)} and optionally {sorted(_OPTIONAL_STATEMENT_KEYS)}")
+            f"must be an object with exactly {sorted(_STATEMENT_KEYS)}"
+            f" and optionally {sorted(_OPTIONAL_STATEMENT_KEYS)}")
     if type(st["v"]) is not int or st["v"] != 1:
         raise _bad_statement("v must be 1")
     if type(st["version"]) is not int or st["version"] < 1:
