@@ -5,7 +5,7 @@ import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
 import { Section, Setting } from '@/components/objectPage/settingsLayout'
 
-// Channels: capabilities, Slack, email, Google account.
+// Channels: read mode and doors, Slack, email, Google account.
 
 export function ChannelsTab({ agent, isAdmin, admins }: { agent: AgentOutletContext['agent']; isAdmin: boolean; admins: string }) {
   return (
@@ -13,10 +13,10 @@ export function ChannelsTab({ agent, isAdmin, admins }: { agent: AgentOutletCont
     <Section id="reach" title="Channels">
       <div className="divide-y divide-border rounded-lg border border-border bg-card">
         <Setting
-          title="Capabilities"
+          title="Read mode and doors"
           who={admins}
           canEdit={isAdmin}
-          description={`What ${agent.name} offers beyond using it whole: its optional capabilities, and the ask a read-only line opens.`}
+          description={`How ${agent.name} answers people who may read but not drive it (read mode, on every agent), and its optional doors.`}
         >
           <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
         </Setting>

@@ -735,9 +735,23 @@ class AgentInterfaceValidateOut(StrictModel):
     yaml: str = ""
 
 
+class ReadModeOut(StrictModel):
+    """What a person who holds `read` and not `write` gets from this agent."""
+
+    # `default`: canopy's own profile, on every agent from the start. `override`: the agent
+    # published its own `ask`, which replaces the default whole.
+    source: str
+    # The published capability that overrides it (`ask`), else null.
+    override: str | None = None
+    # The default profile as it stands for this agent now, whether or not an override hides it.
+    default_profile: dict
+    default_profile_version: int
+
+
 class AgentInterfaceOut(StrictModel):
     # Never empty: an agent without a declared interface has the default one.
     interface: dict
+    read_mode: ReadModeOut
     # The YAML as last saved; "" when it was published as a parsed mapping.
     source: str = ""
     # `source` when there is one, else the interface rendered as YAML.

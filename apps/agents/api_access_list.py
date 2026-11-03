@@ -37,7 +37,7 @@ router = Router(tags=["agents"])
 defaults_router = Router(tags=["workspaces"])
 
 #: The words a person sees beside each permission.
-_CAN = {roles.READ: "be answered in read mode: a confined session that exists on every agent",
+_CAN = {roles.READ: "be answered in read mode: a confined session, on every agent from the start, that can only read and draft a reply",
         roles.WRITE: "drive the whole agent", roles.AGENT_EDIT: "change its skills and capabilities",
         roles.ADMINISTER: "configure it", roles.OWN: "transfer or delete it"}
 _PERMISSIONS = (roles.READ, roles.WRITE, roles.AGENT_EDIT, roles.ADMINISTER, roles.OWN)
@@ -127,7 +127,8 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
     lines = [_out(ln, can_edit=admin and ln.agent_id is not None) for ln in grants.lines_for(agent)]
     return AccessListOut(
         inherit_workspace_defaults=agent.inherit_workspace_defaults,
-        lines=lines, implicit=_implicit(agent), roles=_roles_out(), can_edit=admin)
+        lines=lines, implicit=_implicit(agent), roles=_roles_out(), can_edit=admin,
+        doors=sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n)))
 
 
 @router.post("/{slug}/access-list", response={201: AccessLineOut},
@@ -136,9 +137,9 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
 def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> Status:
     """A line says who has what: a person, everyone in a workspace (optionally also any workspace
     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
-    (read_only, read_write, editor) or, rarely, one named capability. A line that names people only
-    by address (domain, contact) can give read_only or a capability, never a role that drives the
-    whole agent."""
+    (read_only, read_write, editor) or, rarely, one door (a named capability the agent published).
+    read_only gives read mode, which every agent has. A line that names people only by address
+    (domain, contact) can give read_only or a door, never a role that drives the whole agent."""
     agent = agent_for_admin(request, slug)
     line = _create({"agent": agent}, _fields(payload, request.user), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),

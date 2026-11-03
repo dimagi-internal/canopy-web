@@ -173,6 +173,7 @@ export function AgentAccessList({
           <AccessLineForm
             roles={data.roles}
             workspaces={workspaces.map((w) => [w.slug, w.display_name] as [string, string])}
+            doors={data.doors}
             onAdd={async (line) => {
               const added = await addAccessLine(agentSlug, line)
               setError(null)

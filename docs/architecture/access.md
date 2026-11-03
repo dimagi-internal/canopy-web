@@ -36,13 +36,14 @@ Slack threads, what agents know about a person); the HCP service is [hcp-service
 | Word | Means | Where it lives |
 |---|---|---|
 | **workspace role** | What a person may do in a workspace: viewer < editor < admin < owner < superuser. Each role holds a set of workspace *permissions* (`content.write`, `logs.read`, …), not to be confused with the agent permissions below. Built on the same role engine as agent roles (`apps/common/rolesets.py`), with its own vocabulary. | `apps/workspaces/permissions.py`, `WorkspaceMembership.ROLE_RANK` |
-| **permission** | What a person may do with ONE agent: `read` (ask, through the read-only `ask` capability), `write` (drive the whole agent), `agent_edit` (change the agent itself), `admin` (configure it), `own`. `agent_edit` implies `write` implies `read`; `admin` implies all but `own`. A line may also grant the scoped `use:<capability>`, which opens that one capability. | `apps/agents/roles.py` |
+| **permission** | What a person may do with ONE agent: `read` (be answered in read mode), `write` (drive the whole agent), `agent_edit` (change the agent itself), `admin` (configure it), `own`. `agent_edit` implies `write` implies `read`; `admin` implies all but `own`. A line may also grant the scoped `use:<capability>`, which opens that one capability. | `apps/agents/roles.py` |
 | **agent role** | A named bundle of permissions, in one table, strongest first: **owner** > **admin** > **editor** (read + write + agent_edit) > **read_write** (read + write) > **read_only** (read). Never "member", "contact", "viewer" or "user": the first two describe how canopy knows someone, the last two are gone. | `apps/agents/roles.py`, the only place that names them |
 | **system** | Not a person and not in the table: canopy itself (a schedule, a drill), the agent's OWN canopy login, an approved task's dispatch. It may do what an agent admin may. | `roles.SYSTEM` |
 | **access list** | The one list per agent that says who has what: lines of `(who, role)` or, rarely, `(who, one named capability)`. | `AgentGrant`, `apps/agents/grants.py` |
 | **line** | One entry of an access list. `who` is a person, everyone in a workspace (optionally also every workspace below it), anyone at a domain, or a known visitor or sender. | "The access list" below |
 | **workspace default** | A line set once on a workspace; every agent in it, and in the workspaces below it, inherits it unless the agent opts out. | `AgentGrant.workspace`, `Agent.inherit_workspace_defaults` |
-| **capability** | A named, sandboxed profile an agent publishes (`ask`, ACE's `connect`): which tools, paths and sites a confined session may touch. A narrow door for people who should not drive the whole agent; rare. It never says who may use it: that is the access list's job (`read` opens `ask`; a line can name any other). | the agent's interface, `apps/agents/interface.py` |
+| **read mode** | What a person with `read` and not `write` gets: the agent answers them in a confined session that **exists on every agent from the start**. One per agent: canopy's default profile (`interface.default_read_profile`, built from the agent, pinned by `tests/test_default_read_profile.py`, shown on the agent's Settings → Read mode and doors), or the agent's own published `ask`, which replaces the default whole. `read` and `ask` are the same thing (`interface.is_read_mode`, the only place that says so); a turn is stamped with the name actually run (`read` for the default, `ask` for an override). | `apps/agents/interface.py`, `interface_default.py` |
+| **door** (a *capability*) | A named, sandboxed profile an agent publishes (ACE's `connect`): which tools, paths and sites a confined session may touch, for a place or a list of people. Rare. It never says who may use it: that is the access list's job (`read` opens read mode; a line can name any door). `ask` is the override of read mode, not a door. | the agent's interface, `apps/agents/interface.py` |
 | **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email. Every one asks `decide`. | "Where it is asked" |
 | **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Decision.agent_role`, `Decision.source` |
 | **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
@@ -236,7 +237,7 @@ What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** i
 
 | Agent role | Holds | In plain words |
 |---|---|---|
-| **read_only** | `read` | Asks, through the agent's `ask` capability, and nothing else. **Off until the agent publishes `ask`**: nothing publishes it by default and the access-list form pre-selects no role. |
+| **read_only** | `read` | Is answered in read mode, and nothing else. **On for every agent**: the confined session can only read and draft a reply (and send it on the thread it was asked on); the access-list form pre-selects no role. |
 | **read_write** | `read`, `write` | Drives the **whole agent**, in its own authority: every skill and every capability it has (the `full` access level). The ordinary way to give someone an agent. |
 | **editor** | + `agent_edit` | Everything read_write may, and changes the agent itself (its skills and capabilities). |
 | **admin** | + `admin` | Configures the agent in canopy-web: its access list, capabilities, credentials, routing, runners, integrations. May ask for `auto` and pin any runner that can hold it. |
@@ -256,7 +257,7 @@ What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** i
 * **What `decide` reads.** `decide` unions the permissions of every matching line
   (`Resolution.permissions`) and asks one question: do they hold `write` (`roles.holds(…, WRITE)`)?
   Then they get the whole agent. Otherwise they get a capability, chosen by what their lines open
-  (`roles.can_use`: `write` opens all, `read` opens `ask`, `use:<name>` opens `<name>`). The routes
+  (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens `<name>`; `use:ask` and `use:read` are read-mode lines). The routes
   that change an agent still gate on the workspace role (`agent.work`, an editor or above in the
   agent's workspace) or on `Agent.is_admin`; they do not read the agent role.
 * **Where each role comes from.** The owner (`Agent.owner`, while still a member of the agent's
@@ -316,9 +317,10 @@ scoped permission `use:<capability>`, which opens that capability and nothing el
   own lines and turns inheritance on or off. Every change is a settings change
   (`access-list:<slug>`, `docs/architecture/settings-audit.md`). The UI is the agent's
   Settings → Roles → Access.
-* **A line can only open what exists.** It cannot open a capability the agent has not published:
-  an agent with no `ask` capability cannot be asked by a read_only line even if the list names them
-  (`read` opens `ask`, and `ask` is off by default).
+* **A line can only open what exists.** It cannot open a door the agent has not published. Read mode
+  always exists: a read_only line opens it on an agent that published nothing (canopy's default
+  profile) as on one that published its own `ask`. Before putting `read_only` on an agent, know that
+  it is live: `manage.py read_mode_gate` lists agents with such a line and no published `ask`.
 * **Default: nobody.** A new agent has no lines of its own; with none inherited either, only its
   owner and agent admins reach it (and anyone with `write` only by being named). Nobody gets in by being in
   the workspace.
@@ -364,20 +366,22 @@ whole agent. It says what each one *is*, and nothing about who may use it.
 * A capability has a profile (`tools`, `bash`, `read_paths`, `write_paths`, `entry`, `input`,
   `description`), optionally the resources it serves (`pages`, superseded; `sites` and `ceiling`;
   `own_login`; `data: sensitive`). It carries **no `role:`**: who may open it is a line on the
-  access list (`interface.opens(permissions, name)`: `write` opens all, `read` opens `ask`,
-  `use:<name>` opens `<name>`). `ask` is the free-form capability every entry point falls back to
-  and the one `read` opens; it is **off by default** (the Capabilities form can add a standard
-  read-only `ask` with one click, and nothing else turns it on). Further capabilities are optional
-  and rare.
+  access list (`interface.opens(permissions, name)`: `write` opens all, `read` opens read mode,
+  `use:<name>` opens `<name>`). Read mode is the free-form profile every entry point falls back to,
+  the one `read` opens, and it is **on for every agent**: the agent's published `ask` when it has
+  one (stamp `ask`, replaces the default whole), else canopy's default (stamp `read`). The caller
+  envelope lists only `read` in `permissions` for a read-mode turn, never `use:read` or `use:ask`.
+  Doors are optional and rare. A sensitive conversation never gets read mode (its email-reply rules
+  are not a sensitive profile).
 * **Which capability a confined asker gets**: the one the asker named, else the one whose `pages`
   match the page the conversation was held on, else the one whose `sites` include the Connected
-  site it was held on, else `ask`: among those their permissions open (`access._capability_for`). If
-  none, they are refused.
+  site it was held on, else read mode: among those their permissions open (`access._capability_for`). If
+  none, they are refused; an unknown or retired door yields the empty deny-all profile.
 * **Default deny.** The default interface (`interface.default_interface()`) is
-  `{version: 1, capabilities: {}}`: nothing published. Every agent has an interface (a field
+  `{version: 1, capabilities: {}}`: no door and no override. Every agent has an interface (a field
   default on `Agent.interface`; `GET /interface` never returns `{}`) and "unpublish" is **reset to
-  default**. An agent that has published nothing is reached by its owner, its agent admins and the
-  people whose lines give `write`, and by nobody else.
+  default**. An agent that has published nothing is reached by its owner, its agent admins, the
+  people whose lines give `write`, and, in read mode, the people whose lines give `read`.
 * **Retired keys are refused.** `full:`, `editors:` and a capability's `callers:` or `role:` are a
   422 naming the access list; `callers_default` may only be `none`. Strict on purpose: an unknown key
   is refused, not ignored.

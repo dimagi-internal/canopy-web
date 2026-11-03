@@ -6,7 +6,7 @@ import {
   type AgentInterfaceOut,
 } from '@/api/agents'
 import {
-  askCapability,
+  blankCapability,
   clone,
   renamedCapability,
   siteCapability,
@@ -25,15 +25,18 @@ import { smallButton, Errors, CapabilityCard } from './InterfaceEditorParts'
 export function InterfaceEditor({
   agentSlug,
   saved,
+  seed,
   onSaved,
   onCancel,
 }: {
   agentSlug: string
   saved: AgentInterfaceOut
+  /** A draft to start from instead of the saved interface (the read-mode override: a copy of the default). */
+  seed?: InterfaceModel
   onSaved: (out: AgentInterfaceOut) => void
   onCancel: () => void
 }) {
-  const [model, setModel] = useState<InterfaceModel>(() => clone(saved.interface as InterfaceModel))
+  const [model, setModel] = useState<InterfaceModel>(() => clone(seed ?? (saved.interface as InterfaceModel)))
   const [mode, setMode] = useState<'form' | 'yaml'>('form')
   const [yamlText, setYamlText] = useState(saved.yaml ?? saved.source ?? '')
   const [problems, setProblems] = useState<readonly Problem[]>([])
@@ -42,7 +45,7 @@ export function InterfaceEditor({
   const [checking, setChecking] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [dirty, setDirty] = useState(false)
+  const [dirty, setDirty] = useState(seed !== undefined)
   const seq = useRef(0)
 
   const savedSensitive = Object.entries((saved.interface as InterfaceModel).capabilities ?? {})
@@ -138,9 +141,12 @@ export function InterfaceEditor({
       ) : (
         <>
           <section className="flex flex-col gap-2">
-            <h3 className="m-0 text-[13px] font-medium text-foreground">Capabilities</h3>
+            <h3 className="m-0 text-[13px] font-medium text-foreground">Read mode override and doors</h3>
             <p className="m-0 text-[11px] text-muted-foreground">
-              A capability is a narrow door for people who should not drive the whole agent, and is rare: most agents are used in full by whoever has access. A capability says only what it may use; who may open it is a line on the Access setting (Settings, Roles, Access). The one named ask is what a read-only role opens. Anything not listed here is refused.
+              Read mode exists on every agent without any of this. A capability named <span className="font-mono">ask</span> replaces
+              read mode for this agent whole (nothing is merged with canopy&apos;s default). Every other capability is a door: a
+              narrow profile for a place (a Connected site) or a list of people, and rare. A capability says only what it may use;
+              who may open it is a line on the Access setting (Settings, Roles, Access). Anything not listed here is refused.
             </p>
             {names.map((n) => (
               <CapabilityCard
@@ -153,19 +159,14 @@ export function InterfaceEditor({
                 onRemove={() => edit(withoutCapability(model, n))}
               />
             ))}
-            {names.length === 0 && <p className="m-0 text-[12px] text-muted-foreground">No capabilities: only people the access list makes editors, agent admins or the owner can use this agent.</p>}
+            {names.length === 0 && <p className="m-0 text-[12px] text-muted-foreground">No override and no doors: read mode is canopy&apos;s default, and everyone else is the owner, the agent admins and people the access list gives write.</p>}
             <div className="flex flex-wrap gap-2">
-              {!caps.ask && (
-                <button type="button" onClick={() => edit(withCapability(model, 'ask', askCapability(agentSlug)))} className={smallButton}>
-                  Add an ask capability for colleagues
-                </button>
-              )}
               {sites.map((s) => (
                 <button key={s} type="button" onClick={() => edit(withCapability(model, uniqueName(model, s.replace(/-.*$/, '')), siteCapability(s)))} className={smallButton}>
                   Add a {s} site capability
                 </button>
               ))}
-              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), { ...askCapability(agentSlug), description: '', entry: null }))} className={smallButton}>
+              <button type="button" onClick={() => edit(withCapability(model, uniqueName(model, 'capability'), blankCapability()))} className={smallButton}>
                 Add a blank capability
               </button>
             </div>
