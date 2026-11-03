@@ -29,7 +29,8 @@ from apps.connections.providers.google import GoogleProvider
 from apps.connections.providers.salesforce import SalesforceProvider
 from apps.events.models import Event
 from apps.harness.models import RunnerAssignment
-from tests.fixtures.connection_calls import TokensWorld, reseal_body
+from tests.fixtures.connection_calls import TokensWorld, lease, machine_write, reseal_body
+from tests.fixtures.connection_calls import write_back as route_write_back
 from tests.fixtures.connections import (
     CLIENT_ID,
     FAKE_REFRESH,
@@ -1213,6 +1214,112 @@ def test_the_sweep_stops_its_revokes_at_the_first_kms_failure(key):
         keeper.sweep()  # an outage costs a row no hour
         assert tried == [pks[0], pks[0]]
     assert Connection.objects.filter(pk__in=pks).count() == 3
+
+
+# ---- what a good write and a lost write leave behind ----------------------------------------
+
+def test_a_machines_write_back_after_a_failed_refresh_clears_needs_reconnect(w):
+    lease_id = lease(w, w.box_a).json()["lease_id"]
+    Connection.objects.filter(pk=w.conn.pk).update(refresh_failed_at=timezone.now())
+    w.conn.refresh_from_db()
+    assert w.conn.needs_reconnect
+    assert route_write_back(w, w.box_a, machine_write(w, w.conn, w.box_a, lease_id)).status_code == 200
+    w.conn.refresh_from_db()
+    assert not w.conn.needs_reconnect
+
+
+def test_canopy_webs_write_back_after_a_failed_refresh_clears_needs_reconnect(w):
+    """A machine's refresh is refused while canopy-web's is at the provider; canopy-web's good token lands."""
+    real = SalesforceProvider.refresh
+
+    def refresh(self, token):
+        out = real(self, token)
+        Connection.objects.filter(pk=w.conn.pk).update(refresh_failed_at=timezone.now())
+        return out
+
+    with FakeSF(**NO_ROTATION), mock.patch.object(SalesforceProvider, "refresh", refresh):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    w.conn.refresh_from_db()
+    assert not w.conn.needs_reconnect
+
+
+def test_a_write_that_no_longer_applies_gives_back_the_lease_it_renewed(w):
+    """The lease lapsed during the refresh and renewing it gave a new id, then a reconnect replaced
+    the token: the release must name the new id, or it lingers and the next taker reports a loss."""
+    real = SalesforceProvider.refresh
+
+    def refresh(self, token):
+        out = real(self, token)
+        Connection.objects.filter(pk=w.conn.pk).update(lease_id=None, lease_holder="", lease_expires_at=None)
+        reseal_refresh(w, Connection.objects.get(pk=w.conn.pk), refresh_token="5Aep_someone_elses")
+        return out
+
+    conflict = mock.Mock(side_effect=wire.WireError(409, "zk_value_changed", "changed"))
+    writer = tokens.Writer(server_key.thumbprint(), "canopy-web", refreshed="server_refreshed")
+    with FakeSF(**ROTATES), mock.patch.object(SalesforceProvider, "refresh", refresh), \
+            mock.patch.object(tokens, "write_back", conflict):
+        assert server_tokens._refreshed(Connection.objects.get(pk=w.conn.pk), writer, lambda _: None) is None
+    w.conn.refresh_from_db()
+    assert w.conn.lease_id is None and w.conn.lease_holder == ""
+    Connection.objects.filter(pk=w.conn.pk).update(lease_expires_at=timezone.now() - timedelta(seconds=1))
+    tokens.take_lease(w.conn, w.machines[w.box_a][0])
+    assert not Event.objects.filter(kind="connections.lease_expired_unwritten").exists()
+
+
+def disconnected_during_refresh(world, *, delete=False):
+    real = SalesforceProvider.refresh
+
+    def refresh(self, token):
+        out = real(self, token)
+        rows = Connection.objects.filter(pk=world.conn.pk)
+        rows.delete() if delete else rows.update(state=Connection.REVOKING)
+        return out
+
+    return mock.patch.object(SalesforceProvider, "refresh", refresh)
+
+
+def revoked_tokens(sf) -> list[str]:
+    return [c[2]["token"] for c in sf.calls if c[1] == REVOKE_URL]
+
+
+@pytest.mark.parametrize("delete", [False, True], ids=["revoking", "already-gone"])
+def test_a_rotated_token_in_hand_is_revoked_when_the_row_is_disconnected(w, delete, caplog):
+    caplog.set_level(logging.DEBUG, logger="apps")
+    with FakeSF(**ROTATES) as sf, disconnected_during_refresh(w, delete=delete), pytest.raises(services.NotConnected):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    assert revoked_tokens(sf) == ["5Aep_rotated"]
+    assert "connections.server_revoked_rotated" in caplog.text and "5Aep_rotated" not in caplog.text
+
+
+def test_a_token_that_did_not_rotate_is_left_to_the_row_being_revoked(w):
+    with FakeSF(**NO_ROTATION) as sf, disconnected_during_refresh(w), pytest.raises(services.NotConnected):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    assert revoked_tokens(sf) == []
+
+
+def test_a_rotated_token_in_hand_keeps_the_rule_about_other_connections(w):
+    _stored({"user": w.person}, w.person, app=w.app, account_id=w.conn.account_id)
+    with FakeSF(**ROTATES) as sf, disconnected_during_refresh(w), pytest.raises(services.NotConnected):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    assert revoked_tokens(sf) == []
+
+
+@pytest.mark.parametrize("failure", [_resp(status=503), _resp(status=400, body={"error": "5Aep_rotated is bad"}),
+                                     requests.ConnectionError("down 5Aep_rotated")], ids=["5xx", "echo", "network"])
+def test_a_failed_revoke_of_a_rotated_token_is_recorded_without_it(w, failure, caplog):
+    caplog.set_level(logging.DEBUG, logger="apps")
+    with FakeSF(revoke=failure, **ROTATES), disconnected_during_refresh(w), \
+            pytest.raises(services.NotConnected) as e:
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    assert "connections.revoke_failed" in caplog.text and "during=server_revoke_rotated" in caplog.text
+    assert "5Aep_rotated" not in caplog.text + str(e.value)
+
+
+def test_a_failure_while_revoking_a_rotated_token_still_says_not_connected(w):
+    with FakeSF(**ROTATES), disconnected_during_refresh(w), \
+            mock.patch.object(SalesforceProvider, "revoke", side_effect=RuntimeError("boom")), \
+            pytest.raises(services.NotConnected):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
 
 
 # ---- small things -------------------------------------------------------------------------

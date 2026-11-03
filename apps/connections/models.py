@@ -174,7 +174,7 @@ class Connection(models.Model):
     lease_expires_at = models.DateTimeField(null=True, blank=True)
     lease_written = models.BooleanField(default=False)
 
-    # Set when a machine's refresh is rejected (`invalid_grant`); cleared by a reconnect.
+    # Set when a refresh is rejected (`invalid_grant`); cleared by a reconnect or a good write-back.
     refresh_failed_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoking_since = models.DateTimeField(null=True, blank=True)

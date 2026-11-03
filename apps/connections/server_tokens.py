@@ -38,6 +38,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote, quote_plus
 
@@ -315,13 +316,22 @@ def access_token(conn: Connection, *, sleep=None) -> tuple[str, str]:
     raise Waiting()
 
 
+@dataclass
+class _Lease:
+    """The lease this refresh holds. Renewing a lease that lapsed can give a new id, and only the
+    current one can write or release it."""
+
+    id: object
+
+
 def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> tuple[str, str] | None:
     """Take the lease and refresh. None when another holder got there first, or took over since:
     wait for its write. A rotated refresh token exists only here until it is stored, so if that fails
-    the lease stays held, and its expiry says what may be lost (`lease_expired_unwritten`)."""
+    the lease stays held, and its expiry says what may be lost (`lease_expired_unwritten`); if the
+    row was disconnected meanwhile it is revoked instead (`_revoke_rotated`)."""
     pk = row.pk
     try:
-        lease_id = tokens.take_lease(row, writer)["lease_id"]
+        lease = _Lease(tokens.take_lease(row, writer)["lease_id"])
     except WireError as e:
         if e.code == "lease_held":
             return None
@@ -341,12 +351,18 @@ def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> tuple[str, str]
         try:
             token = p.refresh(plain["refresh_token"])
         except providers.ProviderError as e:
-            raise _refresh_refused(row, writer, lease_id, plain["refresh_token"], e) from None
+            raise _refresh_refused(row, writer, lease.id, plain["refresh_token"], e) from None
         rotated = bool(token.refresh_token) and token.refresh_token != plain["refresh_token"]
         keep_lease = rotated
         try:
-            answer = _written_back(row, plain, token, rotated, writer, lease_id, sleep)
+            answer = _written_back(row, plain, token, rotated, writer, lease, sleep)
+        except services.NotConnected:  # the row went while this was being written
+            if rotated:
+                _revoke_rotated(row, p, token.refresh_token)
+            raise
         except WireError as e:
+            if rotated and e.code == "revoking":
+                _revoke_rotated(row, p, token.refresh_token)
             raise _write_refused(row, e) from None
         except ZkError:
             raise _refused(row, "the envelope could not be sealed") from None
@@ -354,7 +370,7 @@ def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> tuple[str, str]
         return answer
     finally:
         if not keep_lease:
-            _release(row, writer, lease_id)
+            _release(row, writer, lease.id)
 
 
 def _check_can_seal(row: Connection, me: str) -> None:
@@ -480,8 +496,8 @@ def _attempts(rotated: bool, sleep):
 
 
 def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, rotated: bool, writer: tokens.Writer,
-                  lease_id, sleep) -> tuple[str, str] | None:
-    """`(token, instance_url)` once stored, keeping the lease renewed. A row that moved is read again
+                  lease: _Lease, sleep) -> tuple[str, str] | None:
+    """`(token, instance_url)` once stored, keeping `lease` renewed. A row that moved is read again
     and sealed again: only the floor and recipients change. With a rotated token in hand, a KMS or
     database failure or a lease someone else holds is tried again too. None when this write no longer
     applies: without a rotation the lease went elsewhere; or a reconnect replaced the refresh token this
@@ -501,8 +517,8 @@ def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, 
                 if plain["refresh_token"] != used:
                     return None
                 reread = False
-            lease_id = tokens.take_lease(row, writer, lease_id)["lease_id"]
-            value, expires_at = _write_once(row, plain, token, rotated, writer, lease_id)
+            lease.id = tokens.take_lease(row, writer, lease.id)["lease_id"]
+            value, expires_at = _write_once(row, plain, token, rotated, writer, lease.id)
             return _stored(row, token, plain, vault_engine.value_digest(value), expires_at)
         except WireError as e:
             last = e.code
@@ -572,10 +588,29 @@ def revoke_if_able(conn: Connection, *, stop_on_kms: bool = False) -> bool:
         return False
 
 
-def _revoke_failed(conn: Connection, error: str) -> None:
+def _revoke_rotated(row: Connection, p: providers.Provider, refresh_token: str) -> None:
+    """The row was disconnected with a rotated refresh token in hand, which nobody else can ever
+    revoke: the row's envelope holds the one before it. Best effort, and never raises, since the
+    caller is on its way to saying the connection is gone. Keeps the rule that a revoke at the
+    provider waits until no other connection of that account remains."""
+    try:
+        if services.other_live_connections(row).exists():
+            return
+        p.revoke(refresh_token)
+    except providers.ProviderError as e:
+        if isinstance(e, providers.ProviderUnavailable) or e.code not in _ALREADY_DEAD:
+            _revoke_failed(row, services._error_code(e), during="server_revoke_rotated")
+            return
+    except Exception as e:  # noqa: BLE001
+        _revoke_failed(row, type(e).__name__.lower(), during="server_revoke_rotated")
+        return
+    services.record(services.Subject.of(row), "server_revoked_rotated", machine=NAME)
+
+
+def _revoke_failed(conn: Connection, error: str, *, during: str = "server_revoke") -> None:
     error = error if services._ERROR_CODE.fullmatch(error or "") else "unrecognised"
     try:
-        services.record(services.Subject.of(conn), "revoke_failed", warn=True, during="server_revoke", machine=NAME,
+        services.record(services.Subject.of(conn), "revoke_failed", warn=True, during=during, machine=NAME,
                         error=error)
     except Exception as e:  # noqa: BLE001
         logger.warning("connections.revoke_failed connection=%s error=%s", conn.pk, type(e).__name__)

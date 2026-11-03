@@ -370,8 +370,9 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey | Writer, lease_
             row.sealed, row.sealed_sig, row.sealed_digest = sealed, sealed_sig, vault_engine.value_digest(sealed)
         row.access_sealed, row.access_sig, row.access_expires_at = access_sealed, access_sig, access_expires_at
         row.lease_written = True
+        row.refresh_failed_at = None  # a token just landed: whatever was refused before, this one works
         row.save(update_fields=["sealed", "sealed_sig", "sealed_digest", "access_sealed", "access_sig",
-                                "access_expires_at", "lease_written", "updated_at"])
+                                "access_expires_at", "lease_written", "refresh_failed_at", "updated_at"])
     # A day's refreshes of one connection coalesce into one Event (its count says how many);
     # a rotation is its own Event so it is never overwritten by a plain refresh.
     kind = device_key.refreshed if isinstance(device_key, Writer) else "refreshed"
