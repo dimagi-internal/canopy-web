@@ -1,15 +1,20 @@
-"""An agent turn's connection tokens (Salesforce, …) are staged per TURN by the canopy CLI.
+"""An agent turn's connection tokens (Salesforce, …) are staged per TURN by the canopy CLI,
+which opens the sealed token on this box and refreshes it here.
 
 Pinned: the runner asks canopy-web which providers the turn's agent has and calls the CLI
 once per provider listed (none for an agent without connections); the CLI is called with
-the runner bearer + runner/turn ids; exit 3 (no connection) is silent and clears a stale
-file; other failures warn (never with a token) and the turn runs; the heartbeat re-stages
-only near expiry; each file goes when the turn ends.
+the runner bearer + runner/turn ids; exit 3 (not connected, waiting for a holder, revoking)
+is silent and clears a stale file; other failures warn (never with a token) and the turn
+runs; a CLI too old for sealed connections costs one warn line and is not run; the
+heartbeat re-stages only near expiry, never over a stage already running for that file,
+and never at the lease's expense; each file goes when the turn ends.
 """
 from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -19,6 +24,7 @@ def cr(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(cloud_runner, "_bearer", lambda min_life=0: "runner-bearer")
     monkeypatch.setattr(cloud_runner, "_canopy_cli", lambda: "/bin/canopy")
+    monkeypatch.setattr(cloud_runner, "_canopy_cli_version", lambda **k: (0, 2, 9999))
     monkeypatch.setattr(cloud_runner, "_CONN_HOLDS", {})
     logs = []
     monkeypatch.setattr(cloud_runner, "_log", lambda m, *a, **k: logs.append(m))
@@ -52,7 +58,7 @@ def test_stages_through_the_cli_with_the_runner_bearer(cr, monkeypatch, tmp_path
     argv, kw = cr.calls[0]
     assert argv == ["/bin/canopy", "cred", "connection-token", "salesforce", "--runner", "--agent", "eva",
                     "--runner-id", "r1", "--turn", "t1", "--min-life", "900"]
-    assert kw["env"]["CANOPY_TOKEN"] == "runner-bearer" and kw["timeout"] == 120
+    assert kw["env"]["CANOPY_TOKEN"] == "runner-bearer" and kw["timeout"] == 300
     assert _path(tmp_path).exists() and "SECRET" not in " ".join(cr.logs)
 
 
@@ -480,3 +486,309 @@ def test_an_adoptable_turn_records_its_providers_and_no_token(wired, monkeypatch
     state = json.loads(seen["state"])
     assert state["connections"] == ["salesforce"] and state["confined"] is False
     assert len(sf) == 1 and "SECRET" not in seen["state"] and "cct_x" not in seen["state"]
+
+
+# ---- the CLI opens the sealed token on this box -----------------------------------------
+
+def test_stage_runs_the_cli_with_min_life_900(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    assert cr.calls[0][0][-2:] == ["--min-life", "900"]
+
+
+def test_the_stage_may_outlast_a_rotated_tokens_write_back(cr, monkeypatch, tmp_path):
+    """Holding a just-rotated refresh token the CLI retries its write-back for 90 s plus
+    per-call timeouts. Killing it there loses the token, so the limit is 300 s."""
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    assert cr.calls[0][1]["timeout"] == cr.CONNECTION_STAGE_TIMEOUT_SECONDS == 300
+
+
+def test_the_bearer_outlives_the_whole_stage(cr, monkeypatch, tmp_path):
+    """The CLI cannot renew the bearer it was handed: one that lapses mid write-back
+    would answer 401 with a rotated token in hand."""
+    asked = []
+    monkeypatch.setattr(cr, "_bearer", lambda min_life=0: asked.append(min_life) or "runner-bearer")
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    assert asked and asked[0] > cr.CONNECTION_STAGE_TIMEOUT_SECONDS
+
+
+def test_waiting_for_a_holder_is_silent_and_leaves_no_file(cr, monkeypatch, tmp_path):
+    _path(tmp_path).parent.mkdir(parents=True)
+    _path(tmp_path).write_text(json.dumps({"expires_at": 1}))
+    _cli(cr, monkeypatch, tmp_path, code=3, stderr="waiting")
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    assert cr.logs == [] and not _path(tmp_path).exists() and cr._CONN_HOLDS == {}
+
+
+def test_heartbeat_restage_still_only_refreshes_held_files(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    other = _path(tmp_path, provider="intacct")
+    other.write_text(json.dumps({"expires_at": 1}))        # on disk, but not this turn's
+    n = len(cr.calls)
+    cr._restage_connections("t1", now=9_900)
+    assert [argv[3] for argv, _ in cr.calls[n:]] == ["salesforce"]
+    assert json.loads(other.read_text())["expires_at"] == 1
+    cr._restage_connections("nobody", now=9_900)           # a turn holding nothing
+    assert len(cr.calls) == n + 1
+
+
+# ---- R15: a CLI older than sealed connections --------------------------------------------
+
+def _old_cli(cr, monkeypatch, tmp_path, version=None):
+    major, minor, patch = cr.CONNECTIONS_ZK_MIN_CLI
+    version = version or (major, minor, patch - 1)
+    monkeypatch.setattr(cr, "_canopy_cli_version", lambda **k: version)
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+
+
+OLD_CLI_LINE = ('warn: connections.stage_failed agent=eva provider=* turn=t1 '
+                'reason="canopy CLI too old for connections"')
+
+
+def test_old_cli_logs_one_stage_failed_line(cr, monkeypatch, tmp_path):
+    _listing(cr, monkeypatch, body={"providers": ["intacct", "salesforce"]})
+    _old_cli(cr, monkeypatch, tmp_path)
+    assert cr._stage_connections("r1", "t1", "eva") == frozenset()
+    assert cr.logs == [OLD_CLI_LINE]               # one line for the turn, not one per provider
+    assert cr.calls == [] and cr._CONN_HOLDS == {} # it is not run: it knows only the removed route
+
+
+def test_an_old_cli_and_an_agent_without_connections_is_silent(cr, monkeypatch, tmp_path):
+    _listing(cr, monkeypatch, body={"providers": []})
+    _old_cli(cr, monkeypatch, tmp_path)
+    cr._stage_connections("r1", "t1", "eva")
+    assert cr.logs == [] and cr.calls == []
+
+
+def test_an_agent_without_connections_never_asks_the_clis_version(cr, monkeypatch, tmp_path):
+    _listing(cr, monkeypatch, body={"providers": []})
+    asked = []
+    monkeypatch.setattr(cr, "_canopy_cli_version", lambda **k: asked.append(1) or (0, 2, 1))
+    cr._stage_connections("r1", "t1", "eva")
+    assert asked == []
+
+
+@pytest.mark.parametrize("version", ["the minimum", "newer", "unknown"])
+def test_a_new_enough_or_unknown_cli_is_run(cr, monkeypatch, tmp_path, version):
+    """Unknown: it could not say. It is not known to be older, and if it cannot work its
+    own failure is the line, rather than a version guess costing the turn its token."""
+    _listing(cr, monkeypatch, body={"providers": ["salesforce"]})
+    major, minor, patch = cr.CONNECTIONS_ZK_MIN_CLI
+    monkeypatch.setattr(cr, "_canopy_cli_version", lambda **k: {
+        "the minimum": (major, minor, patch), "newer": (major, minor + 1, 0), "unknown": None}[version])
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    assert cr._stage_connections("r1", "t1", "eva") == {"salesforce"}
+    assert len(cr.calls) == 1 and cr.logs == []
+
+
+def test_an_adopted_turn_on_an_old_cli_keeps_no_file(cr, monkeypatch, tmp_path):
+    _path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    _path(tmp_path).write_text("{}")
+    cr._reserve_adopted_connections("r1", "t1", "eva", ["salesforce"])
+    _listing(cr, monkeypatch, body={"providers": ["salesforce"]})
+    _old_cli(cr, monkeypatch, tmp_path)
+    cr._adopt_connections("r1", "t1", "eva")
+    assert cr.logs == [OLD_CLI_LINE] and cr.calls == []
+    assert cr._CONN_HOLDS == {} and not _path(tmp_path).exists()
+
+
+# ---- one heartbeat stage at a time, for each file -----------------------------------------
+
+def _blocking_cli(cr, monkeypatch, tmp_path, *, code=0):
+    """A CLI that blocks until `release` is set, as one holding a rotated token does."""
+    started, release = threading.Event(), threading.Event()
+
+    def run(argv, **kw):
+        cr.calls.append((argv, kw))
+        started.set()
+        assert release.wait(5)
+        if code == 0:
+            p = _path(tmp_path, provider=argv[3])
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"expires_at": 10_000}))
+        return subprocess.CompletedProcess(argv, code, "", "")
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    return started, release
+
+
+def _in_thread(fn, *a, **k):
+    t = threading.Thread(target=fn, args=a, kwargs=k, daemon=True)
+    t.start()
+    return t
+
+
+def test_a_heartbeat_does_not_stage_over_the_turns_own_first_stage(cr, monkeypatch, tmp_path):
+    """The lease thread starts before the first stage, whose file does not exist yet: the
+    next beat would otherwise start a second CLI for the same token."""
+    started, release = _blocking_cli(cr, monkeypatch, tmp_path)
+    first = _in_thread(cr._stage_connection_token, "r1", "t1", "eva", "salesforce", now=0)
+    assert started.wait(5)
+    cr._restage_connections("t1", now=0)
+    assert len(cr.calls) == 1
+    release.set()
+    first.join(5)
+    assert not first.is_alive() and "t1" in cr._CONN_HOLDS
+
+
+def test_heartbeats_do_not_stack_on_a_slow_restage(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    n = len(cr.calls)
+    started, release = _blocking_cli(cr, monkeypatch, tmp_path)
+    slow = _in_thread(cr._restage_connections, "t1", now=9_900)
+    assert started.wait(5)
+    cr._restage_connections("t1", now=9_900)
+    assert len(cr.calls) == n + 1
+    release.set()
+    slow.join(5)
+    assert not slow.is_alive()
+
+
+def test_a_siblings_heartbeat_does_not_stack_on_the_same_file(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "A", "eva", "salesforce", now=0)
+    cr._stage_connection_token("r1", "B", "eva", "salesforce", now=0)
+    n = len(cr.calls)
+    started, release = _blocking_cli(cr, monkeypatch, tmp_path)
+    slow = _in_thread(cr._restage_connections, "A", now=9_900)
+    assert started.wait(5)
+    cr._restage_connections("B", now=9_900)
+    assert len(cr.calls) == n + 1
+    release.set()
+    slow.join(5)
+
+
+def test_a_slow_stage_of_one_provider_does_not_hold_back_another(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    cr._stage_connection_token("r1", "t1", "eva", "intacct", now=0)
+    started, release = _blocking_cli(cr, monkeypatch, tmp_path)
+    slow = _in_thread(cr._stage_connection_token, "r1", "t1", "eva", "salesforce", now=9_900, refresh=True)
+    assert started.wait(5)
+    n = len(cr.calls)
+    other = _in_thread(cr._stage_connection_token, "r1", "t1", "eva", "intacct", now=9_900, refresh=True)
+    assert _until(lambda: len(cr.calls) == n + 1)      # a different file: it goes ahead
+    release.set()
+    slow.join(5)
+    other.join(5)
+
+
+def test_a_turns_first_stage_still_asks_while_a_sibling_restages(cr, monkeypatch, tmp_path):
+    """A first stage is this turn's check and its issue record. It is never skipped; two
+    CLIs for one token settle it between them (one takes the lease, the other waits)."""
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "A", "eva", "salesforce", now=0)
+    n = len(cr.calls)
+    started, release = _blocking_cli(cr, monkeypatch, tmp_path)
+    slow = _in_thread(cr._restage_connections, "A", now=9_900)
+    assert started.wait(5)
+    second = _in_thread(cr._stage_connection_token, "r1", "B", "eva", "salesforce", now=9_900)
+    assert _until(lambda: len(cr.calls) == n + 2)
+    release.set()
+    slow.join(5)
+    second.join(5)
+
+
+def _until(cond, seconds=5.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.005)
+    return False
+
+
+@pytest.mark.parametrize("how", ["finished", "failed", "not connected", "raised", "fresh file"])
+def test_a_finished_stage_lets_the_next_heartbeat_run(cr, monkeypatch, tmp_path, how):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    if how == "fresh file":
+        cr._restage_connections("t1", now=0)
+    elif how == "raised":
+        def run(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, 300)
+        monkeypatch.setattr(cr.subprocess, "run", run)
+        cr._restage_connections("t1", now=9_900)
+    else:
+        _cli(cr, monkeypatch, tmp_path, expires=10_000,
+             code={"finished": 0, "failed": 1, "not connected": 3}[how])
+        cr._restage_connections("t1", now=9_900)
+    _cli(cr, monkeypatch, tmp_path, expires=20_000)
+    n = len(cr.calls)
+    cr._restage_connections("t1", now=19_900)
+    assert len(cr.calls) == n + 1
+
+
+def test_an_interrupt_lets_the_next_stage_run(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+
+    def run(argv, **kw):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    with pytest.raises(KeyboardInterrupt):
+        cr._restage_connections("t1", now=9_900)
+    _cli(cr, monkeypatch, tmp_path, expires=20_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    n = len(cr.calls)
+    cr._restage_connections("t1", now=19_900)
+    assert len(cr.calls) == n + 1
+
+
+# ---- a slow re-stage never costs the turn its lease ---------------------------------------
+
+def _beating(cr, monkeypatch):
+    beats = []
+
+    def api(method, path, body=None, **kw):
+        if path.endswith("/heartbeat"):
+            beats.append(path)
+        return 200, {}
+    monkeypatch.setattr(cr, "_api", api)
+    monkeypatch.setattr(cr, "LEASE_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(cr, "_heartbeat_body", lambda ids: {"active_turn_ids": ids})
+    monkeypatch.setattr(cr, "_restage_delegated_google", lambda: None)
+    return beats
+
+
+def _no_lease_threads():
+    """Nothing still running to reach what a test's teardown is about to restore."""
+    return not any(t.name.startswith(("lease-", "restage-")) for t in threading.enumerate())
+
+
+def test_the_lease_keeps_beating_through_a_slow_restage(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=1)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    n = len(cr.calls)
+    started, release = _blocking_cli(cr, monkeypatch, tmp_path)
+    beats = _beating(cr, monkeypatch)
+    passes = []
+    real = cr._restage_connections
+    monkeypatch.setattr(cr, "_restage_connections", lambda t: passes.append(t) or real(t))
+    stop = cr._start_lease_renewal("r1", "t1")
+    try:
+        assert started.wait(5)
+        seen = len(beats)
+        assert _until(lambda: len(beats) >= seen + 3)   # the CLI is still blocked
+        assert len(cr.calls) == n + 1                   # and only one was started
+        assert passes == ["t1"]                         # by the one pass still running
+    finally:
+        stop.set()
+        release.set()
+        assert _until(_no_lease_threads)
+
+
+def test_the_lease_restages_again_after_a_restage_ends(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, expires=1)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    n = len(cr.calls)
+    _beating(cr, monkeypatch)
+    stop = cr._start_lease_renewal("r1", "t1")
+    try:
+        assert _until(lambda: len(cr.calls) >= n + 2)   # the file stays near expiry
+    finally:
+        stop.set()
+        assert _until(_no_lease_threads)
