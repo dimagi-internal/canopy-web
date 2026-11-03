@@ -888,7 +888,7 @@ def test_the_envelope_says_which_identity_the_session_acts_under(fleet):
 # summary, and a reader that needs to know what the asker may do reads these.
 
 from apps.agents import roles  # noqa: E402
-from apps.agents.models import AgentAdmin, AgentGrant  # noqa: E402
+from apps.agents.models import AgentGrant  # noqa: E402
 from tests.access_helpers import declare  # noqa: E402
 
 _CAPS = {"ask": {"description": "Ask", "tools": ["Read"]},
