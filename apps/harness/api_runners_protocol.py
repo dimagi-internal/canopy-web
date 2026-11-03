@@ -11,6 +11,7 @@ from apps.api.route_gates import gate
 from . import (
     claim,
     runner_projects,
+    usage,
 )
 from . import runners as harness_runners
 from .api import (  # noqa: E402
@@ -67,8 +68,6 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
 def runner_usage_scope(request: HttpRequest, runner_id: uuid.UUID):
     """The repos this box scans for its usage report: its declared projects and the
     agents it serves."""
-    from apps.events import usage
-
     runner = runner_or_404(request, runner_id)
     return UsageScopeOut(repos=usage.scope(runner))
 
@@ -80,8 +79,6 @@ def post_runner_usage(request: HttpRequest, runner_id: uuid.UUID, payload: Usage
     little identity — never content. Each session's days replace what was held.
     Matched to canopy's own record of each session and counted there; one canopy
     has no record of is not kept."""
-    from apps.events import usage
-
     runner = runner_or_404(request, runner_id)
     return UsageReportOut(**usage.record(runner, [s.model_dump() for s in payload.sessions]))
 

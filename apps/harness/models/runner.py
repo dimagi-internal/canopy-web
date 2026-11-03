@@ -294,7 +294,7 @@ class Runner(models.Model):
     )
     refresh_before = models.JSONField(default=dict, blank=True)
     refresh_finished_at = models.DateTimeField(null=True, blank=True)
-    # When the box last posted its usage report (`apps/events/usage.py`).
+    # When the box last posted its usage report (`apps/harness/usage.py`).
     usage_reported_at = models.DateTimeField(null=True, blank=True)
     # This runner's owner. Load-bearing for authz AND for tenancy:
     # `_runner_visibility_q` requires owner to be the caller (or NULL, the

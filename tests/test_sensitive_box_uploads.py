@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.canopy_sessions import services as cs_services
 from apps.canopy_sessions import transcript_read
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.events import usage
+from apps.harness import usage
 from apps.events.models import SessionUsage
 from apps.harness import session_sync
 from apps.harness.models import Runner

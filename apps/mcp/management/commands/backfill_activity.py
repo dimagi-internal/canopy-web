@@ -6,7 +6,7 @@ Idempotent: every fact carries the `ref` its live producer uses (a turn, session
 setting change or MCP call id), and a (kind, ref) already present is skipped — so a
 re-run, or a run after the live producers are deployed, never double-counts.
 Tokens are not here: each box reports them from its own transcripts
-(`events.usage`). Facts recorded as a person
+(`harness.usage`). Facts recorded as a person
 whose login turns out to be an agent's are reclassified.
 """
 from __future__ import annotations
@@ -16,8 +16,11 @@ import datetime as dt
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from apps.canopy_sessions.models import Session
 from apps.events import activity
 from apps.events.models import Activity, SettingChange
+from apps.harness.models import Turn
+from apps.mcp.models import MCPAuditLog
 
 
 class Command(BaseCommand):
@@ -27,10 +30,6 @@ class Command(BaseCommand):
         parser.add_argument("--days", type=int, default=365)
 
     def handle(self, *args, days: int, **opts):
-        from apps.canopy_sessions.models import Session
-        from apps.harness.models import Turn
-        from apps.mcp.models import MCPAuditLog
-
         since = timezone.now() - dt.timedelta(days=days)
         have = set(Activity.objects.filter(at__gte=since - dt.timedelta(days=1))
                    .values_list("kind", "ref"))
@@ -92,9 +91,6 @@ class Command(BaseCommand):
     def _fill_repositories(self, since) -> int:
         """Name the repository on facts recorded before facts carried one: repo
         turns, and sessions no agent runs (`activity.repo_of`)."""
-        from apps.canopy_sessions.models import Session
-        from apps.harness.models import Turn
-
         n = 0
         for t in (Turn.objects.filter(created_at__gte=since, agent__isnull=True)
                   .select_related("chat_session").iterator(chunk_size=500)):
