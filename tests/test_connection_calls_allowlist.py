@@ -26,7 +26,9 @@ ALLOWED = [
     ("DELETE", f"sobjects/Task/{LEAD}", "write", "sobject"),
     ("GET", "analytics/reports", "read", "reports"),
     ("GET", f"analytics/reports/{LEAD}/describe", "read", "reports"),
-    ("POST", f"analytics/reports/{LEAD}", "write", "reports"),
+    ("POST", f"analytics/reports/{LEAD}", "read", "reports"),
+    ("POST", f"analytics/reports/{LEAD}/instances", "read", "reports"),
+    ("POST", "analytics/reports", "write", "reports"),
     ("GET", f"analytics/dashboards/{LEAD}", "read", "dashboards"),
     ("POST", "actions/custom/flow/Create_Lead_From_Contact", "write", "flow"),
     ("POST", "apexrest/convert-lead", "write", "apexrest"),
@@ -39,13 +41,14 @@ ALLOWED = [
 
 @pytest.mark.parametrize("method,path,kind,name", ALLOWED)
 def test_each_rule_matches_a_real_example_and_its_kind(method, path, kind, name):
-    rule = calls.match("salesforce", method, path)
-    assert (rule.kind, rule.name) == (kind, name)
-    assert rule.method == method
+    found = calls.match("salesforce", method, path)
+    assert (found.rule.kind, found.rule.name) == (kind, name)
+    assert found.rule.method == method
+    assert found.path == path
 
 
 def test_method_is_case_insensitive():
-    assert calls.match("salesforce", "get", "query").name == "query"
+    assert calls.match("salesforce", "get", "query").rule.method == "GET"
 
 
 @pytest.mark.parametrize("path", [
@@ -57,6 +60,12 @@ def test_method_is_case_insensitive():
     "%2E%2E/query",
     "..%2f",
     "..%2fquery",
+    "%71uery%2F",
+    "sobjects%2FLead",
+    "sobjects%2flead",
+    "sobjects/Lead%2F" + LEAD,
+    "query.json",
+    "sobjects/Lea.d",
     "//evil.com/x",
     "/query",
     "query/",
@@ -159,11 +168,11 @@ def test_unknown_provider_not_supported():
 
 
 def test_build_url_keeps_host():
-    url = calls.build_url("salesforce", INSTANCE, "query", {"q": "SELECT Id FROM Lead"})
+    url = calls.build_url("salesforce", INSTANCE, "query", {"q": "SELECT Id FROM Lead"}, method="GET")
     assert url == f"{INSTANCE}/services/data/{calls.SF_API_VERSION}/query?q=SELECT+Id+FROM+Lead"
-    assert calls.build_url("salesforce", INSTANCE, "limits", None) == \
+    assert calls.build_url("salesforce", INSTANCE, "limits", None, method="GET") == \
         f"{INSTANCE}/services/data/{calls.SF_API_VERSION}/limits"
-    assert calls.build_url("salesforce", INSTANCE, "apexrest/convert-lead", {}) == \
+    assert calls.build_url("salesforce", INSTANCE, "apexrest/convert-lead", {}, method="POST") == \
         f"{INSTANCE}/services/apexrest/convert-lead"
 
 
@@ -177,11 +186,11 @@ def test_api_version_is_the_orgs():
 ])
 def test_build_url_cannot_be_moved_by_the_path(path):
     with pytest.raises(NotAllowed):
-        calls.build_url("salesforce", INSTANCE, path, None)
+        calls.build_url("salesforce", INSTANCE, path, None, method="GET")
 
 
 def test_build_url_query_cannot_change_the_host():
-    url = calls.build_url("salesforce", INSTANCE, "query", {"q": "x#@evil.com/", "a b": ["1", "2&c=3"]})
+    url = calls.build_url("salesforce", INSTANCE, "query", {"q": "x#@evil.com/", "a b": ["1", "2&c=3"]}, method="GET")
     assert url.startswith(f"{INSTANCE}/services/data/{calls.SF_API_VERSION}/query?")
     assert "#" not in url and "evil.com/" not in url.split("?", 1)[0]
     assert "a+b=1&a+b=2%26c%3D3" in url
@@ -199,9 +208,94 @@ def test_build_url_query_cannot_change_the_host():
 ])
 def test_build_url_refuses_a_host_that_is_not_a_my_domain(instance):
     with pytest.raises(NotAllowed):
-        calls.build_url("salesforce", instance, "query", None)
+        calls.build_url("salesforce", instance, "query", None, method="GET")
 
 
 def test_build_url_google_not_supported():
     with pytest.raises(calls.NotSupported):
-        calls.build_url("google", "", "users/me/messages", None)
+        calls.build_url("google", "", "users/me/messages", None, method="GET")
+
+
+def test_percent_encoded_letters_decode_to_the_canonical_path():
+    found = calls.match("salesforce", "GET", "%71uery")
+    assert found.path == "query" and found.rule.name == "query"
+
+
+@pytest.mark.parametrize("method", ["po\u017ft", "P\u041eST", "POST ", "\u0000POST", None, 5, ["POST"], b"POST"])
+def test_refuses_odd_methods(method):
+    with pytest.raises(NotAllowed):
+        calls.match("salesforce", method, f"sobjects/Lead/{LEAD}")
+
+
+@pytest.mark.parametrize("args", [
+    (["salesforce"], "GET", "query"),
+    ({"a": 1}, "GET", "query"),
+    (None, "GET", "query"),
+    ("salesforce", "GET", ["query"]),
+    ("salesforce", "GET", None),
+    ("salesforce", "GET", b"query"),
+    ("salesforce", "GET", 5),
+])
+def test_wrong_types_raise_not_allowed_never_type_error(args):
+    with pytest.raises(NotAllowed):
+        calls.match(*args)
+
+
+@pytest.mark.parametrize("key", ["_HttpMethod", "_httpmethod", "_HTTPMETHOD", " _HttpMethod ", "_HttpMethod\n"])
+def test_query_refuses_http_method_override(key):
+    with pytest.raises(NotAllowed):
+        calls.check_query({key: "DELETE"})
+    with pytest.raises(NotAllowed):
+        calls.build_url("salesforce", INSTANCE, f"sobjects/Lead/{LEAD}", {key: "DELETE"}, method="POST")
+
+
+@pytest.mark.parametrize("query", ["q=1", ["q", "1"], 5, {1: "a"}, {"q": 1}, {"q": None}, {"q": ["a", 2]},
+                                   {"q": {"a": "b"}}, {"q": b"x"}, [("q", "1")]])
+def test_query_must_be_a_dict_of_strings(query):
+    with pytest.raises(NotAllowed):
+        calls.check_query(query)
+    with pytest.raises(NotAllowed):
+        calls.build_url("salesforce", INSTANCE, "query", query, method="GET")
+
+
+def test_query_accepts_strings_lists_and_nothing():
+    assert calls.check_query(None) == {}
+    assert calls.check_query({}) == {}
+    assert calls.check_query({"q": "x", "l": ["a", "b"]}) == {"q": "x", "l": ["a", "b"]}
+
+
+def test_build_url_matches_the_allowlist_itself():
+    for method, path in (("GET", "composite"), ("POST", "composite/batch"), ("GET", "tooling/query"),
+                         ("DELETE", "query"), ("POST", f"sobjects/User/{LEAD}")):
+        with pytest.raises(NotAllowed):
+            calls.build_url("salesforce", INSTANCE, path, None, method=method)
+
+
+def test_build_url_uses_the_decoded_path():
+    assert calls.build_url("salesforce", INSTANCE, "%71uery", None, method="GET").endswith("/query")
+
+
+GUARDED = ["User", "UserRole", "Profile", "PermissionSet", "PermissionSetAssignment", "PermissionSetGroup",
+           "PermissionSetLicenseAssign", "Group", "GroupMember", "AuthSession", "ConnectedApplication",
+           "ApexClass", "ApexTrigger", "ApexPage", "ApexComponent", "Organization", "SetupEntityAccess",
+           "ObjectPermissions", "FieldPermissions", "LoginIp", "UserLogin"]
+
+
+@pytest.mark.parametrize("obj", GUARDED)
+def test_writes_to_identity_permission_and_code_objects_refused(obj):
+    for variant in (obj, obj.lower(), obj.upper()):
+        for method, path in (("POST", f"sobjects/{variant}"), ("POST", f"sobjects/{variant}/{LEAD}"),
+                             ("PATCH", f"sobjects/{variant}/{LEAD}"), ("DELETE", f"sobjects/{variant}/{LEAD}")):
+            with pytest.raises(NotAllowed):
+                calls.match("salesforce", method, path)
+
+
+@pytest.mark.parametrize("obj", GUARDED)
+def test_reads_of_those_objects_stay_allowed(obj):
+    assert calls.match("salesforce", "GET", f"sobjects/{obj}/{LEAD}").rule.kind == "read"
+    assert calls.match("salesforce", "GET", f"sobjects/{obj}/describe").rule.name == "describe"
+
+
+def test_ordinary_objects_with_similar_names_stay_writable():
+    assert calls.match("salesforce", "POST", "sobjects/User__c").rule.kind == "write"
+    assert calls.match("salesforce", "POST", "sobjects/GroupNote").rule.kind == "write"
