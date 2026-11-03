@@ -195,7 +195,6 @@
 "apps/host_grants/live_probe.py" = ["PLC0415"]  # 11
 "apps/host_grants/outbound.py" = ["PLC0415"]  # 3
 "apps/host_grants/self_host.py" = ["PLC0415"]  # 10
-"apps/host_grants/views_oauth.py" = ["PLC0415"]  # 15
 "apps/huddles/checkins.py" = ["PLC0415"]  # 16
 "apps/huddles/checkins_api.py" = ["PLC0415"]  # 2
 "apps/huddles/services.py" = ["PLC0415"]  # 3
@@ -227,6 +226,7 @@
 "apps/mcp_apps_host/views_mcp_apps.py" = ["PLC0415"]  # 1
 "apps/oauth_server/api.py" = ["PLC0415"]  # 2
 "apps/oauth_server/views.py" = ["PLC0415"]  # 5
+"apps/oauth_server/views_oauth.py" = ["PLC0415"]  # 15
 "apps/passkeys/api.py" = ["PLC0415"]  # 1
 "apps/passkeys/services.py" = ["PLC0415"]  # 13
 "apps/passkeys/stepup.py" = ["PLC0415"]  # 2

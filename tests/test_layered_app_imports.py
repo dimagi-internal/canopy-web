@@ -53,9 +53,9 @@ LAYERS: list[tuple[str, set[str]]] = [
     ("kit", {"common", "events", "workspaces", "api"}),
     # L1 core — the agent/turn/session substrate and who may reach it.
     ("core", {"agents", "harness", "canopy_sessions", "tokens", "contacts", "admission", "retention",
-              "realtime", "push", "passkeys", "embedding", "mcp_apps_host", "attention", "agent_tasks"}),
+              "realtime", "push", "passkeys", "embedding", "host_grants", "mcp_apps_host", "attention", "agent_tasks"}),
     # L2 features — framework surfaces built on the core; nothing below names them.
-    ("features", {"agent_runs", "capabilities", "connections", "feedback", "github_connect", "host_grants", "huddles",
+    ("features", {"agent_runs", "capabilities", "connections", "feedback", "github_connect", "huddles",
                   "inbound", "issues", "mcp", "oauth_server", "plugins", "session_sharing", "slack",
                   "system", "timeline", "threads", "approvals"}),
     # L3 product — canopy's own features (the tiers in test_architecture_boundary).
@@ -77,8 +77,6 @@ FROZEN: dict[tuple[str, str], int] = {
     ("agents", "plugins"): 1,
     ("agents", "slack"): 3,
     ("agents", "timeline"): 1,
-    ("contacts", "host_grants"): 1,
-    ("embedding", "host_grants"): 8,
     ("events", "agents"): 4,
     ("events", "api.api"): 1,
     ("events", "canopy_sessions"): 5,
@@ -94,9 +92,7 @@ FROZEN: dict[tuple[str, str], int] = {
     ("harness", "threads"): 1,
     ("mail", "api.api"): 1,
     ("mcp", "api.api"): 1,
-    ("mcp_apps_host", "host_grants"): 2,
     ("mcp_apps_host", "mcp"): 1,
-    ("push", "host_grants"): 1,
     ("retention", "session_sharing"): 1,
     ("retention", "slack"): 1,
     ("workspaces", "agents"): 1,
