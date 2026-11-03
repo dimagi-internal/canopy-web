@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from . import __version__
+from .platform_jobs import no_window
 
 __all__ = ["version", "code_branch", "code_sha", "code_committed_at", "runner_src_dir"]
 
@@ -71,7 +72,7 @@ def code_branch(now_fn=time.monotonic) -> str:
         repo = runner_src_dir().parents[2]  # …/runner/canopy_runner/canopy_runner -> repo root
         out = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True, text=True, timeout=3, **no_window(),
         )
         _cached_branch = out.stdout.strip() if out.returncode == 0 else ""
     except Exception:  # noqa: BLE001 — best-effort; never break the heartbeat
@@ -107,7 +108,7 @@ def code_sha() -> str:
         repo = runner_src_dir().parents[2]
         out = subprocess.run(
             ["git", "-C", str(repo), "log", "-1", "--format=%H", "--", *CODE_PATHS],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, **no_window(),
         )
         return out.stdout.strip() if out.returncode == 0 else ""
     except Exception:  # noqa: BLE001 — best-effort; never break the heartbeat
@@ -143,7 +144,7 @@ def code_committed_at() -> int:
         repo = runner_src_dir().parents[2]
         out = subprocess.run(
             ["git", "-C", str(repo), "log", "-1", "--format=%ct", "--", *CODE_PATHS],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, **no_window(),
         )
         return int(out.stdout.strip()) if out.returncode == 0 else 0
     except Exception:  # noqa: BLE001 — incl. a non-numeric stdout; never break a heartbeat

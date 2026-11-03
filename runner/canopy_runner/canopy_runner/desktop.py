@@ -81,6 +81,7 @@ from canopy_transcript.result_note import cap, turn_url
 
 from . import caller, claude_model, session_naming, transfer
 from .cancel import CANCELLED_TURNS
+from .platform_jobs import no_window
 
 logger = logging.getLogger("canopy_runner.desktop")
 
@@ -275,7 +276,7 @@ def close(cfg, sid: str) -> str:
         # checkout, a broken one) prints nothing too — it vouches for nothing, so
         # it keeps the worktree exactly like a dirty one.
         st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain", "--untracked-files=normal"],
-                            capture_output=True, text=True, timeout=120)
+                            capture_output=True, text=True, timeout=120, **no_window())
         if st.returncode != 0 or st.stdout.strip():
             logger.info("desktop close %s: worktree %s kept (%s)", sid, wt,
                         "uncommitted changes" if st.returncode == 0 else "git status failed")
@@ -541,7 +542,8 @@ def prepare_settings(cfg, wt: Path, *, model: str = "") -> None:
     # cache; `update` is what brings in the mod a runner upgrade shipped.
     for verb in ("install", "update"):
         subprocess.run([str(cli), "plugin", verb, PLUGIN, "--scope", "local"], env=_cli_env(cli),
-                       cwd=wt, capture_output=True, text=True, check=False, timeout=120)
+                       cwd=wt, capture_output=True, text=True, check=False, timeout=120,
+                       **no_window())
     path = wt / ".claude" / "settings.local.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = json.loads(path.read_text()) if path.exists() else {}
@@ -562,12 +564,12 @@ def ensure_mod() -> None:
     cli = _cli()
     env = _cli_env(cli)
     listed = subprocess.run([str(cli), "plugin", "marketplace", "list"], env=env,
-                            capture_output=True, text=True, timeout=60).stdout
+                            capture_output=True, text=True, timeout=60, **no_window()).stdout
     if MARKETPLACE not in listed:
         subprocess.run([str(cli), "plugin", "marketplace", "add", str(dest)], env=env,
-                       capture_output=True, text=True, timeout=120)
+                       capture_output=True, text=True, timeout=120, **no_window())
     subprocess.run([str(cli), "plugin", "marketplace", "update", MARKETPLACE], env=env,
-                   capture_output=True, text=True, timeout=120)
+                   capture_output=True, text=True, timeout=120, **no_window())
 
 
 def seed_session(cfg, wt: Path, name: str = "", *, model: str = "") -> str:
@@ -583,7 +585,8 @@ def seed_session(cfg, wt: Path, name: str = "", *, model: str = "") -> str:
     model = model or getattr(cfg, "desktop_model", "")
     if model:
         argv += ["--model", model]
-    out = subprocess.run(argv, cwd=wt, env=_cli_env(cli), capture_output=True, text=True, timeout=300)
+    out = subprocess.run(argv, cwd=wt, env=_cli_env(cli), capture_output=True, text=True, timeout=300,
+                         **no_window())
     try:
         return json.loads(out.stdout)["session_id"]
     except (ValueError, KeyError) as exc:
