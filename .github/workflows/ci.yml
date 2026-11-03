@@ -229,9 +229,16 @@ jobs:
         working-directory: packages/canopy_cron
         run: uv run --with pytest pytest -q
 
-      # canopy_kb's own suite is not here: it runs by hand, while working on the
-      # KB (.github/workflows/canopy-kb.yml). canopy-web's serving of it (tests/
-      # test_kb_*.py, test_project_mcp.py) still runs in the backend job.
+      # The KB engine's own suite. It was taken out of CI once for a flake: the refused-
+      # card test wrote card.results.json in place, the engine's 10 ms poll read it
+      # half-written, moved it to .bad and waited out its 10 s timeout. The test now
+      # writes temp-then-rename as the session protocol requires (#2134); with the old
+      # write it failed ~1 in 120 runs under load, with the fix 0 in 120 and 0 in 18
+      # full-suite runs. [prep] brings the curator toolkit's format readers, so their
+      # tests run too.
+      - name: Run canopy_kb tests
+        working-directory: packages/canopy_kb
+        run: uv run --extra prep --with pytest pytest -q
 
       # The runner decides WHICH slot is due and fires it, so its suite is the only
       # thing standing between a scheduling bug and a fleet that silently never
