@@ -190,7 +190,7 @@ class WorkspaceMembership(models.Model):
                     (VIEWER, "Viewer")]
     # Total order — the single place role ORDERING lives. What each role may
     # DO is not here: that is `apps/workspaces/permissions.py`, which maps
-    # every capability to the lowest role that holds it, and is the only thing
+    # every permission to the lowest role that holds it, and is the only thing
     # outside this app allowed to reason about roles at all
     # (`tests/test_roles_named_only_in_workspaces.py`).
     #

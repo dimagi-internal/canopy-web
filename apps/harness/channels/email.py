@@ -6,7 +6,7 @@ any generic work, and `log_unproven_member` once the turn exists. An inbound
 email is an unauthenticated, spoofable identity: the recorded contact grants
 nothing and only feeds later turns and routing. The one grant made here is
 session participation for the MEMBERS on a thread, and only on this message's
-proof (`admit_thread_people`; docs/architecture/access.md § Who is in a session,
+proof (`admit_thread_people`; docs/architecture/access-sessions-and-people.md § Who is in a session,
 docs/architecture/mail.md).
 """
 from __future__ import annotations
@@ -137,7 +137,7 @@ def admit_thread_people(session, origin_ref, contact) -> list:
     """Make the canopy members on this message's thread participants of its session.
 
     A session is visible to the people who were in the conversation where it
-    happened (docs/architecture/access.md § Who is in a session). For mail that is
+    happened (docs/architecture/access-sessions-and-people.md § Who is in a session). For mail that is
     everyone on the thread: the From, To and Cc of each inbound message, admitted as
     each message arrives, so someone copied in later joins then.
 

@@ -163,7 +163,7 @@ failure again.
   signed in is linked only when its person accepts, in
   their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
   reads as its asker and never writes (`access.md` → "Whose authority an agent acts with").
-- `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a
+- `POST /api/debug/mint-session/` (`apps/tokens/mint_session.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token
   cannot sign an MCP client in on its own.
@@ -225,7 +225,7 @@ failure again.
   the latest grade kept beside it so a drop stays visible.
 - Recorded best-effort from the email door (`apps/harness/channels/email.py`) — mail
   is answered even when the bookkeeping fails.
-- What agents learn about a person (`PersonFact`, HCP): `access.md` → "What agents know about
+- What agents learn about a person (`PersonFact`, HCP): `access-sessions-and-people.md` → "What agents know about
   a person".
 
 ## The chat-session ACL (CI-enforced)
@@ -244,7 +244,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   session; editor, may pull). Per person × project, opt-in, revocable, each change an
   audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
   `/api/me/session-sharing/`, the Settings → Opted-in repos panel). Who sees what per
-  channel: `access.md` § Who can see a session.
+  channel: `access-sessions-and-people.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
   (`POST /{id}/backfill`) is for the box owner and anyone the rule lets write in it.

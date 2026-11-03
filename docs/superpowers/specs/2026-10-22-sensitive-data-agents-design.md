@@ -259,7 +259,7 @@ full-profile turn is not in any capability.
   handles sensitive data"), never run full. `Decision.basis` is `sensitive:<capability>`; the role, the turn
   mode and `may_request_auto` are unchanged — confinement is about what the turn can
   reach, not who asked.
-- **How it is enforced.** It rides the confinement that already exists (access.md "How
+- **How it is enforced.** It rides the confinement that already exists (access-confinement-and-act-as.md "How
   confinement is enforced"): `Turn.capability` is stamped at enqueue, so the envelope says
   `profile: confined`; only a runner reporting `profiles` may claim it; the runner runs it
   in its own `cx-` session with the profile written first, the `profile_guard` hook and

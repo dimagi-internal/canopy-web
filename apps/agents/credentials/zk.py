@@ -189,7 +189,7 @@ def device_waits(agent, key) -> bool:
     kv 0 (born zero-knowledge, no vault key yet): when any stored value was not
     sealed to it. kv > 0: when it holds no wrap at the current kv. The one
     predicate behind "Give access" on the approve flow
-    (`api_device_keys.zk_agents_waiting_on`) and the vault health of an agent
+    (`device_key_out.zk_agents_waiting_on`) and the vault health of an agent
     (`vault_health.machines_waiting`)."""
     return key.pk in devices_waiting(agent, [key])
 

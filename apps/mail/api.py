@@ -10,6 +10,7 @@ import json
 import logging
 import uuid as uuidlib
 from dataclasses import asdict
+from typing import NamedTuple
 
 from django.conf import settings
 from django.db import InterfaceError, OperationalError
@@ -38,7 +39,6 @@ from .schemas import (
     MailDomainPatchIn,
     MailDomainShareIn,
     MailInboundLogListOut,
-    MailInboxSendIn,
     MailMessageOut,
     MailReplyIn,
     MailResolveOut,
@@ -536,23 +536,28 @@ def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) 
 @gate("member")
 def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False,
                       forwarded: bool = False, q: str = "", address: str = "") -> dict:
-    """`forwarded=true`: the caller's own inbox of mail kept from forward routes (`q` searches
-    subject, sender and text; `address` narrows to one of their addresses). Otherwise the
-    workspace's threads (agents' mail), never another person's forwarded copies."""
+    """One list for every inbox. `agent=`: that agent's threads. `forwarded=true`: the caller's
+    own inbox of mail kept from forward routes. Neither: the workspace's agent threads, never
+    another person's forwarded copies. `q` searches subject, sender and text; `address` narrows
+    to one address. `unread_total` counts the inbox's unread threads (archived excluded) and
+    `addresses` the addresses it can send from."""
     ws = workspace_for(request.user, workspace)
-    qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
-    qs = qs.filter(owner=request.user) if forwarded else qs.filter(owner__isnull=True)
-    if forwarded and q.strip():
+    base = MailThread.objects.filter(workspace=ws).select_related("route__agent", "route__domain")
+    base = base.filter(owner=request.user) if forwarded else base.filter(owner__isnull=True)
+    agent_address = ""
+    sendable = [r.address for r in _sendable_routes(ws, request.user)] if forwarded else []
+    if agent and not forwarded:
+        base = base.filter(agent_slug=agent)  # snapshotted: survives the route's removal
+        r = _agent_route(ws, agent)
+        agent_address = r.address if r else ""
+        sendable = [x.address for x in _agent_routes(ws, agent) if domains.route_is_live(x)]
+    qs = base.filter(archived=archived)
+    if q.strip():
         term = q.strip()
         qs = qs.filter(Q(subject__icontains=term) | Q(messages__from_addr__icontains=term)
                        | Q(messages__from_name__icontains=term) | Q(messages__text__icontains=term)).distinct()
-    if forwarded and address.strip():
+    if address.strip():
         qs = qs.filter(address__iexact=address.strip())
-    address = ""
-    if agent:
-        qs = qs.filter(agent_slug=agent)  # snapshotted: survives the route's removal
-        r = _agent_route(ws, agent)
-        address = r.address if r else ""
     newest = MailMessage.objects.filter(thread=OuterRef("pk")).order_by("-created_at", "-pk")
     qs = qs.annotate(_dir=Subquery(newest.values("direction")[:1]),
                      _from=Subquery(newest.values("from_addr")[:1]),
@@ -562,12 +567,8 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
         out = _thread_out(t, messages=False)
         out["counterpart"] = _counterpart(t._dir, t._from, t._to)
         items.append(out)
-    result = {"agent_address": address, "items": items}
-    if forwarded:
-        result["unread_total"] = MailThread.objects.filter(workspace=ws, owner=request.user, archived=False,
-                                                           unread=True).count()
-        result["addresses"] = [r.address for r in _sendable_routes(ws, request.user)]
-    return result
+    return {"agent_address": agent_address, "items": items, "addresses": sendable,
+            "unread_total": base.filter(archived=False, unread=True).count()}
 
 
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
@@ -643,76 +644,76 @@ def _reply_from(t, user) -> tuple[MailRoute, str]:
     raise HttpError(409, "cannot tell which address to reply from; send a new message instead")
 
 
-@router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")
-@gate("agent.work", kind="conversation")
-def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
-    ws = workspace_for(request.user, workspace)
-    _need(request.user, ws, perms.AGENT_WORK)
-    t = _thread(ws, uuid, request.user)
-    if t.owner_id is not None:  # a person answering their own mail, as their own address
-        route, sender = _reply_from(t, request.user)
-        to = payload.to or _reply_recipients(t)
-        if not to:
-            raise HttpError(422, "no one to reply to")
-        try:
-            m = agent_mail.send(route, to=to, cc=payload.cc, text=payload.text, thread=t,
-                                sender_name=_display_name(request.user), from_address=sender)
-        except agent_mail.SendRefused as exc:
-            raise HttpError(exc.status, str(exc)) from None
-        return _msg_out(m)
+class _Sender(NamedTuple):
+    """Who a message goes out as: the route it uses, a From that differs from the route's own
+    address (a person on a catch-all), and the display name."""
+    route: MailRoute
+    from_address: str = ""
+    name: str = ""
+
+
+def _thread_sender(t, user) -> _Sender:
+    """Who `user` answers a thread as: their own address on their own mail, the agent on an
+    agent's (which needs FULL on it)."""
+    if t.owner_id is not None:
+        route, frm = _reply_from(t, user)
+        return _Sender(route, frm, _display_name(user))
     if t.route is None or not t.route.enabled:
         raise HttpError(409, "this address no longer exists")
     if t.route.kind != MailRoute.AGENT:
         raise HttpError(409, "this address no longer routes to an agent")
-    _agent_full(request.user, t.route)
+    _agent_full(user, t.route)
+    return _Sender(t.route)
+
+
+def _new_sender(ws, user, agent: str, from_address: str | None) -> _Sender:
+    """Who `user` starts a message as: the named agent (one of its addresses; needs FULL), or —
+    with no agent — one of their OWN exact forwarding addresses, never anyone else's or a catch-all."""
+    if agent:
+        route = _from_route(ws, agent, from_address)
+        if route is None:
+            raise HttpError(404, f"agent {agent!r} has no mail address here")
+        _agent_full(user, route)
+        return _Sender(route)
+    want = (from_address or "").strip().lower()
+    route = next((r for r in _sendable_routes(ws, user) if r.address == want), None)
+    if route is None:
+        raise HttpError(422, f"{from_address!r} is not one of your forwarding addresses")
+    return _Sender(route, "", _display_name(user))
+
+
+def _send_as(sender: _Sender, **kw) -> MailMessage:
+    try:
+        return agent_mail.send(sender.route, sender_name=sender.name, from_address=sender.from_address, **kw)
+    except agent_mail.SendRefused as exc:
+        raise HttpError(exc.status, str(exc)) from None
+
+
+@router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its mailbox")
+@gate("agent.work", kind="conversation")
+def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
+    """Reply as the thread's agent, or — on your own kept mail — as your own address."""
+    ws = workspace_for(request.user, workspace)
+    _need(request.user, ws, perms.AGENT_WORK)
+    t = _thread(ws, uuid, request.user)
+    sender = _thread_sender(t, request.user)
     to = payload.to or _reply_recipients(t)
     if not to:
         raise HttpError(422, "no one to reply to")
-    try:
-        m = agent_mail.send(t.route, to=to, cc=payload.cc, text=payload.text, html=payload.html, thread=t)
-    except agent_mail.SendRefused as exc:
-        raise HttpError(exc.status, str(exc)) from None
-    return _msg_out(m)
+    return _msg_out(_send_as(sender, to=to, cc=payload.cc, text=payload.text, html=payload.html, thread=t))
 
 
-@router.post("/inbox/{workspace}/send", response=MailThreadOut,
-             summary="Start a new message from one of your own forwarding addresses")
-@gate("agent.work", kind="conversation")
-def send_inbox_mail(request: HttpRequest, workspace: str, payload: MailInboxSendIn) -> dict:
-    """Compose from your inbox: the From must be one of your own forwarding addresses (never the
-    catch-all). The thread it starts is private to you, like the mail it answers."""
-    ws = workspace_for(request.user, workspace)
-    _need(request.user, ws, perms.AGENT_WORK)
-    want = payload.from_address.strip().lower()
-    route = next((r for r in _sendable_routes(ws, request.user) if r.address == want), None)
-    if route is None:
-        raise HttpError(422, f"{payload.from_address!r} is not one of your forwarding addresses")
-    try:
-        m = agent_mail.send(route, to=payload.to, cc=payload.cc, subject=payload.subject, text=payload.text,
-                            sender_name=_display_name(request.user), owner=request.user)
-    except agent_mail.SendRefused as exc:
-        raise HttpError(exc.status, str(exc)) from None
-    t = _thread(ws, str(m.thread.uuid), request.user)
-    out = _thread_out(t, messages=True)
-    out["counterpart"] = (payload.to or [""])[0]
-    return out
-
-
-@router.post("/send/{workspace}", response=MailMessageOut, summary="Start a new thread as an agent")
+@router.post("/send/{workspace}", response=MailMessageOut, summary="Start a new thread")
 @gate("agent.work", kind="conversation")
 def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict:
+    """Start a thread as an agent (`agent` + optionally one of its `from_address`es), or — with
+    no `agent` — from one of your own forwarding addresses, as a thread private to you."""
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
-    route = _from_route(ws, payload.agent, payload.from_address)
-    if route is None:
-        raise HttpError(404, f"agent {payload.agent!r} has no mail address here")
-    _agent_full(request.user, route)
-    try:
-        m = agent_mail.send(route, to=payload.to, cc=payload.cc, subject=payload.subject,
-                            text=payload.text, html=payload.html)
-    except agent_mail.SendRefused as exc:
-        raise HttpError(exc.status, str(exc)) from None
-    return _msg_out(m)
+    sender = _new_sender(ws, request.user, payload.agent, payload.from_address)
+    m = _send_as(sender, to=payload.to, cc=payload.cc, subject=payload.subject, text=payload.text,
+                 html=payload.html, owner=None if payload.agent else request.user)
+    return {**_msg_out(m), "thread_id": str(m.thread.uuid)}
 
 
 @router.post("/threads/{workspace}/{uuid}/state", response=MailThreadOut, summary="Mark a thread read/archived")

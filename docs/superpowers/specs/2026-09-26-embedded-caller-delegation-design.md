@@ -208,7 +208,7 @@ the host, e.g. its own step-up or MCP's `input_required` (MRTR) confirmation.
    host's MCP is not in a visitor turn's profile.
 4. **Interface:** `sites:` + `ceiling:` replace `pages:`; move ACE's `marketplace`
    capability over.
-5. **Docs:** `embedding-a-canopy-agent.md` §8a ("per-visitor tool permissions do
+5. **Docs:** `embedding-actions-and-access.md` §8a ("per-visitor tool permissions do
    not exist yet") is rewritten, and `test_embedding_doc_is_true.py` pins the new
    contract.
 

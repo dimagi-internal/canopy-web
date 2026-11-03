@@ -11,7 +11,7 @@ import { VaultMembersTab, VaultOverviewTab, VaultSecretsTab } from './VaultTabs'
 // A WORKSPACE VAULT'S ONE PAGE, `/w/:workspace/vaults/:vaultId`, drawn by the same
 // `VaultView` an agent's vault uses (components/vault/VaultView.tsx): a summary
 // line, then Secrets, Who can open them and Storage & key as collapsible sections
-// (docs/architecture/pages.md § One editor per object). Settings → Secrets lists a
+// (docs/architecture/pages.md, "One editor per object"). Settings → Secrets lists a
 // workspace's vaults and links here; a runner's credentials link to the vault that
 // holds them. This file is the workspace vault's ADAPTER: it reads the vault and
 // gives the frame each section's body and one-line summary.

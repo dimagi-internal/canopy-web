@@ -377,7 +377,7 @@ Branch: `runner-pairing-invitations` from `origin/main`.
 
 ### Task 3.6: Docs and PR
 
-- [ ] Update `docs/architecture/runners.md` "How a runner signs in (keyless)": pairing by invitation, who approves, the replaced-instance reattach, and that a new box holds no PAT. Update `docs/architecture/api-surface.md` (three routes plus `pair-by-role`), `docs/architecture/pages.md` (the approve page), and `runner/ec2/README.md`: the flow, `--workspace`, `--approve-minutes`, and that `canopy/cloud-runner/canopy-pat` can be deleted once no stack reads it, as a human AWS step and not done here. Update CLAUDE.md's Runners invariant line about the PAT ("a PAT is for pairing a new box") to "a laptop pairs with a PAT; a cloud box pairs by invitation".
+- [ ] Update `docs/architecture/runner-credentials.md` "How a runner signs in (keyless)": pairing by invitation, who approves, the replaced-instance reattach, and that a new box holds no PAT. Update `docs/architecture/api-surface.md` (three routes plus `pair-by-role`), `docs/architecture/pages.md` (the approve page), and `runner/ec2/README.md`: the flow, `--workspace`, `--approve-minutes`, and that `canopy/cloud-runner/canopy-pat` can be deleted once no stack reads it, as a human AWS step and not done here. Update CLAUDE.md's Runners invariant line about the PAT ("a PAT is for pairing a new box") to "a laptop pairs with a PAT; a cloud box pairs by invitation".
 - [ ] `uv run pytest -q`; `cd frontend && npm run build`.
 - [ ] Push, open the PR, `gh pr merge <n> --auto`.
 

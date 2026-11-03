@@ -15,7 +15,7 @@ from apps.api.errors import (
 )
 from apps.api.route_gates import gate
 from apps.harness import device_keys
-from apps.harness.api_device_keys import agents_key_opens, key_out, zk_agents_waiting_on
+from apps.harness.device_key_out import agents_key_opens, key_out, zk_agents_waiting_on
 from apps.harness.runners import may_trust_device_keys
 from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.passkeys import stepup

@@ -1320,7 +1320,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
     """`/canopy cloud` — "anything of mine stuck behind an offline runner, run
     it on the cloud". Only the caller's own queued conversation turns, only the
     ones no live runner is about to take, and only onto a box they administer."""
-    from apps.harness import claim
+    from apps.harness import claim_reach
 
     user, _assurance, _info = slack_user(installation, slack_user_id)
     mine = [ws for ws in installation.workspace_ids() if user is not None and wsvc.is_member(user, ws)]
@@ -1332,7 +1332,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
               .select_related("chat_session").order_by("created_at"))
     stuck: dict = {}
     for turn in queued:
-        if turn.chat_session_id not in stuck and claim.turn_reach(turn).kind != claim.LIVE:
+        if turn.chat_session_id not in stuck and claim_reach.turn_reach(turn).kind != claim_reach.LIVE:
             stuck[turn.chat_session_id] = turn.chat_session
     if not stuck:
         return Outcome(NOTHING_QUEUED, "Nothing of yours is waiting on an offline runner.")

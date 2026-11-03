@@ -1,7 +1,7 @@
 """Who is in a Slack-bound session: the people in the Slack conversation it lives in.
 
 A session is visible to the people who were in the conversation where it happened
-(docs/architecture/access.md § Who is in a session). In Slack that is everyone in
+(docs/architecture/access-sessions-and-people.md § Who is in a session). In Slack that is everyone in
 the channel (for a DM or group DM, its people): any of them can read the thread and
 write into it there, so in canopy each linked canopy MEMBER of the session's
 workspace is an EDITOR participant — full access, as in Slack. Contacts and guests

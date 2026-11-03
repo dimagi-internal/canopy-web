@@ -1,6 +1,6 @@
 """Direct use of an agent: a person's own Claude Code session, recorded as a turn.
 
-Three objects (canopy-web#1704, `docs/architecture/access.md` § Direct use):
+Three objects (canopy-web#1704, `docs/architecture/access-direct-use-and-admission.md` § Direct use):
 
 * a **private runner** (`models.PrivateRunner`) — the person's machine, registered once
   with their own token; it never claims anything;

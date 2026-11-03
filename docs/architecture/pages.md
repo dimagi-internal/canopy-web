@@ -200,16 +200,18 @@ Every browser-facing address canopy-web serves. The SPA route table is
     authority) and, when that person lost the right, that it stopped and why;
     create, edit, pause, delete, run a schedule now (access.md § Triggers).
   - **Huddles**.
-  - **Mail** (`mail`) — read-only email threads for the agent
-    (`GET /api/mail/threads/{workspace}?agent=`): thread table beside the open
-    thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
-    CSP, meta refreshes stripped; attachments are
-    presigned download links. No address → points to Settings → Email.
+  - **Mail** (`mail`) — the agent's mailbox in the SAME client as a person's own mail
+    (`components/mail/MailClient`, below): Inbox / Archived, search, unread count, reply and
+    compose *as the agent* for someone who may act as it (`canEdit`; the server checks FULL).
+    HTML bodies render only in a `sandbox=""` iframe behind a no-network CSP, meta refreshes
+    stripped (`components/mail/MessageView`); attachments are presigned download links.
+    No address → points to Settings → Email.
   - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
     forward routes with *Keep a copy*: Inbox / Archived, unread count, search
     (`?forwarded=true&q=`), per-address filter, reply / reply all / compose from the person's own
     forwarding addresses, keyboard shortcuts. Private to the person (`MailThread.owner`); plain
-    text out, no attachments on send. Settings → Email shows each domain's inbound ledger (admins).
+    text out, no attachments on send. It is the same `MailClient` as the agent's Mail tab — they differ
+    only in the source (`forwarded` vs `agent`) and who the server lets send. Settings → Email shows each domain's inbound ledger (admins).
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent
@@ -418,7 +420,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   hour), and one Approve button; the passkey step-up is the API client's
   (`auth/stepUp.ts`). Only the invitation's creator can open it (404 otherwise)
   or approve it, and a token cannot (`apps/harness/api_runner_invitations.py`,
-  `docs/architecture/runners.md` § How a runner signs in).
+  `docs/architecture/runner-credentials.md` § How a runner signs in).
 - **`/members/:userId`** — one member: role, when they joined, person or agent, the agents they
   operate here and the other workspaces you share with them; admins and owners also see who
   invited them and when they last signed in.

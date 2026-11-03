@@ -25,6 +25,17 @@ from django.urls.exceptions import Resolver404
 
 REPO = Path(__file__).resolve().parent.parent
 DOC = REPO / "docs" / "architecture" / "embedding-a-canopy-agent.md"
+# The guide is split by subject; its claims are checked across all four files, in guide order.
+GUIDE_FILES = [
+    DOC,
+    DOC.parent / "embedding-advanced.md",
+    DOC.parent / "embedding-actions-and-access.md",
+    DOC.parent / "embedding-reference.md",
+]
+
+
+def _guide_text() -> str:
+    return "\n".join(p.read_text() for p in GUIDE_FILES)
 
 
 @pytest.fixture(scope="module")
@@ -37,14 +48,15 @@ def doc() -> str:
     them too.
     """
     assert DOC.exists(), f"the embedding guide is missing: {DOC}"
-    return " ".join(DOC.read_text().split())
+    return " ".join(_guide_text().split())
 
 
 def test_the_doc_exists_and_is_indexed_in_claude_md(doc):
     """An unindexed doc is an unread doc: CLAUDE.md is the index loaded into
     every session, and it is where api-surface.md and mcp-surface.md live."""
     claude = (DOC.parent.parent.parent / "CLAUDE.md").read_text()
-    assert "embedding-a-canopy-agent.md" in claude
+    for part in GUIDE_FILES:
+        assert part.name in claude, f"{part.name} is not indexed in CLAUDE.md"
 
 
 def test_every_command_the_doc_names_exists(doc):
@@ -119,8 +131,9 @@ def test_the_doc_matches_whether_actions_actually_work(doc):
     pins the other direction: actions work, so the doc says so, and if the
     frame ever stops calling them the doc has to stop claiming it.
     """
-    frame_app = DOC.parent.parent.parent / "frontend" / "src" / "embed" / "EmbedApp.tsx"
-    agent_can_act = frame_app.exists() and "runAction" in frame_app.read_text()
+    frame_dir = DOC.parent.parent.parent / "frontend" / "src" / "embed"
+    frame_sources = [p for p in frame_dir.glob("*.ts*") if ".test." not in p.name]
+    agent_can_act = any("runAction" in p.read_text() for p in frame_sources)
     claims_it_works = "Agent actions work" in doc
     warns_it_does_not = "cannot yet call a host action" in doc
 
@@ -136,7 +149,7 @@ def test_every_internal_link_points_at_a_real_heading():
     silently sends them nowhere. Cheap to check, invisible when broken."""
     import re
 
-    text = DOC.read_text()
+    text = _guide_text()
     headings = re.findall(r"^#{2,3} (.+)$", text, re.M)
 
     def slug(heading: str) -> str:
@@ -154,7 +167,7 @@ def test_the_step_numbering_matches_the_checklist():
     """
     import re
 
-    text = DOC.read_text()
+    text = _guide_text()
     # Checklist rows link to their own section: | [3](#3-add-one-backend-endpoint) | …
     checklist = re.findall(r"\|\s*\[(\d+)\]\(#(\d+)-[^)]*\)", text)
     for shown, anchored in checklist:
@@ -189,7 +202,7 @@ def test_the_self_embed_section_asks_for_nothing(doc):
     ever grows a form of its own again, canopy has become a special case again.
     """
     section = " ".join(
-        DOC.read_text().split("## 11. Reference: canopy embedding its own pages")[-1].split()
+        _guide_text().split("## 11. Reference: canopy embedding its own pages")[-1].split()
     )
     assert "Show this panel on canopy's own pages" in section
     assert "not a special one" in section
@@ -396,7 +409,7 @@ def test_every_documented_theme_variable_and_part_is_real(doc):
     real_fields = set(re.findall(r"^\s+(\w+)\?:", iface, re.M))
     # The RAW file here: the `doc` fixture collapses whitespace, which removes
     # the line starts this pattern anchors on.
-    raw = DOC.read_text()
+    raw = _guide_text()
     raw = raw[raw.index("### Match it to your brand"):]
     block = raw[raw.index("theme: {"):]
     block = block[: block.index("},")]
@@ -513,7 +526,7 @@ def test_the_gateway_tools_the_doc_names_are_served():
 
     from apps.mcp.server import mcp
 
-    text = DOC.read_text()
+    text = _guide_text()
     names = {t.name for t in asyncio.run(mcp._list_tools())}
     for tool in ("site_tools", "site_call", "site_read"):
         assert tool in text and tool in names

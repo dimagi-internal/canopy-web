@@ -66,7 +66,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``self`` — signed in, and touches only the caller's OWN rows (PATs, push
   subscriptions, presence preference, shared transcripts).
 * ``member`` — workspace membership (``permissions.READ``): a viewer passes.
-* the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
+* the permissions of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
   ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
   ``admission.manage``, ``projects.decide``, ``own``, ``control``.
@@ -113,7 +113,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``superuser`` — ``User.is_superuser``: fleet-wide switches that span every tenant
   (the fleet hold).
 * ``fleet-holder`` — an address in ``CANOPY_FLEET_HOLDERS`` (Ada): may SET the fleet
-  hold, never release it (``apps/harness/api_runners.py::_may_hold_fleet``).
+  hold, never release it (``apps/harness/api_runners_holds.py::_may_hold_fleet``).
 * ``host`` — a connected-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
 * ``hcp-grant`` — the Human Context Protocol subject rule

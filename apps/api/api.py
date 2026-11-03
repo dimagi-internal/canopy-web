@@ -262,7 +262,8 @@ from apps.agent_tasks.api import router as agent_tasks_router  # noqa: E402
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
 from apps.capabilities.api import runner_router as capability_keeper_router  # noqa: E402
-from apps.common.api import common_router, public_router  # noqa: E402
+from apps.common.api import public_router  # noqa: E402
+from apps.tokens.api_me import router as me_router  # noqa: E402
 from apps.connections.api import agents_router as connections_agents_router  # noqa: E402
 from apps.connections.api import me_router as connections_me_router  # noqa: E402
 from apps.connections.api import router as connections_router  # noqa: E402
@@ -333,9 +334,13 @@ from apps.timeline.api import router as timeline_router  # noqa: E402
 from apps.tokens.api import router as tokens_router  # noqa: E402
 from apps.walkthroughs.api import router as walkthroughs_router  # noqa: E402
 from apps.workspaces.api import router as workspaces_router  # noqa: E402
+from apps.admission.api import router as admission_rules_router  # noqa: E402
+from apps.retention.api import router as retention_router  # noqa: E402
+from apps.harness.api_workspace_routing import router as workspace_routing_router  # noqa: E402
+from apps.agents.api_workspace_health import router as workspace_health_router  # noqa: E402
 
 api.add_router("/issues", issues_router)
-api.add_router("", common_router)
+api.add_router("", me_router)
 api.add_router("", public_router)
 api.add_router("/walkthroughs", walkthroughs_router)
 api.add_router("/tokens", tokens_router)
@@ -425,6 +430,10 @@ api.add_router("", fleet_tasks_router)
 api.add_router("", workspace_tasks_router)
 api.add_router("", kb_router)
 api.add_router("/workspaces", workspaces_router)
+api.add_router("/workspaces", retention_router)  # /{slug}/retention… (workspace settings, served by the retention app)
+api.add_router("/workspaces", admission_rules_router)  # /{slug}/admission-… (served by the admission app)
+api.add_router("/workspaces", workspace_routing_router)  # /{slug}/runner-topology, /runner-order (harness)
+api.add_router("/workspaces", workspace_health_router)  # /{slug}/health…, /agent-topology (agents)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
 api.add_router("/workspaces", connected_apps_router)
 api.add_router("/workspaces", connection_apps_router)  # a workspace's OAuth clients for connections

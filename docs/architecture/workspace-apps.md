@@ -22,7 +22,7 @@ What runs is `compose(template manifest, overlay)` (`overlay.py`), validated aga
 
 ## The manifest (an app is data, never server code)
 
-`roles` (each a **workspace capability** via `permissions.can`, or grant-only), `collections`
+`roles` (each a **workspace permission** via `permissions.can`, or grant-only), `collections`
 (typed fields incl. `file`; `read` role; optional `public` projection), `actions` (the only writes;
 `effects` the platform performs — email to an address on the record, worded by settings),
 `pages` (sandboxed JSX, with named `slots`), `settings`, `fixtures` (sample records for test
@@ -102,7 +102,7 @@ publish.
 
 ## Reused, not rebuilt
 
-- **Access**: app roles are workspace capabilities; managing is `integrations`, granting is
+- **Access**: app roles are workspace permissions; managing is `integrations`, granting is
   `members.manage`; every route declares `@gate`. No workspace role is named.
 - **Pages**: the dynamic-view sandbox (opaque origin, `connect-src 'none'`, no `allow-forms`),
   compiler, kit and protocol. An app page gets an `app` prop; a plain view still refuses writes.
