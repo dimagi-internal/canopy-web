@@ -91,7 +91,7 @@ the person on a connected site), so:
 ## Scheduled turns
 
 The scheduler is a producer of turns, not an execution engine (no celery/beat).
-`AgentSchedule` (`apps/harness/models.py`) holds the cron server-side, and
+`AgentSchedule` (`apps/harness/models/schedule.py`) holds the cron server-side, and
 **canopy-web fires it itself**: `apps/harness/schedule_clock.py`, a job on the
 off-request clock (`apps/common/ticks.py`, in the web process's ASGI lifespan), evaluates every
 enabled schedule each `CANOPY_SCHEDULE_TICK_S` (60 s; a cache key keeps N web tasks
