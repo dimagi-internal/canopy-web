@@ -133,6 +133,9 @@ class Inbound:
     #: The channel's name when the payload carries it (a slash command does; an
     #: event does not). "directmessage"/"privategroup" are Slack's placeholders, not names.
     channel_name: str = ""
+    #: What tells this message from others with the same `ts`. A post's reply buttons
+    #: all carry the post's `ts`, and each press is a message of its own.
+    delivery_key: str = ""
 
     @property
     def anchor(self) -> str:
@@ -1180,7 +1183,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         user=principal.user or AnonymousUser(),
         # Slack redelivers an event it thinks we missed; the same message must
         # collapse onto the same turn rather than asking the agent twice.
-        client_id=f"slack:{inbound.channel_id}:{inbound.ts}",
+        client_id=f"slack:{inbound.channel_id}:{inbound.delivery_key or inbound.ts}",
         origin=Turn.ORIGIN_SLACK,
         initiator=principal.initiator(inbound.team_id),
         # What the status line needs from THIS request, written onto the turn so

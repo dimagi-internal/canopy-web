@@ -283,7 +283,8 @@ def _record(installation, user, status: str, summary: str, payload: dict, *, ok:
 
 def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
                   session: Session | None = None, workspace: str = "",
-                  own_turn: bool = False, actions: list[dict] | None = None) -> ShareResult:
+                  own_turn: bool = False, actions: list[dict] | None = None,
+                  exclusive: bool = False) -> ShareResult:
     """Post `summary` into `channel`; in BIND mode, give the session that thread.
 
     `session` is re-checked against what the caller can see — a caller that got
@@ -320,7 +321,7 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     if unusable:
         return ShareResult(BAD_REQUEST, unusable)
     if session is not None and relay.session_destination(session) is not None:
-        return _post_update(user, session, summary, actions)
+        return _post_update(user, session, summary, actions, exclusive)
     if actions and mode != BIND:
         return ShareResult(BAD_REQUEST, (
             "Actions need a thread bound to a session for a click to reach: share with mode `bind`, "
@@ -407,7 +408,7 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
             locked.save(update_fields=["metadata", "updated_at"])
         session.metadata = meta
         if actions:
-            choices.remember(post_id, session, channel_id=channel_id, ts=ts, actions=actions)
+            choices.remember(post_id, session, channel_id=channel_id, ts=ts, actions=actions, exclusive=exclusive)
 
     link = client.permalink(installation.bot_token, channel=channel_id, ts=ts)
     if mode == BIND:
@@ -420,7 +421,8 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     return ShareResult(SHARED, message, session=session, channel_id=channel_id, ts=ts, permalink=link)
 
 
-def _post_update(user, session: Session, summary: str, actions: list[dict] | None = None) -> ShareResult:
+def _post_update(user, session: Session, summary: str, actions: list[dict] | None = None,
+                 exclusive: bool = False) -> ShareResult:
     """A new summary, as a reply in the thread this session is already bound to.
     A long one is several posts; its `actions` go under the last."""
     installation, channel_id, thread_ts = relay.session_destination(session)
@@ -453,7 +455,7 @@ def _post_update(user, session: Session, summary: str, actions: list[dict] | Non
         logger.exception("slack share update failed")
         return refuse(POST_FAILED, f"Slack refused the post: {e.error}.")
     if actions:
-        choices.remember(post_id, session, channel_id=channel_id, ts=ts, actions=actions)
+        choices.remember(post_id, session, channel_id=channel_id, ts=ts, actions=actions, exclusive=exclusive)
     link = client.permalink(installation.bot_token, channel=channel_id, ts=ts)
     message = f"Posted an update to this session's thread: {link or f'<#{channel_id}>'}."
     _record(installation, user, UPDATED, message, {"channel": channel_id, "ts": ts, "mode": "update",
