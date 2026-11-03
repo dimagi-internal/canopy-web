@@ -17,9 +17,9 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentTask
+from apps.agents.signals import TASK_RESOURCE
 from apps.canopy_sessions import invalidation, page_state
 from apps.canopy_sessions.models import Session
-from apps.harness.signals import TASK_RESOURCE
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 _EXT = iter(range(1, 10_000))

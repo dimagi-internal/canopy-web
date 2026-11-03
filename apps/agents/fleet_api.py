@@ -19,8 +19,8 @@ from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.events import audit
-from apps.harness.api_turns import visible_turns_qs
 from apps.harness.models import Turn
+from apps.harness.turn_queries import visible_turns_qs
 from apps.oauth_server.views import issuer
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -49,7 +49,6 @@ from .schemas import (
     AgentRosterRowOut,
     AgentTaskOut,
     KbOriginalsIn,
-    TaskCreateIn,
     KbOriginalsOut,
     KbPublishIn,
     KbUploadOut,
@@ -58,6 +57,7 @@ from .schemas import (
     ProjectShareOut,
     ProjectShareRemovedOut,
     TaskCountOut,
+    TaskCreateIn,
     WorkspaceProjectIn,
 )
 

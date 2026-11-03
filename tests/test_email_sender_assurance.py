@@ -24,7 +24,7 @@ from apps.harness import services
 from apps.harness.models import Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.agents.testing import admit_contacts
+from tests.agent_helpers import admit_contacts
 
 pytestmark = pytest.mark.django_db
 

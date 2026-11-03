@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 
 from django.db.models import Q, prefetch_related_objects
 
+from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent
+from apps.agents.standings import Standings
 from apps.canopy_sessions.models import RunnerBinding, SessionHandoff
 from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
@@ -356,8 +358,6 @@ class ServingFacts:
 
     def standings(self):
         """Every runner owner's standing with every agent (`access.Standings`)."""
-        from apps.agents.access import Standings  # noqa: PLC0415 — cycle: it imports routing
-
         if self._standings is None:
             self._standings = Standings({r.owner for r in self.runners if r.owner_id}, self.agents)
         return self._standings
@@ -368,8 +368,6 @@ class ServingFacts:
 
     def may_hold(self, runner: Runner, agent) -> bool:
         """`runner_may_hold_agent`, with every owner's standing read once."""
-        from apps.agents.services import runner_may_hold_agent  # noqa: PLC0415 — cycle: it imports routing
-
         # Its own copy of a runner another list loaded, whose flags it read already.
         return runner_may_hold_agent(self._by_pk.get(runner.pk, runner), agent, standings=self.standings())
 
@@ -388,8 +386,6 @@ class ServingFacts:
 
 def agents_routed_to(runner: Runner):
     """Every agent `runner_routes_agent` holds for, by slug."""
-    from apps.agents.services import runner_may_hold_agent
-
     if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return Agent.objects.none()
     tenant = runner_tenant_slugs(runner)
@@ -471,8 +467,6 @@ def inherited_orders(agent_ids) -> dict:
     def may_hold(runner, agent) -> bool:
         key = (agent.id, runner.owner_id)
         if key not in held:
-            from apps.agents.services import runner_may_hold_agent
-
             held[key] = runner_may_hold_agent(runner, agent)
         return held[key]
 

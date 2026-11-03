@@ -359,7 +359,7 @@ def test_patching_notes_mirrors_supersedes_and_clearing_retracts(world):
 
 
 def test_mirrored_notes_reach_the_envelope(world):
-    from apps.agents.testing import admit_contacts
+    from tests.agent_helpers import admit_contacts
 
     ace = world["ace"]
     admit_contacts(ace)

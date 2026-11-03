@@ -20,6 +20,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.agents.holding import runner_may_hold_agent
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
@@ -169,8 +170,6 @@ def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
     agent = t.acting_agent
     if agent is None:
         return True
-    from apps.agents.services import runner_may_hold_agent
-
     if holds is None:
         return runner_may_hold_agent(r, agent)
     key = (r.id, agent.id)
@@ -955,8 +954,6 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     admins: dict = {}
     now = timezone.now()
     my_flags = rr.in_force(runner)
-    from apps.agents.services import runner_may_hold_agent
-
     trusted: dict[int, bool] = {}
     # Why each candidate this box passed over was passed over, said on the turn
     # (`_note_skips`) so "queued, no runner has claimed it" never again has to be

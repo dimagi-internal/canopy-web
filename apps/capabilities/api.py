@@ -42,7 +42,7 @@ from apps.agents.route_refusals import zk_problem
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
-from apps.harness.api import runner_or_404
+from apps.harness.runner_queries import runner_or_404
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
