@@ -227,7 +227,7 @@ def check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> Non
     raise HttpError(
         403,
         f"turn_mode=auto is for {agent.slug}'s owner or admins; you may request "
-        "turn_mode=manual (or none — a workspace editor's turns run manual anyway), "
+        "turn_mode=manual (or none — a line that is manual_only on your access list runs manual anyway), "
         "or ask its owner to make you an admin",
     )
 

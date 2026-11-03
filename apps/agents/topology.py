@@ -35,8 +35,9 @@ from . import interface as iface_mod
 from .models import Agent
 from .tree import agents_in_tree
 
-#: Why an edge has the access it has. `editor`: full, but manual only.
-#: `no-interface`: a viewer, refused because the target published no interface.
+#: Why an edge has the access it has. `editor`: full through a line that gives `write`
+#: (manual when that line is `manual_only`). `no-interface`: refused, and the target
+#: published no capability either.
 OWNER, WS_OWNER, ADMIN, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
     "owner", "workspace-owner", "admin", "editor", "no-interface", "capabilities",
     "nothing-offered", "not-member", "no-login",

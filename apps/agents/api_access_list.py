@@ -36,7 +36,7 @@ router = Router(tags=["agents"])
 defaults_router = Router(tags=["workspaces"])
 
 #: The words a person sees beside each permission.
-_CAN = {roles.READ: "ask (through its ask capability, when it publishes one)",
+_CAN = {roles.READ: "ask, in a confined session, through the agent's ask capability (nothing, until the agent publishes one)",
         roles.WRITE: "drive the whole agent", roles.AGENT_EDIT: "change its skills and capabilities",
         roles.ADMINISTER: "configure it", roles.OWN: "transfer or delete it"}
 _PERMISSIONS = (roles.READ, roles.WRITE, roles.AGENT_EDIT, roles.ADMINISTER, roles.OWN)

@@ -2,7 +2,7 @@
 
 `manual` / `auto`, the ladder below, and who may ask for which are defined in
 `docs/architecture/access.md`; the person-side half (who may request `auto`,
-whose turns are always manual) is `apps/agents/access.decide`.
+whose turns are capped to manual) is `apps/agents/access.decide`.
 
 A routing rule (`RunnerAssignment` with a non-empty `source`) already answers
 "which box runs this person's work on this channel". Spec 2026-09-23 lets the
@@ -36,14 +36,14 @@ an admin (`Agent.is_admin`, which counts workspace owners), and that is checked
 twice — at enqueue (403) and again here, at every claim, so an admin revoked
 while the turn sat queued gets manual, with the basis saying why.
 
-**A workspace editor's turns are always manual** (owner decision, 2026-10-04).
-An editor who is not an agent admin may reshape the agent and send it work, so
-their turn runs in its full profile — but never in `auto`: whatever a rule or the
-agent's switch says, the turn is manual and its basis says why, because acting
-outbound unreviewed is for the agent's owner and admins. Decided at every claim
-(`access.decide_for_turn`), so promoting the editor to admin while the turn is
-queued takes effect, as does a demotion. The same holds for a turn canopy
-starts on someone's behalf — a schedule's occurrence is bounded by its
+**An editor line may cap its turns to manual.** A person whose access-list lines
+give `write` runs the agent's full profile, but when every line that gives them
+`write` is marked `manual_only`, the turn is manual whatever a rule or the agent's
+switch says, and its basis says why: acting outbound unreviewed is for the agent's
+owner and admins (`editor_cap`). A line not marked `manual_only` sets no cap.
+Decided at every claim (`access.decide_for_turn`), so editing the line, or making
+the person an admin while the turn is queued, takes effect. The same holds for a
+turn canopy starts on someone's behalf: a schedule's occurrence is bounded by its
 creator, so a schedule is not a way around the cap.
 
 **A session's mode is fixed when it starts** (Jonathan, 2026-10-07: "the entire
