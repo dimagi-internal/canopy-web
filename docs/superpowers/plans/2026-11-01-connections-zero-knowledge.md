@@ -83,8 +83,9 @@ Google: `login_host` and `instance_url` are `""`.
 
 `access`:
 ```json
-{"v":1,"access_token":"…","expires_at":1793501800,"instance_url":"https://acme.my.salesforce.com","account_id":"00D…/005…","scope":"…","owner_key":"<same jkt as refresh>"}
+{"v":1,"access_token":"…","expires_at":1793501800,"instance_url":"https://acme.my.salesforce.com","account_id":"00D…/005…","scope":"…","owner_key":"<same jkt as refresh>","statement_floor":3}
 ```
+`statement_floor` here is set by whoever writes `access`, to the `refresh` plaintext's value. A reader refuses a statement whose `version` is below the floor in `refresh` OR the floor in `access`. These are independent checks against the statement, with no equality between the two envelopes, so an `access` left over from before a share stays readable (its token was already known to that envelope's recipients). The floor in `refresh` alone is only as honest as the `refresh` carrying it: a removed device could forge one naming the real owner key with floor 0, beside an old statement that still lists it, and the real `access` would be re-sealed to it.
 A reader refuses an `access` whose `account_id` or `owner_key` differs from the `refresh` plaintext's, or whose `instance_url` fails the host rule. `account_id` alone is no cross-check, because the server knows it: on a fresh box a forged `refresh` with an attacker's owner key, paired with the real `access`, would pass, and a keeper re-seal would hand the real access token to the attacker.
 
 App block in material (plain JSON over the authenticated route, never sealed): `{"client_id","client_secret","options":{…ConnectionApp.options}}`. Only `access_token_seconds` (Salesforce, default 1800) is read from `options`; endpoints never are.
@@ -295,7 +296,7 @@ def test_connect_stores_only_ciphertext_sealed_to_the_owner(world, fake_provider
 def test_the_owner_opens_it_and_finds_the_spec_plaintext(world, fake_provider):
     plain = json.loads(ref_open(conn.sealed, conn.binding, "refresh", world.person_priv))
     assert set(plain) == {"v", "provider", "refresh_token", "client_id", "login_host", "instance_url",
-                          "account_id", "owner_key", "issued_at", "scopes"} and "client_secret" not in plain
+                          "account_id", "owner_key", "issued_at", "scopes", "statement_floor"} and "client_secret" not in plain
 def test_an_agent_connection_is_sealed_to_the_connecting_admin(world, fake_provider): ...
 def test_start_without_a_vault_key_is_refused_and_says_where_to_set_one_up(world): ...   # no_vault_key
 def test_google_wrong_domain_is_dropped_without_revoking(world, fake_provider):
@@ -681,7 +682,7 @@ def test_heartbeat_restage_still_only_refreshes_held_files(fake_run): ...
 
 **Interfaces:**
 - Produces (`connections.ts`): `getShareState(id: string): Promise<ShareStateOut>`, `putShare(id: string, body: ShareIn): Promise<ConnectionOut>`, `disconnectMine(id: string)`, `disconnectAgentConnection(slug: string, id: string)`; remove `grantConnection`, `revokeConnectionGrant`.
-- Produces (`connectionShare.ts`): `statementMessage(st: Statement): string`; `openForOwner(state: ShareStateOut, me: Unlocked): Promise<{account: {account_id, provider, instance_url}; refresh: Bytes}>` (accepts `sealed_sig === null` only when `state.state === 'unshared'`, otherwise verifies the MAC; the plaintext stays inside this module); `chooseRecipients(state: ShareStateOut, choice: {agents: string[]; myComputers: string[]}, trusted: Trust): Recipient[]` (Part 0.5 with `vault/trust.ts`; a candidate without a trusted endorsement is left out and named); `buildShare(state: ShareStateOut, me: Unlocked, choice): Promise<ShareIn>` (next statement with `version + 1`, `endorsers` set to the people whose endorsements it trusts (`vault/trust.ts`) for the chosen machines, `statement_floor` in the re-sealed `refresh` set to that new version, `owner_key` kept in `access` when it re-seals one, signs it as `endorse` does, re-seals `refresh` (and `access` when present) with `sealValue`, writes member-writer MACs, `expect = state.sealed_digest`).
+- Produces (`connectionShare.ts`): `statementMessage(st: Statement): string`; `openForOwner(state: ShareStateOut, me: Unlocked): Promise<{account: {account_id, provider, instance_url}; refresh: Bytes}>` (accepts `sealed_sig === null` only when `state.state === 'unshared'`, otherwise verifies the MAC; the plaintext stays inside this module); `chooseRecipients(state: ShareStateOut, choice: {agents: string[]; myComputers: string[]}, trusted: Trust): Recipient[]` (Part 0.5 with `vault/trust.ts`; a candidate without a trusted endorsement is left out and named); `buildShare(state: ShareStateOut, me: Unlocked, choice): Promise<ShareIn>` (next statement with `version + 1`, `endorsers` set to the people whose endorsements it trusts (`vault/trust.ts`) for the chosen machines, `statement_floor` in the re-sealed `refresh` set to that new version, `owner_key` kept and `statement_floor` set to that new version in `access` when it re-seals one, signs it as `endorse` does, re-seals `refresh` (and `access` when present) with `sealValue`, writes member-writer MACs, `expect = state.sealed_digest`).
 
 - [ ] **Step 1: Write the failing tests** (vitest; vectors via `import raw from '../../../docs/vault/zk-v1/connections_v1_vectors.json?raw'`)
 

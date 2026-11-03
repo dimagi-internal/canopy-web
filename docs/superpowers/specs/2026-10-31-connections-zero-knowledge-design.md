@@ -149,7 +149,7 @@ Releases go together: the CLI first (cloud boxes pick it up), then canopy-web wi
 The guarantee holds from a connection's first honest seal onward. These limits remain:
 
 - **At the moment of connecting.** A server compromised at that moment can substitute that one connection.
-- **A fresh box's first read.** A box with no pin for a connection can be handed a self-consistent forged set. That gives it a substitute token and never the real one.
+- **A fresh box's first read.** A box with no pin for a connection can be handed a self-consistent forged set. That gives it a substitute token and never the real one. It also pins the attacker's owner key on that box, so the real set is refused there until the box's pin entry is removed or the box is replaced.
 - **An old endorsement.** A device with an old endorsement by the owner or a listed endorser, for an agent still in the statement, can be re-listed by the server. Removing such a device from the statement or revoking its device key therefore does not retire it. Retiring a device whose key may be compromised means ending the grant at the provider by disconnecting and connecting again.
 
 ## Downsides accepted

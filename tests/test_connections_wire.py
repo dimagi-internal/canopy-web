@@ -260,7 +260,9 @@ def test_envelope_vector_opens_to_the_refresh_plaintext_for_every_recipient():
 
 def test_the_access_plaintext_names_the_same_owner_key_as_the_refresh_one():
     access, refresh = json.loads(V["envelope"]["access_plaintext"]), json.loads(V["envelope"]["plaintext"])
-    assert set(access) == {"v", "access_token", "expires_at", "instance_url", "account_id", "scope", "owner_key"}
+    assert set(access) == {"v", "access_token", "expires_at", "instance_url", "account_id", "scope", "owner_key",
+                           "statement_floor"}
+    assert access["statement_floor"] == refresh["statement_floor"] == GOOD["version"]
     assert access["owner_key"] == refresh["owner_key"] == V["statement"]["signer_jkt"]
     assert access["account_id"] == refresh["account_id"]
 
