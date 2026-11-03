@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { runnerFlagLabel } from '@/components/chat/runnerEligibility'
 import { getConnectedAppNeeds, type ConnectedApp, type SiteNeeds, type AgentFit } from '@/api/connectedApps'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 function Tick({ on }: { on: boolean }): JSX.Element {
   return <span className={on ? 'text-foreground' : 'text-muted-foreground'}>{on ? 'yes' : '—'}</span>
@@ -70,31 +71,33 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
       )}
       <table className="w-full border-collapse text-xs">
         <thead>
-          <tr className="border-b border-border text-left text-muted-foreground">
-            <th className="py-1 pr-2 font-normal">Agent</th>
-            <th className="py-1 pr-2 font-normal">Offered on the site</th>
-            <th className="py-1 pr-2 font-normal">Sensitive data</th>
-            <th className="py-1 pr-2 font-normal">Ready</th>
-            <th className="py-1 pr-2 font-normal">Can handle sensitive data</th>
-          </tr>
+          <Tr rule="bottom" head="plain">
+            <Th density="compact-gutter" weight="normal">Agent</Th>
+            <Th density="compact-gutter" weight="normal">Offered on the site</Th>
+            <Th density="compact-gutter" weight="normal">Sensitive data</Th>
+            <Th density="compact-gutter" weight="normal">Ready</Th>
+            <Th density="compact-gutter" weight="normal">Can handle sensitive data</Th>
+          </Tr>
         </thead>
         <tbody>
           {needs.agents.map((a) => (
-            <tr
+            <Tr
+              rule="bottom-last"
+              top
               key={a.slug}
               data-attention={needsAttention(a) || undefined}
-              className={`border-b border-border align-top last:border-0 ${needsAttention(a) ? 'bg-destructive/5' : ''}`}
+              className={needsAttention(a) ? 'bg-destructive/5' : undefined}
             >
-              <td className="py-1 pr-2 text-foreground">
+              <Td density="compact-gutter" tone="foreground">
                 <a href={a.url} className="hover:underline">
                   {a.name}
                 </a>
-              </td>
-              <td className="py-1 pr-2"><Tick on={a.offered} /></td>
-              <td className="py-1 pr-2"><Tick on={a.sensitive_data} /></td>
-              <td className="py-1 pr-2"><Tick on={a.ready} /></td>
-              <td className="py-1 pr-2"><CanHandle agent={a} /></td>
-            </tr>
+              </Td>
+              <Td density="compact-gutter"><Tick on={a.offered} /></Td>
+              <Td density="compact-gutter"><Tick on={a.sensitive_data} /></Td>
+              <Td density="compact-gutter"><Tick on={a.ready} /></Td>
+              <Td density="compact-gutter"><CanHandle agent={a} /></Td>
+            </Tr>
           ))}
         </tbody>
       </table>
@@ -123,19 +126,19 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
           </summary>
           <table className="mt-1 w-full border-collapse">
             <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="py-1 pr-2 font-normal">Page</th>
-                <th className="py-1 pr-2 font-normal">Key</th>
-                <th className="py-1 pr-2 font-normal">Scopes</th>
-              </tr>
+              <Tr rule="bottom" head="plain">
+                <Th density="compact-gutter" weight="normal">Page</Th>
+                <Th density="compact-gutter" weight="normal">Key</Th>
+                <Th density="compact-gutter" weight="normal">Scopes</Th>
+              </Tr>
             </thead>
             <tbody>
               {needs.pages.map((p) => (
-                <tr key={p.key} className="border-b border-border align-top last:border-0">
-                  <td className="py-1 pr-2 text-foreground">{p.title || p.key}</td>
-                  <td className="py-1 pr-2 font-mono text-muted-foreground">{p.key}</td>
-                  <td className="py-1 pr-2 font-mono text-muted-foreground">{p.scopes.join(' ')}</td>
-                </tr>
+                <Tr rule="bottom-last" top key={p.key}>
+                  <Td density="compact-gutter" tone="foreground">{p.title || p.key}</Td>
+                  <Td density="compact-gutter" tone="muted" mono>{p.key}</Td>
+                  <Td density="compact-gutter" tone="muted" mono>{p.scopes.join(' ')}</Td>
+                </Tr>
               ))}
             </tbody>
           </table>

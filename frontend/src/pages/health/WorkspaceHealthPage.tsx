@@ -13,7 +13,7 @@ import { RunnersTable } from '@/components/runners/RunnersTable'
 import { useTreeRead } from './useTreeRead'
 import { useAgentSetup } from './useAgentSetup'
 import { scopedPath } from '../../lib/scopedLinks'
-import { Th } from '@/components/DataTable'
+import { Td, Th } from '@/components/DataTable'
 
 // WORKSPACE HEALTH: what is not set up right, across this workspace and every one
 // below it. It renders; it never decides. Each agent's steps are its own setup
@@ -110,16 +110,16 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
         <h2 className="mb-2 text-[13px] font-semibold text-foreground">Workspaces</h2>
         <table className="w-full text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-workspaces">
           <thead className="text-left text-muted-foreground">
-            <tr><Th>Workspace</Th><th className="font-medium">Agents</th></tr>
+            <tr><Th>Workspace</Th><Th density="none">Agents</Th></tr>
           </thead>
           <tbody className="divide-y divide-border">
             {health.workspaces.map((w) => (
               <tr key={w.slug}>
-                <td className="py-1.5" style={{ paddingLeft: `${w.depth * 16}px` }}>
+                <Td density="cozy" style={{ paddingLeft: `${w.depth * 16}px` }}>
                   <Link to={scopedPath(w.slug, '/health')} className="text-foreground hover:underline">{w.name}</Link>
                   <span className="ml-1 font-mono text-muted-foreground">{w.slug}</span>
-                </td>
-                <td className="tabular-nums"><CountLink n={w.agents} to={scopedPath(w.slug, '/agents')} label="agents" /></td>
+                </Td>
+                <Td density="none" numeric><CountLink n={w.agents} to={scopedPath(w.slug, '/agents')} label="agents" /></Td>
               </tr>
             ))}
           </tbody>
@@ -157,19 +157,19 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
           <table className="w-full min-w-[1380px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
             <thead className="text-left text-muted-foreground">
               <tr>
-                <Th>Agent</Th><th className="font-medium">Setup</th>
-                <th className="font-medium">Vault</th><th className="font-medium">Owner</th>
-                <th className="font-medium">Workspace</th><th className="font-medium">Last turn</th>
-                <th className="font-medium text-right" title="Turns started in 30 days, and how many of those that finished failed or were lost">Turns, 30 days</th>
-                <th className="font-medium text-right" title="People who asked it, chatted or messaged in 30 days">People</th>
-                <th className="font-medium" title="The runners its finished turns ran on in 30 days, and how many each">Ran on</th>
-                <th className="font-medium" title="Open sessions, and when any of its sessions last did something">Sessions</th>
-                <th className="font-medium text-right">Projects</th>
-                <th className="font-medium text-right" title="Suggested or in progress">Open tasks</th>
-                <th className="font-medium text-right" title="Open tasks with an unanswered ask, or parked on a person">Waiting on people</th>
-                <th className="font-medium text-right">Skills</th><th className="font-medium text-right">Schedules</th>
-                <th className="font-medium" title="What people other than its admins may ask it to do (its published interface)">Who can use it</th>
-                <th className="font-medium" title="manual: its turns stop for a person's approval before acting or sending. auto: they run through.">Turn mode</th>
+                <Th>Agent</Th><Th density="none">Setup</Th>
+                <Th density="none">Vault</Th><Th density="none">Owner</Th>
+                <Th density="none">Workspace</Th><Th density="none">Last turn</Th>
+                <Th density="none" align="right" title="Turns started in 30 days, and how many of those that finished failed or were lost">Turns, 30 days</Th>
+                <Th density="none" align="right" title="People who asked it, chatted or messaged in 30 days">People</Th>
+                <Th density="none" title="The runners its finished turns ran on in 30 days, and how many each">Ran on</Th>
+                <Th density="none" title="Open sessions, and when any of its sessions last did something">Sessions</Th>
+                <Th density="none" align="right">Projects</Th>
+                <Th density="none" align="right" title="Suggested or in progress">Open tasks</Th>
+                <Th density="none" align="right" title="Open tasks with an unanswered ask, or parked on a person">Waiting on people</Th>
+                <Th density="none" align="right">Skills</Th><Th density="none" align="right">Schedules</Th>
+                <Th density="none" title="What people other than its admins may ask it to do (its published interface)">Who can use it</Th>
+                <Th density="none" title="manual: its turns stop for a person's approval before acting or sending. auto: they run through.">Turn mode</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -177,7 +177,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
                 <Fragment key={a.slug}>
                   <tr className="cursor-pointer hover:bg-muted/50" data-agent={a.slug}
                       onClick={() => setOpen(open === a.slug ? null : a.slug)}>
-                    <td className="py-1.5">
+                    <Td density="cozy">
                       <button type="button" aria-expanded={open === a.slug}
                               className="inline-flex items-center gap-1 text-left font-medium text-foreground">
                         {open === a.slug
@@ -186,7 +186,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
                         {a.name}
                       </button>
                       <span className="ml-1 font-mono text-muted-foreground">{a.slug}</span>
-                    </td>
+                    </Td>
                     <td>
                       {a.steps ? (
                         <span className="inline-flex items-center gap-0.5" aria-label={`${a.left} steps left`}>
@@ -200,49 +200,49 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
                         ? <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#credentials`)}><VaultBadge vault={a.vault} /></CellLink>
                         : <Pending failed={failed.has(a.slug)} />}
                     </td>
-                    <td className="text-foreground-secondary">
+                    <Td density="none" tone="secondary">
                       {a.owner_email ? <a href={`mailto:${a.owner_email}`} onClick={stop} className="hover:underline">{a.owner_email}</a> : '—'}
-                    </td>
-                    <td className="font-mono text-foreground-secondary"><CellLink to={scopedPath(a.workspace, '/health')}>{a.workspace}</CellLink></td>
-                    <td className="text-foreground-secondary">
+                    </Td>
+                    <Td density="none" tone="secondary" mono><CellLink to={scopedPath(a.workspace, '/health')}>{a.workspace}</CellLink></Td>
+                    <Td density="none" tone="secondary">
                       {a.last_turn_at ? <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/turns`)}>{relativeAge(a.last_turn_at, now, { seconds: false })}</CellLink> : 'never'}
-                    </td>
-                    <td className="whitespace-nowrap text-right tabular-nums">
+                    </Td>
+                    <Td density="none" nowrap numeric align="right">
                       <CountLink n={a.turns_30d} to={scopedPath(a.workspace, `/agents/${a.slug}/turns`)} label="turns" />
                       {a.failed_30d > 0 && <span className="text-destructive"> · {a.failed_30d} failed</span>}
-                    </td>
-                    <td className="text-right tabular-nums text-foreground-secondary">{a.people_30d || '—'}</td>
-                    <td className="whitespace-nowrap text-foreground-secondary" data-testid="ran-on">
+                    </Td>
+                    <Td density="none" tone="secondary" numeric align="right">{a.people_30d || '—'}</Td>
+                    <Td density="none" tone="secondary" nowrap data-testid="ran-on">
                       {a.ran_on.length === 0 ? '—' : a.ran_on.map((r, i) => (
                         <span key={r.name} title={`${r.kind || 'runner'} · ${r.turns} turn${r.turns === 1 ? '' : 's'}`}>
                           {i > 0 && ' · '}{r.name} <span className="tabular-nums text-muted-foreground">{r.turns}</span>
                         </span>
                       ))}
-                    </td>
-                    <td className="whitespace-nowrap text-foreground-secondary" title="Open the row for its latest sessions">
+                    </Td>
+                    <Td density="none" tone="secondary" nowrap title="Open the row for its latest sessions">
                       {a.active_sessions ? <span className="text-foreground">{a.active_sessions} open</span> : '0 open'}
                       {a.last_session_at && <span className="text-muted-foreground"> · {relativeAge(a.last_session_at, now, { seconds: false })}</span>}
-                    </td>
-                    <td className="text-right tabular-nums">
+                    </Td>
+                    <Td density="none" numeric align="right">
                       <CountLink n={a.projects} to={scopedPath(a.workspace, `/agents/${a.slug}/projects`)} label="projects" />
-                    </td>
-                    <td className="text-right tabular-nums">
+                    </Td>
+                    <Td density="none" numeric align="right">
                       <CountLink n={a.open_tasks} to={scopedPath(a.workspace, `/agents/${a.slug}/tasks`)} label="open tasks" />
-                    </td>
-                    <td className="text-right tabular-nums">
+                    </Td>
+                    <Td density="none" numeric align="right">
                       <CountLink n={a.waiting_tasks} to={scopedPath(a.workspace, `/agents/${a.slug}/tasks`)} label="tasks waiting on people" />
-                    </td>
-                    <td className="text-right tabular-nums"><CountLink n={a.skills} to={scopedPath(a.workspace, `/agents/${a.slug}/skills`)} label="skills" /></td>
-                    <td className="text-right tabular-nums"><CountLink n={a.schedules} to={scopedPath(a.workspace, `/agents/${a.slug}/triggers`)} label="schedules" /></td>
-                    <td className="whitespace-nowrap text-foreground-secondary"
+                    </Td>
+                    <Td density="none" numeric align="right"><CountLink n={a.skills} to={scopedPath(a.workspace, `/agents/${a.slug}/skills`)} label="skills" /></Td>
+                    <Td density="none" numeric align="right"><CountLink n={a.schedules} to={scopedPath(a.workspace, `/agents/${a.slug}/triggers`)} label="schedules" /></Td>
+                    <Td density="none" tone="secondary" nowrap
                         title={a.access_lines.length ? `On its access list: ${a.access_lines.join('; ')}` : undefined}>
                       <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#reach`)}>{whoCanUse(a)}</CellLink>
-                    </td>
-                    <td className="whitespace-nowrap text-foreground-secondary">
+                    </Td>
+                    <Td density="none" tone="secondary" nowrap>
                       <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)}>
                         {a.turn_mode === 'manual' ? 'Manual · asks first' : a.turn_mode === 'auto' ? 'Auto' : a.turn_mode}
                       </CellLink>
-                    </td>
+                    </Td>
                   </tr>
                   {open === a.slug && (
                     <tr><td colSpan={17} className="bg-muted/30 p-3"><AgentDetail agent={a} failed={failed.has(a.slug)} /></td></tr>
@@ -384,10 +384,10 @@ function AgentDetail({ agent, failed }: { agent: AgentHealthOut; failed: boolean
             <tbody className="divide-y divide-border">
               {v.refs.map((r) => (
                 <tr key={r.name}>
-                  <td className="py-1 font-mono">{r.name}</td>
-                  <td className={clsx('text-right', r.status === 'missing' ? 'text-destructive' : 'text-foreground-secondary')}>
+                  <Td mono>{r.name}</Td>
+                  <Td density="none" align="right" className={r.status === 'missing' ? 'text-destructive' : 'text-foreground-secondary'}>
                     {REF_LABEL[r.status]}
-                  </td>
+                  </Td>
                 </tr>
               ))}
             </tbody>

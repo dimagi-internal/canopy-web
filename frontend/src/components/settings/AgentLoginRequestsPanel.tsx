@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { decideMyAgentLoginRequest, listMyAgentLoginRequests, type AgentLoginRequestOut } from '@/api/agents'
+import { Td, Tr } from '@/components/DataTable'
 
 // Requests, from an agent's admin, to make YOUR existing canopy account that agent's own
 // login — after which the agent's token signs in as you. Only you can accept, here, with a
@@ -39,13 +40,13 @@ export function AgentLoginRequestsPanel() {
       <table className="w-full text-[12px]">
         <tbody>
           {rows.map((r) => (
-            <tr key={r.id} className="border-t border-border">
-              <td className="py-1.5 text-foreground">
+            <Tr rule="top" key={r.id}>
+              <Td density="cozy" tone="foreground">
                 <span className="font-medium">{r.agent_name || r.agent_slug}</span>{' '}
                 <span className="text-muted-foreground">({r.workspace_id})</span>
-              </td>
-              <td className="py-1.5 text-muted-foreground">asked by {r.requested_by_email || 'an admin'}</td>
-              <td className="py-1.5 text-right">
+              </Td>
+              <Td density="cozy" tone="muted">asked by {r.requested_by_email || 'an admin'}</Td>
+              <Td density="cozy" align="right">
                 <button
                   type="button"
                   disabled={busy !== null}
@@ -62,8 +63,8 @@ export function AgentLoginRequestsPanel() {
                 >
                   Accept
                 </button>
-              </td>
-            </tr>
+              </Td>
+            </Tr>
           ))}
         </tbody>
       </table>

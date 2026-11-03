@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 import { X } from 'lucide-react'
 
 import { SHORTCUTS, isPlainKey, isTypingTarget } from './keys'
+import { Td, Tr } from '@/components/DataTable'
 
 export function KeyboardHelp(): JSX.Element | null {
   const [open, setOpen] = useState(false)
@@ -63,8 +64,8 @@ export function KeyboardHelp(): JSX.Element | null {
               <table className="w-full text-[12.5px]">
                 <tbody>
                   {g.shortcuts.map((s) => (
-                    <tr key={s.keys.join('+') + s.what} className="align-top">
-                      <td className="whitespace-nowrap py-0.5 pr-3">
+                    <Tr top key={s.keys.join('+') + s.what}>
+                      <Td density="flush" nowrap>
                         {s.keys.map((k) => (
                           <kbd
                             key={k}
@@ -73,9 +74,9 @@ export function KeyboardHelp(): JSX.Element | null {
                             {k}
                           </kbd>
                         ))}
-                      </td>
-                      <td className="py-0.5 text-foreground-secondary">{s.what}</td>
-                    </tr>
+                      </Td>
+                      <Td density="hair" tone="secondary">{s.what}</Td>
+                    </Tr>
                   ))}
                 </tbody>
               </table>

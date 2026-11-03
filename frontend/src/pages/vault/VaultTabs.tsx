@@ -18,6 +18,7 @@ import {
   grantWorkspaceVaultPending, makeWorkspaceVaultKey, rotateWorkspaceVaultKey, sealWorkspaceVaultValue,
 } from '@/vault/operations'
 import type { VaultOutletContext } from './VaultPage'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // A workspace vault's three bodies — Storage & key, Who can open them, Secrets —
 // drawn by VaultPage inside the shared VaultView as its sections (the old tab addresses still open them). Who may change what is the server's rule
@@ -139,22 +140,22 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
             <tbody className="divide-y divide-border">
               {served.map((a) => (
                 <tr key={a.id}>
-                  <td className="py-1.5 text-foreground">
+                  <Td density="cozy" tone="foreground">
                     {a.project
                       ? `member agents of project ${a.project}`
                       : a.agent ? `agent ${a.agent}` : `every agent in ${a.workspace} and below`}
-                  </td>
-                  <td className="py-1.5 text-muted-foreground" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>
+                  </Td>
+                  <Td density="cozy" tone="muted" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>
                     {a.project ? projectServing(a) : 'layered under each agent’s own secrets'}
-                  </td>
-                  <td className="py-1.5 text-right">
+                  </Td>
+                  <Td density="cozy" align="right">
                     {manages && (
                       <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
                         onClick={() => void run(() => detachWorkspaceVault(v.vault_id, a.id))}>
                         Stop serving
                       </button>
                     )}
-                  </td>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -227,21 +228,21 @@ export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOut
         </p>
         <table className="w-full text-[12px]" data-testid="ws-vault-runners">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="py-1 font-normal">Runner</th><th className="py-1 font-normal">Its key</th>
-              <th className="py-1 font-normal">Access</th><th><span className="sr-only">Actions</span></th>
-            </tr>
+            <Tr head="label">
+              <Th weight="normal">Runner</Th><Th weight="normal">Its key</Th>
+              <Th weight="normal">Access</Th><Th density="none" weight="inherit"><span className="sr-only">Actions</span></Th>
+            </Tr>
           </thead>
           <tbody className="divide-y divide-border">
             {runners.map((a) => (
               <tr key={a.id} data-testid={`ws-vault-runner-${a.id}`}>
-                <td className="py-1.5">
+                <Td density="cozy">
                   <Link to={runnerHref({ id: a.runner!, workspace: v.workspace })} className="text-primary hover:underline">
                     {a.runner_name ?? a.runner}
                   </Link>
-                </td>
-                <td className="py-1.5 text-muted-foreground">{a.key_place ? storePlace(a.key_place) : 'no key yet'}</td>
-                <td className="py-1.5" data-testid={`ws-vault-access-${a.id}`}>
+                </Td>
+                <Td density="cozy" tone="muted">{a.key_place ? storePlace(a.key_place) : 'no key yet'}</Td>
+                <Td density="cozy" data-testid={`ws-vault-access-${a.id}`}>
                   {a.access === 'has' && <span className="text-success">has access</span>}
                   {a.access === 'waiting' && (
                     <span className="flex flex-wrap items-center gap-2">
@@ -260,15 +261,15 @@ export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOut
                     </span>
                   )}
                   {a.access === 'none' && <span className="text-muted-foreground">no access yet (no approved key on it)</span>}
-                </td>
-                <td className="py-1.5 text-right">
+                </Td>
+                <Td density="cozy" align="right">
                   {manages && (
                     <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
                       onClick={() => void run(() => detachWorkspaceVault(v.vault_id, a.id))}>
                       Remove
                     </button>
                   )}
-                </td>
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -293,8 +294,8 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
           <tbody className="divide-y divide-border">
             {v.secrets.map((s) => (
               <tr key={s}>
-                <td className="py-1.5 font-mono text-foreground">{s}</td>
-                <td className="py-1.5 text-right">
+                <Td density="cozy" tone="foreground" mono>{s}</Td>
+                <Td density="cozy" align="right">
                   {manages && (
                     <button type="button" disabled={busy} className={quietClass} data-testid={`ws-vault-delete-${s}`}
                       onClick={() => window.confirm(`Delete ${s} from ${v.name}?`)
@@ -302,7 +303,7 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
                       Delete
                     </button>
                   )}
-                </td>
+                </Td>
               </tr>
             ))}
           </tbody>

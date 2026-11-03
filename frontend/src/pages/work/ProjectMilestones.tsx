@@ -6,7 +6,7 @@ import { Button } from 'canopy-ui/ui'
 import { createMilestone, deleteMilestone, updateMilestone, type Milestone } from '@/api/work'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { ProgressBar } from '@/components/work/projectBits'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 export function MilestonesSection({
   milestones,
@@ -38,12 +38,12 @@ export function MilestonesSection({
         <div className="overflow-x-auto rounded-lg border border-border bg-card" data-testid="milestone-table">
           <table className="w-full border-collapse text-[13px]">
             <thead className="border-b border-border">
-              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-1.5 font-medium">Milestone</th>
+              <Tr head="label">
+                <Th density="snug">Milestone</Th>
                 <Th density="tight">Progress</Th>
                 <Th density="tight">Target</Th>
-                {editable && <th className="w-16 px-2 py-1.5" aria-label="Actions" />}
-              </tr>
+                {editable && <Th density="tight" weight="inherit" className="w-16" aria-label="Actions" />}
+              </Tr>
             </thead>
             <tbody>
               {milestones.map((m) => (
@@ -91,8 +91,8 @@ function MilestoneRow({
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(m.name)
   return (
-    <tr className={`border-b border-border last:border-0 hover:bg-muted/50 ${selected ? 'bg-primary/5' : ''}`} data-milestone={m.name}>
-      <td className="px-3 py-1.5">
+    <Tr rule="bottom-last" className={`hover:bg-muted/50 ${selected ? 'bg-primary/5' : ''}`} data-milestone={m.name}>
+      <Td density="snug">
         {renaming ? (
           <input
             autoFocus
@@ -119,15 +119,15 @@ function MilestoneRow({
           </button>
         )}
         {m.description && <div className="text-[12px] text-muted-foreground">{m.description}</div>}
-      </td>
-      <td className="px-2 py-1.5">
+      </Td>
+      <Td density="tight">
         <ProgressBar done={m.done} total={m.total} />
-      </td>
-      <td className="px-2 py-1.5">
+      </Td>
+      <Td density="tight">
         <DateField label={`${m.name} target date`} value={m.target_date} disabled={!editable} onChange={onDate} />
-      </td>
+      </Td>
       {editable && (
-        <td className="px-2 py-1.5 text-right">
+        <Td density="tight" align="right">
           <span className="inline-flex gap-1">
             <button type="button" aria-label={`Rename ${m.name}`} onClick={() => setRenaming(true)} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
               <Pencil aria-hidden="true" className="size-3.5" />
@@ -136,9 +136,9 @@ function MilestoneRow({
               <Trash2 aria-hidden="true" className="size-3.5" />
             </button>
           </span>
-        </td>
+        </Td>
       )}
-    </tr>
+    </Tr>
   )
 }
 

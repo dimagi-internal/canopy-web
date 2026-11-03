@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listMyHostGrants, stopMyHostGrant, type HostGrant } from '@/api/hostGrants'
 import { listMyActAsRequests, stopActAsRequest, type ActAsRequest } from '@/api/actAs'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 function time(iso: string): string {
   const when = new Date(iso)
@@ -70,20 +70,20 @@ export function ActAsYouPanel() {
         ) : (
           <table className="mt-1 w-full text-xs">
             <thead>
-              <tr className="text-left text-muted-foreground">
+              <Tr head="plain">
                 <Th>Agent</Th>
                 <Th>Why</Th>
                 <Th>May</Th>
                 <Th>Until</Th>
-                <th />
-              </tr>
+                <Th density="none" weight="inherit" />
+              </Tr>
             </thead>
             <tbody>
               {canopy.map((g) => (
-                <tr key={g.id} className="border-t border-border">
-                  <td className="py-1.5 text-foreground-secondary">{g.agent_name || g.agent}</td>
-                  <td className="py-1.5 text-muted-foreground">{g.reason}</td>
-                  <td className="py-1.5 text-muted-foreground">
+                <Tr rule="top" key={g.id}>
+                  <Td density="cozy" tone="secondary">{g.agent_name || g.agent}</Td>
+                  <Td density="cozy" tone="muted">{g.reason}</Td>
+                  <Td density="cozy" tone="muted">
                     {g.status === 'pending' ? (
                       <Link to={`/act-as/${g.id}`} className="text-primary hover:underline">
                         waiting for you
@@ -93,14 +93,14 @@ export function ActAsYouPanel() {
                     ) : (
                       'read'
                     )}
-                  </td>
-                  <td className="py-1.5 text-muted-foreground">{time(g.expires_at ?? '')}</td>
-                  <td className="py-1.5 text-right">
+                  </Td>
+                  <Td density="cozy" tone="muted">{time(g.expires_at ?? '')}</Td>
+                  <Td density="cozy" align="right">
                     <button type="button" onClick={() => void onStopCanopy(g)} className="text-destructive hover:underline">
                       Stop
                     </button>
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
             </tbody>
           </table>
@@ -114,27 +114,27 @@ export function ActAsYouPanel() {
       ) : (
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-left text-muted-foreground">
+            <Tr head="plain">
               <Th>Site</Th>
               <Th>Agent</Th>
               <Th>May read</Th>
               <Th>Until</Th>
-              <th />
-            </tr>
+              <Th density="none" weight="inherit" />
+            </Tr>
           </thead>
           <tbody>
             {rows.map((g) => (
-              <tr key={g.id} className="border-t border-border">
-                <td className="py-1.5 text-foreground-secondary">{g.site}</td>
-                <td className="py-1.5 text-muted-foreground">{g.agent_name || g.agent || 'any agent'}</td>
-                <td className="py-1.5 text-muted-foreground font-mono">{g.scope || '—'}</td>
-                <td className="py-1.5 text-muted-foreground">{time(g.expires_at)}</td>
-                <td className="py-1.5 text-right">
+              <Tr rule="top" key={g.id}>
+                <Td density="cozy" tone="secondary">{g.site}</Td>
+                <Td density="cozy" tone="muted">{g.agent_name || g.agent || 'any agent'}</Td>
+                <Td density="cozy" tone="muted" mono>{g.scope || '—'}</Td>
+                <Td density="cozy" tone="muted">{time(g.expires_at)}</Td>
+                <Td density="cozy" align="right">
                   <button type="button" onClick={() => void onStop(g)} className="text-destructive hover:underline">
                     Stop
                   </button>
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

@@ -9,7 +9,7 @@ import {
 } from '@/api/capabilities'
 import { relativeAge } from '@/lib/relativeAge'
 import { type Limits, manifestLimits, manifestSlots, limitsText, duration, optionalInt } from './capabilityLimits'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 export function CapabilityRow({
   cap,
@@ -48,15 +48,15 @@ export function CapabilityRow({
 
   return (
     <>
-      <tr className="align-top" data-testid={`capability-${cap.name}`}>
-        <td className="px-3 py-2">
+      <Tr top data-testid={`capability-${cap.name}`}>
+        <Td density="roomy">
           <div className="font-medium text-foreground">
             <code>{cap.name}</code>
           </div>
           {cap.description && <div className="mt-0.5 text-muted-foreground">{cap.description}</div>}
-        </td>
-        <td className="px-3 py-2 text-foreground-secondary">{cap.kind}</td>
-        <td className="px-3 py-2 text-foreground-secondary">
+        </Td>
+        <Td density="roomy" tone="secondary">{cap.kind}</Td>
+        <Td density="roomy" tone="secondary">
           {cap.kind === 'pool' ? (
             <span>
               {slots.length} slot{slots.length === 1 ? '' : 's'}: {slots.join(', ')}
@@ -67,11 +67,11 @@ export function CapabilityRow({
               {cap.stack && <span className="block text-muted-foreground">{cap.stack}</span>}
             </span>
           )}
-        </td>
-        <td className="px-3 py-2 text-foreground-secondary">
+        </Td>
+        <Td density="roomy" tone="secondary">
           <LimitsCell effective={cap.limits} ceiling={ceiling} />
-        </td>
-        <td className="px-3 py-2">
+        </Td>
+        <Td density="roomy">
           {grant ? (
             <span>
               <span className="rounded border border-success/30 bg-success/10 px-1.5 py-0.5 text-success">
@@ -96,9 +96,9 @@ export function CapabilityRow({
           ) : (
             <span className="rounded border border-border px-1.5 py-0.5 text-muted-foreground">Not granted</span>
           )}
-        </td>
+        </Td>
         {canGrant && (
-          <td className="whitespace-nowrap px-3 py-2 text-right">
+          <Td density="roomy" nowrap align="right">
             {grant ? (
               <span className="inline-flex gap-1.5">
                 <Button size="xs" variant="outline" disabled={busy} onClick={() => setEditing((v) => !v)}>
@@ -113,9 +113,9 @@ export function CapabilityRow({
                 Grant
               </Button>
             )}
-          </td>
+          </Td>
         )}
-      </tr>
+      </Tr>
       {error && (
         <tr>
           <td colSpan={6} className="px-3 pb-2">
@@ -247,21 +247,21 @@ export function LeaseTable({ leases }: { leases: CapabilityLeaseOut[] }) {
         <tbody className="divide-y divide-border">
           {leases.map((l) => (
             <tr key={l.lease_id} data-testid={`lease-${l.lease_id}`}>
-              <td className="px-3 py-2">
+              <Td density="roomy">
                 <code>{l.capability}</code>
-              </td>
-              <td className="px-3 py-2 text-foreground-secondary">
+              </Td>
+              <Td density="roomy" tone="secondary">
                 {l.status}
                 {l.status === 'queued' && l.position ? ` (#${l.position})` : ''}
-              </td>
-              <td className="px-3 py-2 text-foreground-secondary">{l.slot || l.instance_id || '—'}</td>
-              <td className="px-3 py-2 text-foreground-secondary">
+              </Td>
+              <Td density="roomy" tone="secondary">{l.slot || l.instance_id || '—'}</Td>
+              <Td density="roomy" tone="secondary">
                 {l.turn_id ? `turn ${l.turn_id.slice(0, 8)}` : `${l.agent} (no turn)`}
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">{relativeAge(l.created_at)}</td>
-              <td className="px-3 py-2 text-muted-foreground">
+              </Td>
+              <Td density="roomy" tone="muted">{relativeAge(l.created_at)}</Td>
+              <Td density="roomy" tone="muted">
                 {l.expires_at ? new Date(l.expires_at).toLocaleString() : '—'}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>

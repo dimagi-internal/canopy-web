@@ -1,78 +1,59 @@
 import { describe, expect, it } from 'vitest'
+import { PAD_CLASS } from './components/DataTable'
 
 /**
- * One table convention (docs/architecture/frontend.md § Tables): a dense header cell is
- * `<Th density="…">` from `components/DataTable`, not a hand-written
- * `<th className="py-1 font-medium">`. Two checks:
+ * One table convention (docs/architecture/frontend.md § Tables): a header cell is `<Th>`, a body
+ * cell `<Td>`, a row `<Tr>` from `components/DataTable`, not a hand-written
+ * `<th className="py-1 font-medium">` / `<td className="py-1.5 pr-3 text-muted-foreground">` /
+ * `<tr className="border-b border-border last:border-0">`. Three checks:
  *
- * 1. no raw `<th>` carries one of the standard header combinations (the padding plus
- *    `font-medium` of any `Th` density), anywhere;
- * 2. the files that still hand-write any `<th>` are listed below with how many, a ratchet
- *    that can only shrink: a new raw `<th>` fails, and a migrated one must lower its entry
- *    (or delete it) so the list never goes stale.
+ * 1. no raw `<th>`/`<td>`/`<tr>` with a literal `className` carries something the primitives own
+ *    (a standard density's padding, a tone, alignment, the row rule…), anywhere;
+ * 2. no raw `<th>` at all (a header is always a `Th`), except the files in `NOT_YET_MIGRATED`;
+ * 3. a raw `<td>`/`<tr>` whose `className` is computed (`cn(...)`, a template) is kept only where
+ *    the class depends on the row, and only as many as `COMPUTED_CLASS` lists, so the count can
+ *    only shrink: a new one fails, and a removed one must lower its entry.
  */
 
-// Files still hand-writing `<th>` (headers with their own padding, hidden-at-breakpoint
-// cells, sr-only or sortable headers), and how many. Paths relative to `frontend/`.
-const NOT_YET_MIGRATED: Record<string, number> = {
-  'src/components/agents/AgentClisControl.tsx': 4,
-  'src/components/agents/AgentLicenses.tsx': 1,
-  'src/components/runners/RunnersTable.tsx': 7,
-  'src/components/settings/ActAsYouPanel.tsx': 2,
-  'src/components/settings/ConnectedAppsPanel.tsx': 1,
-  'src/components/settings/DelegatedCredentialsPanel.tsx': 1,
-  'src/components/settings/TokensPanel.tsx': 1,
-  'src/components/vault/VaultMembers.tsx': 4,
-  'src/components/work/ProjectTable.tsx': 11,
-  'src/components/work/TaskTable.tsx': 1,
-  'src/dynamicViews/frame/kit.tsx': 1,
-  'src/pages/SettingsLayout.tsx': 3,
-  'src/pages/WalkthroughsPage.tsx': 7,
-  'src/pages/WorkspaceAdmissionRulesPage.tsx': 1,
-  'src/pages/WorkspaceAgentAccessPage.tsx': 2,
-  'src/pages/WorkspaceAppCustomizePage.tsx': 9,
-  'src/pages/WorkspaceEmailPage.tsx': 1,
-  'src/pages/WorkspaceRetentionPage.tsx': 1,
-  'src/pages/WorkspaceRunnersPage.tsx': 4,
-  'src/pages/WorkspaceTaskSettingsPage.tsx': 4,
-  'src/pages/WorkspaceVaultsSection.tsx': 4,
-  'src/pages/agents/TriggersSection.tsx': 5,
-  'src/pages/connectedApps/ConnectionTester.tsx': 3,
-  'src/pages/connectedApps/SiteFactsTable.tsx': 3,
-  'src/pages/connectedApps/SiteHealthTable.tsx': 6,
-  'src/pages/connectedApps/SiteNeedsTable.tsx': 8,
-  'src/pages/health/WorkspaceAnalyticsPage.tsx': 4,
-  'src/pages/health/WorkspaceHealthPage.tsx': 17,
-  'src/pages/runner/RunnerOverview.tsx': 1,
-  'src/pages/vault/VaultTabs.tsx': 4,
-  'src/pages/work/ProjectMilestones.tsx': 2,
-  'src/pages/work/ProjectServices.tsx': 4,
-  'src/pages/work/TriagePage.tsx': 9,
-}
+// Files still hand-writing `<th>` (paths relative to `frontend/`), and how many. Empty: every
+// header cell is a `Th`.
+const NOT_YET_MIGRATED: Record<string, number> = {}
+
+// Raw `<td>`/`<tr>` whose className is computed from the row's data. Paths relative to `frontend/`.
+const COMPUTED_CLASS: Record<string, number> = {}
 
 const raw = import.meta.glob('./**/*.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 const sources = Object.entries(raw)
   .map(([key, text]) => [`src/${key.slice(2)}`, text] as const)
   .filter(([path]) => path !== 'src/components/DataTable.tsx' && !path.endsWith('.test.tsx'))
 
-const RAW_TH = /<th(?=[\s>])/g
-const RAW_TH_CLASS = /<th\s+(?:[^>]*?\s)?className="([^"]*)"/g
+const RAW_TAG = /<(th|td|tr)(?=[\s>/])/g
+// An opening tag with a string-literal className (single line or not).
+const LITERAL = /<(th|td|tr)\s+(?:[^>]*?\s)?className="([^"]*)"/g
+const COMPUTED = /<(td|tr)\s+(?:[^>]*?\s)?className=\{/g
 
-// The `Th` densities' class sets; a raw header holding all of one (and no other padding) is a Th.
-const STANDARD: string[][] = [
-  ['py-1', 'font-medium'],
-  ['py-1', 'pr-3', 'font-medium'],
-  ['px-3', 'py-2', 'font-medium'],
-  ['px-2', 'py-1.5', 'font-medium'],
+// Classes the primitives own, per tag. A non-standard padding (`p-3`, `pl-3`) is not one of them.
+const PADDINGS = Object.values(PAD_CLASS)
+  .filter(Boolean)
+  .map((s) => s.split(' '))
+const CELL_OWNED = [
+  'font-medium', 'font-normal', 'text-left', 'text-right', 'text-center', 'sr-only',
+  'text-foreground', 'text-foreground-secondary', 'text-muted-foreground',
+  'tabular-nums', 'whitespace-nowrap', 'font-mono',
 ]
+const ROW_OWNED = ['align-top', 'text-left', 'border-border', 'border-border/50']
 
-function isStandard(classes: string): boolean {
-  const have = classes.split(/\s+/)
-  const pad = (t: string) => /^p[xylrtb]?-/.test(t)
-  return STANDARD.some((std) => {
-    if (!std.every((t) => have.includes(t))) return false
-    return !have.filter((t) => !std.includes(t)).some(pad)
-  })
+function owned(tag: string, classes: string): string[] {
+  const have = classes.split(/\s+/).filter(Boolean)
+  const found: string[] = []
+  if (tag !== 'tr') {
+    for (const pad of PADDINGS) if (pad.every((t) => have.includes(t))) found.push(pad.join(' '))
+    found.push(...CELL_OWNED.filter((t) => have.includes(t)))
+    if (have.includes('hidden') && have.some((t) => /^(sm|md|lg|xl):table-cell$/.test(t))) found.push('hidden …:table-cell')
+  } else {
+    found.push(...ROW_OWNED.filter((t) => have.includes(t)))
+  }
+  return found
 }
 
 describe('table convention', () => {
@@ -80,18 +61,21 @@ describe('table convention', () => {
     expect(sources.some(([p]) => p.startsWith('src/pages/'))).toBe(true)
   })
 
-  it('has no raw <th> in a standard Th combination', () => {
+  it('has no raw th/td/tr carrying a class the Th/Td/Tr primitives own', () => {
     const out: string[] = []
     for (const [path, text] of sources) {
-      for (const m of text.matchAll(RAW_TH_CLASS)) if (isStandard(m[1])) out.push(`${path}  <th className="${m[1]}">`)
+      for (const m of text.matchAll(LITERAL)) {
+        const found = owned(m[1], m[2])
+        if (found.length) out.push(`${path}  <${m[1]} className="${m[2]}">  (${found.join(', ')})`)
+      }
     }
     expect(out).toEqual([])
   })
 
-  it('introduces no new hand-written <th>, and the allowlist only shrinks', () => {
+  it('has no hand-written <th>, and the allowlist only shrinks', () => {
     const counts: Record<string, number> = {}
     for (const [path, text] of sources) {
-      const n = (text.match(RAW_TH) ?? []).length
+      const n = [...text.matchAll(RAW_TAG)].filter((m) => m[1] === 'th').length
       if (n) counts[path] = n
     }
     const over = Object.entries(counts)
@@ -104,10 +88,29 @@ describe('table convention', () => {
     expect(stale).toEqual([])
   })
 
+  it('keeps raw td/tr with a computed className from growing, and the allowlist only shrinks', () => {
+    const counts: Record<string, number> = {}
+    for (const [path, text] of sources) {
+      const n = [...text.matchAll(COMPUTED)].length
+      if (n) counts[path] = n
+    }
+    const over = Object.entries(counts)
+      .filter(([p, n]) => n > (COMPUTED_CLASS[p] ?? 0))
+      .map(([p, n]) => `${p}: ${n} raw td/tr with a computed className (allowed ${COMPUTED_CLASS[p] ?? 0}) — use <Td>/<Tr> and pass the row-dependent part as className`)
+    expect(over).toEqual([])
+    const stale = Object.entries(COMPUTED_CLASS)
+      .filter(([p, n]) => (counts[p] ?? 0) < n)
+      .map(([p, n]) => `${p}: lower its entry from ${n} to ${counts[p] ?? 0} (delete it at 0)`)
+    expect(stale).toEqual([])
+  })
+
   it('catches what it claims to', () => {
-    expect(isStandard('py-1 font-medium')).toBe(true)
-    expect(isStandard('px-3 py-2 text-right font-medium')).toBe(true)
-    expect(isStandard('py-1.5 pr-3 font-medium')).toBe(false)
-    expect(isStandard('py-1 pr-2 font-normal')).toBe(false)
+    expect(owned('th', 'py-1 font-medium')).toEqual(['py-1', 'font-medium'])
+    expect(owned('td', 'px-3 py-2 text-right')).toContain('px-3 py-2')
+    expect(owned('td', 'py-1.5 pr-3 text-muted-foreground')).toContain('py-1.5 pr-3')
+    expect(owned('td', 'bg-muted/30 p-3')).toEqual([])
+    expect(owned('td', 'hidden md:table-cell')).toEqual(['hidden …:table-cell'])
+    expect(owned('tr', 'border-b border-border align-top')).toEqual(['align-top', 'border-border'])
+    expect(owned('tr', 'cursor-pointer hover:bg-muted/50')).toEqual([])
   })
 })

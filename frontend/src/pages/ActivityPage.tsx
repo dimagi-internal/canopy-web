@@ -5,7 +5,7 @@ import { listTurns } from "@/api/turns";
 import { EventLedger } from "@/components/activity/EventLedger";
 import { EventLogTable, McpCallsTable } from "@/components/activity/WorkspaceLogs";
 import { relativeAge } from "@/lib/relativeAge";
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 import {
   type Turn,
   type TurnFilters,
@@ -120,13 +120,13 @@ export default function ActivityPage() {
         <div className="overflow-x-auto rounded border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <Tr rule="bottom" head="xs">
                 <Th density="roomy">Time</Th>
                 <Th density="roomy">Agent</Th>
                 <Th density="roomy">Trigger</Th>
                 <Th density="roomy">Runner</Th>
                 <Th density="roomy">Status</Th>
-              </tr>
+              </Tr>
             </thead>
             <tbody>
               {shown.map((t) => (
@@ -148,28 +148,28 @@ function TurnRow({ turn, now, open, onToggle }: {
 }) {
   return (
     <>
-      <tr onClick={onToggle}
-        className="cursor-pointer border-b border-border last:border-0 hover:bg-muted">
-        <td className="px-3 py-2 text-foreground-secondary" title={new Date(turn.created_at).toLocaleString()}>
+      <Tr rule="bottom-last" onClick={onToggle}
+        className="cursor-pointer hover:bg-muted">
+        <Td density="roomy" tone="secondary" title={new Date(turn.created_at).toLocaleString()}>
           {relativeAge(turn.created_at, now, { seconds: false })}
-        </td>
-        <td className="px-3 py-2 text-foreground">
+        </Td>
+        <Td density="roomy" tone="foreground">
           <span className="inline-flex items-center gap-1.5">
             {agentLabel(turn)}
             <WorkspaceBadge workspace={turn.workspace_slug} />
           </span>
-        </td>
-        <td className="px-3 py-2 text-muted-foreground">{originLabel(turn)}</td>
-        <td className="px-3 py-2 text-foreground-secondary">{turn.claimed_by_name ?? "—"}</td>
-        <td className="px-3 py-2">
+        </Td>
+        <Td density="roomy" tone="muted">{originLabel(turn)}</Td>
+        <Td density="roomy" tone="secondary">{turn.claimed_by_name ?? "—"}</Td>
+        <Td density="roomy">
           <span className={`inline-block rounded border px-1.5 py-0.5 text-xs ${statusToken(turn.status)}`}>
             {turn.status}
           </span>
-        </td>
-      </tr>
+        </Td>
+      </Tr>
       {open && (
-        <tr className="border-b border-border bg-card">
-          <td colSpan={5} className="px-3 py-2">
+        <Tr rule="bottom" className="bg-card">
+          <Td density="roomy" colSpan={5}>
             {turn.content_hidden ? (
               <p className="text-xs text-muted-foreground">
                 This turn's details are visible to whoever started it, the agent's admins, and workspace admins.
@@ -177,8 +177,8 @@ function TurnRow({ turn, now, open, onToggle }: {
             ) : (
               <EventLedger turnId={turn.id} />
             )}
-          </td>
-        </tr>
+          </Td>
+        </Tr>
       )}
     </>
   );

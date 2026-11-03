@@ -17,7 +17,7 @@ import { passphraseProblem } from '@/vault/zk'
 import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
 import { useHash } from '@/lib/useHash'
 import { NewVaultKey } from './NewVaultKey'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 
 /**
@@ -228,26 +228,26 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
           )}
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-left text-muted-foreground">
+              <Tr head="plain">
                 <Th>Opens your agents&rsquo; secrets</Th>
                 <Th />
-              </tr>
+              </Tr>
             </thead>
             <tbody>
               {(ks.passkeys ?? []).map((p) => (
-                <tr key={p.credential_id} className="border-t border-border" data-testid={`vault-passkey-${p.credential_id}`}>
-                  <td className="py-1.5 text-foreground-secondary">Passkey · {p.label || 'passkey'}</td>
-                  <td className={`py-1.5 ${p.sealed ? 'text-success' : 'text-muted-foreground'}`}>
+                <Tr rule="top" key={p.credential_id} data-testid={`vault-passkey-${p.credential_id}`}>
+                  <Td density="cozy" tone="secondary">Passkey · {p.label || 'passkey'}</Td>
+                  <Td density="cozy" className={p.sealed ? 'text-success' : 'text-muted-foreground'}>
                     {p.sealed ? '✓' : p.prf_enabled === false ? 'can\u2019t' : '—'}
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
-              <tr className="border-t border-border" data-testid="vault-passphrase-row">
-                <td className="py-1.5 text-foreground-secondary">Passphrase + Secret Key</td>
-                <td className={`py-1.5 ${hasPassphrase ? 'text-success' : 'text-muted-foreground'}`}>
+              <Tr rule="top" data-testid="vault-passphrase-row">
+                <Td density="cozy" tone="secondary">Passphrase + Secret Key</Td>
+                <Td density="cozy" className={hasPassphrase ? 'text-success' : 'text-muted-foreground'}>
                   {hasPassphrase ? '✓' : '—'}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             </tbody>
           </table>
           <div className="flex flex-wrap gap-2">

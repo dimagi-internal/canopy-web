@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { getRunnerDownloads, RunnerPairingError, type RunnerDownloadOut } from '@/api/runnerPairings'
 import { currentNext, loginHref } from '@/auth/loginHref'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 type State =
   | { kind: 'loading' }
@@ -91,19 +91,19 @@ export function RunnerDownloads({ authed, developerCommand }: { authed: boolean;
           </thead>
           <tbody>
             {state.downloads.map((d) => (
-              <tr key={d.platform} className="border-t border-border" data-testid="runner-download">
-                <td className="py-1 pr-3 text-foreground">{d.label}</td>
-                <td className="py-1 pr-3 whitespace-nowrap text-muted-foreground">{megabytes(d.size)}</td>
-                <td className={d.signed ? 'py-1 pr-3 text-muted-foreground' : 'py-1 pr-3 text-warning'}>{buildNote(d)}</td>
-                <td className="py-1 text-right">
+              <Tr rule="top" key={d.platform} data-testid="runner-download">
+                <Td density="compact-gap" tone="foreground">{d.label}</Td>
+                <Td density="compact-gap" tone="muted" nowrap>{megabytes(d.size)}</Td>
+                <Td density="compact-gap" className={d.signed ? 'text-muted-foreground' : 'text-warning'}>{buildNote(d)}</Td>
+                <Td align="right">
                   <a
                     href={`${base}${d.href}`}
                     className="inline-flex min-h-8 items-center rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:bg-primary/90"
                   >
                     Download
                   </a>
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

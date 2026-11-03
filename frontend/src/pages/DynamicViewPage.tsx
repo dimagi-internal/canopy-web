@@ -18,6 +18,7 @@ import type { ViewScope } from '@/dynamicViews/protocol'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
 import { useCanEditViews } from './DynamicViewsPage'
+import { Td, Tr } from '@/components/DataTable'
 
 /**
  * One dynamic view, drawn in its sandbox (`DynamicViewFrame`). Everyone sees the
@@ -282,14 +283,14 @@ function History({ view, canEdit, onRestored }: { view: DynamicView; canEdit: bo
         <table className="w-full border-collapse text-sm">
           <tbody>
             {revs.map((r) => (
-              <tr key={r.version} className="border-b border-border last:border-0">
-                <td className="px-2 py-1 tabular-nums">v{r.version}</td>
-                <td className="px-2 py-1">{r.note || <span className="text-muted-foreground">—</span>}</td>
-                <td className="px-2 py-1 text-muted-foreground">
+              <Tr rule="bottom-last" key={r.version}>
+                <Td density="dense" numeric>v{r.version}</Td>
+                <Td density="dense">{r.note || <span className="text-muted-foreground">—</span>}</Td>
+                <Td density="dense" tone="muted">
                   {new Date(r.changed_at).toLocaleString()}
                   {r.changed_by_email ? ` · ${r.changed_by_email}` : ''}
-                </td>
-                <td className="px-2 py-1 text-right">
+                </Td>
+                <Td density="dense" align="right">
                   {canEdit && r.version !== view.version && (
                     <button
                       type="button"
@@ -299,8 +300,8 @@ function History({ view, canEdit, onRestored }: { view: DynamicView; canEdit: bo
                       Restore
                     </button>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

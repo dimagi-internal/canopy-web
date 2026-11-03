@@ -28,6 +28,7 @@ import {
   sectionForAddress,
   type SettingsSection,
 } from '@/pages/settingsSections'
+import { Td, Tr } from '@/components/DataTable'
 
 // ONE SECTION OF SETTINGS (`/settings/<section>`), beside the rail that lists
 // them all (SettingsLayout).
@@ -313,19 +314,19 @@ function RunnersPanel() {
         <table className="w-full text-[13px]">
           <tbody>
             {runners.map((r) => (
-              <tr key={r.id} className="border-t border-border first:border-t-0">
-                <td className="py-1.5 font-medium text-foreground">{r.name}</td>
-                <td className="py-1.5 text-muted-foreground">{r.kind}</td>
-                <td className="py-1.5 text-muted-foreground">{r.status}</td>
-                <td className="py-1.5 text-right">
+              <Tr rule="top" key={r.id} className="first:border-t-0">
+                <Td density="cozy" tone="foreground" className="font-medium">{r.name}</Td>
+                <Td density="cozy" tone="muted">{r.kind}</Td>
+                <Td density="cozy" tone="muted">{r.status}</Td>
+                <Td density="cozy" align="right">
                   <Link
                     to={runnerHref(r)}
                     className="text-primary hover:underline"
                   >
                     {r.kind === 'cloud' ? 'Claude login & admins →' : 'Details →'}
                   </Link>
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

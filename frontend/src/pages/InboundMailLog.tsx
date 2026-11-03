@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 
 import { fetchInboundLog, type MailInboundLogOut } from '@/api/mail'
 import { relativeAge } from '@/lib/relativeAge'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // What happened to each message that reached a domain: forwarded, handed to an agent, or
 // dropped and why. Metadata only (no bodies), kept for `retention_days`. For "I sent mail
@@ -67,27 +67,27 @@ export function InboundMailLog({ workspace, domainId }: { workspace: string; dom
       ) : (
         <table className="mt-1 w-full text-[12px]">
           <thead className="text-left text-muted-foreground">
-            <tr className="border-b border-border">
+            <Tr rule="bottom">
               <Th density="compact-gap">When</Th>
               <Th density="compact-gap">To</Th>
               <Th density="compact-gap">From</Th>
               <Th density="compact-gap">Subject</Th>
               <Th>What happened</Th>
-            </tr>
+            </Tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const o = describe(r.outcome)
               return (
-                <tr key={r.id} className="border-b border-border align-top">
-                  <td className="whitespace-nowrap py-1.5 pr-3 text-muted-foreground">
+                <Tr rule="bottom" top key={r.id}>
+                  <Td density="cozy-gap" tone="muted" nowrap>
                     <time dateTime={r.created_at} title={new Date(r.created_at).toLocaleString()}>{relativeAge(r.created_at)}</time>
-                  </td>
-                  <td className="py-1.5 pr-3 text-foreground">{r.recipient}</td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary">{r.original_from || '—'}</td>
-                  <td className="max-w-[18rem] truncate py-1.5 pr-3 text-foreground-secondary" title={r.subject}>{r.subject || '(no subject)'}</td>
-                  <td className={`py-1.5 ${o.bad ? 'text-destructive' : 'text-foreground'}`}>{o.text}</td>
-                </tr>
+                  </Td>
+                  <Td density="cozy-gap" tone="foreground">{r.recipient}</Td>
+                  <Td density="cozy-gap" tone="secondary">{r.original_from || '—'}</Td>
+                  <Td density="cozy-gap" tone="secondary" className="max-w-[18rem] truncate" title={r.subject}>{r.subject || '(no subject)'}</Td>
+                  <Td density="cozy" className={o.bad ? 'text-destructive' : 'text-foreground'}>{o.text}</Td>
+                </Tr>
               )
             })}
           </tbody>

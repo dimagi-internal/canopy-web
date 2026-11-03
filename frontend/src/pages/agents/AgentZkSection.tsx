@@ -11,7 +11,7 @@ import { LoadFailed } from '@/components/vault/LoadFailed'
 import { RecoveryCodeBox } from '@/components/vault/RecoveryCodeBox'
 import { keyFlowError } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // Zero-knowledge for this agent (Canopy Vault Phase 2, canopy-web#1550). With
 // it on, values are encrypted in a member's browser (or by the canopy CLI on a
@@ -128,31 +128,31 @@ export function AgentZkSection({
           </p>
           <table className="w-full text-[12px]" data-testid="zk-wraps">
             <thead>
-              <tr className="text-left text-muted-foreground">
+              <Tr head="plain">
                 <Th>Can open them</Th>
                 <Th />
                 <Th />
-              </tr>
+              </Tr>
             </thead>
             <tbody className="divide-y divide-border">
               {current.map((w) => (
                 <tr key={`${w.kind}:${w.target ?? ''}`}>
-                  <td className="py-1.5 text-foreground">
+                  <Td density="cozy" tone="foreground">
                     {w.kind === 'recovery' ? 'Recovery code' : w.kind === 'device' ? w.label.split(' · ')[0] : w.label}
-                  </td>
-                  <td className="py-1.5 text-muted-foreground">{KIND_LABEL[w.kind] ?? w.kind}</td>
-                  <td className="py-1.5 text-right">
+                  </Td>
+                  <Td density="cozy" tone="muted">{KIND_LABEL[w.kind] ?? w.kind}</Td>
+                  <Td density="cozy" align="right">
                     {!w.current && <span className="text-warning">no longer allowed — change the key</span>}
-                  </td>
+                  </Td>
                 </tr>
               ))}
               {pending.map((p) => (
                 <tr key={`pending:${p.kind}:${p.target}`} data-testid={`zk-pending-${p.target}`}>
-                  <td className="py-1.5 text-foreground">
+                  <Td density="cozy" tone="foreground">
                     {p.kind === 'device' ? p.runner_name || p.label || 'a machine' : p.email}
-                  </td>
-                  <td className="py-1.5 text-muted-foreground">{KIND_LABEL[p.kind] ?? p.kind}</td>
-                  <td className="py-1.5 text-right text-warning">waiting</td>
+                  </Td>
+                  <Td density="cozy" tone="muted">{KIND_LABEL[p.kind] ?? p.kind}</Td>
+                  <Td density="cozy" align="right" className="text-warning">waiting</Td>
                 </tr>
               ))}
             </tbody>

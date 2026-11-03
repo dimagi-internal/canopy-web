@@ -2,6 +2,7 @@ import { useState, type JSX } from 'react'
 import { Button } from 'canopy-ui/ui'
 import { testConnectedApp, type ConnectedApp, type ConnectionCheck, type ConnectionTest } from '@/api/connectedApps'
 import { toneClasses } from 'canopy-ui/lib'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 export const STATUS_STYLE: Record<ConnectionCheck['status'], string> = {
   pass: toneClasses('success'),
@@ -15,25 +16,25 @@ function CheckRows({ checks }: { checks: readonly ConnectionCheck[] }): JSX.Elem
   return (
     <table className="w-full border-collapse text-xs">
       <thead>
-        <tr className="border-b border-border text-left text-muted-foreground">
-          <th className="w-14 py-1 pr-2 font-normal">Result</th>
-          <th className="py-1 pr-2 font-normal">Check</th>
-          <th className="py-1 font-normal">Detail</th>
-        </tr>
+        <Tr rule="bottom" head="plain">
+          <Th density="compact-gutter" weight="normal" className="w-14">Result</Th>
+          <Th density="compact-gutter" weight="normal">Check</Th>
+          <Th weight="normal">Detail</Th>
+        </Tr>
       </thead>
       <tbody>
         {checks.map((c, i) => (
-          <tr key={`${c.name}-${i}`} className="border-b border-border align-top last:border-0">
-            <td className="py-1 pr-2">
+          <Tr rule="bottom-last" top key={`${c.name}-${i}`}>
+            <Td density="compact-gutter">
               <span className={`inline-block rounded border px-1.5 text-[10px] uppercase ${STATUS_STYLE[c.status]}`}>
                 {c.status}
               </span>
-            </td>
-            <td className="py-1 pr-2 text-foreground" title={c.name}>
+            </Td>
+            <Td density="compact-gutter" tone="foreground" title={c.name}>
               {c.label}
-            </td>
-            <td className="break-all py-1 font-mono text-[11px] text-foreground-secondary">{c.detail}</td>
-          </tr>
+            </Td>
+            <Td tone="secondary" mono className="break-all text-[11px]">{c.detail}</Td>
+          </Tr>
         ))}
       </tbody>
     </table>

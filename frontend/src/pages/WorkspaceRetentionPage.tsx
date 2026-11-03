@@ -13,7 +13,7 @@ import {
 } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { ApiError } from '@/api/problem'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // How long this workspace keeps the CONTENT of its chats and turns
 // (apps/retention). Any member can read the policy, since it decides when their
@@ -167,21 +167,21 @@ export function WorkspaceRetentionPage(): JSX.Element {
         ) : (
           <table className="mt-2 w-full text-[12px]" data-testid="retention-rules">
             <thead className="text-left text-muted-foreground">
-              <tr className="border-b border-border">
+              <Tr rule="bottom">
                 <Th density="compact-gap">Rule</Th>
                 <Th density="compact-gap">Why</Th>
                 <Th density="compact-gap">Set by</Th>
-                {manage && <th className="py-1" />}
-              </tr>
+                {manage && <Th weight="inherit" />}
+              </Tr>
             </thead>
             <tbody>
               {policy.rules.map((r) => (
-                <tr key={r.id} className="border-b border-border" data-testid={`retention-rule-${r.id}`}>
-                  <td className="py-1.5 pr-3 text-foreground">{r.summary}</td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary">{r.note}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">{r.created_by}</td>
+                <Tr rule="bottom" key={r.id} data-testid={`retention-rule-${r.id}`}>
+                  <Td density="cozy-gap" tone="foreground">{r.summary}</Td>
+                  <Td density="cozy-gap" tone="secondary">{r.note}</Td>
+                  <Td density="cozy-gap" tone="muted">{r.created_by}</Td>
                   {manage && (
-                    <td className="whitespace-nowrap py-1.5 text-right">
+                    <Td density="cozy" nowrap align="right">
                       <button type="button" className="px-2 text-primary hover:underline" onClick={() => startEdit(r)}>
                         Edit
                       </button>
@@ -193,9 +193,9 @@ export function WorkspaceRetentionPage(): JSX.Element {
                       >
                         Remove
                       </button>
-                    </td>
+                    </Td>
                   )}
-                </tr>
+                </Tr>
               ))}
             </tbody>
           </table>
@@ -308,10 +308,10 @@ export function WorkspaceRetentionPage(): JSX.Element {
               <table className="mt-2 w-full text-[12px]" data-testid="retention-preview-table">
                 <tbody>
                   {preview.by_rule.map((row) => (
-                    <tr key={row.rule_id} className="border-b border-border">
-                      <td className="py-1.5 pr-3 text-foreground">{row.summary}</td>
-                      <td className="py-1.5 text-foreground-secondary">{countsText(row.counts)}</td>
-                    </tr>
+                    <Tr rule="bottom" key={row.rule_id}>
+                      <Td density="cozy-gap" tone="foreground">{row.summary}</Td>
+                      <Td density="cozy" tone="secondary">{countsText(row.counts)}</Td>
+                    </Tr>
                   ))}
                 </tbody>
               </table>
@@ -328,10 +328,10 @@ export function WorkspaceRetentionPage(): JSX.Element {
           <table className="mt-2 w-full text-[12px]" data-testid="retention-inherited">
             <tbody>
               {policy.inherited.map((r) => (
-                <tr key={r.id} className="border-b border-border">
-                  <td className="w-40 py-1.5 pr-3 font-mono text-muted-foreground">{r.workspace || 'deployment'}</td>
-                  <td className="py-1.5 text-foreground-secondary">{r.summary}</td>
-                </tr>
+                <Tr rule="bottom" key={r.id}>
+                  <Td density="cozy-gap" tone="muted" mono className="w-40">{r.workspace || 'deployment'}</Td>
+                  <Td density="cozy" tone="secondary">{r.summary}</Td>
+                </Tr>
               ))}
             </tbody>
           </table>

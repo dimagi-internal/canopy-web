@@ -7,6 +7,7 @@ import { describeCron } from '@/components/agents/cronDescribe'
 import { relativeAge } from '@/lib/relativeAge'
 import { TriggerEditor } from '@/components/agents/TriggerEditor'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 function StatusChip({ status }: { status: string }): JSX.Element {
   if (!status) return <span className="text-foreground-subtle">—</span>
@@ -119,18 +120,18 @@ export function TriggersSection(): JSX.Element {
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <table className="w-full text-[13px]">
             <thead>
-              <tr className="border-b border-border text-left text-[11px] text-muted-foreground">
-                <th className="px-3 py-2 font-normal">Trigger</th>
-                <th className="px-3 py-2 font-normal">When</th>
-                <th className="px-3 py-2 font-normal">Next</th>
-                <th className="px-3 py-2 font-normal">Last</th>
-                <th className="px-3 py-2" />
-              </tr>
+              <Tr rule="bottom" head="small">
+                <Th density="roomy" weight="normal">Trigger</Th>
+                <Th density="roomy" weight="normal">When</Th>
+                <Th density="roomy" weight="normal">Next</Th>
+                <Th density="roomy" weight="normal">Last</Th>
+                <Th density="roomy" weight="inherit" />
+              </Tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id} className="border-b border-border/50 last:border-0">
-                  <td className="px-3 py-2">
+                <Tr rule="bottom-soft" key={row.id} className="last:border-0">
+                  <Td density="roomy">
                     <span className={row.enabled ? 'text-foreground' : 'text-foreground-subtle'}>{row.name}</span>
                     {row.created_by_email && (
                       <span className="block text-[11px] text-muted-foreground">set up by {row.created_by_email}</span>
@@ -138,9 +139,9 @@ export function TriggersSection(): JSX.Element {
                     {row.stopped && (
                       <span className="block text-[11px] text-destructive">Stopped: {row.stopped}</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-foreground-secondary">{describeWhen(row)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  </Td>
+                  <Td density="roomy" tone="secondary">{describeWhen(row)}</Td>
+                  <Td density="roomy" tone="muted">
                     {!row.enabled
                       ? row.run_once_at && row.last_slot
                         ? 'done'
@@ -150,11 +151,11 @@ export function TriggersSection(): JSX.Element {
                         : row.next_runs?.[0]
                           ? relativeAge(row.next_runs[0], new Date(), { future: true, seconds: false })
                           : '—'}
-                  </td>
-                  <td className="px-3 py-2">
+                  </Td>
+                  <Td density="roomy">
                     <StatusChip status={row.last_status} />
-                  </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                  </Td>
+                  <Td density="roomy" nowrap align="right">
                     {row.kind === 'cron' && (
                       <button
                         type="button"
@@ -179,8 +180,8 @@ export function TriggersSection(): JSX.Element {
                     >
                       Edit
                     </button>
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
             </tbody>
           </table>

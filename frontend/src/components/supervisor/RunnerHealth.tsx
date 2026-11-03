@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import type { RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '../../lib/scopedLinks'
+import { Td, Tr } from '@/components/DataTable'
 
 // What the box reports about its own features — one row per check, straight
 // from its heartbeat (Runner.health). Exists because "online + ready" said
@@ -63,12 +64,12 @@ export function RunnerHealth({
             {checks.map((c) => {
               const tone = TONE[c.status] ?? TONE.ok
               return (
-                <tr key={c.name} className="border-b border-border last:border-0" data-testid={`runner-health-${c.name}`}>
-                  <td className="w-4 py-1 align-top">
+                <Tr rule="bottom-last" key={c.name} data-testid={`runner-health-${c.name}`}>
+                  <Td className="w-4 align-top">
                     <span className={`mt-1.5 inline-block h-2 w-2 rounded-full ${tone.dot}`} />
-                  </td>
-                  <td className="whitespace-nowrap py-1 pr-3 align-top font-mono text-[11px] text-foreground">{c.name}</td>
-                  <td className={`py-1 align-top ${tone.text}`}>
+                  </Td>
+                  <Td density="compact-gap" tone="foreground" nowrap mono className="align-top text-[11px]">{c.name}</Td>
+                  <Td className={`align-top ${tone.text}`}>
                     {c.detail || c.status}
                     {c.status !== 'ok' && fixHref(c.name, agentWorkspace) && (
                       <Link
@@ -79,8 +80,8 @@ export function RunnerHealth({
                         Fix it →
                       </Link>
                     )}
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               )
             })}
           </tbody>

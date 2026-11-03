@@ -17,6 +17,7 @@ import {
 import { Link } from 'react-router-dom'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { vaultHref } from '@/lib/scopedLinks'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 const KIND_LABEL: Record<string, string> = {
   kb: 'Knowledge base',
@@ -140,18 +141,18 @@ export function ProjectServices({
         <div className="mb-3 overflow-x-auto rounded-lg border border-border bg-card" data-testid="project-services">
           <table className="w-full text-[13px]">
             <thead>
-              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-1.5 font-medium">Kind</th>
-                <th className="px-3 py-1.5 font-medium">Name</th>
-                <th className="px-3 py-1.5 font-medium">How it reaches Claude</th>
-                <th className="px-3 py-1.5" />
-              </tr>
+              <Tr rule="bottom" head="label">
+                <Th density="snug">Kind</Th>
+                <Th density="snug">Name</Th>
+                <Th density="snug">How it reaches Claude</Th>
+                <Th density="snug" weight="inherit" />
+              </Tr>
             </thead>
             <tbody>
               {services.map((s) => (
-                <tr key={s.id} className="border-b border-border last:border-0 align-top">
-                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{KIND_LABEL[s.kind] ?? s.kind}</td>
-                  <td className="px-3 py-2">
+                <Tr rule="bottom-last" top key={s.id}>
+                  <Td density="roomy" tone="muted" nowrap>{KIND_LABEL[s.kind] ?? s.kind}</Td>
+                  <Td density="roomy">
                     <div className="font-medium text-foreground">{s.name}</div>
                     {s.description && <div className="text-[12px] text-muted-foreground">{s.description}</div>}
                     {s.url && s.kind !== 'kb' && (
@@ -167,11 +168,11 @@ export function ProjectServices({
                         </pre>
                       </details>
                     )}
-                  </td>
-                  <td className="px-3 py-2">
+                  </Td>
+                  <Td density="roomy">
                     <HowItLoads s={s} />
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                  </Td>
+                  <Td density="roomy" align="right">
                     {detail.may_edit && s.kind !== 'kb' && (
                       <Button
                         size="sm"
@@ -188,8 +189,8 @@ export function ProjectServices({
                         Remove
                       </Button>
                     )}
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
             </tbody>
           </table>

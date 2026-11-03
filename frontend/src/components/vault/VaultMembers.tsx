@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 
 import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // The people who may open a vault, and WHY each one may — one list for an agent's
 // vault and a workspace's. The page that owns the vault supplies the data and the
@@ -81,23 +82,23 @@ export function VaultMembers({
       {note && <p className="mb-2 text-[12px] text-muted-foreground">{note}</p>}
       <table className="w-full text-[12px]" data-testid={ids.table}>
         <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className="py-1 font-normal">Person</th>
-            <th className="py-1 font-normal">Role</th>
-            <th className="py-1 font-normal">Why they can</th>
-            <th><span className="sr-only">Actions</span></th>
-          </tr>
+          <Tr head="label">
+            <Th weight="normal">Person</Th>
+            <Th weight="normal">Role</Th>
+            <Th weight="normal">Why they can</Th>
+            <Th density="none" weight="inherit"><span className="sr-only">Actions</span></Th>
+          </Tr>
         </thead>
         <tbody className="divide-y divide-border">
           {members.map((m) => (
             <tr key={m.user_id} data-testid={ids.row(m.user_id)}>
-              <td className="py-1.5 text-foreground">{m.email}</td>
-              <td className="py-1.5 text-muted-foreground">{VAULT_ROLE_LABEL[m.role] ?? m.role}</td>
-              <td className="py-1.5 text-muted-foreground">
+              <Td density="cozy" tone="foreground">{m.email}</Td>
+              <Td density="cozy" tone="muted">{VAULT_ROLE_LABEL[m.role] ?? m.role}</Td>
+              <Td density="cozy" tone="muted">
                 {m.sources.map((s) => sourceLabel(s, self)).join(' · ')}
                 {memberWaiting(m, holders) && <span className="text-warning"> · {memberWaiting(m, holders)}</span>}
-              </td>
-              <td className="py-1.5 text-right">
+              </Td>
+              <Td density="cozy" align="right">
                 {manages && m.sources.includes('direct') && (
                   <button
                     type="button"
@@ -109,7 +110,7 @@ export function VaultMembers({
                     Remove
                   </button>
                 )}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>

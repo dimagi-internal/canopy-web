@@ -9,7 +9,7 @@ import {
 } from '@/api/agents'
 import { InterfaceEditor } from './InterfaceEditor'
 import type { Capability } from './interfaceModel'
-import { Th } from '@/components/DataTable'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // The capabilities an interface marks as handling sensitive data.
 function sensitiveCapabilities(iface: unknown): string[] {
@@ -136,18 +136,18 @@ export function AgentInterfaceView({
       {names.length > 0 && (
         <table className="w-full text-[13px]">
           <thead>
-            <tr className="text-left text-[11px] text-muted-foreground">
+            <Tr head="small">
               <Th>Capability</Th>
               <Th>Allows</Th>
               <Th>Sensitive data</Th>
-            </tr>
+            </Tr>
           </thead>
           <tbody className="divide-y divide-border">
             {names.map((n) => {
               const c = caps[n]
               return (
                 <tr key={n} data-testid="interface-capability">
-                  <td className="py-1.5 align-top text-foreground">
+                  <Td density="cozy" tone="foreground" className="align-top">
                     <span className="font-mono">{n}</span>
                     {c.description && <div className="text-[12px] text-muted-foreground">{c.description}</div>}
                     {Object.keys(c.input ?? {}).length > 0 && (
@@ -155,13 +155,13 @@ export function AgentInterfaceView({
                         Inputs: {Object.entries(c.input ?? {}).map(([k, t]) => `${k}: ${t}`).join(', ')}
                       </div>
                     )}
-                  </td>
-                  <td className="py-1.5 align-top font-mono text-[11px] text-foreground-secondary">
+                  </Td>
+                  <Td density="cozy" tone="secondary" mono className="align-top text-[11px]">
                     {[...(c.sites ?? []).map((s) => `site: ${s}`), ...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (
                       <div key={t}>{t}</div>
                     ))}
-                  </td>
-                  <td className="py-1.5 align-top text-[12px]">
+                  </Td>
+                  <Td density="cozy" className="align-top text-[12px]">
                     <div className="flex flex-wrap items-center gap-2">
                       {c.data === 'sensitive' ? (
                         <span data-testid="handles-sensitive" className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
@@ -185,7 +185,7 @@ export function AgentInterfaceView({
                         </button>
                       )}
                     </div>
-                  </td>
+                  </Td>
                 </tr>
               )
             })}
@@ -225,22 +225,22 @@ export function AgentInterfaceView({
           <div className="text-[12px] font-medium text-foreground">Change history</div>
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="text-left text-[11px] text-muted-foreground">
+              <Tr head="small">
                 <Th>When</Th>
                 <Th>Who</Th>
                 <Th>Through</Th>
                 <Th>Change</Th>
                 <Th>Sensitive data after</Th>
-              </tr>
+              </Tr>
             </thead>
             <tbody className="divide-y divide-border">
               {history.slice(0, 10).map((c) => (
                 <tr key={c.id} data-testid="interface-change">
-                  <td className="py-1 text-foreground-secondary">{new Date(c.created_at).toLocaleString()}</td>
-                  <td className="py-1 text-foreground-secondary">{c.actor_email || 'someone'}</td>
-                  <td className="py-1 text-foreground-secondary">{c.via}</td>
-                  <td className="py-1 text-foreground-secondary">{changeLabel(c)}</td>
-                  <td className="py-1">{sensitiveAfter(c) ? 'on' : 'off'}</td>
+                  <Td tone="secondary">{new Date(c.created_at).toLocaleString()}</Td>
+                  <Td tone="secondary">{c.actor_email || 'someone'}</Td>
+                  <Td tone="secondary">{c.via}</Td>
+                  <Td tone="secondary">{changeLabel(c)}</Td>
+                  <Td>{sensitiveAfter(c) ? 'on' : 'off'}</Td>
                 </tr>
               ))}
             </tbody>

@@ -5,6 +5,7 @@
  * in step.
  */
 import { Component, createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 type Tone = 'default' | 'success' | 'warning' | 'destructive'
 
@@ -96,9 +97,9 @@ export function Table<Row extends Record<string, unknown>>({ rows, columns, empt
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+          <Tr rule="bottom" head="xs">
             {columns.map((c) => (
-              <th key={c.key} className={`px-2 py-1.5 font-medium ${c.align === 'right' ? 'text-right' : ''}`}>
+              <Th key={c.key} density="tight" align={c.align === 'right' ? 'right' : undefined}>
                 <button
                   type="button"
                   className="hover:text-foreground"
@@ -107,19 +108,19 @@ export function Table<Row extends Record<string, unknown>>({ rows, columns, empt
                   {c.label}
                   {sort?.key === c.key ? (sort.dir === 1 ? ' ↑' : ' ↓') : ''}
                 </button>
-              </th>
+              </Th>
             ))}
-          </tr>
+          </Tr>
         </thead>
         <tbody>
           {sorted.map((row, i) => (
-            <tr key={i} className="border-b border-border last:border-0">
+            <Tr rule="bottom-last" key={i}>
               {columns.map((c) => (
-                <td key={c.key} className={`px-2 py-1.5 align-top ${c.align === 'right' ? 'text-right tabular-nums' : ''}`}>
+                <Td key={c.key} density="tight" numeric={c.align === 'right'} align={c.align === 'right' ? 'right' : undefined} className="align-top">
                   {c.render ? c.render(row) : show(cell(row, c.key))}
-                </td>
+                </Td>
               ))}
-            </tr>
+            </Tr>
           ))}
         </tbody>
       </table>
