@@ -119,6 +119,12 @@ class ConnectionOut(StrictModel):
         default_factory=list,
         description="Scopes the app now asks for that this grant lacks (an admin chose them after it was "
                     "connected), with what each allows; reconnect to allow them. Empty when nothing is missing.")
+    expires_at: datetime | None = Field(
+        default=None,
+        description="When a lend for a while ends: no machine is handed it from then on and it is disconnected "
+                    "soon after, which revokes it. Null: until it is disconnected.")
+    owner_turns_only: bool = Field(
+        default=False, description="It is staged only on turns its owner started, never anyone else's on that agent.")
     connected_at: datetime
     last_used_at: datetime | None = None
     connected_by_email: str = Field(
@@ -265,6 +271,9 @@ class ShareStateOut(StrictModel):
                                           "each envelope, each with its `agent_id` and its signer's "
                                           "`by_public_jwk`, whose thumbprint is what `endorsers` lists.")
     agents: list[ShareAgentOut] = Field(description="The agents the owner may lend it to.")
+    expires_at: datetime | None = Field(
+        default=None, description="When this lend ends and it is disconnected; null when it has no time limit.")
+    owner_turns_only: bool = Field(default=False, description="Agents use it only on turns its owner started.")
 
 
 class ShareIn(StrictModel):

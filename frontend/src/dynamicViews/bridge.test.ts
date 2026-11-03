@@ -60,6 +60,11 @@ describe('resolveNavigation', () => {
     expect(resolveNavigation('dimagi', 'https://example.com/a')).toEqual({ kind: 'external', url: 'https://example.com/a' })
   })
 
+  it('sends the vault key setup to your own settings, and nothing else there', () => {
+    expect(resolveNavigation('marshellis', '/settings#vault-key')).toEqual({ kind: 'app', to: '/settings#vault-key' })
+    expect(resolveNavigation('marshellis', '/settings')).toEqual({ kind: 'app', to: '/w/marshellis/settings' })
+  })
+
   it('lets a mailto: link out (confirmed, to the viewer\'s own mail app)', () => {
     expect(resolveNavigation('dimagi', 'mailto:leave@list.example?subject=unsubscribe'))
       .toEqual({ kind: 'external', url: 'mailto:leave@list.example?subject=unsubscribe' })

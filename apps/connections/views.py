@@ -32,11 +32,16 @@ Connecting needs the owner's vault key (the person's, or the admin connecting an
 agent's), because the token is sealed to it: without one the start lands refused
 (`no_vault_key`, with `setup=` naming where to set one up) and nothing is parked.
 
+A person's start may name limits, which the owner then sees on the share screen:
+`lend_minutes` (`LEND_MINUTES`; anything else lands `bad_lend`, never a connection
+with no limit) and `owner_turns_only=1` (`Connection`). `for_agent=<slug>` only ticks
+that agent on the share screen; it grants nothing.
+
 A connect that succeeds lands on the share screen,
 `/w/<workspace>/connections/<id>/share?return_to=<return_to>`, where the owner's
 browser opens the sealed token and shares it. Any other outcome lands back on a
 same-site `return_to` with `?connection=<provider>&status=error&reason=<code>`;
-reasons: `not_configured`, `no_vault_key`, `bad_state`, `forbidden` (the caller
+reasons: `not_configured`, `no_vault_key`, `bad_lend`, `bad_state`, `forbidden` (the caller
 no longer administers the agent, the agent left the workspace, or the person
 left it), `access_denied`,
 `insufficient_scope`, `wrong_account` (the provider signed in an account this
@@ -46,6 +51,7 @@ connection's key never changes: disconnect it first), `provider_error`.
 """
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from django.contrib.auth.decorators import login_required
@@ -66,6 +72,10 @@ from apps.agents.models import Agent
 from . import providers, services
 
 DEFAULT_RETURN = "/settings"
+#: A lend for a while, in minutes: long enough to be used, and no longer than the week an
+#: unverified Google app's refresh tokens last anyway.
+LEND_MINUTES = range(5, 7 * 24 * 60 + 1)
+_SLUG = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 
 def _safe_return_to(value: str | None) -> str:
@@ -138,6 +148,15 @@ def connections_start(request: HttpRequest, provider: str, workspace: str) -> Ht
         if not services.person_may_use(request.user, workspace):
             raise Http404("unknown workspace")
         owner, owner_obj = ("user", request.user.pk), request.user
+    lend_minutes = None
+    if not slug and params.get("lend_minutes"):
+        try:
+            lend_minutes = int(params["lend_minutes"])
+        except ValueError:
+            lend_minutes = -1
+        if lend_minutes not in LEND_MINUTES:
+            return _land(request, return_to, provider, "error", "bad_lend")
+    for_agent = params.get("for_agent", "")
     try:
         app = services.app_for(workspace, provider)
     except services.NotConfigured:
@@ -147,7 +166,9 @@ def connections_start(request: HttpRequest, provider: str, workspace: str) -> Ht
     except services.ConnectionError as e:  # no vault key: nothing to seal to, so nothing is begun
         return _land(request, return_to, provider, "error", e.code, setup=services.VAULT_KEY_SETUP)
     url = services.begin(request.session, app=app, owner=owner,
-                         redirect_uri=_redirect_uri(request, provider, workspace), return_to=return_to)
+                         redirect_uri=_redirect_uri(request, provider, workspace), return_to=return_to,
+                         lend_minutes=lend_minutes, owner_turns_only=not slug and params.get("owner_turns_only") == "1",
+                         for_agent=for_agent if not slug and _SLUG.fullmatch(for_agent) else "")
     return HttpResponseRedirect(url)
 
 
@@ -190,13 +211,13 @@ def connections_callback(request: HttpRequest, provider: str, workspace: str) ->
     except services.ConnectionError as e:  # the service logs a provider failure itself
         extra = {"setup": services.VAULT_KEY_SETUP} if e.code == "no_vault_key" else {}
         return _land(request, return_to, provider, "error", e.code, **extra)
-    return _share(request, workspace, conn, return_to)
+    return _share(request, workspace, conn, return_to, for_agent=parked.get("for_agent") or "")
 
 
-def _share(request: HttpRequest, workspace: str, conn, return_to: str):
+def _share(request: HttpRequest, workspace: str, conn, return_to: str, *, for_agent: str = ""):
     """Redirect to the connection's share screen (under SCRIPT_NAME), carrying
-    `return_to` for where the browser goes after it."""
-    query = urlencode({"return_to": _safe_return_to(return_to)})
+    `return_to` for where the browser goes after it and `agent` to tick there."""
+    query = urlencode({"return_to": _safe_return_to(return_to), **({"agent": for_agent} if for_agent else {})})
     url = f"{request.META.get('SCRIPT_NAME', '')}/w/{quote(workspace, safe='')}/connections/{conn.pk}/share?{query}"
     if not url_has_allowed_host_and_scheme(url, allowed_hosts=set(), require_https=True):
         url = DEFAULT_RETURN

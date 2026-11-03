@@ -105,6 +105,7 @@ def share_state(conn: Connection, user) -> dict:
         "owner": tokens._owner(conn),
         "candidates": candidates, "endorsements": endorsements,
         "agents": [_agent_out(a) for a in agents],
+        "expires_at": conn.expires_at, "owner_turns_only": conn.owner_turns_only,
     }
 
 
