@@ -30,14 +30,21 @@ def _clean():
     session_interrupt._pending.clear()
 
 
+#: Which project each press was aimed at, by the `calls` list `_interrupts` returned.
+calls_scopes: dict[int, list] = {}
+
+
 def _interrupts(monkeypatch, *actions):
     from canopy_runner import cdp_control
 
     calls = []
+    scopes = []
+    calls_scopes[id(calls)] = scopes
     seq = list(actions)
 
-    def _fake(task, port=None):
+    def _fake(task, port=None, **scope):
         calls.append(task)
+        scopes.append(scope)
         action = seq.pop(0) if len(seq) > 1 else seq[0]
         if isinstance(action, Exception):
             raise action
@@ -76,7 +83,7 @@ def test_an_unconfirmed_stop_retries_then_gives_up_quietly(monkeypatch):
 
     for _ in range(session_interrupt.MAX_ATTEMPTS - 1):
         assert session_interrupt.drain(_cfg(), client, "r1") == 0
-        assert "hal-canopy-sweep" in session_interrupt._pending, "keep trying"
+        assert ("", "hal-canopy-sweep") in session_interrupt._pending, "keep trying"
 
     assert session_interrupt.drain(_cfg(), client, "r1") == 0
     assert len(calls) == session_interrupt.MAX_ATTEMPTS
@@ -175,3 +182,41 @@ def test_a_rung_stop_carries_its_id_so_the_record_is_retired_not_replayed(monkey
     session_interrupt.drain(_cfg(), client, "r1")
     assert calls == ["hal-1"]
     assert client.retired == [("sess-1", "i2", "interrupted")]
+
+
+def test_a_stop_presses_escape_in_its_own_projects_session(monkeypatch):
+    """Task names are unique per project only, so an Escape addressed by name alone
+    can stop a same-named agent in another project."""
+    calls = _interrupts(monkeypatch, "interrupted")
+    session_interrupt.ring("fix-tests", "sess-1", project="canopy-web")
+
+    session_interrupt.drain(_cfg(), _FakeClient(), "r1")
+
+    assert calls == ["fix-tests"]
+    assert calls_scopes[id(calls)] == [{"project": "canopy-web"}]
+
+
+def test_a_stop_pulled_from_the_record_is_aimed_at_its_project_too(monkeypatch):
+    session_interrupt._done_ids.clear()
+    calls = _interrupts(monkeypatch, "interrupted")
+    client = _DurableClient([{"session_id": "sess-1", "session_key": "fix-tests",
+                              "project": "canopy-web", "interrupt_id": "i3"}])
+
+    session_interrupt.pull(_cfg(), client, "r1")
+    session_interrupt.drain(_cfg(), client, "r1")
+
+    assert calls_scopes[id(calls)] == [{"project": "canopy-web"}]
+
+
+def test_same_named_sessions_in_two_projects_are_two_stops(monkeypatch):
+    """Sharing a pending entry would drop one stop and report the other's outcome
+    against the wrong session."""
+    calls = _interrupts(monkeypatch, "interrupted")
+    client = _FakeClient()
+    session_interrupt.ring("fix-tests", "sess-a", project="canopy-web")
+    session_interrupt.ring("fix-tests", "sess-b", project="ace")
+
+    assert session_interrupt.drain(_cfg(), client, "r1") == 2
+
+    assert calls_scopes[id(calls)] == [{"project": "canopy-web"}, {"project": "ace"}]
+    assert [session_id for session_id, _events in client.streamed] == ["sess-a", "sess-b"]
