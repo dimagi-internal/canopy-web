@@ -402,7 +402,7 @@ def test_unshared_connection_is_listed_as_not_shared_yet(world, fake_provider):
     assert row["state"] == "unshared"
     assert row["statement"] == {"version": 0, "agents": [], "my_computers": [], "endorsers": []}
     assert row["holders"] == []
-    assert row["provider_calls"] is True  # Salesforce is a provider canopy-web calls; the lists show its switch
+    assert row["provider_calls"] is False  # no key here: canopy-web can't be used, so the lists show no switch
 
 
 # ---- a row's owner key never changes -------------------------------------------------

@@ -305,18 +305,19 @@ def unconfirmed_server_target(conn: Connection) -> set[tuple[str, str]]:
     return set()
 
 
-def server_reachable(conn: Connection) -> bool:
-    """Whether the stored refresh envelope is sealed to canopy-web's key now, so that it can use the
-    connection. False when the key can't be read: the answer is then unknown, and that is not a
-    reason to say it can."""
-    if not server_key.available():
+def server_reachable(conn: Connection) -> bool | None:
+    """Whether canopy-web can use the connection: the switch is on and the stored refresh envelope is
+    sealed to its key now. False: it can't (off, no key set up, or sealed without canopy-web). None:
+    the key can't be read right now, so nobody can say, and that is no reason to tell its owner to
+    reconnect, which would stop an active row's machines."""
+    if not conn.server_use or not server_key.available():
         return False
     jwk = server_key.cached_public_jwk()
     if jwk is None:
         try:
             jwk = server_key.public_jwk()
         except server_key.Unavailable:
-            return False
+            return None
     return ("device", device_keys.thumbprint(jwk)) in zk_seal.sealed_targets(conn.sealed)
 
 

@@ -359,6 +359,23 @@ describe('ShareConnectionPage: project screens and apps', () => {
     getShareState.mockResolvedValue({ ...STATE, server: { ...SERVER, ...over }, ...rest })
   const box = () => screen.queryByLabelText('Project screens and apps') as HTMLInputElement | null
 
+  it('before unlocking, says canopy never sees the sign-in only while that is true', async () => {
+    withServer({ on: true })
+    const { unmount } = open()
+    expect(await screen.findByText(/canopy-web can also use this sign-in, because Project screens and apps is on\./)).toBeTruthy()
+    expect(screen.queryByText(/canopy never sees/)).toBeNull()
+    unmount()
+    withServer({ on: false })
+    open()
+    expect(await screen.findByText(/canopy never sees the sign-in it holds while Project screens and apps is off\./)).toBeTruthy()
+  })
+
+  it('before unlocking, with no switch at all, keeps the plain claim', async () => {
+    withServer({ available: false, provider_calls: false, on: false })
+    open()
+    expect(await screen.findByText('Touch your passkey to open it here. canopy never sees the sign-in it holds.')).toBeTruthy()
+  })
+
   it('shows the box with its one sentence, unticked when the row is off', async () => {
     withServer()
     await unlocked()
@@ -444,7 +461,7 @@ describe('ShareConnectionPage: project screens and apps', () => {
     await unlocked()
     expect(box()?.disabled).toBe(false)
     expect(screen.getByTestId('canopy-web-key-changed').textContent)
-      .toBe("canopy-web's key has changed. Turn this off, or check with your administrator before keeping it on.")
+      .toBe("canopy-web's lock has changed. Turn this off, or check with your administrator before keeping it on.")
     fireEvent.click(box() as HTMLInputElement)
     expect(screen.queryByTestId('canopy-web-key-changed')).toBeNull()
   })

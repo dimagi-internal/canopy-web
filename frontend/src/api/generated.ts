@@ -430,7 +430,9 @@ export interface paths {
          * @description Store the owner's signed grant statement (which agents it is lent to, and
          *     whether it is used on their own computers) and the envelope their browser
          *     re-sealed to the machines it allows; the connection becomes `active`.
-         *     canopy-web never opens the envelope: it checks the signer is the owner
+         *     canopy-web opens nothing to do this, and can open the envelope afterwards only
+         *     if the statement names it (`canopy_web`, the "Project screens and apps" box).
+         *     It checks the signer is the owner
          *     (403 `not_the_owner_key`), the signature (422 `bad_signature`), that the
          *     version moves forward (409 `statement_stale`), that every agent added is one
          *     the owner administers (403 `not_an_admin`) in the app's workspace (422
@@ -18773,13 +18775,13 @@ export interface components {
             readonly server_use: boolean;
             /**
              * Server Reachable
-             * @description canopy-web can open the stored sign-in now: the switch is on and the envelope is sealed to its key. False after a sign-in while the key service was failing; connect again to fix.
+             * @description canopy-web can open the stored sign-in now: the switch is on and the envelope is sealed to its key. False: it is sealed without canopy-web (a sign-in while the key service was failing; connect again to fix) or the switch is off. Null: the switch is on and the key can't be read right now, so nobody can say; nothing needs doing.
              * @default false
              */
-            readonly server_reachable: boolean;
+            readonly server_reachable: boolean | null;
             /**
              * Provider Calls
-             * @description canopy-web makes calls for this provider, so the connection has a "Used by canopy-web" switch (Salesforce; not Google).
+             * @description canopy-web can be used for this connection, so it has a "Used by canopy-web" switch: canopy-web makes calls for the provider (Salesforce; not Google), and has a key set up or the switch is already on.
              * @default false
              */
             readonly provider_calls: boolean;
@@ -19031,9 +19033,9 @@ export interface components {
             readonly provider_calls: boolean;
             /**
              * Reachable
-             * @description The stored envelope is sealed to canopy-web's key now, so it can use the connection. False when the switch is on but the key could not be used at sign-in.
+             * @description The stored envelope is sealed to canopy-web's key now, so it can use the connection. False when the switch is off, or on but the key could not be used at sign-in. Null when the switch is on and the key can't be read right now.
              */
-            readonly reachable: boolean;
+            readonly reachable: boolean | null;
         };
         /** ShareStateOut */
         readonly ShareStateOut: {
@@ -19216,10 +19218,16 @@ export interface components {
         readonly DisconnectOut: {
             /**
              * Outcome
-             * @description `revoking`: a machine that holds it will revoke it at the provider, then it is deleted. `deleted`: canopy-web revoked it at the provider itself, or no machine that holds it has been heard from recently enough to revoke it and canopy deleted its copy (the provider may then keep the old sign-in alive until it idles out).
+             * @description `revoked`: canopy-web revoked it at the provider itself and the row is gone. `revoking`: it will be revoked at the provider, then deleted: by a machine that holds it (`machine_revokes`), or by canopy-web's own retries. `deleted`: canopy deleted its copy without revoking it, because nothing could, or another connection of that account still needs the sign-in (the provider may then keep it alive until it idles out).
              * @enum {string}
              */
-            readonly outcome: "revoking" | "deleted";
+            readonly outcome: "revoking" | "revoked" | "deleted";
+            /**
+             * Machine Revokes
+             * @description `revoking` only: a machine that holds it, heard from recently, can revoke it.
+             * @default false
+             */
+            readonly machine_revokes: boolean;
         };
         /** ConnectionMaterialOut */
         readonly ConnectionMaterialOut: {

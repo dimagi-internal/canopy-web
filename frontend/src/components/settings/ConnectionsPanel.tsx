@@ -7,7 +7,7 @@ import {
   turnOffServerUse,
   type ConnectionOut,
   type ConnectionsView,
-  type DisconnectOutcome,
+  type DisconnectOut,
   type ProviderOut,
 } from '@/api/connections'
 import { Button } from 'canopy-ui/ui'
@@ -65,7 +65,8 @@ export function ConnectionsPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Connections</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Accounts you sign in to here are sealed to your vault key, so canopy cannot read them. You choose which
+          Accounts you sign in to here are sealed to your vault key, so canopy cannot read them
+          {data.connections.some((c) => c.server_use) ? ', except any with Used by canopy-web on.' : '.'} You choose which
           of your agents and enrolled computers may use each one.
         </p>
       </div>
@@ -89,9 +90,15 @@ export function ConnectionsPanel() {
   )
 }
 
-/** What a disconnect did: a machine, not canopy, revokes at the provider, when one that holds it is up. */
-export function disconnected(outcome: DisconnectOutcome, keyReplaced = false): string {
-  if (outcome === 'revoking') return 'Disconnected. A machine will revoke it shortly.'
+/** What a disconnect did, and who is left to end the sign-in at the provider: canopy-web already
+ *  did (`revoked`), a machine that holds it, or canopy-web's own retries. */
+export function disconnected({ outcome, machine_revokes }: DisconnectOut, keyReplaced = false): string {
+  if (outcome === 'revoked') return 'Disconnected. The sign-in has been ended at Salesforce or Google.'
+  if (outcome === 'revoking') {
+    return machine_revokes
+      ? 'Disconnected. A machine will revoke it shortly.'
+      : 'Disconnected. canopy will keep trying to end this sign-in.'
+  }
   const idles = 'Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.'
   // Nothing else kills that token now, and the old key can still read it.
   return keyReplaced ? `${idles} Revoke it at Salesforce or Google yourself.` : idles
@@ -240,7 +247,9 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
   c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void
 }) {
   if (!c.usable) return null
-  if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
+  if (c.needs_reconnect) {
+    return <p className="text-[12px] text-warning">{c.provider_calls ? DEAD_SIGN_IN : 'Reconnect required.'}</p>
+  }
   const only = canChange ? null : (
     <span className="block">
       {c.connected_by_email
@@ -255,6 +264,12 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
         {c.server_use && c.server_reachable ? (
           <p className="text-[12px] text-muted-foreground">
             Project screens and apps can use it. No agents or computers can yet.{' '}
+            {canChange && <Link to={href} className={shareLink}>Share</Link>}
+            {only}
+          </p>
+        ) : c.server_use && c.server_reachable === null ? (
+          <p className="text-[12px] text-muted-foreground">
+            No agents or computers can use it yet.{' '}
             {canChange && <Link to={href} className={shareLink}>Share</Link>}
             {only}
           </p>
@@ -306,9 +321,12 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
 }
 
 const USED_BY = 'Used by canopy-web'
+const NOT_WORKING = 'Not working'
 const USED_BY_WHY = 'With this on, project screens and apps can use this account with nobody present. '
   + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
 const UNREACHED = "canopy-web couldn't be reached when this was connected. Connect again to fix it."
+const UNREACHABLE_NOW = "canopy-web can't be reached right now. Nothing needs doing; this usually clears on its own."
+const DEAD_SIGN_IN = 'Reconnect required. This sign-in stopped working, so nothing can use it until you connect it again.'
 const NEEDS_PASSKEY = 'Changing this needs your passkey.'
 
 /**
@@ -323,8 +341,11 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   if (!c.provider_calls) return null
-  // Switched on but nothing sealed to canopy-web: it can't use it, so don't show it as on.
-  const stuck = !!c.server_use && !c.server_reachable
+  // Null: the key can't be read right now, so it stays on and nobody is told to reconnect, which
+  // would stop an active row's machines. Otherwise switched on with nothing sealed to canopy-web:
+  // it can't use it, so don't show it as on.
+  const unknown = !!c.server_use && c.server_reachable === null
+  const stuck = !!c.server_use && !c.server_reachable && !unknown
   const on = !!c.server_use && !stuck
   async function turnOff() {
     setBusy(true)
@@ -344,7 +365,7 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
         <span className="font-medium text-foreground">{USED_BY}</span>
         {canChange && stuck && c.state === 'unshared' ? (
           <>
-            <span>Off</span>
+            <span>{NOT_WORKING}</span>
             <button type="button" aria-label={`Turn off ${USED_BY}`} disabled={busy} onClick={turnOff} className={shareLink}>
               Turn off
             </button>
@@ -358,7 +379,7 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
           </button>
         ) : (
           <>
-            <span>{on ? 'On' : 'Off'}</span>
+            <span>{stuck ? NOT_WORKING : on ? 'On' : 'Off'}</span>
             {canChange && (
               <Link to={href} aria-label={`${on || stuck ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
                 {on || stuck ? 'Turn off' : 'Turn on'}
@@ -368,6 +389,7 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
         )}
       </p>
       {stuck && <p className="text-warning">{UNREACHED}</p>}
+      {unknown && <p>{UNREACHABLE_NOW}</p>}
       <p>{USED_BY_WHY}</p>
       {canChange && !((on || stuck) && c.state === 'unshared') && <p>{NEEDS_PASSKEY}</p>}
       {error && <p role="alert" className="text-destructive">{error}</p>}

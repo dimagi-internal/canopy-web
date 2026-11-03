@@ -415,7 +415,7 @@ def test_an_envelope_held_only_by_canopy_web_and_the_owner_is_revoked_by_canopy_
     with FakeSF() as sf:
         conn = connect(world)
         assert rcpt.revokers(conn) == []
-        assert services.disconnect(conn, by=world.person) == "deleted"
+        assert services.disconnect(conn, by=world.person) == "revoked"
     assert sf.calls[-1][1].endswith("/services/oauth2/revoke")
 
 
@@ -687,6 +687,48 @@ def test_connection_out_without_a_key_is_not_reachable(world):
     world.persons()
     row = _client(world.person).get("/api/connections/").json()["connections"][0]
     assert row["server_use"] is False and row["server_reachable"] is False
+
+
+def test_no_key_lists_no_switch_for_a_provider_canopy_web_calls(world):
+    """After a deploy with no key, a switch's Turn on would lead to a Share screen with no box."""
+    sealed_to_owner({"user": world.person}, world.person, app=world.app)
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["provider"] == "salesforce" and row["provider_calls"] is False and row["server_use"] is False
+
+
+def test_no_key_still_lists_the_switch_of_a_row_that_is_on(world):
+    """The key was taken away: its owner can still see and turn off what is on."""
+    on_row(world)
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["provider_calls"] is True and row["server_reachable"] is False
+
+
+def test_a_key_lists_the_switch_on_an_off_row(world, key):
+    sealed_to_owner({"user": world.person}, world.person, app=world.app)
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["provider_calls"] is True and row["server_use"] is False
+
+
+def _key_unreadable():
+    return (mock.patch.object(server_key, "cached_public_jwk", return_value=None),
+            mock.patch.object(server_key, "public_jwk", side_effect=server_key.Unavailable("down")))
+
+
+def test_a_key_that_cannot_be_read_is_unknown_not_unreachable(world, key):
+    conn = _sf_unshared_on(world)
+    no_cache, down = _key_unreadable()
+    with no_cache, down:
+        assert rcpt.server_reachable(conn) is None
+        row = _client(world.person).get("/api/connections/").json()["connections"][0]
+        assert row["server_use"] is True and row["server_reachable"] is None
+        assert sharing.share_state(conn, world.person)["server"]["reachable"] is None
+
+
+def test_an_off_row_is_not_reachable_whatever_the_key_is_doing(world, key):
+    conn = sealed_to_owner({"user": world.person}, world.person, app=world.app)
+    no_cache, down = _key_unreadable()
+    with no_cache, down:
+        assert rcpt.server_reachable(conn) is False
 
 
 # ---- the switch: turning it off ------------------------------------------------------

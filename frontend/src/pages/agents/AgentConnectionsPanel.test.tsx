@@ -43,7 +43,7 @@ beforeEach(() => {
   m.role.current = null
   me.current = 'jj@dimagi.com'
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
-  m.disconnectAgentConnection.mockResolvedValue('revoking')
+  m.disconnectAgentConnection.mockResolvedValue({ outcome: 'revoking', machine_revokes: true })
 })
 afterEach(cleanup)
 

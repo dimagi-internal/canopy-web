@@ -97,7 +97,7 @@ def test_delete_mine_removes_and_calls_no_provider(client, user):
     cid = conn.pk
     with FakeSF() as fake:
         resp = client.delete(f"/api/connections/{cid}")
-    assert resp.status_code == 200 and resp.json() == {"outcome": "deleted"}
+    assert resp.status_code == 200 and resp.json() == {"outcome": "deleted", "machine_revokes": False}
     assert not Connection.objects.filter(pk=cid).exists()
     assert fake.calls == []
 

@@ -36,9 +36,16 @@ const CANOPY_WEB_WHY = 'canopy-web can use this account for you, with nobody pre
   + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
 const CANOPY_WEB_TURNS_OFF = 'Sharing with agents or your computers turns off project screens and apps for now.'
 const CANOPY_WEB_NOT_YET = "This isn't available yet."
-const CANOPY_WEB_CHANGED = "canopy-web's key has changed. Turn this off, or check with your administrator before keeping it on."
+const CANOPY_WEB_CHANGED = "canopy-web's lock has changed. Turn this off, or check with your administrator before keeping it on."
 const CANOPY_WEB_UNREACHABLE = "Sharing now turns off project screens and apps, because canopy-web can't be reached right now."
 const UNSAFE = "This connection can't be opened safely. Reconnect it."
+
+/** What canopy can read, true for this row: the claim holds only with the switch off. */
+function whoCanRead(server: ShareStateOut['server'] | undefined): string {
+  if (server?.on) return 'canopy-web can also use this sign-in, because Project screens and apps is on.'
+  if (server?.available && server.provider_calls) return 'canopy never sees the sign-in it holds while Project screens and apps is off.'
+  return 'canopy never sees the sign-in it holds.'
+}
 
 interface Opened {
   account: OpenedAccount
@@ -51,7 +58,8 @@ interface Opened {
  * "Share this connection" (`/w/:workspace/connections/:id/share`): where the Connected screen
  * and Settings lead. Your passkey opens the envelope in this browser, which shows which
  * account was connected; the owner then chooses which agents and computers may use it
- * and shares (`vault/connectionShare.ts` signs and seals). canopy-web never sees the token.
+ * and shares (`vault/connectionShare.ts` signs and seals). canopy-web sees the token only if the
+ * owner's share names it (the "Project screens and apps" box).
  * Not now leaves it unshared. Settings links here to finish a share later.
  *
  * The unlocked key lives in a ref for this flow only: not in state, not rendered, not sent.
@@ -259,7 +267,7 @@ export function ShareConnectionPage(): JSX.Element | null {
       ) : !opened ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Touch your passkey to open it here. canopy never sees the sign-in it holds.
+            Touch your passkey to open it here. {whoCanRead(state.server)}
           </p>
           {state.state === 'unshared' && <p className="text-[13px] text-muted-foreground">{NOT_SHARED}</p>}
           <Button onClick={() => void unlock(state)} disabled={busy}>Unlock with your passkey</Button>

@@ -1,7 +1,8 @@
 /**
  * The owner's browser shares a connection: it opens the refresh token sealed to their
  * vault key, signs a grant statement and re-seals the token to the machines the statement
- * allows. canopy-web never opens an envelope and never signs.
+ * allows. canopy-web signs nothing, and opens an envelope only if the statement names it
+ * (`canopy_web`, the "Project screens and apps" box), which only the owner can sign.
  *
  * The NORMATIVE definition of every byte is `docs/vault/zk-v1/connections_v1_reference.py`;
  * `connectionShare.test.ts` reproduces its vectors and writes the share that

@@ -36,13 +36,13 @@ export async function listMyConnections(): Promise<ConnectionsView> {
   return view(unwrap(res, 'Could not read your connections.'))
 }
 
-export type DisconnectOutcome = components['schemas']['DisconnectOut']['outcome']
+export type DisconnectOut = components['schemas']['DisconnectOut']
 
-export async function disconnectMine(id: string): Promise<DisconnectOutcome> {
+export async function disconnectMine(id: string): Promise<DisconnectOut> {
   const res = await apiV2.DELETE('/api/connections/{connection_id}', {
     params: { path: { connection_id: id } },
   })
-  return unwrap(res, 'Could not disconnect.').outcome
+  return unwrap(res, 'Could not disconnect.')
 }
 
 // ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----
@@ -79,11 +79,11 @@ export async function listAgentConnections(slug: string): Promise<ConnectionsVie
   return view(unwrap(res, 'Could not read the agent’s connections.'))
 }
 
-export async function disconnectAgentConnection(slug: string, id: string): Promise<DisconnectOutcome> {
+export async function disconnectAgentConnection(slug: string, id: string): Promise<DisconnectOut> {
   const res = await apiV2.DELETE('/api/agents/{slug}/connections/{connection_id}', {
     params: { path: { slug, connection_id: id } },
   })
-  return unwrap(res, 'Could not disconnect.').outcome
+  return unwrap(res, 'Could not disconnect.')
 }
 
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an

@@ -111,13 +111,16 @@ class ConnectionOut(StrictModel):
                     "by the old key until it is disconnected and connected again. False on a row lent to an agent.")
     server_use: bool = Field(
         default=False, description="canopy-web may use this connection for screens and apps (the owner's switch).")
-    server_reachable: bool = Field(
+    server_reachable: bool | None = Field(
         default=False, description="canopy-web can open the stored sign-in now: the switch is on and the envelope "
-                                    "is sealed to its key. False after a sign-in while the key service was "
-                                    "failing; connect again to fix.")
+                                    "is sealed to its key. False: it is sealed without canopy-web (a sign-in while "
+                                    "the key service was failing; connect again to fix) or the switch is off. Null: "
+                                    "the switch is on and the key can't be read right now, so nobody can say; "
+                                    "nothing needs doing.")
     provider_calls: bool = Field(
-        default=False, description="canopy-web makes calls for this provider, so the connection has a "
-                                   "\"Used by canopy-web\" switch (Salesforce; not Google).")
+        default=False, description="canopy-web can be used for this connection, so it has a \"Used by canopy-web\" "
+                                   "switch: canopy-web makes calls for the provider (Salesforce; not Google), and "
+                                   "has a key set up or the switch is already on.")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "
@@ -145,11 +148,14 @@ class ConnectionOut(StrictModel):
 
 
 class DisconnectOut(StrictModel):
-    outcome: Literal["revoking", "deleted"] = Field(
-        description="`revoking`: a machine that holds it will revoke it at the provider, then it is deleted. "
-                    "`deleted`: canopy-web revoked it at the provider itself, or no machine that holds it has been "
-                    "heard from recently enough to revoke it and canopy deleted its copy (the provider may then "
-                    "keep the old sign-in alive until it idles out).")
+    outcome: Literal["revoking", "revoked", "deleted"] = Field(
+        description="`revoked`: canopy-web revoked it at the provider itself and the row is gone. `revoking`: it "
+                    "will be revoked at the provider, then deleted: by a machine that holds it "
+                    "(`machine_revokes`), or by canopy-web's own retries. `deleted`: canopy deleted its copy without "
+                    "revoking it, because nothing could, or another connection of that account still needs the "
+                    "sign-in (the provider may then keep it alive until it idles out).")
+    machine_revokes: bool = Field(
+        default=False, description="`revoking` only: a machine that holds it, heard from recently, can revoke it.")
 
 
 class ServerUseIn(StrictModel):
@@ -257,9 +263,10 @@ class ShareServerOut(StrictModel):
         description="This deployment accepts a statement naming canopy-web. When false, sharing with it is refused.")
     provider_calls: bool = Field(description="canopy-web makes calls for this provider; the switch is shown only "
                                              "when true.")
-    reachable: bool = Field(
+    reachable: bool | None = Field(
         description="The stored envelope is sealed to canopy-web's key now, so it can use the connection. False "
-                    "when the switch is on but the key could not be used at sign-in.")
+                    "when the switch is off, or on but the key could not be used at sign-in. Null when the switch "
+                    "is on and the key can't be read right now.")
 
 
 class ShareStateOut(StrictModel):

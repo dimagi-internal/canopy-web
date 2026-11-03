@@ -16,9 +16,10 @@ type Copy = { text: string; action: 'person' | 'agent' | 'choose'; agent: string
 /** What to say, from what the page can read without opening anything. Only `server.reachable`
  *  (the stored sign-in is sealed to canopy-web's key now) lets it say screens can use it:
  *  `server.on` alone is only the switch, and a sign-in made while the key service was failing
- *  leaves it on with nothing sealed. */
+ *  leaves it on with nothing sealed (false). Null: the key can't be read right now, which needs
+ *  nothing from anyone, so the page goes on as if it could. */
 export function copyFor(s: ShareStateOut): Copy {
-  const account = s.account_label
+  const account = s.account_label || s.account_id
   const agent = s.owner_agent ? s.owner_agent.name || s.owner_agent.slug : ''
   const calls = !!s.server?.provider_calls
   if (calls && s.server?.reachable) {
@@ -28,6 +29,12 @@ export function copyFor(s: ShareStateOut): Copy {
           action: 'agent', agent,
         }
       : { text: `Connected as ${account}. Project screens and apps you use can use it now.`, action: 'person', agent }
+  }
+  if (calls && s.server?.on && s.server.reachable === null) {
+    return {
+      text: `Connected${agent ? ` ${agent}` : ''} as ${account}. canopy-web can't be reached right now, so project screens and apps may not work for a moment.`,
+      action: agent ? 'agent' : 'person', agent,
+    }
   }
   if (calls && s.server?.on) {
     return {
@@ -97,6 +104,7 @@ export function ConnectedPage(): JSX.Element | null {
         )}
         {copy.action === 'agent' && <Link to={share} className={linkButton}>{`Turn on for ${copy.agent}'s machines`}</Link>}
         {copy.action === 'choose' && <Link to={share} className={linkButton}>Choose</Link>}
+        {copy.action !== 'person' && copy.agent && <Link to={returnTo} className="text-sm text-primary hover:underline">Done</Link>}
       </div>
     </div>
   )

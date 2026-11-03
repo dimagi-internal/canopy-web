@@ -43,7 +43,7 @@ from datetime import UTC, datetime
 from urllib.parse import quote, quote_plus
 
 from django.db import Error as DatabaseFailure
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk_seal
@@ -74,6 +74,8 @@ _STALE = frozenset({"zk_value_changed", "foreign_reader", "zk_rewrap_required", 
 #: A revoke answered with one of these found nothing left to revoke, which is what was wanted.
 _ALREADY_DEAD = frozenset({"invalid_token", "invalid_grant"})
 _DETAIL_MAX = 300
+#: What `try_revoke` did: ended it at the provider, or only saw the row go.
+REVOKED, GONE = "revoked", "gone"
 
 _sleep = time.sleep
 _now = time.time
@@ -501,7 +503,8 @@ def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, 
     and sealed again: only the floor and recipients change. With a rotated token in hand, a KMS or
     database failure or a lease someone else holds is tried again too. None when this write no longer
     applies: without a rotation the lease went elsewhere; or a reconnect replaced the refresh token this
-    one came from. Out of tries, `server_write_failed` and `Refused`; the caller keeps a rotated lease."""
+    one came from. Out of tries, `server_write_failed` and `Refused`; the caller keeps a rotated lease.
+    `_no_longer_a_recipient` says what happens when the row moved beyond canopy-web's reach."""
     used, last = plain["refresh_token"], ""
     reread = False
     for _ in _attempts(rotated, sleep):
@@ -510,6 +513,8 @@ def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, 
                 connection.close_if_unusable_or_obsolete()
             if reread:
                 row = _row(row.pk)
+                if rotated and ("device", writer.jkt) not in zk_seal.sealed_targets(row.sealed):
+                    return _no_longer_a_recipient(row, writer, lease)
                 plain = _open_refresh(row, writer.jkt)
                 if rotated and plain["refresh_token"] == token.refresh_token:  # landed; its answer was lost
                     return _stored(row, token, plain, vault_engine.value_digest(row.access_sealed),
@@ -547,6 +552,39 @@ def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, 
     raise _refused(row, f"the write-back was refused: {last}")
 
 
+def _no_longer_a_recipient(row: Connection, writer: tokens.Writer, lease: _Lease) -> None:
+    """A rotated token is in hand, and the row, read again, is not sealed to canopy-web. With the
+    switch still on that is a reconnect while the key was failing: a new grant owing nothing to this
+    token, so nothing is lost (None). Otherwise the owner turned it off or shared without it, so it
+    can't write: the row keeps the old refresh token, which may be dead. Say so, and mark it for a
+    reconnect if the provider rotates, so the person isn't surprised later (`Refused`). A write nobody
+    can finish needs no lease, and nothing to suspect when it would have expired."""
+    if row.state == Connection.REVOKING:
+        raise WireError(409, "revoking", "This connection is being disconnected.")  # `_refreshed` revokes the token
+    if row.server_use:
+        return None
+    rotates = getattr(providers.CLASSES.get(row.provider), "rotates_refresh_token", False)
+    with transaction.atomic():
+        # Only the envelope just read: a reconnect since then replaced the token this is about.
+        locked = Connection.objects.select_for_update(of=("self",)).filter(pk=row.pk,
+                                                                           sealed_digest=row.sealed_digest).first()
+        if locked is not None:
+            if rotates:
+                locked.refresh_failed_at = timezone.now()
+            if locked.lease_id == lease.id:
+                locked.lease_id, locked.lease_holder, locked.lease_expires_at = None, "", None
+            locked.save(update_fields=["refresh_failed_at", "lease_id", "lease_holder", "lease_expires_at",
+                                       "updated_at"])
+    title = tokens._title(row)
+    services.record(services.Subject.of(row), "server_write_failed", warn=True, machine=NAME, rotated=True,
+                    error="not_a_recipient",
+                    summary=f"{row.owner_label}'s {title} refresh token rotated on {NAME} just as its owner took "
+                            "canopy-web off it, so canopy-web couldn't store the new one. What is stored may have "
+                            "stopped working; if so, connect it again")
+    raise Refused(f"Who can use this {title} connection changed while canopy-web was refreshing it, so canopy-web "
+                  "couldn't store the new sign-in. If it stops working, its owner should connect it again.")
+
+
 def _stored(row: Connection, token: providers.TokenResponse, plain: dict, digest: str,
             expires_at: int) -> tuple[str, str]:
     _remember(row.pk, digest, token.access_token, plain["instance_url"], expires_at)
@@ -568,9 +606,15 @@ def may_revoke(conn: Connection) -> bool:
 
 
 def revoke_if_able(conn: Connection, *, stop_on_kms: bool = False) -> bool:
+    """`try_revoke`, for a caller who only needs to know whether the row is gone."""
+    return try_revoke(conn, stop_on_kms=stop_on_kms) is not None
+
+
+def try_revoke(conn: Connection, *, stop_on_kms: bool = False) -> str | None:
     """Revoke `conn`, being disconnected, through canopy-web's own key, and delete it as a holder's
     confirmation does (`services.finish_revoking`). At the provider only when no other connection
-    of that account through that app remains. True when the row is gone. False leaves it `revoking`
+    of that account through that app remains. `REVOKED`: it was ended at the provider and the row is
+    gone. `GONE`: the row is gone without that. None leaves it `revoking`
     for its holders and the next sweep. A failure that can never pass (what it holds fails a check, the
     app has no client, the provider refused the client) with no machine able to revoke deletes it now,
     recorded `revoke_unconfirmed`, or the account couldn't connect again for days. Never raises, since
@@ -582,10 +626,10 @@ def revoke_if_able(conn: Connection, *, stop_on_kms: bool = False) -> bool:
         _revoke_failed(conn, "kms_unavailable")
         if stop_on_kms:
             raise
-        return False
+        return None
     except Exception as e:  # noqa: BLE001 — a failure here must never reach the person disconnecting
         _revoke_failed(conn, type(e).__name__.lower())
-        return False
+        return None
 
 
 def _revoke_rotated(row: Connection, p: providers.Provider, refresh_token: str) -> None:
@@ -616,17 +660,18 @@ def _revoke_failed(conn: Connection, error: str, *, during: str = "server_revoke
         logger.warning("connections.revoke_failed connection=%s error=%s", conn.pk, type(e).__name__)
 
 
-def _revoke(conn: Connection) -> bool:
+def _revoke(conn: Connection) -> str | None:
     _forget(conn.pk)
     row = Connection.objects.select_related("app__workspace", "agent__workspace", "user").filter(pk=conn.pk).first()
     if row is None:
-        return True
+        return GONE
     if row.state != Connection.REVOKING or not server_key.available():
-        return False
+        return None
     me = server_key.thumbprint()
     if ("device", me) not in zk_seal.sealed_targets(row.sealed):
-        return False
-    if not services.other_live_connections(row).exists():
+        return None
+    ended = not services.other_live_connections(row).exists()
+    if ended:
         try:
             plain = _open_refresh(row, me)
             p = services._configured(row.app)
@@ -636,24 +681,24 @@ def _revoke(conn: Connection) -> bool:
             p.revoke(plain["refresh_token"])
         except providers.ProviderUnavailable as e:
             _revoke_failed(row, services._error_code(e))
-            return False
+            return None
         except providers.ProviderError as e:
             if e.code not in _ALREADY_DEAD:
                 return _revoke_never_works(row, services._error_code(e))
     services.finish_revoking(row, machine=NAME, revoked=True)
-    return True
+    return REVOKED if ended else GONE
 
 
-def _revoke_never_works(row: Connection, error: str) -> bool:
+def _revoke_never_works(row: Connection, error: str) -> str | None:
     """Trying again won't help. A machine that can revoke still may, so it is left to one; with none,
-    delete now, as a disconnect does when nothing holds it. True when the row is gone."""
+    delete now, as a disconnect does when nothing holds it. `GONE` when the row is gone."""
     _revoke_failed(row, error)
     if rcpt.revokers(row):
-        return False
+        return None
     subject = services.Subject.of(row)
     deleted, _ = Connection.objects.filter(pk=row.pk, state=Connection.REVOKING).delete()
     if deleted:
         services.record(subject, "revoke_unconfirmed", warn=True, reason="refused",
                         summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: canopy-web "
                                 "could not revoke it and no machine holds it")
-    return True
+    return GONE

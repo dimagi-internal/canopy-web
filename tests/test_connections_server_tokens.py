@@ -17,10 +17,11 @@ import requests
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.core.cache import cache
 from django.db import InterfaceError, OperationalError, connection
+from django.test import Client
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk, zk_seal
-from apps.connections import keeper, providers, server_key, server_tokens, services, tokens, wire
+from apps.connections import keeper, providers, server_key, server_tokens, services, sharing, tokens, wire
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection
 from apps.connections.providers.google import REVOKE_URL as GOOGLE_REVOKE
@@ -29,6 +30,7 @@ from apps.connections.providers.google import GoogleProvider
 from apps.connections.providers.salesforce import SalesforceProvider
 from apps.events.models import Event
 from apps.harness.models import RunnerAssignment
+from apps.passkeys.testing import grant_step_up
 from tests.fixtures.connection_calls import TokensWorld, lease, machine_write, reseal_body
 from tests.fixtures.connection_calls import write_back as route_write_back
 from tests.fixtures.connections import (
@@ -983,7 +985,7 @@ def test_no_kms_or_provider_call_in_a_disconnects_transaction(w):
 
     with FakeSF(), mock.patch.object(server_key, "derive", derive), \
             mock.patch.object(SalesforceProvider, "revoke", revoke):
-        assert services.disconnect(w.conn, by=w.person) == "deleted"
+        assert services.disconnect(w.conn, by=w.person) == "revoked"
     assert depths and set(depths) == {base}
 
 
@@ -991,7 +993,7 @@ def test_no_kms_or_provider_call_in_a_disconnects_transaction(w):
 
 def test_disconnect_revokes_at_once(w):
     with FakeSF() as sf:
-        assert services.disconnect(w.conn, by=w.person) == "deleted"
+        assert services.disconnect(w.conn, by=w.person) == "revoked"
     revokes = [c for c in sf.calls if c[1] == REVOKE_URL]
     assert len(revokes) == 1 and revokes[0][2]["token"] == FAKE_REFRESH
     assert revokes[0][2]["token_type_hint"] == "refresh_token"
@@ -1012,7 +1014,7 @@ def test_a_never_shared_connection_is_revoked_too(key):
     conn.sealed_digest = vault_engine.value_digest(conn.sealed)
     conn.save()
     with FakeSF() as sf:
-        assert services.disconnect(conn, by=world.person) == "deleted"
+        assert services.disconnect(conn, by=world.person) == "revoked"
     assert [c[1] for c in sf.calls] == [REVOKE_URL]
 
 
@@ -1049,7 +1051,7 @@ def test_with_no_cloud_box_a_failed_revoke_still_waits_for_canopy_web(key):
 
 def test_a_token_the_provider_says_is_dead_needs_no_retry(w):
     with FakeSF(revoke=_resp(status=400, body={"error": "invalid_token"})):
-        assert services.disconnect(w.conn, by=w.person) == "deleted"
+        assert services.disconnect(w.conn, by=w.person) == "revoked"
 
 
 def test_revoke_if_able_never_raises_out_of_a_disconnect(w):
@@ -1078,7 +1080,7 @@ def test_revoke_if_able_only_touches_a_revoking_row(w):
 
 def test_removing_an_app_inside_a_transaction_defers_the_revoke_to_the_sweep(w):
     """`keeper._finish_removal` holds the app's lock: the provider call waits for the next tick."""
-    with mock.patch.object(server_tokens, "revoke_if_able", side_effect=AssertionError("in a transaction")):
+    with mock.patch.object(server_tokens, "try_revoke", side_effect=AssertionError("in a transaction")):
         assert services.disconnect(w.conn, by=None, revoke_now=False) == "revoking"
     with FakeSF() as sf:
         keeper.sweep()
@@ -1278,6 +1280,155 @@ def disconnected_during_refresh(world, *, delete=False):
     return mock.patch.object(SalesforceProvider, "refresh", refresh)
 
 
+def changed_during_refresh(change):
+    real = SalesforceProvider.refresh
+
+    def refresh(self, token):
+        out = real(self, token)
+        change()
+        return out
+
+    return mock.patch.object(SalesforceProvider, "refresh", refresh)
+
+
+def _unshared_on(world) -> Connection:
+    """A row as a sign-in leaves it: never shared, sealed to its owner and canopy-web."""
+    conn = sealed_to_owner({"user": world.person}, world.person, app=world.app, server_use=True)
+    conn.sealed = zk_seal.seal_to(_refresh_plain(conn), agent_id=conn.binding, name="refresh", kv=0, recipients=[
+        rcpt.owner_member(conn), ("device", server_key.thumbprint(), server_key.public_jwk())])
+    conn.sealed_digest, conn.sealed_sig = vault_engine.value_digest(conn.sealed), None
+    conn.save()
+    return conn
+
+
+def assert_rotated_lost(conn, sf) -> None:
+    conn.refresh_from_db()
+    assert conn.needs_reconnect and conn.lease_id is None
+    event = Event.objects.get(kind="connections.server_write_failed") if conn.agent_id else None
+    if event is not None:
+        assert event.payload["rotated"] is True and event.payload["error"] == "not_a_recipient"
+        assert "connect it again" in event.summary
+    assert revoked_tokens(sf) == []
+
+
+def test_turned_off_during_a_rotated_refresh_is_recorded_and_asks_for_a_reconnect(key, caplog):
+    """canopy-web isn't a recipient any more, so it can't write; the row keeps a token that may be dead."""
+    caplog.set_level(logging.DEBUG, logger="apps")
+    world = TokensWorld()
+    conn = _unshared_on(world)
+    off = lambda: sharing.turn_off_server_use(conn, user=world.person)  # noqa: E731
+    with FakeSF(**ROTATES) as sf, changed_during_refresh(off), pytest.raises(server_tokens.Refused) as e:
+        server_tokens.access_token(conn, sleep=lambda _: None)
+    assert "connect it again" in str(e.value) and "couldn't store" in str(e.value)
+    assert "connections.server_write_failed" in caplog.text and "5Aep_rotated" not in caplog.text
+    assert "connections.server_refused" not in caplog.text
+    assert_rotated_lost(conn, sf)
+
+
+def test_shared_without_canopy_web_during_a_rotated_refresh_is_recorded_and_asks_for_a_reconnect(w):
+    def share_without_it():
+        w.conn.refresh_from_db()
+        w.shared(w.conn, agents=[w.eva])
+
+    with FakeSF(**ROTATES) as sf, changed_during_refresh(share_without_it), pytest.raises(server_tokens.Refused):
+        server_tokens.access_token(w.conn, sleep=lambda _: None)
+    assert Event.objects.filter(kind="connections.server_write_failed").count() == 1
+    assert not Event.objects.filter(kind="connections.server_refused").exists()
+    assert_rotated_lost(w.conn, sf)
+    assert not Event.objects.filter(kind="connections.lease_expired_unwritten").exists()
+
+
+def test_a_provider_that_does_not_rotate_is_not_marked_when_the_write_is_lost(w):
+    def share_without_it():
+        w.conn.refresh_from_db()
+        w.shared(w.conn, agents=[w.eva])
+
+    with FakeSF(**ROTATES), changed_during_refresh(share_without_it), \
+            mock.patch.object(SalesforceProvider, "rotates_refresh_token", False), pytest.raises(server_tokens.Refused):
+        server_tokens.access_token(w.conn, sleep=lambda _: None)
+    w.conn.refresh_from_db()
+    assert not w.conn.needs_reconnect
+    assert Event.objects.filter(kind="connections.server_write_failed").count() == 1
+
+
+def test_a_reconnect_during_a_key_failure_replaces_the_token_and_marks_nothing(key):
+    """Switch still on, sealed to the owner alone: a new grant, which owes nothing to the old token."""
+    world = TokensWorld()
+    conn = _unshared_on(world)
+
+    def reconnected():
+        fresh = Connection.objects.get(pk=conn.pk)
+        fresh.sealed = zk_seal.seal_to(_refresh_plain(fresh), agent_id=fresh.binding, name="refresh", kv=0,
+                                       recipients=[rcpt.owner_member(fresh)])
+        fresh.sealed_digest = vault_engine.value_digest(fresh.sealed)
+        fresh.save()
+
+    with FakeSF(**ROTATES), changed_during_refresh(reconnected), pytest.raises(server_tokens.ServerUseOff):
+        server_tokens.access_token(conn, sleep=lambda _: None)
+    conn.refresh_from_db()
+    assert not conn.needs_reconnect and conn.lease_id is None
+
+
+def test_disconnected_after_being_turned_off_still_revokes_the_token_in_hand(key):
+    world = TokensWorld()
+    conn = _unshared_on(world)
+
+    def off_then_gone():
+        sharing.turn_off_server_use(conn, user=world.person)
+        Connection.objects.filter(pk=conn.pk).update(state=Connection.REVOKING)
+
+    with FakeSF(**ROTATES) as sf, changed_during_refresh(off_then_gone), pytest.raises(services.NotConnected):
+        server_tokens.access_token(conn, sleep=lambda _: None)
+    assert revoked_tokens(sf) == ["5Aep_rotated"]
+    conn.refresh_from_db()
+    assert not conn.needs_reconnect
+
+
+def test_a_revoke_a_sibling_connection_stops_is_not_reported_as_revoked(w):
+    """Row gone, sign-in alive: the screen must not say it was ended."""
+    with mock.patch.object(server_tokens.services, "other_live_connections") as others, FakeSF() as sf:
+        others.return_value.exists.return_value = True
+        assert services.disconnect(w.conn, by=w.person) == "deleted"
+    assert revoked_tokens(sf) == []
+
+
+def test_a_revoke_that_can_never_work_with_no_machine_is_not_reported_as_revoked(key):
+    world = TokensWorld()
+    conn = _unshared_on(world)
+    with FakeSF(revoke=_resp(status=400, body={"error": "invalid_client"})):
+        assert services.disconnect(conn, by=world.person) == "deleted"
+    assert not Connection.objects.filter(pk=conn.pk).exists()
+
+
+def test_the_disconnect_route_says_who_will_finish_a_revoke(w):
+    c = Client()
+    c.force_login(w.person)
+    grant_step_up(c)
+    with mock.patch.object(SalesforceProvider, "revoke", side_effect=RuntimeError("boom")):
+        got = c.delete(f"/api/agents/eva/connections/{w.conn.pk}").json()
+    assert got == {"outcome": "revoking", "machine_revokes": True}
+
+
+def test_the_disconnect_route_says_when_no_machine_will(key):
+    world = TokensWorld()
+    conn = _unshared_on(world)
+    c = Client()
+    c.force_login(world.person)
+    with mock.patch.object(server_key, "derive", side_effect=server_key.Unavailable("down")):
+        got = c.delete(f"/api/connections/{conn.pk}").json()
+    assert got == {"outcome": "revoking", "machine_revokes": False}
+
+
+def test_the_disconnect_route_says_revoked(key):
+    world = TokensWorld()
+    conn = _unshared_on(world)
+    c = Client()
+    c.force_login(world.person)
+    with FakeSF():
+        got = c.delete(f"/api/connections/{conn.pk}").json()
+    assert got == {"outcome": "revoked", "machine_revokes": False}
+
+
 def revoked_tokens(sf) -> list[str]:
     return [c[2]["token"] for c in sf.calls if c[1] == REVOKE_URL]
 
@@ -1389,7 +1540,7 @@ def test_google_revoke_skipped_when_other_connection_remains(key):
     assert g.revokes() == []  # revoking there would end `other` too
     assert not Connection.objects.filter(pk=conn.pk).exists() and Connection.objects.filter(pk=other.pk).exists()
     with FakeGoogle() as g:
-        assert services.disconnect(other, by=world.person) == "deleted"
+        assert services.disconnect(other, by=world.person) == "revoked"
     assert [r["token"] for r in g.revokes()] == ["1//refresh"]
 
 

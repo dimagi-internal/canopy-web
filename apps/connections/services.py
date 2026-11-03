@@ -768,8 +768,10 @@ def disconnect(conn: Connection, *, by, revoke_now: bool = True) -> Literal["rev
     once: it leaves every list, is handed to no machine, and its holders are told to revoke it
     (`keeper.work`) — at the provider only when no other connection of that account through that
     app remains (`revoke_at_provider`: revoking at Google ends every token of the account on the
-    client). canopy-web then revokes it itself, after the commit (`server_tokens.revoke_if_able`),
-    finishing as a holder's confirmation does, so this answers `deleted`; when it can't, the row stays
+    client). canopy-web then revokes it itself, after the commit (`server_tokens.try_revoke`),
+    finishing as a holder's confirmation does. This answers `revoked` when that ended it at the
+    provider, and `deleted` when the row went without doing so (another connection of the account
+    needs the sign-in, or a revoke that can never work); when it can't, the row stays
     `revoking`, and the sweep retries while any holder may confirm first. The sweep deletes one
     nobody finishes. When neither can (never shared and not sealed to canopy-web, only laptops, or
     every holder stopped), nothing is there to revoke it, so it is deleted now and recorded
@@ -820,8 +822,10 @@ def disconnect(conn: Connection, *, by, revoke_now: bool = True) -> Literal["rev
                summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: no machine "
                        "holds it to revoke it")
         return "deleted"
-    if ours and revoke_now and server_tokens.revoke_if_able(row):
-        return "deleted"
+    if ours and revoke_now:
+        result = server_tokens.try_revoke(row)
+        if result is not None:
+            return "revoked" if result == server_tokens.REVOKED else "deleted"
     return "revoking"
 
 

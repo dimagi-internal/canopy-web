@@ -82,6 +82,58 @@ describe('ConnectedPage', () => {
     expect(href('Choose')).toContain('/connections/c1/share')
   })
 
+  it("the key can't be read right now: says so, with a person's links, and no choose step", async () => {
+    getShareState.mockResolvedValue({ ...STATE, server: { ...SERVER, on: true, reachable: null } })
+    open()
+    expect(await screen.findByText(
+      "Connected as jj@dimagi.com. canopy-web can't be reached right now, so project screens and apps may not work for a moment.",
+    )).toBeTruthy()
+    expect(href('Also let agents or my computers use it')).toContain('/connections/c1/share')
+    expect(href('Done')).toBe('/settings/connections')
+    expect(screen.queryByRole('link', { name: 'Choose' })).toBeNull()
+  })
+
+  it("the key can't be read right now: an agent's has its links too", async () => {
+    getShareState.mockResolvedValue({
+      ...STATE, owner_agent: { id: '12', slug: 'eva', name: 'Eva' }, server: { ...SERVER, on: true, reachable: null },
+    })
+    open()
+    expect(await screen.findByText(
+      "Connected Eva as jj@dimagi.com. canopy-web can't be reached right now, so project screens and apps may not work for a moment.",
+    )).toBeTruthy()
+    expect(href("Turn on for Eva's machines")).toContain('/connections/c1/share')
+    expect(href('Done')).toBe('/settings/connections')
+  })
+
+  it('switched off with the key unreadable is the ordinary off copy', async () => {
+    getShareState.mockResolvedValue({ ...STATE, server: { ...SERVER, on: false, reachable: false } })
+    open()
+    expect(await screen.findByText('Connected as jj@dimagi.com. One step left: choose who can use it.')).toBeTruthy()
+  })
+
+  it("an agent's Connected screen has a way back", async () => {
+    getShareState.mockResolvedValue({ ...STATE, owner_agent: { id: '12', slug: 'eva', name: 'Eva' } })
+    open()
+    await screen.findByText(/Connected Eva as/)
+    expect(href('Done')).toBe('/settings/connections')
+  })
+
+  it("an agent's choose step has a way back too", async () => {
+    getShareState.mockResolvedValue({
+      ...STATE, provider: 'google', owner_agent: { id: '12', slug: 'eva', name: 'Eva' },
+      server: { ...SERVER, on: false, reachable: false, provider_calls: false },
+    })
+    open()
+    await screen.findByText(/One step left/)
+    expect(href('Done')).toBe('/settings/connections')
+  })
+
+  it('an empty account name falls back to the account id, never "Connected as ."', async () => {
+    getShareState.mockResolvedValue({ ...STATE, account_label: '', account_id: '00Dxx/005yy' })
+    open()
+    expect(await screen.findByText('Connected as 00Dxx/005yy. Project screens and apps you use can use it now.')).toBeTruthy()
+  })
+
   it('no vault prompt on this screen', async () => {
     open()
     await screen.findByText(/Connected as/)
