@@ -26,16 +26,15 @@ from apps.connections.models import Connection
 from apps.events.models import Event
 from apps.harness.models import RunnerAccessToken
 from apps.mcp import api_tools
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connection_calls import (
     TokensWorld,
-    _call,
     _runner_of,
     _turn,
     lease,
     machine_write,
     material_for,
+    person_call,
     runner_call,
     write_back,
 )
@@ -319,16 +318,6 @@ def test_invalid_grant_marks_needs_reconnect_other_errors_do_not(shared):
 
 
 # ---- a person's own computer -------------------------------------------------------
-
-def _pat(user):
-    raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    return raw
-
-
-def person_call(world, method, path, body=None, *, machine="jj-computer", user=None, proof=True):
-    sign = world.machines[machine][1] if proof else None
-    return _call(method, f"/api/me/connections{path}", bearer=_pat(user or world.person), sign=sign, body=body)
-
 
 def test_person_material_needs_a_plain_pat_and_their_own_machine(world):
     world.conn = world.shared(world.persons(), my_computers=[world.computer.ecdh_jkt])

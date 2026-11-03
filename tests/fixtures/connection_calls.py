@@ -14,6 +14,7 @@ from apps.agents.credentials import vault_engine, zk, zk_seal
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection
 from apps.harness.models import Runner, RunnerAccessToken, Turn
+from apps.tokens.models import PersonalToken
 from tests.fixtures.connections import ShareWorld, sealed_to_owner, sf_app
 from tests.fixtures.vault_zk import conn_ref
 
@@ -104,3 +105,28 @@ def write_back(world, name, body, conn=None):
     return runner_call(world, name, "PUT", f"/connections/{conn.pk}/sealed", body)
 
 
+
+
+def _pat(user):
+    raw, _ = PersonalToken.create_for_user(user=user, label="cli")
+    return raw
+
+
+def person_call(world, method, path, body=None, *, machine="jj-computer", user=None, proof=True):
+    sign = world.machines[machine][1] if proof else None
+    return _call(method, f"/api/me/connections{path}", bearer=_pat(user or world.person), sign=sign, body=body)
+
+
+def reseal_body(world, conn, name, *, to=None):
+    """What box `name` sends (route 14) after opening the refresh envelope: the same
+    plaintext re-sealed to `to` (default: everyone canopy-web lists), with writer MACs."""
+    key, _, ecdh = world.machines[name]
+    conn.refresh_from_db()
+    rs = rcpt.recipients(conn) if to is None else to
+    pubs = {(k, t): zk.public_key(j) for k, t, j in rs}
+    sealed = zk_seal.seal_to(json.dumps({"refresh_token": "same"}), agent_id=conn.binding, name="refresh", kv=0,
+                             recipients=rs)
+    return {"sealed": sealed,
+            "sealed_sig": conn_ref.writer_sig(conn.binding, "refresh", conn.sealed_digest, sealed, ecdh, "device",
+                                              key.ecdh_jkt, pubs),
+            "access_sealed": "", "access_sig": None, "expect": conn.sealed_digest}
