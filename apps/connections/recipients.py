@@ -84,6 +84,17 @@ def grants_in_force(conn: Connection) -> list[Agent]:
     return _in_force(conn, [pk for pk in statement_agent_pks(conn.statement) if pk in granted])
 
 
+def lent_in_force(agent: Agent, conns) -> set:
+    """The pks of `conns`, each with a grant row for `agent`, whose grant is in force now
+    (`grants_in_force`, for one agent across many connections, reading who administers
+    it once)."""
+    conns = [c for c in conns if str(agent.pk) in (c.statement or {}).get("agents", [])
+             and owner_agent_usable(c) and agent.workspace_id == c.app.workspace_id]
+    people = {c.user_id: c.user for c in conns if c.user_id is not None}
+    standings = access.Standings(list(people.values()), [agent]) if people else None
+    return {c.pk for c in conns if c.user_id is None or standings.is_admin(c.user, agent)}
+
+
 def _ready(keys):
     return (keys.filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
             .exclude(ecdh_jkt="").select_related("runner__owner"))

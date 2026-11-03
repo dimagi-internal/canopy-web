@@ -97,7 +97,8 @@ class ConnectionOut(StrictModel):
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "
                     "agent is in `workspace` (False once it has moved; disconnect it and connect again in its "
-                    "workspace). One shared with an agent: only while its owner is in `workspace`.")
+                    "workspace). One lent to an agent: only while that grant is in force (the agent is in `workspace`, "
+                    "the lender still administers it, and an owning agent has not moved).")
     missing_scopes: list[ScopeChoiceOut] = Field(
         default_factory=list,
         description="Scopes the app now asks for that this grant lacks (an admin chose them after it was "
@@ -108,8 +109,8 @@ class ConnectionOut(StrictModel):
         description="Who completed the sign-in; empty when that person's account no longer exists.")
     granted_from: str | None = Field(
         default=None,
-        description="For an agent's list: the slug of the agent that owns this connection, "
-                    "when it is shared with this agent rather than its own.",
+        description="For an agent's list, when this connection is lent to it rather than its own: who lent "
+                    "it, the owning agent's slug or the person's name.",
     )
     shared_with: list[str] = Field(
         default_factory=list,

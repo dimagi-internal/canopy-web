@@ -374,3 +374,31 @@ def test_share_state_before_any_share_still_offers_a_machine_only_someone_else_v
 
 def test_the_grant_service_is_gone():
     assert not hasattr(services, "grant") and not hasattr(services, "revoke_grant")
+
+
+# ---- a person's connection on the agent's own tab -----------------------------------
+
+def test_an_agents_tab_lists_a_persons_connection_lent_to_it(world):
+    conn = world.shared(world.persons(), agents=[world.eva], my_computers=[world.computer.ecdh_jkt])
+    # op administers eva and does not own the connection.
+    resp = client(world.op).get("/api/agents/eva/connections")
+    assert resp.status_code == 200, resp.content
+    [row] = resp.json()["connections"]
+    assert row["id"] == str(conn.pk)
+    assert row["granted_from"] == "jj@dimagi.com"
+    assert row["usable"] is True
+    # The owner's own computers are their business, not this agent's other admins'.
+    assert row["my_machines"] == [] and row["statement"]["my_computers"] == []
+
+
+def test_a_lent_persons_connection_is_unusable_once_the_grant_lapses(world):
+    world.shared(world.persons(), agents=[world.eva])
+    Agent.objects.filter(pk=world.eva.pk).update(owner=world.op)  # jj no longer administers eva
+    [row] = client(world.op).get("/api/agents/eva/connections").json()["connections"]
+    assert row["usable"] is False
+
+
+def test_an_agents_connection_lent_to_another_names_the_owning_agent(world):
+    conn = world.shared(world.evas(), agents=[world.eva, world.echo])
+    [row] = client(world.op).get("/api/agents/echo/connections").json()["connections"]
+    assert row["id"] == str(conn.pk) and row["granted_from"] == "eva" and row["usable"] is True

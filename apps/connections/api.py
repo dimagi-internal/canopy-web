@@ -102,13 +102,14 @@ def _missing_scopes(conn: Connection) -> list[ScopeChoiceOut]:
             for sc in providers.for_app(conn.app).missing_scopes(tuple(conn.scopes.split()))]
 
 
-def _statement(conn: Connection) -> ConnectionStatementOut:
-    # The statement names agents by pk (what endorsements sign); shown by slug.
+def _statement(conn: Connection, *, lent: bool = False) -> ConnectionStatementOut:
+    # The statement names agents by pk (what endorsements sign); shown by slug. Which
+    # computers its owner uses it on is not the business of a grantee's admins (`lent`).
     st = conn.statement or {}
     pks = [int(a) for a in st.get("agents", []) if str(a).isdigit()]
     slugs = dict(Agent.objects.filter(pk__in=pks).values_list("pk", "slug")) if pks else {}
     return ConnectionStatementOut(version=conn.statement_version, agents=sorted(slugs[p] for p in pks if p in slugs),
-                                  my_computers=sorted(st.get("my_computers", [])),
+                                  my_computers=[] if lent else sorted(st.get("my_computers", [])),
                                   endorsers=sorted(st.get("endorsers", [])))
 
 
@@ -131,15 +132,23 @@ def _my_machines(conn: Connection) -> list[MyMachineOut]:
             for k in rcpt.my_machines(conn.user, jkts)]
 
 
+def _lent_by(conn: Connection) -> str:
+    # What an agent's list calls whoever lent it this: the agent's slug, or the person's name.
+    if conn.agent_id is not None:
+        return conn.agent.slug
+    return conn.user.get_full_name() or conn.user.email or conn.user.get_username()
+
+
 def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None) -> ConnectionOut:
+    lent = granted_from is not None
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
-        state=conn.state, statement=_statement(conn), holders=_holders(conn),
+        state=conn.state, statement=_statement(conn, lent=lent), holders=_holders(conn),
         waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, facts=facts)],
-        my_machines=_my_machines(conn),
+        my_machines=[] if lent else _my_machines(conn),
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())
@@ -147,7 +156,7 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
         granted_from=granted_from,
         # Agent-owned, not itself a shared row. Callers prefetch `grants__agent`.
         shared_with=(sorted(g.agent.slug for g in conn.grants.all())
-                     if conn.agent_id and granted_from is None else []),
+                     if conn.agent_id and not lent else []),
     )
 
 
@@ -264,25 +273,25 @@ def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> Status:
                    summary="An agent's connections, its own and shared with it")
 @gate("agent-admin")
 def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
-    """What this agent can act as: connections it owns, and ones another agent
-    shares with it (`granted_from` names the owner), and the providers its own
-    workspace has set up, which are what it connects with. A connection works
-    only while its owning agent is in the workspace whose app made it: one made
-    before the agent moved (or shared by an agent that has since moved) is listed
-    with `usable` false. Only the agent's admins can see them."""
+    """What this agent can act as: connections it owns, and ones lent to it by
+    another agent or a person (`granted_from` names the owner), and the providers
+    its own workspace has set up, which are what it connects with. Its own works
+    only while it is in the workspace whose app made it: one made before the agent
+    moved is listed with `usable` false. A lent one works only while its grant is in
+    force (`usable` false otherwise). Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
     own = (services.connections_for(("agent", agent.pk))
            .select_related("connected_by", "agent", "app__workspace")
            .prefetch_related("grants__agent"))
     granted = (Connection.objects.filter(grants__agent=agent).exclude(state=Connection.REVOKING)
-               .select_related("connected_by", "agent", "app__workspace")
+               .select_related("connected_by", "agent", "user", "app__workspace")
                .order_by("provider", "account_label", "pk").distinct())
     facts = rcpt.facts_for([*own, *granted])
+    in_force = rcpt.lent_in_force(agent, granted)
     return ConnectionsOut(
         providers=_agent_provider_rows(agent),
         connections=([_out(c, usable=services.agent_connection_usable(c), facts=facts) for c in own]
-                     + [_out(c, usable=services.agent_connection_usable(c), granted_from=c.agent.slug, facts=facts)
-                        for c in granted]),
+                     + [_out(c, usable=c.pk in in_force, granted_from=_lent_by(c), facts=facts) for c in granted]),
     )
 
 

@@ -6500,12 +6500,12 @@ export interface paths {
         };
         /**
          * An agent's connections, its own and shared with it
-         * @description What this agent can act as: connections it owns, and ones another agent
-         *     shares with it (`granted_from` names the owner), and the providers its own
-         *     workspace has set up, which are what it connects with. A connection works
-         *     only while its owning agent is in the workspace whose app made it: one made
-         *     before the agent moved (or shared by an agent that has since moved) is listed
-         *     with `usable` false. Only the agent's admins can see them.
+         * @description What this agent can act as: connections it owns, and ones lent to it by
+         *     another agent or a person (`granted_from` names the owner), and the providers
+         *     its own workspace has set up, which are what it connects with. Its own works
+         *     only while it is in the workspace whose app made it: one made before the agent
+         *     moved is listed with `usable` false. A lent one works only while its grant is in
+         *     force (`usable` false otherwise). Only the agent's admins can see them.
          */
         readonly get: operations["agent_connections"];
         readonly put?: never;
@@ -18624,7 +18624,7 @@ export interface components {
             readonly my_machines?: readonly components["schemas"]["MyMachineOut"][];
             /**
              * Usable
-             * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One shared with an agent: only while its owner is in `workspace`.
+             * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One lent to an agent: only while that grant is in force (the agent is in `workspace`, the lender still administers it, and an owning agent has not moved).
              */
             readonly usable: boolean;
             /**
@@ -18646,7 +18646,7 @@ export interface components {
             readonly connected_by_email: string;
             /**
              * Granted From
-             * @description For an agent's list: the slug of the agent that owns this connection, when it is shared with this agent rather than its own.
+             * @description For an agent's list, when this connection is lent to it rather than its own: who lent it, the owning agent's slug or the person's name.
              */
             readonly granted_from?: string | null;
             /**
