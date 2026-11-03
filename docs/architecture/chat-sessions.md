@@ -279,6 +279,11 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   `runner.session_interrupt` frame; the runner drains the record on its poll tick
   (`GET /runners/{id}/session-interrupts`, retired by id through
   `…/session-interrupt-result`, offered for `control.INTERRUPT_TTL`).
+  Escape fires no `Stop` hook, so emdash's `agent_status` stays `working` over a
+  stopped agent. The laptop runner reports `interrupted` instead while the
+  conversation's last word is the marker (`canopy_transcript.turn_ended_in_interrupt`,
+  `sessions.annotate_engine_staleness`), and that report's edge says `idle` to an open
+  chat, within one report tick of the stop.
   The socket action `chat.unqueue {turn_id}` is `send.unqueue_send`: your OWN
   send, only while still `QUEUED` (a claimed one may already be in the agent's
   input), finished CANCELLED and the queued list re-sent; anything else is refused

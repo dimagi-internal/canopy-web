@@ -33,6 +33,7 @@ from .questions import (
     pending_question,
     stamp_observed,
     turn_ended_in_api_error,
+    turn_ended_in_interrupt,
 )
 from .records import read_records, read_tail_records
 from .usage_scan import repo_for_cwd, scan as scan_usage, send_report as send_usage_report, session_usage
@@ -76,7 +77,7 @@ __all__ = [
     "ACTIVITY_EVENTS", "ASK_TOOL", "BLOCK_STRIDE", "FORWARDED_EVENTS",
     "STATUS_COMPLETE", "STATUS_PENDING", "pending_question", "hook_retires_menu",
     "menu_from_hook", "marker_from_hook", "stamp_observed",
-    "turn_ended_in_api_error", "read_tail_records",
+    "turn_ended_in_api_error", "turn_ended_in_interrupt", "read_tail_records",
     "SYSTEM_NOISE_PREFIXES", "is_system_noise",
     "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
     "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "summarize_subagents", "assistant_text", "chunk_raw_lines",
