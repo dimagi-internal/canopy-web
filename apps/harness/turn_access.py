@@ -62,7 +62,7 @@ def is_own_running_turn(user, turn) -> bool:
     canopy-web issued for `turn`, which is running now, and it is not sensitive."""
     if sensitivity.is_sensitive(turn):
         return False
-    from . import turn_asker
+    from . import turn_asker  # noqa: PLC0415 — as the lazy imports beside it in this package
 
     running = turn_asker.serving_turn(user)
     return running is not None and running.pk == turn.pk

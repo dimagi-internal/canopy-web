@@ -65,7 +65,7 @@ def _envelope_sync(user_id, turn_id: str, credential: dict | None = None) -> dic
     user = User.objects.filter(pk=user_id).first() if user_id is not None else None
     if user is not None and credential:
         # The agent's per-turn login, as the REST door notes it (`turn_asker.remember`).
-        from apps.harness import turn_asker  # noqa: PLC0415
+        from apps.harness import turn_asker  # noqa: PLC0415 — as its neighbours: tools load before apps
 
         turn_asker.remember(user, credential)
     # Fail CLOSED on a tenant-less turn: no tenant must never read as "ungated".
@@ -80,7 +80,7 @@ def _envelope_sync(user_id, turn_id: str, credential: dict | None = None) -> dic
 
 
 def _credential() -> dict | None:
-    from apps.mcp.api_tools import _principal  # noqa: PLC0415
+    from apps.mcp.api_tools import _principal  # noqa: PLC0415 — as its neighbours: tools load before apps
 
     try:
         return _principal()["credential"]

@@ -139,7 +139,7 @@ def turn_content_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 def caller_context_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """`turn_content_or_404`, widened by the one rule `turn_access.can_read_caller_context`
     (the agent reading its own running turn's envelope). Same uniform 404."""
-    from . import turn_access
+    from . import turn_access  # noqa: PLC0415 — as this module's other turn_access imports
 
     turn = turn_or_404(request, turn_id, own_turn_ok=True)
     if not turn_access.can_read_caller_context(request.user, turn):
@@ -258,7 +258,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
         if not session_access.can_read(request.user, turn.chat_session):
             # The caller envelope alone is also the running agent's to read, in a chat
             # it cannot read (`turn_access.can_read_caller_context`).
-            from . import turn_access
+            from . import turn_access  # noqa: PLC0415 — as this module's other turn_access imports
 
             if not (own_turn_ok and turn_access.is_own_running_turn(request.user, turn)):
                 raise HttpError(404, "turn not found")
