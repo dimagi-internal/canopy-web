@@ -200,16 +200,18 @@ Every browser-facing address canopy-web serves. The SPA route table is
     authority) and, when that person lost the right, that it stopped and why;
     create, edit, pause, delete, run a schedule now (access.md § Triggers).
   - **Huddles**.
-  - **Mail** (`mail`) — read-only email threads for the agent
-    (`GET /api/mail/threads/{workspace}?agent=`): thread table beside the open
-    thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
-    CSP, meta refreshes stripped; attachments are
-    presigned download links. No address → points to Settings → Email.
+  - **Mail** (`mail`) — the agent's mailbox in the SAME client as a person's own mail
+    (`components/mail/MailClient`, below): Inbox / Archived, search, unread count, reply and
+    compose *as the agent* for someone who may act as it (`canEdit`; the server checks FULL).
+    HTML bodies render only in a `sandbox=""` iframe behind a no-network CSP, meta refreshes
+    stripped (`components/mail/MessageView`); attachments are presigned download links.
+    No address → points to Settings → Email.
   - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
     forward routes with *Keep a copy*: Inbox / Archived, unread count, search
     (`?forwarded=true&q=`), per-address filter, reply / reply all / compose from the person's own
     forwarding addresses, keyboard shortcuts. Private to the person (`MailThread.owner`); plain
-    text out, no attachments on send. Settings → Email shows each domain's inbound ledger (admins).
+    text out, no attachments on send. It is the same `MailClient` as the agent's Mail tab — they differ
+    only in the source (`forwarded` vs `agent`) and who the server lets send. Settings → Email shows each domain's inbound ledger (admins).
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent
