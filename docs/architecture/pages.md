@@ -300,7 +300,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     show gaps".
   - **connections** — the workspace's OAuth apps (one per provider, Salesforce and Google):
     client ID, a write-only secret, the extra permissions to ask for, and the callback URL to
-    register (`apps/connections`, [`vault.md`](vault.md) § OAuth connections are server-held).
+    register (`apps/connections`, [`vault.md`](vault.md) § OAuth connections are sealed to their owner).
   - **access-requests** (+ `/:requestId`, the page the admins' notification
     links to) — requests to be invited; approve at a role or deny.
   - **slack** — the workspace's Slack connection (one Slack may serve several
