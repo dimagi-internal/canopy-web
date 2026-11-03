@@ -15,19 +15,21 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives.asymmetric import ec
-from django.test import override_settings
+from django.test import Client, override_settings
 from django.utils import timezone
 
-from apps.agents.credentials import zk_seal
+from apps.agents.credentials import vault_engine, zk_seal
 from apps.connections import keeper, server_key, services, sharing, tokens
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection, ConnectionApp
 from apps.connections.providers.google import GoogleProvider
 from apps.connections.providers.salesforce import SalesforceProvider
 from apps.connections.wire import WireError
+from apps.passkeys.testing import grant_step_up
 from tests.fixtures.connection_calls import TokensWorld, lease, machine_write, write_back
 from tests.fixtures.connections import REDIRECT, FakeGoogle, FakeSF, ShareWorld, browser_share, sealed_to_owner
 from tests.fixtures.vault_zk import ref as zk_ref
+from tests.test_connections_sharing import refused
 
 pytestmark = pytest.mark.django_db
 
@@ -237,6 +239,9 @@ def test_reconnect_of_an_off_row_with_a_statement_stays_off(world, key):
 
 def test_reconnect_of_an_on_row_whose_statement_omits_canopy_web_still_seals_to_it(world, key):
     conn = world.shared(on_row(world), agents=[world.eva])
+    # Sharing without canopy-web switches it off; a row switched on after that is what a reconnect meets.
+    Connection.objects.filter(pk=conn.pk).update(server_use=True)
+    conn.refresh_from_db()
     assert "canopy_web" not in conn.statement and conn.server_use is True
     with FakeSF():
         again = connect(world)
@@ -537,7 +542,7 @@ def test_a_cold_cache_in_reseal_asks_no_kms(machines, key):
     server_key._reset()
 
 
-def test_a_cold_cache_in_share_asks_no_kms_and_refuses_the_named_key(world, key):
+def test_a_cold_cache_in_share_asks_no_kms_and_says_try_again(world, key):
     conn = on_row(world)
     body = browser_share(conn, world.person, world.person_priv, agents=[world.eva],
                          canopy_web=server_key.thumbprint())
@@ -547,6 +552,244 @@ def test_a_cold_cache_in_share_asks_no_kms_and_refuses_the_named_key(world, key)
             mock.patch.object(server_key, "_client", return_value=client), \
             mock.patch.object(rcpt, "warm_server_key"), pytest.raises(WireError) as e:
         sharing.share(conn, user=world.person, **body)
-    assert e.value.code == "foreign_reader"
+    assert (e.value.status, e.value.code) == (503, "try_again")
     client.get_public_key.assert_not_called()
     server_key._reset()
+
+
+# ---- the switch: share ---------------------------------------------------------------
+
+def _sf_unshared_on(world):
+    with FakeSF():
+        conn = connect(world)
+    conn.refresh_from_db()
+    return conn
+
+
+def test_share_with_wrong_thumbprint_refused(world, key):
+    conn = on_row(world)
+    e = refused(conn, world.person, "bad_canopy_web",
+                **browser_share(conn, world.person, world.person_priv, agents=[world.eva], canopy_web=OTHER_KEY))
+    assert e.status == 422
+    assert Connection.objects.get(pk=conn.pk).state == "unshared"
+
+
+def test_share_with_canopy_web_while_statements_disabled_refused(world, key):
+    conn = on_row(world)
+    body = browser_share(conn, world.person, world.person_priv, agents=[world.eva],
+                         canopy_web=server_key.thumbprint())
+    with override_settings(CONNECTIONS_SERVER_STATEMENTS=False):
+        e = refused(conn, world.person, "bad_canopy_web", **body)
+    assert e.status == 422
+
+
+def test_share_naming_canopy_web_with_no_key_configured_refused(world):
+    conn = on_row(world)
+    refused(conn, world.person, "bad_canopy_web",
+            **browser_share(conn, world.person, world.person_priv, agents=[world.eva], canopy_web=OTHER_KEY,
+                            to=[]))
+
+
+def switch_lines(caplog):
+    return [r.getMessage().split()[0].removeprefix("connections.") for r in caplog.records
+            if r.name == "apps.connections.services" and r.getMessage().startswith("connections.server_use_")]
+
+
+def test_share_sets_server_use_both_ways(world, key, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    # An off row naming canopy-web turns on: its entry is allowed, not `foreign_reader`.
+    conn = sealed_to_owner({"user": world.person}, world.person, app=world.app, server_use=False)
+    here = ("device", server_key.thumbprint(), server_key.public_jwk())  # the browser seals to the key it was shown
+    conn = world.shared(conn, agents=[world.eva], canopy_web=server_key.thumbprint(), to=[here])
+    conn.refresh_from_db()
+    assert conn.server_use is True and canopy_target() in zk_seal.sealed_targets(conn.sealed)
+    # The next statement omits it: the switch goes off and canopy-web is pruned.
+    conn = world.shared(conn, agents=[world.eva])
+    conn.refresh_from_db()
+    assert conn.server_use is False and canopy_target() not in zk_seal.sealed_targets(conn.sealed)
+    assert switch_lines(caplog) == ["server_use_on", "server_use_off"]
+
+
+def test_share_that_keeps_the_switch_records_no_change(world, key, caplog):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    world.shared(conn, agents=[world.eva], canopy_web=server_key.thumbprint())
+    assert switch_lines(caplog) == []
+
+
+def test_share_naming_only_canopy_web_is_a_valid_first_share(world, key):
+    conn = on_row(world)
+    conn = world.shared(conn, canopy_web=server_key.thumbprint())
+    conn.refresh_from_db()
+    assert conn.state == "active" and conn.server_use is True
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world), canopy_target()}
+
+
+def test_share_route_answers_try_again_as_503(world, key):
+    conn = on_row(world)
+    body = browser_share(conn, world.person, world.person_priv, agents=[world.eva],
+                         canopy_web=server_key.thumbprint())
+    with mock.patch.object(server_key, "cached_public_jwk", return_value=None), \
+            mock.patch.object(rcpt, "warm_server_key"), mock.patch.object(server_key, "public_jwk",
+                                                                          side_effect=server_key.Unavailable("x")):
+        r = _client(world.person, step_up=True).put(f"/api/connections/{conn.pk}/share", body,
+                                                    content_type="application/json")
+    assert r.status_code == 503 and r.json()["error"] == "try_again"
+    assert "forged" not in r.json()["detail"]
+
+
+# ---- the switch: share_state and the list --------------------------------------------
+
+def test_share_state_describes_canopy_web(world, key):
+    conn = _sf_unshared_on(world)
+    s = sharing.share_state(conn, world.person)["server"]
+    assert s == {"available": True, "thumbprint": server_key.thumbprint(), "public_jwk": server_key.public_jwk(),
+                 "on": True, "statements_enabled": True, "provider_calls": True, "reachable": True}
+
+
+def test_share_state_without_a_key_has_no_thumbprint(world):
+    s = sharing.share_state(world.persons(), world.person)["server"]
+    assert s["available"] is False and s["thumbprint"] == "" and s["public_jwk"] is None
+    assert s["on"] is False and s["reachable"] is False
+
+
+def test_share_state_survives_a_kms_failure(world, kms_down):
+    s = sharing.share_state(world.persons(), world.person)["server"]
+    assert s["available"] is False and s["thumbprint"] == "" and s["public_jwk"] is None
+
+
+def test_share_state_says_statements_disabled_and_google_has_no_calls(world, key):
+    conn = world.persons()
+    with override_settings(CONNECTIONS_SERVER_STATEMENTS=False):
+        assert sharing.share_state(conn, world.person)["server"]["statements_enabled"] is False
+    assert sharing.share_state(conn, world.person)["server"]["provider_calls"] is True
+
+
+def test_connection_out_says_whether_canopy_web_can_use_it(world, key):
+    conn = _sf_unshared_on(world)
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["server_use"] is True and row["server_reachable"] is True
+    # A reconnect during a KMS outage leaves the switch on and canopy-web outside the envelope.
+    conn.sealed = zk_seal.keep_only(conn.sealed, {owner_target(world)})[0]
+    conn.save()
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["server_use"] is True and row["server_reachable"] is False
+
+
+def test_connection_out_without_a_key_is_not_reachable(world):
+    world.persons()
+    row = _client(world.person).get("/api/connections/").json()["connections"][0]
+    assert row["server_use"] is False and row["server_reachable"] is False
+
+
+# ---- the switch: turning it off ------------------------------------------------------
+
+def _client(user, *, step_up=False):
+    c = Client()
+    c.force_login(user)
+    if step_up:
+        grant_step_up(c)
+    return c
+
+
+def _off(user, conn, **kw):
+    return _client(user, **kw).post(f"/api/connections/{conn.pk}/server-use", {"on": False},
+                                    content_type="application/json")
+
+
+def test_turn_off_unshared_prunes_both_envelopes_no_passkey(world, key, caplog):
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    conn = _sf_unshared_on(world)
+    # A server-written access envelope too, sealed to both.
+    conn.access_sealed = zk_seal.seal_to(json.dumps({"access_token": "x"}), agent_id=conn.binding, name="access",
+                                         kv=0, recipients=[r for r in rcpt.recipients(conn)])
+    conn.access_sig = {"v": 1, "by": {"kind": "device", "target": server_key.thumbprint()},
+                       "expect": "", "macs": [{"kind": "member", "target": str(world.person.pk), "mac": "m"},
+                                              {"kind": "device", "target": server_key.thumbprint(), "mac": "d"}]}
+    conn.sealed_sig = {"v": 1, "by": {"kind": "device", "target": server_key.thumbprint()}, "expect": "",
+                       "macs": [{"kind": "member", "target": str(world.person.pk), "mac": "m"},
+                                {"kind": "device", "target": server_key.thumbprint(), "mac": "d"}]}
+    conn.access_expires_at = timezone.now()
+    conn.save()
+    r = _off(world.person, conn)  # no step-up
+    assert r.status_code == 200, r.json()
+    assert r.json()["server_use"] is False and r.json()["server_reachable"] is False
+    conn.refresh_from_db()
+    assert conn.server_use is False and conn.state == "unshared"
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world)}
+    assert conn.sealed_digest == vault_engine.value_digest(conn.sealed)
+    assert [m["target"] for m in conn.sealed_sig["macs"]] == [str(world.person.pk)]
+    assert zk_seal.sealed_targets(conn.access_sealed) == {owner_target(world)}
+    assert [m["target"] for m in conn.access_sig["macs"]] == [str(world.person.pk)]
+    assert owner_opens(world, conn)["refresh_token"] == FAKE_REFRESH
+    assert switch_lines(caplog) == ["server_use_off"]
+
+
+def test_turn_off_drops_an_access_envelope_only_canopy_web_could_open(world, key):
+    conn = _sf_unshared_on(world)
+    conn.access_sealed = zk_seal.seal_to("{}", agent_id=conn.binding, name="access", kv=0,
+                                         recipients=[r for r in rcpt.recipients(conn) if r[0] == "device"])
+    conn.access_sig, conn.access_expires_at = {"v": 1, "macs": [], "by": {}, "expect": ""}, timezone.now()
+    conn.save()
+    assert _off(world.person, conn).status_code == 200
+    conn.refresh_from_db()
+    assert (conn.access_sealed, conn.access_sig, conn.access_expires_at) == ("", None, None)
+
+
+def test_turn_off_is_idempotent(world, key, caplog):
+    conn = _sf_unshared_on(world)
+    assert _off(world.person, conn).status_code == 200
+    caplog.set_level(logging.INFO, logger="apps.connections.services")
+    before = Connection.objects.get(pk=conn.pk).sealed
+    r = _off(world.person, conn)
+    assert r.status_code == 200 and r.json()["server_use"] is False
+    assert Connection.objects.get(pk=conn.pk).sealed == before
+    assert switch_lines(caplog) == []
+
+
+def test_turn_off_active_is_needs_share(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    r = _off(world.person, conn)
+    assert r.status_code == 409 and r.json()["error"] == "needs_share"
+    conn.refresh_from_db()
+    assert conn.server_use is True and canopy_target() in zk_seal.sealed_targets(conn.sealed)
+
+
+def test_turn_on_is_refused(world, key):
+    conn = sealed_to_owner({"user": world.person}, world.person, app=world.app)
+    r = _client(world.person).post(f"/api/connections/{conn.pk}/server-use", {"on": True},
+                                   content_type="application/json")
+    assert r.status_code == 422
+    assert Connection.objects.get(pk=conn.pk).server_use is False
+
+
+def test_someone_elses_connection_404(world, key):
+    conn = _sf_unshared_on(world)
+    assert _off(world.op, conn).status_code == 404
+    assert Connection.objects.get(pk=conn.pk).server_use is True
+
+
+def test_turn_off_an_agents_connection_as_its_admin(world, key):
+    conn = sealed_to_owner({"agent": world.eva}, world.person, app=world.app, server_use=True)
+    conn.sealed = zk_seal.seal_to(zk_ref.open_sealed_value(conn.sealed, conn.binding, "refresh", "member",
+                                                           str(world.person.pk), world.person_priv),
+                                  agent_id=conn.binding, name="refresh", kv=0,
+                                  recipients=rcpt.recipients(conn))
+    conn.save()
+    assert canopy_target() in zk_seal.sealed_targets(conn.sealed)
+    assert _off(world.person, conn).status_code == 200
+    conn.refresh_from_db()
+    assert canopy_target() not in zk_seal.sealed_targets(conn.sealed) and conn.server_use is False
+
+
+def test_turn_off_while_revoking_is_refused(world, key):
+    conn = _sf_unshared_on(world)
+    Connection.objects.filter(pk=conn.pk).update(state="revoking")
+    r = _off(world.person, conn)
+    assert r.status_code == 409 and r.json()["error"] == "revoking"
+
+
+def test_problems_have_plain_titles():
+    from apps.connections.problems import _PROBLEMS
+    for code in ("server_use_off", "waiting", "server_refused", "needs_share", "bad_canopy_web", "try_again"):
+        assert code in _PROBLEMS and _PROBLEMS[code][1]

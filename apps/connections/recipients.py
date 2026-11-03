@@ -305,11 +305,27 @@ def unconfirmed_server_target(conn: Connection) -> set[tuple[str, str]]:
     return set()
 
 
-def warm_server_key(conn: Connection) -> None:
+def server_reachable(conn: Connection) -> bool:
+    """Whether the stored refresh envelope is sealed to canopy-web's key now, so that it can use the
+    connection. False when the key can't be read: the answer is then unknown, and that is not a
+    reason to say it can."""
+    if not server_key.available():
+        return False
+    jwk = server_key.cached_public_jwk()
+    if jwk is None:
+        try:
+            jwk = server_key.public_jwk()
+        except server_key.Unavailable:
+            return False
+    return ("device", device_keys.thumbprint(jwk)) in zk_seal.sealed_targets(conn.sealed)
+
+
+def warm_server_key(conn: Connection, *, wanted: bool = False) -> None:
     """Read canopy-web's public key into the process's cache before a caller takes `conn`'s row
     lock, since under the lock only the cache is read (`cached_only`). A best effort: `conn` may
-    be stale and KMS may be down, and a miss then only counts as unavailable for that write."""
-    if conn.server_use and server_key.available():
+    be stale and KMS may be down, and a miss then only counts as unavailable for that write.
+    `wanted`: the caller means to switch it on, whatever the row says now."""
+    if (conn.server_use or wanted) and server_key.available():
         try:
             server_key.public_jwk()
         except server_key.Unavailable:

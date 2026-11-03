@@ -52,6 +52,7 @@ from .schemas import (
     ProviderOut,
     ReconnectRequiredIn,
     ScopeChoiceOut,
+    ServerUseIn,
     ShareIn,
     ShareStateOut,
     UnreachableOut,
@@ -156,6 +157,7 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
         waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, pairs=pairs)
                  if w["agent"] or not lent],
         owner_key_replaced=not lent and conn.pk in (replaced or ()),
+        server_use=conn.server_use, server_reachable=rcpt.server_reachable(conn),
         unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
         my_machines=[] if lent else _my_machines(conn),
         connected_at=conn.created_at,
@@ -255,6 +257,31 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
         stepup.require_recent_step_up(request)
     try:
         conn = sharing.share(conn, user=request.user, **payload.model_dump())
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")
+            .prefetch_related("grants__agent").get(pk=conn.pk))
+    usable = (conn.app.workspace_id in services.readable_workspaces(request.user) if conn.user_id
+              else services.agent_connection_usable(conn))
+    return _out(conn, usable=usable)
+
+
+@router.post("/{connection_id}/server-use", response=ConnectionOut, summary="Stop canopy-web using a connection")
+@gate("self", setting=True)
+def set_server_use(request: HttpRequest, connection_id: uuid.UUID, payload: ServerUseIn) -> ConnectionOut:
+    """Turn off canopy-web's use of a connection, so screens and apps can no longer act as this account:
+    canopy-web removes itself from the stored sign-in. Mine, or an agent's I administer (anyone else's
+    id is a 404). No passkey: giving up access is always easy. Already off changes nothing. 422 when
+    `on` is true (turning it on goes through Share, where it is part of the signed statement); 409
+    `needs_share` when the connection is shared, since removing canopy-web then needs a new signed
+    statement (share it again without canopy-web); 409 `revoking` while it is being disconnected."""
+    conn = _visible(request, connection_id)
+    if payload.on:
+        raise ProblemError(422, "Turning it on goes through Share",
+                           detail="Choose \"Project screens and apps\" when you share the connection.",
+                           members={"error": "use_share"})
+    try:
+        conn = sharing.turn_off_server_use(conn, user=request.user)
     except WireError as exc:
         raise problem_for_wire(exc) from None
     conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")

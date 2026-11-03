@@ -449,6 +449,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/connections/{connection_id}/server-use": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop canopy-web using a connection
+         * @description Turn off canopy-web's use of a connection, so screens and apps can no longer act as this account:
+         *     canopy-web removes itself from the stored sign-in. Mine, or an agent's I administer (anyone else's
+         *     id is a 404). No passkey: giving up access is always easy. Already off changes nothing. 422 when
+         *     `on` is true (turning it on goes through Share, where it is part of the signed statement); 409
+         *     `needs_share` when the connection is shared, since removing canopy-web then needs a new signed
+         *     statement (share it again without canopy-web); 409 `revoking` while it is being disconnected.
+         */
+        readonly post: operations["set_server_use"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/connections/{connection_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -18741,6 +18766,18 @@ export interface components {
              */
             readonly owner_key_replaced: boolean;
             /**
+             * Server Use
+             * @description canopy-web may use this connection for screens and apps (the owner's switch).
+             * @default false
+             */
+            readonly server_use: boolean;
+            /**
+             * Server Reachable
+             * @description canopy-web can open the stored sign-in now: the switch is on and the envelope is sealed to its key. False after a sign-in while the key service was failing; connect again to fix.
+             * @default false
+             */
+            readonly server_reachable: boolean;
+            /**
              * Usable
              * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One lent to an agent: only while that grant is in force (the agent is in `workspace`, the lender still administers it, and an owning agent has not moved).
              */
@@ -18952,6 +18989,46 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** ShareServerOut */
+        readonly ShareServerOut: {
+            /**
+             * Available
+             * @description canopy-web has a key it can be sealed to and could read it just now. False when none is set up or the key service is failing; then `thumbprint` is empty and `public_jwk` null.
+             */
+            readonly available: boolean;
+            /**
+             * Thumbprint
+             * @description The key's thumbprint, which a statement's `canopy_web` names; empty when not `available`.
+             */
+            readonly thumbprint: string;
+            /**
+             * Public Jwk
+             * @description The key (P-256 public JWK) to seal to; null when not `available`.
+             */
+            readonly public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * On
+             * @description canopy-web may use this connection now (the switch on the row).
+             */
+            readonly on: boolean;
+            /**
+             * Statements Enabled
+             * @description This deployment accepts a statement naming canopy-web. When false, sharing with it is refused.
+             */
+            readonly statements_enabled: boolean;
+            /**
+             * Provider Calls
+             * @description canopy-web makes calls for this provider; the switch is shown only when true.
+             */
+            readonly provider_calls: boolean;
+            /**
+             * Reachable
+             * @description The stored envelope is sealed to canopy-web's key now, so it can use the connection. False when the switch is on but the key could not be used at sign-in.
+             */
+            readonly reachable: boolean;
+        };
         /** ShareStateOut */
         readonly ShareStateOut: {
             /**
@@ -19037,6 +19114,8 @@ export interface components {
              * @description The agents the owner may lend it to.
              */
             readonly agents: readonly components["schemas"]["ShareAgentOut"][];
+            /** @description canopy-web as a reader of this connection. */
+            readonly server: components["schemas"]["ShareServerOut"];
         };
         /**
          * ZkEndorsementOut
@@ -19119,11 +19198,19 @@ export interface components {
              */
             readonly expect: string;
         };
+        /** ServerUseIn */
+        readonly ServerUseIn: {
+            /**
+             * On
+             * @description Only `false` is accepted here; turning canopy-web on goes through Share.
+             */
+            readonly on: boolean;
+        };
         /** DisconnectOut */
         readonly DisconnectOut: {
             /**
              * Outcome
-             * @description `revoking`: a machine that holds it will revoke it at the provider, then it is deleted. `deleted`: no machine that holds it has been heard from recently enough to revoke it, so canopy deleted its copy; the provider may keep the old sign-in alive until it idles out.
+             * @description `revoking`: a machine that holds it will revoke it at the provider, then it is deleted. `deleted`: canopy-web revoked it at the provider itself, or no machine that holds it has been heard from recently enough to revoke it and canopy deleted its copy (the provider may then keep the old sign-in alive until it idles out).
              * @enum {string}
              */
             readonly outcome: "revoking" | "deleted";
@@ -46935,6 +47022,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+        };
+    };
+    readonly set_server_use: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ServerUseIn"];
             };
         };
         readonly responses: {
