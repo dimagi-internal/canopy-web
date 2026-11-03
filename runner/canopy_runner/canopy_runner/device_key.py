@@ -32,6 +32,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional
 
+from .platform_jobs import no_window
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 120
@@ -99,7 +101,7 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
     try:
         r = runner([cli, "vault", "device", "--enroll", "--runner", cfg.runner_id, "--json"],
                    capture_output=True, text=True, timeout=TIMEOUT, env=_child_env(cfg, bearer),
-                   cwd=str(home or Path.home()))
+                   cwd=str(home or Path.home()), **no_window())
     except Exception as e:  # noqa: BLE001
         logger.warning("device key: enrollment did not run (%s)", e)
         return {"error": str(e)}

@@ -34,6 +34,7 @@ from typing import Callable, Optional
 
 from . import cli_extras
 from .device_key import canopy_cli
+from .platform_jobs import no_window
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def _env(home: Path) -> dict:
 
 def _version_of(cmd: list[str], run: Runner, env: dict) -> str:
     try:
-        out = run(cmd, capture_output=True, text=True, timeout=30, env=env)
+        out = run(cmd, capture_output=True, text=True, timeout=30, env=env, **no_window())
     except (OSError, subprocess.SubprocessError):
         return ""
     return (out.stdout or "") if out.returncode == 0 else ""
@@ -102,7 +103,7 @@ def check(home: Optional[Path] = None, run: Runner = subprocess.run) -> str:
         # is measured against what canopy has actually released.
         try:
             run([str(claude), "plugin", "marketplace", "update", "canopy"], capture_output=True,
-                text=True, timeout=120, env=env)
+                text=True, timeout=120, env=env, **no_window())
         except (OSError, subprocess.SubprocessError):
             pass
     want = _parse(plugin_version(home))
@@ -124,7 +125,7 @@ def check(home: Optional[Path] = None, run: Runner = subprocess.run) -> str:
         # drops every `--with` (cli_extras).
         out = run([uv, "tool", "install", "--reinstall", "--force",
                    *cli_extras.with_args(home), str(marketplace_clone(home))],
-                  capture_output=True, text=True, timeout=TIMEOUT, env=env)
+                  capture_output=True, text=True, timeout=TIMEOUT, env=env, **no_window())
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("canopy CLI reinstall failed (%s)", e)
         return "reinstall failed"

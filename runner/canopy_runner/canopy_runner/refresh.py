@@ -27,6 +27,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .platform_jobs import no_window
+
 logger = logging.getLogger(__name__)
 
 MIN_INTERVAL_SECONDS = 1800
@@ -99,7 +101,7 @@ def prepare(*, run: Runner = subprocess.run, home: Path | None = None) -> dict:
     def call(*args: str) -> subprocess.CompletedProcess | None:
         try:
             return run([str(claude), "plugin", *args], capture_output=True, text=True,
-                       timeout=TIMEOUT, env=env)
+                       timeout=TIMEOUT, env=env, **no_window())
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("refresh: claude plugin %s: %s", " ".join(args), exc)
             return None
