@@ -52,6 +52,18 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
   keeps public ones. A clone the box-wide pass could not make is not reported
   unprepared — that would stop canopy-web sending the turn that clones it; a failed
   in-turn clone is.
+- **Keeping an agent's clone current.** A new chat session is cut from the clone's
+  `origin/main`, and a caller's (confined) turn is handed no token, so its fetch of a
+  private repo could not succeed. The runner therefore fetches/pulls the clone itself
+  (`cloud_runner._fetch_clone`) with the agent's delegation in THAT git process's
+  environment only (`_clone_refresh_env`: the credential-helper env of `github_env`, no
+  file, no URL, no argument). Conditions: this box's own resolve, at most
+  `_AGENT_ENV_TTL_SECONDS` old and not failed, still lists `github-token` (the per-turn
+  gate's 409 for a withdrawn delegation is not asked here, so a stale cache is never
+  enough); not on a sensitive-data box; the turn's env is a separate allowlist and never
+  receives it. git's error is redacted (`_redact_credentials`) before it is logged or
+  reported by the `clones` health check, which is amber when a failing clone is older
+  than `CLONE_STALE_SECONDS`. Held by `runner/ec2/tests/test_clone_refresh_token_exposure.py`.
 - **Agentless repo turns and project chats** (`Turn.project`, or the chat
   session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row

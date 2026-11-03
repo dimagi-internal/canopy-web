@@ -67,8 +67,8 @@ def test_an_old_clean_session_is_brought_forward_on_its_next_turn(box):
 def test_the_refresh_uses_the_agents_delegation_but_never_hands_it_to_the_turn(box, monkeypatch):
     mod, _, _, _ = box
     monkeypatch.setattr(mod, "SENSITIVE_DATA_MODE", False)
-    monkeypatch.setattr(mod, "_delegated_value",
-                        lambda slug, name: "ghp_agent" if (slug, name) == ("trellis", "github-token") else "")
+    monkeypatch.setattr(mod, "_turn_values", lambda slug, **_: {})
+    monkeypatch.setattr(mod, "_AGENT_DELEGATED", {"trellis": {"github-token": "ghp_agent"}})
     turn_env = dict(CONFINED_ENV)
     fetch_env = mod._clone_refresh_env("trellis", turn_env)
     assert fetch_env["GH_TOKEN"] == "ghp_agent" and fetch_env["PATH"] == CONFINED_ENV["PATH"]
@@ -77,14 +77,15 @@ def test_the_refresh_uses_the_agents_delegation_but_never_hands_it_to_the_turn(b
 
 def test_the_refresh_borrows_nothing_when_the_turn_has_its_own_or_the_box_is_sensitive(box, monkeypatch):
     mod, _, _, _ = box
-    monkeypatch.setattr(mod, "_delegated_value", lambda slug, name: "ghp_agent")
+    monkeypatch.setattr(mod, "_turn_values", lambda slug, **_: {})
+    monkeypatch.setattr(mod, "_AGENT_DELEGATED", {"trellis": {"github-token": "ghp_agent"}})
     own = {"GH_TOKEN": "turn-token"}
     assert mod._clone_refresh_env("trellis", own) is own
     monkeypatch.setattr(mod, "SENSITIVE_DATA_MODE", True)
     env = dict(CONFINED_ENV)
     assert mod._clone_refresh_env("trellis", env) is env
     monkeypatch.setattr(mod, "SENSITIVE_DATA_MODE", False)
-    monkeypatch.setattr(mod, "_delegated_value", lambda slug, name: "")
+    monkeypatch.setattr(mod, "_AGENT_DELEGATED", {})
     assert mod._clone_refresh_env("trellis", env) is env      # no delegation: fetch as before
 
 

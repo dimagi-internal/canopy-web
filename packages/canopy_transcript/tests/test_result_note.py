@@ -55,6 +55,20 @@ def test_a_box_on_the_old_address_still_links_the_canonical_session_page():
     assert turn_url("http://localhost:8000", chat) == "http://localhost:8000/w/dimagi/sessions/s-1"
 
 
+def test_only_the_former_addresses_themselves_become_canonical():
+    from canopy_transcript.result_note import public_base
+    canonical = "https://canopy.dimagi.com"
+    assert public_base("HTTPS://Labs.Connect.Dimagi.com/canopy/") == canonical
+    assert public_base("  https://labs.connect.dimagi.com  ") == canonical
+    # A look-alike, a userinfo trick, another path, another scheme, a port: all kept as given.
+    for other in ("https://labs.connect.dimagi.com.evil.com", "https://labs.connect.dimagi.com.evil.com/canopy",
+                  "https://labs.connect.dimagi.com@evil.com", "https://evil.com/labs.connect.dimagi.com/canopy",
+                  "https://labs.connect.dimagi.com/canopy-staging", "https://labs.connect.dimagi.com:8443/canopy",
+                  "http://labs.connect.dimagi.com/canopy", "https://canopy.example.org", "http://localhost:8000"):
+        assert public_base(other) == other
+    assert public_base("") == "" and public_base(None) == ""
+
+
 def test_a_cut_keeps_the_runners_reason_the_turn_failed():
     # Failure investigation 21 (turn c4dd7019, 2026-10-30): the reason was cut off.
     reason = ("[runner] out of Claude usage — every Claude credential on this box is "

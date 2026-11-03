@@ -6641,6 +6641,20 @@ _CLONE_FETCH: dict[str, dict] = {}   # clone path -> {ok_at, failed_at, error}
 _CLONE_FETCH_LOCK = threading.Lock()
 
 
+_URL_CREDENTIALS = re.compile(r"(?<=://)[^/@\s]+@")
+_TOKEN_SHAPES = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b")
+
+
+def _redact_credentials(text: str, env: dict | None) -> str:
+    """`text` with any GitHub token it carries blanked: the exact value in `env`, a GitHub
+    token's shape, and the userinfo of a URL (`https://x-access-token:T@github.com/…`)."""
+    for key in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = str((env or {}).get(key) or "")
+        if len(value) >= 4:
+            text = text.replace(value, "***")
+    return _TOKEN_SHAPES.sub("***", _URL_CREDENTIALS.sub("***@", text))
+
+
 def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = False) -> bool:
     """Bring `clone` up to its origin — `fetch`, or `pull --ff-only` for an agent's own
     checkout — and RECORD how it went. A failed fetch used to be swallowed (a private
@@ -6656,6 +6670,9 @@ def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = F
             error = " ".join((r.stderr or r.stdout or f"exit {r.returncode}").split())[-300:]
     except Exception as exc:  # noqa: BLE001
         error = str(exc)[:300]
+    # The error is logged and reported in the `clones` health payload: whatever git
+    # echoed, a token the fetch ran with (or one inside a remote URL) never goes out.
+    error = _redact_credentials(error, env)
     now = time.time()
     with _CLONE_FETCH_LOCK:
         rec = _CLONE_FETCH.setdefault(key, {"ok_at": 0.0, "failed_at": 0.0, "error": ""})
@@ -6717,7 +6734,13 @@ def _clone_refresh_env(slug: str, env: dict | None) -> dict | None:
     nothing it need not."""
     if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug:
         return env
-    token = _delegated_value(slug, "github-token")
+    # In force NOW, not as last cached: the server's per-turn gate (`…/github-token`, a 409
+    # once the delegation is withdrawn or its person stops being an admin) is not asked
+    # here, so this box's own resolve (at most `_AGENT_ENV_TTL_SECONDS` old; a failed one
+    # counts as no answer) is the only proof the delegation still serves.
+    if _turn_values(slug) is None or _TURN_ENV_ERRORS.get(slug):
+        return env
+    token = _AGENT_DELEGATED.get(slug, {}).get("github-token", "")
     if not token:
         return env
     return {**(env if env is not None else _child_safe_env()), **github_env(token)}
