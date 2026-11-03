@@ -93,7 +93,9 @@ export function AgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {agents.map((a) => (
+              {agents.map((a) => {
+                const about = agentSummary(a.name, a.description)
+                return (
                 <Tr rule="top" top key={a.slug} className="hover:bg-card/60">
                   <Td density="roomy">
                     <Link to={a.url} className="flex items-center gap-2.5">
@@ -102,13 +104,13 @@ export function AgentsPage() {
                     </Link>
                   </Td>
                   <Td density="roomy">
-                    {agentSummary(a.name, a.description) ? (
-                      <span className="block min-w-[16rem] max-w-md whitespace-normal text-[12px] leading-snug text-foreground-secondary"
+                    {about ? (
+                      <span className="block max-w-md whitespace-normal text-[12px] leading-snug text-foreground-secondary md:min-w-[16rem]"
                         title={a.description}>
-                        {agentSummary(a.name, a.description)}
+                        {about}
                       </span>
                     ) : (
-                      <span className="text-muted-foreground">—</span>
+                      <span className="text-muted-foreground" title={a.description || undefined}>—</span>
                     )}
                   </Td>
                   <Td density="roomy" nowrap>
@@ -132,7 +134,8 @@ export function AgentsPage() {
                   <Td density="roomy" tone="secondary">{a.turn_mode}</Td>
                   <Td density="roomy" tone="secondary">{a.owner_email ?? '—'}</Td>
                 </Tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
