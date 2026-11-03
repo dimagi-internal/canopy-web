@@ -14,7 +14,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.harness.api import runner_or_404
+from apps.harness.runner_queries import runner_or_404
 
 from .credentials import accounts, delegations, vault_keeper, vault_members, zk
 from .models import Agent, Vault

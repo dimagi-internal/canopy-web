@@ -18,6 +18,8 @@ class AgentsConfig(AppConfig):
 
         from .models import Agent  # noqa: PLC0415 — ready(): models load only after the app registry
 
+        from . import signals  # noqa: F401,PLC0415 — ready(): connects the task-collection page invalidation
+
         # Every agent has its own vault from the moment it exists, linked to the
         # agent (credentials.vault_members) — made here so no read path writes.
         post_save.connect(_make_vault, sender=Agent, dispatch_uid="agents.make_vault")

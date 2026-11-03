@@ -127,15 +127,14 @@
 "apps/feedback/rounds.py" = ["PLC0415"]  # 1
 "apps/github_connect/github_app.py" = ["PLC0415"]  # 2
 "apps/github_connect/models.py" = ["PLC0415"]  # 1
-"apps/harness/api.py" = ["PLC0415"]  # 10
+"apps/harness/api.py" = ["PLC0415"]  # 7
 "apps/harness/api_device_key_requests.py" = ["PLC0415"]  # 3
 "apps/harness/api_device_keys.py" = ["PLC0415"]  # 4
 "apps/harness/api_local.py" = ["PLC0415"]  # 4
 "apps/harness/api_runner_invitations.py" = ["PLC0415"]  # 1
 "apps/harness/api_runner_pairings.py" = ["PLC0415"]  # 1
-"apps/harness/api_runners.py" = ["PLC0415"]  # 27
+"apps/harness/api_runners.py" = ["PLC0415"]  # 25
 "apps/harness/api_session_sync.py" = ["PLC0415"]  # 6
-"apps/harness/api_turn_agent_token.py" = ["PLC0415"]  # 1
 "apps/harness/api_turns.py" = ["PLC0415"]  # 8
 "apps/harness/apps.py" = ["PLC0415"]  # 3
 "apps/harness/artifact_origin.py" = ["PLC0415"]  # 2
@@ -144,7 +143,7 @@
 "apps/harness/caller_context.py" = ["PLC0415"]  # 14
 "apps/harness/caller_tokens.py" = ["PLC0415"]  # 3
 "apps/harness/channels/email.py" = ["PLC0415"]  # 3
-"apps/harness/claim.py" = ["PLC0415"]  # 11
+"apps/harness/claim.py" = ["PLC0415"]  # 9
 "apps/harness/claiming.py" = ["PLC0415"]  # 4
 "apps/harness/closing.py" = ["PLC0415"]  # 8
 "apps/harness/credential_notify.py" = ["PLC0415"]  # 3
@@ -159,7 +158,7 @@
 "apps/harness/models.py" = ["PLC0415"]  # 2
 "apps/harness/owner_ask.py" = ["PLC0415"]  # 1
 "apps/harness/provenance.py" = ["PLC0415"]  # 1
-"apps/harness/routing.py" = ["PLC0415"]  # 5
+"apps/harness/routing.py" = ["PLC0415"]  # 3
 "apps/harness/routing_audit.py" = ["PLC0415"]  # 1
 "apps/harness/runner_releases.py" = ["PLC0415"]  # 2
 "apps/harness/runners.py" = ["PLC0415"]  # 6
@@ -175,7 +174,6 @@
 "apps/harness/topology.py" = ["PLC0415"]  # 2
 "apps/harness/turn_access.py" = ["PLC0415"]  # 2
 "apps/harness/turn_agent_tokens.py" = ["PLC0415"]  # 2
-"apps/harness/turn_gates.py" = ["PLC0415"]  # 1
 "apps/harness/turn_mode.py" = ["PLC0415"]  # 8
 "apps/harness/turn_status.py" = ["PLC0415"]  # 7
 "apps/harness/views.py" = ["PLC0415"]  # 6

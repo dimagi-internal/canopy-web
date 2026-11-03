@@ -8,7 +8,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.route_gates import gate
-from apps.harness.api_turns import visible_turns_qs
+from apps.harness.turn_queries import visible_turns_qs
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc
 

@@ -15,7 +15,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.harness.api_turns import visible_turns_qs
+from apps.harness.turn_queries import visible_turns_qs
 from apps.huddles import services as huddles
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc

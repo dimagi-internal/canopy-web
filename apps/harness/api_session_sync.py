@@ -18,6 +18,7 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
+from apps.agents.holding import runner_may_hold_agent
 from apps.api.route_gates import gate
 from apps.canopy_sessions import control, handoff
 from apps.canopy_sessions import services as chat_services
@@ -69,9 +70,9 @@ from .schemas import (
     SessionInterruptSyncOut,
     SessionMenuIn,
     SessionMenuOut,
-    SessionSubagentsIn,
     SessionReportOut,
     SessionStreamIn,
+    SessionSubagentsIn,
     StreamPostOut,
     StreamSyncOut,
 )
@@ -394,8 +395,6 @@ def _turn_end_session(runner, session_id, transcript_id: str = ""):
         if not ours:
             continue
         session = turn.chat_session
-        from apps.agents.services import runner_may_hold_agent  # noqa: PLC0415 — agents imports harness
-
         if session.agent_id is None or not runner_may_hold_agent(runner, session.agent):
             return None
         return session

@@ -19,12 +19,11 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import caller_context, services
-from apps.harness import claim
+from apps.harness import caller_context, claim, services
 from apps.harness import turn_mode as modes
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.agents.testing import admit_contacts
+from tests.agent_helpers import admit_contacts
 
 pytestmark = pytest.mark.django_db
 

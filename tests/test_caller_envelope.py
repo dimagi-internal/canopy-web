@@ -23,7 +23,7 @@ from apps.harness import initiator as who
 from apps.harness.models import RunnerAssignment, Turn
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.agents.testing import admit_contacts
+from tests.agent_helpers import admit_contacts
 
 pytestmark = pytest.mark.django_db
 
