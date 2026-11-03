@@ -1065,6 +1065,48 @@ def _continue_shared(session: Session, principal: Principal, text: str, inbound:
     return _send(session, False, None, principal, text, inbound)
 
 
+def choice_refusal(session: Session, principal: Principal) -> Outcome | None:
+    """Why a reply button (`choices.py`) pressed by `principal` must not act, or None.
+
+    The rule a typed reply lives under, asked before anything is claimed. A typed
+    reply from someone who may not steer the session goes somewhere harmless (a
+    confined fork of their own, or a refusal); a button has no such place to go,
+    because it stands for a choice in THIS conversation. So it does not act, and
+    stays for someone it can act for.
+    """
+    refused = private_refusal(session)
+    if refused is not None:
+        return refused
+    agent = session.agent
+    if agent is None:
+        if principal.user is None:
+            return Outcome(MEMBERS_ONLY, "Only members of this canopy workspace can answer this session. "
+                           "Your click did nothing.", session=session)
+        return None
+    if not agent.slack_enabled:
+        return Outcome(NO_AGENT, f"`{agent.slug}` isn't turned on for Slack. Your click did nothing.",
+                       session=session, agent=agent)
+    if not _owns(session, principal) and _access_in(session, agent, principal, session_team(session)) != access.FULL:
+        return Outcome(MEMBERS_ONLY, f"You aren't a member of this conversation in canopy, so `{agent.slug}` "
+                       "can't take this choice from you. Your click did nothing.", session=session, agent=agent)
+    return None
+
+
+def session_team(session: Session) -> str:
+    return str((session.metadata or {}).get("slack_team") or "")
+
+
+def deliver_choice(session: Session, principal: Principal, text: str, inbound: Inbound) -> Outcome:
+    """A reply button's words, into its session: what a typed reply does once it
+    has found the session it belongs to. It starts past the parsing of a typed
+    message on purpose. Agent-written words must not name another agent, read a
+    channel or set a CLI with the authority of the person who pressed the button."""
+    if session.agent is None:
+        return _continue_shared(session, principal, text, inbound)
+    _sync_audience(session, inbound, principal)
+    return _send(session, False, session.agent, principal, text, inbound, named=False)
+
+
 def _adoption_ref(inbound: Inbound) -> dict | None:
     """The slash command's anchor, in the shape `status.adoption` reads."""
     from . import status

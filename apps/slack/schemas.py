@@ -192,6 +192,17 @@ class SlackDetachIn(Schema):
     turn_id: str = ""
 
 
+class SlackShareAction(Schema):
+    """A button on the post. Pressing it sends `reply` to the session as a message
+    from whoever pressed it."""
+    #: The button's text. Slack shows 75 characters; longer is cut short.
+    label: str
+    #: The words the session receives, and the thread shows, when it is pressed.
+    reply: str
+    #: `primary`, `danger`, or left out for Slack's plain button.
+    style: str = ""
+
+
 class SlackShareIn(Schema):
     """What to post, where, and which session it is about."""
     #: Markdown: what we are doing, why, and where it stands.
@@ -210,6 +221,9 @@ class SlackShareIn(Schema):
     workspace: str = ""
     #: An agent's own live turn (the caller envelope's `turn_id`) — tried first.
     turn_id: str = ""
+    #: Reply buttons under the post. Only on a post into a bound thread (`bind`,
+    #: an update to a bound session, or `turn_id`), never a broadcast. At most 25.
+    actions: list[SlackShareAction] = []
 
 
 class SlackShareOut(Schema):
