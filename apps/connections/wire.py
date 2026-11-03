@@ -76,7 +76,8 @@ def check_statement(st: dict, *, connection_id, account_id: str) -> dict:
     """`st` if it is a well-formed statement about THIS connection and account; 422
     `bad_statement` otherwise. Its signature, version and agents are the caller's
     to judge."""
-    if not isinstance(st, dict) or not _STATEMENT_KEYS <= set(st) <= _STATEMENT_KEYS | _OPTIONAL_STATEMENT_KEYS:
+    allowed = _STATEMENT_KEYS | _OPTIONAL_STATEMENT_KEYS
+    if not isinstance(st, dict) or not _STATEMENT_KEYS <= set(st) <= allowed:
         raise _bad_statement(
             f"must be an object with exactly {sorted(_STATEMENT_KEYS)} and optionally {sorted(_OPTIONAL_STATEMENT_KEYS)}")
     if type(st["v"]) is not int or st["v"] != 1:

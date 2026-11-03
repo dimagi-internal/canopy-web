@@ -206,7 +206,8 @@ def test_a_statement_with_canopy_web_matches_its_vector():
     assert st == {**GOOD, "canopy_web": st["canopy_web"]}
     assert wire.statement_msg(st) == CW["msg"].encode()
     assert wire.verify_statement(st, CW["sig"], V["statement"]["signer_jwk"])
-    assert not wire.verify_statement({**st, "canopy_web": GOOD["my_computers"][0]}, CW["sig"], V["statement"]["signer_jwk"])
+    other = {**st, "canopy_web": GOOD["my_computers"][0]}
+    assert not wire.verify_statement(other, CW["sig"], V["statement"]["signer_jwk"])
     # The key is part of what is signed: the old statement's signature does not cover it.
     assert not wire.verify_statement(st, V["statement"]["sig"], V["statement"]["signer_jwk"])
 
