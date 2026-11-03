@@ -17,6 +17,13 @@ class SlackConfig(AppConfig):
         from .agent_move import participant
 
         move.register(participant)
+
+        # Flipping an agent's Slack switch adds or removes its /<slug> command.
+        from apps.agents import command_sync  # noqa: PLC0415 — app registry: only once apps are ready
+
+        from .commands import sync_for_agent  # noqa: PLC0415 — app registry: only once apps are ready
+
+        command_sync.register(sync_for_agent)
         # Approved channel reads, on the off-request clock (ingest_scheduler.py).
         from . import ingest_scheduler
 

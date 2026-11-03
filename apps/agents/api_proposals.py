@@ -21,6 +21,7 @@ or decline (`POST …/tasks/{ref}/actions`), the existing task action.
 """
 from __future__ import annotations
 
+from django.apps import apps as django_apps
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -29,7 +30,6 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.contacts import services as contacts
 from apps.harness.models import Turn
-from apps.huddles.models import CheckinRun
 
 from . import engagement, proposals, services
 from .gates import agent_for_read, agent_for_work, project_or_404, visible_agent_workspaces
@@ -254,7 +254,8 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
     partners = _partners(request, payload.partners)
     run = None
     if payload.run is not None:
-        run = CheckinRun.objects.filter(pk=payload.run, project=project).first()
+        # By label, not import: check-in runs are `huddles`', a layer above.
+        run = django_apps.get_model("huddles", "CheckinRun").objects.filter(pk=payload.run, project=project).first()
         if run is None:
             raise HttpError(422, f"check-in run {payload.run} is not {project.ext_id}'s")
     try:

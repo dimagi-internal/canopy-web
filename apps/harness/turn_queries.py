@@ -98,3 +98,8 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
     if site_q is not None:
         qs = qs.filter(site_q)
     return qs
+
+
+def huddle_anchors(visible_qs):
+    """The turns that anchor a huddle (`origin_ref.kind == "huddle"`) among `visible_qs`."""
+    return visible_qs.filter(origin_ref__kind="huddle")

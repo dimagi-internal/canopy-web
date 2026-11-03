@@ -44,13 +44,11 @@ from apps.harness.models import Turn
 from apps.passkeys import stepup
 from apps.plugins import services as plugin_services
 from apps.realtime import groups
-from apps.slack import commands as slack_commands
-from apps.slack.models import SlackInstallation
 from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, agent_login, creation, mailbox, sensitive_data, services
+from . import access, agent_login, command_sync, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key
@@ -1091,18 +1089,8 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     agent = agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
     agent.save(update_fields=["slack_enabled", "updated_at"])
-    result = slack_commands.sync_quietly(SlackInstallation.objects.filter(links__workspace=agent.workspace).first())
-    detail = result.get("detail", "")
-    if result["status"] == "synced":
-        name = slack_commands.command_name(agent.slug)
-        if name is None:
-            detail = f"`{agent.slug}` is too long to be a Slack command; use `/canopy {agent.slug}`."
-        elif name in result.get("added", []):
-            detail = f"Added {name} to Slack."
-        elif name in result.get("removed", []):
-            detail = f"Removed {name} from Slack."
-    return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=result["status"],
-                           command_detail=detail)
+    status, detail = command_sync.sync(agent)
+    return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=status, command_detail=detail)
 
 
 @router.get("/{slug}/test-vault-key", response=TestVaultKeyOut,
