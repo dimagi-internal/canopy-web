@@ -5410,9 +5410,9 @@ export interface paths {
          * Add a line to this agent's access list (an agent admin)
          * @description A line says who has what: a person, everyone in a workspace (optionally also any workspace
          *     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
-         *     (read_only, read_write, editor) or, rarely, one named capability. A line that names people only
-         *     by address (domain, contact) can give read_only or a capability, never a role that drives the
-         *     whole agent.
+         *     (read_only, read_write, editor) or, rarely, one door (a named capability the agent published).
+         *     read_only gives read mode, which every agent has. A line that names people only by address
+         *     (domain, contact) can give read_only or a door, never a role that drives the whole agent.
          */
         readonly post: operations["add_access_line"];
         readonly delete?: never;
@@ -26543,6 +26543,7 @@ export interface components {
             readonly interface: {
                 readonly [key: string]: unknown;
             };
+            readonly read_mode: components["schemas"]["ReadModeOut"];
             /**
              * Source
              * @default
@@ -26562,6 +26563,22 @@ export interface components {
             readonly published_at?: string | null;
             /** Published By Email */
             readonly published_by_email?: string | null;
+        };
+        /**
+         * ReadModeOut
+         * @description What a person who holds `read` and not `write` gets from this agent.
+         */
+        readonly ReadModeOut: {
+            /** Source */
+            readonly source: string;
+            /** Override */
+            readonly override?: string | null;
+            /** Default Profile */
+            readonly default_profile: {
+                readonly [key: string]: unknown;
+            };
+            /** Default Profile Version */
+            readonly default_profile_version: number;
         };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {
@@ -27396,6 +27413,8 @@ export interface components {
              * @default false
              */
             readonly can_edit: boolean;
+            /** Doors */
+            readonly doors?: readonly string[];
         };
         /** AccessRoleOut */
         readonly AccessRoleOut: {

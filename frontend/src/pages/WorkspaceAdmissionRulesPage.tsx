@@ -315,10 +315,13 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
             <input
               aria-label="Capability"
               placeholder="Any capability"
+              list="admission-capabilities"
               value={draft.capability}
               onChange={(e) => set({ capability: e.target.value })}
               className="min-h-11 w-36 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0"
             />
+            {/* `read` is read mode (the older name `ask` is the same thing and is still accepted). */}
+            <datalist id="admission-capabilities"><option value="read">Read mode (also matches ask)</option></datalist>
             <select aria-label="Turn mode" className={select} value={draft.turn_mode}
               onChange={(e) => set({ turn_mode: e.target.value as AdmissionRuleIn['turn_mode'] })}>
               <option value="">Any mode</option>

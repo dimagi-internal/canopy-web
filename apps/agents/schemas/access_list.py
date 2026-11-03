@@ -80,6 +80,9 @@ class AccessListOut(StrictModel):
     roles: list[AccessRoleOut]
     #: Can the caller change this agent's list (an agent admin)?
     can_edit: bool = False
+    #: The doors this agent has published (capabilities other than read mode), which a line may
+    #: name; the form picks from these.
+    doors: list[str] = Field(default_factory=list)
 
 
 class AccessInheritIn(StrictModel):

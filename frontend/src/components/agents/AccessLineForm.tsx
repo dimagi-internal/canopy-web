@@ -17,8 +17,8 @@ import {
 //
 // A line says who has what: a person, everyone in a workspace (optionally also any workspace below
 // it), anyone at an email domain, or a known visitor or sender. What they get is ONE role or,
-// rarely, ONE named capability. No role is pre-selected: read only turns on asking (`ask`), so it is
-// a choice, not a default. The server decides what it will take; a refusal (422) is shown here,
+// rarely, ONE door (a published capability, picked from the agent's own list). No role is
+// pre-selected: it is a choice, not a default. The server decides what it will take; a refusal (422) is shown here,
 // next to the form, in the server's own words. `canGiveWrite` is only a hint (a workspace's default
 // line that drives the whole agent is its owner's call; the server still refuses).
 const FIELD = 'rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground'
@@ -28,6 +28,7 @@ export function AccessLineForm({
   workspaces,
   canGiveWrite = true,
   submitLabel = 'Add',
+  doors,
   onAdd,
 }: {
   roles: readonly AccessRoleOut[]
@@ -35,6 +36,9 @@ export function AccessLineForm({
   workspaces: readonly [string, string][]
   canGiveWrite?: boolean
   submitLabel?: string
+  /** The agent's published doors, when this form is for one agent: a door is picked from this
+   *  list. Left out (a workspace's defaults, which span agents) the name is typed. */
+  doors?: readonly string[]
   /** Resolves when the line is added; rejects with the server's reason. */
   onAdd: (line: AccessLineIn) => Promise<unknown>
 }) {
@@ -172,14 +176,28 @@ export function AccessLineForm({
         })}
         <label className="flex items-baseline gap-2 text-[12px] text-foreground">
           <input type="radio" name="access-role" value="capability" checked={choice === 'capability'} onChange={() => setChoice('capability')} />
-          <span>One named capability</span>
-          <span className="text-muted-foreground">(rare) opens that capability and nothing else</span>
+          <span>One door</span>
+          <span className="text-muted-foreground">(rare) opens that one published capability and nothing else</span>
         </label>
-        {choice === 'capability' && (
+        {choice === 'capability' && doors !== undefined && (
+          doors.length > 0 ? (
+            <select value={capability} onChange={(e) => setCapability(e.target.value)} aria-label="Door" className={`${FIELD} ml-6 w-56`}>
+              <option value="">Pick a door…</option>
+              {doors.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="m-0 ml-6 text-[12px] text-muted-foreground">This agent has published no doors yet.</p>
+          )
+        )}
+        {choice === 'capability' && doors === undefined && (
           <input
             value={capability}
             onChange={(e) => setCapability(e.target.value)}
-            placeholder="capability name, e.g. connect"
+            placeholder="door name, e.g. connect"
             aria-label="Capability name"
             className={`${FIELD} ml-6 w-56`}
           />

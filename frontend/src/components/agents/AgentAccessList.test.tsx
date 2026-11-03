@@ -43,6 +43,7 @@ const line = (o: Partial<AccessLineOut>): AccessLineOut => ({
 const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
   inherit_workspace_defaults: true,
   can_edit: true,
+  doors: [],
   lines: [
     line({ id: 1, who: 'ann@dimagi.com', role: 'read_write' }),
     line({ id: 2, kind: 'domain', who: 'Anyone at @partner.org (verified)', role: 'read_only', domain: 'partner.org' }),
@@ -196,13 +197,17 @@ describe('AgentAccessList', () => {
     )
   })
 
-  it('adds one named capability instead of a role', async () => {
+  it('adds one door, picked from the agent\'s published doors, instead of a role', async () => {
     addAccessLine.mockResolvedValue(line({}))
+    getAccessList.mockResolvedValue(LIST({ doors: ['canopy', 'connect'] }))
     show()
     fireEvent.change(await screen.findByLabelText('Their email'), { target: { value: 'cy@dimagi.com' } })
-    fireEvent.click(screen.getByRole('radio', { name: /One named capability/ }))
-    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true)   // needs the name
-    fireEvent.change(screen.getByLabelText('Capability name'), { target: { value: 'connect' } })
+    fireEvent.click(screen.getByRole('radio', { name: /One door/ }))
+    expect(screen.queryByLabelText('Capability name')).toBeNull()          // no free-text name
+    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true)   // needs a pick
+    const pick = screen.getByLabelText('Door') as HTMLSelectElement
+    expect([...pick.options].map((o) => o.value)).toEqual(['', 'canopy', 'connect'])
+    fireEvent.change(pick, { target: { value: 'connect' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() =>
       expect(addAccessLine).toHaveBeenCalledWith('ace', expect.objectContaining({
