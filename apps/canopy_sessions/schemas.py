@@ -524,8 +524,9 @@ class SessionOut(Schema):
     #: Who started it, by name ("" when a runner or an agent did): a list shows a
     #: private conversation by this, since it keeps no title. Not content.
     started_by_name: str = ""
-    #: The session is the reader's own (`access.sessions_of_q`): they started it,
-    #: or it was found on their own box and is not an agent's own work.
+    #: The session is the reader's own: they started it, it was found on their own
+    #: box and is not an agent's own work (`access.sessions_of_q`), or an agent they
+    #: asked dispatched it from a conversation of theirs (`access.started_by_you_among`).
     started_by_you: bool = False
     #: The page it was started on: the `resource` its page first declared, set once
     #: (`Session.origin_resource`). "" when it was not started on a page that names one.

@@ -2,7 +2,8 @@
 
 A session is yours when you started it, or when it was found on your own box and
 is not an agent's own work: `access.sessions_of_q`, asked for one row by
-`access.is_own_session`. The two must agree.
+`access.is_own_session`. The two must agree. It is also yours when an agent you
+asked dispatched it from a conversation of yours (`parent_session`), however deep.
 """
 from __future__ import annotations
 
@@ -58,3 +59,32 @@ def test_one_row_agrees_with_the_query(w):
     own = set(Session.objects.filter(access.sessions_of_q([w["jj"].pk])).values_list("pk", flat=True))
     for s in Session.objects.select_related("runner_binding__runner"):
         assert access.is_own_session(w["jj"], s) == (s.pk in own), s.title
+
+
+def test_a_session_an_agent_dispatched_from_your_chat_is_yours(w):
+    hal = User.objects.create_user("halbot", "hal@dimagi-ai.com", "pw")
+    agent = Agent.objects.get(slug="hal")
+    child = Session.objects.create(workspace=agent.workspace, created_by=hal, agent=agent,
+                                   title="child", parent_session=w["mine"])
+    grandchild = Session.objects.create(workspace=agent.workspace, created_by=hal, agent=agent,
+                                        title="grandchild", parent_session=child)
+    under_bo = Session.objects.create(workspace=agent.workspace, created_by=hal, agent=agent,
+                                      title="under-bo", parent_session=w["bos"])
+    for s in (child, grandchild, under_bo):
+        SessionParticipant.objects.create(session=s, user=w["jj"], role=SessionParticipant.EDITOR)
+    c = Client()
+    c.force_login(w["jj"])
+    listed = {s["title"]: s["started_by_you"] for s in c.get("/api/canopy-sessions/?state=all").json()}
+    assert listed["child"] and listed["grandchild"]
+    assert not listed["under-bo"]  # its root is bo's chat, not jj's
+    assert access.started_by_you_among(w["jj"], [child, grandchild, under_bo]) == {child.pk, grandchild.pk}
+
+
+def test_dispatched_from_your_chat_grants_no_access(w):
+    """A display rule only: `sessions_of_q` (what review grants and coaching read) is unchanged."""
+    hal = User.objects.create_user("halbot", "hal@dimagi-ai.com", "pw")
+    agent = Agent.objects.get(slug="hal")
+    child = Session.objects.create(workspace=agent.workspace, created_by=hal, agent=agent,
+                                   title="child", parent_session=w["mine"])
+    assert not access.is_own_session(w["jj"], child)
+    assert not Session.objects.filter(access.sessions_of_q([w["jj"].pk]), pk=child.pk).exists()

@@ -268,6 +268,45 @@ def is_own_session(user, session) -> bool:
     return binding is not None and binding.runner_id is not None and binding.runner.owner_id == user.pk
 
 
+#: How far up `parent_session` `started_by_you_among` walks.
+MAX_LINEAGE_DEPTH = 32
+
+
+def started_by_you_among(user, sessions) -> set:
+    """The pks among `sessions` that `user` started: their own (`is_own_session`), or
+    one dispatched from a conversation of theirs — an agent they asked created it
+    under its own login, so `created_by` is the agent, but `parent_session` leads
+    back to the chat they typed in. Two queries per level of nesting for the whole page.
+
+    A DISPLAY rule for the "Started by me" filter, never an access one: it grants
+    nothing, which is why it is not folded into `sessions_of_q` (review grants and
+    coaching read that)."""
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    mine, frontier = set(), {}  # frontier: row pk -> the ancestor we are asking about
+    for s in sessions:
+        if is_own_session(user, s):
+            mine.add(s.pk)
+        elif s.parent_session_id:
+            frontier[s.pk] = s.parent_session_id
+    for _ in range(MAX_LINEAGE_DEPTH):
+        if not frontier:
+            break
+        asked = set(frontier.values())
+        own = set(Session.objects.filter(sessions_of_q([user.pk]), pk__in=asked)
+                  .values_list("pk", flat=True))
+        parents = dict(Session.objects.filter(pk__in=asked - own, parent_session_id__isnull=False)
+                       .values_list("pk", "parent_session_id"))
+        nxt = {}
+        for pk, ancestor in frontier.items():
+            if ancestor in own:
+                mine.add(pk)
+            elif ancestor in parents and parents[ancestor] != pk:
+                nxt[pk] = parents[ancestor]
+        frontier = nxt
+    return mine
+
+
 def _not_sensitive_q() -> Q:
     """Sessions that are certainly not sensitive: no runner requirement at all.
     `sensitivity.is_sensitive` reads the same key; any value there (even one that

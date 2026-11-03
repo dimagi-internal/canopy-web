@@ -483,6 +483,7 @@ export function IdePage() {
               checked={filters.mineOnly}
               onClick={() => setFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
               data-testid="ide-mine-only"
+              title="Sessions you started, on your own machine, or that an agent you asked dispatched from one of your chats"
               className="text-[12px]"
             >
               Started by me
