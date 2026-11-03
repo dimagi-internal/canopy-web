@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
 import { connectionStartPath, getShareState, putShare, type ShareStateOut } from '@/api/connections'
 import { ApiError } from '@/api/problem'
@@ -95,7 +95,7 @@ export function ShareConnectionPage(): JSX.Element | null {
     return (
       <div className="max-w-2xl space-y-2">
         <p role="alert" className="text-sm text-destructive">{NOT_YOURS}</p>
-        <a href="/settings" className="text-sm text-primary underline">Back to Settings</a>
+        <Link to={returnTo} className="text-sm text-primary underline">Back</Link>
       </div>
     )
   }

@@ -8,10 +8,11 @@ import {
   type ConnectionsView,
 } from '@/api/connections'
 import { getCsrfToken } from '@/api/base'
-import { ConnectOutcome, Scopes, SharingStatus, detailLine, listed, missingScopes } from '@/components/settings/ConnectionsPanel'
+import { ConnectOutcome, DISCONNECTED, Scopes, SharingStatus, detailLine, listed, missingScopes } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
+import { useAuth } from '@/auth/AuthProvider'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 /**
@@ -46,6 +47,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   const outcome = params.get('connection') ? params : null
   // The agent's workspace: the API names it on every provider row.
   const workspace = data?.providers.find((p) => p.workspace)?.workspace || agent.workspace || ''
+  const email = useAuth().user?.email ?? ''
   const canSetUp = roleAllows(useWorkspaceRole(workspace), 'integrations')
 
   const load = useCallback(() => {
@@ -95,7 +97,8 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 start={{ ...start, action: connectionStartAction(c.provider, c.workspace ?? '') }}
                 busy={busy === c.id}
                 returnTo={pathname}
-                onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id), 'Disconnected.')}
+                canChange={!!email && !!c.connected_by_email && c.connected_by_email.toLowerCase() === email.toLowerCase()}
+                onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id), DISCONNECTED)}
               />
             ))}
             {!p.configured ? (
@@ -142,12 +145,13 @@ function ConnectForm({ label, action, returnTo, agent }: { label: string } & Sta
 }
 
 function Row({
-  c, start, busy, returnTo, onDisconnect,
+  c, start, busy, returnTo, canChange, onDisconnect,
 }: {
   c: ConnectionOut
   start: StartForm
   busy: boolean
   returnTo: string
+  canChange: boolean
   onDisconnect: () => void
 }) {
   // One lent by another agent: its owner changes or withdraws it by sharing again, not here.
@@ -175,7 +179,7 @@ function Row({
               : missing ? <p className="text-[12px] text-warning">Its owner must reconnect to allow: {missing}</p> : null
           ) : (
             <>
-              <SharingStatus c={c} returnTo={returnTo} />
+              <SharingStatus c={c} returnTo={returnTo} canChange={canChange} />
               {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
             </>
           )}

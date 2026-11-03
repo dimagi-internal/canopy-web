@@ -26,6 +26,7 @@ export function ConnectionsPanel() {
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
+  const [notice, setNotice] = useState('')
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
@@ -44,8 +45,10 @@ export function ConnectionsPanel() {
   async function disconnect(c: ConnectionOut) {
     setBusy(c.id)
     setError('')
+    setNotice('')
     try {
       await disconnectMine(c.id)
+      setNotice(DISCONNECTED)
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not disconnect.')
@@ -66,6 +69,7 @@ export function ConnectionsPanel() {
       </div>
       <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
       {error && <p className="text-[13px] text-destructive">{error}</p>}
+      {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
       {groupByProvider(data.providers).map((rows) => (
         <ProviderSection
           key={rows[0].name}
@@ -82,6 +86,9 @@ export function ConnectionsPanel() {
   )
 }
 
+/** What a disconnect does: a machine, not canopy, revokes at the provider. */
+export const DISCONNECTED = 'Disconnected. A machine will revoke it shortly.'
+
 /** What a callback `reason` code says, as a fixed sentence (never the query text). */
 const REASONS: Record<string, string> = {
   not_configured: 'is not set up for this workspace.',
@@ -93,13 +100,13 @@ const REASONS: Record<string, string> = {
   insufficient_scope: 'was connected without every permission canopy needs. Connect again and allow them all.',
   no_vault_key: 'needs your vault key first. Set up your vault key in Settings, then connect again.',
   revoking: 'is being disconnected. Wait for that to finish, then connect again.',
-  owner_changed: 'is already connected with another vault key, which never changes. Disconnect it first, then connect again.',
   wrong_account:
     'was signed in with an account this connection may not use — sign in as the agent’s own account, or one in the workspace’s allowed domains.',
 }
 
 /** Reasons that are a whole sentence, not a continuation of the provider's name. */
 const WHOLE_REASONS: Record<string, string> = {
+  owner_changed: 'Someone else connected this account. Disconnect it first, then connect again.',
   provider_error: 'Salesforce or Google refused this sign-in. Check the app’s settings, then try again.',
 }
 
@@ -197,15 +204,19 @@ const shareLink = 'text-primary hover:underline'
  * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
  * are not in this view, so the share page explains them and this links to it.
  */
-export function SharingStatus({ c, returnTo }: { c: ConnectionOut; returnTo: string }) {
+export function SharingStatus({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
   if (!c.usable) return null
   if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
+  const only = canChange ? null : (
+    <p>Connected by {c.connected_by_email}; only they can change who uses it.</p>
+  )
   const href = sharePath(c, returnTo)
   if (c.state === 'unshared') {
     return (
       <p className="text-[12px] text-warning">
         Not shared yet: no agent or computer can use it.{' '}
-        <Link to={href} className={shareLink}>Share</Link>
+        {canChange && <Link to={href} className={shareLink}>Share</Link>}
+        {only}
       </p>
     )
   }
@@ -225,13 +236,15 @@ export function SharingStatus({ c, returnTo }: { c: ConnectionOut; returnTo: str
           <p className="text-warning">
             Waiting for a machine that holds it: {waiting.map((w) => (w.agent ? `${w.runner} (${w.agent})` : w.runner)).join(', ')}
           </p>
-          <p><Link to={href} className={shareLink}>Give waiting machines a copy</Link></p>
+          {canChange && <p><Link to={href} className={shareLink}>Give waiting machines a copy</Link></p>}
         </>
       )}
-      <p className="flex flex-wrap gap-x-3">
-        <Link to={href} className={shareLink}>Change who can use it</Link>
-        <Link to={href} className={shareLink}>Open to check its machines</Link>
-      </p>
+      {canChange ? (
+        <p className="flex flex-wrap gap-x-3">
+          <Link to={href} className={shareLink}>Change who can use it</Link>
+          <Link to={href} className={shareLink}>Open to check its machines</Link>
+        </p>
+      ) : only}
     </div>
   )
 }

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthContext } from '@/auth/AuthProvider'
 
 const m = vi.hoisted(() => ({
   listAgentConnections: vi.fn(),
@@ -29,12 +30,18 @@ function conn(over: Record<string, unknown> = {}) {
     statement: { version: 1, agents: [], my_computers: [], endorsers: [] }, holders: [], waiting: [], my_machines: [], ...over,
   }
 }
+const me = { current: 'jj@dimagi.com' }
 const show = () =>
-  render(<MemoryRouter initialEntries={['/agents/eva/settings/accounts']}><AgentConnectionsPanel agent={{ slug: 'eva' }} /></MemoryRouter>)
+  render(
+    <AuthContext.Provider value={{ status: 'authenticated', user: { email: me.current } as never }}>
+      <MemoryRouter initialEntries={['/agents/eva/settings/accounts']}><AgentConnectionsPanel agent={{ slug: 'eva' }} /></MemoryRouter>
+    </AuthContext.Provider>,
+  )
 
 beforeEach(() => {
   vi.clearAllMocks()
   m.role.current = null
+  me.current = 'jj@dimagi.com'
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
   m.disconnectAgentConnection.mockResolvedValue(undefined)
 })
@@ -71,6 +78,7 @@ describe('AgentConnectionsPanel', () => {
     show()
     fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
     await waitFor(() => expect(m.disconnectAgentConnection).toHaveBeenCalledWith('eva', 3))
+    expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
   })
 
   it('shows Reconnect, and a not-configured provider disabled', async () => {
@@ -128,6 +136,19 @@ describe('AgentConnectionsPanel', () => {
     expect(screen.getByRole('link', { name: 'Change who can use it' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Give waiting machines a copy' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Open to check its machines' })).toBeTruthy()
+  })
+
+  it('hides the share links from an admin who did not connect it, and says who can change it', async () => {
+    me.current = 'other@dimagi.com'
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared' }), conn({ id: 4, shared_with: ['echo'], waiting: [{ agent: 'echo', runner: 'b' }],
+        statement: { version: 2, agents: ['echo'], my_computers: [], endorsers: [] } })],
+    })
+    show()
+    expect((await screen.findAllByText('Connected by jj@dimagi.com; only they can change who uses it.'))).toHaveLength(2)
+    expect(screen.queryByRole('link', { name: /Share|Change who|Give waiting|check its machines/ })).toBeNull()
+    expect(screen.getByText('Lent to: echo')).toBeTruthy()
   })
 
   it('shows a connection lent by another agent as lent, with nothing to change', async () => {

@@ -48,6 +48,13 @@ describe('ConnectionsPanel', () => {
     expect(screen.getByText(/dimagi\.my\.salesforce\.com/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
     await waitFor(() => expect(disconnectMine).toHaveBeenCalledWith(7))
+    expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
+  })
+
+  it('names the owner_changed refusal exactly', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    at('/settings?connection=salesforce&status=error&reason=owner_changed')
+    expect(await screen.findByText('Someone else connected this account. Disconnect it first, then connect again.')).toBeTruthy()
   })
 
   it('shows what the grant allows', async () => {

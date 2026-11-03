@@ -267,11 +267,24 @@ describe('ShareConnectionPage: fixes', () => {
     expect(screen.getByRole('button', { name: /unlock/i })).toBeTruthy()
   })
 
-  it.each([404, 403])('a %s on load says it is not theirs, with a link to Settings', async (status) => {
+  it.each([404, 403])('a %s on load says it is not theirs, with a link back', async (status) => {
     getShareState.mockRejectedValue(apiError(status, 'not_the_owner_key'))
     open()
     expect(await screen.findByText("This connection isn't yours to share.")).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Back to Settings' }).getAttribute('href')).toBe('/settings')
+    expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/settings/connections')
+  })
+
+  it('goes back through the router to return_to, not a full page load', async () => {
+    getShareState.mockRejectedValue(apiError(403, 'not_the_owner_key'))
+    open('?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
+    fireEvent.click(await screen.findByRole('link', { name: 'Back' }))
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/agents/eva/settings/accounts'))
+  })
+
+  it('falls back to Settings when return_to is absent or unsafe', async () => {
+    getShareState.mockRejectedValue(apiError(403, 'not_the_owner_key'))
+    open('?return_to=%2F%2Fevil.test')
+    expect((await screen.findByRole('link', { name: 'Back' })).getAttribute('href')).toBe('/settings')
   })
 })
 
