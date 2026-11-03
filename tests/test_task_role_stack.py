@@ -142,3 +142,5 @@ def test_the_connections_key_is_granted_by_its_key_policy_not_by_the_role():
     assert app["Parameters"]["ConnectionsServerKmsKey"]["Default"] == ""
     env = app["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
     assert {"Name": "CONNECTIONS_SERVER_KMS_KEY", "Value": {"Ref": "ConnectionsServerKmsKey"}} in env
+    assert app["Parameters"]["ConnectionsServerStatements"]["Default"] == "false"
+    assert {"Name": "CONNECTIONS_SERVER_STATEMENTS", "Value": {"Ref": "ConnectionsServerStatements"}} in env

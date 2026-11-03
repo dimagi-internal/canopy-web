@@ -27,6 +27,19 @@ No environment or secret settings: providers (Salesforce, Google) are set up by 
 
 Refreshing now happens on the box, so an egress-locked runner (`RUNNER_EGRESS`, or a sensitive-data box) reaches the provider itself. Its lock must admit the hosts its connections use: `login.salesforce.com` (or `test.salesforce.com`) and the org's My Domain host for Salesforce, `oauth2.googleapis.com` for Google. They are deliberately not in `EGRESS_BASE_HOSTS`, which every locked runner admits whether or not it holds a connection, and canopy-web does not add them for you: add them to the box's `RUNNER_EGRESS_ALLOW` or the runner's egress setting. Without them the stage fails as `connections.stage_failed` and the turn runs without a token, and that holder's revoke fails too: it keeps heartbeating, so it stays a revoker, and connecting the account again is refused as `revoking` until the 7-day sweep (`keeper.REVOKE_GRACE`).
 
+### canopy-web can use a connection
+
+Per-connection switch "canopy-web can use this" ([`vault.md`](vault.md) § OAuth connections are sealed to their owner). Three pieces of deployment, rolled out in this order:
+
+1. **The key's stack**, `deploy/aws/canopy-web-connections-key.cfn.yaml`: a KMS key (`ECC_NIST_P256`, `KEY_AGREEMENT`, alias `alias/canopy-web-connections`) whose policy gives `canopy-web-task-role` only `kms:DeriveSharedSecret` and `kms:GetPublicKey`. Deployed by hand with a labs admin login, like the role stack, and only with the owner's approval. Its `KeyAlias` output is the next step's value. The role stack grants no `kms:`; the key's policy names the role.
+2. **canopy-web**: set the `ConnectionsServerKmsKey` parameter of `canopy-web.cfn.yaml` to that alias and deploy. It reaches the task as the environment variable `CONNECTIONS_SERVER_KMS_KEY` (empty, the default, means canopy-web uses no connection and every connection behaves as switched off). New Salesforce connections seal to canopy-web from then on.
+3. **Confirm the cloud boxes run canopy CLI at or above 0.2.837** (`CONNECTIONS_ZK_MIN_CLI` in `runner/ec2/cloud_runner.py`). An older CLI refuses any statement carrying `canopy_web`. Then set the `ConnectionsServerStatements` parameter to `true` and deploy: it reaches the task as `CONNECTIONS_SERVER_STATEMENTS` (default `false`; `config/settings/base.py`). While false, a share that omits canopy-web turns the switch off, and a connection with the switch on cannot also be shared with machines; the Share screen says so (`ShareServerOut.statements_enabled`).
+
+Read the settings from the running task's environment (ECS Exec, `printenv CONNECTIONS_SERVER_KMS_KEY CONNECTIONS_SERVER_STATEMENTS`) or the task definition; `GET /api/connections/{id}/share` shows `server.available` (key readable now) and `server.statements_enabled`.
+
+- **Roll back the image, not the setting.** With the key unset, a rotated token a machine writes back no longer includes canopy-web, so canopy-web drops out of that envelope until the owner's next share. A named canopy-web entry already in an envelope is kept, not stripped, while the key is unset.
+- **Cut canopy-web off at once:** remove the task role's grant from the key's policy (redeploy the key stack without it). Every open and derive then fails; nothing in the database changes. KMS use is in CloudTrail.
+
 ### Protocol identity is pinned by connected sites
 
 canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every connected site. `CANOPY_FORMER_BASE_URLS` names the old address so the Slack sync can recognise and move the commands and webhooks it registered there.

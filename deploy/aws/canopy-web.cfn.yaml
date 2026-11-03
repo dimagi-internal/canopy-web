@@ -54,6 +54,12 @@ Parameters:
   ConnectionsServerKmsKey:
     Type: String
     Default: ""
+  # Accept `canopy_web` in an owner's signed statement. Turn on only once cloud boxes run a CLI
+  # that understands it (CONNECTIONS_ZK_MIN_CLI); an older CLI refuses such a statement.
+  ConnectionsServerStatements:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
   # Workspace email domains (apps/mail). Values are the canopy-web-mail stack's
   # Outputs; leave MailEnabled "false" until that stack exists.
   MailEnabled:
@@ -506,6 +512,7 @@ Resources:
             - { Name: CANOPY_EMAIL_ENABLED, Value: "true" }
             # canopy-web's own sealed-connection key (apps/connections/server_key.py); empty = off.
             - { Name: CONNECTIONS_SERVER_KMS_KEY, Value: !Ref ConnectionsServerKmsKey }
+            - { Name: CONNECTIONS_SERVER_STATEMENTS, Value: !Ref ConnectionsServerStatements }
             # Workspace email domains (apps/mail): off until canopy-mail.cfn.yaml is
             # deployed and its Outputs are passed in as the Mail* parameters.
             - { Name: MAIL_ENABLED, Value: !Ref MailEnabled }
