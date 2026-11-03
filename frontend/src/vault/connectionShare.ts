@@ -272,11 +272,15 @@ async function checkedSig(sig: unknown, entries: SealedEntry[]): Promise<{ by: B
 
 /** A device the stored statement allows: one of `my_computers`, or an endorsement of its
  *  exact key for an agent it lists, by the owner or someone it names. The statement says
- *  who may vouch here, not this browser's pins: this is the check every machine makes. */
-async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statement | null, ownerJkt: string): Promise<boolean> {
-  if (!stored) return false
+ *  who may vouch here, not this browser's pins: this is the check every machine makes.
+ *  It counts only under the owner's own signature, or canopy-web could write a statement
+ *  naming its own box beside a substitute token. `owner` is the key in hand, and
+ *  `readRefresh` refuses any envelope whose sealed `owner_key` is not its thumbprint. */
+async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statement | null, owner: OwnerKey): Promise<boolean> {
+  if (!stored || !state.statement_sig) return false
+  if (!(await verifyStatement(stored, state.statement_sig, owner.publicJwk))) return false
   if (stored.my_computers.includes(thumb)) return true
-  const vouchers = new Set([ownerJkt, ...stored.endorsers])
+  const vouchers = new Set([owner.jkt, ...stored.endorsers])
   for (const e of state.endorsements ?? []) {
     if (e.kind !== 'device' || e.target !== thumb || e.key_jkt !== thumb || !e.by_public_jwk) continue
     if (!stored.agents.includes(String(e.agent_id))) continue
@@ -300,7 +304,7 @@ async function authenticate(state: ShareStateOut, stored: Statement | null, owne
   }
   const allowed = by.kind === 'member'
     ? by.target === owner.userId && thumb === owner.jkt
-    : await deviceAllowed(thumb, state, stored, owner.jkt)
+    : await deviceAllowed(thumb, state, stored, owner)
   if (!allowed) throw new ShareRefused('bad-writer', 'This connection’s envelope was written by someone it does not allow.')
 }
 

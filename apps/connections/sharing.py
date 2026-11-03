@@ -33,7 +33,7 @@ from apps.harness import device_keys
 from apps.passkeys.models import UserVaultKeyset
 
 from . import recipients as rcpt
-from . import services, wire
+from . import services, tokens, wire
 from .models import Connection, ConnectionGrant
 from .wire import WireError
 
@@ -72,11 +72,15 @@ def _choosable(conn: Connection, user) -> list[Agent]:
     return rcpt.administered(user, Agent.objects.filter(workspace_id=conn.app.workspace_id).order_by("slug"))
 
 
+def _agent_out(agent: Agent) -> dict:
+    return {"id": str(agent.pk), "slug": agent.slug, "name": agent.name}
+
+
 def share_state(conn: Connection, user) -> dict:
     """What the owner's browser needs to share `conn`: the envelopes, the stored
     statement, the owner's key, every recipient the owner could choose (each
     machine with the agent that admits it, or `mine` for their own computer) and
-    the endorsements to check those machines by. Owner only."""
+    the endorsements to check those machines and the envelopes' last writer by. Owner only."""
     _not_revoking(conn)
     ks = _owner_keyset(conn, user)
     agents = _choosable(conn, user)
@@ -87,17 +91,20 @@ def share_state(conn: Connection, user) -> dict:
                     "mine": k.runner.owner_id == user.pk}
                    for k, a in rcpt.candidate_reasons(conn, agents, user)]
     devices = {c["target"] for c in candidates if c["kind"] == "device"}
-    endorsements = [{**e, "agent_id": str(a.pk)} for a in agents for e in zk_endorse.endorsements(a)
-                    if e["kind"] == "device" and e["target"] in devices]
+    endorsements = tokens.with_writer_endorsements(conn, [
+        {**e, "agent_id": str(a.pk)} for a in agents for e in zk_endorse.endorsements(a)
+        if e["kind"] == "device" and e["target"] in devices])
     return {
         "id": conn.pk, "binding": conn.binding, "provider": conn.provider, "account_id": conn.account_id,
         "account_label": conn.account_label, "state": conn.state,
         "sealed": conn.sealed, "sealed_sig": conn.sealed_sig, "sealed_digest": conn.sealed_digest,
         "access_sealed": conn.access_sealed, "access_sig": conn.access_sig,
-        "statement": conn.statement, "endorsers": (conn.statement or {}).get("endorsers", []),
+        "statement": conn.statement, "statement_sig": conn.statement_sig,
+        "endorsers": (conn.statement or {}).get("endorsers", []),
+        "owner_agent": _agent_out(conn.agent) if conn.agent_id is not None else None,
         "owner": {"user_id": str(user.pk), "public_jwk": ks.public_jwk},
         "candidates": candidates, "endorsements": endorsements,
-        "agents": [{"id": str(a.pk), "slug": a.slug, "name": a.name} for a in agents],
+        "agents": [_agent_out(a) for a in agents],
     }
 
 

@@ -16,8 +16,9 @@ import logging
 import pytest
 from django.test import Client
 
-from apps.agents.credentials import zk_seal
+from apps.agents.credentials import zk, zk_seal
 from apps.agents.models import Agent
+from apps.connections import recipients as rcpt
 from apps.connections import services, sharing
 from apps.connections.models import Connection
 from apps.events.models import Event
@@ -25,6 +26,7 @@ from apps.harness.models import Runner
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connections import FAKE_REFRESH, ShareWorld, browser_share, endorse, revoke_admin
+from tests.fixtures.vault_zk import conn_ref
 from tests.fixtures.vault_zk import ref as zk_ref
 
 pytestmark = pytest.mark.django_db
@@ -281,6 +283,65 @@ def test_a_share_listing_the_endorser_reaches_their_machine_and_is_stored(vouche
     assert ("device", world.box2.ecdh_jkt) in zk_seal.sealed_targets(conn.sealed)
     (row,) = client(world.person).get("/api/connections/").json()["connections"]
     assert row["statement"]["endorsers"] == [world.ada_jkt]
+
+
+def test_share_state_answers_the_statement_and_its_signature(world):
+    conn = world.persons()
+    body = client(world.person).get(f"/api/connections/{conn.pk}/share").json()
+    assert body["statement"] is None and body["statement_sig"] == ""
+    conn = world.shared(conn, agents=[world.eva])
+    body = client(world.person).get(f"/api/connections/{conn.pk}/share").json()
+    assert body["statement"] == conn.statement and body["statement_sig"] == conn.statement_sig != ""
+
+
+def test_share_state_names_an_agents_connections_owner_agent(world):
+    mine = client(world.person).get(f"/api/connections/{world.persons().pk}/share").json()
+    assert mine["owner_agent"] is None
+    evas = client(world.person).get(f"/api/connections/{world.evas().pk}/share").json()
+    assert evas["owner_agent"] == {"id": str(world.eva.pk), "slug": "eva", "name": "Eva"}
+    assert evas["owner_agent"] in evas["agents"]
+
+
+def _written_by(conn, name, key, ecdh):
+    """`conn`'s envelope as box `key` last wrote it, to everyone it is sealed to now."""
+    rs = rcpt.recipients(conn)
+    pubs = {(k, t): zk.public_key(j) for k, t, j in rs}
+    sig = conn_ref.writer_sig(conn.binding, name, conn.sealed_digest, conn.sealed, ecdh, "device", key.ecdh_jkt, pubs)
+    Connection.objects.filter(pk=conn.pk).update(sealed_sig=sig)
+    conn.refresh_from_db()
+    return conn
+
+
+def test_a_pruned_writer_is_still_vouched_for_so_the_owner_can_re_share_without_reconnecting(world):
+    """Review Focus 3: echo's box wrote last, then jj stopped administering echo. It is no
+    candidate now and echo is no agent to choose; the browser must still prove that writer."""
+    conn = world.shared(world.persons(), agents=[world.eva, world.echo])
+    conn = _written_by(conn, "refresh", world.echo_box, world.echo_ecdh)
+    revoke_admin(world.person, world.echo)
+    assert rcpt.prune(conn) == ["echo-cloud"]
+    conn.refresh_from_db()
+    assert ("device", world.echo_box.ecdh_jkt) not in zk_seal.sealed_targets(conn.sealed)
+    assert conn.sealed_sig["by"]["target"] == world.echo_box.ecdh_jkt
+
+    body = client(world.person).get(f"/api/connections/{conn.pk}/share").json()
+    assert world.echo_box.ecdh_jkt not in {c["target"] for c in body["candidates"]}
+    assert str(world.echo.pk) not in {a["id"] for a in body["agents"]}
+    [e] = [e for e in body["endorsements"] if e["target"] == world.echo_box.ecdh_jkt]
+    assert e["agent_id"] == str(world.echo.pk) and e["key_jkt"] == world.echo_box.ecdh_jkt
+    assert e["by_public_jwk"] == zk_ref.jwk(world.person_priv.public_key())
+    assert zk_ref.verify_endorsement(e, str(world.echo.pk), world.person_priv.public_key())
+
+    r = _put(client(world.person), conn, browser_share(conn, world.person, world.person_priv, agents=[world.eva]))
+    assert r.status_code == 200, r.json()
+    assert r.json()["statement"]["agents"] == ["eva"]
+
+
+def test_a_writer_vouched_for_as_a_candidate_is_listed_once(world):
+    conn = world.shared(world.persons(), agents=[world.eva])
+    conn = _written_by(conn, "refresh", world.eva_box, world.eva_ecdh)
+    body = client(world.person).get(f"/api/connections/{conn.pk}/share").json()
+    assert len([e for e in body["endorsements"]
+                if e["target"] == world.eva_box.ecdh_jkt and e["agent_id"] == str(world.eva.pk)]) == 1
 
 
 def test_a_malformed_endorsers_list_is_a_bad_statement(world):

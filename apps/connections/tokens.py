@@ -157,7 +157,7 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None, f
     keeper (`keeper.work`: a box that holds it, re-sealing or revoking) both answer it.
     `recipients` and the endorsements are those of the statement in force
     (`pairs`, default `recipients.device_reasons`; `facts`, what they were read with),
-    plus what vouches for the last writer (`_writer_endorsements`)."""
+    plus what vouches for the last writer (`with_writer_endorsements`)."""
     pairs = rcpt.device_reasons(conn) if pairs is None else pairs
     devices, seen = [], set()
     for k, _ in pairs:
@@ -170,10 +170,9 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None, f
     recipients += [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
                     "runner_name": k.runner.name} for k in devices]
     agents = {a.pk: a for _, a in pairs if a is not None}
-    endorsements = [{**e, "agent_id": str(a.pk)} for a in agents.values() for e in rcpt.endorsements_for(a, facts)
-                    if e["kind"] == "device" and e["target"] in seen]
-    have = {(e["agent_id"], e["by"], e["target"]) for e in endorsements}
-    endorsements += [e for e in _writer_endorsements(conn) if (e["agent_id"], e["by"], e["target"]) not in have]
+    endorsements = with_writer_endorsements(conn, [
+        {**e, "agent_id": str(a.pk)} for a in agents.values() for e in rcpt.endorsements_for(a, facts)
+        if e["kind"] == "device" and e["target"] in seen])
     return {
         "id": conn.pk, "provider": conn.provider, "workspace": conn.app.workspace_id, "binding": conn.binding,
         "account_id": conn.account_id, "account_label": conn.account_label,
@@ -190,15 +189,18 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None, f
     }
 
 
-def _writer_endorsements(conn: Connection) -> list[dict]:
-    """What vouches for the device that last wrote each envelope, for every agent the
-    statement lists. A reader must validate the writer to open it, or nobody could
-    re-seal it after that device was pruned; its key travels in the sig's `by`."""
+def with_writer_endorsements(conn: Connection, endorsements: list[dict]) -> list[dict]:
+    """`endorsements` (each with its `agent_id`) plus what vouches for the device that last
+    wrote each envelope, for every agent the statement lists, each once. A reader must
+    validate the writer to open it, or nobody could re-seal it after that device was
+    pruned; its key travels in the sig's `by`. Machines and the owner's browser both read this."""
     writers = {sig["by"]["target"] for sig in (conn.sealed_sig, conn.access_sig)
                if sig and (sig.get("by") or {}).get("kind") == "device"}
     agent_pks = rcpt.statement_agent_pks(conn.statement)
-    # None left (say the key was deleted): this still answers; the box refuses, the owner re-shares.
-    return [e for jkt in sorted(writers) for e in zk_endorse.endorsements_of_device(agent_pks, jkt)]
+    have = {(e["agent_id"], e["by"], e["target"]) for e in endorsements}
+    # None left (say the key was deleted): this still answers; the reader refuses.
+    return endorsements + [e for jkt in sorted(writers) for e in zk_endorse.endorsements_of_device(agent_pks, jkt)
+                           if (e["agent_id"], e["by"], e["target"]) not in have]
 
 
 # ---- the lease ----------------------------------------------------------------------

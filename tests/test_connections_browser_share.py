@@ -153,6 +153,7 @@ def test_the_browser_was_given_what_the_share_route_answers():
     assert set(body) >= set(state)
     for field in ("id", "binding", "provider", "account_id", "state", "sealed", "sealed_digest", "owner", "agents"):
         assert body[field] == state[field], field
+    assert body["statement_sig"] == state["statement_sig"] == "" and body["owner_agent"] is state["owner_agent"] is None
     assert (sorted(map(_what_a_candidate_is, body["candidates"]))
             == sorted(map(_what_a_candidate_is, state["candidates"])))
     assert ({e["sig"]: e["agent_id"] for e in body["endorsements"]}
@@ -183,11 +184,15 @@ def test_a_reshare_over_a_machines_write_is_accepted_with_access_re_sealed_and_a
     assert state["sealed_sig"]["by"]["target"] == KEYS["eva_box"]["jkt"]
     Connection.objects.filter(pk=conn.pk).update(
         sealed=state["sealed"], sealed_sig=state["sealed_sig"], sealed_digest=state["sealed_digest"],
-        access_sealed=state["access_sealed"], access_sig=state["access_sig"], statement=state["statement"])
+        access_sealed=state["access_sealed"], access_sig=state["access_sig"], statement=state["statement"],
+        statement_sig=state["statement_sig"])
     r = _put(person, share)
     assert r.status_code == 200, r.json()
     conn.refresh_from_db()
     assert conn.statement == share["statement"] and conn.statement_version == 2
+    # What the browser verified its device writer's statement by is what the route hands out.
+    read = _client(person).get(f"/api/connections/{conn.pk}/share").json()
+    assert read["statement_sig"] == share["sig"]
     assert conn.statement["my_computers"] == []
     assert conn_ref.statement_msg(share["statement"]).decode() == FIXTURE["second"]["msg"]
     assert conn_ref.verify_statement(share["statement"], share["sig"], _priv("owner").public_key())

@@ -18889,11 +18889,19 @@ export interface components {
                 readonly [key: string]: unknown;
             } | null;
             /**
+             * Statement Sig
+             * @description The owner's signature over `statement`; a device writer counts only under a statement this verifies. Empty before the first share.
+             * @default
+             */
+            readonly statement_sig: string;
+            /**
              * Endorsers
              * @description The stored statement's `endorsers`: key thumbprints of the people, besides the owner, whose endorsement of a machine it accepts. Empty before the first share.
              */
             readonly endorsers?: readonly string[];
             readonly owner: components["schemas"]["ShareOwnerOut"];
+            /** @description The agent whose connection this is, which the statement must list; null for a person's. */
+            readonly owner_agent?: components["schemas"]["ShareAgentOut"] | null;
             /**
              * Candidates
              * @description Everyone the owner could seal to: their member key, each machine of an agent they could lend it to (one row per agent that admits it), and their own computers. A machine is sealed to only when the statement allows it AND the browser trusts its endorsement.
@@ -18901,7 +18909,7 @@ export interface components {
             readonly candidates: readonly components["schemas"]["ShareCandidateOut"][];
             /**
              * Endorsements
-             * @description Endorsements of those machines' keys, each with its `agent_id` and its signer's `by_public_jwk`, whose thumbprint is what `endorsers` lists.
+             * @description Endorsements of those machines' keys and of the device that last wrote each envelope, each with its `agent_id` and its signer's `by_public_jwk`, whose thumbprint is what `endorsers` lists.
              */
             readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
             /**

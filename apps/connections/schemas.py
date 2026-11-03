@@ -221,18 +221,25 @@ class ShareStateOut(StrictModel):
     access_sig: dict[str, Any] | None = None
     statement: dict[str, Any] | None = Field(
         default=None, description="The stored signed grant statement; null before the first share.")
+    statement_sig: str = Field(
+        default="", description="The owner's signature over `statement`; a device writer counts only under a "
+                                "statement this verifies. Empty before the first share.")
     endorsers: list[str] = Field(
         default_factory=list,
         description="The stored statement's `endorsers`: key thumbprints of the people, besides the owner, whose "
                     "endorsement of a machine it accepts. Empty before the first share.")
     owner: ShareOwnerOut
+    owner_agent: ShareAgentOut | None = Field(
+        default=None, description="The agent whose connection this is, which the statement must list; null for a "
+                                  "person's.")
     candidates: list[ShareCandidateOut] = Field(
         description="Everyone the owner could seal to: their member key, each machine of an agent they could "
                     "lend it to (one row per agent that admits it), and their own computers. A machine is sealed "
                     "to only when the statement allows it AND the browser trusts its endorsement.")
     endorsements: list[ZkEndorsementOut] = Field(
-        default_factory=list, description="Endorsements of those machines' keys, each with its `agent_id` and its "
-                                          "signer's `by_public_jwk`, whose thumbprint is what `endorsers` lists.")
+        default_factory=list, description="Endorsements of those machines' keys and of the device that last wrote "
+                                          "each envelope, each with its `agent_id` and its signer's "
+                                          "`by_public_jwk`, whose thumbprint is what `endorsers` lists.")
     agents: list[ShareAgentOut] = Field(description="The agents the owner may lend it to.")
 
 
