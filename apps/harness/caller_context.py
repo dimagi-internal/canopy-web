@@ -370,9 +370,9 @@ def build(turn, *, reader_user=None) -> dict:
         # WHY: owner | admin | system | session:<role> | grant:<access-list line> |
         # capability:<name> | refused | no-interface (a turn with no agent).
         # `role`: WHERE the asker stands on the agent's role ladder (owner | admin | editor |
-        # user | viewer | system; null when refused) and `source`: WHY (owner | admin | system |
+        # read_write | read_only | system; null when refused) and `source`: WHY (owner | admin | system |
         # session | list:<access-list line>) —
-        # what an agent reads to say "you are a viewer here because ..." instead of
+        # what an agent reads to say "you are read-only here because ..." instead of
         # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
         **_grant(turn, agent),
         # WHY A CONFINED CALLER IS CONFINED and what would change it: their place, the
