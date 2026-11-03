@@ -83,14 +83,21 @@ afterEach(() => { cleanup(); vi.clearAllMocks() })
 describe('ShareConnectionPage', () => {
   it('shows the account from the opened envelope before sharing', async () => {
     await unlocked()
-    expect(screen.getByText(/Connected as 00Dxx\/005yy/)).toBeTruthy()
-    expect(screen.queryByText(/Server Label/)).toBeNull()
+    expect(screen.getByText('Connected as Server Label')).toBeTruthy()
+    expect(screen.getByText('Account ID: 00Dxx/005yy')).toBeTruthy()
     expect(openForOwner).toHaveBeenCalledWith(STATE, ME)
     expect(unlock).toHaveBeenCalledTimes(1)
     // machines by name and fingerprint; agents by name
     expect(screen.getByText('jj-laptop')).toBeTruthy()
     expect(screen.getByText('AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA')).toBeTruthy()
     expect(screen.getByLabelText('Eva')).toBeTruthy()
+  })
+
+  it('shows only the checked id as the main line when the label is empty', async () => {
+    getShareState.mockResolvedValue({ ...STATE, account_label: '' })
+    await unlocked()
+    expect(screen.getByText('Connected as 00Dxx/005yy')).toBeTruthy()
+    expect(screen.queryByText(/Account ID:/)).toBeNull()
   })
 
   it('sends a signed statement and a re-sealed envelope with the chosen agents', async () => {

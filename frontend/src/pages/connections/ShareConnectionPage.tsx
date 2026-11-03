@@ -159,7 +159,14 @@ export function ShareConnectionPage(): JSX.Element | null {
       ) : (
         <div className="space-y-4">
           <div>
-            <p className="text-sm font-medium text-foreground">Connected as {opened.account.account_id}</p>
+            {state.account_label ? (
+              <>
+                <p className="text-sm font-medium text-foreground">Connected as {state.account_label}</p>
+                <p className="text-[12px] text-muted-foreground">Account ID: {opened.account.account_id}</p>
+              </>
+            ) : (
+              <p className="text-sm font-medium text-foreground">Connected as {opened.account.account_id}</p>
+            )}
             {opened.account.instance_url && (
               <p className="text-[12px] text-muted-foreground">{opened.account.instance_url}</p>
             )}
