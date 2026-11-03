@@ -119,6 +119,13 @@ class MailInboundLogListOut(Schema):
     items: list[MailInboundLogOut]
 
 
+class MailUploadOut(Schema):
+    id: str
+    filename: str
+    content_type: str
+    size: int
+
+
 class MailAttachmentOut(Schema):
     filename: str
     content_type: str
@@ -137,6 +144,7 @@ class MailMessageOut(Schema):
     from_name: str
     to: list[str]
     cc: list[str]
+    bcc: list[str] = []
     reply_to: list[str] = []
     subject: str
     text: str
@@ -160,8 +168,17 @@ class MailThreadOut(Schema):
     last_message_at: str
     forwarded: bool = False
     """A copy kept from a forward route: only its destination can read it."""
+    spam: bool = False
+    trashed: bool = False
     counterpart: str = ""
+    counterpart_name: str = ""
+    """The other party's display name on the newest message, when it has one."""
+    snippet: str = ""
+    """The start of the newest message's text, quoted lines left out. List rows only."""
+    has_attachments: bool = False
     default_reply_to: list[str] = []
+    reply_from: str = ""
+    """The address a reply goes out from; "" when this caller cannot reply here."""
     messages: list[MailMessageOut] = []
 
 
@@ -173,6 +190,8 @@ class MailThreadListOut(Schema):
     addresses: list[str] = []
     """The addresses this inbox can send from: an agent's live addresses, or the caller's own
     forwarding addresses on a live domain (never a catch-all)."""
+    has_more: bool = False
+    """More threads match than this page holds: ask again with a larger `offset`."""
 
 
 class MailReplyIn(Schema):
@@ -180,6 +199,9 @@ class MailReplyIn(Schema):
     html: str = ""
     to: list[str] = []
     cc: list[str] = []
+    bcc: list[str] = []
+    attachments: list[str] = []
+    """Ids from `POST /api/mail/uploads/{workspace}`, sent with the message."""
 
 
 class MailSendIn(Schema):
@@ -188,6 +210,9 @@ class MailSendIn(Schema):
     forwarding addresses (never someone else's or a catch-all); the thread is private to you."""
     to: list[str]
     cc: list[str] = []
+    bcc: list[str] = []
+    attachments: list[str] = []
+    """Ids from `POST /api/mail/uploads/{workspace}`, sent with the message."""
     subject: str
     text: str
     html: str = ""
@@ -199,6 +224,43 @@ class MailSendIn(Schema):
 class MailThreadStateIn(Schema):
     unread: bool | None = None
     archived: bool | None = None
+    spam: bool | None = None
+    trashed: bool | None = None
+
+
+class MailDraftIn(Schema):
+    agent: str = ""
+    thread_id: str = ""
+    from_address: str = ""
+    to: str = ""
+    cc: str = ""
+    bcc: str = ""
+    subject: str = ""
+    text: str = ""
+    uploads: list[str] = []
+
+
+class MailDraftOut(Schema):
+    id: str
+    agent: str
+    thread_id: str
+    thread_subject: str = ""
+    from_address: str
+    to: str
+    cc: str
+    bcc: str
+    subject: str
+    text: str
+    uploads: list[MailUploadOut] = []
+    updated_at: str
+
+
+class MailDraftListOut(Schema):
+    items: list[MailDraftOut]
+
+
+class MailEmptiedOut(Schema):
+    deleted: int
 
 
 class MailResolveOut(Schema):

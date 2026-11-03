@@ -1,5 +1,7 @@
 from django.apps import AppConfig
 
+from apps.common import ticks
+
 
 class MailConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
@@ -31,10 +33,13 @@ class MailConfig(AppConfig):
         from apps.agents.models import Agent
         from apps.workspaces.models import Workspace
 
-        from . import auto_addresses
+        from . import auto_addresses, storage
 
         post_save.connect(auto_addresses.on_agent_saved, sender=Agent,
                           dispatch_uid="mail.agent_addresses.agent")
         post_save.connect(auto_addresses.on_workspace_saved, sender=Workspace,
                           dispatch_uid="mail.agent_addresses.workspace")
         login_gate.register_verified_domain_owner(domains.verified_domain_owner)
+
+        # Trash past its 30 days, and files picked for a message that was never sent.
+        ticks.register("mail.purge_expired", storage.purge_expired, 24 * 60 * 60)

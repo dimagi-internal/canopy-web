@@ -14,10 +14,13 @@ from typing import NamedTuple
 
 from django.conf import settings
 from django.db import InterfaceError, OperationalError
-from django.db.models import OuterRef, Q, Subquery
+from django.db.models import Exists, OuterRef, Q, Subquery
+from django.db.models.functions import Substr
 from django.http import HttpRequest
-from ninja import Router
+from django.utils import timezone
+from ninja import File, Router
 from ninja.errors import HttpError
+from ninja.files import UploadedFile
 
 from apps.agents import access
 from apps.api.auth import session_auth
@@ -28,8 +31,17 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
 
-from . import agent_mail, auto_addresses, domains, inbound, reputation, ses, sns, storage
-from .models import MailDomain, MailInboundLog, MailMessage, MailRoute, MailThread
+from . import agent_mail, auto_addresses, domains, inbound, parse, reputation, ses, sns, storage
+from .models import (
+    MailAttachment,
+    MailDomain,
+    MailDraft,
+    MailInboundLog,
+    MailMessage,
+    MailRoute,
+    MailThread,
+    MailUpload,
+)
 from .schemas import (
     AgentMailboxIn,
     AgentMailboxOut,
@@ -38,6 +50,10 @@ from .schemas import (
     MailDomainOut,
     MailDomainPatchIn,
     MailDomainShareIn,
+    MailDraftIn,
+    MailDraftListOut,
+    MailDraftOut,
+    MailEmptiedOut,
     MailInboundLogListOut,
     MailMessageOut,
     MailReplyIn,
@@ -48,6 +64,7 @@ from .schemas import (
     MailThreadListOut,
     MailThreadOut,
     MailThreadStateIn,
+    MailUploadOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -402,11 +419,13 @@ def _presign(a) -> str:
         return ""
 
 
-def _msg_out(m) -> dict:
+def _msg_out(m, *, offer_files: bool = True) -> dict:
+    """`offer_files` False (a thread in Spam) lists the attachments without a download link."""
     atts = [{"filename": a.filename, "content_type": a.content_type, "size": a.size,
-             "url": _presign(a), "kept": a.kept} for a in m.attachments.all()]
+             "url": _presign(a) if offer_files else "", "kept": a.kept} for a in m.attachments.all()]
     return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
-            "from_name": m.from_name, "to": m.to, "cc": m.cc, "reply_to": m.reply_to or [], "subject": m.subject, "text": m.text,
+            "from_name": m.from_name, "to": m.to, "cc": m.cc, "bcc": m.bcc or [], "reply_to": m.reply_to or [],
+            "subject": m.subject, "text": m.text,
             "html": m.html, "delivery_status": m.delivery_status, "verdicts": m.verdicts or {},
             "created_at": m.created_at.isoformat(),
             "attachments": atts}
@@ -415,11 +434,11 @@ def _msg_out(m) -> dict:
 def _thread_out(t, *, messages: bool) -> dict:
     agent = t.route.agent.slug if t.route_id and t.route.agent_id else ""
     out = {"thread_id": str(t.uuid), "address": t.address, "agent": agent, "subject": t.subject,
-           "forwarded": t.owner_id is not None,
+           "forwarded": t.owner_id is not None, "spam": t.spam, "trashed": t.trashed_at is not None,
            "message_count": t.message_count, "unread": t.unread, "archived": t.archived,
            "last_message_at": t.last_message_at.isoformat() if t.last_message_at else ""}
     if messages:
-        out["messages"] = [_msg_out(m) for m in t.messages.prefetch_related("attachments")]
+        out["messages"] = [_msg_out(m, offer_files=not t.spam) for m in t.messages.prefetch_related("attachments")]
     return out
 
 
@@ -431,6 +450,43 @@ def _counterpart(direction, from_addr, to) -> str:
         to = to if isinstance(to, list) else []
         return to[0] if to else ""
     return ""
+
+
+def _counterpart_name(direction, from_name) -> str:
+    return (from_name or "") if direction == MailMessage.IN else ""
+
+
+def _snippet(text: str | None) -> str:
+    """One line of what a message says: no quoted lines, no "On … wrote:" that introduces them."""
+    lines = [ln.strip() for ln in (text or "").splitlines()]
+    said = [ln for ln in lines
+            if ln and not ln.startswith(">") and not (ln.startswith("On ") and ln.endswith("wrote:"))]
+    return " ".join(said)[:160]
+
+
+_FOLDERS = ("inbox", "sent", "archived", "spam", "trash")
+
+
+def _in_folder(qs, folder: str, archived: bool):
+    """A folder of an inbox. No folder: everything live at that archive state, as the agents'
+    tools have always read it (mail they sent included, never spam or trash)."""
+    trash = qs.filter(trashed_at__isnull=False)
+    if folder == "trash":
+        return trash
+    live = qs.filter(trashed_at__isnull=True)
+    if folder == "spam":
+        return live.filter(spam=True)
+    live = live.filter(spam=False)
+    has = lambda d: Exists(MailMessage.objects.filter(thread=OuterRef("pk"), direction=d))  # noqa: E731
+    if folder == "inbox":
+        return live.filter(has(MailMessage.IN), archived=False)
+    if folder == "sent":
+        return live.filter(has(MailMessage.OUT))
+    if folder == "archived":
+        return live.filter(archived=True)
+    if folder:
+        raise HttpError(422, f"folder must be one of {', '.join(_FOLDERS)}")
+    return live.filter(archived=archived)
 
 
 def _agent_routes(ws, slug: str):
@@ -535,12 +591,15 @@ def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) 
 @router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")
 @gate("member")
 def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False,
-                      forwarded: bool = False, q: str = "", address: str = "") -> dict:
+                      forwarded: bool = False, q: str = "", address: str = "", folder: str = "",
+                      offset: int = 0, limit: int = 200) -> dict:
     """One list for every inbox. `agent=`: that agent's threads. `forwarded=true`: the caller's
     own inbox of mail kept from forward routes. Neither: the workspace's agent threads, never
-    another person's forwarded copies. `q` searches subject, sender and text; `address` narrows
-    to one address. `unread_total` counts the inbox's unread threads (archived excluded) and
-    `addresses` the addresses it can send from."""
+    another person's forwarded copies. `folder` is inbox, sent, archived, spam or trash; without
+    one the list is live threads at `archived`. `q` searches subject, sender, recipients and text;
+    `address` narrows to one address. `unread_total` counts the inbox's unread threads (archived,
+    spam and trash excluded), `addresses` the addresses it can send from, and `has_more` says
+    another page follows `offset` + `limit` (at most 200)."""
     ws = workspace_for(request.user, workspace)
     base = MailThread.objects.filter(workspace=ws).select_related("route__agent", "route__domain")
     base = base.filter(owner=request.user) if forwarded else base.filter(owner__isnull=True)
@@ -551,24 +610,34 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
         r = _agent_route(ws, agent)
         agent_address = r.address if r else ""
         sendable = [x.address for x in _agent_routes(ws, agent) if domains.route_is_live(x)]
-    qs = base.filter(archived=archived)
+    qs = _in_folder(base, folder.strip().lower(), archived)
     if q.strip():
         term = q.strip()
         qs = qs.filter(Q(subject__icontains=term) | Q(messages__from_addr__icontains=term)
-                       | Q(messages__from_name__icontains=term) | Q(messages__text__icontains=term)).distinct()
+                       | Q(messages__from_name__icontains=term) | Q(messages__text__icontains=term)
+                       | Q(address__icontains=term)).distinct()
     if address.strip():
         qs = qs.filter(address__iexact=address.strip())
     newest = MailMessage.objects.filter(thread=OuterRef("pk")).order_by("-created_at", "-pk")
     qs = qs.annotate(_dir=Subquery(newest.values("direction")[:1]),
                      _from=Subquery(newest.values("from_addr")[:1]),
-                     _to=Subquery(newest.values("to")[:1]))
+                     _to=Subquery(newest.values("to")[:1]),
+                     _name=Subquery(newest.values("from_name")[:1]),
+                     _text=Subquery(newest.annotate(_start=Substr("text", 1, 1000)).values("_start")[:1]),
+                     _files=Exists(MailAttachment.objects.filter(message__thread=OuterRef("pk"))))
+    offset, limit = max(offset, 0), min(max(limit, 1), 200)
+    page = list(qs[offset:offset + limit + 1])
     items = []
-    for t in qs[:200]:
+    for t in page[:limit]:
         out = _thread_out(t, messages=False)
         out["counterpart"] = _counterpart(t._dir, t._from, t._to)
+        out["counterpart_name"] = _counterpart_name(t._dir, t._name)
+        out["snippet"] = _snippet(t._text)
+        out["has_attachments"] = t._files
         items.append(out)
+    unread = base.filter(archived=False, unread=True, spam=False, trashed_at__isnull=True)
     return {"agent_address": agent_address, "items": items, "addresses": sendable,
-            "unread_total": base.filter(archived=False, unread=True).count()}
+            "unread_total": unread.count(), "has_more": len(page) > limit}
 
 
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
@@ -579,7 +648,17 @@ def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
     newest = t.messages.order_by("-created_at", "-pk").values("direction", "from_addr", "to").first()
     out["counterpart"] = _counterpart(newest["direction"], newest["from_addr"], newest["to"]) if newest else ""
     out["default_reply_to"] = _reply_recipients(t)
+    out["reply_from"] = _reply_from_address(t, request.user)
     return out
+
+
+def _reply_from_address(t, user) -> str:
+    """Shown in the composer. The send itself decides again: a person who may not reply gets ""."""
+    try:
+        sender = _thread_sender(t, user)
+    except HttpError:
+        return ""
+    return sender.from_address or sender.route.address
 
 
 def _host(addr: str) -> str:
@@ -682,11 +761,135 @@ def _new_sender(ws, user, agent: str, from_address: str | None) -> _Sender:
     return _Sender(route, "", _display_name(user))
 
 
-def _send_as(sender: _Sender, **kw) -> MailMessage:
+def _uploads(ws, user, ids: list[str]) -> list[MailUpload]:
+    """The caller's own uploads by id, in the order asked, within one message's attachment limit."""
+    if not ids:
+        return []
+    found = {str(u.uuid): u for u in MailUpload.objects.filter(workspace=ws, user=user, uuid__in=_uuids(ids))}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise HttpError(422, "an attachment is no longer available; attach it again")
+    picked = [found[i] for i in dict.fromkeys(ids)]
+    limit = int(settings.MAIL_MAX_ATTACHMENT_BYTES or 0)
+    if limit and sum(u.size for u in picked) > limit:
+        raise HttpError(422, f"attachments are limited to {limit // (1024 * 1024)} MB per message")
+    return picked
+
+
+def _uuids(ids: list[str]) -> list[uuidlib.UUID]:
+    out = []
+    for i in ids:
+        try:
+            out.append(uuidlib.UUID(i))
+        except ValueError:
+            raise HttpError(422, "an attachment is no longer available; attach it again") from None
+    return out
+
+
+def _send_as(sender: _Sender, *, uploads: list[MailUpload] = (), **kw) -> MailMessage:
     try:
-        return agent_mail.send(sender.route, sender_name=sender.name, from_address=sender.from_address, **kw)
+        files = [parse.Attachment(u.filename, u.content_type, ses.get_object(u.s3_key)) for u in uploads]
+    except Exception:  # noqa: BLE001 - nothing has been sent yet: say so, and the words are still in the draft
+        logger.exception("mail: could not read an upload")
+        raise HttpError(502, "could not read an attachment; try again") from None
+    try:
+        out = agent_mail.send(sender.route, sender_name=sender.name, from_address=sender.from_address,
+                              attachments=files, **kw)
     except agent_mail.SendRefused as exc:
         raise HttpError(exc.status, str(exc)) from None
+    agent_mail.attach_uploads(out, uploads)
+    return out
+
+
+@router.post("/uploads/{workspace}", response=MailUploadOut, summary="Hold a file for a message about to be sent")
+@gate("agent.work", kind="conversation")
+def upload_mail_attachment(request: HttpRequest, workspace: str, file: File[UploadedFile]) -> dict:
+    """Stores a file picked in a composer. Name its `id` in a reply or send's `attachments`."""
+    ws = workspace_for(request.user, workspace)
+    _need(request.user, ws, perms.AGENT_WORK)
+    limit = int(settings.MAIL_MAX_ATTACHMENT_BYTES or 0)
+    if limit and file.size > limit:
+        raise HttpError(422, f"attachments are limited to {limit // (1024 * 1024)} MB per message")
+    u = MailUpload(workspace=ws, user=request.user, filename=(file.name or "attachment")[:255],
+                   content_type=(file.content_type or "application/octet-stream")[:255], size=file.size)
+    u.s3_key = f"attachments/{ws.slug}/uploads/{u.uuid}"
+    try:
+        ses.put_object(u.s3_key, file.read(), u.content_type)
+    except ses.MailOff:
+        raise HttpError(503, "mail is turned off on this deployment") from None
+    u.save()
+    return _upload_out(u)
+
+
+def _upload_out(u: MailUpload) -> dict:
+    return {"id": str(u.uuid), "filename": u.filename, "content_type": u.content_type, "size": u.size}
+
+
+def _draft_out(d: MailDraft, uploads: dict[str, MailUpload]) -> dict:
+    return {"id": str(d.uuid), "agent": d.agent_slug, "thread_id": str(d.thread.uuid) if d.thread_id else "",
+            "thread_subject": d.thread.subject if d.thread_id else "", "from_address": d.from_address,
+            "to": d.to, "cc": d.cc, "bcc": d.bcc, "subject": d.subject, "text": d.text,
+            "uploads": [_upload_out(uploads[i]) for i in d.uploads or [] if i in uploads],
+            "updated_at": d.updated_at.isoformat()}
+
+
+def _uploads_of(drafts: list[MailDraft]) -> dict[str, MailUpload]:
+    ids = [i for d in drafts for i in d.uploads or []]
+    return {str(u.uuid): u for u in MailUpload.objects.filter(uuid__in=_uuids(ids))} if ids else {}
+
+
+def _draft_key(draft_id: str) -> uuidlib.UUID:
+    try:
+        return uuidlib.UUID(draft_id)
+    except ValueError:
+        raise HttpError(404, "no such draft") from None
+
+
+@router.get("/drafts/{workspace}", response=MailDraftListOut, summary="Your unsent messages")
+@gate("member")
+def list_mail_drafts(request: HttpRequest, workspace: str, agent: str = "") -> dict:
+    """The caller's own drafts written in one inbox: `agent=` that agent's, else their own."""
+    ws = workspace_for(request.user, workspace)
+    drafts = list(MailDraft.objects.filter(workspace=ws, user=request.user, agent_slug=agent)
+                  .select_related("thread")[:200])
+    uploads = _uploads_of(drafts)
+    return {"items": [_draft_out(d, uploads) for d in drafts]}
+
+
+@router.put("/drafts/{workspace}/{draft_id}", response=MailDraftOut, summary="Save an unsent message")
+@gate("member", kind="conversation", viewer_write="a draft is its author's alone and sends nothing; sending checks")
+def save_mail_draft(request: HttpRequest, workspace: str, draft_id: str, payload: MailDraftIn) -> dict:
+    """Create or replace a draft under an id the caller chose. Nobody else's id is reachable."""
+    ws = workspace_for(request.user, workspace)
+    key = _draft_key(draft_id)
+    if MailDraft.objects.filter(uuid=key).exclude(workspace=ws, user=request.user).exists():
+        raise HttpError(404, "no such draft")
+    if len(payload.text) > 1_000_000:
+        raise HttpError(422, "that draft is too long")
+    thread = _thread(ws, payload.thread_id, request.user) if payload.thread_id else None
+    uploads = _uploads(ws, request.user, payload.uploads)
+    d, _ = MailDraft.objects.update_or_create(uuid=key, defaults=dict(
+        workspace=ws, user=request.user, agent_slug=payload.agent, thread=thread,
+        from_address=payload.from_address[:320], to=payload.to, cc=payload.cc, bcc=payload.bcc,
+        subject=payload.subject[:998], text=payload.text, uploads=[str(u.uuid) for u in uploads]))
+    return _draft_out(d, {str(u.uuid): u for u in uploads})
+
+
+@router.delete("/drafts/{workspace}/{draft_id}", response={204: None}, summary="Throw away an unsent message")
+@gate("member", kind="conversation", viewer_write="a draft is its author's alone and sends nothing; sending checks")
+def delete_mail_draft(request: HttpRequest, workspace: str, draft_id: str):
+    """Its waiting files go with it. A sent draft's files are the message's by now, so they stay."""
+    ws = workspace_for(request.user, workspace)
+    d = MailDraft.objects.filter(uuid=_draft_key(draft_id), workspace=ws, user=request.user).first()
+    if d is None:
+        return 204, None
+    gone = list(MailUpload.objects.filter(uuid__in=_uuids(d.uploads or []), user=request.user))
+    if gone:
+        keys = [u.s3_key for u in gone]
+        MailUpload.objects.filter(pk__in=[u.pk for u in gone]).delete()
+        storage._delete_objects(keys, "draft")
+    d.delete()
+    return 204, None
 
 
 @router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its mailbox")
@@ -700,7 +903,9 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     to = payload.to or _reply_recipients(t)
     if not to:
         raise HttpError(422, "no one to reply to")
-    return _msg_out(_send_as(sender, to=to, cc=payload.cc, text=payload.text, html=payload.html, thread=t))
+    uploads = _uploads(ws, request.user, payload.attachments)
+    return _msg_out(_send_as(sender, uploads=uploads, to=to, cc=payload.cc, bcc=payload.bcc, text=payload.text,
+                             html=payload.html, thread=t))
 
 
 @router.post("/send/{workspace}", response=MailMessageOut, summary="Start a new thread")
@@ -711,8 +916,9 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     sender = _new_sender(ws, request.user, payload.agent, payload.from_address)
-    m = _send_as(sender, to=payload.to, cc=payload.cc, subject=payload.subject, text=payload.text,
-                 html=payload.html, owner=None if payload.agent else request.user)
+    uploads = _uploads(ws, request.user, payload.attachments)
+    m = _send_as(sender, uploads=uploads, to=payload.to, cc=payload.cc, bcc=payload.bcc, subject=payload.subject,
+                 text=payload.text, html=payload.html, owner=None if payload.agent else request.user)
     return {**_msg_out(m), "thread_id": str(m.thread.uuid)}
 
 
@@ -721,15 +927,56 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
 def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, payload: MailThreadStateIn) -> dict:
     ws = workspace_for(request.user, workspace)
     t = _thread(ws, uuid, request.user)
-    if t.owner_id is None:  # your own forwarded mail needs no agent rights to mark or archive
-        _need(request.user, ws, perms.AGENT_WORK)
-        _agent_full(request.user, t.route)
+    _may_change(request.user, ws, t)
     if payload.unread is not None:
         t.unread = payload.unread
     if payload.archived is not None:
         t.archived = payload.archived
-    t.save(update_fields=["unread", "archived"])
+    if payload.spam is not None:
+        t.spam = payload.spam
+    if payload.trashed is not None:
+        t.trashed_at = timezone.now() if payload.trashed else None
+    t.save(update_fields=["unread", "archived", "spam", "trashed_at"])
     return _thread_out(t, messages=False)
+
+
+def _may_change(user, ws, t) -> None:
+    """Your own forwarded mail needs no agent rights; an agent's needs FULL on that agent."""
+    if t.owner_id is None:
+        _need(user, ws, perms.AGENT_WORK)
+        _agent_full(user, t.route)
+
+
+@router.delete("/threads/{workspace}/{uuid}", response={204: None}, summary="Delete a thread for good")
+@gate("agent.work", kind="conversation")
+def delete_mail_thread(request: HttpRequest, workspace: str, uuid: str):
+    """Only from Trash or Spam (409 otherwise): move it there first. This cannot be undone."""
+    ws = workspace_for(request.user, workspace)
+    t = _thread(ws, uuid, request.user)
+    _may_change(request.user, ws, t)
+    if t.trashed_at is None and not t.spam:
+        raise HttpError(409, "move it to Trash first")
+    storage.delete_threads([t.pk])
+    return 204, None
+
+
+@router.post("/empty-folder/{workspace}", response=MailEmptiedOut, summary="Empty Trash or Spam")
+@gate("agent.work", kind="conversation")
+def empty_mail_folder(request: HttpRequest, workspace: str, folder: str, agent: str = "") -> dict:
+    """Delete every thread in one inbox's `trash` or `spam` for good: `agent=` that agent's
+    (needs FULL on it), else the caller's own."""
+    ws = workspace_for(request.user, workspace)
+    if folder not in ("trash", "spam"):
+        raise HttpError(422, "folder must be trash or spam")
+    base = MailThread.objects.filter(workspace=ws)
+    if agent:
+        _need(request.user, ws, perms.AGENT_WORK)
+        _agent_full(request.user, _agent_route(ws, agent))
+        base = base.filter(agent_slug=agent, owner__isnull=True)
+    else:
+        base = base.filter(owner=request.user)
+    ids = list(_in_folder(base, folder, False).values_list("pk", flat=True))
+    return {"deleted": storage.delete_threads(ids)}
 
 
 def _notification_message(msg: dict) -> dict | None:

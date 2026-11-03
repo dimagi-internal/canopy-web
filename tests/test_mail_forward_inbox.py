@@ -1,14 +1,26 @@
 """The inbound ledger (every outcome, including drops) and the kept copy of a forwarded message."""
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
+from django.utils import timezone
 
-from apps.mail import agent_mail, inbound, parse, ses
-from apps.mail.models import MailDomain, MailInboundLog, MailMessage, MailRoute, MailThread
+from apps.mail import agent_mail, inbound, parse, ses, storage
+from apps.mail.models import (
+    MailAttachment,
+    MailDomain,
+    MailDraft,
+    MailInboundLog,
+    MailMessage,
+    MailRoute,
+    MailThread,
+    MailUpload,
+)
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -271,3 +283,157 @@ def test_an_agents_inbox_gets_the_same_list_features(w):
     # and never mixed with anyone's forwarded copies
     inbound.handle(_note("jjackson@marshellis.com"))
     assert all(i["forwarded"] is False for i in get(archived=True)["items"])
+
+
+# --- The mail client: folders, trash, drafts, bcc, attachments.
+
+def _stored(w, n=1, subject="Hi"):
+    th = MailThread.objects.create(workspace=w.ws, route=w.r, owner=w.owner, address=w.r.address, subject=subject,
+                                   message_count=1, last_message_at=timezone.now())
+    MailMessage.objects.create(thread=th, workspace=w.ws, direction="in", mailbox=w.r.address,
+                               message_id=f"<{th.pk}@x>", from_addr="a@x.org", from_name="A Person", to=[w.r.address],
+                               text=f"Hello there\n\nOn Tue, J wrote:\n> old words {n}")
+    return th
+
+
+def _list(w, **q):
+    return _c(w.owner).get("/api/mail/threads/marshellis", {"forwarded": "true", **q}).json()
+
+
+def test_list_rows_say_who_and_what_without_the_quote(w):
+    _stored(w)
+    row = _list(w, folder="inbox")["items"][0]
+    assert row["counterpart_name"] == "A Person" and row["snippet"] == "Hello there"
+    assert row["has_attachments"] is False
+
+
+def test_list_pages(w):
+    for i in range(3):
+        _stored(w, subject=f"s{i}")
+    page = _list(w, folder="inbox", limit=2)
+    assert len(page["items"]) == 2 and page["has_more"] is True
+    rest = _list(w, folder="inbox", limit=2, offset=2)
+    assert len(rest["items"]) == 1 and rest["has_more"] is False
+
+
+def test_folders_hold_what_they_should(w):
+    live, gone, junk, sent = _stored(w), _stored(w), _stored(w), _stored(w)
+    MailThread.objects.filter(pk=gone.pk).update(trashed_at=timezone.now())
+    MailThread.objects.filter(pk=junk.pk).update(spam=True)
+    MailMessage.objects.filter(thread=sent).update(direction="out")
+    ids = lambda **q: {r["thread_id"] for r in _list(w, **q)["items"]}  # noqa: E731
+    assert ids(folder="inbox") == {str(live.uuid)}
+    assert ids(folder="sent") == {str(sent.uuid)}
+    assert ids(folder="trash") == {str(gone.uuid)}
+    assert ids(folder="spam") == {str(junk.uuid)}
+    assert str(gone.uuid) not in ids() and str(junk.uuid) not in ids()  # the agents' default read
+    assert _c(w.owner).get("/api/mail/threads/marshellis", {"folder": "nope"}).status_code == 422
+
+
+def test_trash_then_delete_for_good_removes_the_files_too(w, monkeypatch, django_capture_on_commit_callbacks):
+    gone = []
+    monkeypatch.setattr(ses, "delete_objects", lambda keys: gone.extend(keys))
+    th = _stored(w)
+    MailMessage.objects.filter(thread=th).update(raw_key="kept/abc")
+    url = f"/api/mail/threads/marshellis/{th.uuid}"
+    assert _c(w.owner).delete(url).status_code == 409  # not from the inbox
+    moved = _c(w.owner).post(f"{url}/state", {"trashed": True}, content_type="application/json")
+    assert moved.json()["trashed"] is True
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _c(w.owner).delete(url).status_code == 204
+    assert not MailThread.objects.filter(pk=th.pk).exists() and gone == ["kept/abc"]
+
+
+def test_nobody_else_can_delete_or_empty_my_mail(w):
+    th = _stored(w)
+    MailThread.objects.filter(pk=th.pk).update(trashed_at=timezone.now())
+    assert _c(w.other).delete(f"/api/mail/threads/marshellis/{th.uuid}").status_code == 404
+    assert _post(w.other, "/api/mail/empty-folder/marshellis?folder=trash", {}).json() == {"deleted": 0}
+    assert MailThread.objects.filter(pk=th.pk).exists()
+    assert _post(w.owner, "/api/mail/empty-folder/marshellis?folder=trash", {}).json() == {"deleted": 1}
+    assert _post(w.owner, "/api/mail/empty-folder/marshellis?folder=inbox", {}).status_code == 422
+
+
+def test_trash_past_its_days_is_purged(w, monkeypatch):
+    monkeypatch.setattr(ses, "delete_objects", lambda keys: None)
+    old, recent = _stored(w), _stored(w)
+    MailThread.objects.filter(pk=old.pk).update(trashed_at=timezone.now() - timedelta(days=storage.TRASH_DAYS + 1))
+    MailThread.objects.filter(pk=recent.pk).update(trashed_at=timezone.now())
+    storage.purge_expired()
+    assert not MailThread.objects.filter(pk=old.pk).exists() and MailThread.objects.filter(pk=recent.pk).exists()
+
+
+def test_a_spam_threads_attachments_are_listed_without_a_link(w, monkeypatch):
+    monkeypatch.setattr(ses, "presign", lambda key, name: "https://s3.example/f")
+    th = _stored(w)
+    MailAttachment.objects.create(message=th.messages.get(), filename="x.exe", size=1, s3_key="attachments/x")
+    url = f"/api/mail/threads/marshellis/{th.uuid}"
+    assert _c(w.owner).get(url).json()["messages"][0]["attachments"][0]["url"] == "https://s3.example/f"
+    MailThread.objects.filter(pk=th.pk).update(spam=True)
+    assert _c(w.owner).get(url).json()["messages"][0]["attachments"][0]["url"] == ""
+
+
+def test_a_draft_is_its_authors_alone_and_saving_twice_is_one_draft(w):
+    key = "11111111-1111-4111-8111-111111111111"
+    url = f"/api/mail/drafts/marshellis/{key}"
+    put = lambda c, text: c.put(url, {"to": "bob", "text": text}, content_type="application/json")  # noqa: E731
+    assert put(_c(w.owner), "one").status_code == 200
+    assert put(_c(w.owner), "two").json()["text"] == "two"
+    assert [d["text"] for d in _c(w.owner).get("/api/mail/drafts/marshellis").json()["items"]] == ["two"]
+    assert _c(w.other).get("/api/mail/drafts/marshellis").json()["items"] == []
+    assert put(_c(w.other), "steal").status_code == 404
+    assert _c(w.other).delete(url).status_code == 204 and MailDraft.objects.filter(uuid=key).exists()
+    assert _c(w.owner).delete(url).status_code == 204 and not MailDraft.objects.filter(uuid=key).exists()
+
+
+def test_a_draft_cannot_name_someone_elses_thread(w):
+    th = _stored(w)
+    url = "/api/mail/drafts/marshellis/22222222-2222-4222-8222-222222222222"
+    body = {"thread_id": str(th.uuid), "text": "x"}
+    assert _c(w.other).put(url, body, content_type="application/json").status_code == 404
+
+
+def test_bcc_goes_on_the_envelope_never_the_headers_and_counts_against_the_cap(w, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: seen.update(kw) or "ses-1")
+    r = _c(w.owner).post("/api/mail/send/marshellis", {
+        "from_address": w.r.address, "to": ["t@x.org"], "bcc": ["secret@x.org"], "subject": "S", "text": "T"},
+        content_type="application/json")
+    assert r.status_code == 200 and r.json()["bcc"] == ["secret@x.org"]
+    assert seen["to"] == ["t@x.org", "secret@x.org"] and b"secret@x.org" not in seen["raw"]
+    assert agent_mail._sent_today(w.d) == 2
+
+
+def test_an_attachment_goes_out_and_stays_with_the_sent_message(w, monkeypatch):
+    objects, seen = {}, {}
+    monkeypatch.setattr(ses, "put_object", lambda key, data, ct: objects.update({key: data}))
+    monkeypatch.setattr(ses, "get_object", lambda key: objects[key])
+    monkeypatch.setattr(ses, "presign", lambda key, name: "https://s3.example/f")
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: seen.update(kw) or "ses-1")
+    up = _c(w.owner).post("/api/mail/uploads/marshellis",
+                          {"file": SimpleUploadedFile("note.txt", b"hello file", content_type="text/plain")})
+    assert up.status_code == 200 and up.json()["filename"] == "note.txt"
+    r = _c(w.owner).post("/api/mail/send/marshellis", {
+        "from_address": w.r.address, "to": ["t@x.org"], "subject": "S", "text": "T",
+        "attachments": [up.json()["id"]]}, content_type="application/json")
+    assert r.status_code == 200 and b"note.txt" in seen["raw"]
+    assert not MailUpload.objects.exists()
+    th = MailThread.objects.get(subject="S")
+    att = _c(w.owner).get(f"/api/mail/threads/marshellis/{th.uuid}").json()["messages"][0]["attachments"][0]
+    assert att["filename"] == "note.txt" and att["size"] == 10
+    assert MailMessage.objects.get(thread=th).size_bytes >= 10
+
+
+def test_someone_elses_upload_cannot_be_sent(w, monkeypatch):
+    monkeypatch.setattr(ses, "put_object", lambda *a: None)
+    up = _c(w.owner).post("/api/mail/uploads/marshellis", {"file": SimpleUploadedFile("n.txt", b"x")}).json()
+    MailRoute.objects.create(domain=w.d, local_part="ot", kind="forward", forward_to=w.other)
+    r = _c(w.other).post("/api/mail/send/marshellis", {
+        "from_address": f"ot@{w.d.name}", "to": ["t@x.org"], "subject": "S", "text": "T", "attachments": [up["id"]]},
+        content_type="application/json")
+    assert r.status_code == 422
+
+
+def test_a_reply_names_the_address_it_goes_out_from(w):
+    th = _stored(w)
+    assert _c(w.owner).get(f"/api/mail/threads/marshellis/{th.uuid}").json()["reply_from"] == w.r.address

@@ -201,17 +201,20 @@ Every browser-facing address canopy-web serves. The SPA route table is
     create, edit, pause, delete, run a schedule now (access.md § Triggers).
   - **Huddles**.
   - **Mail** (`mail`) — the agent's mailbox in the SAME client as a person's own mail
-    (`components/mail/MailClient`, below): Inbox / Archived, search, unread count, reply and
-    compose *as the agent* for someone who may act as it (`canEdit`; the server checks FULL).
-    HTML bodies render only in a `sandbox=""` iframe behind a no-network CSP, meta refreshes
-    stripped (`components/mail/MessageView`); attachments are presigned download links.
-    No address → points to Settings → Email.
+    (`components/mail/MailClient`, below), replying and composing *as the agent* for someone who may
+    act as it (`canEdit`; the server checks FULL). No address → points to Settings → Email.
   - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
-    forward routes (Keep a copy is on unless unchecked): Inbox / Archived, unread count, search
-    (`?forwarded=true&q=`), per-address filter, reply / reply all / compose from the person's own
-    forwarding addresses, keyboard shortcuts. Private to the person (`MailThread.owner`); plain
-    text out, no attachments on send. It is the same `MailClient` as the agent's Mail tab — they differ
-    only in the source (`forwarded` vs `agent`) and who the server lets send. Settings → Email shows each domain's inbound ledger (admins).
+    forward routes (Keep a copy is on unless unchecked), private to the person (`MailThread.owner`).
+    `MailClient` is one implementation for both: they differ only in the source (`forwarded` vs
+    `agent`) and who the server lets send. The open thread and folder are in the URL
+    (`?thread=<uuid>&folder=`). Folders: Inbox, Sent, Drafts, Archived, Spam, Trash; 30-second refresh
+    and on tab focus; list and reader scroll apart, one pane at a time below `lg`; select several; older
+    messages and quoted text collapse; a failed sender check warns on the message. Drafts save as you
+    type and return when their thread opens. Send waits 5 seconds with Undo (the draft stays saved until
+    it has gone); moving a thread offers Undo. Sends plain text with Cc, Bcc and attachments; an address
+    that does not parse blocks Send. Its keys are in the app's `?` list (`components/work/keys.ts`). HTML renders only in the sandbox
+    in `components/mail/MessageView` (`docs/architecture/mail.md` § Safety invariants). Settings → Email
+    shows each domain's inbound ledger (admins).
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent

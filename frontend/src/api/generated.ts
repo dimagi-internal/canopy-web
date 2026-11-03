@@ -1059,9 +1059,11 @@ export interface paths {
          * List mail threads
          * @description One list for every inbox. `agent=`: that agent's threads. `forwarded=true`: the caller's
          *     own inbox of mail kept from forward routes. Neither: the workspace's agent threads, never
-         *     another person's forwarded copies. `q` searches subject, sender and text; `address` narrows
-         *     to one address. `unread_total` counts the inbox's unread threads (archived excluded) and
-         *     `addresses` the addresses it can send from.
+         *     another person's forwarded copies. `folder` is inbox, sent, archived, spam or trash; without
+         *     one the list is live threads at `archived`. `q` searches subject, sender, recipients and text;
+         *     `address` narrows to one address. `unread_total` counts the inbox's unread threads (archived,
+         *     spam and trash excluded), `addresses` the addresses it can send from, and `has_more` says
+         *     another page follows `offset` + `limit` (at most 200).
          */
         readonly get: operations["list_mail_threads"];
         readonly put?: never;
@@ -1083,7 +1085,75 @@ export interface paths {
         readonly get: operations["get_mail_thread"];
         readonly put?: never;
         readonly post?: never;
+        /**
+         * Delete a thread for good
+         * @description Only from Trash or Spam (409 otherwise): move it there first. This cannot be undone.
+         */
+        readonly delete: operations["delete_mail_thread"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/uploads/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Hold a file for a message about to be sent
+         * @description Stores a file picked in a composer. Name its `id` in a reply or send's `attachments`.
+         */
+        readonly post: operations["upload_mail_attachment"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/drafts/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your unsent messages
+         * @description The caller's own drafts written in one inbox: `agent=` that agent's, else their own.
+         */
+        readonly get: operations["list_mail_drafts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/drafts/{workspace}/{draft_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Save an unsent message
+         * @description Create or replace a draft under an id the caller chose. Nobody else's id is reachable.
+         */
+        readonly put: operations["save_mail_draft"];
+        readonly post?: never;
+        /**
+         * Throw away an unsent message
+         * @description Its waiting files go with it. A sent draft's files are the message's by now, so they stay.
+         */
+        readonly delete: operations["delete_mail_draft"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1141,6 +1211,27 @@ export interface paths {
         readonly put?: never;
         /** Mark a thread read/archived */
         readonly post: operations["set_mail_thread_state"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/empty-folder/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Empty Trash or Spam
+         * @description Delete every thread in one inbox's `trash` or `spam` for good: `agent=` that agent's
+         *     (needs FULL on it), else the caller's own.
+         */
+        readonly post: operations["empty_mail_folder"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -20145,6 +20236,11 @@ export interface components {
             /** Cc */
             readonly cc: readonly string[];
             /**
+             * Bcc
+             * @default []
+             */
+            readonly bcc: readonly string[];
+            /**
              * Reply To
              * @default []
              */
@@ -20196,6 +20292,11 @@ export interface components {
              * @default []
              */
             readonly addresses: readonly string[];
+            /**
+             * Has More
+             * @default false
+             */
+            readonly has_more: boolean;
         };
         /** MailThreadOut */
         readonly MailThreadOut: {
@@ -20221,20 +20322,147 @@ export interface components {
              */
             readonly forwarded: boolean;
             /**
+             * Spam
+             * @default false
+             */
+            readonly spam: boolean;
+            /**
+             * Trashed
+             * @default false
+             */
+            readonly trashed: boolean;
+            /**
              * Counterpart
              * @default
              */
             readonly counterpart: string;
+            /**
+             * Counterpart Name
+             * @default
+             */
+            readonly counterpart_name: string;
+            /**
+             * Snippet
+             * @default
+             */
+            readonly snippet: string;
+            /**
+             * Has Attachments
+             * @default false
+             */
+            readonly has_attachments: boolean;
             /**
              * Default Reply To
              * @default []
              */
             readonly default_reply_to: readonly string[];
             /**
+             * Reply From
+             * @default
+             */
+            readonly reply_from: string;
+            /**
              * Messages
              * @default []
              */
             readonly messages: readonly components["schemas"]["MailMessageOut"][];
+        };
+        /** MailUploadOut */
+        readonly MailUploadOut: {
+            /** Id */
+            readonly id: string;
+            /** Filename */
+            readonly filename: string;
+            /** Content Type */
+            readonly content_type: string;
+            /** Size */
+            readonly size: number;
+        };
+        /** MailDraftListOut */
+        readonly MailDraftListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["MailDraftOut"][];
+        };
+        /** MailDraftOut */
+        readonly MailDraftOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Thread Id */
+            readonly thread_id: string;
+            /**
+             * Thread Subject
+             * @default
+             */
+            readonly thread_subject: string;
+            /** From Address */
+            readonly from_address: string;
+            /** To */
+            readonly to: string;
+            /** Cc */
+            readonly cc: string;
+            /** Bcc */
+            readonly bcc: string;
+            /** Subject */
+            readonly subject: string;
+            /** Text */
+            readonly text: string;
+            /**
+             * Uploads
+             * @default []
+             */
+            readonly uploads: readonly components["schemas"]["MailUploadOut"][];
+            /** Updated At */
+            readonly updated_at: string;
+        };
+        /** MailDraftIn */
+        readonly MailDraftIn: {
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Thread Id
+             * @default
+             */
+            readonly thread_id: string;
+            /**
+             * From Address
+             * @default
+             */
+            readonly from_address: string;
+            /**
+             * To
+             * @default
+             */
+            readonly to: string;
+            /**
+             * Cc
+             * @default
+             */
+            readonly cc: string;
+            /**
+             * Bcc
+             * @default
+             */
+            readonly bcc: string;
+            /**
+             * Subject
+             * @default
+             */
+            readonly subject: string;
+            /**
+             * Text
+             * @default
+             */
+            readonly text: string;
+            /**
+             * Uploads
+             * @default []
+             */
+            readonly uploads: readonly string[];
         };
         /** MailReplyIn */
         readonly MailReplyIn: {
@@ -20255,6 +20483,16 @@ export interface components {
              * @default []
              */
             readonly cc: readonly string[];
+            /**
+             * Bcc
+             * @default []
+             */
+            readonly bcc: readonly string[];
+            /**
+             * Attachments
+             * @default []
+             */
+            readonly attachments: readonly string[];
         };
         /** MailSendIn */
         readonly MailSendIn: {
@@ -20270,6 +20508,16 @@ export interface components {
              * @default []
              */
             readonly cc: readonly string[];
+            /**
+             * Bcc
+             * @default []
+             */
+            readonly bcc: readonly string[];
+            /**
+             * Attachments
+             * @default []
+             */
+            readonly attachments: readonly string[];
             /** Subject */
             readonly subject: string;
             /** Text */
@@ -20288,6 +20536,15 @@ export interface components {
             readonly unread?: boolean | null;
             /** Archived */
             readonly archived?: boolean | null;
+            /** Spam */
+            readonly spam?: boolean | null;
+            /** Trashed */
+            readonly trashed?: boolean | null;
+        };
+        /** MailEmptiedOut */
+        readonly MailEmptiedOut: {
+            /** Deleted */
+            readonly deleted: number;
         };
         /** SlackChannelAllowOut */
         readonly SlackChannelAllowOut: {
@@ -47537,6 +47794,9 @@ export interface operations {
                 readonly forwarded?: boolean;
                 readonly q?: string;
                 readonly address?: string;
+                readonly folder?: string;
+                readonly offset?: number;
+                readonly limit?: number;
             };
             readonly header?: never;
             readonly path: {
@@ -47577,6 +47837,131 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["MailThreadOut"];
                 };
+            };
+        };
+    };
+    readonly delete_mail_thread: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly uuid: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly upload_mail_attachment: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailUploadOut"];
+                };
+            };
+        };
+    };
+    readonly list_mail_drafts: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDraftListOut"];
+                };
+            };
+        };
+    };
+    readonly save_mail_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly draft_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailDraftIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDraftOut"];
+                };
+            };
+        };
+    };
+    readonly delete_mail_draft: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly draft_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -47656,6 +48041,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MailThreadOut"];
+                };
+            };
+        };
+    };
+    readonly empty_mail_folder: {
+        readonly parameters: {
+            readonly query: {
+                readonly folder: string;
+                readonly agent?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailEmptiedOut"];
                 };
             };
         };
