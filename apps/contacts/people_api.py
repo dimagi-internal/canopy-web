@@ -987,15 +987,45 @@ def _session_reviewers(person: Person, user) -> dict:
             "coach": session_reviewers.coach_offer(user, wsvc.user_workspace_slugs(user))}
 
 
+def _asker_turn_agent(request: HttpRequest):
+    """The agent of the turn whose verified human asker this request speaks for
+    (a caller token, `kinds.CALLER_TOKEN`), else None. The token is already the
+    asker's own user (re-resolved per call); this also requires the turn to be an
+    agent's, asked by a verified canopy user who is that very user."""
+    from apps.harness import caller_context  # noqa: PLC0415 — only a caller-token request pays for it; harness imports contacts
+    from apps.harness import initiator as who  # noqa: PLC0415 — same
+    from apps.harness.models import Turn  # noqa: PLC0415 — same
+
+    cred = getattr(request, "auth_credential", None) or {}
+    if kinds.kind_of(cred) is not kinds.KINDS[kinds.CALLER_TOKEN] or not cred.get("turn_id"):
+        return None
+    turn = Turn.objects.filter(pk=cred["turn_id"]).select_related("agent", "chat_session__agent").first()
+    if (turn is None or turn.initiator_kind != who.USER or turn.initiator_user_id != request.user.pk
+            or not caller_context.is_verified(turn) or not people.is_human_account(request.user)):
+        return None
+    return turn.acting_agent
+
+
 @router.get("/me/session-reviewers/", response=SessionReviewersOut,
             summary="The agents you let review your sessions")
 # Letting an agent review your sessions, read-only (apps/contacts/session_reviewers.py):
 # choosing who is the person's own act; canopy_sessions.access (leg 5) enforces it.
+# The ONE read a caller token also reaches (the agent asks "has my asker enrolled?");
+# changing consent stays the person's alone.
 @gate("self")
 def list_my_session_reviewers(request: HttpRequest) -> dict:
     """Which agents may read your sessions to review them, which you could let
     in (the agents of workspaces you belong to), and the coach canopy offers
-    you, if any. Only you see this."""
+    you, if any. Only you see this. An agent's turn, asked by you, sees only
+    whether it is itself among them."""
+    agent = _asker_turn_agent(request)
+    if agent is not None:
+        person = contact_services.person_for(user=request.user)
+        if person is None:
+            raise _not_found()
+        out = _session_reviewers(person, request.user)
+        out["reviewers"] = [r for r in out["reviewers"] if r["agent"] == agent.slug]
+        return {**out, "agents": [], "coach": None}
     return _session_reviewers(_the_person_themself(request), request.user)
 
 

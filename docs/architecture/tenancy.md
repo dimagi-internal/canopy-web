@@ -274,6 +274,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   `GET /api/canopy-sessions/?of_user=<id>`. Which agent canopy offers as the coach (the
   first-run checkbox, the Settings switch) is `settings.COACHING_AGENT_SLUG`, offered only
   where that agent is in a workspace the person is in or may ask to join.
+  The one other reader of the list is the agent's own turn: the caller token of a verified user who asked that turn may `GET /api/people/me/session-reviewers/` for their own record and sees only whether THAT agent is among their reviewers (no pickable agents, no coach offer); POST and DELETE stay the person's own (browser session or PAT), and a contact's, unverified, or another user's token reads nothing.
 - Acting needs participant role owner/editor; a `viewer` reads; sharing is the owner's
   (`/participants`, the chat header's People control).
 - Every entry point calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
