@@ -269,8 +269,6 @@ class AgentCapability:
 
     name: str
     description: str = ""
-    #: Caller classes the capability is published for (``contact``, ``member``…).
-    callers: tuple[str, ...] = ()
     #: The capability is ``data: sensitive`` on the agent's published interface.
     handles_sensitive: bool = False
     #: Who published the interface holding the setting, and when ("" when it does not handle sensitive data).
@@ -280,7 +278,7 @@ class AgentCapability:
     @classmethod
     def from_mapping(cls, value: Mapping) -> AgentCapability:
         return cls(name=str(value.get("name") or ""), description=str(value.get("description") or ""),
-                   callers=_strs(value.get("callers")), handles_sensitive=value.get("handles_sensitive") is True,
+                   handles_sensitive=value.get("handles_sensitive") is True,
                    sensitive_set_by=str(value.get("sensitive_set_by") or ""),
                    sensitive_set_at=str(value.get("sensitive_set_at") or ""))
 

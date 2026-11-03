@@ -2,6 +2,15 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.27.0 — 2026-11-03
+
+**Removed: `AgentCapability.callers`.**
+
+- canopy retired per-capability `callers` (and `role`) from the agent interface; who may use
+  a capability is the agent's access list. The site-agents listing never carried the key,
+  so the field was always `()`. Code that read `capability.callers` or passed `callers=` to
+  `AgentCapability` must drop it.
+
 ## 0.26.0 — 2026-10-28
 
 **Site sign-offs on the site's own page: approve with a passkey without leaving it.**
