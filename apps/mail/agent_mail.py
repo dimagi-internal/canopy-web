@@ -185,10 +185,10 @@ def _sent_today(domain, workspace_id=None) -> int:
                                       created_at__gte=since)
     if workspace_id is not None:
         rows = rows.filter(workspace=workspace_id)
-    return sum(len(t or []) + len(c or []) for t, c in rows.values_list("to", "cc"))
+    return sum(len(t or []) + len(c or []) + len(b or []) for t, c, b in rows.values_list("to", "cc", "bcc"))
 
 
-def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=(),
+def send(route, *, to, cc=(), bcc=(), subject="", text="", html="", thread=None, attachments=(),
          sender_name="", from_address="", owner=None) -> MailMessage:
     """Send as the route's agent. The From is the route address — or, for a person replying
     from a catch-all, the `from_address` the mail was sent to (the caller proves it resolves
@@ -201,12 +201,27 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
     with transaction.atomic():
         domain = MailDomain.objects.select_for_update(of=("self",)).select_related("workspace").get(
             pk=route.domain_id)
-        out = _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
+        out = _send_locked(route, domain, to=to, cc=cc, bcc=bcc, subject=subject, text=text, html=html,
                            thread=thread, attachments=attachments, sender_name=sender_name,
                            from_address=from_address, owner=owner)
     _enforce_cap(out)  # outside the domain lock: eviction is the mailbox's own business
     _admit_recipients(route, out)
     return out
+
+
+def attach_uploads(out, uploads) -> None:
+    """The files a sent message carried become its attachments, on the keys they already
+    have. The message has gone by now, so a problem here is logged, never raised."""
+    try:
+        with transaction.atomic():
+            for u in uploads:
+                MailAttachment.objects.create(message=out, filename=u.filename, content_type=u.content_type,
+                                              size=u.size, s3_key=u.s3_key, kept=True)
+                u.delete()
+            total = sum(u.size for u in uploads)
+            MailMessage.objects.filter(pk=out.pk).update(size_bytes=F("size_bytes") + total)
+    except Exception:  # noqa: BLE001
+        logger.exception("mail %s: could not record its attachments", out.pk)
 
 
 def _admit_recipients(route, out) -> None:
@@ -226,28 +241,29 @@ def _admit_recipients(route, out) -> None:
         logger.exception("mail %s: could not admit the recipients to its session", out.pk)
 
 
-def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments,
+def _send_locked(route, domain, *, to, cc, bcc, subject, text, html, thread, attachments,
                  sender_name="", from_address="", owner=None) -> MailMessage:
     if domain.status == MailDomain.SUSPENDED:
         raise SendRefused(409, f"sending from {domain.name} is suspended: {domain.suspended_reason}")
     if domain.status != MailDomain.VERIFIED:
         raise SendRefused(409, f"{domain.name} is not verified yet")
-    to, cc = _addresses(to, "recipient"), _addresses(cc, "cc")
+    to, cc, bcc = _addresses(to, "recipient"), _addresses(cc, "cc"), _addresses(bcc, "bcc")
+    everyone = len(to) + len(cc) + len(bcc)
     if not to:
         raise SendRefused(422, "no recipients")
     own = (from_address or route.address).lower()
-    if own in to or own in cc:
+    if own in to or own in cc or own in bcc:
         raise SendRefused(422, "an agent cannot send mail to its own address")
-    if len(to) + len(cc) > MAX_RECIPIENTS:
+    if everyone > MAX_RECIPIENTS:
         raise SendRefused(422, f"at most {MAX_RECIPIENTS} recipients per message")
     share = None
     if route.workspace_id != domain.workspace_id:
         share = domains.share_for(domain, route.workspace)
         if share is None:
             raise SendRefused(409, f"{domain.name} is no longer shared with this workspace")
-    if _sent_today(domain) + len(to) + len(cc) > domain.daily_send_cap:
+    if _sent_today(domain) + everyone > domain.daily_send_cap:
         raise SendRefused(429, f"{domain.name} reached its daily send cap ({domain.daily_send_cap})")
-    if share is not None and _sent_today(domain, route.workspace_id) + len(to) + len(cc) > share.daily_send_cap:
+    if share is not None and _sent_today(domain, route.workspace_id) + everyone > share.daily_send_cap:
         raise SendRefused(429, f"this workspace reached its daily send cap on {domain.name} ({share.daily_send_cap})")
     subject = _line(subject)
     msg = EmailMessage()
@@ -278,7 +294,7 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         msg.add_attachment(att.data, maintype=main, subtype=sub or "octet-stream",
                            filename=_line(att.filename))
     try:
-        ses_id = ses.send_raw(from_addr=from_address or route.address, to=to + cc, raw=msg.as_bytes())
+        ses_id = ses.send_raw(from_addr=from_address or route.address, to=to + cc + bcc, raw=msg.as_bytes())
     except ses.MailOff:
         raise SendRefused(503, "mail is turned off on this deployment") from None
     except ClientError as exc:
@@ -292,10 +308,10 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     out = MailMessage.objects.create(
         thread=thread, workspace=route.workspace, direction=MailMessage.OUT, mailbox=route.address,
         message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
-        references=msg.get("References", ""), from_addr=from_address or route.address, to=to, cc=cc,
+        references=msg.get("References", ""), from_addr=from_address or route.address, to=to, cc=cc, bcc=bcc,
         subject=subject[:998], text=text, html=html, ses_message_id=ses_id,
         delivery_status=MailMessage.SENT,
-        # Only the text and html of a sent message are stored (no raw MIME, no attachments).
+        # The text and html; `attach_uploads` adds the attachments the caller holds in S3.
         size_bytes=storage.message_size(text=text, html=html))
     MailThread.objects.filter(pk=thread.pk).update(
         message_count=F("message_count") + 1, last_message_at=timezone.now(), unread=False)

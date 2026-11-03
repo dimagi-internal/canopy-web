@@ -13,6 +13,8 @@ const { fetchInbox, fetchMailThread, getAgentMailbox, sendMail, ctx } = vi.hoist
 vi.mock('@/api/mail', () => ({
   fetchInbox, fetchMailThread, getAgentMailbox,
   setMailThreadState: vi.fn(async () => ({})), replyToThread: vi.fn(), sendMail,
+  fetchMailDrafts: vi.fn(async () => []), saveMailDraft: vi.fn(async () => ({})), deleteMailDraft: vi.fn(async () => undefined),
+  deleteMailThread: vi.fn(), emptyMailFolder: vi.fn(), uploadMailAttachment: vi.fn(),
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
@@ -21,9 +23,13 @@ vi.mock('react-router-dom', async (orig) => ({
 
 const { AgentMailSection } = await import('./AgentMailSection')
 const { sandboxedSrcDoc } = await import('@/components/mail/MessageView')
+const { mailTiming } = await import('@/components/mail/MailClient')
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); ctx.canEdit = false })
-beforeEach(() => { getAgentMailbox.mockResolvedValue({ kind: 'none', addresses: [] }) })
+beforeEach(() => {
+  getAgentMailbox.mockResolvedValue({ kind: 'none', addresses: [] })
+  mailTiming.sendDelayMs = 0
+})
 
 const thread = {
   thread_id: 't1', address: 'echo@mail.example.org', agent: 'echo', subject: 'Grant question',
@@ -51,31 +57,33 @@ function renderMail() {
 }
 
 describe('AgentMailSection', () => {
-  it('lists threads and loads one on click, in order with direction labels', async () => {
+  it('lists threads and loads one on click, newest open and older ones a line that opens', async () => {
     fetchInbox.mockResolvedValue({ items: [thread], agent_address: 'echo@mail.example.org', unread_total: 0, addresses: [] })
     fetchMailThread.mockResolvedValue(detail())
     renderMail()
     const row = await screen.findByText('Grant question')
-    expect(fetchInbox).toHaveBeenCalledWith('connect', { agent: 'echo' }, { archived: false, q: '', address: '' })
+    expect(fetchInbox).toHaveBeenCalledWith('connect', { agent: 'echo' }, { folder: 'inbox', q: '', address: '', limit: 50 })
     expect(screen.getAllByText('amy@x.org').length).toBeGreaterThan(0)
     fireEvent.click(row)
     await waitFor(() => expect(fetchMailThread).toHaveBeenCalledWith('connect', 't1'))
-    const first = await screen.findByText('First hello')
-    const second = screen.getByText('Second reply')
-    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByText('in')).toBeTruthy()
-    expect(screen.getByText('out')).toBeTruthy()
+    const second = await screen.findByText('Second reply')
+    const older = screen.getByRole('button', { name: /First hello/ })
+    expect(older.getAttribute('aria-expanded')).toBe('false')
+    expect(older.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByText('delivered')).toBeTruthy()
+    fireEvent.click(older)
+    expect(screen.getAllByText('First hello').length).toBe(1)
   })
 
-  it('renders html only in an iframe with an empty sandbox', async () => {
+  it('renders html only in a sandboxed iframe that can open links but never reach this origin', async () => {
     fetchInbox.mockResolvedValue({ items: [thread], agent_address: 'echo@mail.example.org', unread_total: 0, addresses: [] })
     fetchMailThread.mockResolvedValue(detail('<p>Hi</p>'))
     const { container } = renderMail()
     fireEvent.click(await screen.findByText('Grant question'))
+    fireEvent.click(await screen.findByRole('button', { name: /First hello/ }))
     await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy())
     const frame = container.querySelector('iframe')!
-    expect(frame.getAttribute('sandbox')).toBe('')
+    expect(frame.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox')
     expect(frame.getAttribute('srcdoc')).toContain('<p>Hi</p>')
     expect(frame.getAttribute('srcdoc')!.startsWith(
       `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`,
@@ -107,6 +115,7 @@ describe('AgentMailSection', () => {
     fetchMailThread.mockResolvedValue(detail())
     renderMail()
     fireEvent.click(await screen.findByText('Grant question'))
+    fireEvent.click(await screen.findByRole('button', { name: /First hello/ }))
     const link = await screen.findByRole('link', { name: /budget\.pdf/ })
     expect(link.getAttribute('href')).toBe('https://s3/budget?sig=1')
   })
@@ -206,6 +215,6 @@ describe('AgentMailSection', () => {
     expect(screen.getByText(/sent as Echo/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() => expect(sendMail).toHaveBeenCalledWith('connect', {
-      agent: 'echo', from_address: 'echo@mail.example.org', to: ['amy@x.org'], cc: [], subject: 'Hello', text: 'Hi' }))
+      agent: 'echo', from_address: 'echo@mail.example.org', to: ['amy@x.org'], cc: [], bcc: [], attachments: [], subject: 'Hello', text: 'Hi' }))
   })
 })

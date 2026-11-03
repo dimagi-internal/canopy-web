@@ -152,6 +152,10 @@ class MailThread(models.Model):
                               related_name="+")
     """Set on a thread kept from a forward route: only this person may read it (not even an
     admin, as for any other person's mail). NULL for an agent's thread, which the workspace sees."""
+    spam = models.BooleanField(default=False)
+    """In the Spam folder: out of every default list, its attachments not offered for download."""
+    trashed_at = models.DateTimeField(null=True, blank=True)
+    """In the Trash since then; `storage.purge_expired` deletes it for good after TRASH_DAYS."""
 
     class Meta:
         ordering = ["-last_message_at"]
@@ -183,6 +187,8 @@ class MailMessage(models.Model):
     from_name = models.CharField(max_length=320, blank=True, default="")
     to = models.JSONField(default=list, blank=True)
     cc = models.JSONField(default=list, blank=True)
+    bcc = models.JSONField(default=list, blank=True, db_default=[])
+    """Outbound only: who was blind-copied. Never in the sent headers."""
     reply_to = models.JSONField(default=list, blank=True, db_default=[])
     """The inbound message's Reply-To addresses; a reply goes there, else to from_addr."""
     subject = models.CharField(max_length=998, blank=True, default="")
@@ -225,6 +231,47 @@ class MailAttachment(models.Model):
     kept = models.BooleanField(default=True)
     """False when the message's attachments were over MAIL_MAX_ATTACHMENT_BYTES and this one's
     content was dropped: its name, type and size stay, the bytes were never stored."""
+
+
+class MailUpload(models.Model):
+    """A file picked in a composer, in S3 and on no message yet. Sending it makes it a
+    MailAttachment on the same key; `storage.purge_expired` removes one that never was sent."""
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    filename = models.CharField(max_length=255, blank=True, default="")
+    content_type = models.CharField(max_length=255, blank=True, default="")
+    size = models.PositiveIntegerField(default=0)
+    s3_key = models.CharField(max_length=512)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class MailDraft(models.Model):
+    """An unsent message: its author's alone, whichever inbox it was written in. The browser
+    names it (`uuid`), so saving the same draft again can never make a second one."""
+    NEW, REPLY = "new", "reply"
+
+    uuid = models.UUIDField(unique=True, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    agent_slug = models.CharField(max_length=100, blank=True, default="")
+    """The agent's inbox it was written in; "" for the person's own."""
+    thread = models.ForeignKey(MailThread, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    """The thread a reply answers. NULL on a new message, or once that thread is gone."""
+    from_address = models.CharField(max_length=320, blank=True, default="")
+    to = models.TextField(blank=True, default="")
+    cc = models.TextField(blank=True, default="")
+    bcc = models.TextField(blank=True, default="")
+    """As typed: a half-written address is still a draft."""
+    subject = models.CharField(max_length=998, blank=True, default="")
+    text = models.TextField(blank=True, default="")
+    uploads = models.JSONField(default=list, blank=True)
+    """MailUpload uuids waiting to be sent with it."""
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["workspace", "user", "agent_slug"], name="mail_draft_inbox")]
 
 
 class MailForwardLog(models.Model):

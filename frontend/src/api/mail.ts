@@ -117,48 +117,99 @@ export async function fetchInboundLog(workspace: string, domainId: number, recip
   return res.data as MailInboundLogListOut
 }
 
-/** Mark a thread read/unread or archived. */
+/** Mark a thread read/unread, or move it: archived, spam, trashed. */
 export async function setMailThreadState(workspace: string, threadId: string,
-  body: { unread?: boolean; archived?: boolean }): Promise<MailThreadOut> {
+  body: { unread?: boolean; archived?: boolean; spam?: boolean; trashed?: boolean }): Promise<MailThreadOut> {
   const res = await apiV2.POST('/api/mail/threads/{workspace}/{uuid}/state', {
     params: { path: { workspace, uuid: threadId } }, body })
   ensureOk(res, 'Failed to update the thread')
   return res.data as MailThreadOut
 }
 
-export type MailInbox = { items: MailThreadOut[]; unread_total: number; addresses: string[]; agent_address: string }
+export type MailFolder = 'inbox' | 'sent' | 'archived' | 'spam' | 'trash'
+export type MailInbox = { items: MailThreadOut[]; unread_total: number; addresses: string[]; agent_address: string; has_more: boolean }
 export type InboxSource = { agent?: string; forwarded?: boolean }
-export type InboxFilter = { archived?: boolean; q?: string; address?: string }
+export type InboxFilter = { folder?: MailFolder; q?: string; address?: string; offset?: number; limit?: number }
+export type MailUploadOut = components['schemas']['MailUploadOut']
+export type MailDraftOut = components['schemas']['MailDraftOut']
+export type MailDraftIn = components['schemas']['MailDraftIn']
 
 /** One inbox's threads: an agent's (`agent`) or the caller's own kept forwarded mail (`forwarded`),
- *  by archive state, search text or address. `addresses` are what it can send from. */
+ *  by folder, search text or address. `addresses` are what it can send from. */
 export async function fetchInbox(workspace: string, source: InboxSource, opts: InboxFilter = {}): Promise<MailInbox> {
-  const query: Record<string, string | boolean> = {}
+  const query: Record<string, string | boolean | number> = {}
   if (source.agent) query.agent = source.agent
   if (source.forwarded) query.forwarded = true
-  if (opts.archived) query.archived = true
+  if (opts.folder) query.folder = opts.folder
   if (opts.q?.trim()) query.q = opts.q.trim()
   if (opts.address) query.address = opts.address
+  if (opts.offset) query.offset = opts.offset
+  if (opts.limit) query.limit = opts.limit
   const res = await apiV2.GET('/api/mail/threads/{workspace}', { params: { path: { workspace }, query } })
   ensureOk(res, 'Failed to load mail')
   const d = res.data as MailThreadListOut
   return { items: [...d.items], unread_total: d.unread_total ?? 0, addresses: [...(d.addresses ?? [])],
-    agent_address: d.agent_address ?? '' }
+    agent_address: d.agent_address ?? '', has_more: d.has_more ?? false }
 }
 
+type Outgoing = { text: string; to: string[]; cc: string[]; bcc: string[]; attachments: string[] }
+
 /** Answer a thread from your own address; the reply joins the thread. */
-export async function replyToThread(workspace: string, threadId: string,
-  body: { text: string; to?: string[]; cc?: string[] }): Promise<MailMessageOut> {
+export async function replyToThread(workspace: string, threadId: string, body: Outgoing): Promise<MailMessageOut> {
   const res = await apiV2.POST('/api/mail/threads/{workspace}/{uuid}/reply', {
-    params: { path: { workspace, uuid: threadId } }, body: { text: body.text, html: '', to: body.to ?? [], cc: body.cc ?? [] } })
+    params: { path: { workspace, uuid: threadId } }, body: { html: '', ...body } })
   ensureOk(res, 'Failed to send the reply')
   return res.data as MailMessageOut
 }
 
 /** Start a new thread: as an agent (`agent`), or from one of your own forwarding addresses. */
 export async function sendMail(workspace: string,
-  body: { agent?: string; from_address: string; to: string[]; cc: string[]; subject: string; text: string }): Promise<MailMessageOut> {
+  body: Outgoing & { agent?: string; from_address: string; subject: string }): Promise<MailMessageOut> {
   const res = await apiV2.POST('/api/mail/send/{workspace}', { params: { path: { workspace } }, body: { html: '', ...body, agent: body.agent ?? '' } })
   ensureOk(res, 'Failed to send the message')
   return res.data as MailMessageOut
+}
+
+/** Delete a thread for good. Only from Trash or Spam. */
+export async function deleteMailThread(workspace: string, threadId: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/mail/threads/{workspace}/{uuid}', { params: { path: { workspace, uuid: threadId } } })
+  ensureOk(res, 'Failed to delete the thread')
+}
+
+/** Delete everything in Trash or Spam for good. */
+export async function emptyMailFolder(workspace: string, folder: 'trash' | 'spam', agent?: string): Promise<void> {
+  const res = await apiV2.POST('/api/mail/empty-folder/{workspace}', {
+    params: { path: { workspace }, query: { folder, agent: agent ?? '' } } })
+  ensureOk(res, 'Failed to empty the folder')
+}
+
+/** Hold a picked file in storage; a send names it by id. */
+export async function uploadMailAttachment(workspace: string, file: File): Promise<MailUploadOut> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await apiV2.POST('/api/mail/uploads/{workspace}', {
+    params: { path: { workspace } },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    body: form as any,
+    bodySerializer: (body: unknown) => body as FormData,
+  })
+  ensureOk(res, 'Failed to attach the file')
+  return res.data as MailUploadOut
+}
+
+export async function fetchMailDrafts(workspace: string, agent?: string): Promise<MailDraftOut[]> {
+  const res = await apiV2.GET('/api/mail/drafts/{workspace}', { params: { path: { workspace }, query: agent ? { agent } : {} } })
+  ensureOk(res, 'Failed to load drafts')
+  return [...(res.data as { items: readonly MailDraftOut[] }).items]
+}
+
+export async function saveMailDraft(workspace: string, id: string, body: MailDraftIn): Promise<MailDraftOut> {
+  const res = await apiV2.PUT('/api/mail/drafts/{workspace}/{draft_id}', { params: { path: { workspace, draft_id: id } }, body })
+  ensureOk(res, 'Failed to save the draft')
+  return res.data as MailDraftOut
+}
+
+export async function deleteMailDraft(workspace: string, id: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/mail/drafts/{workspace}/{draft_id}', { params: { path: { workspace, draft_id: id } } })
+  ensureOk(res, 'Failed to delete the draft')
 }

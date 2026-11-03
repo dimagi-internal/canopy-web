@@ -46,6 +46,24 @@ export const SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Mail',
+    shortcuts: [
+      { keys: ['C'], what: 'Compose' },
+      { keys: ['J'], what: 'Next message' },
+      { keys: ['K'], what: 'Previous message' },
+      { keys: ['Enter'], what: 'Open the message' },
+      { keys: ['X'], what: 'Select the message' },
+      { keys: ['R'], what: 'Reply' },
+      { keys: ['A'], what: 'Reply all' },
+      { keys: ['F'], what: 'Forward' },
+      { keys: ['E'], what: 'Archive' },
+      { keys: ['#'], what: 'Delete' },
+      { keys: ['!'], what: 'Report spam' },
+      { keys: ['U'], what: 'Mark unread' },
+      { keys: ['/'], what: 'Search mail' },
+    ],
+  },
+  {
     title: 'Triage',
     shortcuts: [
       { keys: ['A'], what: 'Accept into Todo' },
