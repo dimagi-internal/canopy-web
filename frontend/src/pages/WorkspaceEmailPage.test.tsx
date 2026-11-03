@@ -310,4 +310,11 @@ describe('WorkspaceEmailPage', () => {
     expect(within(log).getByText('Hello')).toBeTruthy()
     expect(within(log).getByText('jjackson@marshellis.com')).toBeTruthy()
   })
+  it('shows Keep a copy as its own column and flips it on a forwarding row without opening Edit', async () => {
+    renderPage()
+    expect(await screen.findByText('Keep a copy in canopy')).toBeTruthy()
+    fireEvent.click(await screen.findByLabelText('Keep a copy in canopy: *@marshellis.com'))
+    await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
+      local_part: '*', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: true }))
+  })
 })

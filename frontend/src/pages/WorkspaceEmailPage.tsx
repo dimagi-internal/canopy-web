@@ -114,15 +114,16 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   }
 
   // Flips one route on or off through the same PUT, keeping everything else as it is.
-  async function toggleRoute(r: MailRouteOut) {
+  async function toggleRoute(r: MailRouteOut, change: { enabled?: boolean; keep_copy?: boolean } = { enabled: !r.enabled }) {
     await run(async () => {
       await saveMailRoute(workspace, domain.id, {
         local_part: r.local_part,
         kind: r.kind,
         agent_slug: r.agent_slug,
         forward_to_user_id: r.forward_to_user_id ?? null,
-        enabled: !r.enabled,
+        enabled: r.enabled,
         keep_copy: r.keep_copy,
+        ...change,
       })
       await reload()
     }, 'Could not change the address')
@@ -281,6 +282,9 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 <th className="py-1 pr-3 font-medium">Address</th>
                 <th className="py-1 pr-3 font-medium">Goes to</th>
                 <th className="py-1 pr-3 font-medium">Enabled</th>
+                <th className="py-1 pr-3 font-medium" title="Also keep each forwarded message in the member's canopy inbox, readable only by them">
+                  Keep a copy in canopy
+                </th>
                 {manage && <th className="py-1" />}
               </tr>
             </thead>
@@ -304,6 +308,18 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                           aria-label={`Enabled: ${r.address}`} onChange={() => void toggleRoute(r)} />
                       </label>
                     ) : (r.enabled ? 'Yes' : 'No')}
+                  </td>
+                  <td className="py-1.5 pr-3 text-foreground-secondary" data-testid={`keep-copy-${r.local_part}`}>
+                    {r.kind !== 'forward' ? (
+                      <span className="text-muted-foreground" title="Only forwarding addresses can keep a copy">—</span>
+                    ) : manage ? (
+                      <label className="-my-2.5 inline-flex min-h-11 cursor-pointer items-center gap-1.5">
+                        <input type="checkbox" checked={r.keep_copy} disabled={busy} className="h-3.5 w-3.5 accent-primary"
+                          aria-label={`Keep a copy in canopy: ${r.address}`}
+                          onChange={() => void toggleRoute(r, { keep_copy: !r.keep_copy })} />
+                        {r.keep_copy ? 'On' : 'Off'}
+                      </label>
+                    ) : (r.keep_copy ? 'On' : 'Off')}
                   </td>
                   {manage && (
                     <td className="whitespace-nowrap py-1.5 text-right">
