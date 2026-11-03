@@ -63,6 +63,46 @@ def test_an_agent_session_with_no_turn_is_interrupted(seeded, monkeypatch):
     assert msg["session_id"] == str(session.id)
 
 
+def test_the_frame_reaching_the_runner_says_which_stop_and_which_project(seeded, monkeypatch):
+    """Through the real socket handler, which forwards named fields only.
+
+    Without the id the runner cannot retire the record of a stop it carried out, so
+    its next sweep presses Escape again, possibly into whatever was sent since. Without
+    the project it can hit a same-named session elsewhere: task names are unique per
+    project only."""
+    import asyncio
+
+    from apps.realtime import groups
+    from apps.realtime.consumers import RunnerConsumer
+
+    _owner, _ws, _agent, session, runner = seeded
+    binding = _bind(session, runner)
+    binding.emdash_project = "canopy-web"
+    binding.save(update_fields=["emdash_project"])
+    session.refresh_from_db()
+    published = []
+    monkeypatch.setattr(groups, "publish", lambda group, msg: published.append(msg))
+    assert session_control.interrupt_session(session) == "sent"
+
+    sent = []
+
+    async def _send_json(frame):
+        sent.append(frame)
+
+    consumer = RunnerConsumer()
+    consumer.send_json = _send_json
+    asyncio.run(consumer.runner_session_interrupt(published[0]))
+
+    session.runner_binding.refresh_from_db()
+    assert sent == [{
+        "type": "session_interrupt",
+        "session_id": str(session.id),
+        "session_key": "hal-canopy-sweep-1",
+        "project": "canopy-web",
+        "interrupt_id": session.runner_binding.pending_interrupt["id"],
+    }]
+
+
 def test_an_unbound_session_refuses_rather_than_raising(seeded):
     """A session canopy cannot reach a terminal for. Ordinary, not an error —
     mirrors answer_menu's refusal shape."""

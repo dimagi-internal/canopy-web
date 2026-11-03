@@ -122,6 +122,7 @@ def interrupt_session(session: Session) -> str:
         "type": "runner.session_interrupt",
         "session_id": str(session.id),
         "session_key": binding.session_key,
+        "project": binding.emdash_project or session.emdash_project,
         "interrupt_id": interrupt_id,
     })
     return "sent"

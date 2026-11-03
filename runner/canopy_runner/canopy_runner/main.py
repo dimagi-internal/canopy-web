@@ -1261,7 +1261,8 @@ def make_control_handler(cfg: Config, waker, client=None):
             # Only marks it due: pressing Escape is a CDP round trip, and this thread
             # also carries cancel, wake and menu_answer.
             session_interrupt.ring(str(msg["session_key"]), str(msg.get("session_id") or ""),
-                                   str(msg.get("interrupt_id") or ""))
+                                   str(msg.get("interrupt_id") or ""),
+                                   project=str(msg.get("project") or ""))
             waker.event.set()
         elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
             # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
