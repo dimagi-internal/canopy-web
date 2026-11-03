@@ -142,6 +142,9 @@ class TurnStatus:
     #: "confined" (a caller's turn runs in a session of its own).
     midturn: bool = False
     midturn_blocked: str | None = None
+    #: For PICKING_UP: every runner that would take it is restarting or replacing a
+    #: tool (`Runner.setting_up`), so "picking this up" is a moment away, not now.
+    setting_up: bool = False
 
     def quiet_since(self, now: datetime) -> datetime | None:
         """When anything last came back from a WORKING turn, if that was at least
@@ -191,6 +194,7 @@ class TurnStatus:
             "last_progress_at": self.last_progress_at.isoformat() if self.last_progress_at else None,
             "midturn": self.midturn,
             "midturn_blocked": self.midturn_blocked,
+            "setting_up": self.setting_up,
             "settled": self.settled,
             "stuck": self.stuck,
         }
@@ -288,8 +292,12 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
     else:
         state, runners = FAILED, ((claimed_by,) if claimed_by else ())
 
+    takers = (([turn.pinned_runner] if turn.pinned_runner_id else list(reach.runners))
+              if state == PICKING_UP else [])
+
     return TurnStatus(
         state=state,
+        setting_up=bool(takers) and all(getattr(r, "setting_up", "") for r in takers),
         agent_slug=agent_slug,
         runners=runners,
         claimed_by=claimed_by,

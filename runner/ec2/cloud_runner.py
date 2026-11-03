@@ -237,6 +237,12 @@ LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
 #: When this runner last finished a bootstrap (unix seconds), beside its state file.
 BOOTSTRAPPED_MARKER = STATE_FILE.with_name(".canopy-bootstrapped-at")
+#: What bootstrap_agents.sh is replacing right now, beside the state file: "tools" while
+#: it reinstalls `claude` or `canopy`, "agent:<slug>" while it prepares that agent. See
+#: `setting_up`. A file because the script is another process; older than
+#: SETUP_HOLD_MAX_SECONDS it is what a killed script left, and means nothing.
+SETUP_HOLD_FILE = STATE_FILE.with_name(".canopy-setup-hold")
+SETUP_HOLD_MAX_SECONDS = int(os.environ.get("SETUP_HOLD_MAX_SECONDS", "600"))
 
 # Where this runner's bytes live, and the two files the auto-updater
 # (runner/ec2/update_runner.sh, spec 2026-07-30) shares with it:
@@ -1037,7 +1043,7 @@ def maybe_sweep_disk(*, now: float | None = None) -> bool:
         return False
     now = time.time() if now is None else now
     running = _SWEEP_STATE["thread"]
-    if (running is not None and running.is_alive()) or _in_flight_ids():
+    if (running is not None and running.is_alive()) or _in_flight_ids() or bootstrap_running():
         return False
     full = _disk_pct() >= DISK_WARN_PCT
     last = _SWEEP_STATE["at"]
@@ -1151,7 +1157,10 @@ def health_report() -> dict:
     # for a refresh (canopy_release.refresh_owed). "" = unknown.
     return {"checks": checks, "checked_at": time.time(), "bootstrapped_at": _BOOTSTRAPPED_AT,
             "canopy_version": _CANOPY_CLI["v"] or "",
-            "refresh_floor_until": _refresh_floor_until()}
+            "refresh_floor_until": _refresh_floor_until(),
+            # Why this box is not asking for work for the moment ("" = it is); what a
+            # queued turn's status says instead of "picking this up".
+            "setting_up": setting_up()}
 
 
 # ── self-refresh ─────────────────────────────────────────────────────────────
@@ -1228,7 +1237,9 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     claims. Returns True when a restart was started."""
     now = time.time() if now is None else now
     reason = _refresh_reason(pending, now)
-    if not reason:
+    if not reason or bootstrap_running():
+        # Mid-pass, a refresh would only start the pass again; finishing is what
+        # discharges the request.
         return False
     handoff = _refresh_can_hand_off()
     if _in_flight_ids() and not handoff:
@@ -3813,9 +3824,15 @@ def note_cred_success(slug: str) -> None:
 
 
 def backed_off_slugs(*, now: float | None = None) -> list[str]:
-    """The agents this box will not claim right now (credential-resolve backoff)."""
+    """The agents this box will not claim right now: a credential-resolve backoff,
+    or the one bootstrap is preparing this moment (its turn waits a few seconds
+    rather than start in a clone being pulled)."""
     now = time.time() if now is None else now
-    return sorted(s for s, (_n, until) in _CRED_BACKOFF.items() if until > now)
+    slugs = {s for s, (_n, until) in _CRED_BACKOFF.items() if until > now}
+    hold = _setup_hold_file()
+    if hold.startswith(AGENT_HOLD_PREFIX):
+        slugs.add(hold[len(AGENT_HOLD_PREFIX):])
+    return sorted(slugs)
 
 
 def _turn_env_dir(turn_id: str, *, create: bool = True) -> pathlib.Path | None:
@@ -6869,6 +6886,9 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
 
     if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir() and not stale():
         return
+    # A pass running beside the claim loop may be cloning this agent right now: only
+    # this turn waits for it to finish, as every turn once did.
+    _BOOTSTRAP_DONE.wait(timeout=BOOTSTRAP_TIMEOUT_SECONDS)
     with _LAZY_BOOTSTRAP_LOCK:
         # Re-checked under the lock: a concurrent turn may have just done it.
         if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
@@ -7599,6 +7619,10 @@ def bootstrap_agent_fleet() -> None:
     silently skip cloning the private repos — this call site is the earliest
     point at which the credentials are guaranteed to exist.
 
+    On a box that has bootstrapped before this runs BESIDE the claim loop
+    (`start_bootstrap_beside_claims`), so a restart does not stop the box taking
+    work; only a box's first pass holds its claims back.
+
     Best-effort end to end: a failure here (network hiccup, one agent's
     manifest broken) is logged loudly and the runner proceeds to claim turns
     anyway — whatever DID bootstrap clean (canopy-web itself, other agents,
@@ -7630,20 +7654,138 @@ def bootstrap_agent_fleet() -> None:
             # wrote are only a liability now (spec §4).
             remove_legacy_secret_files([s for s in _known_agent_slugs() if off_disk_proven(s)])
     finally:
-        # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
-        # is what discharges a refresh request. The checks say how it went.
-        _BOOTSTRAPPED_AT = time.time()
-        # And on disk, for root's `--fleet-ready`: a fleet member is put in service
-        # (or into its warm pool) only once every runner has bootstrapped this boot.
-        try:
-            BOOTSTRAPPED_MARKER.write_text(f"{_BOOTSTRAPPED_AT:.0f}\n")
-        except OSError as exc:
-            _log(f"could not write {BOOTSTRAPPED_MARKER}: {exc}")
+        # Stamped however it went, except cut short by this daemon leaving: this is
+        # "a bootstrap was ATTEMPTED at", which is what discharges a refresh request
+        # and tells `--fleet-ready` and the next start this box has been set up. The
+        # checks say how it went.
+        if not _stop:
+            _BOOTSTRAPPED_AT = time.time()
+            # And on disk, for root's `--fleet-ready`: a fleet member is put in service
+            # (or into its warm pool) only once every runner has bootstrapped this boot.
+            try:
+                BOOTSTRAPPED_MARKER.write_text(f"{_BOOTSTRAPPED_AT:.0f}\n")
+            except OSError as exc:
+                _log(f"could not write {BOOTSTRAPPED_MARKER}: {exc}")
         # The bootstrap may have installed a newer canopy CLI (the off-disk gate).
         _forget_cli_version()
         # Versions may have just moved (bootstrap updates Claude Code and the
         # canopy CLI): re-read them on the next beat rather than in 10 minutes.
         _HEALTH_SLOW_AT = 0.0
+
+
+# -- taking turns while setting up -------------------------------------------------
+# A restart is routine: canopy releases on every merge and a box behind the release
+# refreshes, so a busy day restarts a box many times. Its tools, clones and plugins are
+# all still on disk from the last pass, and the turns it adopts already run beside the
+# new one, so a new turn can too. It waited out the whole pass only because `main()`
+# ran the pass first: 1-2 minutes on a good day, 6 on a loaded box, while every status
+# said it was claiming.
+#
+# So a box that has bootstrapped before starts claiming at once and runs the pass on a
+# thread, at low priority so it does not slow the turns beside it. A box's FIRST pass
+# still comes first: until it ends there is nothing to run a turn with. Claims are held
+# only while what a starting turn needs is being replaced (`setting_up`).
+
+#: Why this daemon may not claim yet, by who holds it. Empty once it may.
+_CLAIM_HOLDS: dict[str, str] = {}
+#: `SETUP_HOLD_FILE`'s form for one agent: only that agent's turns wait.
+AGENT_HOLD_PREFIX = "agent:"
+#: Clear while a pass runs beside the claim loop.
+_BOOTSTRAP_DONE = threading.Event()
+_BOOTSTRAP_DONE.set()
+#: True once this daemon's pass runs beside the claim loop (`_run_bootstrap`'s priority).
+_BOOTSTRAP_BESIDE = False
+#: The running bootstrap script, which must not outlive this daemon (`stop_bootstrap`).
+_BOOTSTRAP_PROC: dict = {"proc": None}
+
+
+def _hold_claims(key: str, why: str) -> None:
+    _CLAIM_HOLDS[key] = why
+
+
+def _release_claims(key: str) -> None:
+    _CLAIM_HOLDS.pop(key, None)
+
+
+def _setup_hold_file() -> str:
+    """What bootstrap_agents.sh says it is replacing ("" = nothing, or a stale file)."""
+    try:
+        if time.time() - SETUP_HOLD_FILE.stat().st_mtime > SETUP_HOLD_MAX_SECONDS:
+            return ""
+        return SETUP_HOLD_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def setting_up() -> str:
+    """Why this box is not asking for work just now, in words a status can repeat;
+    "" when setup is not what stops it. One agent's prepare is not a reason: the box
+    still claims every other agent's turns."""
+    for why in list(_CLAIM_HOLDS.values()):
+        return why
+    hold = _setup_hold_file()
+    if hold and not hold.startswith(AGENT_HOLD_PREFIX):
+        return "installing updated tools"
+    return ""
+
+
+def bootstrap_running() -> bool:
+    return not _BOOTSTRAP_DONE.is_set()
+
+
+def may_bootstrap_beside_claims() -> bool:
+    """Has this box been set up, so a turn can start before this pass ends? The marker
+    says a pass finished on this box, however it went; one that failed leaves the box
+    claiming with what it has, as it always has. `BOOTSTRAP_BESIDE_CLAIMS=0` goes back
+    to the pass first."""
+    return os.environ.get("BOOTSTRAP_BESIDE_CLAIMS", "1") != "0" and BOOTSTRAPPED_MARKER.is_file()
+
+
+def start_bootstrap_beside_claims(enrollment: threading.Thread) -> threading.Thread:
+    """The slow half of a restart, on its own thread: the credential probes, waiting on
+    the device key, and the pass. The probes can go here because a credential not yet
+    asked counts as one that may work (`_credential_readiness`), and before the pass
+    because it may be replacing the CLI they run."""
+    global _BOOTSTRAP_BESIDE
+    _BOOTSTRAP_BESIDE = True
+    _BOOTSTRAP_DONE.clear()
+
+    def _pass() -> None:
+        try:
+            _probe_all()
+            enrollment.join(timeout=60)
+            if not _stop:
+                bootstrap_agent_fleet()
+        except Exception as exc:  # noqa: BLE001 — never takes the claim loop with it
+            _log(f"warn: the bootstrap beside the claim loop failed: {exc}")
+            _set_check("bootstrap", "fail", f"the bootstrap failed: {exc}")
+        finally:
+            _BOOTSTRAP_DONE.set()
+
+    thread = threading.Thread(target=_pass, daemon=True, name="bootstrap")
+    thread.start()
+    return thread
+
+
+def stop_bootstrap() -> None:
+    """A daemon that leaves takes its script with it. A handoff leaves the unit's cgroup
+    running, so the script would go on beside the next daemon's own pass. Cutting one
+    short mid-install is safe: the next daemon's pass starts at once and repairs it."""
+    proc = _BOOTSTRAP_PROC["proc"]
+    if proc is None or proc.poll() is not None:
+        return
+    _log("stopping the bootstrap this daemon started")
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError as exc:
+        _log(f"warn: could not stop the bootstrap: {exc}")
+
+
+def _low_priority_prefix() -> list[str]:
+    """Run a pass beside live turns at the back of the CPU and disk queues: `ionice`
+    best-effort lowest, not idle, which a busy disk could starve for its whole timeout."""
+    out = ["ionice", "-c", "2", "-n", "7"] if shutil.which("ionice") else []
+    return out + (["nice", "-n", "10"] if shutil.which("nice") else [])
 
 
 #: Where the auto-updater learns this runner keeps secrets off disk, so its
@@ -7741,22 +7883,30 @@ def _github_readiness() -> None:
         _log(f"github {slug}: {row.get('status')} — {row.get('detail')}")
 
 
-def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4) -> tuple[int, list[str]]:
+def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4,
+              on_start=None) -> tuple[int, list[str]]:
     """Run `cmd`, passing every output line through to our own stdout (so it
     still lands in `journalctl -u canopy-runner` exactly as before) while
-    keeping the last `keep` non-empty lines for the health check."""
+    keeping the last `keep` non-empty lines for the health check. `cmd` leads its
+    own process group; `on_start` is handed the process."""
     import collections
 
     tail: collections.deque = collections.deque(maxlen=keep)
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace")
+                            text=True, errors="replace", start_new_session=True)
+    if on_start is not None:
+        on_start(proc)
     # A watchdog rather than a check per line: a bootstrap that hangs SILENTLY
     # never yields a line to check on.
     timed_out = threading.Event()
 
     def _kill() -> None:
         timed_out.set()
-        proc.kill()
+        # The group: a child left holding our stdout would keep the read below open.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
 
     watchdog = threading.Timer(timeout, _kill)
     watchdog.daemon = True
@@ -7819,7 +7969,13 @@ def ensure_updater_clone() -> bool:
 
 def _run_bootstrap() -> None:
     ensure_updater_clone()
-    if not sync_runner_src():
+    # A turn starting now imports its packages from this clone: not mid-checkout.
+    _hold_claims("code", "updating its code")
+    try:
+        synced = sync_runner_src()
+    finally:
+        _release_claims("code")
+    if not synced:
         _set_check("bootstrap", "fail", f"no runner clone at {RUNNER_SRC_DIR}; agent bootstrap skipped")
         return
     script = pathlib.Path(RUNNER_SRC_DIR) / "runner" / "ec2" / "bootstrap_agents.sh"
@@ -7837,9 +7993,12 @@ def _run_bootstrap() -> None:
     bearer = _bearer(min_life=BOOTSTRAP_TIMEOUT_SECONDS)
     if bearer:
         env["CANOPY_TOKEN"] = bearer
+    env["CANOPY_SETUP_HOLD_FILE"] = str(SETUP_HOLD_FILE)
+    cmd = [*(_low_priority_prefix() if _BOOTSTRAP_BESIDE else []), "bash", str(script)]
     _log(f"running {script}")
     try:
-        rc, tail = _run_teed(["bash", str(script)], env=env, timeout=BOOTSTRAP_TIMEOUT_SECONDS)
+        rc, tail = _run_teed(cmd, env=env, timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+                             on_start=lambda proc: _BOOTSTRAP_PROC.update(proc=proc))
         _log(f"bootstrap_agents.sh exited {rc}")
         # The last lines carry the reason. "exited 1" alone still sent someone
         # to journald on 2026-09-22 (`line 1024: ace: unbound variable`), which
@@ -9104,12 +9263,13 @@ def _beat_while_waiting(runner_id: str) -> None:
         _log(f"warn: heartbeat while waiting for a credential failed ({exc})")
 
 
-def fetch_and_stage_credential(runner_id: str) -> bool:
+def fetch_and_stage_credential(runner_id: str, *, probe: bool = True) -> bool:
     """A CLOUD runner owns no secrets at boot beyond its PAT — it fetches its
     credential bundle from canopy-web (the per-runner hub) and stages it into the
     environment. Blocks (polling) until the Claude token is set, so the operator can
     provision the runner AFTER it has paired and appeared in the fleet. A laptop
-    runner never does this — it uses emdash's ambient auth.
+    runner never does this — it uses emdash's ambient auth. `probe=False` leaves
+    asking the credentials to the caller (`start_bootstrap_beside_claims`).
     """
     while not _stop:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
@@ -9129,9 +9289,10 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             # opened per turn by the canopy CLI (`_turn_values`).
             _log("staged credential bundle from canopy-web (claude)")
             # Before the first ready heartbeat, so "ready" means a credential
-            # answered. The box is not serving yet, so nothing waits on this; a
+            # answered. A new box is not serving yet, so nothing waits on this; a
             # hung CLI costs PROBE_TIMEOUT_SECONDS and reads `unknown`.
-            _probe_all()
+            if probe:
+                _probe_all()
             # Report them now. The next beat is otherwise the first after the
             # bootstrap (up to 40 min), and wire.sh is waiting on these checks.
             try:
@@ -10669,7 +10830,7 @@ def _span(seconds: float) -> str:
 def claim_gate(*, now: float | None = None) -> tuple[bool, str, str]:
     """(claiming, reason, detail): may this box ask for a turn right now, and if
     not, which of its own limits says no. `reason` is "" while claiming, else one
-    of turn_cap / memory / token_refused / data_mode. Also records when the
+    of setup / turn_cap / memory / token_refused / data_mode. Also records when the
     current not-claiming streak started, which the detail names."""
     global _NOT_CLAIMING_SINCE
     now = time.time() if now is None else now
@@ -10677,7 +10838,9 @@ def claim_gate(*, now: float | None = None) -> tuple[bool, str, str]:
     avail = _meminfo_kb(_read_meminfo(), "MemAvailable")
     load = f"{len(in_flight)}/{MAX_CONCURRENT_TURNS} turns in flight"
     free = f"{avail / _GIB_KB:.1f} GiB free" if avail is not None else "free memory unknown"
-    if len(in_flight) >= MAX_CONCURRENT_TURNS:
+    if setup := setting_up():
+        reason, why = "setup", f"{setup} ({load})"
+    elif len(in_flight) >= MAX_CONCURRENT_TURNS:
         reason, why = "turn_cap", (f"at turn cap {len(in_flight)}/{MAX_CONCURRENT_TURNS} "
                                    f"(in flight: {', '.join(t[:8] for t in in_flight)})")
     elif not _memory_headroom_ok():
@@ -13664,6 +13827,13 @@ def main() -> None:
     runner_id = pair_or_load()
     global _RUNNER_ID
     _RUNNER_ID = runner_id
+    # Whatever a script cut short left is nobody's now.
+    try:
+        SETUP_HOLD_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        _log(f"could not clear {SETUP_HOLD_FILE} (it expires on its own): {exc}")
+    beside = may_bootstrap_beside_claims()
+    _hold_claims("start", "restarting" if beside else "setting up for the first time")
     # Turns a previous daemon left running, FIRST: their leases are renewing again
     # before anything slow (the bootstrap) runs, and every sweep below skips them.
     # The clone's packages go on sys.path for them (canopy_acp, canopy_transcript).
@@ -13697,13 +13867,17 @@ def main() -> None:
     # before the startup credential probes: a probe that reads like a cap parses its
     # reset with canopy_transcript. The clone is synced later, in bootstrap; a stale
     # one is fine for a path.)
-    if not fetch_and_stage_credential(runner_id):
+    if not fetch_and_stage_credential(runner_id, probe=not beside):
         return  # stopped before a credential was provisioned
     # Registering the key can change what canopy-web will accept from this box (a
     # new key waits on a person): settle that BEFORE the bootstrap checks the token,
     # not halfway through it, as on 2026-10-18 02:28.
-    enrollment.join(timeout=60)
-    bootstrap_agent_fleet()
+    if beside:
+        start_bootstrap_beside_claims(enrollment)
+    else:
+        enrollment.join(timeout=60)
+        bootstrap_agent_fleet()
+    _release_claims("start")
     # Prefer the WS control channel; fall back to REST polling if it can't be used.
     if not run_over_ws(runner_id):
         run_over_rest(runner_id)
@@ -13743,6 +13917,7 @@ def _finish_stop(*, drain_seconds: float | None = None) -> None:
     restart (an update) keeps them, and the next start sweeps them as usual. A
     turn still running past the drain keeps nothing (`keep_conversation`), and
     what it leaves is swept at the next start, if there is one."""
+    stop_bootstrap()
     if _HANDOFF:
         # An update: the turns keep running under their relays, and the next daemon
         # adopts them. Only a finish already being posted is waited for.

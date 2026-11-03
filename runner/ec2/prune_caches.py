@@ -9,7 +9,7 @@ npm's and uv's download caches took most of the rest. It was cleaned by hand.
 
 This runs from bootstrap_agents.sh (step 4, after the plugin updates, so the
 version just installed is already recorded) — i.e. on every service start and
-every daily self-refresh, when no turn is running:
+every self-refresh, which turns may be running beside:
 
   * plugin cache: per plugin, keep every version `installed_plugins.json` points
     at (any scope) plus the newest KEEP_NEWEST others by mtime — a margin for a

@@ -85,7 +85,7 @@ def test_no_per_agent_preparation_is_left_in_the_bash():
 def test_a_never_seen_agent_is_prepared_alone(cloud_runner, monkeypatch):
     mod = cloud_runner
     runs, fleet = [], []
-    monkeypatch.setattr(mod, "_run_teed", lambda cmd, env, timeout: (runs.append(cmd) or (0, [])))
+    monkeypatch.setattr(mod, "_run_teed", lambda cmd, env, timeout, **kw: (runs.append(cmd) or (0, [])))
     monkeypatch.setattr(mod, "bootstrap_agent_fleet", lambda: fleet.append(1))
     mod.prepare_agent("scout")
     assert fleet == [] and runs[0][1:] == ["agent", "prepare", "--runner", "--slug", "scout"]
@@ -109,7 +109,7 @@ def test_the_fleet_bootstrap_reads_as_the_box_not_with_runner_envs_pat(cloud_run
     monkeypatch.setattr(mod, "_bearer", lambda **kw: "crt_box")
     seen = {}
     monkeypatch.setattr(mod, "_run_teed",
-                        lambda cmd, env, timeout: (seen.update(env=env) or (0, [])))
+                        lambda cmd, env, timeout, **kw: (seen.update(env=env) or (0, [])))
     mod._run_bootstrap()
     assert seen["env"]["CANOPY_TOKEN"] == "crt_box"
 

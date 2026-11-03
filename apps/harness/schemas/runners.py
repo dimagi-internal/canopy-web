@@ -126,6 +126,9 @@ class RunnerHealthIn(Schema):
     # The earliest the box will restart itself again (its floor between
     # self-restarts) — why a requested refresh is waiting when nothing is busy.
     refresh_floor_until: float = 0
+    # Why the box is not asking for work just now, while it restarts or replaces a
+    # tool ("" = it is, or something else stops it): `Runner.setting_up`.
+    setting_up: str = Field(default="", max_length=200)
 
 
 class RefreshChangeOut(Schema):

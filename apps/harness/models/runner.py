@@ -584,6 +584,14 @@ class Runner(models.Model):
         return not self.ready and self.ready_note.startswith(SIGNED_OUT_NOTE)
 
     @property
+    def setting_up(self) -> str:
+        """Why this box is not asking for work just now, in its own words ("restarting",
+        "installing updated tools"), or "". It resolves on its own within moments, so
+        a queued turn says so rather than sounding stuck. Read from its last beat: a box
+        that stops beating stops being ONLINE, and then this is not what anyone reads."""
+        return str((self.health or {}).get("setting_up") or "")
+
+    @property
     def remedy(self) -> str:
         """What a person does about this box being degraded or not ready, when
         its own note names a known cause; "" otherwise (the note is shown either

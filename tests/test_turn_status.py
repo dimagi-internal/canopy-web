@@ -317,6 +317,7 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         "last_progress_at": None,
         "midturn": False,
         "midturn_blocked": None,
+        "setting_up": False,
         "settled": False,
         "stuck": True,
     }
@@ -366,3 +367,13 @@ def test_a_turn_without_one_carries_none():
 
 def test_a_settled_turn_does_not_carry_it():
     assert ts.derive(_sensitive_turn(Turn.DONE)).requires == ()
+
+
+def test_picking_up_on_a_restarting_runner_says_so():
+    restarting = _Runner("cloud-1")
+    restarting.setting_up = "restarting"
+    assert ts.derive(_turn(Turn.QUEUED), reach=_reach("live", [restarting])).setting_up is True
+    # Another runner could take it now, so nobody is waiting on the restart.
+    st = ts.derive(_turn(Turn.QUEUED), reach=_reach("live", [restarting, _Runner("jj-mbp")]))
+    assert st.state == ts.PICKING_UP and st.setting_up is False
+    assert st.as_dict()["setting_up"] is False
