@@ -111,7 +111,7 @@ WebAuthn (py_webauthn) passkeys as a SECOND factor, never a sign-in. Every route
 - **No flat artifact addresses** — which prefixes 404 and why: [pages.md § Rules for every page](pages.md#rules-for-every-page). `tests/test_api_urls_are_workspace_scoped.py` fails on any artifact URL field not under `/w/<workspace>/`.
 - Settings: `WALKTHROUGHS_ENABLED` (default on; off → the API and content stream 404), `CANOPY_DRIVE_SA_KEY_JSON` (empty → uploads/streams 500 `code=drive-not-configured`), `CANOPY_DRIVE_ROOT_FOLDER_ID` (`walkthroughs/<uuid>/` subfolders go under it), `WALKTHROUGH_MAX_UPLOAD_BYTES` (default 75 MB). Spec: `docs/superpowers/specs/2026-07-13-walkthrough-share-token-revival-design.md`.
 
-### Debug access (`apps/common/views_debug`)
+### Debug access (`apps/tokens/mint_session.py`; `is_machine` in `apps/common/views_debug`)
 - `POST /api/debug/mint-session/` — bare view: an authenticated caller (in practice the macOS menubar with its runner PAT) mints a short-lived session cookie (`{ttl_seconds}`, clamped 60s–1w; returns cookie + curl example). A minted session counts as a machine (`is_machine`), so the MCP and HCP OAuth consent pages refuse it.
 
 ### Reviews (`apps/reviews`) — DDD narrative review surface

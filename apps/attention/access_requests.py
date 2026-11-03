@@ -2,11 +2,11 @@
 (`members.manage`)."""
 from __future__ import annotations
 
-from apps.attention.types import ASKING, AttentionRow
+from apps.workspaces import permissions as perms
+from apps.workspaces.links import scoped_path
+from apps.workspaces.models import WorkspaceAccessRequest
 
-from . import permissions as perms
-from .models import WorkspaceAccessRequest
-from .links import scoped_path
+from .types import ASKING, AttentionRow
 
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:

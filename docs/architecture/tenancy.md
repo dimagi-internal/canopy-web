@@ -163,7 +163,7 @@ failure again.
   signed in is linked only when its person accepts, in
   their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
   reads as its asker and never writes (`access.md` → "Whose authority an agent acts with").
-- `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a
+- `POST /api/debug/mint-session/` (`apps/tokens/mint_session.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token
   cannot sign an MCP client in on its own.

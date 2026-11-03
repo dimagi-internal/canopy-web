@@ -66,7 +66,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``self`` — signed in, and touches only the caller's OWN rows (PATs, push
   subscriptions, presence preference, shared transcripts).
 * ``member`` — workspace membership (``permissions.READ``): a viewer passes.
-* the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
+* the permissions of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
   ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
   ``admission.manage``, ``projects.decide``, ``own``, ``control``.

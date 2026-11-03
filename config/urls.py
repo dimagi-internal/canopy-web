@@ -12,6 +12,7 @@ from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.tokens.mint_session import mint_session
 from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
@@ -34,7 +35,7 @@ urlpatterns = [
     # for the deployed runner version's installer (apps/harness/runner_releases.py).
     # Before the SPA catch-all.
     path("download/runner/<str:platform>", download_runner, name="download-runner"),
-    path("api/debug/", include("apps.common.urls_debug")),
+    path("api/debug/mint-session/", mint_session, name="debug-mint-session"),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
     # The GitHub App connect flow. Bare views (redirects + session), and
     # deliberately NOT public: the callback exists to bind a GitHub grant to a

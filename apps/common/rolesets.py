@@ -17,7 +17,7 @@ Two ways to declare the table:
 
 A scoped permission (`use:connect`) is `<scope>:<name>`; the scope must be declared in `scopes`.
 Holding `<scope>:*` holds every name in that scope, so an implication such as `write -> use:*` reads
-"driving the whole agent opens every capability".
+"driving the whole agent opens every permission".
 """
 from __future__ import annotations
 
