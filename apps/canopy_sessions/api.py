@@ -11,7 +11,6 @@ import uuid
 
 from django.db.models import Q
 from django.http import HttpRequest
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja import Router
 from ninja.errors import HttpError
@@ -75,12 +74,20 @@ def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool 
     # One authority (`access`): the tenant, then who within it — the same rule
     # the list, the chat socket and attachments apply. `write=True` also needs
     # an owner/editor role; a viewer gets 403, since they can already see it.
-    session = get_object_or_404(
+    session = (
         readable_sessions(request)
         .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
-        .annotate(_last_msg_at=transcript_read.last_message_at()),
-        pk=session_id,
+        .annotate(_last_msg_at=transcript_read.last_message_at())
+        .filter(pk=session_id)
+        .first()
     )
+    if session is None:
+        # One answer for "no such session" and "not yours to see" (a private session's
+        # existence must not leak), but it names both so a caller does not guess: an
+        # admin reading a person's own private session is told how to ask for it.
+        raise HttpError(404, "session not found, or it is private to someone else "
+                             "(an admin does not see a person's private session; "
+                             "`act-as-you`, with that person present, can)")
     if write and not access.can_write(request.user, session):
         raise HttpError(403, "you can read this session but not act in it")
     return session

@@ -16,6 +16,8 @@ gating them on ownership or participation would make them unreachable by
 everybody, which is the whole emdash-discovered-session flow.
 """
 
+import uuid
+
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
@@ -61,6 +63,16 @@ def test_cotenant_cannot_read_someone_elses_web_session_by_id():
     owner, other, ws = _ws_with_two_members()
     s = Session.objects.create(workspace=ws, created_by=owner, origin=Session.ORIGIN_WEB, title="mine")
     assert _client(other).get(f"/api/canopy-sessions/{s.id}").status_code == 404
+
+
+def test_the_session_404_names_both_causes_without_confirming_either():
+    owner, other, ws = _ws_with_two_members()
+    s = Session.objects.create(workspace=ws, created_by=owner, origin=Session.ORIGIN_WEB, title="mine")
+    private = _client(other).get(f"/api/canopy-sessions/{s.id}")
+    missing = _client(other).get(f"/api/canopy-sessions/{uuid.uuid4()}")
+    assert private.status_code == missing.status_code == 404
+    assert private.json()["detail"] == missing.json()["detail"]
+    assert "private to someone else" in private.json()["detail"]
 
 
 def test_a_runner_binding_does_not_grant_cotenant_access_to_a_web_session():

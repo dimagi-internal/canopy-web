@@ -46,6 +46,17 @@ def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
     return can_read_turn_log(user, turn, _memo)
 
 
+def refusal_reason(user, turn) -> str:
+    """Why `user` may not read this turn's content, and who could — for a 403 body.
+    Names roles, never people or content."""
+    if sensitivity.is_sensitive(turn) and can_read_turn_log(user, turn):
+        return ("this turn's content is sensitive: its words belong to its own conversation, "
+                "and no log route (including an admin's) serves them")
+    return ("a turn's content is a log: it is read by whoever started it, the agent's "
+            "owner or admins, the owner of the runner that ran it, or a workspace admin "
+            "(logs.read) - your role in this workspace does not include that")
+
+
 def can_read_turn_log(user, turn, _memo: dict | None = None) -> bool:
     """Who may read a turn's LOG — the people listed above — whether or not the turn
     is sensitive. Ask it only where what is served holds no words: a sensitive
