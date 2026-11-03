@@ -56,6 +56,8 @@ export function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGran
     setBusy(true)
     void pageGrant.stop().finally(() => setBusy(false))
   }
+  // shared-dialog-exception: an act-as-you consent that only its own buttons answer. Escape and a
+  // click on the scrim must not stop the permission, which the shared Dialog would do by default.
   return (
     <div role="dialog" aria-modal="true" aria-label="Confirm act as you"
          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"

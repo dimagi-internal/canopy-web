@@ -136,7 +136,7 @@ describe('CommandPalette', () => {
 })
 
 describe('KeyboardHelp', () => {
-  it('? lists every shortcut, and Esc closes it', () => {
+  it('? lists every shortcut, and Esc closes it', async () => {
     show()
     act(() => {
       fireEvent.keyDown(window, { key: '?', shiftKey: true })
@@ -145,10 +145,11 @@ describe('KeyboardHelp', () => {
     for (const k of ['⌘', 'K', 'C', 'J', 'X', 'Space', 'Esc', 'A', 'S', 'B', 'D', 'H', 'M']) {
       expect(Array.from(help.querySelectorAll('kbd')).some((el) => el.textContent === k)).toBe(true)
     }
+    // The shared Dialog hears Escape where the focus is (inside it), like a real keypress.
     act(() => {
-      fireEvent.keyDown(window, { key: 'Escape' })
+      fireEvent.keyDown(help, { key: 'Escape' })
     })
-    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('a single key does nothing while you type in a box', () => {

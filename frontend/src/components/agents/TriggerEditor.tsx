@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Dialog, DialogContent, DialogTitle } from 'canopy-ui/ui'
 import type { Schedule } from '@/api/schedules'
 import { previewCron } from '@/api/schedules'
 import type { Trigger, TriggerKind } from '@/api/triggers'
@@ -62,17 +63,6 @@ export function TriggerEditor({
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState<string[]>([])
   const [previewError, setPreviewError] = useState('')
-  const titleId = useId()
-  const cardRef = useRef<HTMLDivElement>(null)
-
-  // Esc closes — a modal you can't dismiss from the keyboard is a trap.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
 
   // Ask the SERVER when this cron would actually run — debounced, because the
   // user is mid-type. Never re-implement cron here: a client parser that says
@@ -149,29 +139,18 @@ export function TriggerEditor({
     }
   }
 
+  // The shared Dialog owns Escape, the scrim click and the focus trap, so a modal you can't
+  // dismiss from the keyboard cannot happen here.
   return (
-    // Scrim tokenized as bg-background/… (the AppLayout mobile-nav precedent) so
-    // it dims correctly in BOTH themes — a fixed black scrim only reads right in
-    // the light one. Click the scrim (never the card) to close.
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4"
-      onMouseDown={(e) => {
-        if (!cardRef.current?.contains(e.target as Node)) onClose()
-      }}
-    >
-      {/* shadow-xl carries the separation: in light theme --background (0.985)
-          and --card (1.0) are 0.015 apart, so the border alone leaves the card
-          floating on a scrim it barely contrasts with. */}
-      <div
-        ref={cardRef}
-        role="dialog"
+    <Dialog open onOpenChange={(o: boolean) => { if (!o) onClose() }}>
+      {/* shadow-xl carries the separation: the card and the page are only a hair apart in light theme. */}
+      <DialogContent
         aria-modal="true"
-        aria-labelledby={titleId}
-        className="w-full max-w-lg rounded-lg border border-border bg-card p-4 shadow-xl"
+        className="block w-[calc(100%-2rem)] max-w-lg bg-card p-4 shadow-xl"
       >
-        <h3 id={titleId} className="mb-3 text-sm font-medium text-foreground">
+        <DialogTitle className="mb-3 text-sm font-medium leading-normal tracking-normal text-foreground">
           {schedule ? 'Edit trigger' : 'New trigger'}
-        </h3>
+        </DialogTitle>
 
         {!schedule && (
           <div className="mb-3 flex gap-1" role="group" aria-label="Kind">
@@ -289,7 +268,7 @@ export function TriggerEditor({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
