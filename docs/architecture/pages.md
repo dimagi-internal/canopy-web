@@ -207,7 +207,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     stripped (`components/mail/MessageView`); attachments are presigned download links.
     No address → points to Settings → Email.
   - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
-    forward routes with *Keep a copy*: Inbox / Archived, unread count, search
+    forward routes (Keep a copy is on unless unchecked): Inbox / Archived, unread count, search
     (`?forwarded=true&q=`), per-address filter, reply / reply all / compose from the person's own
     forwarding addresses, keyboard shortcuts. Private to the person (`MailThread.owner`); plain
     text out, no attachments on send. It is the same `MailClient` as the agent's Mail tab — they differ

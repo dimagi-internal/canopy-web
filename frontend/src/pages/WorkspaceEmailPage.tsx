@@ -75,7 +75,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   const [agent, setAgent] = useState('')
   const [member, setMember] = useState('')
   const [enabled, setEnabled] = useState(true)
-  const [keepCopy, setKeepCopy] = useState(false)
+  const [keepCopy, setKeepCopy] = useState(true)
   const [cap, setCap] = useState(String(domain.daily_send_cap))
   const manage = domain.can_manage
   const owned = domain.owned
@@ -106,7 +106,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
       })
       setLocal('')
       setEnabled(true)
-      setKeepCopy(false)
+      setKeepCopy(true)
       await reload()
     }, 'Could not save the address')
   }
@@ -325,7 +325,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                         onClick={() => {
                           setLocal(r.local_part); setKind(r.kind as Kind); setAgent(r.agent_slug)
                           setMember(r.forward_to_user_id ? String(r.forward_to_user_id) : '')
-                          setEnabled(r.enabled); setKeepCopy(r.keep_copy ?? false)
+                          setEnabled(r.enabled); setKeepCopy(r.kind === 'forward' ? r.keep_copy ?? true : true)
                         }}>Edit</button>
                       {!r.auto && <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
                         onClick={() => {

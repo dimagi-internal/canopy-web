@@ -116,7 +116,7 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.change(screen.getByLabelText('Member'), { target: { value: '1' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
-      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: false }))
+      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: true }))
   })
   it('confirms before removing an address, saying threads are kept', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
@@ -296,10 +296,12 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.change(screen.getByLabelText('Local part'), { target: { value: 'jj' } })
     fireEvent.change(screen.getByLabelText('Route kind'), { target: { value: 'forward' } })
     fireEvent.change(screen.getByLabelText('Member'), { target: { value: '1' } })
-    fireEvent.click(screen.getByLabelText('Keep a copy in their canopy inbox'))
+    const keep = screen.getByLabelText('Keep a copy in their canopy inbox') as HTMLInputElement
+    expect(keep.checked).toBe(true) // on unless someone says not to
+    fireEvent.click(keep)
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
-      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: true }))
+      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: false }))
   })
   it('an admin sees what happened to each inbound message, drops included', async () => {
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
