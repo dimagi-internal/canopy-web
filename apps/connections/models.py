@@ -158,6 +158,10 @@ class Connection(models.Model):
     # the live row, and every machine would then refuse a writer only the old signature vouches
     # for, including for a revoke. Readers verify these as any other: never on the server's word.
     owner_endorsements = models.JSONField(default=list, blank=True)
+    # The switch: canopy-web's own key (`server_key`) may open this connection. Only the owner's
+    # choice moves it: a reconnect never resets it to the provider's default. A machine trusts
+    # the statement's `canopy_web`, never this (`recipients.server_recipient`).
+    server_use = models.BooleanField(default=False)
     # The owner's signed grant statement (the machines it may reach); version 0 = none yet.
     statement = models.JSONField(null=True, blank=True)
     statement_sig = models.CharField(max_length=128, blank=True, default="")

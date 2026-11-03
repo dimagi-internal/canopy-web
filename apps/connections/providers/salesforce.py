@@ -68,6 +68,8 @@ class SalesforceProvider(Provider):
     # A Connected App set to `full` reports "full refresh_token": `full` includes `api`.
     scope_implies = {"full": ("api",)}
     rotates_refresh_token = True
+    server_use_default = True
+    server_calls = True
     default_access_token_seconds = 1800
     option_fields = (
         OptionField("login_url", "Login URL", "url", required=True, default=DEFAULT_LOGIN_URL),

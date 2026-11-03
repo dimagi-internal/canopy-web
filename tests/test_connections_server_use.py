@@ -1,0 +1,413 @@
+"""The `server_use` switch: canopy-web as one more `device` recipient of a connection.
+
+A new Salesforce connection is sealed to its owner and canopy-web; Google's, or any
+connection when the key is missing or KMS is down, to the owner alone, and the sign-in
+never fails for it. A reconnect keeps the owner's choice. On an `active` row only the
+signed statement lets canopy-web stay; while `unshared`, an old statement decides nothing.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from unittest import mock
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+from botocore.exceptions import ClientError
+from cryptography.hazmat.primitives.asymmetric import ec
+from django.test import override_settings
+
+from apps.agents.credentials import zk_seal
+from apps.connections import keeper, server_key, services, tokens
+from apps.connections import recipients as rcpt
+from apps.connections.models import Connection, ConnectionApp
+from apps.connections.providers.google import GoogleProvider
+from apps.connections.providers.salesforce import SalesforceProvider
+from tests.fixtures.connection_calls import TokensWorld, lease, machine_write, write_back
+from tests.fixtures.connections import REDIRECT, FakeGoogle, FakeSF, ShareWorld, sealed_to_owner
+from tests.fixtures.vault_zk import ref as zk_ref
+
+pytestmark = pytest.mark.django_db
+
+FAKE_REFRESH = "5Aep_refresh_1"
+OTHER_KEY = "A" * 43
+
+
+@pytest.fixture
+def key():
+    k = ec.generate_private_key(ec.SECP256R1())
+    server_key.use_software_key_for_tests(k)
+    yield k
+    server_key.use_software_key_for_tests(None)
+
+
+@pytest.fixture
+def kms_down():
+    """A key is configured, and KMS refuses every call."""
+    server_key._reset()
+    denied = ClientError({"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "GetPublicKey")
+    client = mock.Mock()
+    client.get_public_key.side_effect = denied
+    with override_settings(CONNECTIONS_SERVER_KMS_KEY="alias/canopy-web-connections"), \
+            mock.patch.object(server_key, "_client", return_value=client):
+        yield client
+    server_key._reset()
+
+
+@pytest.fixture
+def world():
+    return ShareWorld()
+
+
+def connect(world, *, provider="salesforce") -> Connection:
+    session = {}
+    app = ConnectionApp.objects.get(workspace=world.ws, provider=provider)
+    url = services.begin(session, app=app, owner=("user", world.person.pk), redirect_uri=REDIRECT)
+    state = parse_qs(urlparse(url).query)["state"][0]
+    return services.complete(session, provider=provider, workspace=world.ws.slug, code="c0de", state=state,
+                             redirect_uri=REDIRECT, by=world.person)
+
+
+def owner_target(world) -> tuple[str, str]:
+    return ("member", str(world.person.pk))
+
+
+def canopy_target() -> tuple[str, str]:
+    return ("device", server_key.thumbprint())
+
+
+def owner_opens(world, conn) -> dict:
+    return json.loads(zk_ref.open_sealed_value(conn.sealed, conn.binding, "refresh", "member",
+                                               str(world.person.pk), world.person_priv))
+
+
+def on_row(world, **fields) -> Connection:
+    return sealed_to_owner({"user": world.person}, world.person, app=world.app, server_use=True, **fields)
+
+
+def statement_says(conn, **over) -> Connection:
+    """`conn`'s stored statement, as an owner's earlier share left it, without the crypto."""
+    conn.statement = {**(conn.statement or {}), **over}
+    conn.save(update_fields=["statement"])
+    return conn
+
+
+# ---- connecting ---------------------------------------------------------------------
+
+def test_provider_defaults():
+    assert (SalesforceProvider.server_use_default, SalesforceProvider.server_calls) == (True, True)
+    assert (GoogleProvider.server_use_default, GoogleProvider.server_calls) == (False, False)
+
+
+def test_new_salesforce_connection_seals_to_owner_and_canopy_web(world, key):
+    with FakeSF():
+        conn = connect(world)
+    conn.refresh_from_db()
+    assert conn.server_use is True and conn.state == Connection.UNSHARED and conn.sealed_sig is None
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world), canopy_target()}
+    assert owner_opens(world, conn)["refresh_token"] == FAKE_REFRESH
+    # canopy-web opens its own entry through the derive KMS answers.
+    plain = zk_seal.open_for(conn.sealed, agent_id=conn.binding, name="refresh", kv=0, kind="device",
+                             target=server_key.thumbprint(), derive=server_key.derive)
+    assert json.loads(plain)["refresh_token"] == FAKE_REFRESH
+
+
+def test_new_google_connection_seals_to_owner_only(world, key):
+    services.configure_app(world.ws, "google", client_id="123.apps.googleusercontent.com", client_secret="GOCSPX-s",
+                           scopes=[f"{FakeGoogle.G}gmail.readonly"], by=world.person)
+    with FakeGoogle():
+        conn = connect(world, provider="google")
+    assert conn.server_use is False
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world)}
+
+
+def test_new_google_connection_never_asks_kms(world, kms_down):
+    services.configure_app(world.ws, "google", client_id="123.apps.googleusercontent.com", client_secret="GOCSPX-s",
+                           scopes=[f"{FakeGoogle.G}gmail.readonly"], by=world.person)
+    with FakeGoogle():
+        connect(world, provider="google")
+    kms_down.get_public_key.assert_not_called()
+
+
+def test_no_key_configured_seals_to_owner_only(world):
+    assert not server_key.available()
+    with FakeSF():
+        conn = connect(world)
+    assert conn.server_use is False
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world)}
+
+
+def test_kms_failure_at_connect_still_connects_owner_only(world, kms_down, caplog):
+    with FakeSF(), caplog.at_level(logging.WARNING, logger="apps.connections.services"):
+        conn = connect(world)
+    conn.refresh_from_db()
+    assert conn.server_use is False and conn.state == Connection.UNSHARED
+    assert zk_seal.sealed_targets(conn.sealed) == {owner_target(world)}
+    assert owner_opens(world, conn)["refresh_token"] == FAKE_REFRESH  # the refresh token is not lost
+    assert "connections.server_key_unavailable" in caplog.text
+    assert FAKE_REFRESH not in caplog.text
+
+
+def test_kms_failure_at_reconnect_keeps_the_owners_on_and_seals_to_owner_only(world, kms_down):
+    conn = on_row(world)
+    with FakeSF():
+        again = connect(world)
+    assert again.pk == conn.pk and again.server_use is True  # the owner's choice stands
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world)}
+    assert owner_opens(world, again)["refresh_token"] == FAKE_REFRESH
+
+
+def test_connecting_reads_the_key_before_the_row_is_locked(world, key, monkeypatch):
+    real, in_upsert, read_inside = services._upsert_connection, [], []
+
+    def upsert(*args):
+        in_upsert.append(True)
+        try:
+            return real(*args)
+        finally:
+            in_upsert.pop()
+
+    real_jwk = server_key.public_jwk
+
+    def jwk():
+        read_inside.append(bool(in_upsert))
+        return real_jwk()
+
+    monkeypatch.setattr(services, "_upsert_connection", upsert)
+    monkeypatch.setattr(server_key, "public_jwk", jwk)
+    with FakeSF():
+        connect(world)
+    assert read_inside and not any(read_inside)
+
+
+# ---- reconnecting -------------------------------------------------------------------
+
+def test_reconnect_keeps_off(world, key):
+    conn = sealed_to_owner({"user": world.person}, world.person, app=world.app)
+    assert conn.server_use is False
+    with FakeSF():
+        again = connect(world)
+    again.refresh_from_db()
+    assert again.pk == conn.pk and again.server_use is False  # never the provider's default
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world)}
+
+
+def test_reconnect_keeps_on_and_goes_unshared(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    assert conn.state == Connection.ACTIVE
+    with FakeSF():
+        again = connect(world)
+    again.refresh_from_db()
+    assert again.pk == conn.pk and again.server_use is True
+    assert again.state == Connection.UNSHARED and again.sealed_sig is None and again.access_sealed == ""
+    # canopy-web can use the new token at once; machines stop until the owner shares again.
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world), canopy_target()}
+    assert again.statement is not None  # kept, and it decides nothing now
+
+
+def test_reconnect_of_an_on_row_whose_statement_omits_canopy_web_still_seals_to_it(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    statement_says(conn, canopy_web=OTHER_KEY)
+    with FakeSF():
+        again = connect(world)
+    assert canopy_target() in zk_seal.sealed_targets(again.sealed)
+
+
+# ---- the rule -----------------------------------------------------------------------
+
+def test_off_row_has_no_server_recipient_whatever_the_statement_says(world, key):
+    conn = world.persons()
+    assert rcpt.server_recipient(conn) is None
+    statement_says(conn, canopy_web=server_key.thumbprint())
+    assert rcpt.server_recipient(conn) is None
+
+
+def test_no_key_means_no_server_recipient(world):
+    assert rcpt.server_recipient(on_row(world)) is None
+
+
+def test_recipients_include_canopy_web_with_its_public_key(world, key):
+    got = rcpt.recipients(on_row(world))
+    assert ("device", server_key.thumbprint(), server_key.public_jwk()) in got
+    assert owner_target(world) in rcpt.targets(got)
+
+
+def test_unshared_row_ignores_old_statement(world, key):
+    conn = on_row(world)
+    statement_says(conn, agents=[], my_computers=[])  # names no canopy-web
+    assert rcpt.server_recipient(conn)[1] == server_key.thumbprint()
+    statement_says(conn, canopy_web=OTHER_KEY)  # names another key
+    assert rcpt.server_recipient(conn)[1] == server_key.thumbprint()
+
+
+def test_a_statement_being_shared_decides_even_on_an_unshared_row(world, key):
+    """The new statement is what will be in force: an envelope can't reach canopy-web
+    if the statement it comes with leaves it out."""
+    conn = on_row(world)
+    assert rcpt.server_recipient(conn, {"agents": []}) is None
+    assert rcpt.server_recipient(conn, {"agents": [], "canopy_web": OTHER_KEY}) is None
+    named = {"agents": [], "canopy_web": server_key.thumbprint()}
+    assert rcpt.server_recipient(conn, named)[1] == server_key.thumbprint()
+
+
+def test_active_row_needs_the_current_key_named(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    assert rcpt.server_recipient(conn)[1] == server_key.thumbprint()
+    statement_says(conn, canopy_web=OTHER_KEY)
+    assert rcpt.server_recipient(conn) is None
+
+
+# ---- pruning ------------------------------------------------------------------------
+
+def test_prune_keeps_canopy_web_when_named(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    assert canopy_target() in zk_seal.sealed_targets(conn.sealed)
+    assert rcpt.prune(conn) == []
+    conn.refresh_from_db()
+    assert canopy_target() in zk_seal.sealed_targets(conn.sealed)
+    assert canopy_target() in {(m["kind"], m["target"]) for m in conn.sealed_sig["macs"]}
+
+
+def test_active_row_without_canopy_web_in_statement_drops_it(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    conn.statement.pop("canopy_web")
+    conn.save(update_fields=["statement"])
+    target = canopy_target()
+    assert rcpt.prune(conn)
+    conn.refresh_from_db()
+    assert target not in zk_seal.sealed_targets(conn.sealed)
+    assert target not in {(m["kind"], m["target"]) for m in conn.sealed_sig["macs"]}
+    assert owner_target(world) in zk_seal.sealed_targets(conn.sealed)
+
+
+def test_a_kms_outage_never_prunes_canopy_web(world, key):
+    """Only the owner's statement drops it: an outage says nothing about what they chose."""
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    target = canopy_target()
+    with mock.patch.object(server_key, "public_jwk", side_effect=server_key.Unavailable("down")):
+        assert rcpt.prune(conn) == []
+    conn.refresh_from_db()
+    assert target in zk_seal.sealed_targets(conn.sealed)
+
+
+def test_prune_reads_the_key_before_it_takes_the_row_lock(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    calls = mock.Mock()
+    real_jwk, real_lock = server_key.public_jwk, Connection.objects.select_for_update
+
+    def jwk():
+        calls.jwk()
+        return real_jwk()
+
+    def lock(*a, **kw):
+        calls.lock()
+        return real_lock(*a, **kw)
+
+    with mock.patch.object(server_key, "public_jwk", jwk), \
+            mock.patch.object(Connection.objects, "select_for_update", lock):
+        rcpt.prune(conn)
+    assert [c[0] for c in calls.mock_calls][:2] == ["jwk", "lock"]
+
+
+# ---- canopy-web has no RunnerDeviceKey: every reader of the recipients ------------------
+
+def test_writer_provable_when_the_statement_names_canopy_web(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    by_canopy = {"by": {"kind": "device", "target": server_key.thumbprint()}}
+    assert rcpt._writer_provable(conn, by_canopy) is True
+    conn.statement.pop("canopy_web")
+    assert rcpt._writer_provable(conn, by_canopy) is False
+
+
+def test_writer_proof_asks_no_kms(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    by_canopy = {"by": {"kind": "device", "target": server_key.thumbprint()}}
+    with mock.patch.object(server_key, "public_jwk", side_effect=server_key.Unavailable("down")):
+        assert rcpt._writer_provable(conn, by_canopy) is True
+
+
+def test_canopy_web_is_no_machine_and_no_revoker(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    jkt = server_key.thumbprint()
+    assert ("device", jkt) in zk_seal.sealed_targets(conn.sealed)
+    assert jkt not in {k.ecdh_jkt for k in rcpt.holders(conn)}
+    assert jkt not in {w["target"] for w in rcpt.waiting(conn)}
+    assert jkt not in {k.ecdh_jkt for k, _ in rcpt.device_reasons(conn)}
+    assert rcpt._revokers([jkt]) == []
+    assert jkt not in rcpt.revokers(conn)
+    assert rcpt._last_holder(set(), {("device", jkt)}) is None
+
+
+def test_an_envelope_held_only_by_canopy_web_and_the_owner_deletes_at_once(world, key):
+    with FakeSF():
+        conn = connect(world)
+    assert rcpt.revokers(conn) == []
+    assert services.disconnect(conn, by=world.person) == "deleted"
+
+
+def test_keeper_work_keeps_canopy_web_and_never_waits_for_it(world, key):
+    conn = sealed_to_owner({"agent": world.eva}, world.person, app=world.app, server_use=True)
+    to = [r for r in rcpt.recipients(conn, {"agents": [str(world.eva.pk)], "my_computers": [],
+                                            "canopy_web": server_key.thumbprint()})
+          if r[0] == "device" and r[1] != world.ada_laptop.ecdh_jkt]
+    world.shared(conn, agents=[world.eva], canopy_web=server_key.thumbprint(), to=to)
+    [work] = keeper.work(world.eva_box.runner)
+    assert work["waiting"] == [world.ada_laptop.ecdh_jkt]
+    assert server_key.thumbprint() in {r["target"] for r in work["recipients"]}
+
+
+def test_material_lists_canopy_web_so_a_machine_keeps_it(world, key):
+    """A machine seals only to those this list names, and a write-back that drops a
+    recipient still allowed is refused: leaving canopy-web out would stop every refresh."""
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    rows = {r["target"]: r for r in tokens.material_fields(conn, world.eva_box)["recipients"]}
+    row = rows[server_key.thumbprint()]
+    assert (row["kind"], row["public_jwk"], row["runner_name"]) == ("device", server_key.public_jwk(), "canopy-web")
+
+
+def test_material_does_not_list_canopy_web_when_the_statement_omits_it(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva])
+    rows = tokens.material_fields(conn, world.eva_box)["recipients"]
+    assert server_key.thumbprint() not in {r["target"] for r in rows}
+
+
+# ---- a machine writing back ------------------------------------------------------------
+
+@pytest.fixture
+def machines(key):
+    w = TokensWorld()
+    w.conn = w.shared(on_row(w), agents=[w.eva], canopy_web=server_key.thumbprint())
+    return w
+
+
+def test_a_machine_write_reaching_canopy_web_is_stored(machines):
+    w = machines
+    lid = lease(w, w.box_a).json()["lease_id"]
+    assert write_back(w, w.box_a, machine_write(w, w.conn, w.box_a, lid)).status_code == 200
+    w.conn.refresh_from_db()
+    assert canopy_target() in zk_seal.sealed_targets(w.conn.access_sealed)
+
+
+def test_a_machine_write_leaving_canopy_web_out_is_refused(machines):
+    w = machines
+    lid = lease(w, w.box_a).json()["lease_id"]
+    to = [r for r in rcpt.recipients(w.conn) if r[1] != server_key.thumbprint()]
+    r = write_back(w, w.box_a, machine_write(w, w.conn, w.box_a, lid, to=to))
+    assert r.status_code == 422 and r.json()["error"] == "zk_rewrap_required"
+
+
+def test_a_kms_outage_refuses_no_machine_write(machines):
+    """Another web worker may have shown canopy-web's key, or none could: this machine's new
+    token may be the only copy, so neither write is refused for it."""
+    w = machines
+    lid = lease(w, w.box_a).json()["lease_id"]
+    reaching = machine_write(w, w.conn, w.box_a, lid)
+    without = [r for r in rcpt.recipients(w.conn) if r[1] != server_key.thumbprint()]
+    with mock.patch.object(server_key, "public_jwk", side_effect=server_key.Unavailable("down")):
+        assert rcpt.server_recipient(w.conn) is None
+        rows = tokens.material_fields(w.conn, w.machines[w.box_a][0])["recipients"]
+        assert "canopy-web" not in {r["runner_name"] for r in rows}
+        assert write_back(w, w.box_a, reaching).status_code == 200
+        lid = lease(w, w.box_a, w.conn, lid).json()["lease_id"]
+        leaving_out = machine_write(w, w.conn, w.box_a, lid, to=without)
+        assert write_back(w, w.box_a, leaving_out).status_code == 200

@@ -162,6 +162,7 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
     """Store the owner's signed statement and the envelope their browser sealed to
     it; the row becomes `active`. Every refusal is a `WireError` (contract §0.6
     route 4)."""
+    rcpt.warm_server_key(conn)
     with transaction.atomic():
         conn = Connection.objects.select_for_update(of=("self",)).select_related("app", "agent").get(pk=conn.pk)
         _not_revoking(conn)

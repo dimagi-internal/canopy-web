@@ -116,6 +116,7 @@ def reseal(conn: Connection, runner: Runner, device_key: RunnerDeviceKey, *, sea
     `zk_rewrap_required`, `bad_writer_sig`). A stored access envelope must be
     re-sealed with it (422 `zk_rewrap_required`). Records `resealed`."""
     mine = ("device", device_key.ecdh_jkt)
+    rcpt.warm_server_key(conn)
     with transaction.atomic():
         row = (Connection.objects.select_for_update(of=("self",)).select_related("app", "agent", "user")
                .get(pk=conn.pk))
@@ -129,6 +130,7 @@ def reseal(conn: Connection, runner: Runner, device_key: RunnerDeviceKey, *, sea
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
         allowed = rcpt.targets(rcpt.recipients(row))
         keep = old & allowed
+        allowed |= rcpt.unconfirmed_server_target(row)  # a KMS outage refuses nobody's write
         tokens.check_write(sealed, sealed_sig, name=wire.REFRESH_NAME, allowed=allowed, keep=keep,
                            writer=device_key, expect=row.sealed_digest)
         if row.access_sealed:

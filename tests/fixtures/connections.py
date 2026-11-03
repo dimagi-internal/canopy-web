@@ -280,11 +280,12 @@ def endorse(agent, key, user, priv, **row) -> AgentVaultEndorsement:
 
 
 def browser_share(conn, user, priv, *, agents=(), my_computers=(), endorsers=(), to=None, version=None,
-                  sign_with=None, writer=None) -> dict:
+                  sign_with=None, writer=None, canopy_web=None) -> dict:
     """The `sharing.share` keyword arguments the owner's browser sends (contract
     §0.3-0.4): a statement lending `conn` to `agents`, its use on `my_computers` (ECDH
-    thumbprints) and the other people who may vouch for machines (`endorsers`, person
-    key thumbprints), signed with `sign_with` (default `priv`); the refresh token
+    thumbprints), the other people who may vouch for machines (`endorsers`, person key
+    thumbprints) and canopy-web's key (`canopy_web`, a thumbprint; the key is left out
+    otherwise), signed with `sign_with` (default `priv`); the refresh token
     sealed to `user` and to `to` (`[(kind, target, public_jwk)]`; default every
     machine canopy-web lists for that statement), with writer MACs by `writer`
     (default `priv`, as `user`)."""
@@ -292,6 +293,8 @@ def browser_share(conn, user, priv, *, agents=(), my_computers=(), endorsers=(),
     st = {"account_id": conn.account_id, "agents": sorted(str(a.pk) for a in agents), "connection": str(conn.pk),
           "endorsers": sorted(endorsers), "my_computers": sorted(my_computers), "v": 1,
           "version": conn.statement_version + 1 if version is None else version}
+    if canopy_web is not None:
+        st["canopy_web"] = canopy_web
     if to is None:
         to = [r for r in rcpt.recipients(conn, st) if r[0] == "device"]
     owner = ("member", str(user.pk), zk_ref.jwk(priv.public_key()))
@@ -354,10 +357,10 @@ class ShareWorld:
     def evas(self) -> Connection:
         return sealed_to_owner({"agent": self.eva}, self.person, app=self.app)
 
-    def shared(self, conn, agents=(), my_computers=(), to=None, endorsers=()) -> Connection:
+    def shared(self, conn, agents=(), my_computers=(), to=None, endorsers=(), canopy_web=None) -> Connection:
         return sharing.share(conn, user=self.person, **browser_share(
             conn, self.person, self.person_priv, agents=agents, my_computers=my_computers, to=to,
-            endorsers=endorsers))
+            endorsers=endorsers, canopy_web=canopy_web))
 
 
 def revoke_admin(user, agent):

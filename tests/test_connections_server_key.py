@@ -231,3 +231,15 @@ def test_the_key_stack_is_a_p256_key_agreement_key_only_the_task_role_derives_wi
     for s in st.values():
         if s is not use:
             assert "kms:DeriveSharedSecret" not in s["Action"]
+
+
+def test_a_failed_read_is_not_retried_for_a_while(settings):
+    """A row lock or a sign-in may be waiting on this: an outage costs one KMS timeout, not one each."""
+    settings.CONNECTIONS_SERVER_KMS_KEY = "alias/k"
+    client = mock.Mock()
+    client.get_public_key.side_effect = ClientError({"Error": {"Code": "Down", "Message": "x"}}, "GetPublicKey")
+    with mock.patch.object(server_key, "_client", return_value=client):
+        for _ in range(2):
+            with pytest.raises(server_key.Unavailable):
+                server_key.public_jwk()
+    assert client.get_public_key.call_count == 1

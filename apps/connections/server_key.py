@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import threading
+import time
 
 import boto3
 from botocore.config import Config
@@ -25,6 +26,9 @@ from django.conf import settings
 from apps.agents.credentials import zk
 
 KEY_SPEC, KEY_USAGE = "ECC_NIST_P256", "KEY_AGREEMENT"
+#: How long a failed read of the public key answers without asking KMS again: a sign-in, or a
+#: caller holding a row lock, must not pay a timeout each.
+RETRY_AFTER_SECONDS = 30
 
 
 class Unavailable(Exception):  # noqa: N818 — the name is the interface
@@ -33,13 +37,14 @@ class Unavailable(Exception):  # noqa: N818 — the name is the interface
 
 _lock = threading.Lock()
 _cached: tuple[str, dict] | None = None  # (key id, public JWK)
+_failed: tuple[str, float] | None = None  # (key id, monotonic time to try again)
 _software: ec.EllipticCurvePrivateKey | None = None
 
 
 def _reset() -> None:
-    global _cached
+    global _cached, _failed
     with _lock:
-        _cached = None
+        _cached, _failed = None, None
 
 
 def use_software_key_for_tests(private_key) -> None:
@@ -71,29 +76,38 @@ def _jwk(pub: ec.EllipticCurvePublicKey) -> dict:
 
 
 def public_jwk() -> dict:
-    """The key's public JWK (cached per process)."""
-    global _cached
+    """The key's public JWK (cached per process; a failure for `RETRY_AFTER_SECONDS`)."""
+    global _cached, _failed
     if not available():
         raise Unavailable("canopy-web's connection key is not configured")
     if _software is not None:
         return _jwk(_software.public_key())
     key_id = settings.CONNECTIONS_SERVER_KMS_KEY
     with _lock:
-        hit = _cached
+        hit, failed = _cached, _failed
     if hit is not None and hit[0] == key_id:
         return dict(hit[1])
+    if failed is not None and failed[0] == key_id and time.monotonic() < failed[1]:
+        raise Unavailable("canopy-web's connection key could not be read")
     try:  # the network call holds no lock
+        jwk = _read_public_jwk(key_id)
+    except Unavailable:
+        with _lock:
+            _failed = (key_id, time.monotonic() + RETRY_AFTER_SECONDS)
+        raise
+    with _lock:
+        _cached, _failed = (key_id, jwk), None
+    return dict(jwk)
+
+
+def _read_public_jwk(key_id: str) -> dict:
+    try:
         out = _client().get_public_key(KeyId=key_id)
         if out.get("KeySpec") != KEY_SPEC or out.get("KeyUsage") != KEY_USAGE:
             raise Unavailable("canopy-web's connection key is not a P-256 key-agreement key")
-        jwk = _jwk(serialization.load_der_public_key(bytes(out["PublicKey"])))
-    except Unavailable:
-        raise
+        return _jwk(serialization.load_der_public_key(bytes(out["PublicKey"])))
     except (ClientError, BotoCoreError, KeyError, ValueError, TypeError):
         raise Unavailable("canopy-web's connection key could not be read") from None
-    with _lock:
-        _cached = (key_id, jwk)
-    return dict(jwk)
 
 
 def thumbprint() -> str:

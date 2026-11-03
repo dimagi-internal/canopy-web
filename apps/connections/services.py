@@ -20,7 +20,10 @@ only — the person's, or for an agent the admin connecting it (`owner_keyset`) 
 drops the access token and keeps no readable copy. The row is `unshared` until
 the owner's browser signs a grant statement and re-seals it to the machines
 that statement allows. Without a vault key there is nothing to seal to:
-`no_vault_key`, before anything is exchanged.
+`no_vault_key`, before anything is exchanged. When `server_use` is on (a new row:
+the provider's default, if canopy-web's key can be read) it is sealed to
+canopy-web's key too (`server_key`, spec "Connecting"); a KMS failure never costs the
+sign-in, which then seals to the owner alone.
 
 THE APP. Every flow runs against one workspace's `ConnectionApp` (`app_for`):
 its client id and secret, its options, its chosen scopes. A connection keeps the
@@ -78,7 +81,7 @@ from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
 
-from . import providers, wire
+from . import providers, server_key, wire
 from . import recipients as rcpt
 from .models import Connection, ConnectionApp
 
@@ -514,7 +517,8 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     the required scopes, the provider's `check_owner` and its `sealed_hosts`
     succeed; a grant refused after the exchange is discarded (`_discard_grant`). On
     success the refresh plaintext is sealed to the owner's member key only
-    (`owner_keyset`), the access token is dropped, and the row (inserted, or the
+    (`owner_keyset`), and to canopy-web's key when the switch is on
+    (`_server_key_to_seal_to`), the access token is dropped, and the row (inserted, or the
     same account's row for this owner and app, replaced) is `unshared`; records
     `connected`. An existing row sealed to another key is left as it is
     (`owner_changed`): boxes pin a connection's owner key, and only that pin catches
@@ -609,10 +613,24 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "connected_by": by,
     }
 
-    def seal(connection_id) -> dict:
+    # Read now: the transaction below holds row locks, and a network call never does.
+    server_jwk = _server_key_to_seal_to(p, lookup, subject, by)
+
+    def seal(connection_id, server_use) -> dict:
+        """The envelope fields for the row. `server_use`: the locked row's switch, None for a
+        new row, whose own is decided here and returned with them. An existing row's is never
+        returned: a reconnect keeps the owner's choice. Its key failing this time seals to the
+        owner only and leaves an on row on, as the owner chose; the next reconnect or share
+        reaches canopy-web again."""
+        new = server_use is None
+        on = (p.server_use_default and server_jwk is not None) if new else server_use
+        to = [("member", str(keyset.user_id), keyset.public_jwk)]
+        if on and server_jwk is not None:
+            to.append(("device", device_keys.thumbprint(server_jwk), server_jwk))
         sealed = zk_seal.seal_to(plaintext, agent_id=wire.binding_id(connection_id), name=wire.REFRESH_NAME,
-                                 kv=0, recipients=[("member", str(keyset.user_id), keyset.public_jwk)])
-        return {"sealed": sealed, "sealed_digest": hashlib.sha256(sealed.encode()).hexdigest()}
+                                 kv=0, recipients=to)
+        return {"sealed": sealed, "sealed_digest": hashlib.sha256(sealed.encode()).hexdigest(),
+                **({"server_use": on} if new else {})}
 
     with transaction.atomic():
         # The app row, locked, is still the client that issued this grant: a client
@@ -647,6 +665,21 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     return conn
 
 
+def _server_key_to_seal_to(p: providers.Provider, lookup: dict, subject: Subject, by) -> dict | None:
+    """canopy-web's public key, if this connect may seal to it: a new row the provider turns on
+    by default, or the same account's row already on. None otherwise, when no key is configured,
+    and when KMS fails: that is a warning, never a failed sign-in. Google's connect asks KMS nothing."""
+    if not server_key.available():
+        return None
+    if not p.server_use_default and not Connection.objects.filter(**lookup, server_use=True).exists():
+        return None
+    try:
+        return server_key.public_jwk()
+    except server_key.Unavailable:
+        record(subject, "server_key_unavailable", by=by, warn=True, during="connect")
+        return None
+
+
 def refresh_plaintext(app: ConnectionApp, token: providers.TokenResponse, *, account_id: str,
                       owner_key: str, scopes: str, login_host: str, instance_url: str) -> str:
     """The `refresh` plaintext (contract §0.2), compact JSON. Never the client secret:
@@ -671,9 +704,11 @@ class _OwnerChanged(Exception):  # noqa: N818 - a signal inside `complete`, neve
 
 def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
     """Insert or update the grant's row with its envelope; the caller holds the
-    transaction. `seal(connection_id)` gives the envelope fields: the binding is the
-    row's id, so the row is always sealed to the id it ends up with — its own when
-    the same owner, app and account already has one, else the id it is created with.
+    transaction. `seal(connection_id, server_use)` gives the envelope fields: the binding
+    is the row's id, so the row is always sealed to the id it ends up with — its own when
+    the same owner, app and account already has one, else the id it is created with. It is
+    told the locked row's `server_use` (None for a new row, whose fields then carry one),
+    and `defaults` never holds it, so a reconnect does not reset the owner's choice.
     Raises, writing nothing, `_RowRevoking` when the row it locks is `revoking` and
     `_OwnerChanged` when its `owner_key` is not the key about to be sealed to."""
     conn = Connection.objects.select_for_update().filter(**lookup).first()
@@ -681,7 +716,7 @@ def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
         pk = uuid.uuid4()
         try:
             with transaction.atomic():
-                return Connection.objects.create(id=pk, **lookup, **defaults, **seal(pk))
+                return Connection.objects.create(id=pk, **lookup, **defaults, **seal(pk, None))
         except IntegrityError:
             # A concurrent completion for the same account inserted the row between
             # our lookup and insert. It exists now: update it with this grant,
@@ -691,7 +726,7 @@ def _upsert_connection(lookup: dict, defaults: dict, seal) -> Connection:
         raise _RowRevoking
     if conn.owner_key != defaults["owner_key"]:
         raise _OwnerChanged
-    for k, v in {**defaults, **seal(conn.pk)}.items():
+    for k, v in {**defaults, **seal(conn.pk, conn.server_use)}.items():
         setattr(conn, k, v)
     conn.save()
     return conn

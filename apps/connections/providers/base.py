@@ -50,6 +50,9 @@ What a provider declares, and where providers differ:
   revoked at the provider before it is dropped (default yes). Google: no — revoking
   there ends every token of that account on that OAuth client, including ones
   other connections hold.
+- `server_use_default`: whether a new connection lets canopy-web use it, when
+  canopy-web's key is available (`recipients.server_recipient`). `server_calls`:
+  whether canopy-web can call this provider at all; the switch is not shown otherwise.
 - `instance_url(body)`: the account's own API base, when the provider has one
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
 - `sealed_hosts(token)`: the `login_host` and `instance_url` sealed in the envelope
@@ -165,6 +168,8 @@ class Provider:
     client_auth: ClassVar[Literal["body", "basic"]] = "body"
     rotates_refresh_token: ClassVar[bool] = False
     revokes_refused_grant: ClassVar[bool] = True
+    server_use_default: ClassVar[bool] = False
+    server_calls: ClassVar[bool] = False
     pkce: ClassVar[bool] = True
     default_access_token_seconds: ClassVar[int] = 3600
 

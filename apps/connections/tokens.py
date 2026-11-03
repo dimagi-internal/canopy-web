@@ -170,6 +170,12 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None, f
                   else [])
     recipients += [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
                     "runner_name": k.runner.name} for k in devices]
+    # A machine seals only to who is listed here, and a write-back must keep whoever may still
+    # open it (`check_write`): left out, canopy-web would make every refresh refused.
+    server = rcpt.server_recipient(conn)
+    if server is not None:
+        recipients.append({"kind": server[0], "target": server[1], "public_jwk": server[2],
+                           "runner_name": "canopy-web"})
     agents = {a.pk: a for _, a in pairs if a is not None}
     endorsements = with_writer_endorsements(conn, [
         {**e, "agent_id": str(a.pk)} for a in agents.values() for e in rcpt.endorsements_for(a, facts)
@@ -313,6 +319,7 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
     if rotated != (sealed is not None):
         raise WireError(422, "rotation_mismatch",
                         "Send `sealed` exactly when the refresh token rotated (`rotated`).")
+    rcpt.warm_server_key(conn)
     with transaction.atomic():
         row = _locked(conn)
         _not_revoking(row)
@@ -321,6 +328,8 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
         allowed = rcpt.targets(rcpt.recipients(row))
         keep = zk_seal.sealed_targets(row.sealed) & allowed
+        # Never refused over a KMS outage: this machine's new token may be the only copy.
+        allowed |= rcpt.unconfirmed_server_target(row)
         check_write(access_sealed, access_sig, name=wire.ACCESS_NAME, allowed=allowed, keep=keep,
                      writer=device_key, expect=vault_engine.value_digest(row.access_sealed))
         if sealed is not None:
