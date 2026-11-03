@@ -2,7 +2,7 @@
 with that project's team (`ProjectSessionShare`, `sharing.py`).
 
 Your own choice, per project, revocable at once; every change is an audited
-setting change. docs/architecture/access.md § Who can see a session.
+setting change. docs/architecture/access-sessions-and-people.md § Who can see a session.
 """
 from __future__ import annotations
 

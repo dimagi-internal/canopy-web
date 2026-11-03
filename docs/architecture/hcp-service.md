@@ -213,7 +213,7 @@ unavailable; Jonathan is record available + on by default, use not available
   (available), `.defaultOn|defaultOff` (default), and `sessionRecord|sessionUse.
   on|off|inherit` (a session's override) — canopy's own types, beyond the spec's
   required set.
-- **Coverage** (`access.md` § "Project participants, coverage, and contact notes")
+- **Coverage** (`access-sessions-and-people.md` § "Project participants, coverage, and contact notes")
   counts only people who make record available; a session may still turn it off, and
   coverage does not see that.
 

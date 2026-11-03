@@ -420,7 +420,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   hour), and one Approve button; the passkey step-up is the API client's
   (`auth/stepUp.ts`). Only the invitation's creator can open it (404 otherwise)
   or approve it, and a token cannot (`apps/harness/api_runner_invitations.py`,
-  `docs/architecture/runners.md` § How a runner signs in).
+  `docs/architecture/runner-credentials.md` § How a runner signs in).
 - **`/members/:userId`** — one member: role, when they joined, person or agent, the agents they
   operate here and the other workspaces you share with them; admins and owners also see who
   invited them and when they last signed in.

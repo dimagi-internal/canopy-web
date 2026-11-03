@@ -1,5 +1,5 @@
 """Credential sets: one ordered list of Claude credentials that several cloud runners
-read as their own (`RunnerCredentialSet`; docs/architecture/runners.md § Credential sets).
+read as their own (`RunnerCredentialSet`; docs/architecture/runner-fleets.md § Credential sets).
 
 A set's LIST is shared by every runner on it, in whatever workspace tree each one
 serves: an entry added, renamed, reordered or removed from any member's Credentials

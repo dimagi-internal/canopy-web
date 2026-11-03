@@ -65,7 +65,7 @@ keyless from then on. `up.sh` records `<stack>-invitation.json` (`{id, runner_id
 from which `wire.sh --name` takes the runner id. An invitation expires after an hour;
 re-run `up.sh` for a new one. An update of a stack whose runner exists needs no
 invitation: a replaced instance re-attaches by its role. Flow and rules:
-`docs/architecture/runners.md` § How a runner signs in.
+`docs/architecture/runner-credentials.md` § How a runner signs in.
 
 **A second box, proven without routing any work to it** (what was run on 2026-10-04):
 ```bash
@@ -1000,7 +1000,7 @@ running would either suppress a real update or trigger a needless one.
 ## Runner fleets: capacity that scales itself
 
 A fleet is an Auto Scaling group of interchangeable runners that canopy-web grows and
-shrinks with the work waiting (`docs/architecture/runners.md` § Runner fleets; spec
+shrinks with the work waiting (`docs/architecture/runner-fleets.md` § Runner fleets; spec
 `docs/superpowers/specs/2026-10-24-runner-fleets-design.md`). Members keep nothing the
 fleet needs:
 - their identity is their instance, proven to AWS;
