@@ -10,9 +10,10 @@ vi.mock('@/api/connectedApps', async (importOriginal) => ({
   testConnectedApp: (...args: unknown[]) => testConnectedApp(...args),
 }))
 
-const { ConnectionTester, ConnectionTestTable, SiteHealthTable, RunnerRequirements, liveProbeSummary } = await import(
-  './ConnectedAppsPage'
-)
+const { ConnectionTester, ConnectionTestTable, liveProbeSummary } = await import('./connectedApps/ConnectionTester')
+const { SiteHealthTable } = await import('./connectedApps/SiteHealthTable')
+const { RunnerRequirements } = await import('./connectedApps/HostGrantEditor')
+
 
 afterEach(() => {
   cleanup()
