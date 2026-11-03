@@ -25,6 +25,8 @@ class MailRouteOut(Schema):
     enabled: bool
     auto: bool = False
     """Made and kept by the domain's every-agent switch; editing it makes it yours."""
+    keep_copy: bool = False
+    """A forward route also keeps each message in the destination's canopy inbox."""
 
 
 class MailDomainShareOut(Schema):
@@ -97,6 +99,24 @@ class MailRouteIn(Schema):
     agent_slug: str = ""
     forward_to_user_id: int | None = None
     enabled: bool = True
+    keep_copy: bool | None = None
+    """Forward routes: also keep each message in the destination's canopy inbox. Omitted on
+    an existing route: unchanged (a new one starts off)."""
+
+
+class MailInboundLogOut(Schema):
+    id: int
+    recipient: str
+    original_from: str
+    subject: str
+    outcome: str
+    verdicts: dict[str, str] = {}
+    created_at: str
+
+
+class MailInboundLogListOut(Schema):
+    retention_days: int
+    items: list[MailInboundLogOut]
 
 
 class MailAttachmentOut(Schema):
@@ -136,6 +156,8 @@ class MailThreadOut(Schema):
     unread: bool
     archived: bool
     last_message_at: str
+    forwarded: bool = False
+    """A copy kept from a forward route: only its destination can read it."""
     counterpart: str = ""
     default_reply_to: list[str] = []
     messages: list[MailMessageOut] = []
