@@ -195,7 +195,7 @@ def test_on_the_site_the_sensitive_door_confines_even_the_owner(w, who_):
 def test_the_owner_keeps_their_role_and_mode_rights_when_confined(w):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w["owner"], _site_session(w))
-    assert d.role == access.OWNER and d.may_pin_runner
+    assert d.relationship == access.OWNER and d.may_pin_runner
 
 
 def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):

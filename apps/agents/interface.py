@@ -77,13 +77,9 @@ with no `pages` is never selected by a page. `ask` is OFF by default: an agent w
 capability cannot be asked by a `read_only` line even if the list names them: a line can only
 open a capability that exists.
 
-**Removed 2026-11-02:** each capability's `role:` (viewer | user). Who may use a capability is an
-access-list line (a role, or one that names the capability); see
-`docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md`.
-
-**Removed 2026-10-30:** `full:`, each capability's `callers:`, `callers_default:` and
-`editors:`. A published interface that still carries them is refused with a message pointing
-at the access list; the data migration `agents/0112` moved every agent's rules onto its list.
+A capability carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
+one is an access-list line (a role, or one that names the capability). A published interface that
+still carries them is refused with a message pointing at the access list.
 """
 from __future__ import annotations
 
