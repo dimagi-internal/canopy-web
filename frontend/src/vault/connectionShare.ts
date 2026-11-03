@@ -8,13 +8,16 @@
  * `tests/test_connections_browser_share.py` puts through the real route and the reference.
  *
  * Everything in `ShareStateOut` is canopy-web's claim, so it is checked here:
+ *  - a stored statement counts only under the owner's signature, whoever wrote the envelope:
+ *    it sets the floor check, the next version and what callers show as today's choices;
  *  - an envelope is read only with its writer's MAC, from the owner's key or a machine the
  *    statement allows. The one exception is canopy-web's first seal, while `unshared` (R4);
  *  - a device is sealed to only when `vault/trust.ts` trusts an endorsement of its exact key
  *    for a chosen agent, or the owner chose it as their own (R14); the candidates only narrow;
  *  - the owner's key is the one the scalar in hand has, whatever the server named.
  *
- * Plaintext tokens stay inside this module: `openForOwner` answers only the account.
+ * Plaintext tokens stay inside this module: `openForOwner` answers only the account and
+ * the verified statement. Read a stored statement from there, never from `state.statement`.
  */
 import type { ShareIn, ShareStateOut } from '@/api/connections'
 import type { ZkRecipientsOut } from '@/api/vault'
@@ -273,14 +276,11 @@ async function checkedSig(sig: unknown, entries: SealedEntry[]): Promise<{ by: B
 /** A device the stored statement allows: one of `my_computers`, or an endorsement of its
  *  exact key for an agent it lists, by the owner or someone it names. The statement says
  *  who may vouch here, not this browser's pins: this is the check every machine makes.
- *  It counts only under the owner's own signature, or canopy-web could write a statement
- *  naming its own box beside a substitute token. `owner` is the key in hand, and
- *  `readRefresh` refuses any envelope whose sealed `owner_key` is not its thumbprint. */
-async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statement | null, owner: OwnerKey): Promise<boolean> {
-  if (!stored || !state.statement_sig) return false
-  if (!(await verifyStatement(stored, state.statement_sig, owner.publicJwk))) return false
+ *  `stored` has passed `storedStatement`, so it is the owner's own word. */
+async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statement | null, ownerJkt: string): Promise<boolean> {
+  if (!stored) return false
   if (stored.my_computers.includes(thumb)) return true
-  const vouchers = new Set([owner.jkt, ...stored.endorsers])
+  const vouchers = new Set([ownerJkt, ...stored.endorsers])
   for (const e of state.endorsements ?? []) {
     if (e.kind !== 'device' || e.target !== thumb || e.key_jkt !== thumb || !e.by_public_jwk) continue
     if (!stored.agents.includes(String(e.agent_id))) continue
@@ -304,7 +304,7 @@ async function authenticate(state: ShareStateOut, stored: Statement | null, owne
   }
   const allowed = by.kind === 'member'
     ? by.target === owner.userId && thumb === owner.jkt
-    : await deviceAllowed(thumb, state, stored, owner)
+    : await deviceAllowed(thumb, state, stored, owner.jkt)
   if (!allowed) throw new ShareRefused('bad-writer', 'This connection’s envelope was written by someone it does not allow.')
 }
 
@@ -347,11 +347,18 @@ function checkFloor(plain: Json, name: Name, stored: Statement | null): void {
 
 interface Opened { owner: OwnerKey; stored: Statement | null; refresh: Json; access: Json | null }
 
-function storedStatement(state: ShareStateOut): Statement | null {
+/** The stored statement, once it is the owner's: about this connection and account, and
+ *  signed by the key in hand. `readRefresh` then refuses any envelope whose sealed
+ *  `owner_key` is not that key's thumbprint, and nothing leaves `readAll` before both pass.
+ *  A real row always has both: a share writes them together and a reconnect leaves them. */
+async function storedStatement(state: ShareStateOut, owner: OwnerKey): Promise<Statement | null> {
   if (!state.statement) return null
   const st = checkedStatement(state.statement)
   if (st.connection !== state.id) throw badStatement('names another connection')
   if (st.account_id !== state.account_id) throw badStatement('names another account')
+  if (!state.statement_sig || !(await verifyStatement(st, state.statement_sig, owner.publicJwk))) {
+    throw new ShareRefused('bad-statement-sig', 'You did not sign the grant statement canopy-web shows for this connection.')
+  }
   return st
 }
 
@@ -372,7 +379,9 @@ async function readRefresh(state: ShareStateOut, stored: Statement | null, owner
   }
   const plain = parsed(text, 'refresh')
   if (Object.keys(plain).sort().join() !== REFRESH_KEYS.join() || plain.v !== 1) throw badPlaintext('refresh')
-  if (plain.provider !== state.provider || typeof plain.refresh_token !== 'string') throw badPlaintext('refresh')
+  if (plain.provider !== state.provider) throw badPlaintext('refresh')
+  if (typeof plain.refresh_token !== 'string' || !plain.refresh_token
+      || typeof plain.client_id !== 'string' || !plain.client_id) throw badPlaintext('refresh')
   checkHosts(plain.provider, plain.login_host, plain.instance_url)
   if (plain.owner_key !== owner.jkt) throw new ShareRefused('bad-owner-key', 'This connection names another key as its owner.')
   if (plain.account_id !== state.account_id) throw new ShareRefused('account-mismatch', 'This connection opened to another account.')
@@ -427,17 +436,20 @@ async function readAll(state: ShareStateOut, me: Unlocked): Promise<Opened> {
   if (!UUID.test(state.id) || state.binding !== `connection:${state.id}`) {
     throw new ShareRefused('bad-binding', 'This connection’s binding is not its own.')
   }
-  const stored = storedStatement(state)
+  const stored = await storedStatement(state, owner)
   const refresh = await readRefresh(state, stored, owner, me)
   return { owner, stored, refresh, access: await readAccess(state, stored, owner, me, refresh) }
 }
 
-/** Open the connection enough to say which account it is. The token stays in here:
- *  `buildShare` opens it again with the same unlocked key. */
-export async function openForOwner(state: ShareStateOut, me: Unlocked): Promise<{ account: OpenedAccount }> {
-  const { refresh } = await readAll(state, me)
+/** Open the connection enough to say which account it is and what its owner last signed
+ *  (null before the first share). The token stays in here: `buildShare` opens it again
+ *  with the same unlocked key. */
+export async function openForOwner(state: ShareStateOut, me: Unlocked):
+    Promise<{ account: OpenedAccount; statement: Statement | null }> {
+  const { refresh, stored } = await readAll(state, me)
   return { account: { account_id: refresh.account_id as string, instance_url: refresh.instance_url as string,
-                      provider: refresh.provider as string } }
+                      provider: refresh.provider as string },
+           statement: stored }
 }
 
 // ---- who may read it (contract §0.5, R14) ------------------------------------------------
@@ -451,8 +463,8 @@ async function keyMatches(target: string, jwk: Jwk): Promise<boolean> {
   }
 }
 
-/** Read every candidate's key and every agent's endorsements through `vault/trust.ts`.
- *  `pins`: this browser's, unless a test says otherwise. */
+/** Read every candidate's key and every agent's endorsements through `vault/trust.ts`, for
+ *  the page to show and `buildShare` to seal by. `pins`: this browser's, unless a test says otherwise. */
 export async function trustFor(state: ShareStateOut, me: Unlocked, opts: { pins?: Pins } = {}): Promise<Trust> {
   const owner = await ownerOf(state, me)
   const keys = new Map<string, Jwk>()
@@ -549,18 +561,21 @@ function trustedEndorsers(choice: ShareChoice, trust: Trust, sealedTo: Set<strin
 
 // ---- the share ---------------------------------------------------------------------------
 
-/** Everything `PUT /api/connections/{id}/share` needs, for `choice`. Needs the private scalar:
- *  only a key opened in this flow signs. */
-export async function buildShare(state: ShareStateOut, me: Unlocked, choice: ShareChoice): Promise<ShareIn> {
+/** Everything `PUT /api/connections/{id}/share` needs, for `choice`, and the chosen machines
+ *  it did not seal to. `trust` is the one the page showed (`trustFor`), so what is signed
+ *  is never wider than what the owner saw. Needs the private scalar: only a key opened in
+ *  this flow signs. */
+export async function buildShare(state: ShareStateOut, me: Unlocked, choice: ShareChoice,
+                                 trust: Trust): Promise<{ share: ShareIn; leftOut: LeftOut[] }> {
   if (!me.scalar) throw new ShareRefused('no-scalar', 'Unlock your vault key to share this connection.')
   const { owner, stored, refresh, access } = await readAll(state, me)
-  const trust = await trustFor(state, me)
+  if (trust.owner.jkt !== owner.jkt) throw new ShareRefused('bad-owner-key', 'This list of machines was read for another vault key.')
   const changed = changedEndorser(trust, choice)
   if (changed) {
     throw new ShareRefused('key-changed', `${changed.email || 'Someone'}’s vault key changed since this browser last `
       + 'trusted it. Confirm with them before sharing: nothing was sent.')
   }
-  const { sealTo, computers, agentDevices } = decide(state, choice, trust)
+  const { sealTo, computers, agentDevices, leftOut: dropped } = decide(state, choice, trust)
   const recipients = [{ kind: 'member' as const, target: owner.userId, publicJwk: owner.publicJwk }, ...sealTo.values()]
   if (recipients.length > MAX_LISTED) throw new ShareRefused('too-many', `A connection can reach at most ${MAX_LISTED} recipients.`)
 
@@ -588,7 +603,8 @@ export async function buildShare(state: ShareStateOut, me: Unlocked, choice: Sha
     sealed_sig: sealed.sig,
     expect: state.sealed_digest,
   }
-  if (!access) return share
+  const left = [...dropped.values()]
+  if (!access) return { share, leftOut: left }
   const again = await seal(access, 'access', await valueDigest(state.access_sealed))
-  return { ...share, access_sealed: again.value, access_sig: again.sig }
+  return { share: { ...share, access_sealed: again.value, access_sig: again.sig }, leftOut: left }
 }

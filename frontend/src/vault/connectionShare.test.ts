@@ -5,7 +5,7 @@
 // and the reference. Regenerate it with:
 //   cd frontend && VITE_WRITE_SHARE_FIXTURE=1 npx vitest run src/vault/connectionShare.test.ts
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import type { ShareIn, ShareStateOut } from '@/api/connections'
+import type { ShareStateOut } from '@/api/connections'
 import raw from '../../../docs/vault/zk-v1/connections_v1_vectors.json?raw'
 import shareFixture from '../../../docs/vault/zk-v1/connections_v1_browser_share.json?raw'
 import {
@@ -126,9 +126,10 @@ async function unshared(over: Record<string, unknown> = {}, plain: Record<string
 
 const PINS = (): Pins => ({ [ADA]: { jkt: ada.jkt, email: 'ada@x', pinned_at: '2026-01-01T00:00:00Z' } })
 
-/** This browser's pins, as `buildShare` reads them (`vault/trust.ts` `loadPins`). */
-function pinAda() {
-  vi.stubGlobal('window', { localStorage: { getItem: () => JSON.stringify(PINS()), setItem: () => {}, removeItem: () => {} } })
+/** A stored statement as the route answers it: with the owner's signature over it. */
+const signed = async (over: Partial<Statement> = {}) => {
+  const statement = statementOf(over)
+  return { statement, statement_sig: await signStatement(statement, owner.scalar, owner.pub) }
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -270,7 +271,8 @@ describe('openForOwner', () => {
   const vectorState = (over: Record<string, unknown>) => ({
     id: CONNECTION, binding: BINDING, provider: 'salesforce', account_id: ACCOUNT, account_label: 'x', state: 'active',
     sealed: v.envelope.sealed, sealed_sig: v.envelope.member_writer.sig, sealed_digest: v.envelope.sealed_digest,
-    access_sealed: '', access_sig: null, statement: v.statement.statement, endorsers: v.statement.statement.endorsers,
+    access_sealed: '', access_sig: null, statement: v.statement.statement, statement_sig: v.statement.sig,
+    endorsers: v.statement.statement.endorsers,
     owner: { user_id: '7', public_jwk: v.statement.signer_jwk }, candidates: [], endorsements: [], agents: [], ...over,
   }) as unknown as ShareStateOut
 
@@ -298,17 +300,23 @@ describe('openForOwner', () => {
   })
 
   it('refuses an unsigned envelope once shared', async () => {
-    await refused(openForOwner(await unshared({ state: 'active', statement: statementOf({ version: 1 }) }), me), 'unsigned')
+    await refused(openForOwner(await unshared({ state: 'active', ...(await signed({ version: 1 })) }), me), 'unsigned')
     await refused(openForOwner(await unshared({ state: 'revoking' }), me), 'unsigned')
   })
 
   it('never returns the refresh token to callers', async () => {
     const opened = await openForOwner(await written(await unshared(), evaBox, {
       statement: statementOf({ my_computers: [evaBox.jkt] }) }), me)
-    expect(Object.keys(opened)).toEqual(['account'])
+    expect(Object.keys(opened)).toEqual(['account', 'statement'])
     expect(Object.keys(opened.account)).toEqual(['account_id', 'instance_url', 'provider'])
     expect(JSON.stringify(opened)).not.toContain(REFRESH_TOKEN)
     expect(JSON.stringify(opened)).not.toContain(ACCESS_TOKEN)
+  })
+
+  it('hands back the statement it verified, and none before the first share', async () => {
+    expect((await openForOwner(await unshared(), me)).statement).toBeNull()
+    const state = await written(await unshared(), evaBox, { statement: statementOf({ my_computers: [evaBox.jkt] }) })
+    expect((await openForOwner(state, me)).statement).toEqual(statementOf({ my_computers: [evaBox.jkt] }))
   })
 
   it('a refusal names no secret', async () => {
@@ -349,40 +357,74 @@ describe('openForOwner', () => {
       statement: statementOf({ my_computers: [strangerBox.jkt] }), refresh: { refresh_token: 'substitute' }, access: null, ...over })
 
     it('refuses a fabricated statement signed by anyone else', async () => {
-      await refused(openForOwner(await forged({ signedBy: stranger }), me), 'bad-writer')
-      await refused(buildShare(await forged({ signedBy: stranger }), me, { agents: [], myComputers: [] }), 'bad-writer')
+      await refused(openForOwner(await forged({ signedBy: stranger }), me), 'bad-statement-sig')
+      const state = await forged({ signedBy: stranger })
+      await refused(buildShare(state, me, { agents: [], myComputers: [] }, await trustFor(state, me, { pins: {} })), 'bad-statement-sig')
     })
 
     it('refuses the owner’s real signature over a different statement', async () => {
       const real = await signStatement(statementOf(), owner.scalar, owner.pub)
       const s = await forged({ signedBy: owner })
-      await refused(openForOwner({ ...s, statement_sig: real } as ShareStateOut, me), 'bad-writer')
+      await refused(openForOwner({ ...s, statement_sig: real } as ShareStateOut, me), 'bad-statement-sig')
     })
 
     it.each([[''], [undefined], [null], ['not base64!']])('refuses a statement signature of %j', async (sig) => {
       const s = await forged({ signedBy: owner })
-      await refused(openForOwner({ ...s, statement_sig: sig } as unknown as ShareStateOut, me), 'bad-writer')
+      await refused(openForOwner({ ...s, statement_sig: sig } as unknown as ShareStateOut, me), 'bad-statement-sig')
     })
 
     it('refuses a fabricated statement that would admit an endorsed writer too', async () => {
       const s = await written(await unshared(), adaBox, { access: null, signedBy: stranger,
                                                           statement: statementOf({ endorsers: [ada.jkt] }) })
-      await refused(openForOwner(s, me), 'bad-writer')
+      await refused(openForOwner(s, me), 'bad-statement-sig')
     })
 
-    it('checks the same signature for the writer of access', async () => {
-      const real = await written(await unshared(), evaBox, {})
-      const s = await written(await unshared(), strangerBox, { statement: statementOf({ my_computers: [strangerBox.jkt] }) })
-      // `refresh` by the owner's own key, `access` by a machine a fabricated statement admits.
-      const sealed_sig = await writerSig(BINDING, 'refresh', '', real.sealed,
-        { kind: 'member', target: OWNER, privateKey: owner.priv, publicJwk: owner.pub }, [ownerRecipient(), toDevice(evaBox)])
-      await refused(openForOwner({ ...real, sealed_sig, statement: s.statement, statement_sig: await signStatement(statementOf(), stranger.scalar, stranger.pub),
-                                   access_sealed: s.access_sealed, access_sig: s.access_sig } as ShareStateOut, me), 'bad-writer')
+    it('refuses a machine the owner’s statement does not allow as the writer of access', async () => {
+      const statement = statementOf({ my_computers: [evaBox.jkt] })
+      const real = await written(await unshared(), evaBox, { statement, access: null })
+      const other = await written(await unshared(), strangerBox, { statement })
+      await refused(openForOwner({ ...real, access_sealed: other.access_sealed, access_sig: other.access_sig } as ShareStateOut, me), 'bad-writer')
+    })
+  })
+
+  describe('a stored statement is the owner’s, whoever wrote the envelope', () => {
+    /** The normal state after a share: an envelope the owner wrote, with its floor. */
+    const ownerWrote = async (floor: number, stated: Record<string, unknown>) => {
+      const recipients = [ownerRecipient(), toDevice(evaBox)]
+      const sealed = await sealValue(JSON.stringify(refreshPlain({ statement_floor: floor })), BINDING, 'refresh', 0, recipients)
+      const sealed_sig = await writerSig(BINDING, 'refresh', '', sealed,
+        { kind: 'member', target: OWNER, privateKey: owner.priv, publicJwk: owner.pub }, recipients)
+      return unshared({ state: 'active', sealed, sealed_sig, sealed_digest: await valueDigest(sealed), ...stated })
+    }
+
+    it('takes the owner’s own envelope under the statement they signed', async () => {
+      await expect(openForOwner(await ownerWrote(3, await signed()), me)).resolves.toBeTruthy()
     })
 
-    it('needs no signature when the writer is the owner', async () => {
-      const state = await unshared({ state: 'unshared', statement: statementOf({ version: 1 }), statement_sig: '' })
-      await expect(openForOwner(state, me)).resolves.toBeTruthy()
+    it('will not let a junk-signed version step over the floor', async () => {
+      const inflated = { statement: statementOf({ version: 999 }), statement_sig: b64u(new Uint8Array(64)) }
+      await refused(openForOwner(await ownerWrote(9, inflated), me), 'bad-statement-sig')
+    })
+
+    it('will not let a fabricated statement widen what a re-share reads', async () => {
+      const statement = statementOf({ my_computers: [strangerBox.jkt] })
+      await refused(openForOwner(await ownerWrote(3, { statement, statement_sig: await signStatement(statement, stranger.scalar, stranger.pub) }), me),
+        'bad-statement-sig')
+    })
+
+    it('refuses the owner’s old statement replayed below the floor', async () => {
+      await refused(openForOwner(await ownerWrote(9, await signed({ version: 3 })), me), 'statement-below-floor')
+    })
+
+    it.each([[''], [undefined], [null]])('refuses a statement with a signature of %j, even on a first seal', async (sig) => {
+      const { statement } = await signed({ version: 1 })
+      await refused(openForOwner(await unshared({ statement, statement_sig: sig }), me), 'bad-statement-sig')
+      await refused(openForOwner(await ownerWrote(1, { statement, statement_sig: sig }), me), 'bad-statement-sig')
+    })
+
+    it('keeps the statement through a reconnect (R6): a first seal under a signed one opens', async () => {
+      const opened = await openForOwner(await unshared(await signed({ version: 5 })), me)
+      expect(opened.statement?.version).toBe(5)
     })
   })
 
@@ -398,6 +440,9 @@ describe('openForOwner', () => {
     ['field set', { surprise: 1 }, 'bad-plaintext'],
     ['floor type', { statement_floor: '0' }, 'bad-plaintext'],
     ['version', { v: 2 }, 'bad-plaintext'],
+    ['empty client_id', { client_id: '' }, 'bad-plaintext'],
+    ['client_id type', { client_id: 7 }, 'bad-plaintext'],
+    ['empty refresh_token', { refresh_token: '' }, 'bad-plaintext'],
     ['login host', { login_host: 'evil.example' }, 'bad-host'],
     ['instance', { instance_url: 'https://evil.example' }, 'bad-host'],
     ['instance scheme', { instance_url: 'http://acme.my.salesforce.com' }, 'bad-host'],
@@ -561,10 +606,8 @@ describe('chooseRecipients', () => {
 })
 
 describe('buildShare', () => {
-  const withPins = (state: ShareStateOut, choice = { agents: [EVA, ECHO], myComputers: [computer.jkt] }) => {
-    pinAda()
-    return buildShare(state, me, choice)
-  }
+  const withPins = async (state: ShareStateOut, choice = { agents: [EVA, ECHO], myComputers: [computer.jkt] }) =>
+    (await buildShare(state, me, choice, await trustFor(state, me, { pins: PINS() }))).share
   const open = async (stored: string, name: string, kind: string, target: string, priv: CryptoKey) =>
     JSON.parse(await openSealedValue(stored, BINDING, name, kind, target, priv))
 
@@ -627,14 +670,16 @@ describe('buildShare', () => {
 
   it('names the writer by exactly a public key, whatever WebCrypto hung on it', async () => {
     const noisy: Unlocked = { ...me, publicJwk: { ...owner.pub, ext: true, key_ops: ['deriveBits'] } as never }
-    const share = await buildShare(await unshared(), noisy, { agents: [], myComputers: [] })
+    const state = await unshared()
+    const { share } = await buildShare(state, noisy, { agents: [], myComputers: [] }, await trustFor(state, noisy, { pins: {} }))
     const by = (share.sealed_sig as { by: { public_jwk: object } }).by.public_jwk
     expect(Object.keys(by)).toEqual(['kty', 'crv', 'x', 'y'])
   })
 
   it('writes the key it holds, not the one canopy-web named for it', async () => {
     const lied: Unlocked = { ...me, publicJwk: { ...evaBox.pub } }
-    const share = await buildShare(await unshared(), lied, { agents: [], myComputers: [] })
+    const state = await unshared()
+    const { share } = await buildShare(state, lied, { agents: [], myComputers: [] }, await trustFor(state, lied, { pins: {} }))
     expect(share.by_jkt).toBe(owner.jkt)
   })
 
@@ -696,8 +741,41 @@ describe('buildShare', () => {
     expect((share.statement as unknown as Statement).version).toBe(4)
   })
 
+  it('seals no wider than the Trust the page showed, and reports who it dropped', async () => {
+    const state = await unshared()
+    const shown = await trustFor(state, me, { pins: {} })
+    // ada gets pinned after the page drew its list: what was shown still decides.
+    vi.stubGlobal('window', { localStorage: { getItem: () => JSON.stringify(PINS()) } })
+    const { share, leftOut: dropped } = await buildShare(state, me, { agents: [EVA], myComputers: [] }, shown)
+    expect(sealedTargets(share.sealed)).toEqual([`device:${evaBox.jkt}`, `member:${OWNER}`].sort())
+    expect((share.statement as unknown as Statement).endorsers).toEqual([])
+    expect(dropped.map((d) => d.runner_name).sort()).toEqual(['ada-cloud', 'stranger-cloud'])
+  })
+
+  it('reports nobody dropped when every chosen machine is sealed to', async () => {
+    const state = await unshared()
+    const { leftOut: dropped } = await buildShare(state, me, { agents: [ECHO], myComputers: [computer.jkt] }, await trustFor(state, me, { pins: {} }))
+    expect(dropped).toEqual([])
+  })
+
+  it('does not reach a machine added since the Trust was read', async () => {
+    const before = await unshared({ candidates: [device(evaBox, EVA, 'eva-cloud')] })
+    const shown = await trustFor(before, me, { pins: PINS() })
+    const after = { ...before, candidates: [device(evaBox, EVA, 'eva-cloud'), device(computer, '', 'new-box', true)] } as ShareStateOut
+    const { share, leftOut: dropped } = await buildShare(after, me, { agents: [EVA], myComputers: [computer.jkt] }, shown)
+    expect(sealedTargets(share.sealed)).toEqual([`device:${evaBox.jkt}`, `member:${OWNER}`].sort())
+    expect(dropped.map((d) => d.target)).toEqual([computer.jkt])
+  })
+
+  it('refuses a Trust read for another key', async () => {
+    const state = await unshared()
+    const trust = await trustFor(state, me, { pins: {} })
+    await refused(buildShare(state, me, { agents: [], myComputers: [] }, { ...trust, owner: { ...trust.owner, jkt: stranger.jkt } }), 'bad-owner-key')
+  })
+
   it('needs the private scalar to sign', async () => {
-    await refused(buildShare(await unshared(), { ...me, scalar: undefined }, { agents: [], myComputers: [] }), 'no-scalar')
+    const state = await unshared()
+    await refused(buildShare(state, { ...me, scalar: undefined }, { agents: [], myComputers: [] }, await trustFor(state, me, { pins: {} })), 'no-scalar')
   })
 
   it('refuses rather than silently dropping a machine past the limit', async () => {
@@ -707,6 +785,17 @@ describe('buildShare', () => {
     }))
     const state = await unshared({ candidates: many })
     await refused(withPins(state, { agents: [], myComputers: many.map((c) => c.target) }), 'too-many')
+  })
+
+  it('will not sign over a statement below a floor, on an envelope the owner wrote', async () => {
+    const recipients = [ownerRecipient()]
+    const sealed = await sealValue(JSON.stringify(refreshPlain({ statement_floor: 9 })), BINDING, 'refresh', 0, recipients)
+    const sealed_sig = await writerSig(BINDING, 'refresh', '', sealed,
+      { kind: 'member', target: OWNER, privateKey: owner.priv, publicJwk: owner.pub }, recipients)
+    const base = { state: 'active', sealed, sealed_sig, sealed_digest: await valueDigest(sealed) }
+    await refused(withPins(await unshared({ ...base, ...(await signed({ version: 3 })) })), 'statement-below-floor')
+    // The same state claiming a version past the floor, on a signature that is not the owner's.
+    await refused(withPins(await unshared({ ...base, statement: statementOf({ version: 999 }), statement_sig: b64u(new Uint8Array(64)) })), 'bad-statement-sig')
   })
 
   it('will not sign over a statement below a floor', async () => {
@@ -731,8 +820,7 @@ async function browserShareFixture() {
     await vouch(owner, OWNER, EVA, evaBox), await vouch(ada, ADA, EVA, adaBox), await vouch(stranger, STRANGER, EVA, strangerBox),
   ], agents: [{ id: EVA, slug: 'eva', name: 'Eva' }] })
   const choice = { agents: [EVA], myComputers: [computer.jkt] }
-  pinAda()
-  const firstShare: ShareIn = await buildShare(first, me, choice)
+  const { share: firstShare } = await buildShare(first, me, choice, await trustFor(first, me, { pins: PINS() }))
 
   // The eva box refreshed: it re-sealed `refresh` and wrote `access` to the same recipients.
   const statement = firstShare.statement as unknown as Statement
@@ -746,7 +834,8 @@ async function browserShareFixture() {
     sealed_digest: await valueDigest(sealed), access_sealed,
     access_sig: await writerSig(BINDING, 'access', '', access_sealed, by, everyone),
   } as unknown as ShareStateOut
-  const secondShare = await buildShare(second, me, { agents: [EVA], myComputers: [] })
+  const { share: secondShare } = await buildShare(second, me, { agents: [EVA], myComputers: [] },
+    await trustFor(second, me, { pins: PINS() }))
 
   const key = (w: Who) => ({ scalar_hex: Array.from(w.scalar, (b) => b.toString(16).padStart(2, '0')).join(''),
                              public_jwk: w.pub, jkt: w.jkt })
