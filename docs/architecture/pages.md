@@ -590,11 +590,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
   the account from the opened envelope; the owner then ticks agents they administer
   and their own computers (name plus fingerprint) and shares
   (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the
-  owner agent is fixed on. Person-owned with nobody chosen: Share is off and Not now
-  leaves it unshared ("Not shared yet: no agent or computer can use it."). Machines
-  left out are named with why; a changed endorser key stops the share; an envelope
+  owner agent is fixed on. Never shared and nobody chosen: Share is off and Not now
+  leaves it unshared ("Not shared yet: no agent or computer can use it."); once shared,
+  unticking everyone withdraws it. Machines left out are named with why; a chosen machine
+  vouched for only by someone this browser has not trusted offers "Trust <name>'s
+  vouching" with their fingerprint; a changed endorser key stops the share; an envelope
   that fails verification says "can't be opened safely" and offers Reconnect;
-  a reconnect over an earlier share warns first. Afterwards it goes to `return_to`
+  a reconnect over an earlier share warns first; opened by someone whose key is not the
+  one it is sealed to, it says why and to disconnect and connect again. Afterwards it goes to `return_to`
   (a same-site path) or Settings. The key lives in a ref for the flow, never state
   (`pages/connections/ShareConnectionPage.tsx`).
 - **`/act-as/:requestId`** — an agent, in a turn you started, asking to act as you
