@@ -918,8 +918,9 @@ export interface paths {
         };
         /**
          * List mail threads
-         * @description `forwarded=true`: the caller's own inbox of mail kept from forward routes. Otherwise
-         *     the workspace's threads (agents' mail), never another person's forwarded copies.
+         * @description `forwarded=true`: the caller's own inbox of mail kept from forward routes (`q` searches
+         *     subject, sender and text; `address` narrows to one of their addresses). Otherwise the
+         *     workspace's threads (agents' mail), never another person's forwarded copies.
          */
         readonly get: operations["list_mail_threads"];
         readonly put?: never;
@@ -958,6 +959,27 @@ export interface paths {
         readonly put?: never;
         /** Reply on a thread as its agent */
         readonly post: operations["reply_mail_thread"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/inbox/{workspace}/send": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start a new message from one of your own forwarding addresses
+         * @description Compose from your inbox: the From must be one of your own forwarding addresses (never the
+         *     catch-all). The thread it starts is private to you, like the mail it answers.
+         */
+        readonly post: operations["send_inbox_mail"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -19296,6 +19318,16 @@ export interface components {
             readonly agent_address: string;
             /** Items */
             readonly items: readonly components["schemas"]["MailThreadOut"][];
+            /**
+             * Unread Total
+             * @default 0
+             */
+            readonly unread_total: number;
+            /**
+             * Addresses
+             * @default []
+             */
+            readonly addresses: readonly string[];
         };
         /** MailThreadOut */
         readonly MailThreadOut: {
@@ -19355,6 +19387,22 @@ export interface components {
              * @default []
              */
             readonly cc: readonly string[];
+        };
+        /** MailInboxSendIn */
+        readonly MailInboxSendIn: {
+            /** From Address */
+            readonly from_address: string;
+            /** To */
+            readonly to: readonly string[];
+            /**
+             * Cc
+             * @default []
+             */
+            readonly cc: readonly string[];
+            /** Subject */
+            readonly subject: string;
+            /** Text */
+            readonly text: string;
         };
         /** MailSendIn */
         readonly MailSendIn: {
@@ -46347,6 +46395,8 @@ export interface operations {
                 readonly agent?: string;
                 readonly archived?: boolean;
                 readonly forwarded?: boolean;
+                readonly q?: string;
+                readonly address?: string;
             };
             readonly header?: never;
             readonly path: {
@@ -46413,6 +46463,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MailMessageOut"];
+                };
+            };
+        };
+    };
+    readonly send_inbox_mail: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailInboxSendIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailThreadOut"];
                 };
             };
         };

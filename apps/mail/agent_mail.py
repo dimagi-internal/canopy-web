@@ -188,8 +188,12 @@ def _sent_today(domain, workspace_id=None) -> int:
     return sum(len(t or []) + len(c or []) for t, c in rows.values_list("to", "cc"))
 
 
-def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=()) -> MailMessage:
-    """Send as the route's agent. The From is always the route address."""
+def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=(),
+         sender_name="", from_address="", owner=None) -> MailMessage:
+    """Send as the route's agent. The From is the route address — or, for a person replying
+    from a catch-all, the `from_address` the mail was sent to (the caller proves it resolves
+    to this route). `sender_name` is the display name of a person sending; `owner` makes a
+    thread this starts private to that person."""
     # The domain row is locked (select_for_update) across the cap check, the SES call and
     # the insert, so concurrent sends from one domain are serialised and cannot overshoot
     # the daily cap. The lock is held during the SES call — acceptable at this volume.
@@ -198,7 +202,8 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
         domain = MailDomain.objects.select_for_update(of=("self",)).select_related("workspace").get(
             pk=route.domain_id)
         out = _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
-                           thread=thread, attachments=attachments)
+                           thread=thread, attachments=attachments, sender_name=sender_name,
+                           from_address=from_address, owner=owner)
     _enforce_cap(out)  # outside the domain lock: eviction is the mailbox's own business
     _admit_recipients(route, out)
     return out
@@ -221,7 +226,8 @@ def _admit_recipients(route, out) -> None:
         logger.exception("mail %s: could not admit the recipients to its session", out.pk)
 
 
-def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments) -> MailMessage:
+def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments,
+                 sender_name="", from_address="", owner=None) -> MailMessage:
     if domain.status == MailDomain.SUSPENDED:
         raise SendRefused(409, f"sending from {domain.name} is suspended: {domain.suspended_reason}")
     if domain.status != MailDomain.VERIFIED:
@@ -229,7 +235,7 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     to, cc = _addresses(to, "recipient"), _addresses(cc, "cc")
     if not to:
         raise SendRefused(422, "no recipients")
-    own = route.address.lower()
+    own = (from_address or route.address).lower()
     if own in to or own in cc:
         raise SendRefused(422, "an agent cannot send mail to its own address")
     if len(to) + len(cc) > MAX_RECIPIENTS:
@@ -245,7 +251,8 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         raise SendRefused(429, f"this workspace reached its daily send cap on {domain.name} ({share.daily_send_cap})")
     subject = _line(subject)
     msg = EmailMessage()
-    msg["From"] = formataddr((_line(route.agent.name) if route.agent_id else "", route.address))
+    msg["From"] = formataddr((_line(sender_name) or (_line(route.agent.name) if route.agent_id else ""),
+                              from_address or route.address))
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
@@ -271,7 +278,7 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         msg.add_attachment(att.data, maintype=main, subtype=sub or "octet-stream",
                            filename=_line(att.filename))
     try:
-        ses_id = ses.send_raw(from_addr=route.address, to=to + cc, raw=msg.as_bytes())
+        ses_id = ses.send_raw(from_addr=from_address or route.address, to=to + cc, raw=msg.as_bytes())
     except ses.MailOff:
         raise SendRefused(503, "mail is turned off on this deployment") from None
     except ClientError as exc:
@@ -280,11 +287,12 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     except BotoCoreError as exc:
         raise SendRefused(502, f"the mail provider refused: {type(exc).__name__}") from None
     if thread is None:
-        thread = MailThread.objects.create(workspace=route.workspace, route=route, subject=subject[:998])
+        thread = MailThread.objects.create(workspace=route.workspace, route=route, owner=owner,
+                                           subject=subject[:998])
     out = MailMessage.objects.create(
         thread=thread, workspace=route.workspace, direction=MailMessage.OUT, mailbox=route.address,
         message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
-        references=msg.get("References", ""), from_addr=route.address, to=to, cc=cc,
+        references=msg.get("References", ""), from_addr=from_address or route.address, to=to, cc=cc,
         subject=subject[:998], text=text, html=html, ses_message_id=ses_id,
         delivery_status=MailMessage.SENT,
         # Only the text and html of a sent message are stored (no raw MIME, no attachments).

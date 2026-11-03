@@ -166,6 +166,11 @@ class MailThreadOut(Schema):
 class MailThreadListOut(Schema):
     agent_address: str = ""
     items: list[MailThreadOut]
+    unread_total: int = 0
+    """`forwarded=true` only: unread threads in the caller's inbox (archived ones excluded)."""
+    addresses: list[str] = []
+    """`forwarded=true` only: the addresses the caller can send from — their own forwarding
+    addresses on a live domain (never a catch-all)."""
 
 
 class MailReplyIn(Schema):
@@ -173,6 +178,14 @@ class MailReplyIn(Schema):
     html: str = ""
     to: list[str] = []
     cc: list[str] = []
+
+
+class MailInboxSendIn(Schema):
+    from_address: str
+    to: list[str]
+    cc: list[str] = []
+    subject: str
+    text: str
 
 
 class MailSendIn(Schema):

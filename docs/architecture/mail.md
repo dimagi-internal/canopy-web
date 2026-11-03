@@ -4,7 +4,7 @@ A workspace admin brings their own domain; canopy-web runs its email through Ama
 
 A superuser can **share** a domain with other workspaces (below), so one domain — dimagi.ai — serves as a sitewide address space instead of every workspace bringing its own.
 
-Not here: IMAP/full webmail (compose, folders, search), replying to forwarded mail *as* the domain, automatic DNS writes, bulk mail. A forward route can *keep a copy* of each message as a read-only thread in its destination's own inbox (`/w/:workspace/mail`); every inbound message, dropped ones included, is recorded in a metadata-only ledger admins read in Settings → Email.
+Not here: IMAP, send-side attachments or HTML, custom folders, shared inboxes, replying to forwarded mail *as* the domain, automatic DNS writes, bulk mail. A forward route can *keep a copy* of each message as a thread in its destination's own private inbox (`/w/:workspace/mail`), where they read, search, archive, reply and compose from their own forwarding addresses (never as another person's address or the catch-all, and only mail sent to an address that resolves to their route); every inbound message, dropped ones included, is recorded in a metadata-only ledger admins read in Settings → Email.
 
 ## Tier and removability
 
