@@ -15149,6 +15149,18 @@ export interface paths {
          *     is in flight — post an update, or (after `detach_session_from_slack`) bind
          *     again, only in the conversation's own channel. To move the conversation to
          *     a fresh thread in one step, use `start_new_slack_thread`.
+         *
+         *     `actions` puts reply buttons under a post into a bound thread (`bind`, an
+         *     update to a bound session, or `turn_id`; refused on a broadcast), so a person
+         *     can answer in one tap: `[{"label": "Book all", "reply": "book all", "style":
+         *     "primary"}, {"label": "Skip today", "reply": "skip today"}]`. `style` is
+         *     optional: `primary` or `danger`. Up to 25; a label over 75 characters is cut
+         *     short. Pressing one sends `reply` to this session as a message from whoever
+         *     pressed it, exactly as if they had typed it in the thread, under the same
+         *     rules as a typed reply; you handle it when it arrives. A post takes one choice:
+         *     the first click that reaches the session removes the post's buttons and shows
+         *     who chose what, so to offer what is left, post again. A click that cannot act
+         *     tells that person it did nothing and leaves the buttons in place.
          */
         readonly post: operations["share_session_to_slack"];
         readonly delete?: never;
@@ -42304,6 +42316,22 @@ export interface components {
             readonly session_id?: string | null;
         };
         /**
+         * SlackShareAction
+         * @description A button on the post. Pressing it sends `reply` to the session as a message
+         *     from whoever pressed it.
+         */
+        readonly SlackShareAction: {
+            /** Label */
+            readonly label: string;
+            /** Reply */
+            readonly reply: string;
+            /**
+             * Style
+             * @default
+             */
+            readonly style: string;
+        };
+        /**
          * SlackShareIn
          * @description What to post, where, and which session it is about.
          */
@@ -42350,6 +42378,11 @@ export interface components {
              * @default
              */
             readonly turn_id: string;
+            /**
+             * Actions
+             * @default []
+             */
+            readonly actions: readonly components["schemas"]["SlackShareAction"][];
         };
         /** SlackDetachOut */
         readonly SlackDetachOut: {

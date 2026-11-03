@@ -32,7 +32,7 @@ from apps.canopy_sessions.models import Session
 from apps.harness import sensitivity
 from apps.workspaces import services as wsvc
 
-from . import client, location, relay, services
+from . import choices, client, location, relay, services
 from .models import SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,7 @@ def _record(installation, user, status: str, summary: str, payload: dict, *, ok:
 
 def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
                   session: Session | None = None, workspace: str = "",
-                  own_turn: bool = False) -> ShareResult:
+                  own_turn: bool = False, actions: list[dict] | None = None) -> ShareResult:
     """Post `summary` into `channel`; in BIND mode, give the session that thread.
 
     `session` is re-checked against what the caller can see — a caller that got
@@ -301,6 +301,9 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     which it cannot read. Such a caller may update the thread, and may BIND only
     back into the conversation's own channel: moving a person's conversation to
     a channel they never chose is theirs to ask for, not the agent's to do.
+
+    `actions` are reply buttons under the post (`choices.py`). They need a thread
+    bound to a session for a click to reach, so a broadcast cannot carry them.
     """
     if session is not None and not own_turn and resolve_session(user, session_id=str(session.pk)) is None:
         session = None
@@ -313,8 +316,15 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
         return ShareResult(BAD_REQUEST, f"Mode must be one of {', '.join(MODES)}.")
     if not (summary or "").strip():
         return ShareResult(BAD_REQUEST, "A summary is required.")
+    actions, unusable = choices.clean(actions)
+    if unusable:
+        return ShareResult(BAD_REQUEST, unusable)
     if session is not None and relay.session_destination(session) is not None:
-        return _post_update(user, session, summary)
+        return _post_update(user, session, summary, actions)
+    if actions and mode != BIND:
+        return ShareResult(BAD_REQUEST, (
+            "Actions need a thread bound to a session for a click to reach: share with mode `bind`, "
+            "or post an update to a bound session. A broadcast can't carry them."))
     if own_turn and session is not None:
         if mode != BIND:
             return ShareResult(BAD_REQUEST, (
@@ -360,9 +370,12 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
             "to link it, then share again."))
 
     agent = session.agent if session is not None and session.agent_id else caller_agent
+    text = _text(byline, summary, session, mode)
+    post_id = choices.new_post_id()
     try:
         body = client.post_message_body(installation.bot_token, channel=channel,
-                                        text=_text(byline, summary, session, mode),
+                                        text=choices.fallback(text) if actions else text,
+                                        blocks=choices.blocks_for(text, actions, post_id) if actions else None,
                                         persona=relay.persona(agent))
     except client.SlackApiError as e:
         if e.error in _CANNOT_POST_THERE:
@@ -393,6 +406,8 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
             locked.metadata = meta
             locked.save(update_fields=["metadata", "updated_at"])
         session.metadata = meta
+        if actions:
+            choices.remember(post_id, session, channel_id=channel_id, ts=ts, actions=actions)
 
     link = client.permalink(installation.bot_token, channel=channel_id, ts=ts)
     if mode == BIND:
@@ -405,8 +420,9 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     return ShareResult(SHARED, message, session=session, channel_id=channel_id, ts=ts, permalink=link)
 
 
-def _post_update(user, session: Session, summary: str) -> ShareResult:
-    """A new summary, as a reply in the thread this session is already bound to."""
+def _post_update(user, session: Session, summary: str, actions: list[dict] | None = None) -> ShareResult:
+    """A new summary, as a reply in the thread this session is already bound to.
+    A long one is several posts; its `actions` go under the last."""
     installation, channel_id, thread_ts = relay.session_destination(session)
 
     def refuse(status: str, message: str) -> ShareResult:
@@ -422,9 +438,13 @@ def _post_update(user, session: Session, summary: str) -> ShareResult:
     agent = session.agent if session.agent_id else caller_agent
     try:
         ts = ""
-        for chunk in relay.split(_update_text(byline, summary)):
-            ts = client.post_message(installation.bot_token, channel=channel_id, text=chunk,
-                                     thread_ts=thread_ts, persona=relay.persona(agent))
+        post_id = choices.new_post_id()
+        chunks = relay.split(_update_text(byline, summary))
+        for i, chunk in enumerate(chunks, 1):
+            buttons = choices.blocks_for(chunk, actions, post_id) if actions and i == len(chunks) else None
+            ts = client.post_message(installation.bot_token, channel=channel_id,
+                                     text=choices.fallback(chunk) if buttons else chunk,
+                                     thread_ts=thread_ts, blocks=buttons, persona=relay.persona(agent))
     except client.SlackApiError as e:
         if e.error in _CANNOT_POST_THERE:
             return refuse(NOT_IN_CHANNEL, (
@@ -432,6 +452,8 @@ def _post_update(user, session: Session, summary: str) -> ShareResult:
                 "to the channel and share again."))
         logger.exception("slack share update failed")
         return refuse(POST_FAILED, f"Slack refused the post: {e.error}.")
+    if actions:
+        choices.remember(post_id, session, channel_id=channel_id, ts=ts, actions=actions)
     link = client.permalink(installation.bot_token, channel=channel_id, ts=ts)
     message = f"Posted an update to this session's thread: {link or f'<#{channel_id}>'}."
     _record(installation, user, UPDATED, message, {"channel": channel_id, "ts": ts, "mode": "update",
