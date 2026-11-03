@@ -89,9 +89,16 @@ const REASONS: Record<string, string> = {
   // not only a missing admin role.
   forbidden: 'is no longer allowed for this account or workspace.',
   insufficient_scope: 'was connected without every permission canopy needs. Connect again and allow them all.',
+  no_vault_key: 'needs your vault key first. Set up your vault key in Settings, then connect again.',
+  revoking: 'is being disconnected. Wait for that to finish, then connect again.',
   owner_changed: 'is already connected with another vault key, which never changes. Disconnect it first, then connect again.',
   wrong_account:
     'was signed in with an account this connection may not use — sign in as the agent’s own account, or one in the workspace’s allowed domains.',
+}
+
+/** Reasons that are a whole sentence, not a continuation of the provider's name. */
+const WHOLE_REASONS: Record<string, string> = {
+  provider_error: 'Salesforce or Google refused this sign-in. Check the app’s settings, then try again.',
 }
 
 /** The `?connection=…&status=…&reason=…` result banner, shared with the agent panel.
@@ -112,9 +119,12 @@ export function ConnectOutcome({
   const who = known ? known.title : 'The connection'
   const ok = params.get('status') === 'connected'
   const reason = REASONS[params.get('reason') ?? '']
+  const whole = WHOLE_REASONS[params.get('reason') ?? '']
   const text = ok
     ? `${who} connected.`
-    : reason
+    : whole
+      ? whole
+      : reason
       ? `${who} ${reason}`
       : `Connecting ${known ? known.title : 'the service'} failed. Try again.`
   return (

@@ -85,6 +85,17 @@ describe('ConnectionsPanel', () => {
     expect(document.body.textContent).not.toMatch(/failed\. Try again/)
   })
 
+  it.each([
+    ['provider_error', 'Salesforce or Google refused this sign-in. Check the app’s settings, then try again.'],
+    ['no_vault_key', 'Salesforce needs your vault key first. Set up your vault key in Settings, then connect again.'],
+    ['revoking', 'Salesforce is being disconnected. Wait for that to finish, then connect again.'],
+  ])('names the %s refusal instead of a generic failure', async (reason, sentence) => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    at(`/settings?connection=salesforce&status=error&reason=${reason}`)
+    expect(await screen.findByText(sentence)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/failed\. Try again/)
+  })
+
   it('words forbidden neutrally: it is also what someone who left the workspace sees', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     at('/settings?connection=salesforce&status=error&reason=forbidden')

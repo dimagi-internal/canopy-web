@@ -582,6 +582,19 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
+- **`/w/:workspace/connections/:id/share`** — "Connected as …": where the OAuth
+  callback lands (and where Settings' Share on a not-shared connection leads). One
+  passkey touch (`useVaultUnlock`) opens the connection in this browser and shows
+  the account from the opened envelope; the owner then ticks agents they administer
+  and their own computers (name plus fingerprint) and shares
+  (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the
+  owner agent is fixed on. Person-owned with nobody chosen: Share is off and Not now
+  leaves it unshared ("Not shared yet: no agent or computer can use it."). Machines
+  left out are named with why; a changed endorser key stops the share; an envelope
+  that fails verification says "can't be opened safely" and offers Reconnect;
+  a reconnect over an earlier share warns first. Afterwards it goes to `return_to`
+  (a same-site path) or Settings. The key lives in a ref for the flow, never state
+  (`pages/connections/ShareConnectionPage.tsx`).
 - **`/act-as/:requestId`** — an agent, in a turn you started, asking to act as you
   on canopy (the push and the supervisor feed card link here): the agent, its reason
   verbatim, the conversation, what it asked for. "Allow read-only (30 min)" (first),
