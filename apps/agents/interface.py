@@ -94,6 +94,7 @@ still carries them is refused with a message pointing at the access list.
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from apps.agents import roles
@@ -101,7 +102,6 @@ from apps.agents.interface_default import (  # noqa: F401  (re-exported)
     READ_MODE,
     READ_MODE_NAMES,
     READ_PROFILE_VERSION,
-    VERSION,
     default_interface,
     default_read_profile,
     is_read_mode,
@@ -109,6 +109,8 @@ from apps.agents.interface_default import (  # noqa: F401  (re-exported)
 from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import initiator as who
 from apps.harness import invocations
+
+logger = logging.getLogger(__name__)
 
 #: The fallback capability for a free-form channel (email, chat, Slack, a widget on a
 #: page that declared nothing). Named capabilities are for callers that ask for
@@ -157,12 +159,6 @@ def opens(permissions, name: str) -> bool:
     (`apps/agents/grants.py`)."""
     return roles.can_use(permissions, name)
 
-#: What a capability's `input` fields may be. Declared and shown, but no capability
-#: passes typed inputs today: the MCP capability tools that did were removed
-#: (agents are used through their plugin, not canopy's MCP).
-INPUT_TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
-#: Names an `input` field may not take (the message envelope's own fields).
-_RESERVED_INPUTS = frozenset({"message", "conversation_id", "wait_seconds"})
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 _MAX_ITEMS = 100
 _MAX_PATTERN = 300
@@ -224,6 +220,10 @@ def parse(doc) -> dict:
         raise InterfaceError(f"unknown top-level key(s): {sorted(extra)}")
     if doc.get("callers_default", "none") != "none":
         raise InterfaceError("callers_default is gone: nobody is let in by default")
+    # Fields nothing reads any more. Published interfaces still carry them (`version: 1` and a
+    # capability's `input: {}` were written by every save), and a republish must not 422, so they
+    # are accepted, ignored and not written back.
+    ignored = sorted(k for k in ("callers_default", "version") if k in doc)
     caps = doc.get("capabilities") or {}
     if not isinstance(caps, dict) or len(caps) > 50:
         raise InterfaceError("capabilities must be a mapping of at most 50 entries")
@@ -236,6 +236,8 @@ def parse(doc) -> dict:
         for key in ("callers", "role"):
             if key in cap:
                 raise InterfaceError(_RETIRED_HINT.format(where=name, key=key), f"{name}.{key}")
+        if "input" in cap:
+            ignored.append(f"{name}.input")
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "pages", "sites", "ceiling", "own_login",
                           "data"}
@@ -246,17 +248,7 @@ def parse(doc) -> dict:
                                   or len(entry) > _MAX_PATTERN
                                   or invocations.parse(entry) is None):
             raise InterfaceError(f"{name}.entry must be one plugin command: /<plugin>:<skill> [args]")
-        inputs = cap.get("input") or {}
-        if not isinstance(inputs, dict) or len(inputs) > 20:
-            raise InterfaceError(f"{name}.input must be a mapping of at most 20 fields")
-        for field, typ in inputs.items():
-            if not isinstance(field, str) or not _NAME.match(field) or field in _RESERVED_INPUTS:
-                raise InterfaceError(f"{name}.input: {field!r} must match {_NAME.pattern} "
-                                     f"and not be one of {sorted(_RESERVED_INPUTS)}")
-            if typ not in INPUT_TYPES:
-                raise InterfaceError(f"{name}.input.{field}: type must be one of {sorted(INPUT_TYPES)}")
         out[name] = {
-            "input": dict(inputs),
             "description": str(cap.get("description") or "")[:500],
             "entry": entry,
             "tools": _strings(cap.get("tools"), "tools", name),
@@ -273,7 +265,9 @@ def parse(doc) -> dict:
         }
         if cap.get("data") is not None:
             out[name]["data"] = _data(cap["data"], name, out[name])
-    return {"version": VERSION, "capabilities": out}
+    if ignored:
+        logger.warning("interface: ignoring retired field(s) %s", ", ".join(ignored))
+    return {"capabilities": out}
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
@@ -571,30 +565,9 @@ def session_writer(turn, agent) -> str | None:
     return role if role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) else None
 
 
-def capability_for(turn, agent, requested: str | None = None) -> str | None:
-    """Which profile this turn runs in: FULL, a capability name, or None (refused).
-
-    A thin face over THE rule, `apps.agents.access.decide` — see
-    docs/architecture/access.md. In short: FULL for its owner, admins, canopy's own turns,
-    a writer in an admin's own session and anyone whose lines give `write`; anyone else gets the
-    capability they asked for — `requested`, e.g. a tool called over MCP — or the page's/site's
-    capability, or `ask`, if their lines open it; otherwise they are refused. An agent that has
-    published no capability lets in only those who run it whole.
-    """
-    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
-
-    return access.decide_for_turn(turn, agent, requested).stamp
-
-
-def granted_by(turn, agent) -> str:
-    """WHY this turn has the access it has, for the envelope: `owner`, `admin`, `system`,
-    `session:<role>`, `grant:<line>`, `capability:<name>` or `refused`."""
-    return grant_facts(turn, agent)["granted_by"]
-
-
 def grant_facts(turn, agent) -> dict:
     """The envelope's account of the asker's standing, from ONE decision: `granted_by`
-    (the older one-word why above), `role` (where they stand on the agent's role ladder, None
+    (one word: owner | admin | system | session:<role> | grant:<line> | capability:<name> | refused), `role` (where they stand on the agent's role ladder, None
     when refused), `source` (what put them there: owner | admin | system |
     capability:<name> | session | list:<access-list line>), `permissions` (what they hold on
     THIS turn, sorted; see `_held_permissions`) and `manual_only`."""
@@ -687,11 +660,11 @@ def profile(agent, capability: str) -> dict | None:
         # as it stands now (a skill added or removed changes the next turn, never a stored one).
         cap, default_version = default_read_profile(agent), READ_PROFILE_VERSION
     cap = cap or {"description": "", "entry": None,
-                  "tools": [], "bash": [], "read_paths": [], "write_paths": [], "input": {},
+                  "tools": [], "bash": [], "read_paths": [], "write_paths": [],
                   "pages": [], "sites": [], "ceiling": []}
     out = {"name": capability, **{k: cap.get(k) for k in
                                   ("description", "entry", "tools", "bash", "read_paths",
-                                   "write_paths", "input")}}
+                                   "write_paths")}}
     if default_version is not None:
         # Which pinned default this turn ran under (`tests/test_default_read_profile.py`).
         out["default_profile_version"] = default_version

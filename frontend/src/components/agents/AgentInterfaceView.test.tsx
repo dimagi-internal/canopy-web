@@ -52,7 +52,7 @@ const PUBLISHED = {
   interface: {
     capabilities: { ask: {
       description: 'Ask ACE.',
-      tools: ['Read'], bash: ['canopy email read --repo . {thread_id}'], input: { opportunity_id: 'integer' },
+      tools: ['Read'], bash: ['canopy email read --repo . {thread_id}'],
     } },
   },
   source: 'capabilities:\n  ask:\n    description: Ask ACE.  # comment kept\n',
@@ -134,7 +134,7 @@ describe('AgentInterfaceView', () => {
     expect(await screen.findByTestId('read-mode-default')).toBeTruthy()
   })
 
-  it('shows each capability with its inputs, no role column, no access summary, and no MCP tool', async () => {
+  it('shows each capability with no role column, no access summary, no inputs and no MCP tool', async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
     render(<AgentInterfaceView agentSlug="ace" />)
     const row = await screen.findByTestId('interface-capability')
@@ -142,7 +142,7 @@ describe('AgentInterfaceView', () => {
     expect(screen.queryByTestId('access-summary')).toBeNull()
     expect(screen.queryByTestId('interface-warning')).toBeNull()
     expect(screen.queryByText('Lowest role')).toBeNull()
-    expect(row.textContent).toContain('Inputs: opportunity_id: integer')
+    expect(row.textContent).not.toContain('Inputs')
     expect(row.textContent).not.toContain('ace__ask')
     expect(row.textContent).toContain('canopy email read --repo . {thread_id}')
     expect(screen.getByText(/set on the Access setting/)).toBeTruthy()

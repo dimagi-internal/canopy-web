@@ -11,7 +11,6 @@ export type Capability = {
   bash?: string[]
   read_paths?: string[]
   write_paths?: string[]
-  input?: Record<string, string>
   pages?: string[]
   sites?: string[]
   ceiling?: string[]
@@ -61,7 +60,6 @@ export function blankCapability(): Capability {
     bash: [],
     read_paths: ['{cwd}/**'],
     write_paths: [],
-    input: {},
     pages: [],
     sites: [],
     ceiling: [],
@@ -82,7 +80,6 @@ export function overrideFromDefault(profile: Record<string, unknown>): Capabilit
     bash: list('bash'),
     read_paths: list('read_paths'),
     write_paths: list('write_paths'),
-    input: {},
     pages: [],
     sites: [],
     ceiling: [],
@@ -97,7 +94,6 @@ export function siteCapability(site: string): Capability {
     bash: [],
     read_paths: ['{cwd}/**'],
     write_paths: [],
-    input: {},
     pages: [],
     sites: [site],
     ceiling: [],

@@ -24,8 +24,9 @@ M = WorkspaceMembership
 _ACE_OLD = json.loads((pathlib.Path(__file__).parent.parent / "apps/agents/tests/fixtures/ace_interface.json").read_text())
 # ACE's published interface in today's words: the `full:` rules and each capability's `callers` are
 # the access list's business; a capability keeps only what it is.
-ACE = {"version": 1, "capabilities": {
-    name: {k: v for k, v in cap.items() if k != "callers"}
+# `version` and a capability's `input` are retired (accepted on a save, never written back).
+ACE = {"capabilities": {
+    name: {k: v for k, v in cap.items() if k not in ("callers", "input")}
     for name, cap in _ACE_OLD["capabilities"].items()}}
 
 
