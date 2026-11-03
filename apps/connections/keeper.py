@@ -141,8 +141,9 @@ def reseal(conn: Connection, runner: Runner, device_key: RunnerDeviceKey, *, sea
         elif access_sealed:
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
         row.sealed, row.sealed_sig, row.sealed_digest = sealed, sealed_sig, vault_engine.value_digest(sealed)
+        row.owner_endorsements = rcpt.snapshot_owner_endorsements(row)
         row.save(update_fields=["sealed", "sealed_sig", "sealed_digest", "access_sealed", "access_sig",
-                                "updated_at"])
+                                "owner_endorsements", "updated_at"])
     now = {t for kind, t in zk_seal.sealed_targets(row.sealed) if kind == "device"}
     added = _names(now - {t for kind, t in old if kind == "device"})
     services.record(services.Subject.of(row), "resealed", machine=device_key.runner.name, added=",".join(added),

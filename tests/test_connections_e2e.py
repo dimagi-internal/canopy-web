@@ -1087,7 +1087,9 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
                       identity=_resp(body=_identity_body(user_id="005ann", username="ann@dimagi.com")))
         ann_id = ann_browser.connect("salesforce", "w", fake)
         lab.seed_refresh("5Aep_ann")
-        r = ann_browser.share(ann_id, agents=[world.eva], endorsers=[ref.jkt(world.jj_priv.public_key())])
+        # Only ann vouches for the box, so an envelope a box wrote stands on her signature alone.
+        endorse(world.eva, box1.key, ann, ann_priv)
+        r = ann_browser.share(ann_id, agents=[world.eva])
         story.check("ann shares", r.status_code == 200, f"{r.status_code} {r.text[:600]}")
 
         # Nothing alive and another box holding the lease: exit 4, so the runner keeps its hold.
@@ -1102,6 +1104,8 @@ def test_the_real_cli_against_the_real_server(live_server, tmp_path, settings, c
         old_key = Connection.objects.get(pk=ann_id).owner_key
         new_priv = vault_key(ann)
         new_browser = Browser(live_server.url, ann, new_priv)
+        # Re-endorsing replaces the live row: only the row's snapshot still holds her old signature.
+        endorse(world.eva, box1.key, ann, new_priv)
         box1.staged().unlink(missing_ok=True)
         run = box1.stage(world.turn(box1), "--refresh")
         story.check("with the key replaced, a box still reads and refreshes it", run.rc == 0, run)

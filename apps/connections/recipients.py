@@ -33,7 +33,7 @@ from django.utils import timezone
 
 from apps.agents import access
 from apps.agents.credentials import accounts, vault_engine, zk_endorse, zk_seal
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentVaultEndorsement
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerDeviceKey
 from apps.harness.routing import ServingFacts
@@ -125,16 +125,52 @@ def endorsements_for(agent: Agent, facts: ServingFacts | None = None) -> list[di
     return facts.once(("endorsements", agent.pk), lambda: zk_endorse.endorsements(agent, facts))
 
 
-def as_signed(conn: Connection, endorsements: list[dict]) -> list[dict]:
-    """`endorsements` with the key each of the owner's was signed by. An endorsement names
-    its endorser's CURRENT key, so one the owner signed before replacing theirs would verify
-    against nothing and every machine they vouched for would drop out. Nothing is believed
-    because of this: a reader still verifies the signature under this key and takes the
-    signer's thumbprint from it."""
+def _verifies_as_owners(conn: Connection, agent_id, e: dict) -> bool:
+    return zk_endorse.verify(agent_id, kind="device", target=e["target"], key_jkt=e["key_jkt"], sig=e["sig"],
+                             endorser_jwk=conn.owner_public_jwk)
+
+
+def as_signed(conn: Connection, endorsements: list[dict], agent_id=None) -> list[dict]:
+    """`endorsements` as the owner signed them. An endorsement names its endorser's CURRENT
+    key, so one signed before they replaced theirs would verify against nothing, and one
+    re-signed since is under a key the envelope does not name: either way every machine they
+    vouched for would drop out. So the owner's is served under the key stored at connect, or,
+    when that no longer verifies, as the row last snapshotted it (`owner_endorsements`).
+    Nothing is believed because of this: a reader still verifies the signature under the key
+    served and takes the signer's thumbprint from it. `agent_id`: the agent these are for,
+    when they are not tagged."""
     if not conn.owner_key or not conn.owner_public_jwk:
         return endorsements
-    return [{**e, "by_public_jwk": conn.owner_public_jwk} if e.get("by_jkt") == conn.owner_key else e
-            for e in endorsements]
+    kept = {(e["agent_id"], e["target"]): e for e in conn.owner_endorsements or []}
+    out = []
+    for e in endorsements:
+        if e.get("by") != conn.owner_user_id and e.get("by_jkt") != conn.owner_key:
+            out.append(e)
+            continue
+        agent = str(e.get("agent_id") or agent_id)
+        if e.get("by_jkt") == conn.owner_key and _verifies_as_owners(conn, agent, e):
+            out.append({**e, "by_public_jwk": conn.owner_public_jwk})
+        else:
+            out.append({**kept.get((agent, e["target"]), e)})
+    return out
+
+
+def snapshot_owner_endorsements(conn: Connection) -> list[dict]:
+    """`conn.owner_endorsements` as it should be now that a share or a re-seal landed: what the
+    owner signed for the statement's agents and still verifies, on top of what was kept before,
+    which is what survives a re-endorsement under another key."""
+    agents = statement_agent_pks(conn.statement)
+    wanted = {str(a) for a in agents}
+    kept = {(e["agent_id"], e["target"]): e for e in conn.owner_endorsements or [] if e["agent_id"] in wanted}
+    rows = (AgentVaultEndorsement.objects.filter(agent_id__in=agents, kind="device", endorser_jkt=conn.owner_key)
+            .select_related("endorser"))
+    for r in rows:
+        e = {"kind": r.kind, "target": r.target, "key_jkt": r.key_jkt, "by": str(r.endorser_id),
+             "by_email": r.endorser.email, "by_jkt": r.endorser_jkt, "by_public_jwk": conn.owner_public_jwk,
+             "sig": r.sig, "agent_id": str(r.agent_id)}
+        if r.target == r.key_jkt and _verifies_as_owners(conn, r.agent_id, e):
+            kept[(e["agent_id"], e["target"])] = e
+    return [kept[k] for k in sorted(kept)]
 
 
 def _agent_devices(conn: Connection, agent: Agent, facts: ServingFacts) -> list[RunnerDeviceKey]:
@@ -161,7 +197,7 @@ def _vouched(conn: Connection, agent: Agent, trusted: set[str], facts: ServingFa
     `agent`, by the check a box makes (contract §0.5) on the endorsements it is handed:
     the endorser is who the key that verifies the signature says, not what a row claims."""
     out = set()
-    for e in as_signed(conn, endorsements_for(agent, facts)):
+    for e in as_signed(conn, endorsements_for(agent, facts), agent.pk):
         jwk = e["by_public_jwk"]
         if (e["kind"] == "device" and e["target"] == e["key_jkt"] and jwk
                 and device_keys.thumbprint(jwk) in trusted
@@ -321,8 +357,7 @@ def _writer_provable(conn: Connection, sig: dict | None) -> bool:
     if target in st.get("my_computers", []):
         return True
     trusted = {conn.owner_key, *st.get("endorsers", [])} - {""}
-    agents = statement_agent_pks(st)
-    for e in as_signed(conn, zk_endorse.endorsements_of_device(agents, target)):
+    for e in as_signed(conn, zk_endorse.endorsements_of_device(statement_agent_pks(st), target)):
         jwk = e["by_public_jwk"]
         if (jwk and device_keys.thumbprint(jwk) in trusted
                 and zk_endorse.verify(e["agent_id"], kind="device", target=target, key_jkt=target, sig=e["sig"],

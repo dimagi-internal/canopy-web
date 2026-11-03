@@ -153,6 +153,11 @@ class Connection(models.Model):
     # sealed in the envelope, so a server that changes these only gets itself refused.
     owner_public_jwk = models.JSONField(default=dict, blank=True)
     owner_user_id = models.CharField(max_length=32, blank=True, default="")
+    # The owner's endorsements of machines as they stood when a share or a keeper's re-seal
+    # landed, each verified under `owner_public_jwk`. Re-endorsing under a new key overwrites
+    # the live row, and every machine would then refuse a writer only the old signature vouches
+    # for, including for a revoke. Readers verify these as any other: never on the server's word.
+    owner_endorsements = models.JSONField(default=list, blank=True)
     # The owner's signed grant statement (the machines it may reach); version 0 = none yet.
     statement = models.JSONField(null=True, blank=True)
     statement_sig = models.CharField(max_length=128, blank=True, default="")

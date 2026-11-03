@@ -25,7 +25,7 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.agents.credentials import vault_engine, zk, zk_seal
+from apps.agents.credentials import vault_engine, zk, zk_endorse, zk_seal
 from apps.agents.models import AgentAdmin, AgentVaultEndorsement
 from apps.common import ticks
 from apps.connections import keeper, services, sharing
@@ -44,6 +44,7 @@ from tests.fixtures.connections import (
     ShareWorld,
     _stored,
     browser_share,
+    endorse,
     revoke_admin,
     sealed_to_owner,
     sf_app,
@@ -603,6 +604,51 @@ def test_a_person_who_replaced_their_key_disconnects_a_holder_revokes_and_they_c
     assert device_keys.thumbprint(fresh.owner_public_jwk) == fresh.owner_key
 
 
+def test_re_endorsing_under_a_new_key_keeps_the_old_signature_for_a_holders_revoke(world):
+    """`zk_endorse.add` replaces the row, so only the snapshot still holds what the sealed
+    owner key signed. Without it every box refuses the writer and the revoke never runs."""
+    conn = world.only_on_box_a()
+    old_key = conn.owner_key
+    key = world.eva_box
+    assert [(e["agent_id"], e["target"]) for e in conn.owner_endorsements if e["target"] == key.ecdh_jkt] == [
+        (str(world.eva.pk), key.ecdh_jkt)]
+    # A box wrote the envelope last, so a reader needs an endorsement to accept it.
+    assert reseal(world, "eva-cloud", conn, reseal_body(world, conn, "eva-cloud")).status_code == 200
+    conn.refresh_from_db()
+    assert conn.sealed_sig["by"]["target"] == key.ecdh_jkt
+
+    new = vault_key(world.person)
+    endorse(world.eva, key, world.person, new)  # the live row now holds the new key's signature
+    live = AgentVaultEndorsement.objects.get(agent=world.eva, target=key.ecdh_jkt, endorser=world.person)
+    assert live.endorser_jkt != old_key
+
+    assert key.ecdh_jkt in rcpt.revokers(conn)
+    services.disconnect(conn, by=world.person)
+    assert Connection.objects.get().state == Connection.REVOKING
+    [item] = work(world, "eva-cloud").json()["connections"]
+    _validates_as_a_box_does(item, old_key)
+    rows = [e for e in item["endorsements"] if e["target"] == key.ecdh_jkt and e["by"] == str(world.person.pk)]
+    assert len(rows) == 1 and rows[0]["by_jkt"] == old_key
+    assert device_keys.thumbprint(rows[0]["by_public_jwk"]) == old_key
+    assert zk_endorse.verify(world.eva.pk, kind="device", target=key.ecdh_jkt, key_jkt=key.ecdh_jkt, sig=rows[0]["sig"],
+                             endorser_jwk=rows[0]["by_public_jwk"])
+    assert confirm(world, "eva-cloud", conn).status_code == 204
+
+
+def test_a_share_keeps_the_owners_old_signature_and_a_tampered_snapshot_admits_nobody(world):
+    conn = world.only_on_box_a()
+    key = world.eva_box
+    kept = list(conn.owner_endorsements)
+    endorse(world.eva, key, world.person, vault_key(world.person))
+    conn.refresh_from_db()
+    # Snapshotted again with the live row now under another key: the old signature stands.
+    assert rcpt.snapshot_owner_endorsements(conn) == kept
+    assert key.ecdh_jkt in {t for k, t, _ in rcpt.recipients(conn) if k == "device"}
+    # The server's word for it is worth nothing: a signature that does not verify is no one's vouching.
+    conn.owner_endorsements = [{**e, "sig": kept[-1]["sig"][::-1]} for e in kept]
+    assert key.ecdh_jkt not in {t for k, t, _ in rcpt.recipients(conn) if k == "device"}
+
+
 def _adas_connection(world):
     """eva's, connected and shared by ada, who could be deleted: eva-cloud vouched for by jj,
     whom she names, and sealed to it."""
@@ -647,7 +693,8 @@ def test_a_replaced_key_still_verifies_what_the_owner_vouched_for_and_only_that(
     new = vault_key(world.person)
     # The owner's old endorsement stands, under the old key, for this connection.
     assert world.eva_box.ecdh_jkt in {t for k, t, _ in rcpt.recipients(conn) if k == "device"}
-    # A row claiming to be the owner's, signed by the new key, does not.
+    # A row claiming to be the owner's, signed by the new key, does not, with no snapshot to fall back on.
+    conn.owner_endorsements = []
     forged = zk_ref.endorse(world.eva.pk, "device", world.eva_box.ecdh_jkt, zk.public_key(world.eva_box.ecdh_public_jwk),
                             new, world.person.pk)
     AgentVaultEndorsement.objects.filter(target=world.eva_box.ecdh_jkt).update(sig=forged["sig"])

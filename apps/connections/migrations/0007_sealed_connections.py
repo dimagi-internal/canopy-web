@@ -59,6 +59,7 @@ class Migration(migrations.Migration):
                 ("owner_key", models.CharField(blank=True, default="", max_length=64)),
                 ("owner_public_jwk", models.JSONField(blank=True, default=dict)),
                 ("owner_user_id", models.CharField(blank=True, default="", max_length=32)),
+                ("owner_endorsements", models.JSONField(blank=True, default=list)),
                 ("statement", models.JSONField(blank=True, null=True)),
                 ("statement_sig", models.CharField(blank=True, default="", max_length=128)),
                 ("statement_version", models.PositiveIntegerField(default=0)),

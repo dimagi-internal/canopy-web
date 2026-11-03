@@ -195,6 +195,7 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
             conn.access_sealed, conn.access_sig = access_sealed, access_sig
         conn.statement, conn.statement_sig, conn.statement_version = statement, sig, statement["version"]
         conn.state = Connection.ACTIVE
+        conn.owner_endorsements = rcpt.snapshot_owner_endorsements(conn)
         conn.save()
         added, removed = _follow_statement(conn, agent_pks, by=user)
 
