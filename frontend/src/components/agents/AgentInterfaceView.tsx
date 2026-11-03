@@ -9,6 +9,7 @@ import {
 } from '@/api/agents'
 import { InterfaceEditor } from './InterfaceEditor'
 import type { Capability } from './interfaceModel'
+import { Th } from '@/components/DataTable'
 
 // The capabilities an interface marks as handling sensitive data.
 function sensitiveCapabilities(iface: unknown): string[] {
@@ -136,9 +137,9 @@ export function AgentInterfaceView({
         <table className="w-full text-[13px]">
           <thead>
             <tr className="text-left text-[11px] text-muted-foreground">
-              <th className="py-1 font-medium">Capability</th>
-              <th className="py-1 font-medium">Allows</th>
-              <th className="py-1 font-medium">Sensitive data</th>
+              <Th>Capability</Th>
+              <Th>Allows</Th>
+              <Th>Sensitive data</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -225,11 +226,11 @@ export function AgentInterfaceView({
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-left text-[11px] text-muted-foreground">
-                <th className="py-1 font-medium">When</th>
-                <th className="py-1 font-medium">Who</th>
-                <th className="py-1 font-medium">Through</th>
-                <th className="py-1 font-medium">Change</th>
-                <th className="py-1 font-medium">Sensitive data after</th>
+                <Th>When</Th>
+                <Th>Who</Th>
+                <Th>Through</Th>
+                <Th>Change</Th>
+                <Th>Sensitive data after</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">

@@ -10,6 +10,7 @@ import {
   type AgentTopologyOut,
 } from '@/api/workspaces'
 import { edgeKey, explainEdge, grantable, indexEdges } from './agentTopology'
+import { Th } from '@/components/DataTable'
 import { TopologyViews } from './topology/TopologyViews'
 import { scopedPath } from '../lib/scopedLinks'
 import { ApiError } from '@/api/problem'
@@ -157,12 +158,12 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
                 <tr className="border-b border-border">
                   <th className="py-1.5 pr-3 text-left font-medium text-muted-foreground">sends ↓ · receives →</th>
                   {list.map((dst) => (
-                    <th key={dst.slug} className="px-2 py-1.5 text-center font-medium text-foreground">
+                    <Th key={dst.slug} density="tight" className="text-center text-foreground">
                       <Link to={scopedPath(dst.workspace, `/agents/${dst.slug}/settings`)} className="hover:underline">
                         {dst.name}
                       </Link>
                       <div className="font-normal text-muted-foreground">{dst.workspace}</div>
-                    </th>
+                    </Th>
                   ))}
                 </tr>
               </thead>

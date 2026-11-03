@@ -5,6 +5,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '../lib/scopedLinks'
+import { Th } from '@/components/DataTable'
 
 // The workspace's agents, one row each: who it is and what it is doing — tasks
 // open and waiting on a person, active projects, and its turns (the last one and
@@ -77,15 +78,15 @@ export function AgentsPage() {
           <table className="w-full text-[13px]">
             <thead className="bg-card text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Agent</th>
-                <th className="px-3 py-2 font-medium">Last turn</th>
-                <th className="px-3 py-2 text-right font-medium" title="Turns in the last 7 days">Turns 7d</th>
-                <th className="px-3 py-2 text-right font-medium" title="Failed or lost in the last 7 days">Failed</th>
-                <th className="px-3 py-2 text-right font-medium" title="Tasks not done">Open</th>
-                <th className="px-3 py-2 text-right font-medium" title="Open tasks waiting on a person">Waiting</th>
-                <th className="px-3 py-2 text-right font-medium" title="Active projects">Projects</th>
-                <th className="px-3 py-2 font-medium">Mode</th>
-                <th className="px-3 py-2 font-medium">Owner</th>
+                <Th density="roomy">Agent</Th>
+                <Th density="roomy">Last turn</Th>
+                <Th density="roomy" className="text-right" title="Turns in the last 7 days">Turns 7d</Th>
+                <Th density="roomy" className="text-right" title="Failed or lost in the last 7 days">Failed</Th>
+                <Th density="roomy" className="text-right" title="Tasks not done">Open</Th>
+                <Th density="roomy" className="text-right" title="Open tasks waiting on a person">Waiting</Th>
+                <Th density="roomy" className="text-right" title="Active projects">Projects</Th>
+                <Th density="roomy">Mode</Th>
+                <Th density="roomy">Owner</Th>
               </tr>
             </thead>
             <tbody>

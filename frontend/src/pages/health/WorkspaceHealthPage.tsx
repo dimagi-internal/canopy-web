@@ -13,6 +13,7 @@ import { RunnersTable } from '@/components/runners/RunnersTable'
 import { useTreeRead } from './useTreeRead'
 import { useAgentSetup } from './useAgentSetup'
 import { scopedPath } from '../../lib/scopedLinks'
+import { Th } from '@/components/DataTable'
 
 // WORKSPACE HEALTH: what is not set up right, across this workspace and every one
 // below it. It renders; it never decides. Each agent's steps are its own setup
@@ -109,7 +110,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
         <h2 className="mb-2 text-[13px] font-semibold text-foreground">Workspaces</h2>
         <table className="w-full text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-workspaces">
           <thead className="text-left text-muted-foreground">
-            <tr><th className="py-1 font-medium">Workspace</th><th className="font-medium">Agents</th></tr>
+            <tr><Th>Workspace</Th><th className="font-medium">Agents</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
             {health.workspaces.map((w) => (
@@ -156,7 +157,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
           <table className="w-full min-w-[1380px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
             <thead className="text-left text-muted-foreground">
               <tr>
-                <th className="py-1 font-medium">Agent</th><th className="font-medium">Setup</th>
+                <Th>Agent</Th><th className="font-medium">Setup</th>
                 <th className="font-medium">Vault</th><th className="font-medium">Owner</th>
                 <th className="font-medium">Workspace</th><th className="font-medium">Last turn</th>
                 <th className="font-medium text-right" title="Turns started in 30 days, and how many of those that finished failed or were lost">Turns, 30 days</th>

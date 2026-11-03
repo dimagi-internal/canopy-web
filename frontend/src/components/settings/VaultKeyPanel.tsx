@@ -17,6 +17,7 @@ import { passphraseProblem } from '@/vault/zk'
 import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
 import { useHash } from '@/lib/useHash'
 import { NewVaultKey } from './NewVaultKey'
+import { Th } from '@/components/DataTable'
 
 
 /**
@@ -228,8 +229,8 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 font-medium">Opens your agents&rsquo; secrets</th>
-                <th className="py-1 font-medium" />
+                <Th>Opens your agents&rsquo; secrets</Th>
+                <Th />
               </tr>
             </thead>
             <tbody>

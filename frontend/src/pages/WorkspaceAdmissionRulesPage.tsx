@@ -14,6 +14,7 @@ import {
 } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { ApiError } from '@/api/problem'
+import { Th } from '@/components/DataTable'
 
 // Which turns this workspace refuses before any session starts (apps/admission,
 // canopy-web#1400). Any member reads the rules; admins change them, and the
@@ -198,11 +199,11 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
           <table className="w-full text-[12px]" data-testid="admission-rules">
             <thead className="text-left text-muted-foreground">
               <tr className="border-b border-border">
-                <th className="py-1 pr-3 font-medium">On</th>
-                <th className="py-1 pr-3 font-medium">Rule</th>
-                <th className="py-1 pr-3 font-medium">Why</th>
-                <th className="py-1 pr-3 font-medium">Notices</th>
-                <th className="py-1 pr-3 font-medium">Fired</th>
+                <Th density="compact-gap">On</Th>
+                <Th density="compact-gap">Rule</Th>
+                <Th density="compact-gap">Why</Th>
+                <Th density="compact-gap">Notices</Th>
+                <Th density="compact-gap">Fired</Th>
                 {manage && <th className="py-1" />}
               </tr>
             </thead>

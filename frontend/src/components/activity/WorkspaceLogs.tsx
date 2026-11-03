@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listEvents, listMcpCalls, type LogEvent, type McpCall } from "@/api/logs";
 import { relativeAge } from "@/lib/relativeAge";
+import { Th } from '@/components/DataTable'
 
 // The two logs beside the turn log on Activity. Both are the workspace
 // ADMIN's (apps/workspaces/permissions.py, LOGS_READ): an admin or owner sees
@@ -45,11 +46,11 @@ export function EventLogTable() {
       <table className="w-full text-sm" data-testid="event-log">
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Last seen</th>
-            <th className="px-3 py-2 font-medium">Level</th>
-            <th className="px-3 py-2 font-medium">Source</th>
-            <th className="px-3 py-2 font-medium">What</th>
-            <th className="px-3 py-2 font-medium">Count</th>
+            <Th density="roomy">Last seen</Th>
+            <Th density="roomy">Level</Th>
+            <Th density="roomy">Source</Th>
+            <Th density="roomy">What</Th>
+            <Th density="roomy">Count</Th>
           </tr>
         </thead>
         <tbody>
@@ -97,11 +98,11 @@ export function McpCallsTable() {
           <table className="w-full text-sm" data-testid="mcp-calls">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Who</th>
-                <th className="px-3 py-2 font-medium">Tool</th>
-                <th className="px-3 py-2 font-medium">Call</th>
-                <th className="px-3 py-2 font-medium">Result</th>
+                <Th density="roomy">Time</Th>
+                <Th density="roomy">Who</Th>
+                <Th density="roomy">Tool</Th>
+                <Th density="roomy">Call</Th>
+                <Th density="roomy">Result</Th>
               </tr>
             </thead>
             <tbody>

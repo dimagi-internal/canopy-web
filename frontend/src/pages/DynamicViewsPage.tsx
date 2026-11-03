@@ -4,6 +4,7 @@ import { createDynamicView, getDynamicViewGuide, listDynamicViews, type DynamicV
 import { useScopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
 import type { DynamicViewSource } from '@/api/dynamicViews'
+import { Th } from '@/components/DataTable'
 
 /**
  * A workspace's dynamic views: AI-generated screens over canopy's own data, each
@@ -78,10 +79,10 @@ export default function DynamicViewsPage() {
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="px-2 py-1.5 font-medium">View</th>
-              <th className="px-2 py-1.5 font-medium">For</th>
-              <th className="px-2 py-1.5 text-right font-medium">Version</th>
-              <th className="px-2 py-1.5 font-medium">Last changed</th>
+              <Th density="tight">View</Th>
+              <Th density="tight">For</Th>
+              <Th density="tight" className="text-right">Version</Th>
+              <Th density="tight">Last changed</Th>
             </tr>
           </thead>
           <tbody>
