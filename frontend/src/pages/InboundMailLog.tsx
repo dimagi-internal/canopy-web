@@ -26,6 +26,15 @@ const OUTCOME: Record<string, string> = {
   'stored:automated': 'Stored (automated mail, agent not woken)',
 }
 
+// After "Forwarded" SES has only accepted the copy; this is what it said next.
+const DELIVERY: Record<string, { text: string; bad: boolean }> = {
+  sent: { text: 'Forwarded, no delivery report yet', bad: false },
+  delivered: { text: 'Forwarded, accepted by the destination\'s mail server (check Spam if it isn\'t in the inbox)', bad: false },
+  bounced: { text: 'Forwarded, but it bounced', bad: true },
+  rejected: { text: 'Forwarded, but SES rejected it', bad: true },
+  complained: { text: 'Forwarded, and marked as spam by the destination', bad: true },
+}
+
 function describe(outcome: string): { text: string; bad: boolean } {
   const known = OUTCOME[outcome]
   if (known) return { text: known, bad: outcome.startsWith('dropped') }
@@ -78,7 +87,7 @@ export function InboundMailLog({ workspace, domainId }: { workspace: string; dom
           </thead>
           <tbody>
             {rows.map((r) => {
-              const o = describe(r.outcome)
+              const o = DELIVERY[r.delivery ?? ''] ?? describe(r.outcome)
               return (
                 <Tr rule="bottom" top key={r.id}>
                   <Td density="cozy-gap" tone="muted" nowrap>

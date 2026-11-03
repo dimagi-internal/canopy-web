@@ -110,6 +110,9 @@ class MailInboundLogOut(Schema):
     original_from: str
     subject: str
     outcome: str
+    delivery: str = ""
+    """A forwarded copy, as SES last reported it: sent, delivered (the destination's mail server
+    took it), bounced, complained or rejected. "" when none is known."""
     verdicts: dict[str, str] = {}
     created_at: str
 

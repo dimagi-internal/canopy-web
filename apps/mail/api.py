@@ -36,6 +36,7 @@ from .models import (
     MailAttachment,
     MailDomain,
     MailDraft,
+    MailForwardLog,
     MailInboundLog,
     MailMessage,
     MailRoute,
@@ -324,9 +325,15 @@ def list_inbound_log(request: HttpRequest, workspace: str, domain_id: int, recip
     qs = MailInboundLog.objects.filter(domain=d)
     if recipient.strip():
         qs = qs.filter(recipient__icontains=recipient.strip().lower())
+    rows = list(qs[:max(1, min(limit, 500))])
+    forwarded = [r.message_id for r in rows if r.outcome == "forwarded"]
+    copies = MailForwardLog.objects.filter(domain=d, message_id__in=forwarded)
+    delivery = {(c.message_id, c.recipient): c.delivery_status for c in copies}
     items = [{"id": r.pk, "recipient": r.recipient, "original_from": r.original_from, "subject": r.subject,
-              "outcome": r.outcome, "verdicts": r.verdicts or {}, "created_at": r.created_at.isoformat()}
-             for r in qs[:max(1, min(limit, 500))]]
+              "outcome": r.outcome,
+              "delivery": delivery.get((r.message_id, r.recipient), "") if r.outcome == "forwarded" else "",
+              "verdicts": r.verdicts or {}, "created_at": r.created_at.isoformat()}
+             for r in rows]
     return {"retention_days": MailInboundLog.RETENTION_DAYS, "items": items}
 
 

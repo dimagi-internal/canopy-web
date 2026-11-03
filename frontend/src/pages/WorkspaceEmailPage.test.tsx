@@ -303,6 +303,16 @@ describe('WorkspaceEmailPage', () => {
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
       local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: false }))
   })
+  it('the ledger says what happened to a forwarded copy after SES took it', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true, items: [{ ...domain, status: 'verified', receiving: true }] } as never)
+    vi.mocked(mail.fetchInboundLog).mockResolvedValueOnce({ retention_days: 30, items: [
+      { id: 2, recipient: 'a@marshellis.com', original_from: 'b@x.org', subject: 'S', outcome: 'forwarded', delivery: 'bounced',
+        verdicts: {}, created_at: '2026-11-02T20:00:00Z' }] })
+    renderPage()
+    const log = await screen.findByTestId('mail-inbound-log')
+    await vi.waitFor(() => expect(within(log).getByText('Forwarded, but it bounced')).toBeTruthy())
+  })
   it('an admin sees what happened to each inbound message, drops included', async () => {
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
       enabled: true, can_manage: true, items: [{ ...domain, status: 'verified', receiving: true }] } as never)

@@ -288,6 +288,10 @@ class MailForwardLog(models.Model):
                                     related_name="+")
     status = models.CharField(max_length=10)
     error = models.TextField(blank=True, default="")
+    ses_message_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    delivery_status = models.CharField(max_length=12, blank=True, default="")
+    """What SES reported after accepting the copy: sent, then delivered, bounced, complained or
+    rejected. "Delivered" means the destination's mail server took it, not that it reached an inbox."""
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

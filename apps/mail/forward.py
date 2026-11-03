@@ -19,7 +19,7 @@ from django.utils import timezone
 from apps.workspaces import services as wsvc
 
 from . import domains, ses
-from .models import MailForwardLog
+from .models import MailForwardLog, MailMessage
 
 _STRIP = ("DKIM-Signature", "ARC-Seal", "ARC-Message-Signature", "ARC-Authentication-Results",
           "Return-Path", "Disposition-Notification-To", "Return-Receipt-To", "Sender", "From", "Reply-To", "Message-ID")
@@ -91,11 +91,13 @@ def forward(route, parsed, raw: bytes, recipient: str) -> str:
             return "duplicate"
         row = MailForwardLog.objects.get(**key)
     try:
-        ses.send_raw(from_addr=f"{settings.MAIL_FORWARDER_LOCAL_PART}@{route.domain.name}",
-                     to=[user.email], raw=build(route, parsed, raw, recipient))
+        ses_id = ses.send_raw(from_addr=f"{settings.MAIL_FORWARDER_LOCAL_PART}@{route.domain.name}",
+                              to=[user.email], raw=build(route, parsed, raw, recipient))
     except Exception:
         row.delete()  # leave no claim so the SNS retry can forward
         raise
     row.status = MailForwardLog.FORWARDED
-    row.save(update_fields=["status"])
+    row.ses_message_id = ses_id or ""
+    row.delivery_status = MailMessage.SENT
+    row.save(update_fields=["status", "ses_message_id", "delivery_status"])
     return "forwarded"

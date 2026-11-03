@@ -10,7 +10,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.utils import timezone
 
-from apps.mail import agent_mail, inbound, parse, ses, storage
+from apps.mail import agent_mail, inbound, parse, reputation, ses, storage
 from apps.mail.models import (
     MailAttachment,
     MailDomain,
@@ -488,3 +488,18 @@ def test_new_mail_brings_an_archived_or_trashed_thread_back_but_not_a_reported_o
     reply(2)
     th.refresh_from_db()
     assert th.spam is True
+
+
+def test_the_ledger_shows_what_ses_said_about_a_forwarded_copy(w, monkeypatch):
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: "ses-fwd-9")
+    MailRoute.objects.filter(pk=w.r.pk).update(keep_copy=False)
+    inbound.handle(_note("jjackson@marshellis.com"))
+    url = f"/api/mail/domains/marshellis/{w.d.pk}/inbound"
+    assert _c(w.owner).get(url).json()["items"][0]["delivery"] == "sent"
+    source = "canopy-forwarder@marshellis.com"
+    reputation.record({"eventType": "Delivery", "mail": {"source": source, "messageId": "ses-fwd-9"}},
+                      sns_message_id="e1")
+    assert _c(w.owner).get(url).json()["items"][0]["delivery"] == "delivered"
+    reputation.record({"eventType": "Bounce", "bounce": {"bounceType": "Permanent"},
+                       "mail": {"source": source, "messageId": "ses-fwd-9"}}, sns_message_id="e2")
+    assert _c(w.owner).get(url).json()["items"][0]["delivery"] == "bounced"
