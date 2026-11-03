@@ -20,6 +20,7 @@ import {
 import type { ToolRowsView, TypingVisibility } from "canopy-ui/chat";
 import { copyText } from "canopy-ui/lib";
 import { scopedPath } from "@/lib/scopedLinks";
+import { slackLabel } from "@/lib/slackLinks";
 import { SlackThreadMenuItems, type SlackThread } from "./SlackThreadMenuItems";
 import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
@@ -248,7 +249,7 @@ export function ChatSessionMenu({
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
-          <MenuSection>{slackThread ? `Slack · ${slackThread.channel}` : "Slack"}</MenuSection>
+          <MenuSection>{slackThread ? `Slack · ${slackLabel(slackThread)}` : "Slack"}</MenuSection>
           {slackThread && (
             <SlackThreadMenuItems thread={slackThread} onDetach={onDetachSlack} detaching={detachingSlack} />
           )}

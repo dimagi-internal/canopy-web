@@ -9,6 +9,7 @@ from django.db.models import Q
 from django.http import Http404, HttpRequest
 from ninja.errors import HttpError
 
+from apps.agents.credentials import delegations
 from apps.api.errors import ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
@@ -338,7 +339,13 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
         "turns_limit": SESSION_INFO_TURNS,
         "participant_count": session.participants.count(),
         "message_count": session.messages.count(),
+        "github_identity": _github_identity(session),
     }
+
+
+def _github_identity(session) -> dict:
+    who = delegations.session_identity(session)
+    return {"agent": who["agent"].slug if who["agent"] else "", "source": who["source"], "repo": who["repo"]}
 
 
 @router.get("/{session_id}/slash-commands", response=list[SlashCommandOut],

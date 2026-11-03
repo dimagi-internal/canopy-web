@@ -3,6 +3,7 @@ import { getSessionInfo, type SessionInfo, type SessionInfoTurn } from "@/api/ch
 import { relativeAge } from "@/lib/relativeAge";
 import { CopyButton } from "canopy-ui/ui";
 import { cliLabel } from "@/lib/clis";
+import { slackLabel } from "@/lib/slackLinks";
 
 /**
  * "Session info", opened from the chat's ⋯ menu and the /ide row menu:
@@ -137,7 +138,8 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
             ) : (
               <p className="text-muted-foreground">No runner has backed this session yet.</p>
             )}
-            {s.slack && <Row label="Slack" value={s.slack.channel} href={s.slack.app_url || s.slack.url || undefined} />}
+            <Row label="GitHub identity" value={githubIdentityText(info.github_identity)} />
+            {s.slack && <Row label="Slack" value={slackLabel(s.slack)} href={s.slack.app_url || s.slack.url || undefined} />}
           </Section>
 
           {Object.keys(activity).length > 0 && (
@@ -163,6 +165,15 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
       )}
     </div>
   );
+}
+
+/** Whose GitHub token this session's turns borrow, and why — the answer to "which agent's token is this?" */
+export function githubIdentityText(g: { agent: string; source: string; repo: string }): string {
+  if (g.source === "agent") return `${g.agent} — this chat's own agent`
+  if (g.source === "repo_default") return `${g.agent} — the default agent for the ${g.repo} repo`
+  return g.repo
+    ? `none — ${g.repo} has no default agent, so its turns get no GitHub token`
+    : "none — no agent, so its turns get no GitHub token"
 }
 
 function TurnRow({ turn: t }: { turn: SessionInfoTurn }) {

@@ -500,13 +500,7 @@ function ChatPageInner({
         <ChatPanel
           state={panelState}
           connected={socket.connected}
-          statusSlot={meta?.slack ? (
-            <SlackThreadChip
-              thread={meta.slack}
-              onDetach={canDetachSlack ? () => void actions.detachSlack() : undefined}
-              detaching={actions.detachingSlack}
-            />
-          ) : undefined}
+          statusSlot={meta?.slack ? <SlackThreadChip thread={meta.slack} /> : undefined}
           currentUserId={socket.state.current_user_id}
           onSend={(body) => {
             // The server consumes whatever the session is holding, so the chips
