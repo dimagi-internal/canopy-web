@@ -672,7 +672,8 @@ def _turn_mode(turn) -> dict | None:
 
 def _grant(turn, agent) -> dict:
     if agent is None:
-        return {"granted_by": "no-interface", "role": None, "source": ""}
+        return {"granted_by": "no-interface", "role": None, "source": "",
+                "permissions": [], "manual_only": False}
     from apps.agents.interface import grant_facts
 
     return grant_facts(turn, agent)

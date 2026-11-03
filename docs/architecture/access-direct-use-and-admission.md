@@ -235,7 +235,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
 VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `role` and `source`
-(below), `relationship`, `profile` (`full` | `confined`), `granted_by`, `capability` (the confined
+(below), `relationship`, `profile` (`full` | `confined`), `permissions`, `manual_only`, `granted_by`, `capability` (the confined
 profile), `turn_mode` (`{mode, basis}`), and:
 
 * **`role`** — the asker's named role on the agent: `owner` | `admin` | `editor` |
@@ -244,10 +244,23 @@ profile), `turn_mode` (`{mode, basis}`), and:
   `system` | `session` | `list:<line>` (the access-list line that gave it, e.g.
   `list:domain:dimagi.com`), `""` when refused. An agent says "you are read_only here because …"
   from these, instead of guessing. Added without a version bump.
-* **`granted_by`** — the same answer as one word: `owner` | `admin` | `system` |
-  `session:<role>` | `grant:<line>` (a line that gives `write`) | `capability:<name>` (a confined
-  asker in that capability) | `sensitive:<capability>` | `refused`, and `no-interface` for a turn with no
-  agent.
+* **`permissions`** — what the asker holds on THIS agent on this turn: a sorted list from the
+  agent vocabulary (`read`, `write`, `agent_edit`, `admin`, `own`, and scoped `use:<capability>`),
+  closed under the dependency rule (`agent_edit` implies `write` implies `read`). A named role
+  gives `roles.permissions_of(role)` (owner, admin and system included; system holds what an admin
+  does); an access-list asker gets what their lines give (`Decision.permissions`); a confined turn
+  holds only `read` (when their lines give it) and `use:<capability>` for the capability the turn
+  runs in, even for an owner whom a sensitive conversation confined; `[]` when refused or for a
+  turn with no agent. **`write` is in `permissions` exactly when `profile` is `full`**, so a reader
+  may trust either (`tests/test_caller_envelope.py`). **`manual_only`** — `true` when the line that
+  gives them `write` says every turn they start runs `manual` (write, but an admin approves what
+  goes out); `false` otherwise. Both added without a version bump, computed beside `role`/`source`
+  from the one decision (`apps/agents/interface.py::grant_facts`).
+* **`granted_by`** — a legacy one-word summary of the same decision, kept for older readers;
+  new readers should use `permissions` and `profile`, never match its strings: `owner` | `admin` |
+  `system` | `session:<role>` | `grant:<line>` (a line that gives `write`) | `capability:<name>` (a
+  confined asker in that capability) | `sensitive:<capability>` | `refused`, and `no-interface` for a
+  turn with no agent. New values may appear.
 * **`access_help`** — on a confined turn only: `{your_role, workspace, role_needed_for_full,
   who_can_grant}`. Why the caller is confined and what would change it, in roles (never people
   or other callers' data); the Slack "Questions only" notice says the same. `null` on a full profile.
