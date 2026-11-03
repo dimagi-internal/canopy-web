@@ -22,7 +22,7 @@ In precedence order:
 
 - **A `Notification` counts only MID-TURN.** It fires both when an agent stops to ask and when a prompt sits idle after a turn ends — the second is every idle session on the box. The discriminator is turn STATE (`UserPromptSubmit` seen, `Stop` not yet; `HookListener._in_turn` in `runner/canopy_runner/canopy_runner/hook_listener.py`), never the message wording, which Claude Code may change.
 - **It fails closed:** a runner that restarted mid-turn misses a real prompt rather than raising a false one. Silence costs a menu; noise costs the signal.
-- **An API error ends a turn without a `Stop` hook**, so on a `Notification` the listener reads the transcript tail (`canopy_transcript.turn_ended_in_api_error`) and clears the turn state.
+- **Some turns end without a `Stop` hook**: an API error, and a hook answering `continue: false` (credential_guard's abort). On a `Notification` the listener reads the transcript tail (`canopy_transcript.turn_ended_without_stop`: an API error said last, or a `turn_duration` row after the last message) and clears the turn state.
 - **Precedence is one-way:** a marker never overwrites a real menu; a real menu always replaces a marker.
 - **Escape stays real on a marker** — the runner re-reads the screen before pressing anything, and a permission prompt parses there, so the refuse button is an action.
 

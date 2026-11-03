@@ -228,6 +228,17 @@ describe("turnNotice", () => {
     expect(turnNotice(failed)?.tone).toBe("error");
   });
 
+  it("still shows a failure when its own transcript arrives just after it", () => {
+    // A mirrored session's rows take their time when they are ingested, so the
+    // turn's own last rows can be seconds newer than the turn's end (3s on Ada's
+    // debug turn 05590519).
+    const failed = status({
+      state: "failed", settled: true, finished_at: "2026-11-03T14:11:37Z",
+    });
+    expect(turnNotice(failed, { latestMessageAt: "2026-11-03T14:11:40Z" })?.tone).toBe("error");
+    expect(turnNotice(failed, { latestMessageAt: "2026-11-03T14:13:00Z" })).toBeNull();
+  });
+
   it("never lets a newer message hide a turn that is not settled", () => {
     // A live or stuck turn is still owed something, whatever else was said.
     const n = turnNotice(

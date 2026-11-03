@@ -40,7 +40,7 @@ from canopy_transcript import (
     hook_retires_menu,
     marker_from_hook,
     menu_from_hook,
-    turn_ended_in_api_error,
+    turn_ended_without_stop,
 )
 from canopy_transcript.signed_out import answered_at_transcript_end, signed_out_at_transcript_end
 from canopy_transcript.usage_limit import limit_at_transcript_end
@@ -303,10 +303,11 @@ class HookListener:
                 self._in_turn.difference_update(keys)
             elif (event == "Notification"
                     and any(k in self._in_turn for k in keys)
-                    and turn_ended_in_api_error(payload)):
-                # The one turn ending that fires no `Stop`. Claude Code writes
-                # the 500 as an assistant message and returns to the prompt, so
-                # without this the session stays marked in-turn forever and the
+                    and turn_ended_without_stop(payload)):
+                # The turn endings that fire no `Stop`: an API error, which Claude
+                # Code writes as an assistant message before returning to the
+                # prompt, and a hook's `continue: false`. Without this the session
+                # stays marked in-turn forever and the
                 # NEXT idle notification — the ordinary one, sixty seconds later
                 # — is read as an agent asking a question. It is not: there is no
                 # dialog on the screen, so the "Waiting on you" it raises can be
