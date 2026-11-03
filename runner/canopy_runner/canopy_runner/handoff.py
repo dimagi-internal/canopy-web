@@ -37,6 +37,8 @@ import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
 
+from .platform_jobs import no_window
+
 FORMAT = 1
 
 #: The whole archive, compressed. canopy-web refuses more than this too.
@@ -69,7 +71,7 @@ class SnapshotError(RuntimeError):
 def _git(cwd: Path, *args: str, env: dict | None = None, timeout: float = 120,
          check: bool = True, text: bool = True, input=None):
     proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=text,
-                          timeout=timeout, env=env, input=input)
+                          timeout=timeout, env=env, input=input, **no_window())
     if check and proc.returncode != 0:
         err = proc.stderr if text else proc.stderr.decode("utf-8", "replace")
         raise SnapshotError(f"git {args[0]} failed: {' '.join(str(err).split())[:300]}")
