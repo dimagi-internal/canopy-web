@@ -137,11 +137,19 @@ def test_write_drives_the_whole_agent_whatever_the_role_is_called(w):
     assert d.permissions >= {roles.READ, roles.WRITE} and roles.AGENT_EDIT not in d.permissions
 
 
-def test_a_line_cannot_use_a_capability_the_agent_does_not_have(w):
+def test_a_line_cannot_use_a_door_the_agent_does_not_have(w):
+    bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
+    _line({**w, "agent": bare}, "", kind=G.DOMAIN, domain="dimagi.com", capability="canopy")
+    contact = _contact(w, "idiene@dimagi.com")
+    assert access.decide(bare, contact, verified=True).access == access.NONE
+
+
+def test_read_mode_needs_no_published_capability(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
     _line({**w, "agent": bare}, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
-    assert access.decide(bare, contact, verified=True).access == access.NONE
+    d = access.decide(bare, contact, verified=True)
+    assert (d.access, d.capability) == (access.CONFINED, "read")
 
 
 def test_everyone_in_another_workspace_can_be_named_and_an_editor_line_runs_the_whole_agent(w):

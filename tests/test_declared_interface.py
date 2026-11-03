@@ -258,6 +258,14 @@ def test_unpublishing_a_capability_denies_everything_to_turns_already_queued(w):
     w["agent"].save(update_fields=["interface"])
     env = caller_context.build(t)
     assert env["profile"] == "confined"
+    # Stamped `ask` is read mode: with no override left it runs canopy's default read profile,
+    # never the full one.
+    assert env["capability"]["name"] == "ask" and env["capability"]["write_paths"] == ["{cwd}/.ace-read/*"]
+    assert env["capability"]["default_profile_version"] == 1
+    # A retired DOOR, though, yields the empty deny-all profile.
+    t.capability = "retired-door"
+    env = caller_context.build(t)
+    assert env["profile"] == "confined"
     assert env["capability"]["tools"] == [] and env["capability"]["bash"] == []
 
 
@@ -305,7 +313,8 @@ def test_reset_returns_to_the_default_not_to_nothing(w):
     assert r.status_code == 200 and r.json()["interface"] == default_interface()
     assert r.json()["is_default"] is True
     w["agent"].refresh_from_db()
-    assert _as_user(w["agent"], w["ed"], "k").capability == FULL
+    # `ed`'s members' read line still stands, and read mode needs no published capability.
+    assert _as_user(w["agent"], w["ed"], "k").capability == "read"
 
 
 # --- only a runner that can confine a caller's session may claim one ----------------

@@ -21,7 +21,7 @@ SYSTEM = "system"
 
 # --- permissions ------------------------------------------------------------------
 
-#: Ask the agent through its read-only capability (`ask`). Off until the owner publishes it.
+#: Be answered by the agent in read mode: confined, on every agent from the start (`interface.is_read_mode`).
 READ = "read"
 #: Drive the whole agent, in its own authority: every skill it has, every capability.
 WRITE = "write"
@@ -33,9 +33,6 @@ ADMINISTER = "admin"
 OWN = "own"
 #: The scope of a named-capability permission: `use:<capability>` opens that one capability.
 USE = "use"
-
-#: The published name read mode resolves to today (`is_read_mode`: `ask` and `read` are one).
-READ_CAPABILITY = "ask"
 
 _PLAIN = (READ, WRITE, AGENT_EDIT, ADMINISTER, OWN)
 

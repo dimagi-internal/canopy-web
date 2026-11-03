@@ -257,14 +257,18 @@ def extended_card(agent, user) -> A2AAgentCardOut | None:
     """The card for a signed-in canopy user: the public skills plus the ones
     `user` may invoke. None when that is nothing — the same answer, to them, as
     an agent that does not exist."""
-    caps = _capabilities(agent)
-    if not caps:
-        return None
+    caps = dict(_capabilities(agent))
     mine = set(iface_mod.offered_to(user, agent))
     public_names = public_capabilities(agent)
     names = sorted(mine | set(public_names))
     if not names:
         return None
+    # Read mode exists on every agent: a signed-in person who holds `read` is offered it even when
+    # the agent published nothing. (The PUBLIC card never lists it: an outsider's `read_only` line
+    # reaches the agent's own published `ask` only.)
+    for n in names:
+        caps.setdefault(n, {"description": f"Ask {agent.name} (read mode): it answers from its own "
+                                           "repo and docs and cannot change anything."})
     skills = [_skill(agent, n, caps[n], public=n not in mine) for n in names]
     return _card(agent, skills, _interfaces(agent, caps, public_names))
 
