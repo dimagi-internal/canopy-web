@@ -13,15 +13,8 @@ import pytest
 from django.db import connection, connections
 
 from apps.slack import client, share
-from tests.test_slack_choices import (  # noqa: F401
-    ACTIONS,
-    ALICE,
-    POSTED_TS,
-    _press,
-    _prompts,
-    hal_session,
-    repo_session,
-)
+from tests.fixtures.slack import ALICE
+from tests.fixtures.slack_choices import ACTIONS, POSTED_TS, _press, _prompts, repo_session  # noqa: F401
 
 pytestmark = [
     pytest.mark.skipif(connection.vendor != "postgresql", reason="row locks need PostgreSQL"),
