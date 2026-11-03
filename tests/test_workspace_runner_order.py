@@ -19,7 +19,7 @@ from django.utils import timezone
 from apps.harness import claim, routing
 from apps.harness.models import Runner, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 

@@ -22,6 +22,7 @@
 "apps/agents/access.py" = ["PLC0415"]  # 3
 "apps/agents/api.py" = ["PLC0415"]  # 6
 "apps/agents/api_board.py" = ["PLC0415"]  # 1
+"apps/agents/api_fleet.py" = ["PLC0415"]  # 3
 "apps/agents/api_routing.py" = ["PLC0415"]  # 3
 "apps/agents/api_sender_trust.py" = ["PLC0415"]  # 2
 "apps/agents/api_skills.py" = ["PLC0415"]  # 1
@@ -34,7 +35,6 @@
 "apps/agents/credentials/zk_notify.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk_seal.py" = ["PLC0415"]  # 1
 "apps/agents/engagement.py" = ["PLC0415"]  # 1
-"apps/agents/api_fleet.py" = ["PLC0415"]  # 3
 "apps/agents/ideas.py" = ["PLC0415"]  # 2
 "apps/agents/interface.py" = ["PLC0415"]  # 2
 "apps/agents/kb_store.py" = ["PLC0415"]  # 4
@@ -151,9 +151,8 @@
 "apps/harness/caller_tokens.py" = ["PLC0415"]  # 3
 "apps/harness/channels/email.py" = ["PLC0415"]  # 3
 "apps/harness/claim.py" = ["PLC0415"]  # 6
-"apps/harness/claim_reach.py" = ["PLC0415"]  # 3
 "apps/harness/claim_payload.py" = ["PLC0415"]  # 4
-"apps/harness/turn_close.py" = ["PLC0415"]  # 8
+"apps/harness/claim_reach.py" = ["PLC0415"]  # 3
 "apps/harness/credential_notify.py" = ["PLC0415"]  # 3
 "apps/harness/device_key_notify.py" = ["PLC0415"]  # 7
 "apps/harness/device_key_out.py" = ["PLC0415"]  # 2
@@ -186,6 +185,7 @@
 "apps/harness/topology.py" = ["PLC0415"]  # 2
 "apps/harness/turn_access.py" = ["PLC0415"]  # 2
 "apps/harness/turn_agent_tokens.py" = ["PLC0415"]  # 2
+"apps/harness/turn_close.py" = ["PLC0415"]  # 8
 "apps/harness/turn_mode.py" = ["PLC0415"]  # 8
 "apps/harness/turn_status.py" = ["PLC0415"]  # 7
 "apps/harness/views.py" = ["PLC0415"]  # 6
@@ -292,13 +292,12 @@
 "apps/walkthroughs/flat_links.py" = ["PLC0415"]  # 1
 "apps/walkthroughs/models.py" = ["PLC0415"]  # 1
 "apps/walkthroughs/timeline.py" = ["PLC0415"]  # 1
-"apps/workspaces/access_requests.py" = ["PLC0415"]  # 3
+"apps/workspaces/access_requests.py" = ["PLC0415"]  # 2
 "apps/workspaces/api.py" = ["PLC0415"]  # 5
-"apps/workspaces/departure.py" = ["PLC0415"]  # 7
+"apps/workspaces/departure.py" = ["PLC0415"]  # 1
 "apps/workspaces/login_gate.py" = ["PLC0415"]  # 1
 "apps/workspaces/models.py" = ["PLC0415"]  # 1
 "apps/workspaces/permissions.py" = ["PLC0415"]  # 5
-"apps/workspaces/role_cap.py" = ["PLC0415"]  # 3
+"apps/workspaces/role_cap.py" = ["PLC0415"]  # 2
 "apps/workspaces/services.py" = ["PLC0415"]  # 5
-"apps/workspaces/testing.py" = ["PLC0415"]  # 2
 "config/views.py" = ["PLC0415"]  # 1

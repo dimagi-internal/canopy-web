@@ -19,7 +19,7 @@ from apps.harness.claim import claim_next_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db

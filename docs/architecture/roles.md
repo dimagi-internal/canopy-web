@@ -331,7 +331,7 @@ Every grant that hangs off membership is checked against **current** membership 
 including an agent's owner: once removed they are not its admin (credentials, interface,
 transfer), get no unconfined profile when messaging it, lend it no GitHub token and are not
 pushed about it. And removal sweeps the rest
-(`apps/workspaces/departure.py`): AgentAdmin, RunnerAdmin and chat participant rows in that
+(`apps/workspaces/departure.py`, a registry that agents, harness, canopy_sessions and realtime fill from `ready()` in their own `departure.py`): AgentAdmin, RunnerAdmin and chat participant rows in that
 workspace, lent GitHub tokens, their box on its agents' runner lists, and agent ownership
 (cleared, with a `warn` Event saying so); their open chat sockets there are closed. That is
 because `dimagi` auto-approves access requests: without the sweep, a removed person asks again and every

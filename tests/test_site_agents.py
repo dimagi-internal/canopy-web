@@ -27,7 +27,7 @@ from apps.host_grants import client_identity, site_needs
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db

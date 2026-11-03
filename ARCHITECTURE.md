@@ -140,6 +140,11 @@ The upward imports that exist today are frozen in its `FROZEN` table as
 
 A new app gets a layer in both places; the test fails until it has one.
 
+A lower layer that needs something a higher one owns takes a **registry** the higher app fills from
+its `AppConfig.ready()`, rather than importing it: `workspaces.departure.register` (what leaving a
+workspace revokes; `tests/test_departure_revokers.py` lists the expected names),
+`workspaces.role_cap.register_turn_origin` and `workspaces.access_requests.register_push`.
+
 ## Structural guards
 
 A **guard** is a test that holds a structural rule over the source tree or the docs rather than

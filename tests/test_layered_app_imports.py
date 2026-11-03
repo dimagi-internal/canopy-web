@@ -99,11 +99,6 @@ FROZEN: dict[tuple[str, str], int] = {
     ("push", "host_grants"): 1,
     ("retention", "session_sharing"): 1,
     ("retention", "slack"): 1,
-    ("workspaces", "agents"): 1,
-    ("workspaces", "canopy_sessions"): 1,
-    ("workspaces", "harness"): 3,
-    ("workspaces", "push"): 1,
-    ("workspaces", "realtime"): 1,
     # END FROZEN
 }
 

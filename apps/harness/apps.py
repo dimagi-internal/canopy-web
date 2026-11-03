@@ -7,6 +7,12 @@ class HarnessConfig(AppConfig):
     verbose_name = "Agent execution harness"
 
     def ready(self) -> None:
+        from . import departure  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        departure.register()
+        from apps.workspaces import role_cap  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        role_cap.register_turn_origin(_turn_origin_ref)
         # Importing is what CONNECTS the page-invalidation receiver. A signals
         # module nothing imports is dead code that looks alive — how
         # `apps/mcp/page_tools.py` shipped with ten passing tests and no
@@ -27,3 +33,10 @@ class HarnessConfig(AppConfig):
         from . import act_as  # noqa: PLC0415 — AppConfig.ready() wiring, after the app registry is loaded
 
         ticks.register("harness.act_as_expire", act_as.expire_due, 60)
+
+
+def _turn_origin_ref(turn_id, user):
+    from .models import Turn  # noqa: PLC0415 — models load only after the app registry
+
+    return (Turn.objects.filter(pk=turn_id, initiator_user=user)
+            .values_list("origin_ref", flat=True).first())

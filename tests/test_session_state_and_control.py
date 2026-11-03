@@ -30,7 +30,7 @@ from apps.harness import claim, routing, session_sync
 from apps.harness import turn_status as ts
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 

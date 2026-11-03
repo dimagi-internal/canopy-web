@@ -90,7 +90,7 @@ construction (`tests/test_claim_schedule_parity.py`). It is the INTERSECTION of:
 - **the workspaces the box is ENROLLED in, plus every workspace below them**
   (`RunnerEnrollment`, `routing.covered_slugs`). Pairing enrolls only the
   workspace paired into; joining a workspace never enrolls existing boxes; leaving
-  one drops the owner's boxes' enrollment there (`apps/workspaces/departure.py`); a
+  one drops the owner's boxes' enrollment there (`apps/harness/departure.py`, run by `apps/workspaces/departure.py`); a
   division created later is covered; a separate root never is — which keeps a family
   workspace's box off Dimagi's work and Dimagi's boxes off the family's, though one
   person owns both. Managed by the owner or a runner admin at

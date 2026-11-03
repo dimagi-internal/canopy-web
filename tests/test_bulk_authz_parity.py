@@ -30,7 +30,7 @@ from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, ancestor_chains
 from apps.workspaces.models import WorkspaceMembership as M
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
