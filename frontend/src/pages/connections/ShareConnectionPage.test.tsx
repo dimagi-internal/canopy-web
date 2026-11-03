@@ -107,6 +107,19 @@ describe('ShareConnectionPage', () => {
     expect(screen.getByText('No enrolled computers. Run: canopy vault device --enroll')).toBeTruthy()
   })
 
+  it('withdraws the last grant: everyone unticked goes through to the PUT, once it was shared', async () => {
+    const statement = { agents: ['12'], my_computers: [] }
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement })
+    getShareState.mockResolvedValue({ ...STATE, state: 'active', statement })
+    await unlocked()
+    fireEvent.click(screen.getByLabelText('Eva'))
+    const share = screen.getByRole('button', { name: 'Share' }) as HTMLButtonElement
+    expect(share.disabled).toBe(false)
+    fireEvent.click(share)
+    await waitFor(() => expect(putShare).toHaveBeenCalledWith('c1', { sig: 's' }))
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [] })
+  })
+
   it('sends a signed statement and a re-sealed envelope with the chosen agents', async () => {
     await unlocked()
     fireEvent.click(screen.getByLabelText('Eva'))

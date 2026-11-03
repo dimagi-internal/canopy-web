@@ -181,7 +181,9 @@ export function ShareConnectionPage(): JSX.Element | null {
     if (!next.delete(key)) next.add(key)
     setter(next)
   }
-  const nobody = choice.agents.length === 0 && choice.myComputers.length === 0
+  // A first share has to reach someone. Once shared, unticking everyone is how the last
+  // grant is withdrawn: a statement naming nobody, signed like any other.
+  const nothingToShare = !opened?.statement && choice.agents.length === 0 && choice.myComputers.length === 0
   const reconnected = !!opened?.statement && state.sealed_sig == null
 
   return (
@@ -297,7 +299,7 @@ export function ShareConnectionPage(): JSX.Element | null {
 
           <p className="text-[13px] text-muted-foreground">{state.state === 'unshared' ? NOT_SHARED : null}</p>
           <div className="flex gap-2">
-            <Button onClick={() => void share(state, opened)} disabled={busy || nobody || !!changed}>Share</Button>
+            <Button onClick={() => void share(state, opened)} disabled={busy || nothingToShare || !!changed}>Share</Button>
             <Button variant="outline" onClick={() => navigate(returnTo)} disabled={busy}>Not now</Button>
           </div>
         </div>

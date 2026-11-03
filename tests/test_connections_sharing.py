@@ -11,6 +11,7 @@ and machines the statement allows, with the owner as its writer.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 import pytest
@@ -402,3 +403,16 @@ def test_an_agents_connection_lent_to_another_names_the_owning_agent(world):
     conn = world.shared(world.evas(), agents=[world.eva, world.echo])
     [row] = client(world.op).get("/api/agents/echo/connections").json()["connections"]
     assert row["id"] == str(conn.pk) and row["granted_from"] == "eva" and row["usable"] is True
+
+
+def test_withdrawing_the_last_grant_through_the_route_empties_the_statement(world):
+    conn = world.shared(world.persons(), agents=[world.eva])
+    body = browser_share(conn, world.person, world.person_priv, agents=[])
+    resp = client(world.person).put(f"/api/connections/{conn.pk}/share", data=json.dumps(body),
+                                    content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    conn.refresh_from_db()
+    assert conn.state == "active" and conn.statement["agents"] == [] and conn.statement_version == 2
+    assert not conn.grants.exists()
+    assert zk_seal.sealed_targets(conn.sealed) == {("member", str(world.person.pk))}
+    assert services.providers_for_agent(world.eva) == []
