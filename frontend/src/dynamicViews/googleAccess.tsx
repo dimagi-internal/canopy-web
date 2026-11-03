@@ -11,6 +11,7 @@
  * Nothing is left in Settings afterwards. Backend: apps/agents/credentials/google_mint.py.
  */
 import { useRef, useState } from 'react'
+import { Dialog, DialogContent, DialogTitle } from 'canopy-ui/ui'
 import { getGoogleDelegation, startGoogleDelegation } from '@/api/agents'
 import { apiV2 } from '@/api/client.v2'
 import { withdrawMyDelegatedCredential } from '@/api/delegatedCredentials'
@@ -138,13 +139,16 @@ export function GoogleAccessDialog({ ask, onDone }: {
     }
   }
 
+  const cancel = () => { cancelled.current = true; onDone({ ok: false, error: 'cancelled' }) }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true"
-      aria-labelledby="google-access-title" data-testid="google-access-dialog">
-      <div className="w-full max-w-md space-y-3 rounded-xl border border-border bg-card p-5 text-sm text-foreground shadow-xl">
-        <h2 id="google-access-title" className="text-base font-semibold">
+    // Escape, the scrim and the X are the Cancel button: stopping is the safe answer to a consent ask.
+    <Dialog open onOpenChange={(o: boolean) => { if (!o) cancel() }}>
+      <DialogContent aria-modal="true" data-testid="google-access-dialog"
+        className="block w-[calc(100%-2rem)] max-w-md space-y-3 rounded-xl bg-card p-5 text-sm text-foreground shadow-xl">
+        <DialogTitle className="text-base leading-normal tracking-normal">
           Let {name} use your Google account for {ask.minutes} minutes
-        </h2>
+        </DialogTitle>
         {ask.purpose && <p className="text-muted-foreground">This page says: “{ask.purpose}”</p>}
         <ul className="list-disc space-y-1 pl-5">
           <li>You sign in to Google yourself, in a small window.</li>
@@ -167,13 +171,13 @@ export function GoogleAccessDialog({ ask, onDone }: {
         {error && <p className="text-destructive" data-testid="google-access-error">{error}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" className="rounded-md border border-border px-3 py-1.5 hover:bg-muted"
-            onClick={() => { cancelled.current = true; onDone({ ok: false, error: 'cancelled' }) }}>Cancel</button>
+            onClick={cancel}>Cancel</button>
           <button type="button" disabled={!!busy || !account.trim()} onClick={go}
             className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50">
             Continue to Google
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

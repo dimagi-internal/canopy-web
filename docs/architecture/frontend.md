@@ -54,6 +54,12 @@ Dense app tables are written with `<Th>`, `<Td>` and `<Tr>` from `frontend/src/c
 
 `frontend/src/dataTableConvention.test.ts` fails on a raw `<th>`/`<td>`/`<tr>` whose `className` carries anything those props own, on any hand-written `<th>`, and on a raw `<td>`/`<tr>` with a computed `className` (`cn(...)`, a template) beyond the counts in `NOT_YET_MIGRATED` / `COMPUTED_CLASS` (both empty today; they can only shrink). A genuinely different cell (its own padding like `p-3`, a one-off width) keeps its extra classes in `className` on a `Td`. A pattern that repeats across files gets a prop here, not a copy (the `canopy-ui` `Table` primitives are a separate, card-bordered style and are not used here).
 
+## Modals
+
+An overlay on a scrim is the shared `Dialog` / `DialogContent` / `DialogTitle` from `canopy-ui/ui` (`frontend/packages/canopy-ui/src/ui/dialog.tsx`): it owns the focus trap, Escape, the scrim click, the built-in close button and `role="dialog"` with the title as its label. Size and surface go in `className` on `DialogContent` (`block w-[calc(100%-2rem)] max-w-lg bg-card p-4`; it is a grid with `p-6` by default). Base UI does not set `aria-modal`, and `TriagePage` and `KeyboardHelp` look for `[aria-modal="true"]` to know another dialog owns the keyboard, so pass `aria-modal="true"` to `DialogContent`. A dialog that is mounted only while shown uses `<Dialog open onOpenChange={(o) => { if (!o) onClose() }}>`. A test that presses Escape fires it on the dialog (`fireEvent.keyDown(dialog, …)`), not on `window`.
+
+A hand-built `fixed inset-0` overlay stays only where the shared one cannot do the job, each with a `shared-dialog-exception: <why>` comment: the command palette (a combobox that owns its keys and focus), the storyboard lightbox (full-screen media), and the embed's act-as-you consent (only its own buttons may answer it). `frontend/src/modalConvention.test.ts` fails on any other hand-built overlay and on a stale entry. An inline `role="dialog"` panel (the Emergency Kit, the recovery code, the vault unlock form, the memory popovers) is not an overlay and is not covered.
+
 ## Light and dark themes
 
 - One token set, two themes, in `frontend/src/index.css`: `:root` is Warm Earth **light**, `.dark` is Warm Earth **dark** (the default). The light palette deepens brand/status hues (~600) for contrast on white.
