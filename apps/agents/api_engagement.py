@@ -15,8 +15,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.harness.turn_queries import visible_turns_qs
-from apps.huddles import services as huddles
+from apps.harness.turn_queries import huddle_anchors, visible_turns_qs
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc
 
@@ -32,7 +31,7 @@ def _huddle_workspace(request: HttpRequest, huddle_id: str) -> str:
     """The workspace of a huddle the caller can see — the same lookup the huddle
     page makes (`apps/huddles/api.get_huddle`), so a guess confirms nothing."""
 
-    anchor = (huddles.anchors(visible_turns_qs(request, slugs=wsvc.member_scope(request.user)))
+    anchor = (huddle_anchors(visible_turns_qs(request, slugs=wsvc.member_scope(request.user)))
               .filter(origin_ref__huddle=huddle_id).order_by("-created_at").first())
     home = turn_workspace_slug(anchor) if anchor is not None else ""
     if not home:

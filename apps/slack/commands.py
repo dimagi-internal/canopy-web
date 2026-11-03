@@ -268,6 +268,22 @@ def reconcile(installation: SlackInstallation) -> dict:
         raise
 
 
+def sync_for_agent(agent) -> tuple[str, str]:
+    """`sync_quietly` for the workspace of an agent whose Slack switch just flipped, and
+    the sentence to show the person (registered with `agents.command_sync`)."""
+    result = sync_quietly(SlackInstallation.objects.filter(links__workspace=agent.workspace).first())
+    detail = result.get("detail", "")
+    if result["status"] == "synced":
+        name = command_name(agent.slug)
+        if name is None:
+            detail = f"`{agent.slug}` is too long to be a Slack command; use `/canopy {agent.slug}`."
+        elif name in result.get("added", []):
+            detail = f"Added {name} to Slack."
+        elif name in result.get("removed", []):
+            detail = f"Removed {name} from Slack."
+    return result["status"], detail
+
+
 def sync_quietly(installation: SlackInstallation | None) -> dict:
     """reconcile(), for a caller that must not fail on Slack (flipping a switch).
 

@@ -30,14 +30,14 @@ a project's worth of work SPAWNS one (`AgentProject.spawned_from`).
 from __future__ import annotations
 
 import datetime as dt
+import re
 
+from django.apps import apps as django_apps
 from django.db import transaction
 from django.utils import timezone
 
 from apps.contacts import people
 from apps.contacts import services as contacts
-from apps.huddles.models import ProjectCheckin
-from apps.huddles.services import _huddle_of_url
 from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 
@@ -524,7 +524,9 @@ def _checkin_leads(task: AgentTask) -> set[int]:
 
     if task.project_id is None:
         return set()
-    rows = ProjectCheckin.objects.filter(project_id=task.project_id, lead__isnull=False)
+    # By label, not import: check-ins are `huddles`', a layer above.
+    checkins = django_apps.get_model("huddles", "ProjectCheckin")
+    rows = checkins.objects.filter(project_id=task.project_id, lead__isnull=False)
     cid = _ref_of(task).get("checkin")
     named = rows.filter(pk=cid) if str(cid or "").isdigit() else rows.none()
     return set((named if named.exists() else rows).values_list("lead_id", flat=True))
@@ -544,9 +546,18 @@ def _task_declined_by_a_person(task: AgentTask) -> bool:
     return task.actions.filter(action=AgentTaskAction.DECLINE).exclude(by=EXPIRY_BY).exists()
 
 
-def _huddle_of(source_url: str) -> str:
+_HUDDLE_TAIL = re.compile(r"/huddles/([^/?#]+)/?$")
 
-    return _huddle_of_url(source_url)
+
+def huddle_of_url(url: str) -> str:
+    """The huddle id a page URL ends with, or "". Matches the exact tail so h1 never
+    claims h10's tasks."""
+    m = _HUDDLE_TAIL.search(url or "")
+    return m.group(1) if m else ""
+
+
+def _huddle_of(source_url: str) -> str:
+    return huddle_of_url(source_url)
 
 
 def _sync_task_plan(task: AgentTask, plan: list[str]) -> None:

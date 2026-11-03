@@ -28,9 +28,11 @@ import re
 from django.db.models import Exists, OuterRef, Q
 
 from apps.agents.models import AgentProject, AgentTask
+from apps.agents.proposals import huddle_of_url
 from apps.harness import ledger
 from apps.harness import turn_access
 from apps.harness.models import Turn, TurnTranscript
+from apps.harness.turn_queries import huddle_anchors
 
 from .models import CheckinRun
 
@@ -41,7 +43,6 @@ _LOOSE_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)
 DEADLINE = dt.timedelta(minutes=90)
 #: A member may close out a moment before the anchor's own row lands.
 _CLOSEOUT_SLACK = dt.timedelta(minutes=5)
-_HUDDLE_TAIL = re.compile(r"/huddles/([^/?#]+)/?$")
 
 
 def _parse_obj(raw: str) -> tuple[dict | None, str]:
@@ -104,7 +105,7 @@ def extract_block(text: str, huddle: str, round_no: int) -> tuple[dict | None, s
 
 
 def anchors(visible_qs):
-    return visible_qs.filter(origin_ref__kind="huddle")
+    return huddle_anchors(visible_qs)
 
 
 def _ref(turn) -> dict:
@@ -127,13 +128,6 @@ def _outputs_qs(workspaces):
     `workspaces` (the caller's own) — a huddle's members span workspaces."""
     return AgentTask.objects.select_related("agent", "project").filter(
         workspace_id__in=list(workspaces), source_url__contains="/huddles/")
-
-
-def _huddle_of_url(url: str) -> str:
-    # The page URL ends with /huddles/<id>; match the exact tail so h1 never
-    # claims h10's tasks.
-    m = _HUDDLE_TAIL.search(url or "")
-    return m.group(1) if m else ""
 
 
 def _base(anchor, *, rounds_dispatched: int, outcome_count: int) -> dict:
@@ -171,7 +165,7 @@ def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
         urls += AgentProject.objects.filter(workspace_id__in=list(workspaces),
                                             source_url__contains="/huddles/").values_list("source_url", flat=True)
         for url in urls:
-            h = _huddle_of_url(url)
+            h = huddle_of_url(url)
             if h in ids:
                 counts[h] = counts.get(h, 0) + 1
     out = []

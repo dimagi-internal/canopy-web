@@ -65,7 +65,6 @@ from apps.harness import routing
 from apps.harness.models import AgentSchedule, RunnerAssignment, Turn
 from apps.issues.models import OriginIssue
 from apps.retention.models import RetentionRule
-from apps.slack.services import installation_for_workspace
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -485,7 +484,8 @@ def _identity(p: Plan, apply: bool) -> None:
 
 @register
 def _runtime(p: Plan, apply: bool) -> None:
-    """Runner routing, the shared vault and Slack — re-decided by the new tenant."""
+    """Runner routing and the shared vault — re-decided by the new tenant. (Slack's part is
+    `slack.agent_move`, registered from its `ready()`.)"""
 
     agent, dest = p.agent, p.dest
     after = copy.copy(agent)
@@ -502,14 +502,6 @@ def _runtime(p: Plan, apply: bool) -> None:
     if not runners:
         p.breaks("runner_order", f"{agent.slug} has no runner list of its own; it runs on "
                                  f"'{dest.slug}''s default runner order from now on")
-
-    if agent.slack_enabled:
-
-        before, now = installation_for_workspace(p.source.slug), installation_for_workspace(dest.slug)
-        if (before and before.pk) != (now and now.pk):
-            p.breaks("slack", f"'{dest.slug}' is " + (f"connected to a different Slack ({now.team_name})"
-                                                      if now else "not connected to Slack")
-                     + f", so {agent.slug}'s Slack command stops working where it was")
 
 
 def _vault_name(ws) -> str:
