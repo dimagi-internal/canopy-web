@@ -55,7 +55,7 @@ from .api import (
     me_router,
     router,
 )
-from .session_row import mark_people_in, session_out
+from .session_row import mark_people_in, mark_started_by_you, session_out
 
 #: Published operationIds keep this app's label (apps/api/api.py `_app_label`): an
 #: operationId is an MCP tool name and a `generated.ts` key.
@@ -112,7 +112,7 @@ def list_sessions(
     rows = session_state.with_state(transcript_read.with_driving_turn(rows))
     if reply:
         rows = transcript_read.with_last_reply(rows)
-    out = [session_out(s, reply=reply, viewer=request.user) for s in mark_people_in(rows, request.user)]
+    out = [session_out(s, reply=reply, viewer=request.user) for s in mark_started_by_you(mark_people_in(rows, request.user), request.user)]
     # Waiting first, then running, then genuinely-most-recent: last_activity_at,
     # not created_at, under which a dead repo and a live one "created" in the
     # same report sweep interleave arbitrarily. The client can re-group by
@@ -198,7 +198,7 @@ def search_sessions(
     more = len(page) > limit
     page = page[:limit]
     return {
-        "sessions": [session_out(s, viewer=request.user) for s in mark_people_in(page, request.user)],
+        "sessions": [session_out(s, viewer=request.user) for s in mark_started_by_you(mark_people_in(page, request.user), request.user)],
         "next_cursor": _encode_cursor(page[-1]._activity, page[-1].id) if more else None,
     }
 

@@ -73,6 +73,16 @@ def mark_people_in(rows, viewer) -> list:
     return rows
 
 
+def mark_started_by_you(rows, viewer) -> list:
+    """`rows`, each told whether `viewer` started it (`access.started_by_you_among`) —
+    once per page, not one walk up the parents per row in `session_out`."""
+    rows = list(rows)
+    mine = access.started_by_you_among(viewer, rows)
+    for s in rows:
+        s._started_by_you = s.pk in mine
+    return rows
+
+
 def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
@@ -184,7 +194,8 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
                            else sensitivity.is_conversation_person(session, user=viewer))
                           if sensitive else None),
         "started_by_name": _started_by_name(session),
-        "started_by_you": viewer is not None and access.is_own_session(viewer, session),
+        "started_by_you": (session._started_by_you if hasattr(session, "_started_by_you")
+                           else viewer is not None and session.pk in access.started_by_you_among(viewer, [session])),
         "runner_requirements": sorted(rr.requirements_of_session(session)),
         "last_reply": last_reply,
         "agent_spoke_last": agent_spoke_last,
