@@ -3456,7 +3456,9 @@ export interface paths {
          * Create a dynamic view
          * @description Validates the code (it must define `View`), every source against the
          *     catalog, and every declared agent task (`agent_tasks`: the agent must be in the
-         *     view's workspace and one you may give tasks to yourself); a refusal names what
+         *     view's workspace and one you may give tasks to yourself), and every declared
+         *     Salesforce call (`connections`: each line must be on the allowlist, a write names its
+         *     object exactly, a shared entry names an agent in the workspace); a refusal names what
          *     is wrong. Returns the view with its `url`.
          */
         readonly post: operations["create_dynamic_view"];
@@ -24159,6 +24161,13 @@ export interface components {
              * @description The agent tasks the view's code may start, as its viewer.
              */
             readonly agent_tasks?: readonly components["schemas"]["DynamicViewAgentTask"][];
+            /**
+             * Connections
+             * @description The Salesforce calls the view's code may make: [{provider, as, agent?, reads, writes}].
+             */
+            readonly connections?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**
@@ -24213,6 +24222,13 @@ export interface components {
                 readonly [key: string]: unknown;
             }[];
             /**
+             * Connections
+             * @description The Salesforce calls the code may make: [{provider, as: viewer|shared, agent?, reads: [{method, path}], writes: [{method, path}]}]. Each line must be on the allowlist; a write names its object exactly (sobjects/Lead/*). A shared entry names an agent in the workspace.
+             */
+            readonly connections?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
              * Note
              * @default
              */
@@ -24234,6 +24250,10 @@ export interface components {
             }[] | null;
             /** Agent Tasks */
             readonly agent_tasks?: readonly {
+                readonly [key: string]: unknown;
+            }[] | null;
+            /** Connections */
+            readonly connections?: readonly {
                 readonly [key: string]: unknown;
             }[] | null;
             /**
@@ -24270,6 +24290,10 @@ export interface components {
             }[];
             /** Agent Tasks */
             readonly agent_tasks?: readonly components["schemas"]["DynamicViewAgentTask"][];
+            /** Connections */
+            readonly connections?: readonly {
+                readonly [key: string]: unknown;
+            }[];
         };
         /** DynamicViewRollbackIn */
         readonly DynamicViewRollbackIn: {

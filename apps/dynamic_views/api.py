@@ -49,7 +49,7 @@ def _summary_fields(view: DynamicView) -> dict:
 
 def _out(view: DynamicView) -> DynamicViewOut:
     return DynamicViewOut(**_summary_fields(view), code=view.code, sources=view.sources or [],
-                          agent_tasks=view.agent_tasks or [],
+                          agent_tasks=view.agent_tasks or [], connections=view.connections or [],
                           created_by_email=view.created_by.email if view.created_by_id else None,
                           created_at=view.created_at)
 
@@ -117,7 +117,9 @@ def list_dynamic_views(request: HttpRequest, project: str = "") -> list[DynamicV
 def create_dynamic_view(request: HttpRequest, payload: DynamicViewIn) -> Status:
     """Validates the code (it must define `View`), every source against the
     catalog, and every declared agent task (`agent_tasks`: the agent must be in the
-    view's workspace and one you may give tasks to yourself); a refusal names what
+    view's workspace and one you may give tasks to yourself), and every declared
+    Salesforce call (`connections`: each line must be on the allowlist, a write names its
+    object exactly, a shared entry names an agent in the workspace); a refusal names what
     is wrong. Returns the view with its `url`."""
     ws = _ws_for_write(request, payload.workspace)
     project = _project_or_422(ws, payload.project) if payload.project else None
@@ -176,7 +178,7 @@ def list_dynamic_view_revisions(request: HttpRequest, view_id: int) -> list[Dyna
     return [DynamicViewRevisionOut(version=r.version, title=r.title, note=r.note,
                                    changed_by_email=r.changed_by.email if r.changed_by_id else None,
                                    changed_at=r.changed_at, code=r.code, sources=r.sources or [],
-                                   agent_tasks=r.agent_tasks or [])
+                                   agent_tasks=r.agent_tasks or [], connections=r.connections or [])
             for r in view.revisions.select_related("changed_by")]
 
 

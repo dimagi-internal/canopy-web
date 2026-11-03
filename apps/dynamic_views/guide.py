@@ -109,6 +109,19 @@ GLOBALS (no imports — the code is not a module)
   bg-card, bg-muted, text-foreground, text-muted-foreground, border, text-success,
   text-warning, text-destructive. Never raw palette colours (stone-*, red-*).
 
+SALESFORCE CALLS (declared now; the calling API follows)
+- Declare the calls the code may make on the view: "connections": [{"provider": "salesforce",
+  "as": "viewer", "reads": [{"method": "GET", "path": "query"}], "writes": [{"method": "PATCH",
+  "path": "sobjects/Lead/*"}]}]. `as` is "viewer" (the viewer's own connection) or "shared" (an
+  agent's shared connection, with "agent": "<slug>" naming an agent in the workspace).
+- A path is relative to the Salesforce API root, in plain form: no dots, queries or encoding. `*`
+  stands for exactly one segment. A write names its object exactly (sobjects/Lead/*, never
+  sobjects/*/*), and a flow or Apex write names the exact flow or class. People, permissions and
+  code objects (User, Profile, PermissionSet, ApexClass, ...) are never writable. Running a report
+  (POST analytics/reports/*) is a read.
+- Every line is checked on save against the allowlist and refused with a sentence naming it; at most
+  5 entries and 50 lines each.
+
 RULES (the frame enforces them; breaking one fails, it is not "best effort")
 - No network: fetch, XHR, WebSocket and remote images are blocked by the frame's CSP.
   Everything comes through props.data, canopy.read or canopy.runAgentTask.

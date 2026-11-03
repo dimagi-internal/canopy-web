@@ -77,10 +77,11 @@ SALESFORCE_RULES = _rules(
     ("PATCH", "sobjects/{type}/{id}", "write", "sobject"),
     ("DELETE", "sobjects/{type}/{id}", "write", "sobject"),
     ("GET", "analytics/reports/...", "read", "reports"),
-    # First match wins: running a report (by id) is a read; creating one is not.
+    # Running a report (by id) or its async instances is a read; creating a report
+    # is a write. Any other POST under a report id is refused, not a read.
     ("POST", "analytics/reports/{id}", "read", "reports"),
-    ("POST", "analytics/reports/{id}/...", "read", "reports"),
-    ("POST", "analytics/reports/...", "write", "reports"),
+    ("POST", "analytics/reports/{id}/instances", "read", "reports"),
+    ("POST", "analytics/reports", "write", "reports"),
     ("GET", "analytics/dashboards/...", "read", "dashboards"),
     ("POST", "actions/custom/flow/{name}", "write", "flow"),
     ("POST", "apexrest/{name}", "write", "apexrest"),

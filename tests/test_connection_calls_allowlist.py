@@ -299,3 +299,14 @@ def test_reads_of_those_objects_stay_allowed(obj):
 def test_ordinary_objects_with_similar_names_stay_writable():
     assert calls.match("salesforce", "POST", "sobjects/User__c").rule.kind == "write"
     assert calls.match("salesforce", "POST", "sobjects/GroupNote").rule.kind == "write"
+
+
+@pytest.mark.parametrize("path", [
+    f"analytics/reports/{LEAD}/describe",
+    f"analytics/reports/{LEAD}/instances/{LEAD}",
+    f"analytics/reports/{LEAD}/anything",
+    "analytics/reports/query",
+])
+def test_post_deeper_under_a_report_is_refused_not_a_read(path):
+    with pytest.raises(NotAllowed):
+        calls.match("salesforce", "POST", path)
