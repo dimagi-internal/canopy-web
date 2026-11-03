@@ -25,12 +25,12 @@ from apps.common.encryption import encrypt_secret
 from apps.contacts.models import Contact
 from apps.harness import caller_context
 from apps.harness.models import Turn
+from apps.host_grants import client_identity, host_gateway
 from apps.mcp.models import MCPAuditLog
 from apps.mcp_apps_host import mcp_apps, mcp_apps_views
-from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken, HostGrant, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 from tests.mcp_apps_host import VIEW_HTML, VIEW_URI, FakeLabs
 
 pytestmark = pytest.mark.django_db
@@ -86,9 +86,11 @@ def w():
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     editor, viewer, nogrant = _member(ws, "eddie"), _member(ws, "vera"), _member(ws, "nora")
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(agent, {"capabilities": {"connect": {"callers": ["contact"], "sites": ["connect-labs"],
-                                                 "ceiling": ["workflow_*", "marketplace_*"],
-                                                 "tools": ["mcp__*canopy-web__who_is_asking"]}}})
+    declare(agent, {"connect": {"sites": ["connect-labs"],
+                                "ceiling": ["workflow_*", "marketplace_*"],
+                                "tools": ["mcp__*canopy-web__who_is_asking"]}})
+    allow(agent, capability="connect", contact=True)
+    editors_run(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.host_issuer = "https://labs.test"
     app.host_mcp_resource = RESOURCE
@@ -325,10 +327,12 @@ def test_an_expired_grant_is_no_grant(w, labs):
 def test_each_gate_refuses_with_its_own_code_and_never_calls(w, labs, name, code, status):
     Message.objects.filter(role=Message.TOOL_USE).update(turn=w["turn"])
     Turn.objects.filter(pk=w["turn"].pk).update(capability="connect")
-    publish(w["agent"], {"capabilities": {"connect": {
-        "callers": ["contact"], "sites": ["connect-labs"],
+    declare(w["agent"], {"connect": {
+        "sites": ["connect-labs"],
         "ceiling": ["workflow_*", "model_only_report", "no_such_tool"],
-        "tools": ["mcp__*canopy-web__who_is_asking"]}}})
+        "tools": ["mcp__*canopy-web__who_is_asking"]}})
+    allow(w["agent"], capability="connect", contact=True)
+    editors_run(w["agent"])
     labs.calls.clear()
     r = through(labs, lambda: post(client_for(w["editor"]), base(w) + "/call",
                                    {"name": name, "arguments": {"run_id": 5}}))

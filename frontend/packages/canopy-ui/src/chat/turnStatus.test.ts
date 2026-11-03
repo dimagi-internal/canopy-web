@@ -87,6 +87,9 @@ describe("pendingLabel", () => {
     expect(pendingLabel({ status: { ...s, behind: "agent" } })).toBe(
       "Queued behind the agent's current turn on jj-mbp…",
     );
+    expect(pendingLabel({ status: { ...s, behind: "transfer" } })).toBe(
+      "Queued behind the move to this runner on jj-mbp…",
+    );
     expect(turnNotice(s)).toBeNull();
   });
 

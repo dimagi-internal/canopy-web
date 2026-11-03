@@ -1,4 +1,4 @@
-import type { ChatRow } from "./pairToolMessages";
+import { toolFailed, type ChatRow } from "./pairToolMessages";
 
 /**
  * Collapse a run of consecutive tool calls into ONE row.
@@ -51,6 +51,41 @@ export function groupToolRuns(
   return out;
 }
 
+/**
+ * The same split as `groupToolRuns`, except EVERY run of tool calls comes back
+ * as one entry, its key taken from its first call, with `grouped` saying
+ * whether it is long enough to collapse. A renderer that draws each entry in
+ * one container keeps the run's rows mounted when the run grows from two calls
+ * to three and starts collapsing: only the container's header changes, so a
+ * row someone had opened stays open.
+ */
+export type ToolRunSegment =
+  | ChatRow
+  | { kind: "tool_run"; rows: ChatRow[]; key: string; grouped: boolean };
+
+export function segmentToolRuns(
+  rows: ChatRow[],
+  minRun: number = MIN_RUN_TO_GROUP,
+): ToolRunSegment[] {
+  const out: ToolRunSegment[] = [];
+  let run: ChatRow[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    out.push({ kind: "tool_run", rows: run, key: `run-${run[0].key}`, grouped: run.length >= minRun });
+    run = [];
+  };
+  for (const row of rows) {
+    if (row.kind === "tool_pair" && !isActionableRow(row)) {
+      run.push(row);
+      continue;
+    }
+    flush();
+    out.push(row);
+  }
+  flush();
+  return out;
+}
+
 /** A call with an MCP Apps View, or one asking for a secret, is something the
  *  person ACTS on, so it is never folded into a collapsed run (nor behind a
  *  finished turn's fold, `turnWork.planFold`). */
@@ -90,10 +125,5 @@ export function lastTurnIndex(rows: ChatRow[]): number | undefined {
 /** True when any call in the run failed — a collapsed run must not hide an
  *  error, or you'd scroll past the one thing worth stopping for. */
 export function runHasError(rows: ChatRow[]): boolean {
-  return rows.some(
-    (row) =>
-      row.kind === "tool_pair" &&
-      (row.result?.status === "error" ||
-        (row.result?.content as { is_error?: unknown } | undefined)?.is_error === true),
-  );
+  return rows.some((row) => row.kind === "tool_pair" && toolFailed(row.use, row.result));
 }

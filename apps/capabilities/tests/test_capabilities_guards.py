@@ -20,8 +20,9 @@ from apps.capabilities import scheduler, services
 from apps.capabilities.models import AgentCapability, CapabilityLease
 from apps.events.models import Event
 from apps.harness.models import Turn
+from tests.token_helpers import pat_client
 
-from .helpers import MANIFEST, _acquire, _as, _grant, _json, _pat, _publish
+from .helpers import MANIFEST, _acquire, _as, _grant, _json, _publish
 
 pytestmark = pytest.mark.django_db
 
@@ -516,7 +517,7 @@ def test_the_refresh_route(ready_to_lease, tenancy, world):
     r = _json(_as(tenancy["owner"]), "post", "/api/agents/ace/capabilities/android-emulator/refresh")
     assert r.status_code == 200, r.content
     assert r.json()["stack_outputs"]["ExecDocumentName"] == "canopy-cap-ace-android-emulator-exec"
-    assert _json(_pat(tenancy["bot"]), "post",
+    assert _json(pat_client(tenancy["bot"]), "post",
                  "/api/agents/ace/capabilities/android-emulator/refresh").status_code == 200
     assert _json(_as(tenancy["editor"]), "post",
                  "/api/agents/ace/capabilities/android-emulator/refresh").status_code == 403
@@ -597,7 +598,7 @@ def test_the_lease_list_is_workspace_scoped_and_filters(ready_to_lease, tenancy,
     assert _json(ready_to_lease, "get", "/api/capabilities/leases?limit=1").json()["truncated"] is True
     assert _json(_as(tenancy["outsider"]), "get", "/api/capabilities/leases").json()["leases"] == []
     # The agent's own PAT sees its leases without being a member.
-    assert len(_json(_pat(tenancy["bot"]), "get", "/api/capabilities/leases?agent=ace").json()["leases"]) == 2
+    assert len(_json(pat_client(tenancy["bot"]), "get", "/api/capabilities/leases?agent=ace").json()["leases"]) == 2
 
 
 def test_spend_rolls_up_machine_seconds_in_the_window(ready_to_lease, tenancy):

@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react'
+import type { JSX } from 'react'
 import {
   getWorkspaceHold,
   holdWorkspace,
@@ -6,6 +6,7 @@ import {
   stopWorkspace,
   type WorkspaceHoldOut,
 } from '@/api/harness'
+import { usePolled } from '@/hooks/usePolled'
 import { HoldBanner, HoldStopPanel } from './HoldStopPanel'
 
 // The WORKSPACE controls (Workspace.held, /workspaces/{slug}/stop): the same hold and
@@ -21,22 +22,12 @@ export function WorkspaceControlsCard({
   slug: string | null
   name: string
 }): JSX.Element | null {
-  const [hold, setHold] = useState<WorkspaceHoldOut | null>(null)
-
-  useEffect(() => {
-    if (!slug) return
-    let cancelled = false
-    const read = () =>
-      getWorkspaceHold(slug)
-        .then((h) => !cancelled && setHold(h))
-        .catch(() => !cancelled && setHold(null))
-    void read()
-    const t = window.setInterval(read, 30_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(t)
-    }
-  }, [slug])
+  // A failed read hides the card (as it always has); `usePolled` keeps the last
+  // good value on error, so the catch maps it to null here instead.
+  const { data: hold = null, setData: setHold } = usePolled(
+    (): Promise<WorkspaceHoldOut | null> => getWorkspaceHold(slug as string).catch(() => null),
+    { ms: 30_000, deps: [slug], enabled: Boolean(slug) },
+  )
 
   if (!slug || !hold || hold.workspace !== slug || (!hold.held && !hold.can_control)) return null
 

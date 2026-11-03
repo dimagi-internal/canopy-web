@@ -11,8 +11,6 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-
-from tests.fixtures.sensitive import vault_key
 from allauth.account.models import EmailAddress
 from canopy_sdk import contract
 from canopy_sdk.host import HostConfig, sign_visitor_assertion
@@ -26,14 +24,15 @@ from apps.canopy_sessions.models import Session
 from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
+from tests.fixtures.sensitive import vault_key
+from tests.token_helpers import bearer_client
 
 pytestmark = pytest.mark.django_db
 
 # `data: sensitive`: a sensitive-data box holds only an agent with a sensitive-data capability (dedicated box).
-IFACE = {"capabilities": {"connect": {"callers": ["contact"], "sites": ["connect-labs"],
-                                      "data": "sensitive",
-                                      "tools": ["mcp__*canopy-web__who_is_asking"]}}}
+IFACE = {"connect": {"sites": ["connect-labs"], "data": "sensitive",
+                     "tools": ["mcp__*canopy-web__who_is_asking"]}}
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +53,9 @@ def site(key):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(agent, IFACE)
+    declare(agent, IFACE)
+    allow(agent, capability="connect", contact=True)
+    editors_run(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.public_keys = [public_pem(key)]
     app.save()
@@ -83,10 +84,6 @@ def _arrive(key, *, requirements=(), subject="u-42", email="", verified=False):
                          content_type="application/json")
 
 
-def _bearer(raw):
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
 def _member(site):
     u = User.objects.create_user("mem", "mem@dimagi.com", "pw")
     EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
@@ -97,7 +94,7 @@ def _member(site):
 
 
 def _contact_session(raw):
-    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "helper"},
+    r = bearer_client(raw).post("/api/contact/sessions", {"agent_slug": "helper"},
                           content_type="application/json")
     assert r.status_code == 200, r.content
     return Session.objects.get(pk=r.json()["id"])
@@ -134,7 +131,7 @@ def test_a_contact_cannot_start_one_under_that_token(site, key):
     """A contact has no vault key, so it cannot hold a conversation sealed to its people
     (spec 2026-10-23 §2): refused in a sentence, before anything exists."""
     raw = _arrive(key, requirements=["sensitive_data"]).json()["token"]
-    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "helper"}, content_type="application/json")
+    r = bearer_client(raw).post("/api/contact/sessions", {"agent_slug": "helper"}, content_type="application/json")
     assert r.status_code == 422 and "vault key" in r.json()["detail"]
     assert not Session.objects.exists()
 
@@ -147,7 +144,7 @@ def test_a_session_started_without_the_claim_is_not_stamped(site, key):
 def test_a_member_session_created_through_the_site_is_stamped(site, key):
     _member(site)
     raw = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
-    r = _bearer(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+    r = bearer_client(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
                           content_type="application/json")
     assert r.status_code == 200, r.content
     assert Session.objects.get(pk=r.json()["id"]).metadata["runner_requirements"] == ["sensitive_data"]
@@ -157,7 +154,7 @@ def test_a_body_cannot_set_or_clear_it(site, key):
     # Under a sensitive token, a body naming an empty list is dropped, not obeyed.
     _member(site)
     raw = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
-    r = _bearer(raw).post("/api/canopy-sessions/",
+    r = bearer_client(raw).post("/api/canopy-sessions/",
                           {"agent_slug": "ace", "metadata": {"runner_requirements": []}},
                           content_type="application/json")
     assert r.status_code == 200, r.content
@@ -174,7 +171,7 @@ def test_a_body_cannot_set_or_clear_it(site, key):
 
 
 def _send(raw, session):
-    r = _bearer(raw).post(f"/api/contact/sessions/{session.pk}/send", {"text": "hello"},
+    r = bearer_client(raw).post(f"/api/contact/sessions/{session.pk}/send", {"text": "hello"},
                           content_type="application/json")
     assert r.status_code == 200, r.content
 
@@ -182,10 +179,10 @@ def _send(raw, session):
 def test_a_later_token_without_the_claim_does_not_unstamp(site, key):
     _member(site)
     raw = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
-    sid = _bearer(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+    sid = bearer_client(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
                             content_type="application/json").json()["id"]
     later = _arrive(key, email="mem@dimagi.com", verified=True).json()["token"]
-    r = _bearer(later).post(f"/api/canopy-sessions/{sid}/send", {"text": "hello"},
+    r = bearer_client(later).post(f"/api/canopy-sessions/{sid}/send", {"text": "hello"},
                             content_type="application/json")
     assert r.status_code == 200, r.content
     assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["sensitive_data"]
@@ -197,7 +194,7 @@ def test_a_later_token_with_the_claim_cannot_make_a_contacts_session_private(sit
     refused, which left an older conversation private with its history blanked."""
     session = _contact_session(_arrive(key).json()["token"])
     assert "runner_requirements" not in session.metadata
-    r = _bearer(_arrive(key, requirements=["sensitive_data"]).json()["token"]).post(
+    r = bearer_client(_arrive(key, requirements=["sensitive_data"]).json()["token"]).post(
         f"/api/contact/sessions/{session.pk}/send", {"text": "hello"}, content_type="application/json")
     assert r.status_code == 422 and "vault key" in r.json()["detail"]
     session.refresh_from_db()
@@ -214,12 +211,12 @@ def test_a_sensitive_send_into_a_keyless_starters_older_chat_changes_nothing(sit
 
     UserVaultKeyset.objects.filter(user=member).delete()
     plain = _arrive(key, email="mem@dimagi.com", verified=True).json()["token"]
-    sid = _bearer(plain).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+    sid = bearer_client(plain).post("/api/canopy-sessions/", {"agent_slug": "ace"},
                               content_type="application/json").json()["id"]
     Message.objects.create(session_id=sid, turn_index=0, role=Message.USER, plaintext="Amina's visits?")
     Message.objects.create(session_id=sid, turn_index=64, role=Message.ASSISTANT, plaintext="12 visits")
     sensitive = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
-    r = _bearer(sensitive).post(f"/api/canopy-sessions/{sid}/send", {"text": "and now?"},
+    r = bearer_client(sensitive).post(f"/api/canopy-sessions/{sid}/send", {"text": "and now?"},
                                 content_type="application/json")
     assert r.status_code == 422 and "vault key" in r.json()["detail"], r.content
     session = Session.objects.get(pk=sid)
@@ -234,10 +231,10 @@ def test_a_sensitive_send_into_a_keyless_starters_older_chat_changes_nothing(sit
 def test_a_member_send_through_the_site_stamps_an_older_session(site, key):
     _member(site)
     plain = _arrive(key, email="mem@dimagi.com", verified=True).json()["token"]
-    sid = _bearer(plain).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+    sid = bearer_client(plain).post("/api/canopy-sessions/", {"agent_slug": "ace"},
                               content_type="application/json").json()["id"]
     sensitive = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
-    r = _bearer(sensitive).post(f"/api/canopy-sessions/{sid}/send", {"text": "hi"},
+    r = bearer_client(sensitive).post(f"/api/canopy-sessions/{sid}/send", {"text": "hi"},
                           content_type="application/json")
     assert r.status_code == 200, r.content
     assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["sensitive_data"]
@@ -319,15 +316,15 @@ def test_a_transfer_from_a_stale_copy_keeps_the_stamp(site):
 
 
 def test_moving_queued_turns_from_a_stale_copy_keeps_the_stamp(site):
-    from apps.canopy_sessions import services
-    from apps.canopy_sessions import send
+    from apps.canopy_sessions import placement as session_placement
+    from apps.canopy_sessions import send, services
 
     _cloud, sensitive = _runners(site)
     s = services.create_session(workspace=site["ws"], created_by=site["owner"],
                                 agent=site["agent"])
     send.send_message(session=s, text="hello", user=site["owner"])
     stale = _stale_copy_then_stamp(s)
-    moved = send.move_queued_turns(session=stale, placement=str(sensitive.id), user=site["owner"])
+    moved = session_placement.move_queued_turns(session=stale, placement=str(sensitive.id), user=site["owner"])
     assert moved
     meta = Session.objects.get(pk=s.pk).metadata
     assert meta["runner_requirements"] == ["sensitive_data"]

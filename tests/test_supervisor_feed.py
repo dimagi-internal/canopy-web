@@ -111,11 +111,27 @@ def test_a_paused_runner_parks_it_and_nobody_is_pushed(fleet, monkeypatch):
 
 def test_an_agents_own_auto_run_is_held_and_nobody_is_pushed(fleet, monkeypatch):
     session = _blocked_session(fleet, on="jj")
-    monkeypatch.setattr(feed, "driving_turn", lambda s: ("auto", "canopy_scheduler"))
+    monkeypatch.setattr(feed, "driving_turn", lambda s: ("auto", "canopy_scheduler", False))
     assert _pushed_to(monkeypatch, session) == []
-    assert feed.held(fleet["jj"], session, turn_mode="auto", turn_origin="canopy_scheduler") == feed.AUTO
+    assert feed.ran_on_its_own(session)
+    assert feed.held(fleet["jj"], session, auto=True) == feed.AUTO
     # A chat you are having stays yours even when its turn ran auto.
-    assert feed.held(fleet["jj"], session, turn_mode="auto", turn_origin="canopy_web_chat") == ""
+    monkeypatch.setattr(feed, "driving_turn", lambda s: ("auto", "canopy_web_chat", False))
+    assert not feed.ran_on_its_own(session)
+    assert feed.held(fleet["jj"], session, auto=False) == ""
+    # ...unless an agent started it: then it ran on its own whatever the channel.
+    monkeypatch.setattr(feed, "driving_turn", lambda s: ("auto", "canopy_web_chat", True))
+    assert feed.ran_on_its_own(session)
+
+
+def test_a_slack_thread_is_a_persons_conversation_not_an_auto_run(fleet, monkeypatch):
+    """The feed and the cloud retire rule share one `ran_on_its_own`
+    (`staleness`): a Slack thread is a conversation, like a web chat."""
+    session = _blocked_session(fleet, on="jj")
+    monkeypatch.setattr(feed, "driving_turn", lambda s: ("auto", "slack", False))
+    assert feed.ran_on_its_own(session)
+    session.metadata = {**(session.metadata or {}), "slack_thread": {"channel": "C1", "ts": "1"}}
+    assert not feed.ran_on_its_own(session)
 
 
 def test_not_waiting_is_on_nobodys_feed(fleet):
@@ -136,7 +152,7 @@ def test_an_agents_cloud_session_is_on_its_owners_feed(fleet, monkeypatch):
         workspace=fleet["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     session = _blocked_session(fleet, on="cloud", key="dispatch")
-    monkeypatch.setattr(feed, "driving_turn", lambda s: ("manual", "api"))
+    monkeypatch.setattr(feed, "driving_turn", lambda s: ("manual", "api", False))
     assert _feed_status(fleet["jj"], session) == feed.WAITING
     assert _pushed_to(monkeypatch, session) == ["jj"]
 

@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom'
 import {
   actOnProposal,
   actOnTaskProposal,
-  AgentApiError,
   backProject,
   backTask,
   unbackProject,
@@ -18,6 +17,7 @@ import { StatusChip } from '@/pages/agents/projectParts'
 
 import { BackingControl } from './BackingControl'
 import { BackingList } from './BackingList'
+import { errorText } from '../../api/problem'
 
 // A PROPOSAL, as people act on it — a proposed PROJECT or a check-in's proposed
 // TASK. The one card the project page and the huddle page both render, so a
@@ -33,10 +33,6 @@ import { BackingList } from './BackingList'
 
 function when(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''
-}
-
-function errorText(err: unknown, fallback: string): string {
-  return err instanceof AgentApiError && err.detail ? err.detail : fallback
 }
 
 type Action = 'approve' | 'decline' | 'reply'

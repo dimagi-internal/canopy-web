@@ -147,7 +147,7 @@ def test_person_is_null_for_canopy_and_for_another_agents_login(world):
 
 
 def test_a_contact_has_a_person_block_too(world):
-    from apps.agents.testing import admit_contacts
+    from tests.agent_helpers import admit_contacts
 
     ace = world["ace"]
     admit_contacts(ace)

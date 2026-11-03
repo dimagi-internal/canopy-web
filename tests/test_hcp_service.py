@@ -31,9 +31,9 @@ from django.utils import timezone
 
 from apps.contacts import hcp, hcp_oauth
 from apps.contacts import services as contacts
-from apps.contacts.models import (HcpRevocationDelivery, HcpToken, Person, PersonAuditEvent,
-                                  PersonFact, PersonGrant)
+from apps.contacts.models import HcpRevocationDelivery, HcpToken, Person, PersonAuditEvent, PersonFact, PersonGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import bearer_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -126,14 +126,10 @@ def _tokens(c, client_id, **kw):
     return r.json()
 
 
-def _bearer(access) -> dict:
-    return {"HTTP_AUTHORIZATION": f"Bearer {access}"}
-
-
 def _search(access, query="short answers", categories=(  "general_preferences",)):
     return Client().post("/api/hcp/v1/preferences/search", data=json.dumps({
         "query": query, "categories": list(categories), "purpose": "tailor the plan"}),
-        content_type="application/json", **_bearer(access))
+        content_type="application/json", **bearer_headers(access))
 
 
 def _personal(user, text="I prefer short answers.", category="general_preferences"):
@@ -209,7 +205,7 @@ def test_a_client_writes_a_personal_entry(lili, client_id):
     r = Client().post("/api/hcp/v1/preferences/add", data=json.dumps({
         "category": "general_preferences", "preference": "Vegetarian on weekdays.",
         "declarationType": "user-declared", "sourceContext": "conversation-id:abc"}),
-        content_type="application/json", **_bearer(access))
+        content_type="application/json", **bearer_headers(access))
     assert r.status_code == 201, r.content
     fact = PersonFact.objects.get(statement="Vegetarian on weekdays.")
     assert fact.workspace_id is None and fact.captured_by == f"client:{client_id}"
@@ -221,7 +217,7 @@ def test_a_client_cannot_pass_itself_off_as_canopy(lili, client_id):
         "claim": {"subject": {"preference": "Likes tea."}},
         "record": {"category": "general_preferences", "declarationType": "user-declared",
                    "provenance": {"source": "x", "capturedBy": "agent:ace"}}}),
-        content_type="application/json", **_bearer(access))
+        content_type="application/json", **bearer_headers(access))
     assert r.status_code == 201, r.content
     assert PersonFact.objects.get(statement="Likes tea.").captured_by == f"client:{client_id}/agent:ace"
 
@@ -404,7 +400,7 @@ def test_record_off_refuses_a_write(lili, client_id):
     Person.objects.filter(user=lili).update(hcp_record_default=False)
     r = Client().post("/api/hcp/v1/preferences/add", data=json.dumps({
         "category": "general_preferences", "preference": "x y z", "declarationType": "user-declared",
-        "sourceContext": "c"}), content_type="application/json", **_bearer(access))
+        "sourceContext": "c"}), content_type="application/json", **bearer_headers(access))
     assert r.status_code == 403
 
 
@@ -444,11 +440,11 @@ def test_workspace_entries_are_reached_only_when_ticked(lili, client_id, ws_entr
 
 def test_a_token_opens_hcp_v1_only_and_never_the_persons_own_routes(lili, client_id):
     access = _tokens(_as(lili), client_id)["access_token"]
-    assert Client().get("/api/people/me/", **_bearer(access)).status_code == 401
-    assert Client().get("/api/workspaces/", **_bearer(access)).status_code == 401
+    assert Client().get("/api/people/me/", **bearer_headers(access)).status_code == 401
+    assert Client().get("/api/workspaces/", **bearer_headers(access)).status_code == 401
     for path in ("/api/hcp/v1/audit", "/api/hcp/v1/export"):
-        assert Client().get(path, **_bearer(access)).status_code == 403, path
-    grants = Client().get("/api/hcp/v1/grants", **_bearer(access)).json()["grants"]
+        assert Client().get(path, **bearer_headers(access)).status_code == 403, path
+    grants = Client().get("/api/hcp/v1/grants", **bearer_headers(access)).json()["grants"]
     assert len(grants) == 1 and grants[0]["client"]["id"] == client_id          # its own only (4.1.5)
 
 
@@ -458,7 +454,7 @@ def test_idempotency_works_for_a_client(lili, client_id):
                        "declarationType": "user-declared", "sourceContext": "c"})
     for _ in range(2):
         r = Client().post("/api/hcp/v1/preferences/add", data=body, content_type="application/json",
-                          HTTP_IDEMPOTENCY_KEY="k1", **_bearer(access))
+                          HTTP_IDEMPOTENCY_KEY="k1", **bearer_headers(access))
         assert r.status_code == 201
     assert PersonFact.objects.filter(statement="Tea not coffee.").count() == 1
 

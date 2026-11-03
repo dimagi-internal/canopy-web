@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { CopyButton } from 'canopy-ui/ui'
 
 import { listAgents, type AgentOut } from '@/api/agents'
@@ -18,6 +18,9 @@ import {
   type MailRouteOut,
 } from '@/api/mail'
 import { listMembers, type MemberOut } from '@/api/workspaces'
+import { scopedPath } from '@/lib/scopedLinks'
+import { InboundMailLog } from '@/pages/InboundMailLog'
+import { errorText } from '../api/problem'
 
 // A workspace's own email domain run through canopy (apps/mail, SES). Any member
 // can read it; the server answers `can_manage` for the list and per domain, so this
@@ -46,17 +49,13 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   suspended: { label: 'Suspended', cls: 'text-destructive' },
 }
 
-function message(e: unknown, fallback: string): string {
-  return e instanceof Error ? e.message : fallback
-}
-
 function manyFound(found: readonly string[]): boolean {
   return found.filter((v) => v.toLowerCase().startsWith('v=spf1')).length > 1
 }
 
 function goesTo(r: MailRouteOut): string {
   if (r.kind === 'agent') return r.agent_slug
-  if (r.kind === 'forward') return r.forward_to_email
+  if (r.kind === 'forward') return r.keep_copy ? `${r.forward_to_email} (and kept in their canopy inbox)` : r.forward_to_email
   return 'Dropped'
 }
 
@@ -75,6 +74,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   const [agent, setAgent] = useState('')
   const [member, setMember] = useState('')
   const [enabled, setEnabled] = useState(true)
+  const [keepCopy, setKeepCopy] = useState(false)
   const [cap, setCap] = useState(String(domain.daily_send_cap))
   const manage = domain.can_manage
   const owned = domain.owned
@@ -88,7 +88,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   async function run(fn: () => Promise<void>, fallback: string) {
     setBusy(true)
     setError(null)
-    try { await fn() } catch (e: unknown) { setError(message(e, fallback)) } finally { setBusy(false) }
+    try { await fn() } catch (e: unknown) { setError(errorText(e, fallback)) } finally { setBusy(false) }
   }
 
   const reload = async () => onChange((await listMailDomains(workspace)).items.find((d) => d.id === domain.id) ?? domain)
@@ -101,22 +101,26 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         agent_slug: kind === 'agent' ? agent : '',
         forward_to_user_id: kind === 'forward' ? Number(member) : null,
         enabled,
+        keep_copy: kind === 'forward' ? keepCopy : false,
       })
       setLocal('')
       setEnabled(true)
+      setKeepCopy(false)
       await reload()
     }, 'Could not save the address')
   }
 
   // Flips one route on or off through the same PUT, keeping everything else as it is.
-  async function toggleRoute(r: MailRouteOut) {
+  async function toggleRoute(r: MailRouteOut, change: { enabled?: boolean; keep_copy?: boolean } = { enabled: !r.enabled }) {
     await run(async () => {
       await saveMailRoute(workspace, domain.id, {
         local_part: r.local_part,
         kind: r.kind,
         agent_slug: r.agent_slug,
         forward_to_user_id: r.forward_to_user_id ?? null,
-        enabled: !r.enabled,
+        enabled: r.enabled,
+        keep_copy: r.keep_copy,
+        ...change,
       })
       await reload()
     }, 'Could not change the address')
@@ -275,6 +279,9 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 <th className="py-1 pr-3 font-medium">Address</th>
                 <th className="py-1 pr-3 font-medium">Goes to</th>
                 <th className="py-1 pr-3 font-medium">Enabled</th>
+                <th className="py-1 pr-3 font-medium" title="Also keep each forwarded message in the member's canopy inbox, readable only by them">
+                  Keep a copy in canopy
+                </th>
                 {manage && <th className="py-1" />}
               </tr>
             </thead>
@@ -299,13 +306,25 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                       </label>
                     ) : (r.enabled ? 'Yes' : 'No')}
                   </td>
+                  <td className="py-1.5 pr-3 text-foreground-secondary" data-testid={`keep-copy-${r.local_part}`}>
+                    {r.kind !== 'forward' ? (
+                      <span className="text-muted-foreground" title="Only forwarding addresses can keep a copy">—</span>
+                    ) : manage ? (
+                      <label className="-my-2.5 inline-flex min-h-11 cursor-pointer items-center gap-1.5">
+                        <input type="checkbox" checked={r.keep_copy} disabled={busy} className="h-3.5 w-3.5 accent-primary"
+                          aria-label={`Keep a copy in canopy: ${r.address}`}
+                          onChange={() => void toggleRoute(r, { keep_copy: !r.keep_copy })} />
+                        {r.keep_copy ? 'On' : 'Off'}
+                      </label>
+                    ) : (r.keep_copy ? 'On' : 'Off')}
+                  </td>
                   {manage && (
                     <td className="whitespace-nowrap py-1.5 text-right">
                       <button type="button" className="px-2 text-primary hover:underline"
                         onClick={() => {
                           setLocal(r.local_part); setKind(r.kind as Kind); setAgent(r.agent_slug)
                           setMember(r.forward_to_user_id ? String(r.forward_to_user_id) : '')
-                          setEnabled(r.enabled)
+                          setEnabled(r.enabled); setKeepCopy(r.keep_copy ?? false)
                         }}>Edit</button>
                       {!r.auto && <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
                         onClick={() => {
@@ -348,6 +367,14 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 aria-label="Enabled" className="h-3.5 w-3.5 accent-primary" />
               Enabled
             </label>
+            {kind === 'forward' && (
+              <label className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 text-[12px] text-foreground-secondary sm:min-h-0"
+                title="Also keep each message in that member's canopy inbox, readable only by them">
+                <input type="checkbox" checked={keepCopy} onChange={(e) => setKeepCopy(e.target.checked)}
+                  aria-label="Keep a copy in their canopy inbox" className="h-3.5 w-3.5 accent-primary" />
+                Keep a copy in their canopy inbox
+              </label>
+            )}
             <button type="button" className={primary} disabled={busy || !canSave} onClick={() => void saveRoute()}>
               Save address
             </button>
@@ -355,6 +382,8 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
       </div>
 
+
+      {manage && owned && domain.status !== 'pending' && <InboundMailLog workspace={workspace} domainId={domain.id} />}
 
       {(!owned || manage || domain.can_share || domain.can_set_sign_in || domain.sign_in) && (
         <div className="flex flex-col gap-3" data-testid="mail-settings">
@@ -461,7 +490,7 @@ export function WorkspaceEmailPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    listMailDomains(slug).then(setList).catch((e: unknown) => setError(message(e, 'Could not load email')))
+    listMailDomains(slug).then(setList).catch((e: unknown) => setError(errorText(e, 'Could not load email')))
   }, [slug])
 
   // Agents and members fill the route pickers; a failure is said, not swallowed.
@@ -471,9 +500,9 @@ export function WorkspaceEmailPage(): JSX.Element {
     load()
     setLookupError(null)
     listAgents().then((p) => setAgents(p.items.filter((a) => a.workspace === slug)))
-      .catch((e: unknown) => addLookupError(`Could not load agents: ${message(e, 'unknown error')}`))
+      .catch((e: unknown) => addLookupError(`Could not load agents: ${errorText(e, 'unknown error')}`))
     listMembers(slug).then(setMembers)
-      .catch((e: unknown) => addLookupError(`Could not load members: ${message(e, 'unknown error')}`))
+      .catch((e: unknown) => addLookupError(`Could not load members: ${errorText(e, 'unknown error')}`))
   }, [slug, load])
 
   async function add() {
@@ -484,7 +513,7 @@ export function WorkspaceEmailPage(): JSX.Element {
       setName('')
       load()
     } catch (e: unknown) {
-      setError(message(e, 'Could not add the domain'))
+      setError(errorText(e, 'Could not add the domain'))
     } finally {
       setBusy(false)
     }
@@ -502,7 +531,8 @@ export function WorkspaceEmailPage(): JSX.Element {
         <h2 className="text-[15px] font-semibold text-foreground">Email</h2>
         <p className="mt-1 max-w-3xl text-[13px] text-foreground-secondary">
           Addresses on your own domain, and where each one goes: an agent, a member of this workspace, or
-          nowhere.
+          nowhere.{' '}
+          <Link to={scopedPath(slug, '/mail')} className="text-primary underline">Your forwarded mail</Link>
         </p>
       </section>
 

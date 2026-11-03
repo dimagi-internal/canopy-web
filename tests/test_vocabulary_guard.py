@@ -1,7 +1,11 @@
 """The retired nouns cannot creep back into the API (and so the MCP tools)."""
 import re
 
+import pytest
+
 from apps.api.api import api
+
+pytestmark = pytest.mark.guard
 
 BANNED = re.compile(r"(^|[_/-])(items?|work[_-]?products?|commands?|decisions?)($|[_/-])")
 

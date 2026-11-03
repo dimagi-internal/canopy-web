@@ -5904,7 +5904,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 # inherited it) and written to a global ~/.git-credentials — which meant every
 # agent pushed as whoever made that token, with whatever it could do, and could
 # not open a pull request (#747). Now each TURN asks canopy-web for its agent
-# owner's token for that agent (`AgentDelegation`), and it goes into that turn's
+# owner's token for that agent (delegated in its vault), and it goes into that turn's
 # environment and nowhere else, so two concurrent turns for agents with
 # different owners cannot see each other's.
 
@@ -6035,7 +6035,7 @@ _SCOPED_KEEP_SECONDS = 7 * 24 * 3600
 
 def _scoped_token_env(turn: dict) -> dict:
     """A full-profile turn asked by someone who is not the agent's owner, an admin
-    or canopy (a `full:` rule, an editor) reaches canopy's MCP as its ASKER, not as
+    or canopy (an editor line on the access list) reaches canopy's MCP as its ASKER, not as
     this box's PAT (who-is-asking phase 5, canopy-web#1332).
 
     canopy hands such a turn a caller token (`scoped`) with the claim. The MCP
@@ -7361,6 +7361,33 @@ def stop_session(session_key: str, why: str = "") -> list[str]:
     with _STOP_LOCK:
         hits = [tid for tid, sid in _TURN_SESSIONS.items() if sid == session_key]
     return [tid for tid in hits if request_stop(tid, why or "session stop")]
+
+
+def _drain_session_interrupts(runner_id: str) -> int:
+    """Carry out every session-shaped stop the server holds for this runner
+    (`GET /session-interrupts`, the durable twin of the `session_interrupt` frame)
+    and retire each by id. Returns how many reached a running turn. Never raises."""
+    try:
+        status, payload = _api("GET", f"/runners/{runner_id}/session-interrupts")
+    except Exception as exc:  # noqa: BLE001 — the poll loop must survive
+        _log(f"session interrupt poll failed: {exc}")
+        return 0
+    if status != 200 or not isinstance(payload, dict):
+        return 0
+    reached = 0
+    for item in payload.get("interrupts") or []:
+        sid, iid = item.get("session_id") or "", item.get("interrupt_id") or ""
+        if not iid:
+            continue
+        hits = stop_session(str(item.get("session_key") or ""), "session interrupt")
+        reached += bool(hits)
+        try:
+            _api("POST", f"/runners/{runner_id}/session-interrupt-result",
+                 {"session_id": sid, "interrupt_id": iid,
+                  "outcome": "interrupted" if hits else "idle"})
+        except Exception as exc:  # noqa: BLE001 — the server's TTL retires it anyway
+            _log(f"session interrupt result failed: {exc}")
+    return reached
 
 
 def honour_stops(reply) -> None:
@@ -13270,6 +13297,7 @@ def run_over_rest(runner_id: str) -> None:
         _observe_beat(beat)
         honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
+        _drain_session_interrupts(runner_id)
         maybe_sweep_disk()
         maybe_keep_vaults()
         maybe_sweep_kept(runner_id)
@@ -13474,7 +13502,9 @@ def run_over_ws(runner_id: str) -> bool:
                         request_stop(str(msg.get("turn_id") or ""), "cancel frame")
                     elif mtype == "session_interrupt":
                         # A stop aimed at a session: the turn driving it, if any.
+                        # Then the server's record of it, which the stop retires.
                         stop_session(str(msg.get("session_key") or ""), "session interrupt")
+                        _drain_session_interrupts(runner_id)
                     elif mtype == "menu_answer":
                         # A person answered an ask. The bell only: the answer is
                         # read from /menu-answers, which a waiting ask also polls.
@@ -13511,6 +13541,7 @@ def run_over_ws(runner_id: str) -> bool:
                 # the WS path to parity.
                 if time.monotonic() - last_poll >= POLL_SECONDS:
                     _drain(ws, runner_id)
+                    _drain_session_interrupts(runner_id)
                     _sync_session_views(runner_id)          # incl. backfills
                     _drain_mint(runner_id)
                     _maybe_reread_credentials()

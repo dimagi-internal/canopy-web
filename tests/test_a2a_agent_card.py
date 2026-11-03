@@ -12,41 +12,47 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
 
+from apps.agents import roles
 from apps.agents.models import Agent, AgentAdmin
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 BASE = "https://canopy.example.org/canopy"
 
 ACE = {
-    "full": ["contact@dimagi.com:verified", "member@dimagi.com"],
-    "capabilities": {
-        "ask": {
-            "description": "Ask ACE about your programme.",
-            "callers": ["contact", "member"],
-            "entry": "/ace:ask --thread {thread_id}",
-            "tools": ["Read", "mcp__canopy-web__who_is_asking"],
-            "bash": ["canopy email read --repo . {thread_id}"],
-            "read_paths": ["{cwd}/**"],
-        },
-        "marketplace": {
-            "description": "Browse the marketplace.",
-            "callers": ["contact@partner.org:verified"],
-            "pages": ["labs-marketplace://*"],
-            "tools": ["mcp__*connect_labs__marketplace_*"],
-        },
-        "summarise_opportunity": {
-            "description": "Summarise an opportunity.",
-            "callers": ["member"],
-            "input": {"opportunity_id": "integer"},
-            "tools": ["Skill"],
-        },
-        "deploy": {"description": "Ship it.", "role": "user", "bash": ["git push"]},
+    "ask": {
+        "description": "Ask ACE about your programme.",
+        "entry": "/ace:ask --thread {thread_id}",
+        "tools": ["Read", "mcp__canopy-web__who_is_asking"],
+        "bash": ["canopy email read --repo . {thread_id}"],
+        "read_paths": ["{cwd}/**"],
     },
+    "marketplace": {
+        "description": "Browse the marketplace.",
+        "pages": ["labs-marketplace://*"],
+        "tools": ["mcp__*connect_labs__marketplace_*"],
+    },
+    "summarise_opportunity": {
+        "description": "Summarise an opportunity.",
+        "input": {"opportunity_id": "integer"},
+        "tools": ["Skill"],
+    },
+    "deploy": {"description": "Ship it.", "bash": ["git push"]},
 }
+
+
+def _let_in_ace(agent):
+    """Who may use ACE: dimagi contacts (verified) and dimagi members run it whole; `ask` is open to
+    contacts and members, `marketplace` to verified partner contacts, `summarise_opportunity` to members."""
+    allow(agent, role=roles.EDITOR, contact=True, domain="dimagi.com", verified=True)
+    allow(agent, role=roles.EDITOR, domain="dimagi.com")
+    allow(agent, role=roles.READ_ONLY, contact=True)
+    allow(agent, role=roles.READ_ONLY)
+    allow(agent, capability="marketplace", contact=True, domain="partner.org", verified=True)
+    allow(agent, capability="summarise_opportunity")
 INTERNAL = ["/ace:ask", "who_is_asking", "canopy email read", "{cwd}", "labs-marketplace://",
             "connect_labs", "git push", "opportunity_id", "entry", "read_paths", "bash",
             "op@dimagi.com", "mem@elsewhere.org"]
@@ -72,19 +78,16 @@ def w():
     M.objects.create(user=admin, workspace=ws, role=M.EDITOR)
     ace = Agent.objects.create(slug="ace", name="ACE", description="Runs Connect opportunities.",
                                email="ace@dimagi-ai.com", workspace=ws, owner=op)
-    publish(ace, ACE, editors=False)
+    declare(ace, ACE)
+    _let_in_ace(ace)
     AgentAdmin.objects.create(agent=ace, user=admin)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=op, interface={})
     inner = Agent.objects.create(slug="inner", name="Inner", workspace=ws, owner=op)
-    publish(inner, {"full": ["contact@dimagi.com:verified"],
-                    "capabilities": {"ask": {"callers": ["member"]}}}, editors=False)
+    declare(inner, {"ask": {}})
+    allow(inner, role=roles.EDITOR, contact=True, domain="dimagi.com", verified=True)
+    allow(inner, role=roles.READ_ONLY)
     return {"op": op, "mem": mem, "admin": admin, "stranger": stranger, "ws": ws,
             "ace": ace, "hal": hal, "inner": inner}
-
-
-def _pat(user):
-    raw, _ = PersonalToken.create_for_user(user=user, label="t")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
 def _skills(body):
@@ -102,15 +105,16 @@ def test_public_card_lists_only_what_an_outsider_can_reach(w):
     ask = _skills(body)["ask"]
     assert ask["name"] == "Ask"
     assert ask["description"] == "Ask ACE about your programme."
-    # Only the lines that name outsiders become tags on the public card. Lines are the agent's,
-    # not a capability's: every viewer capability is open to every viewer line.
-    assert ask["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
+    # Only the lines that name outsiders become tags on the public card, and only the ones that
+    # open THIS capability: `ask` is read (the unverified contact line); `marketplace` is a door
+    # named by a verified partner.org line.
+    assert ask["tags"] == ["caller:contact"]
     assert ask["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
     mkt = _skills(body)["marketplace"]
     assert mkt["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
-    # A known visitor with no proof (the `contact` line) reaches both viewer capabilities, so both
-    # have a contact-token entry point; a capability reached only by verified lines would not.
-    assert mkt["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
+    # A known visitor with no proof (the `contact` line) reaches `ask`, so it has a contact-token
+    # entry point; a capability reached only by verified lines (`marketplace`) has none.
+    assert "securityRequirements" not in mkt
 
 
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE)
@@ -148,13 +152,13 @@ def test_public_card_leaks_nothing_internal(w):
         assert needle not in text, needle
     # Neither the member-only nor the admin-only capability is advertised.
     assert "summarise_opportunity" not in text and "Ship it." not in text
-    # Nor the full: rule granting a whole profile.
+    # Nor the editor line granting a whole profile.
     assert "dimagi.com:verified" not in text
 
 
 def test_a_private_agent_has_no_card(w):
-    # No interface; a member-only interface whose outsider access is a `full:`
-    # rule; and a slug that does not exist — indistinguishable 404s.
+    # No interface; a member-only interface whose outsider access is an editor
+    # line; and a slug that does not exist — indistinguishable 404s.
     bodies = []
     for slug in ("hal", "inner", "nope"):
         r = Client().get(_card_url(slug))
@@ -172,9 +176,7 @@ def test_public_card_is_cacheable_and_conditional(w):
     assert again.status_code == 304
     assert again["ETag"] == etag and not again.content
     # Republishing the interface changes the card, and so the tag.
-    iface = dict(ACE, capabilities={**ACE["capabilities"],
-                                    "ask": {**ACE["capabilities"]["ask"], "description": "New."}})
-    publish(Agent.objects.get(slug="ace"), iface, editors=False)
+    declare(Agent.objects.get(slug="ace"), {**ACE, "ask": {**ACE["ask"], "description": "New."}})
     assert Client().get(_card_url("ace"), HTTP_IF_NONE_MATCH=etag).status_code == 200
 
 
@@ -185,14 +187,15 @@ def test_extended_card_requires_a_login(w):
 
 
 def test_a_member_sees_public_plus_their_own(w):
-    r = _pat(w["mem"]).get(_ext_url("ace"))
+    r = pat_client(w["mem"]).get(_ext_url("ace"))
     assert r.status_code == 200, r.content
     skills = _skills(r.json())
-    assert set(skills) == {"ask", "marketplace", "summarise_opportunity", "deploy"}   # every user capability
+    # Public plus the doors their lines name; `deploy` is named by no line, so only admins have it.
+    assert set(skills) == {"ask", "marketplace", "summarise_opportunity"}
     # A member-only skill has no A2A entry point: members use the agent's plugin.
     assert "securityRequirements" not in skills["summarise_opportunity"]
     assert "inputModes" not in skills["summarise_opportunity"]
-    assert skills["ask"]["tags"] == ["caller:contact", "caller:member", "domain:partner.org", "verified-sender"]
+    assert skills["ask"]["tags"] == ["caller:contact", "caller:member"]
     assert not any(i["url"].endswith("/api/mcp/") for i in r.json()["supportedInterfaces"])
     assert r["Cache-Control"] == "private, max-age=60"
     assert "Authorization" in r["Vary"]
@@ -207,36 +210,36 @@ def test_owner_and_admin_see_everything(w):
         c.force_login(w[who])
         skills = _skills(c.get(_ext_url("ace")).json())
         assert set(skills) == {"ask", "marketplace", "summarise_opportunity", "deploy"}, who
-        assert skills["deploy"]["tags"] == ["caller:member"]   # a user capability: every user line reaches it
+        assert skills["deploy"]["tags"] == ["caller:admin"]    # no line names it: only the agent's admins
 
 
 def test_a_full_rule_member_sees_everything(w):
     dimagi_member = User.objects.create_user("dm", "dm@dimagi.com", "pw")
     M.objects.create(user=dimagi_member, workspace=w["ws"], role=M.VIEWER)
-    skills = _skills(_pat(dimagi_member).get(_ext_url("ace")).json())
+    skills = _skills(pat_client(dimagi_member).get(_ext_url("ace")).json())
     assert "deploy" in skills
 
 
 def test_a_non_member_gets_the_public_card_or_nothing(w):
-    c = _pat(w["stranger"])
+    c = pat_client(w["stranger"])
     assert set(_skills(c.get(_ext_url("ace")).json())) == {"ask", "marketplace"}
     assert c.get(_ext_url("inner")).status_code == 404
     assert c.get(_ext_url("hal")).status_code == 404
 
 
 def test_a_member_of_a_private_agent_gets_its_member_skills(w):
-    skills = _skills(_pat(w["mem"]).get(_ext_url("inner")).json())
+    skills = _skills(pat_client(w["mem"]).get(_ext_url("inner")).json())
     assert set(skills) == {"ask"}
     # ...while the public still sees nothing.
     assert Client().get(_card_url("inner")).status_code == 404
 
 
 def test_extended_card_is_conditional(w):
-    c = _pat(w["mem"])
+    c = pat_client(w["mem"])
     etag = c.get(_ext_url("ace"))["ETag"]
     assert c.get(_ext_url("ace"), HTTP_IF_NONE_MATCH=etag).status_code == 304
     # Per-person: another caller's tag does not match.
-    assert _pat(w["stranger"]).get(_ext_url("ace"), HTTP_IF_NONE_MATCH=etag).status_code == 200
+    assert pat_client(w["stranger"]).get(_ext_url("ace"), HTTP_IF_NONE_MATCH=etag).status_code == 200
 
 
 def test_the_schema_publishes_camel_case(w):

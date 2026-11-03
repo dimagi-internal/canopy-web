@@ -1,10 +1,11 @@
 import { useEffect, useState, type JSX, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
-import { getMember, WorkspaceApiError, type MemberProfileOut } from '@/api/workspaces'
+import { getMember, type MemberProfileOut } from '@/api/workspaces'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '@/lib/scopedLinks'
 import { relativeAge } from '@/lib/relativeAge'
+import { ApiError } from '@/api/problem'
 
 const KIND_LABEL: Record<MemberProfileOut['kind'] & string, string> = {
   person: 'Person',
@@ -43,7 +44,7 @@ export function MemberPage(): JSX.Element {
       .catch((e: unknown) => {
         if (cancelled) return
         setError(
-          e instanceof WorkspaceApiError && e.status === 404
+          e instanceof ApiError && e.status === 404
             ? `No one with this address is a member of ${wsName}.`
             : e instanceof Error ? e.message : 'Failed to load member',
         )

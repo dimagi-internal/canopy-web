@@ -68,7 +68,13 @@ export function useStickyBottom<T>(
     lastTopRef.current = el.scrollTop;
     if (fromBottom <= 1) setFollow(true);
     else if (movedUp) setFollow(false);
-    else setFollow(fromBottom < thresholdPx);
+    // Not a move up, yet short of the bottom: while following, that is content
+    // that grew after a snap and before the browser delivered the snap's scroll
+    // event, a frame later. Nobody left, so catch up rather than strand the view.
+    else if (followRef.current) {
+      el.scrollTop = el.scrollHeight;
+      lastTopRef.current = el.scrollTop;
+    } else setFollow(fromBottom < thresholdPx);
   }, [thresholdPx, setFollow]);
 
   const onWheel = useCallback((e: { deltaY: number }) => {

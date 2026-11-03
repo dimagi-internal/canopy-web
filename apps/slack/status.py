@@ -129,7 +129,8 @@ def _confined_note(turn: Turn, agent: str) -> str:
     who = who or "This sender"
     return (f":lock: *Questions only* — {who} isn't a member of this agent's conversation in "
             f"canopy, so {agent} answers in `{turn.capability}` mode (no actions), in a session of "
-            "its own. To give them more, add them to the agent's canopy workspace.")
+            "its own. To give them more, the agent's owner or an admin can add them as an editor "
+            "(on the agent's access list, or in its canopy workspace).")
 
 
 def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
@@ -156,8 +157,8 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         line = (f":hourglass: Queued — {agent} is still finishing the previous message in this "
                 f"thread on {_runner_names(st.runners)}, and this one runs next.")
     elif st.state == ts.QUEUED_BEHIND:
-        line = (f":hourglass: Queued — {agent} is busy with another turn on "
-                f"{_runner_names(st.runners)}; this one runs when it finishes.")
+        line = (f":hourglass: Queued — this conversation is moving to {_runner_names(st.runners)}; "
+                f"this one runs there once its work has been handed over.")
     elif st.state == ts.PICKING_UP and st.pinned:
         line = f":hourglass_flowing_sand: Sent to *{st.runners[0]}* — {agent} will pick this up there."
     elif st.state == ts.PICKING_UP:

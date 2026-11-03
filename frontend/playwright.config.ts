@@ -32,7 +32,8 @@ export default defineConfig({
     },
   ],
   webServer: [
-    { command: 'bash e2e/backend.sh', url: `http://127.0.0.1:${API_PORT}/health/`, timeout: 120_000, reuseExistingServer: false },
+    // E2E_SERVER_TIMEOUT: a cold CI box takes longer to boot the API than a laptop.
+    { command: 'bash e2e/backend.sh', url: `http://127.0.0.1:${API_PORT}/health/`, timeout: Number(process.env.E2E_SERVER_TIMEOUT ?? 120_000), reuseExistingServer: false },
     { command: 'npm run dev', url: 'http://localhost:3000', timeout: 60_000, reuseExistingServer: false },
   ],
 })

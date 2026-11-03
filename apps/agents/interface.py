@@ -1,13 +1,24 @@
 """An agent's DECLARED CAPABILITIES: what it offers people who are not its admins.
 
+"Capability" has five meanings in canopy; this module is (a):
+  (a) interface capability: a door an agent publishes (here; `docs/architecture/access.md`);
+  (b) workspace permission: a right a role holds (`apps/workspaces/permissions.py`,
+      `docs/architecture/roles.md`);
+  (c) cloud capability: a leased machine or pool slot (`apps/capabilities`,
+      `docs/architecture/capabilities.md`);
+  (d) `Runner.capabilities`: the JSON a box reports about itself
+      (`apps/harness/models.py`, `docs/architecture/runners.md`);
+  (e) `Storyboard.capability`: the level a share link grants (`apps/storyboards/models.py`).
+
 Who may use which capability is NOT here: it is the agent's access list
 (`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
-This says only what each capability IS — its tools, paths and sites — and the lowest role
-that may use it (`role: viewer | user`). THE rule that decides who gets which is
+This says only what each capability IS — its tools, paths and sites — and never who may use
+it (a capability no longer carries a `role:`). THE rule that decides who gets which is
 `apps/agents/access.decide`; every term is defined in `docs/architecture/access.md`.
 
 An agent's owner and admins reach its full working session; so does anyone the access list
-makes an editor. Everyone else — a user, a viewer — reaches only a capability. It is LIVE STATE
+gives `write`. Everyone else — a `read_only` line, a line naming one capability — reaches only
+a capability. It is LIVE STATE
 held by canopy-web, never a file in the agent's repo, and canopy enforces it.
 
 **Allowlist by construction.** Restricting a fully-powered agent per caller —
@@ -17,7 +28,6 @@ runs in its capability's profile, where everything not listed is denied:
     capabilities:
       ask:                                  # the free-form capability every channel uses
         description: Ask ACE about your programme.
-        role: viewer                        # the lowest role that may use it (viewer | user)
         entry: /ace:ask --thread {thread_id}  # the session's prompt (optional)
         tools: [Read, Grep, "mcp__canopy-web__who_is_asking"]
         bash: ["canopy email read --repo . {thread_id}"]
@@ -30,7 +40,6 @@ of in `ask`:
 
     capabilities:
       marketplace:
-        role: viewer
         pages: ["labs-marketplace://*"]   # what the PAGE declared it is showing
         tools: [Skill, "mcp__*canopy-web__current_page",
                 "mcp__*connect_labs__marketplace_*"]
@@ -56,7 +65,6 @@ ran as the AGENT. A site capability instead names a registered Connected site:
 
     capabilities:
       connect:
-        role: viewer
         sites: [connect-labs]               # a Connected site, by name
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL narrowing
 
@@ -74,13 +82,14 @@ screen; it is not a filter (until 2026-09-29 it was).
 
 **Default deny.** Every agent HAS an interface; until its owner changes it, it is the default
 (`default_interface()`: no capability). An agent that has published nothing is reachable by its
-owner, admins and anyone its access list makes an editor, and by nobody else. A capability
-with no `pages` is never selected by a page. An agent with no `ask` capability cannot be asked
-by a viewer even if the list names them: a line can only open a capability that exists.
+owner, admins and anyone its access list gives `write`, and by nobody else. A capability
+with no `pages` is never selected by a page. `ask` is OFF by default: an agent with no `ask`
+capability cannot be asked by a `read_only` line even if the list names them: a line can only
+open a capability that exists.
 
-**Removed 2026-10-30:** `full:`, each capability's `callers:`, `callers_default:` and
-`editors:`. A published interface that still carries them is refused with a message pointing
-at the access list; the data migration `agents/0112` moved every agent's rules onto its list.
+A capability carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
+one is an access-list line (a role, or one that names the capability). A published interface that
+still carries them is refused with a message pointing at the access list.
 """
 from __future__ import annotations
 
@@ -113,20 +122,12 @@ PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 #: turn predating this reads as "full", which is what it was.
 FULL = ""
 
-#: The lowest role that may use a capability (`role:` on it). Who HAS a role is the
-#: access list's business (`apps/agents/grants.py`); a capability only says how much it takes.
-CAPABILITY_ROLES = (roles.VIEWER, roles.USER)
-
-
-def capability_role(cap: dict) -> str:
-    """The lowest role that may use `cap`: its `role:`, `user` when it says nothing."""
-    explicit = cap.get("role")
-    return explicit if explicit in CAPABILITY_ROLES else roles.USER
-
-
-def role_opens(role: str | None, cap: dict) -> bool:
-    """May someone holding `role` use `cap`?"""
-    return roles.at_least(role, capability_role(cap))
+def opens(permissions, name: str) -> bool:
+    """May someone holding `permissions` (the union of their access-list lines) use the capability
+    `name`? `write` opens every capability, `read` opens `ask`, a `use:<name>` line opens `<name>`.
+    A capability does not say what it takes: that is the access list's business
+    (`apps/agents/grants.py`)."""
+    return roles.can_use(permissions, name)
 
 #: What a capability's `input` fields may be. Declared and shown, but no capability
 #: passes typed inputs today: the MCP capability tools that did were removed
@@ -174,8 +175,9 @@ def _strings(value, field: str, cap: str) -> list[str]:
 #: Keys the access list replaced; refused with the pointer below, never silently ignored.
 _RETIRED = {"full", "editors", "callers"}
 _RETIRED_HINT = ("{where}: `{key}:` is gone — who may use an agent is its access list now "
-                 "(Settings → Access, or /api/agents/<slug>/access-list). A capability only says what "
-                 "it is and the lowest `role:` (viewer or user) that may use it")
+                 "(Settings → Roles → Access, or /api/agents/<slug>/access-list). A capability only "
+                 "says what it is; to let someone use just this capability, add an access-list line "
+                 "that names it")
 
 
 def parse(doc) -> dict:
@@ -203,11 +205,12 @@ def parse(doc) -> dict:
             raise InterfaceError(f"capability name {name!r} must match {_NAME.pattern}")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
-        if "callers" in cap:
-            raise InterfaceError(_RETIRED_HINT.format(where=name, key="callers"), f"{name}.callers")
+        for key in ("callers", "role"):
+            if key in cap:
+                raise InterfaceError(_RETIRED_HINT.format(where=name, key=key), f"{name}.{key}")
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "pages", "sites", "ceiling", "own_login",
-                          "data", "role"}
+                          "data"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -224,13 +227,9 @@ def parse(doc) -> dict:
                                      f"and not be one of {sorted(_RESERVED_INPUTS)}")
             if typ not in INPUT_TYPES:
                 raise InterfaceError(f"{name}.input.{field}: type must be one of {sorted(INPUT_TYPES)}")
-        role = cap.get("role", roles.USER)
-        if role not in CAPABILITY_ROLES:
-            raise InterfaceError(f"{name}.role must be one of {list(CAPABILITY_ROLES)}", f"{name}.role")
         out[name] = {
             "input": dict(inputs),
             "description": str(cap.get("description") or "")[:500],
-            "role": role,
             "entry": entry,
             "tools": _strings(cap.get("tools"), "tools", name),
             "bash": _strings(cap.get("bash"), "bash", name),
@@ -370,7 +369,7 @@ def _page_capability(turn, iface: dict, opens) -> str | None:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
         patterns = cap.get("pages") or []
-        if not patterns or not opens(cap):
+        if not patterns or not opens(name, cap):
             continue
         if any(fnmatchcase(resource, pattern) for pattern in patterns):
             return name
@@ -398,7 +397,7 @@ def _site_capability(turn, iface: dict, opens) -> str | None:
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
-        if site in (cap.get("sites") or []) and opens(cap):
+        if site in (cap.get("sites") or []) and opens(name, cap):
             return name
     return None
 
@@ -549,10 +548,10 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
 
     A thin face over THE rule, `apps.agents.access.decide` — see
     docs/architecture/access.md. In short: FULL for its owner, admins, canopy's own turns,
-    a writer in an admin's own session and anyone the access list makes an editor; a user or
-    a viewer gets the capability they asked for — `requested`, e.g. a tool called over MCP —
-    or the page's/site's capability, or `ask`, if their role may use it; otherwise they are
-    refused. An agent that has published no capability lets in only those who run it whole.
+    a writer in an admin's own session and anyone whose lines give `write`; anyone else gets the
+    capability they asked for — `requested`, e.g. a tool called over MCP — or the page's/site's
+    capability, or `ask`, if their lines open it; otherwise they are refused. An agent that has
+    published no capability lets in only those who run it whole.
     """
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
@@ -597,7 +596,7 @@ def offered_to(user, agent) -> list[str]:
     if d.access == access.FULL:
         return sorted(caps)
     if d.access == access.CONFINED:
-        return sorted(n for n, c in caps.items() if role_opens(d.agent_role, c))
+        return sorted(n for n in caps if opens(d.permissions, n))
     return []
 
 

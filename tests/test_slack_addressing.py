@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import pytest
 
+from apps.agents import roles
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Turn
 from apps.slack import services
-from tests.access_helpers import editors_run
+from tests.access_helpers import allow, declare, editors_run
 from tests.fixtures.slack import BOT, TEAM, mention
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
@@ -222,9 +223,9 @@ def test_a_closed_private_conversation_takes_nothing_from_slack(slack, linked, h
 def test_a_click_that_would_run_confined_forks_like_a_confined_reply(slack, linked, hal, ace, alice):
     """Bob is a contact and hal answers contacts only through `ask`: in someone
     else's (closed) conversation he gets a thread of his own, as a reply would."""
-    from tests.access_helpers import publish
-
-    publish(hal, {"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
+    declare(hal, {"ask": {"description": "Ask"}})
+    allow(hal, role=roles.READ_ONLY, contact=True)
+    editors_run(hal)
     closed = _closed_thread(hal)
     closed.created_by = alice
     closed.save(update_fields=["created_by"])

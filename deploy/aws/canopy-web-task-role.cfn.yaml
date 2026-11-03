@@ -31,9 +31,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 #                                      -> memory-embeddings here
 #   apps/agents/api_aws.py             sts AssumeRole on labs-jj-observe-readonly
 #                                      -> assume-labs-observe here
-#   apps/common/kms_envelope.py        kms GenerateDataKey/Decrypt on the Canopy
-#                                      Vault key -> that key's KEY POLICY in
-#                                      canopy-web.cfn.yaml (EnableVaultKms only)
 # Secrets and logs are the EXECUTION role's (labs-jj-ecs-task-execution-role),
 # not this one.
 #

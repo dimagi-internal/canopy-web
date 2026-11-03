@@ -18,8 +18,10 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
+from apps.agents.holding import runner_may_hold_agent
 from apps.api.route_gates import gate
-from apps.canopy_sessions import handoff
+from apps.canopy_sessions import control, handoff
+from apps.canopy_sessions import services as chat_services
 from apps.canopy_sessions.coaching import full_upload_session_ids
 from apps.canopy_sessions.models import HandoffArchive, RunnerBinding, Session, SessionHandoff
 from apps.workspaces import services as wsvc
@@ -64,11 +66,13 @@ from .schemas import (
     ResolveSessionIn,
     ResolveSessionOut,
     SessionBackfillIn,
+    SessionInterruptResultIn,
+    SessionInterruptSyncOut,
     SessionMenuIn,
     SessionMenuOut,
-    SessionSubagentsIn,
     SessionReportOut,
     SessionStreamIn,
+    SessionSubagentsIn,
     StreamPostOut,
     StreamSyncOut,
 )
@@ -337,13 +341,12 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
 @router.post("/runners/{runner_id}/session-stream", response=StreamPostOut)
 @gate("runner", kind="runner-protocol")  # session must be bound to this runner
 def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: SessionStreamIn):
-    """The runner ships live conversational events for a session it backs. For an
-    origin=runner session, events carrying a transcript ordinal are PERSISTED as
-    Message rows first (the transcript is the durable source — spec 2026-07-24),
-    then the assistant frames fan out to the session group as the same
-    chat.turn_event frames the chat path uses (turn-less -> the consumer derives
-    seq:<n> message ids). User events are persisted but never live-pushed — the
-    sender's client already echoed them optimistically."""
+    """The runner ships live conversational events for a session it backs. For a
+    transcript-sourced session, events carrying a transcript ordinal are
+    PERSISTED as Message rows first (the transcript is the durable source); then,
+    while someone is watching, every event — user lines included — fans out to the
+    session's viewers, each carrying the stored row's id and `turn_index`, so a
+    row that arrives live is the same row a reload returns."""
     runner = runner_or_404(request, runner_id)
     binding = (
         RunnerBinding.objects.select_related("session")
@@ -392,8 +395,6 @@ def _turn_end_session(runner, session_id, transcript_id: str = ""):
         if not ours:
             continue
         session = turn.chat_session
-        from apps.agents.services import runner_may_hold_agent  # noqa: PLC0415 — agents imports harness
-
         if session.agent_id is None or not runner_may_hold_agent(runner, session.agent):
             return None
         return session
@@ -648,6 +649,43 @@ def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
     return {"ok": True}
 
 
+@router.get("/runners/{runner_id}/session-interrupts", response=SessionInterruptSyncOut)
+@gate("runner")
+def list_session_interrupts(request: HttpRequest, runner_id: uuid.UUID):
+    """Stops a person asked of a session on this runner that it has not carried
+    out yet. The `session_interrupt` control frame is the doorbell; this is the
+    record, drained on the poll tick, so a frame lost while the control channel
+    was down costs a tick rather than the stop. A request older than
+    `control.INTERRUPT_TTL` is not offered."""
+    runner = runner_or_404(request, runner_id)
+    bindings = (
+        RunnerBinding.objects.select_related("session")
+        .filter(runner=runner)
+        .exclude(pending_interrupt__isnull=True)
+        .exclude(session_key="")
+    )
+    return {"interrupts": [
+        {"session_id": str(b.session_id), "session_key": b.session_key,
+         "project": b.emdash_project or b.session.emdash_project,
+         "interrupt_id": (b.pending_interrupt or {}).get("id") or ""}
+        for b in bindings if control.interrupt_live(b.pending_interrupt)
+    ]}
+
+
+@router.post("/runners/{runner_id}/session-interrupt-result", response=MenuAnswerResultOut)
+@gate("runner", kind="runner-protocol")
+def post_session_interrupt_result(request: HttpRequest, runner_id: uuid.UUID,
+                                  payload: SessionInterruptResultIn):
+    """The runner reports what became of a stop, which retires it. Matched on
+    `interrupt_id`, so a result for a stop since replaced leaves the newer one."""
+    runner = runner_or_404(request, runner_id)
+    retired = (RunnerBinding.objects
+               .filter(session_id=payload.session_id, runner=runner,
+                       pending_interrupt__id=payload.interrupt_id)
+               .update(pending_interrupt=None))
+    return {"ok": bool(retired)}
+
+
 @router.post("/runners/{runner_id}/session-menu", response=SessionMenuOut)
 @gate("runner", kind="runner-protocol")  # only a session this runner holds
 def post_session_menu(request: HttpRequest, runner_id: uuid.UUID, payload: SessionMenuIn):
@@ -716,12 +754,12 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
-    session = chat_transcript_ingest.fork_if_name_reused(session, payload.transcript_id) or session
-    # Same guard as the live path: history from a different transcript lands in
-    # its own epoch rather than merging into what is held. Idempotent across chunks — the
-    # first one records the id, so the rest of the ship matches and writes through.
-    chat_transcript_ingest.ensure_transcript_identity(session, payload.transcript_id)
-    written = chat_transcript_ingest.write_backfill(session, [m.dict() for m in payload.messages])
+    # The same write as the live path, transcript identity included: history from
+    # a different transcript lands in its own epoch rather than merging into what
+    # is held. Idempotent across chunks — the first one records the id, so the
+    # rest of the ship matches and writes through.
+    written = chat_transcript_ingest.write_backfill(
+        session, [m.dict() for m in payload.messages], transcript_id=payload.transcript_id)
     # Only the LAST chunk clears the ask. A transcript is shipped in byte-budgeted
     # chunks (see SessionBackfillIn.final), and clearing on the first one would
     # retire the request while most of the history was still in flight — a ship
@@ -730,4 +768,6 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if payload.final and binding.backfill_requested:
         binding.backfill_requested = False
         binding.save(update_fields=["backfill_requested", "updated_at"])
+    if payload.final:
+        chat_services.finish_rebuild(session)
     return {"written": written}

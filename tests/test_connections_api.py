@@ -14,9 +14,9 @@ from apps.agents.models import Agent
 from apps.connections.models import Connection, ConnectionGrant
 from apps.events.models import Event
 from apps.passkeys.testing import grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connections import FakeSF, _stored, home, sf_app
+from tests.token_helpers import pat_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -58,11 +58,6 @@ def client(user):
     c.force_login(user)
     grant_step_up(c)
     return c
-
-
-def _pat(user) -> dict:
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
 
 
 # ---- list / disconnect (mine) ---------------------------------------------------
@@ -182,7 +177,7 @@ def test_agent_disconnect_with_step_up(client, user, eva):
 def test_agent_disconnect_with_a_pat_needs_no_step_up(user, eva):
     conn = _stored({"agent": eva}, user)
     with FakeSF():
-        resp = Client().delete(f"/api/agents/eva/connections/{conn.pk}", **_pat(user))
+        resp = Client().delete(f"/api/agents/eva/connections/{conn.pk}", **pat_headers(user))
     assert resp.status_code == 204
 
 
@@ -225,7 +220,7 @@ def test_cookie_plus_a_valid_pat_is_a_browser_and_needs_step_up(user, eva):
     c = Client()
     c.force_login(user)  # no step-up
     with FakeSF():
-        resp = c.delete(f"/api/agents/eva/connections/{conn.pk}", **_pat(user))
+        resp = c.delete(f"/api/agents/eva/connections/{conn.pk}", **pat_headers(user))
     assert resp.status_code == 403 and resp.json().get("error") == "step_up_required"
     assert Connection.objects.filter(pk=conn.pk).exists()
 
@@ -253,7 +248,7 @@ def test_a_real_pat_is_a_machine(user):
     from django.test import RequestFactory
 
     from apps.common.views_debug import is_machine
-    req = RequestFactory().get("/", **_pat(user))
+    req = RequestFactory().get("/", **pat_headers(user))
     assert is_machine(req) is False  # header alone (no middleware) proves nothing
     req.auth_method = "pat"
     assert is_machine(req) is True

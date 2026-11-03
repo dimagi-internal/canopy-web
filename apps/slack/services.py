@@ -1200,7 +1200,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
     administer the box may move the chat from the web and not from a Slack
     button, whose identity is a weaker principal than a browser session.
     """
-    from apps.canopy_sessions import send as session_send
+    from apps.canopy_sessions import placement as session_placement
     from apps.harness import runners
 
     from . import status
@@ -1214,7 +1214,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
         return Outcome(PRIVATE, "This conversation is private, so canopy does not move it from "
                        f"Slack, and nothing was changed.{where}",
                        session=session, agent=session.agent, workspace_id=session.workspace_id)
-    runner = session_send.available_cloud_runner(session, user=user)
+    runner = session_placement.available_cloud_runner(session, user=user)
     if runner is None:
         return Outcome(NO_CLOUD, "No cloud runner is online to take this right now.", session=session)
     if not runners.can_administer_runner(user, runner):
@@ -1223,7 +1223,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
             "from the runner's page in canopy."), session=session)
     closed, asked = _requeue_stranded(session, user, via)
     try:
-        moved = session_send.move_queued_turns(
+        moved = session_placement.move_queued_turns(
             session=session, placement=str(runner.id), user=user,
             initiator=who.for_user(user, via=via, assurance=""),
         )

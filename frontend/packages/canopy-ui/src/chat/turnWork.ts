@@ -1,7 +1,9 @@
 import type { Message } from "./protocol";
 import type { ChatRow } from "./pairToolMessages";
-import { mcpServerLabel, toolDisplayName } from "./pairToolMessages";
+import { mcpServerLabel, toolDisplayName, toolFailed } from "./pairToolMessages";
 import { isActionableRow } from "./groupToolRuns";
+import { isCompactionSummary } from "./contextUsage";
+import { editStats } from "./toolBodies/diff";
 
 /**
  * What an agent's turn did, read off its rows — so a long turn can be followed
@@ -37,14 +39,15 @@ function toolInput(use: Message): Record<string, unknown> {
 }
 
 /** A line a person sent, which starts a turn. A compaction summary is a `user`
- *  row too, but Claude Code wrote it — it is part of the work, not a new ask. */
+ *  row too, but Claude Code wrote it — it is part of the work, not a new ask.
+ *  A cancelled send never started anything: it sits in whatever turn it was
+ *  sent into, marked, rather than splitting that turn's work around itself. */
+export function isPersonMessage(m: Message): boolean {
+  return m.role === "user" && m.content?.cancelled !== true && !isCompactionSummary(m);
+}
+
 function isPersonLine(row: ChatRow): boolean {
-  if (row.kind !== "message" || row.message.role !== "user") return false;
-  // A cancelled send never started anything: it sits in whatever turn it was
-  // sent into, marked, rather than splitting that turn's work around itself.
-  if (row.message.content?.cancelled === true) return false;
-  const record = row.message.content?.record as Record<string, unknown> | undefined;
-  return !record?.compact_summary;
+  return row.kind === "message" && isPersonMessage(row.message);
 }
 
 export function segmentTurns(rows: ChatRow[]): TurnSegment[] {
@@ -126,8 +129,9 @@ export interface TurnFold {
 /**
  * How to fold a FINISHED turn, or null to show it as it is.
  *
- * `live` is the caller's answer to "is this turn still running" — from the
- * server's turn status. A live turn is never folded: you are watching it.
+ * `live` is the caller's answer to "is this turn still running" (`turnView`),
+ * taken as given: a row whose completion frame never arrived does not hold a
+ * finished turn open. A live turn is never folded: you are watching it.
  * Neither is a turn with no reply text (there is nothing to show beneath the
  * fold) or with no tool calls in front of its reply.
  *
@@ -138,7 +142,6 @@ export interface TurnFold {
 export function planFold(segment: TurnSegment, { live }: { live: boolean }): TurnFold | null {
   if (live || !segment.user) return null;
   const body = segment.body;
-  if (body.some(rowIsInFlight)) return null;
   let replyAt = -1;
   for (let i = body.length - 1; i >= 0; i--) {
     if (isReplyText(body[i])) {
@@ -161,11 +164,7 @@ export function planFold(segment: TurnSegment, { live }: { live: boolean }): Tur
 }
 
 function rowFailed(row: ChatRow): boolean {
-  return (
-    row.kind === "tool_pair" &&
-    (row.result?.status === "error" ||
-      (row.result?.content as { is_error?: unknown } | undefined)?.is_error === true)
-  );
+  return row.kind === "tool_pair" && toolFailed(row.use, row.result);
 }
 
 function rowMessages(row: ChatRow): Message[] {
@@ -232,10 +231,10 @@ export function countLines(text: unknown): number {
 
 /**
  * Every file the turn's edit calls touched, in first-touched order, with the
- * lines they added and removed — counted from the call's own input
- * (`old_string`/`new_string`/`content`), so a Write counts its whole file as
- * added: the input does not say what was there before. A call that failed
- * changed nothing and is left out.
+ * lines they added and removed — the same line diff each row's own `+A −R`
+ * shows (`editStats`), so the fold and the rows beneath it agree. A Write
+ * counts its whole file as added: the input does not say what was there
+ * before. A call that failed changed nothing and is left out.
  */
 export function filesChanged(rows: ChatRow[]): FileChange[] {
   const byPath = new Map<string, FileChange>();
@@ -253,34 +252,12 @@ export function filesChanged(rows: ChatRow[]): FileChange[] {
     if (row.kind !== "tool_pair" || rowFailed(row)) continue;
     const name = toolName(row.use);
     const input = toolInput(row.use);
-    switch (name) {
-      case "Edit":
-        touch(input.file_path, countLines(input.new_string), countLines(input.old_string));
-        break;
-      case "MultiEdit": {
-        let added = 0;
-        let removed = 0;
-        for (const e of Array.isArray(input.edits) ? input.edits : []) {
-          const edit = (e ?? {}) as Record<string, unknown>;
-          added += countLines(edit.new_string);
-          removed += countLines(edit.old_string);
-        }
-        touch(input.file_path, added, removed);
-        break;
-      }
-      case "Write":
-        touch(input.file_path, countLines(input.content), 0);
-        break;
-      case "NotebookEdit":
-        touch(
-          input.notebook_path,
-          input.edit_mode === "delete" ? 0 : countLines(input.new_source),
-          0,
-        );
-        break;
-      default:
-        break;
+    if (name === "NotebookEdit") {
+      touch(input.notebook_path, input.edit_mode === "delete" ? 0 : countLines(input.new_source), 0);
+      continue;
     }
+    const stats = editStats(name, input);
+    if (stats) touch(input.file_path, stats.added, stats.removed);
   }
   return [...byPath.values()];
 }

@@ -7,7 +7,8 @@ const POST = vi.fn(async () => ({
   response: new Response(),
 }))
 vi.mock('./client.v2', () => ({ apiV2: { GET, POST }, WORKSPACE_HEADER: 'X-Workspace' }))
-const { listTasks, actOnTask, AgentApiError } = await import('./agents')
+const { listTasks, actOnTask } = await import('./agents')
+const { ApiError: AgentApiError } = await import('./problem')
 
 describe('task client', () => {
   it('passes filters as query params', async () => {

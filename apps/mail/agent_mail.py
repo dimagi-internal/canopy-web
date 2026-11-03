@@ -14,8 +14,8 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
-from apps.harness import services as harness
 from apps.harness import invocations, session_sync
+from apps.harness import services as harness
 from apps.harness.channels import email as email_channel
 from apps.harness.models import Turn
 
@@ -70,6 +70,56 @@ def _enforce_cap(msg) -> None:
         logger.exception("mail cap %s: eviction failed", msg.mailbox)
 
 
+def _store(route, parsed, raw_key: str, *, verdicts, raw_size: int, quiet: str | None):
+    """Store one inbound copy under `route`'s mailbox. Returns (msg, thread), or None when
+    this mailbox already holds the message."""
+    ws = route.workspace
+    keep = storage.kept_attachments([len(a.data) for a in parsed.attachments])
+    # The raw MIME holds every attachment, so a message that dropped one keeps no raw copy.
+    whole = all(keep)
+    try:
+        with transaction.atomic():
+            thread = threads.place(route, parsed)
+            msg = MailMessage.objects.create(
+                thread=thread, workspace=ws, direction=MailMessage.IN, mailbox=route.address,
+                message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
+                references=" ".join(parsed.references), from_addr=parsed.from_addr,
+                from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
+                reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
+                raw_key=ses.keep(raw_key) if whole else "", verdicts=dict(verdicts or {}),
+                size_bytes=storage.message_size(
+                    text=parsed.text, html=parsed.html, raw_size=raw_size if whole else 0,
+                    attachment_sizes=[len(a.data) for a, k in zip(parsed.attachments, keep) if k]),
+                auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
+            for i, (att, kept) in enumerate(zip(parsed.attachments, keep)):
+                key = f"attachments/{ws.slug}/{msg.pk}/{i}" if kept else ""
+                if kept:
+                    ses.put_object(key, att.data, att.content_type)
+                MailAttachment.objects.create(message=msg, filename=att.filename[:255],
+                                              content_type=att.content_type[:255],
+                                              size=len(att.data), s3_key=key, kept=kept)
+            upd = {"message_count": F("message_count") + 1, "last_message_at": timezone.now()}
+            if quiet is None:
+                upd["unread"] = True
+            elif thread.message_count == 0:
+                upd["unread"] = False  # a brand-new thread of only quiet mail
+            MailThread.objects.filter(pk=thread.pk).update(**upd)
+    except IntegrityError:
+        return None
+    _enforce_cap(msg)
+    thread.refresh_from_db()
+    return msg, thread
+
+
+def keep_forwarded(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
+    """Store a copy of mail a forward route passes on, as a thread only the destination can read."""
+    if MailMessage.objects.filter(workspace=route.workspace, mailbox=route.address,
+                                  message_id=parsed.message_id).exists():
+        return "duplicate"
+    stored = _store(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size, quiet=None)
+    return "duplicate" if stored is None else "kept"
+
+
 def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
     """Store one inbound copy for `route` and wake its agent. `raw_size` is the raw MIME
     object's length, counted against the mailbox's cap with the stored parts."""
@@ -79,40 +129,10 @@ def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_si
                 .select_related("thread").first())
     if existing is None:
         quiet = _quiet(route, parsed)
-        keep = storage.kept_attachments([len(a.data) for a in parsed.attachments])
-        # The raw MIME holds every attachment, so a message that dropped one keeps no raw copy.
-        whole = all(keep)
-        try:
-            with transaction.atomic():
-                thread = threads.place(route, parsed)
-                msg = MailMessage.objects.create(
-                    thread=thread, workspace=ws, direction=MailMessage.IN, mailbox=route.address,
-                    message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
-                    references=" ".join(parsed.references), from_addr=parsed.from_addr,
-                    from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
-                    reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
-                    raw_key=ses.keep(raw_key) if whole else "", verdicts=dict(verdicts or {}),
-                    size_bytes=storage.message_size(
-                        text=parsed.text, html=parsed.html, raw_size=raw_size if whole else 0,
-                        attachment_sizes=[len(a.data) for a, k in zip(parsed.attachments, keep) if k]),
-                    auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
-                for i, (att, kept) in enumerate(zip(parsed.attachments, keep)):
-                    key = f"attachments/{ws.slug}/{msg.pk}/{i}" if kept else ""
-                    if kept:
-                        ses.put_object(key, att.data, att.content_type)
-                    MailAttachment.objects.create(message=msg, filename=att.filename[:255],
-                                                  content_type=att.content_type[:255],
-                                                  size=len(att.data), s3_key=key, kept=kept)
-                upd = {"message_count": F("message_count") + 1, "last_message_at": timezone.now()}
-                if quiet is None:
-                    upd["unread"] = True
-                elif thread.message_count == 0:
-                    upd["unread"] = False  # a brand-new thread of only quiet mail
-                MailThread.objects.filter(pk=thread.pk).update(**upd)
-        except IntegrityError:
+        stored = _store(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size, quiet=quiet)
+        if stored is None:
             return "duplicate"
-        _enforce_cap(msg)
-        thread.refresh_from_db()
+        msg, thread = stored
         if quiet:
             return quiet
         _wake(route, parsed, msg, thread)
@@ -168,8 +188,12 @@ def _sent_today(domain, workspace_id=None) -> int:
     return sum(len(t or []) + len(c or []) for t, c in rows.values_list("to", "cc"))
 
 
-def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=()) -> MailMessage:
-    """Send as the route's agent. The From is always the route address."""
+def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=(),
+         sender_name="", from_address="", owner=None) -> MailMessage:
+    """Send as the route's agent. The From is the route address — or, for a person replying
+    from a catch-all, the `from_address` the mail was sent to (the caller proves it resolves
+    to this route). `sender_name` is the display name of a person sending; `owner` makes a
+    thread this starts private to that person."""
     # The domain row is locked (select_for_update) across the cap check, the SES call and
     # the insert, so concurrent sends from one domain are serialised and cannot overshoot
     # the daily cap. The lock is held during the SES call — acceptable at this volume.
@@ -178,7 +202,8 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
         domain = MailDomain.objects.select_for_update(of=("self",)).select_related("workspace").get(
             pk=route.domain_id)
         out = _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
-                           thread=thread, attachments=attachments)
+                           thread=thread, attachments=attachments, sender_name=sender_name,
+                           from_address=from_address, owner=owner)
     _enforce_cap(out)  # outside the domain lock: eviction is the mailbox's own business
     _admit_recipients(route, out)
     return out
@@ -201,7 +226,8 @@ def _admit_recipients(route, out) -> None:
         logger.exception("mail %s: could not admit the recipients to its session", out.pk)
 
 
-def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments) -> MailMessage:
+def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments,
+                 sender_name="", from_address="", owner=None) -> MailMessage:
     if domain.status == MailDomain.SUSPENDED:
         raise SendRefused(409, f"sending from {domain.name} is suspended: {domain.suspended_reason}")
     if domain.status != MailDomain.VERIFIED:
@@ -209,7 +235,7 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     to, cc = _addresses(to, "recipient"), _addresses(cc, "cc")
     if not to:
         raise SendRefused(422, "no recipients")
-    own = route.address.lower()
+    own = (from_address or route.address).lower()
     if own in to or own in cc:
         raise SendRefused(422, "an agent cannot send mail to its own address")
     if len(to) + len(cc) > MAX_RECIPIENTS:
@@ -225,7 +251,8 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         raise SendRefused(429, f"this workspace reached its daily send cap on {domain.name} ({share.daily_send_cap})")
     subject = _line(subject)
     msg = EmailMessage()
-    msg["From"] = formataddr((_line(route.agent.name) if route.agent_id else "", route.address))
+    msg["From"] = formataddr((_line(sender_name) or (_line(route.agent.name) if route.agent_id else ""),
+                              from_address or route.address))
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
@@ -251,7 +278,7 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         msg.add_attachment(att.data, maintype=main, subtype=sub or "octet-stream",
                            filename=_line(att.filename))
     try:
-        ses_id = ses.send_raw(from_addr=route.address, to=to + cc, raw=msg.as_bytes())
+        ses_id = ses.send_raw(from_addr=from_address or route.address, to=to + cc, raw=msg.as_bytes())
     except ses.MailOff:
         raise SendRefused(503, "mail is turned off on this deployment") from None
     except ClientError as exc:
@@ -260,11 +287,12 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     except BotoCoreError as exc:
         raise SendRefused(502, f"the mail provider refused: {type(exc).__name__}") from None
     if thread is None:
-        thread = MailThread.objects.create(workspace=route.workspace, route=route, subject=subject[:998])
+        thread = MailThread.objects.create(workspace=route.workspace, route=route, owner=owner,
+                                           subject=subject[:998])
     out = MailMessage.objects.create(
         thread=thread, workspace=route.workspace, direction=MailMessage.OUT, mailbox=route.address,
         message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
-        references=msg.get("References", ""), from_addr=route.address, to=to, cc=cc,
+        references=msg.get("References", ""), from_addr=from_address or route.address, to=to, cc=cc,
         subject=subject[:998], text=text, html=html, ses_message_id=ses_id,
         delivery_status=MailMessage.SENT,
         # Only the text and html of a sent message are stored (no raw MIME, no attachments).

@@ -231,7 +231,7 @@ def test_the_report_corrects_an_autotitled_session():
     title = "I think we basically implemented everything"
     session = Session.objects.create(workspace=ws, created_by=jj, title=title)
     Message.objects.create(session=session, turn_index=0, role=Message.USER,
-                           plaintext=title)
+                           plaintext=title, typed=True)
     RunnerBinding.objects.create(session=session, runner=runner,
                                  session_key="canopy-web-api-7716",
                                  thread_key="emdash:canopy-web-api-7716",

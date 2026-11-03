@@ -22,6 +22,7 @@ from ninja.errors import HttpError
 from apps.agents.credentials import google_mint as agent_google_mint
 from apps.agents.credentials import workspace_vaults
 from apps.agents.credentials.zk import ZkError
+from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent
 from apps.agents.route_refusals import zk_problem
 from apps.api.errors import ProblemError
@@ -73,7 +74,8 @@ from .schemas import (
     FleetHoldIn,
     FleetHoldOut,
     FleetStopOut,
-    WorkspaceHoldOut,
+    GoogleMintChallengeIn,
+    GoogleMintResultIn,
     HeartbeatIn,
     OpenSignInRequestOut,
     PauseIn,
@@ -86,7 +88,6 @@ from .schemas import (
     RunnerCredentialResolveOut,
     RunnerCredentialStatusOut,
     RunnerDirectedIn,
-    RunnerNameIn,
     RunnerEgressIn,
     RunnerEngineIn,
     RunnerEnrollmentIn,
@@ -96,8 +97,6 @@ from .schemas import (
     RunnerIn,
     RunnerLoginOrderIn,
     RunnerLoginReportIn,
-    GoogleMintChallengeIn,
-    GoogleMintResultIn,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
     RunnerMintEntryIn,
@@ -105,6 +104,7 @@ from .schemas import (
     RunnerMintResultIn,
     RunnerMintStartIn,
     RunnerMintUrlIn,
+    RunnerNameIn,
     RunnerOnlyAgentsIn,
     RunnerOnlyAgentsOut,
     RunnerOpenSessionCloseOut,
@@ -125,6 +125,7 @@ from .schemas import (
     UsageReportIn,
     UsageReportOut,
     UsageScopeOut,
+    WorkspaceHoldOut,
 )
 from .session_sync import report_projects
 
@@ -471,8 +472,6 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
     )
     if turn is None:
         raise HttpError(404, "turn not found")
-    from apps.agents.services import runner_may_hold_agent
-
     # A claim already requires this; re-asked here because a owner can be
     # demoted mid-turn, and this is the owner's GitHub identity.
     agent = delegations.turn_agent(turn)
@@ -492,8 +491,7 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
                 "kind": "agent.github.issued",
                 "level": "info",
                 "key": f"{agent.slug}:{turn.pk}",
-                "summary": (f"{agent.slug}: GitHub identity for one turn on {runner.name}"
-                            + ("" if issued["delegated"] else " (token issued the old way)")),
+                "summary": f"{agent.slug}: GitHub identity for one turn on {runner.name}",
                 "payload": {"agent": agent.slug, "turn": str(turn.pk),
                             "runner": str(runner.pk), "as": issued["github_login"],
                             "delegated": issued["delegated"]},
@@ -521,7 +519,6 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
     # participants only, canopy_sessions/access.py). Claiming the turn is what
     # entitles the box to it — the same rule as turn_github_token above.
     from apps.agents.credentials import delegations
-    from apps.agents.services import runner_may_hold_agent
     from apps.canopy_sessions import attachment_storage, private_attachments
 
     runner = runner_or_404(request, runner_id)

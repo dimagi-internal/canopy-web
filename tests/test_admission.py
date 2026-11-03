@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from apps.admission import defaults, notices, runner_notices
 from apps.admission.models import AdmissionNotice, AdmissionRule, AdmissionSettings
+from apps.agents import roles
 from apps.agents.models import Agent, AgentGrant
 from apps.harness import services
 from apps.harness.claim import claim_next_turn
@@ -28,7 +29,7 @@ from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -37,7 +38,21 @@ VIKRAM = "vkumar@dimagi.com"
 PASS_ALL = ("mx.google.com; dkim=pass header.i=@dimagi.com; spf=pass "
             "smtp.mailfrom=dimagi.com; dmarc=pass header.from=dimagi.com")
 VERIFIED = [{"name": "Authentication-Results", "value": PASS_ALL}]
-CONFINING = {"capabilities": {"ask": {"callers": ["contact@dimagi.com:verified"]}}}
+
+
+def _confine(hal):
+    """`ask` for verified dimagi.com contacts only, and workspace editors drive it manually."""
+    declare(hal, {"ask": {}})
+    allow(hal, role=roles.READ_ONLY, contact=True, domain="dimagi.com", verified=True)
+    editors_run(hal)
+
+
+def _ask_any_contact(hal):
+    declare(hal, {"ask": {}})
+    allow(hal, role=roles.READ_ONLY, contact=True)
+    editors_run(hal)
+
+
 CAPS = {"sessions": True, "profiles": PROFILES_VERSION, "envelope": ENVELOPE_VERSION}
 
 
@@ -55,7 +70,7 @@ def fleet():
     M.objects.create(workspace=ws, user=jj, role=M.OWNER)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj,
                                turn_mode=Agent.MANUAL)
-    publish(hal, CONFINING)
+    _confine(hal)
     cloud = _runner("cloud-ec2-2", Runner.CLOUD, jj)
     laptop = _runner("jj-mbp", Runner.EMDASH, jj)
     return {"jj": jj, "ws": ws, "hal": hal, "cloud": cloud, "laptop": laptop}
@@ -239,7 +254,7 @@ def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbac
     # A no-reply address cannot be a verified dimagi.com contact in the ask
     # list, so give it a rule of its own.
     hal = fleet["hal"]
-    publish(hal, {"capabilities": {"ask": {"callers": ["contact"]}}})
+    _ask_any_contact(hal)
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
                               sender=sender, headers=[])
     assert notice.status == AdmissionNotice.SKIPPED and "no-reply" in notice.detail
@@ -256,7 +271,7 @@ def test_a_person_whose_address_merely_contains_the_letters_is_still_a_person(se
 def test_another_agents_address_gets_no_notice_however_the_turn_was_typed(
         fleet, django_capture_on_commit_callbacks):
     hal = fleet["hal"]
-    publish(hal, {"capabilities": {"ask": {"callers": ["contact"]}}})
+    _ask_any_contact(hal)
     Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["jj"],
                          email="ada@dimagi-ai.com")
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
@@ -494,7 +509,8 @@ def test_a_person_offered_nothing_is_refused_and_their_rule_fires(
         fleet, django_capture_on_commit_callbacks):
     hal = fleet["hal"]
     AgentGrant.objects.filter(agent=hal).delete()
-    publish(hal, None)  # nothing published, no contact line: a contact is offered nothing
+    declare(hal, None)  # nothing published, no contact line: a contact is offered nothing
+    editors_run(hal)
     rule = _seeded(fleet["ws"], "offered-nothing")
     rule.notify_owner = True
     rule.save()

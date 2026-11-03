@@ -1,11 +1,15 @@
-"""The liveness window, defined once.
+"""Which sessions are open, and which turns drive a session.
 
-Separate from services.py so it can be imported without dragging in models, signals,
-and the realtime bridge — including from a migration, which imports SESSION_LIVE_WINDOW
-(the window is data) but must NOT reuse `unseen_q` (the rule is logic, and it moves).
-Migration 0009 learned that the hard way: the predicate grew a join into
-`Runner.sessions_reported_at`, a field its historical models do not have, and every
-test database stopped building. A one-shot backfill freezes its own copy of the rule.
+`active` is the one rule for "open sessions": `status="active"` minus `unseen_q`,
+which is derived on every read from the binding's sightings and, on a box that
+posts no wholesale session report (the cloud runner), from the turns that drive
+the session. `driving_turns` / `driving_turns_of` define "the turns that drive a
+session" once, for this module, the mode badge (`transcript_read.with_driving_turn`),
+the session resolver (`session_state`), placement and the session info page.
+`ran_on_its_own` is the one rule for "nobody is waiting on this session".
+
+A migration may import the window constants (data) but must not reuse the
+predicates (logic): they read fields a historical model does not have.
 """
 from __future__ import annotations
 
@@ -31,72 +35,31 @@ from django.utils import timezone
 
 from . import lifecycle
 
-# How long a runner-discovered session survives with no runner sighting before it
-# drops out of `state=active`.
-#
-# LIVENESS IS POLLED, NOT EVENTED. The runner re-reports its ENTIRE open-task set on
-# a guaranteed heartbeat every `session_report_seconds` (10s) — not only when
-# something changes — and skips the report outright if it could not read emdash. So
-# "seen in the last few minutes" is a direct, self-healing observation of what is
-# actually open on that box, and absence needs no explanation to be acted on.
-#
-# It replaced a 3-day window that existed to cover an ambiguity that turned out to be
-# unfixable at the source: the written closing signal (`list_recently_archived_tasks`,
-# `archived_at IS NOT NULL`) NEVER FIRES, because emdash DELETES a closed task rather
-# than archiving it — verified 2026-07-25 on a 7-week-old emdash4.db with zero
-# archived rows ever. Every closed task therefore fell through to the 3-day timer, and
-# labs accumulated 47 sessions that were `active`, unreachable, and (because the old
-# report path nulled their runner FK) could not even say which box they came from.
-#
-# 3 minutes is ~18x the report cadence, so a runner restart or a run of swallowed
-# POSTs never retires anything, while a box that has genuinely gone away stops being
-# offered promptly. The rule is derived on every read, so a returning runner
-# un-retires its sessions with no repair step.
+# How long a session survives with no sighting from a runner that posts wholesale
+# session reports before it drops out of `state=active`. Such a runner re-reports
+# its whole open-task set every `session_report_seconds` (10s) and skips the report
+# when it could not read emdash, so "seen within the window" is a direct observation
+# of what is open on that box. Three minutes is ~18 report cadences: a runner
+# restart never retires anything, and a box that went away stops being offered
+# promptly. Derived on every read, so a returning runner un-retires its sessions.
 SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 
-# A box that posts NO wholesale reports (the cloud runner) has no open-task set to
-# observe: it runs each turn as one Claude process that EXITS when the turn ends. So
-# there, a finished turn says nothing about whether the SESSION is done — a manual
-# turn ends by asking for approval, and its session is exactly the one you need to
-# find. #1140 closed a cloud session the moment its last turn ended; that hid every
-# session waiting on a person (Jonathan, 2026-10-07: "the sessions weren't done").
-# So a cloud-held session stays open until someone closes or archives it, or its
-# runner is retired (the box is gone; nothing can continue it there). The list shows
-# each session's turn mode, which is how an auto session that just ran and a manual
-# one waiting on you are told apart.
-#
-# Except a session that RAN ON ITS OWN (`feed.ran_on_its_own`: started in auto mode,
-# not from a person's chat): nobody is waiting on it by definition, so once nothing
-# on it is in flight it is done. Left open, these were 56 of Jonathan's 62 "active"
-# sessions on 2026-10-11 — finished huddle rounds, thread messages and scheduled
-# turns, burying the six that needed a person (#1396). Manual and chat-started
-# sessions keep the open-until-closed rule above, and a session with a dialog up
-# (`pending_question`) is never retired whatever its mode.
-
-#
-# And a PERSON's web chat on the cloud closes once it has been idle for
-# CLOUD_CHAT_IDLE: no turn on it created or finished in that long, nothing in
-# flight, no dialog up, started in auto mode. Held open until closed, these were
-# 106 of cloud-ec2-2's 110 open sessions on 2026-10-26, none needing anyone —
-# a web chat left alone is far more often abandoned than waiting (Jonathan,
-# 2026-10-26). Sending to it again is a new turn, which reopens it. A session an
-# AGENT started (its first turn's initiator is an agent, or an agent's own login)
-# ran on its own whatever channel it came in on.
-#
-# A conversation in a SLACK THREAD is a person's chat too: people reply in the thread,
-# and a reply is a new turn on the same session. It used to count as having "ran on its
-# own" the moment its one turn ended, so a person who asked an agent in Slack (or typed
-# `/agent read-channel`) never found that session in their active list (Jonathan,
-# 2026-10-30). It now follows the web-chat rule: open until idle for CLOUD_CHAT_IDLE.
+# A box that posts no wholesale reports (the cloud runner) runs each turn as one
+# process that exits when the turn ends, so a finished turn says nothing about
+# whether the session is done. A session it holds stays open until it is closed or
+# archived or its runner is retired, with three exceptions that retire it once
+# nothing on it is in flight and no dialog is up:
+#   * it ran on its own (`ran_on_its_own`): nobody is waiting on it;
+#   * it is a person's conversation (a web chat, or a Slack thread) started in auto
+#     mode, and no turn on it was created or finished within CLOUD_CHAT_IDLE.
+# A manual-mode session waits for a person and keeps the open-until-closed rule.
 CLOUD_CHAT_IDLE = dt.timedelta(hours=24)
 
-# How long a transferred session stays listed while its NEW box has not reported it
-# yet. A transfer clears the source's identity off the binding, waits up to
-# `handoff.CAPTURE_WAIT` (3 min) for the source to pack the worktree, and only then
-# enqueues the turn the target has to claim — so the last sighting is the SOURCE's
-# and goes stale before the target's first report, and the session vanished from
-# every list mid-move and came back minutes later. Bounded, so a transfer whose
-# target never picks it up still retires like any other quiet session.
+# How long a transferred session stays listed while its new box has not reported it
+# yet. The transfer clears the source's identity off the binding and the transfer
+# turn is enqueued only once the source packs its work (`handoff.CAPTURE_WAIT`), so
+# the last sighting is the source's. Bounded, so a transfer the target never picks
+# up still retires like any other quiet session.
 TRANSFER_WINDOW = dt.timedelta(minutes=30)
 
 
@@ -122,28 +85,80 @@ def is_transferring(binding, now=None) -> bool:
     return binding.live_seen_at is None or binding.live_seen_at < binding.transferred_at
 
 
-def driving_turns():
-    """The turns that drove a session, for use under a Session queryset: a chat
-    send carries the session itself (`chat_session`), an agent turn the runner
-    opened a session for carries the session too (`Turn.canopy_session`, written
-    by record-session) and its key (`Turn.session_key`, the binding's).
-    Defined once for `transcript_read.with_driving_turn` (the mode badge and the feed)
-    and `unseen_q` (the auto-retire leg), so the two cannot disagree about which
-    turn started a session.
+def _driving_q(session_pk, agent_id, session_key) -> Q:
+    """The turns that drive one session: a chat send names the session
+    (`chat_session`), a turn the runner opened a session for names it too
+    (`Turn.canopy_session`, written by record-session), and an agent turn carries
+    the binding's key (`Turn.session_key`). Takes values or `OuterRef`s, so the
+    queryset form and the one-session form are the same predicate."""
+    q = Q(chat_session=session_pk) | Q(canopy_session=session_pk)
+    if agent_id is not None and session_key != "":
+        q |= Q(agent=agent_id, session_key=session_key) & ~Q(session_key="")
+    return q
 
-    The key alone is not enough: a dispatched turn that carries its own thread key
-    (a huddle round) can leave the turn's key and the binding's different, and then
-    the session had no driving turn at all — no mode badge, and on the cloud runner
-    never retired."""
+
+def driving_turns():
+    """The turns that drive each session, for use under a Session queryset
+    (`_driving_q` against the outer row)."""
     Turn = apps.get_model("harness", "Turn")
     return Turn.objects.filter(
-        Q(chat_session=OuterRef("pk"))
-        | Q(canopy_session=OuterRef("pk"))
-        | (
-            Q(agent=OuterRef("agent"), session_key=OuterRef("runner_binding__session_key"))
-            & ~Q(session_key="")
-        )
-    )
+        _driving_q(OuterRef("pk"), OuterRef("agent"), OuterRef("runner_binding__session_key")))
+
+
+def driving_turns_of(session):
+    """`driving_turns` for one session in hand."""
+    Turn = apps.get_model("harness", "Turn")
+    binding = getattr(session, "runner_binding", None)
+    key = binding.session_key if binding is not None else ""
+    return Turn.objects.filter(_driving_q(session.pk, session.agent_id, key))
+
+
+def ran_on_its_own(*, mode: str | None, origin: str | None, slack_thread: bool,
+                   started_by_agent: bool) -> bool:
+    """Nobody is waiting on this session: its first claimed turn ran in `auto` mode,
+    and it is not a person's conversation (a web chat or a Slack thread) — or an
+    agent started it, whatever channel it came in on. `ran_on_its_own_q` is the
+    same rule in SQL; the supervisor feed holds such a session back (`feed.AUTO`)
+    and the cloud runner's sessions retire on it (`unseen_q`)."""
+    Turn = apps.get_model("harness", "Turn")
+    if mode != "auto":
+        return False
+    conversation = origin == Turn.ORIGIN_CANOPY_WEB_CHAT or slack_thread
+    return not conversation or started_by_agent
+
+
+def started_by_agent_q() -> Q:
+    """For a Turn queryset: its initiator is an agent, or an agent's own login (an
+    agent calling the API as itself records `kind="user"`)."""
+    Agent = apps.get_model("agents", "Agent")
+    return Q(initiator_kind="agent") | Q(Exists(Agent.objects.filter(user=OuterRef("initiator_user"))))
+
+
+def turn_started_by_agent(turn) -> bool:
+    """`started_by_agent_q` for one turn in hand."""
+    Agent = apps.get_model("agents", "Agent")
+    if turn.initiator_kind == "agent":
+        return True
+    return bool(turn.initiator_user_id) and Agent.objects.filter(user_id=turn.initiator_user_id).exists()
+
+
+def first_driving_turn():
+    """The first claimed turn that drove each session (claimed: an unclaimed turn
+    has no mode yet), annotated `_by_agent` — what the session's mode, origin and
+    `ran_on_its_own` read."""
+    return (driving_turns().exclude(turn_mode="").order_by("created_at")
+            .annotate(_by_agent=ExpressionWrapper(started_by_agent_q(), output_field=BooleanField())))
+
+
+def ran_on_its_own_q() -> Q:
+    """`ran_on_its_own` under a Session queryset."""
+    Turn = apps.get_model("harness", "Turn")
+    first = first_driving_turn()
+    mode = Coalesce(Subquery(first.values("turn_mode")[:1]), Value(""))
+    origin = Coalesce(Subquery(first.values("origin")[:1]), Value(""))
+    by_agent = Coalesce(Subquery(first.values("_by_agent")[:1]), Value(False))
+    conversation = Q(Exact(origin, Turn.ORIGIN_CANOPY_WEB_CHAT)) | Q(metadata__has_key="slack_thread")
+    return Q(Exact(mode, "auto")) & (~conversation | Q(Exact(by_agent, True)))
 
 
 def stale_cutoff(now=None):
@@ -192,47 +207,36 @@ def _predicates() -> _Predicates:
         runner_binding__live_seen_at__isnull=True
     )
 
-    # UNCHANGED. A runner-discovered session could only have come from a report, so
-    # absence — of a sighting or of a binding entirely — is staleness with no further
-    # qualification. Narrowing this leg would resurrect the 47 zombies of 2026-07-25.
+    # A runner-discovered session could only have come from a report, so absence —
+    # of a sighting or of a binding entirely — is staleness with no further
+    # qualification.
     #
     # Except on the cloud runner, which records a session per turn and never reports
-    # it again: there, the session is open until it is closed or its runner is
-    # retired (see the module note above `stale_cutoff`). Gated on the runner's KIND, not on
-    # its never having reported: a laptop that went quiet before
-    # `sessions_reported_at` existed has no stamp either, and its sessions are
-    # exactly the zombies this leg retires. A session with no binding, or whose
-    # binding lost its runner, keeps the rule above.
+    # it again: there the rule is `cloud_done` (the note above CLOUD_CHAT_IDLE). Gated
+    # on the runner's KIND, not on its never having reported: a laptop that never
+    # stamped `sessions_reported_at` is retired by the quiet rule. A session with no
+    # binding, or whose binding lost its runner, keeps the rule above.
     unobserved = Q(runner_binding__runner__kind="cloud") & Q(
         runner_binding__runner__sessions_reported_at__isnull=True
     )
     Runner = apps.get_model("harness", "Runner")
     cloud_gone = Q(runner_binding__runner__status=Runner.RETIRED)
     # A cloud-held session that ran on its own is done once nothing on it is in
-    # flight (the module note above `driving_turns`). Its mode is the FIRST claimed
-    # turn's — the same turn `with_driving_turn` badges — and a later turn still
-    # queued or running keeps it open. A dialog up keeps it open too.
+    # flight. Its mode is the FIRST claimed turn's — the same turn `with_driving_turn`
+    # badges — and a later turn still queued or running keeps it open, as does a
+    # dialog that is up.
     Turn = apps.get_model("harness", "Turn")
-    driving = driving_turns().exclude(turn_mode="").order_by("created_at")
+    driving = first_driving_turn()
     # Coalesced: a session with no claimed turn yet must compare FALSE, not NULL —
     # `state=active` EXCLUDES this predicate, and NOT(NULL) would drop the row.
     def first(field):
         return Coalesce(Subquery(driving.values(field)[:1]), Value(""))
 
-    # Started by an agent: the first turn's initiator is one, or is an agent's own
-    # login (an agent calling the API as itself records `kind="user"`).
-    Agent = apps.get_model("agents", "Agent")
-    by_agent = driving.annotate(_by_agent=ExpressionWrapper(
-        Q(initiator_kind="agent") | Q(Exists(Agent.objects.filter(user=OuterRef("initiator_user")))),
-        output_field=BooleanField(),
-    ))
-    started_by_agent = Coalesce(Subquery(by_agent.values("_by_agent")[:1]), Value(False))
     auto = Q(Exact(first("turn_mode"), "auto"))
-    web_chat = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT))
     # A conversation: a person's web chat, or a session bound to a Slack thread.
     slack_thread = Q(metadata__has_key="slack_thread")
-    conversation = web_chat | slack_thread
-    ran_on_its_own = auto & (~conversation | Q(Exact(started_by_agent, True)))
+    conversation = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)) | slack_thread
+    ran_on_its_own = ran_on_its_own_q()
     # Idle: no driving turn created or finished within CLOUD_CHAT_IDLE. Turn times,
     # not the binding's: a cloud binding's `live_seen_at` is stamped per turn and
     # its `last_interacted_at` is never reported.
@@ -250,18 +254,11 @@ def _predicates() -> _Predicates:
         (~unobserved & quiet) | (unobserved & cloud_done)
     )
 
-    # NEW, and gated on an OBSERVER existing. A sent web chat is held and reported
-    # like any other, so its going quiet means the same thing — but ONLY on a box that
-    # actually posts wholesale reports. The cloud runner does not (it record-sessions
-    # once per turn and has no open-task set to report), so there `live_seen_at` is a
-    # creation stamp and its age is not evidence. Ungated, this archived a cloud chat
-    # 3 minutes after its turn STARTED, mid-run. `sessions_reported_at` is that gate; see Runner for why it is `isnull`
-    # rather than a freshness window.
-    #
-    # And held by the cloud runner, the same rule the runner leg uses: open until it
-    # is closed, its runner is retired, or (a person's auto-mode chat) it has been
-    # idle for CLOUD_CHAT_IDLE. (Labs once listed a hal chat 67 days after
-    # its last word, on a cloud runner long since gone — the retired gate ends that.)
+    # A web chat once a runner holds it: going quiet means the same thing as for a
+    # runner-discovered session, but only on a box that posts wholesale reports
+    # (`sessions_reported_at` set — see Runner for why it is `isnull` rather than a
+    # freshness window). On the cloud runner `live_seen_at` is a per-turn stamp and
+    # its age is not evidence, so the cloud rule (`cloud_done`) applies instead.
     web_unseen = (
         ~Q(origin="runner")
         & Q(runner_binding__isnull=False)

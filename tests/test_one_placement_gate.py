@@ -71,7 +71,7 @@ def test_editor_cannot_move_an_agent_chats_queued_turns_onto_a_box_they_may_not_
     session = _agent_chat(ws, agent, bob)
     session_send.send_message(session=session, text="hi", user=bob, client_id="c1")
     with pytest.raises(ValueError):
-        session_send.move_queued_turns(session=session, placement=str(box.id), user=bob)
+        session_placement.move_queued_turns(session=session, placement=str(box.id), user=bob)
 
 
 @pytest.mark.parametrize("who", ["alice", "bob", "carol"])
@@ -99,11 +99,11 @@ def test_send_place_and_move_agree(team, who, kind):
                                                 client_id="a", placement=str(box.id)))
     s2 = fresh()
     session_send.send_message(session=s2, text="hi", user=user, client_id="b")
-    at_place = allowed(lambda: session_send.place_queued_turn(session=s2, placement=str(box.id),
+    at_place = allowed(lambda: session_placement.place_queued_turn(session=s2, placement=str(box.id),
                                                       user=user))
     s3 = fresh()
     session_send.send_message(session=s3, text="hi", user=user, client_id="c")
-    at_move = allowed(lambda: session_send.move_queued_turns(session=s3, placement=str(box.id),
+    at_move = allowed(lambda: session_placement.move_queued_turns(session=s3, placement=str(box.id),
                                                      user=user))
     assert at_send == at_place == at_move == session_placement.may_place(user, s1, box)
     # alice owns the agent and the box; carol administers the box; bob neither.

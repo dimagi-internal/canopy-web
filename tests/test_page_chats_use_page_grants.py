@@ -25,6 +25,7 @@ import pytest
 from asgiref.sync import async_to_sync
 from django.contrib.auth.models import User
 
+from apps.agents import roles
 from apps.agents.interface import InterfaceError, own_login_of, page_sites, parse, site_ceiling
 from apps.agents.models import Agent
 from apps.canopy_sessions import chat_keys
@@ -36,17 +37,17 @@ from apps.host_grants import host_gateway
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 from tests.fixtures import site_gateway as sg
 
 pytestmark = pytest.mark.django_db
 
-IFACE = {"capabilities": {
-    "connect": {"callers": ["contact"], "sites": ["connect-labs"],
+IFACE = {
+    "connect": {"sites": ["connect-labs"],
                 "ceiling": ["mcp__*connect_labs__marketplace_*"],
                 "own_login": {"connect-labs": ["LABS_MCP_TOKEN"]},
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
-}}
+}
 
 
 @pytest.fixture()
@@ -57,7 +58,9 @@ def host(monkeypatch):
 @pytest.fixture()
 def w():
     w = sg.world()
-    publish(w["agent"], IFACE)
+    declare(w["agent"], IFACE)
+    allow(w["agent"], capability="connect", contact=True)
+    editors_run(w["agent"])
     # The OWNER's own chat with the agent, held on a connect-labs page.
     w["chat"] = Session.objects.create(workspace=w["ws"], agent=w["agent"],
                                        metadata={"embed_app": "connect-labs"},
@@ -121,8 +124,9 @@ def test_a_grant_bound_to_a_different_agent_is_not_this_agents(w, host):
 
 def test_an_agent_not_set_up_for_the_site_is_refused(w, host):
     _owner_grant(w)
-    publish(w["agent"], {"capabilities": {
-        "ask": {"callers": ["contact"], "tools": ["mcp__*canopy-web__who_is_asking"]}}})
+    declare(w["agent"], {"ask": {"tools": ["mcp__*canopy-web__who_is_asking"]}})
+    allow(w["agent"], role=roles.READ_ONLY, contact=True)
+    editors_run(w["agent"])
     _refused(w, host, "not set up to use")
 
 
@@ -214,14 +218,14 @@ def test_own_login_parses_and_answers_per_site(w):
     assert own_login_of(agent, "elsewhere") == []
     assert site_ceiling(agent, "connect-labs") == ["mcp__*connect_labs__marketplace_*"]
     # An interface published before the key existed parses exactly as it did.
-    plain = {"capabilities": {"connect": {"role": "viewer", "sites": ["connect-labs"]}}}
+    plain = {"capabilities": {"connect": {"sites": ["connect-labs"]}}}
     assert "own_login" not in parse(plain)["capabilities"]["connect"]
 
 
 def test_a_site_any_capability_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
     agent = Agent(interface=parse({"capabilities": {
-        "a": {"role": "viewer", "sites": ["connect-labs"], "ceiling": ["x_*"]},
-        "b": {"role": "user", "sites": ["connect-labs"]}}}))
+        "a": {"sites": ["connect-labs"], "ceiling": ["x_*"]},
+        "b": {"sites": ["connect-labs"]}}}))
     assert site_ceiling(agent, "connect-labs") == []
 
 
@@ -232,7 +236,7 @@ def test_a_site_any_capability_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
 ])
 def test_own_login_refuses_nonsense(own, match):
     with pytest.raises(InterfaceError, match=match):
-        parse({"capabilities": {"c": {"role": "viewer", "sites": ["connect-labs"],
+        parse({"capabilities": {"c": {"sites": ["connect-labs"],
                                       "own_login": own}}})
 
 

@@ -22,6 +22,9 @@ import type { Message } from "./protocol";
 
 /** canopy's `MessageOut` (apps/canopy_sessions/schemas.py), structurally. */
 export interface RestMessage {
+  /** The stored row's id, the same id the session socket carries for it. Absent
+   *  on an older server. */
+  id?: string;
   turn_index: number;
   role: string;
   content: Record<string, unknown>;
@@ -36,17 +39,19 @@ export interface RestMessage {
 }
 
 /**
- * Synthetic id (`t<turn_index>`) + `status: "complete"`.
+ * The row's stored id + `status: "complete"`.
  *
- * `prependHistory` dedupes on `turn_index`, not on `id`, so a synthetic id can
- * never collide with the live WS row for the same turn — which is the whole
- * reason it is safe to invent one here. `started_at` is null because a row read
+ * The id is the one the socket's snapshot and live frames carry for the same
+ * row, so a row painted from REST keeps its React key when the snapshot replaces
+ * it. An older server sends none; then the id is synthetic (`t<turn_index>`),
+ * which is safe because `prependHistory` dedupes on `turn_index`, not on `id`.
+ * `started_at` is null because a row read
  * back from REST has no streaming history to report; `completed_at` takes
  * `created_at`, which is when the turn finished as far as the server records it.
  */
 export function restToKitMessage(m: RestMessage): Message {
   return {
-    id: `t${m.turn_index}`,
+    id: m.id ? String(m.id) : `t${m.turn_index}`,
     turn_index: m.turn_index,
     role: m.role as Message["role"],
     content: m.content,

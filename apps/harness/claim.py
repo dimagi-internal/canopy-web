@@ -20,6 +20,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.agents.holding import runner_may_hold_agent
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
@@ -61,6 +62,8 @@ from .routing import (
     runner_target_q,
     runner_tenant_slugs,
     runner_tenant_slugs_of,
+    transfer_held_q,
+    transfer_holding,
     turn_serves_refusal,
     turn_workspace_q,
 )
@@ -167,8 +170,6 @@ def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
     agent = t.acting_agent
     if agent is None:
         return True
-    from apps.agents.services import runner_may_hold_agent
-
     if holds is None:
         return runner_may_hold_agent(r, agent)
     key = (r.id, agent.id)
@@ -325,11 +326,14 @@ class Reach:
     #: caller's turn) must not be blamed on them — that sends its owner to the
     #: wrong fix.
     blocked_by_requirements: bool = False
-    #: The executing turn this one waits behind (`blocking_turn`): its session's
-    #: previous message, or its agent's current turn. A LIVE runner will take it,
-    #: but not until that turn ends — "picking this up" would be a promise the
-    #: claim is not keeping (canopy-web#1147).
+    #: The turn this one waits behind (`blocking_turn`): its session's previous
+    #: message, or a transfer's turn still waiting to start. A LIVE runner will
+    #: take it, but not until that turn ends — "picking this up" would be a
+    #: promise the claim is not keeping.
     behind: Turn | None = None
+    #: Its session is mid-transfer and the transfer turn does not exist yet (the
+    #: source is still packing its work, `routing.transfer_holding`).
+    transfer: bool = False
     #: For PARKED: when the first of its runners resumes on its own (a scheduled
     #: unpause), or None when only a person resuming one will run it.
     held_until: dt.datetime | None = None
@@ -403,7 +407,8 @@ def turn_reach(turn: Turn) -> Reach:
     # taker, not "offline".
     live += [r for r in covering if r.wakeable and r not in live]
     if live:
-        return Reach(LIVE, live, behind=blocking_turn(turn))
+        return Reach(LIVE, live, behind=blocking_turn(turn),
+                     transfer=transfer_holding(turn) is not None)
     if online:
         # Up, heartbeating, and unable to run the turn's CLI: "Picking this up on X"
         # over a box that will answer "Not logged in" is the lie this state replaces.
@@ -913,6 +918,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .filter(match_q)
         .filter(profile_q(runner))
         .exclude(chat_session_id__in=busy_sessions)
+        # A session mid-transfer runs its transfer turn first (`transfer_held_q`).
+        .exclude(transfer_held_q())
         # The AGENT hold (Agent.held): none of a held agent's turns — its own or a
         # chat with it — is claimed, ridden or pinned, like the fleet hold above
         # but for one agent. Outside `match_q` so a pin cannot punch through it.
@@ -947,8 +954,6 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     admins: dict = {}
     now = timezone.now()
     my_flags = rr.in_force(runner)
-    from apps.agents.services import runner_may_hold_agent
-
     trusted: dict[int, bool] = {}
     # Why each candidate this box passed over was passed over, said on the turn
     # (`_note_skips`) so "queued, no runner has claimed it" never again has to be

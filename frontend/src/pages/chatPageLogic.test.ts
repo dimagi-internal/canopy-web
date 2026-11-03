@@ -17,6 +17,7 @@ import type { ChatSessionDetail } from "@/api/chat";
 describe("restToKitMessage", () => {
   it("maps a REST MessageOut into the kit Message shape as complete", () => {
     const rest: ChatSessionDetail["messages"][number] = {
+      id: "41",
       turn_index: 7,
       role: "assistant",
       plaintext: "hello",
@@ -24,7 +25,7 @@ describe("restToKitMessage", () => {
       created_at: "2026-07-23T00:00:00Z",
     };
     expect(restToKitMessage(rest)).toEqual({
-      id: "t7",
+      id: "41",
       turn_index: 7,
       role: "assistant",
       content: { text: "hello" },
@@ -37,17 +38,18 @@ describe("restToKitMessage", () => {
     });
   });
 
-  it("gives every mapped row a synthetic id distinct from a real WS pk", () => {
+  it("keeps the stored row id, the one the socket carries for the same row", () => {
     const rest: ChatSessionDetail["messages"][number] = {
+      id: "42",
       turn_index: 3,
       role: "user",
       plaintext: "hi",
       content: {},
       created_at: "2026-07-23T00:00:00Z",
     };
-    // The kit dedupes prepended history by turn_index, not id — but the id
-    // must still never collide with a real WS message pk.
-    expect(restToKitMessage(rest).id).toBe("t3");
+    // The same id the socket's snapshot gives this row, so the row keeps its
+    // React key when the snapshot replaces the REST paint.
+    expect(restToKitMessage(rest).id).toBe("42");
   });
 });
 

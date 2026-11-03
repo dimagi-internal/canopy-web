@@ -69,7 +69,11 @@ export function PlacementBanner({
   const [showPicker, setShowPicker] = useState(false);
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[12px] text-warning">
+    <div
+      data-testid="placement-banner"
+      data-paused={paused ? "true" : "false"}
+      className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[12px] text-warning"
+    >
       <span className="font-medium">
         {runnerName} is {paused ? "paused" : "unavailable"}
       </span>

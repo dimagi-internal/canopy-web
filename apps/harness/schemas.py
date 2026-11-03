@@ -2277,7 +2277,7 @@ class TurnGitHubTokenOut(Schema):
     """One turn's GitHub identity, and where its token is. A token a person delegated to
     the agent is in the agent's vault, sealed to the machines that run it: `token` is ""
     and `delegated` names the vault entry the box opens from its own resolve of `agent`.
-    One still held the old way comes in `token`, for that turn's environment only."""
+    (`token` is always "" now; older runners still read it.)"""
 
     token: str = ""
     #: The agent vault entry holding the token (`github-token`), when it is there.
@@ -2413,6 +2413,26 @@ class SessionSubagentsIn(Schema):
     # One dict per subagent (`canopy_transcript.summarize_subagents`), the whole
     # set each time; [] when it has none.
     subagents: list[dict] = []
+
+
+class SessionInterruptOut(Schema):
+    session_id: str
+    session_key: str
+    #: The emdash project owning `session_key` (task names are unique per project).
+    project: str = ""
+    interrupt_id: str
+
+
+class SessionInterruptSyncOut(Schema):
+    interrupts: list[SessionInterruptOut] = []
+
+
+class SessionInterruptResultIn(Schema):
+    session_id: uuid.UUID
+    interrupt_id: str
+    #: What the runner did with it (interrupted / idle / failed / no_session …);
+    #: free-form, the server only retires the request.
+    outcome: str = ""
 
 
 class CloseOut(Schema):

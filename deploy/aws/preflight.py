@@ -131,10 +131,9 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "Modify": ("secretsmanager:UpdateSecret", "secretsmanager:TagResource"),
         "Remove": ("secretsmanager:DeleteSecret",),
     },
-    # Canopy Vault KMS key (canopy-web.cfn.yaml, behind EnableVaultKms). Granted
-    # by deploy_roles.py `VaultKmsKeyManagement` — which a human must apply
-    # BEFORE the condition is flipped; this mapping is what turns forgetting
-    # that into a named refusal instead of a mid-rollout 403.
+    # A KMS key in a change set. No deploy role holds KMS grants now (the Canopy Vault key is
+    # retired), so a change that adds or touches one is refused here by name, instead of failing
+    # mid-rollout with a 403.
     "AWS::KMS::Key": {
         "Add": ("kms:CreateKey", "kms:TagResource", "kms:EnableKeyRotation",
                 "kms:PutKeyPolicy", "kms:DescribeKey"),

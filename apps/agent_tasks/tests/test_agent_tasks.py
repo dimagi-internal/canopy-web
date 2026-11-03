@@ -15,16 +15,16 @@ from apps.harness import caller_context
 from apps.harness import services as harness
 from apps.harness.models import Turn
 from apps.tokens.models import PersonalToken
-
 from tests.access_helpers import editors_run
+from tests.token_helpers import pat_client
 
-from .helpers import GOOD, INPUT, SCHEMA, _create, _pat, _post
+from .helpers import GOOD, INPUT, SCHEMA, _create, _post
 
 pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def task(world):
-    r = _create(_pat(world["owner"]))
+    r = _create(pat_client(world["owner"]))
     assert r.status_code == 201, r.content
     return AgentTask.objects.get(pk=r.json()["id"])
 
@@ -40,7 +40,7 @@ def _end_turn(turn, django_capture_on_commit_callbacks, status=Turn.DONE):
 # ---- create --------------------------------------------------------------------
 
 def test_create_queues_one_turn_that_names_the_task(world):
-    r = _create(_pat(world["owner"]))
+    r = _create(pat_client(world["owner"]))
     assert r.status_code == 201, r.content
     body = r.json()
     assert body["status"] == "queued" and body["input"] is None and body["output_schema"] == SCHEMA
@@ -55,37 +55,37 @@ def test_create_queues_one_turn_that_names_the_task(world):
 
 def test_a_task_named_after_a_skill_tells_the_turn_to_use_it(world):
     AgentSkill.objects.create(agent=world["agent"], name="gmail-triage")
-    body = _create(_pat(world["owner"])).json()
+    body = _create(pat_client(world["owner"])).json()
     assert "using your `gmail-triage` skill" in Turn.objects.get(pk=body["turn_id"]).prompt
 
 
 def test_create_has_the_enqueue_turn_gate(world):
     editors_run(world["agent"])
-    assert _create(_pat(world["editor"])).status_code == 201
-    assert _create(_pat(world["viewer"])).status_code == 403
-    assert _create(_pat(world["outsider"])).status_code == 404
+    assert _create(pat_client(world["editor"])).status_code == 201
+    assert _create(pat_client(world["viewer"])).status_code == 403
+    assert _create(pat_client(world["outsider"])).status_code == 404
     assert not AgentTask.objects.filter(created_by__in=[world["viewer"], world["outsider"]]).exists()
 
 
 def test_an_invalid_output_schema_is_refused(world):
-    r = _create(_pat(world["owner"]), output_schema={"type": "not-a-type"})
+    r = _create(pat_client(world["owner"]), output_schema={"type": "not-a-type"})
     assert r.status_code == 422 and "not a valid JSON Schema" in r.json()["detail"]
     assert not AgentTask.objects.exists() and not Turn.objects.exists()
 
 
 def test_an_input_over_the_cap_is_413(world):
     big = {"blob": "x" * (services.MAX_INPUT_BYTES + 1)}
-    r = _create(_pat(world["owner"]), input=big)
+    r = _create(pat_client(world["owner"]), input=big)
     assert r.status_code == 413 and "input" in r.json()["detail"]
     assert not Turn.objects.exists()
 
 
 def test_timeout_is_capped(world):
-    assert _create(_pat(world["owner"]), timeout_s=7200).status_code == 422
+    assert _create(pat_client(world["owner"]), timeout_s=7200).status_code == 422
 
 
 def test_a_client_cannot_stamp_agent_task_on_an_ordinary_turn(world, task):
-    r = _post(_pat(world["owner"]), "/api/harness/turns/", {
+    r = _post(pat_client(world["owner"]), "/api/harness/turns/", {
         "agent_slug": "bailey", "origin": "api", "idempotency_key": "plain-1",
         "origin_ref": {"agent_task": str(task.pk), "note": "kept"}})
     assert r.status_code == 201, r.content
@@ -95,37 +95,37 @@ def test_a_client_cannot_stamp_agent_task_on_an_ordinary_turn(world, task):
 # ---- read ----------------------------------------------------------------------
 
 def test_the_agent_reads_its_task_and_it_becomes_running(world, task):
-    r = _pat(world["bot"]).get(f"/api/agent-tasks/{task.pk}")
+    r = pat_client(world["bot"]).get(f"/api/agent-tasks/{task.pk}")
     assert r.status_code == 200
     body = r.json()
     assert body["input"] == INPUT and body["output_schema"] == SCHEMA and body["status"] == "running"
 
 
 def test_who_may_read(world, task):
-    assert _pat(world["owner"]).get(f"/api/agent-tasks/{task.pk}").json()["input"] is None
-    assert _pat(world["editor"]).get(f"/api/agent-tasks/{task.pk}").status_code == 404
-    assert _pat(world["outsider"]).get(f"/api/agent-tasks/{task.pk}").status_code == 404
+    assert pat_client(world["owner"]).get(f"/api/agent-tasks/{task.pk}").json()["input"] is None
+    assert pat_client(world["editor"]).get(f"/api/agent-tasks/{task.pk}").status_code == 404
+    assert pat_client(world["outsider"]).get(f"/api/agent-tasks/{task.pk}").status_code == 404
 
 
 def test_the_creator_reads_their_own_task(world):
     editors_run(world["agent"])
-    body = _create(_pat(world["editor"])).json()
-    assert _pat(world["editor"]).get(f"/api/agent-tasks/{body['id']}").json()["status"] == "queued"
+    body = _create(pat_client(world["editor"])).json()
+    assert pat_client(world["editor"]).get(f"/api/agent-tasks/{body['id']}").json()["status"] == "queued"
 
 
 # ---- submit --------------------------------------------------------------------
 
 def test_only_the_agent_submits(world, task):
-    r = _post(_pat(world["owner"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD})
+    r = _post(pat_client(world["owner"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD})
     assert r.status_code == 403
-    assert _post(_pat(world["outsider"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD}).status_code == 404
+    assert _post(pat_client(world["outsider"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD}).status_code == 404
     task.refresh_from_db()
     assert task.status == AgentTask.QUEUED
 
 
 def test_an_invalid_result_is_422_with_paths_and_the_task_stays_open(world, task):
     bad = {"decisions": [{"id": "m1", "action": "burn"}]}
-    r = _post(_pat(world["bot"]), f"/api/agent-tasks/{task.pk}/result", {"result": bad})
+    r = _post(pat_client(world["bot"]), f"/api/agent-tasks/{task.pk}/result", {"result": bad})
     assert r.status_code == 422
     errors = r.json()["errors"]
     assert {"path": "/decisions/0", "message": "'reason' is a required property"} in errors
@@ -135,10 +135,10 @@ def test_an_invalid_result_is_422_with_paths_and_the_task_stays_open(world, task
 
 
 def test_a_valid_result_completes_the_task_once(world, task):
-    bot = _pat(world["bot"])
+    bot = pat_client(world["bot"])
     r = _post(bot, f"/api/agent-tasks/{task.pk}/result", {"result": GOOD})
     assert r.status_code == 200 and r.json()["status"] == "done"
-    got = _pat(world["owner"]).get(f"/api/agent-tasks/{task.pk}").json()
+    got = pat_client(world["owner"]).get(f"/api/agent-tasks/{task.pk}").json()
     assert got["status"] == "done" and got["result"] == GOOD
     assert _post(bot, f"/api/agent-tasks/{task.pk}/result", {"result": GOOD}).status_code == 409
 
@@ -157,7 +157,7 @@ def test_the_long_poll_returns_when_the_status_changes(world, task, monkeypatch)
         AgentTask.objects.filter(pk=task.pk).update(status=AgentTask.DONE, result=GOOD)
 
     monkeypatch.setattr(services, "_sleep", finish_meanwhile)
-    body = _pat(world["owner"]).get(f"/api/agent-tasks/{task.pk}?wait_s=20").json()
+    body = pat_client(world["owner"]).get(f"/api/agent-tasks/{task.pk}?wait_s=20").json()
     assert body["status"] == "done" and body["result"] == GOOD
 
 
@@ -165,8 +165,8 @@ def test_the_long_poll_gives_up_after_wait_s(world, task, monkeypatch):
     clock = iter(range(0, 1000, 5))
     monkeypatch.setattr(services, "_monotonic", lambda: next(clock))
     monkeypatch.setattr(services, "_sleep", lambda _s: None)
-    assert _pat(world["owner"]).get(f"/api/agent-tasks/{task.pk}?wait_s=10").json()["status"] == "queued"
-    assert _pat(world["owner"]).get(f"/api/agent-tasks/{task.pk}?wait_s=21").status_code == 422
+    assert pat_client(world["owner"]).get(f"/api/agent-tasks/{task.pk}?wait_s=10").json()["status"] == "queued"
+    assert pat_client(world["owner"]).get(f"/api/agent-tasks/{task.pk}?wait_s=21").status_code == 422
 
 
 # ---- the backstop: a turn ended without a result ---------------------------------
@@ -193,7 +193,7 @@ def test_a_turn_ending_without_a_result_is_nudged_then_the_task_fails(world, tas
 
 
 def test_a_done_task_is_not_nudged(world, task, django_capture_on_commit_callbacks):
-    assert _post(_pat(world["bot"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD}).status_code == 200
+    assert _post(pat_client(world["bot"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD}).status_code == 200
     _end_turn(task.turn, django_capture_on_commit_callbacks)
     task.refresh_from_db()
     assert task.status == AgentTask.DONE and task.nudges == 0
@@ -220,10 +220,10 @@ def test_a_cancelled_turn_fails_the_task(world, task, django_capture_on_commit_c
 
 def test_a_task_past_its_deadline_fails_on_read(world, task):
     AgentTask.objects.filter(pk=task.pk).update(deadline_at=timezone.now() - dt.timedelta(seconds=1))
-    body = _pat(world["owner"]).get(f"/api/agent-tasks/{task.pk}").json()
+    body = pat_client(world["owner"]).get(f"/api/agent-tasks/{task.pk}").json()
     assert body["status"] == "failed" and body["error"].startswith("timed out after 900s")
     assert Turn.objects.get(pk=task.turn_id).status == Turn.CANCELLED
-    r = _post(_pat(world["bot"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD})
+    r = _post(pat_client(world["bot"]), f"/api/agent-tasks/{task.pk}/result", {"result": GOOD})
     assert r.status_code == 409
 
 
@@ -237,7 +237,7 @@ def test_the_tick_fails_overdue_tasks(world, task):
 # ---- cancel ----------------------------------------------------------------------
 
 def test_the_creator_cancels_and_the_queued_turn_goes_with_it(world, task):
-    r = _post(_pat(world["owner"]), f"/api/agent-tasks/{task.pk}/cancel", {})
+    r = _post(pat_client(world["owner"]), f"/api/agent-tasks/{task.pk}/cancel", {})
     assert r.status_code == 200 and r.json()["status"] == "cancelled"
     assert Turn.objects.get(pk=task.turn_id).status == Turn.CANCELLED
     task.refresh_from_db()
@@ -245,8 +245,8 @@ def test_the_creator_cancels_and_the_queued_turn_goes_with_it(world, task):
 
 
 def test_the_agent_and_strangers_do_not_cancel(world, task):
-    assert _post(_pat(world["bot"]), f"/api/agent-tasks/{task.pk}/cancel", {}).status_code == 403
-    assert _post(_pat(world["editor"]), f"/api/agent-tasks/{task.pk}/cancel", {}).status_code == 404
+    assert _post(pat_client(world["bot"]), f"/api/agent-tasks/{task.pk}/cancel", {}).status_code == 403
+    assert _post(pat_client(world["editor"]), f"/api/agent-tasks/{task.pk}/cancel", {}).status_code == 404
 
 
 # ---- the caller envelope ---------------------------------------------------------

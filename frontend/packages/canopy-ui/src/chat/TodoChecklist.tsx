@@ -103,6 +103,7 @@ export function TodoWriteRow({
     <details
       data-turn-index={use.turn_index}
       data-testid="todowrite-row"
+      data-tool-status={status.kind}
       open={forceOpen}
       className="group/todo my-1 rounded border border-border bg-muted/40 text-sm"
     >

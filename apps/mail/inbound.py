@@ -12,13 +12,16 @@ for the recipients that already succeeded.
 from __future__ import annotations
 
 import logging
+import random
+from datetime import timedelta
 from email.utils import getaddresses
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.db import InterfaceError, OperationalError
+from django.utils import timezone
 
 from . import domains, parse, ses
-from .models import MailRoute
+from .models import MailInboundLog, MailRoute
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +34,14 @@ class Transient(Exception):  # noqa: N818 - carries the outcomes of a notificati
         self.outcomes = outcomes
 
 
-def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
-    from . import agent_mail
+def _agent_mail():
+    from . import agent_mail  # the harness it pulls in stays out of this module's import
 
+    return agent_mail
+
+
+def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
+    agent_mail = _agent_mail()
     return agent_mail.deliver(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size)
 
 
@@ -85,7 +93,44 @@ def _route_one(rcpt: str, parsed, raw: bytes, key: str, verdicts: dict) -> str:
         return kind
     if kind == MailRoute.AGENT:
         return deliver_agent(route, parsed, key, verdicts=verdicts, raw_size=len(raw))
+    if route.keep_copy:
+        _keep_copy(route, parsed, key, verdicts, len(raw))
     return deliver_forward(route, parsed, raw, rcpt)
+
+
+def _keep_copy(route, parsed, key: str, verdicts: dict, raw_size: int) -> None:
+    """The reader's own copy of a forwarded message. It is a safety net, so a failure to
+    store it must never stop the forward itself."""
+    try:
+        _agent_mail().keep_forwarded(route, parsed, key, verdicts=verdicts, raw_size=raw_size)
+    except Exception:  # noqa: BLE001
+        logger.exception("mail %s: could not keep a copy for %s", parsed.message_id, route.address)
+
+
+def record(rcpt: str, outcome: str, *, message_id: str = "", sender: str = "", subject: str = "",
+           verdicts: dict | None = None) -> None:
+    """Write one inbound-ledger row. Never raises: a ledger problem must not change delivery."""
+    try:
+        host = rcpt.rpartition("@")[2]
+        MailInboundLog.objects.create(
+            domain=domains._domain_for(host), recipient=rcpt[:320], message_id=message_id[:998],
+            original_from=sender[:320], subject=subject[:998], outcome=outcome[:80],
+            verdicts=dict(verdicts or {}))
+        if random.random() < 0.01:  # amortised pruning, no scheduler needed
+            MailInboundLog.objects.filter(
+                created_at__lt=timezone.now() - timedelta(days=MailInboundLog.RETENTION_DAYS)).delete()
+    except Exception:  # noqa: BLE001
+        logger.exception("mail inbound ledger: could not record %s -> %s", rcpt, outcome)
+
+
+def _common(notification: dict) -> dict:
+    """The sender, subject and message id the receipt notification carries, for mail we
+    drop before fetching it."""
+    headers = (notification.get("mail") or {}).get("commonHeaders") or {}
+    frm = headers.get("from") or []
+    return {"message_id": str(headers.get("messageId") or (notification.get("mail") or {}).get("messageId") or ""),
+            "sender": str(frm[0]) if frm else str((notification.get("mail") or {}).get("source") or ""),
+            "subject": str(headers.get("subject") or "")}
 
 
 def valid_key(key: str) -> bool:
@@ -119,6 +164,8 @@ def deliver(parsed, raw: bytes, key: str, recipients: list[str], *, verdicts: di
             logger.exception("mail %s -> %s failed", parsed.message_id, rcpt)
             outcome = f"error:{type(exc).__name__}"
         out.append({"recipient": rcpt, "outcome": outcome})
+        record(rcpt, outcome, message_id=parsed.message_id, sender=parsed.from_addr,
+               subject=parsed.subject, verdicts=verdicts)
     logger.info("mail %s: %s", parsed.message_id, out)
     if transient:
         raise Transient(out)
@@ -137,20 +184,27 @@ def handle(notification: dict) -> list[dict]:
         return []
     verdicts = receipt_verdicts(receipt)
     reason = blocked(verdicts)
+    meta = _common(notification)
+
+    def dropped(why: str) -> list[dict]:
+        for r in recipients:
+            record(r, f"dropped:{why}", verdicts=verdicts, **meta)
+        return [{"recipient": r, "outcome": f"dropped:{why}"} for r in recipients]
+
     if reason:
         logger.info("mail dropped (%s) for %s", reason, recipients)
-        return [{"recipient": r, "outcome": f"dropped:{reason}"} for r in recipients]
+        return dropped(reason)
     key = _object_key(notification)
     if not key:
         return []
     if not valid_key(key):
         logger.warning("mail inbound refused object key %r", key)
-        return [{"recipient": r, "outcome": "dropped:bad-key"} for r in recipients]
+        return dropped("bad-key")
     try:
         raw = ses.get_object(key)
     except ses.MailOff:
         logger.warning("mail inbound ignored: MAIL_ENABLED is off")
-        return [{"recipient": r, "outcome": "dropped:mail-off"} for r in recipients]
+        return dropped("mail-off")
     return deliver(parse.parse(raw), raw, key, recipients, verdicts=verdicts)
 
 

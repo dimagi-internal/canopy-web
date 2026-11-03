@@ -19,7 +19,7 @@ from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 
 from apps.api.route_gates import gate
-from apps.harness.api import runner_or_404
+from apps.harness.runner_queries import runner_or_404
 from apps.harness.models import RunnerDeviceKey
 
 from . import keeper, proofs, tokens

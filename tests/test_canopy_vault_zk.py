@@ -43,6 +43,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.access_helpers import editors_run
 from tests.fixtures.vault_zk import VECTORS, ref
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -56,11 +57,6 @@ def _fresh_cache():
     cache.clear()
     yield
     cache.clear()
-
-
-def _pat(user) -> str:
-    raw, _ = PersonalToken.create_for_user(user=user, label="t")
-    return raw
 
 
 def _jwk(key) -> dict:
@@ -105,7 +101,7 @@ def fleet(client):
     client.force_login(f.user)
     grant_step_up(client)
     f.client = client
-    f.pat = _pat(f.user)
+    f.pat = pat_token(f.user)
     f.sign = ec.generate_private_key(ec.SECP256R1())
     f.ecdh = ec.generate_private_key(ec.SECP256R1())
     f.device = _register(f, f.sign, f.ecdh)
@@ -278,7 +274,7 @@ def test_keyset_put_needs_a_browser_step_up_and_your_own_passkey(client):
     res = client.put("/api/vault/keyset", data=body, content_type="application/json")
     assert res.status_code == 403 and res.json()["error"] == "step_up_required"
     res = Client().put("/api/vault/keyset", data=body, content_type="application/json",
-                       HTTP_AUTHORIZATION=f"Bearer {_pat(user)}")
+                       HTTP_AUTHORIZATION=f"Bearer {pat_token(user)}")
     assert res.status_code == 403
     grant_step_up(client)
     stranger = dict(seal, cred=ref.b64u(b"someone-elses"))
@@ -1556,7 +1552,7 @@ def test_a_machine_whose_person_is_waiting_too_is_asked_about_as_the_person_only
                                    workspace=fleet.ws, last_heartbeat_at=timezone.now(), capabilities={})
     # ed10 registers and approves their own laptop, as `canopy agent use` has them do.
     res = Client().post("/api/runner-device-keys/", content_type="application/json",
-                        HTTP_AUTHORIZATION=f"Bearer {_pat(ed)}",
+                        HTTP_AUTHORIZATION=f"Bearer {pat_token(ed)}",
                         data={"runner": str(laptop.pk), "public_jwk": _jwk(ec.generate_private_key(ec.SECP256R1())),
                               "kind": "tpm", "label": "DIM-SI-W021 (Windows)",
                               "ecdh_public_jwk": ref.jwk(ec.generate_private_key(ec.SECP256R1()).public_key())})
@@ -1692,7 +1688,7 @@ def _members_own_laptop(fleet, name):
                                    capabilities={})
     ecdh = ec.generate_private_key(ec.SECP256R1())
     res = Client().post("/api/runner-device-keys/", content_type="application/json",
-                        HTTP_AUTHORIZATION=f"Bearer {_pat(ed)}",
+                        HTTP_AUTHORIZATION=f"Bearer {pat_token(ed)}",
                         data={"runner": str(laptop.pk), "public_jwk": _jwk(ec.generate_private_key(ec.SECP256R1())),
                               "kind": "tpm", "label": f"{name} (Windows)",
                               "ecdh_public_jwk": ref.jwk(ecdh.public_key())})

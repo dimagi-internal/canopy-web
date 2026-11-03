@@ -139,9 +139,13 @@ def _agent_login(w, *, member=True, bind=True):
 
 
 def _publish_ask_interface(agent):
-    from tests.access_helpers import publish
+    from apps.agents import roles
+    from tests.access_helpers import allow, declare, editors_run
 
-    publish(agent, {"capabilities": {"ask": {"callers": ["contact", "member"]}}})
+    declare(agent, {"ask": {}})
+    allow(agent, role=roles.READ_ONLY, contact=True)
+    allow(agent, role=roles.READ_ONLY)
+    editors_run(agent)
 
 
 def _turn_as(raw, agent_slug="echo"):

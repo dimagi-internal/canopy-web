@@ -138,6 +138,19 @@ Every browser-facing address canopy-web serves. The SPA route table is
   [`dynamic-views.md`](dynamic-views.md)). The list (`?project=<handle>` narrows,
   `?new=1` opens New view); one view, with History (restore) and, for editors, the
   code and sources beside a live preview of the draft (`?edit=1`).
+- **`/apps`** (+ `/store?app=<key>`, `/:appKey/:page?`, `/:appKey/customize`) — workspace apps
+  (`apps/workspace_apps`; [`workspace-apps.md`](workspace-apps.md)): the installed list, one app of
+  canopy's catalog before it is installed (screenshots, roles, records, public pages), an installed
+  app's pages drawn in the dynamic-view sandbox, and its draft-based customize page. Anyone in the
+  workspace reads; admins install, switch on/off, make public pages live, remove.
+- **`/mcp`** — the MCP servers a person can add: every published workspace project serving
+  its own tools, here and below, each with the line that adds it to Claude Code
+  (`McpServersPage.tsx`; served through the one project gateway,
+  [`work.md`](work.md), [`mcp-surface.md`](mcp-surface.md)). Nothing is added for the person.
+- **`/approvals/:approvalId`** — one typed approval request (`apps/approvals`,
+  [`approvals.md`](approvals.md)): what approving will run, rendered by the server from the
+  request's parameters, the requester's own words kept apart; Approve or Decline here or from
+  the Slack message, push or email that linked to it.
 - **`/projects/:handle/kb`** — a knowledge base's sources and version log
   (`GET …/kb/sources`, `GET …/kb/versions`, `KnowledgeBasePage.tsx`), read-only:
   each version its steward published, its counts, size, publisher and which one is
@@ -192,6 +205,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
     thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
     CSP, meta refreshes stripped; attachments are
     presigned download links. No address → points to Settings → Email.
+  - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
+    forward routes with *Keep a copy*: Inbox / Archived, unread count, search
+    (`?forwarded=true&q=`), per-address filter, reply / reply all / compose from the person's own
+    forwarding addresses, keyboard shortcuts. Private to the person (`MailThread.owner`); plain
+    text out, no attachments on send. Settings → Email shows each domain's inbound ledger (admins).
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent
@@ -280,6 +298,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     (`POST /api/workspaces/{slug}/members/`, no invite), a new role PATCHes, "—"
     removes after a confirm. Errors show on the cell. Filter by email, "only
     show gaps".
+  - **connections** — the workspace's OAuth apps (one per provider, Salesforce and Google):
+    client ID, a write-only secret, the extra permissions to ask for, and the callback URL to
+    register (`apps/connections`, [`vault.md`](vault.md) § OAuth connections are server-held).
   - **access-requests** (+ `/:requestId`, the page the admins' notification
     links to) — requests to be invited; approve at a role or deny.
   - **slack** — the workspace's Slack connection (one Slack may serve several
@@ -398,6 +419,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (`auth/stepUp.ts`). Only the invitation's creator can open it (404 otherwise)
   or approve it, and a token cannot (`apps/harness/api_runner_invitations.py`,
   `docs/architecture/runners.md` § How a runner signs in).
+- **`/members/:userId`** — one member: role, when they joined, person or agent, the agents they
+  operate here and the other workspaces you share with them; admins and owners also see who
+  invited them and when they last signed in.
 - **`/sign-offs/:signOffId`** — a connected site asking you to approve one action
   with your passkey (labs creating a full-access MCP token): the `approve_url` the
   site sends you to, also on Home. Shows the site, the action in its words, and the
@@ -684,6 +708,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   canopy plugin.
 - **`/guide`** — the in-app guide, generated from `frontend/src/guide/surfaces.ts`.
 - **`/people/me`** — what agents know about you, and your agent-memory settings (a section of `/settings`).
+- **`/people/:personId/page`** — a person's memory page, read-only, for an agent they let see it from their own `/people/me`: what is remembered, the conversations that used it, who can read it; each look is logged. Anyone not let in sees nothing.
 - **`/hcp-clients`** — the HCP service's client registry (superusers).
 - **`/beta-requests`** (+ `/:requestId`) — requests for access to Canopy from
   the public site; only their reviewer or a superuser sees them.

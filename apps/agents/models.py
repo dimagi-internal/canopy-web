@@ -16,6 +16,7 @@ from pgvector.django import HalfVectorField
 
 from apps.harness import clis as clis_vocab
 
+from . import roles
 from .interface_default import default_interface
 
 #: An argument not passed, so read from the database. `None` is an answer (not
@@ -200,7 +201,7 @@ class Agent(models.Model):
                                 null=True, blank=True, related_name="+")
     # The agent's own login (`user`) may hold a personal vault key for TESTING, so a
     # headless harness signed in as the agent can take part in its own sensitive
-    # conversations (apps/agents/credentials/test_key.py). Off by default; an agent
+    # conversations (apps/agents/credentials/login_test_key.py). Off by default; an agent
     # admin turns it on from a browser behind a passkey step-up. The key opens nothing
     # but conversation keys of conversations that login is in — never a vault.
     test_vault_key = models.BooleanField(default=False)
@@ -356,6 +357,9 @@ class AgentGrant(models.Model):
     subject_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
                                           on_delete=models.CASCADE, related_name="+")
     at_least = models.CharField(max_length=12, blank=True, default="")
+    #: `kind=workspace`: also everyone in any workspace BELOW the subject (its own subtree in the
+    #: parent tree, never another organisation's), at the same `at_least` / `domain`.
+    include_below = models.BooleanField(default=False)
     #: `kind=domain`: anyone whose address is at the exact domain ("" = any address), member
     #: or not. `kind=contact`: a person canopy knows as a contact (an emailer, a Slack member
     #: outside the workspace, a widget visitor — who may have no address at all), optionally
@@ -364,7 +368,10 @@ class AgentGrant(models.Model):
     #: request always does.
     domain = models.CharField(max_length=253, blank=True, default="")
     verified = models.BooleanField(default=True)
-    role = models.CharField(max_length=12)
+    #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named capability
+    #: (the scoped permission `use:<capability>`). Exactly one of the two is set.
+    role = models.CharField(max_length=12, blank=True, default="")
+    capability = models.CharField(max_length=41, blank=True, default="")
     #: Every turn this line lets someone start runs `manual`: an admin approves what goes
     #: out. The editor lines migrated from "a workspace editor is an editor" keep it, so
     #: dropping the gate is one visible edit per agent.
@@ -386,6 +393,10 @@ class AgentGrant(models.Model):
                 condition=(models.Q(agent__isnull=False, workspace__isnull=True)
                            | models.Q(agent__isnull=True, workspace__isnull=False)),
                 name="agent_grant_one_scope"),
+            models.CheckConstraint(
+                condition=(~models.Q(role="") & models.Q(capability=""))
+                | (models.Q(role="") & ~models.Q(capability="")),
+                name="agent_grant_role_or_capability"),
             models.UniqueConstraint(fields=["agent", "subject_key"],
                                     condition=models.Q(agent__isnull=False),
                                     name="uniq_agent_grant_subject"),
@@ -395,20 +406,33 @@ class AgentGrant(models.Model):
         ]
 
     @staticmethod
-    def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="") -> str:
+    def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="",
+               include_below=False, capability="") -> str:
         if kind == AgentGrant.PERSON:
-            return f"person:{user_id}"
-        d = (domain or "").lower()
-        if kind == AgentGrant.WORKSPACE:
-            return f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}:{d}"
-        if kind == AgentGrant.CONTACT:
-            return f"contact:{d}"
-        return f"domain:{d}"
+            key = f"person:{user_id}"
+        else:
+            d = (domain or "").lower()
+            if kind == AgentGrant.WORKSPACE:
+                key = (f"workspace:{getattr(subject_workspace, 'pk', subject_workspace)}:{at_least}:{d}"
+                       + (":below" if include_below else ""))
+            elif kind == AgentGrant.CONTACT:
+                key = f"contact:{d}"
+            else:
+                key = f"domain:{d}"
+        # A capability line is one line per capability: the same subject can hold a role line and
+        # several capability lines, so the capability is part of what makes a line unique.
+        return f"{key}#use:{capability}" if capability else key
+
+    @property
+    def permissions(self) -> frozenset[str]:
+        """What the line grants: its role's permissions, or the one `use:<capability>`."""
+        return roles.permissions_of(self.role) if self.role else frozenset({roles.use(self.capability)})
 
     def save(self, *args, **kwargs):
         self.subject_key = self.key_of(
             self.kind, user_id=self.user_id, subject_workspace=self.subject_workspace_id,
-            at_least=self.at_least, domain=self.domain)
+            at_least=self.at_least, domain=self.domain, include_below=self.include_below,
+            capability=self.capability)
         if self.domain:
             self.domain = self.domain.lower()
         super().save(*args, **kwargs)
@@ -421,7 +445,7 @@ class AgentLicense(models.Model):
     """A person's license to use an agent DIRECTLY — "Aathithya uses ACE directly, since …".
 
     The agent's caller list (`access.decide`) still decides who MAY hold one; this row
-    is who DOES (`apps/agents/licenses.py`, canopy-web#1704). Requested on first local
+    is who DOES (`apps/agents/credentials/licenses.py`). Requested on first local
     use and issued at once when `decide` gives the person the whole agent; an admin
     revokes it per person without touching the rule, and a revoked license is not
     re-issued automatically — only an admin's approve brings it back. Direct turns and
@@ -707,7 +731,7 @@ class AgentCredentialRead(models.Model):
 
 class AgentCredentialAlert(models.Model):
     """A read of an agent's secrets that looked wrong, and whether its owner was
-    told (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/vault_alerts.py`).
+    told (`apps/agents/credentials/vault_alerts.py`).
 
     At most one row per (agent, kind) per hour: a repeat inside the hour bumps
     `occurrences` on the open row instead of notifying again. Shown beside the
@@ -1217,7 +1241,7 @@ class ZkGrantNotice(models.Model):
 
 class AgentPatRotation(models.Model):
     """One automatic (or on-demand) rotation of an agent's `canopy-pat`
-    (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/pat_rotation.py`).
+    (`apps/agents/credentials/pat_rotation.py`).
 
     The new token is written to the agent's `canopy-pat` AgentCredential; the
     old one keeps working for the overlap (`revoke_after`, also set as its
@@ -1250,72 +1274,6 @@ class AgentPatRotation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_id}:pat-rotation:{self.status}@{self.created_at:%Y-%m-%d %H:%M}"
-
-
-class AgentDelegation(models.Model):
-    """A PERSON lending their own identity on some service to ONE agent.
-
-    The third kind of credential, beside the agent's own (its Canopy vault —
-    things that ARE the agent: its mailbox, an account of its own) and the
-    tenant's (the workspace's shared vault). `docs/superpowers/specs/
-    2026-09-05-agent-credentials-design.md` named this case and left it out of
-    scope — "`chrome-sales` acts on behalf of the dispatching human, not the
-    agent … an agent vault is the wrong home" — and GitHub is the same shape: an
-    agent's pull request should be opened AS its owner, with the owner's rights.
-
-    Why a row of its own and not a vault item (Jonathan, 2026-09-24):
-
-    - **It belongs to the person, not the agent.** A delegation is USED only
-      while its person owns the agent — or, for GitHub, is one of its admins and
-      the owner has lent none (`delegations.delegation_for`) — so handing an
-      agent to someone else stops the old owner's identity travelling with it
-      unless they remain an admin. A vault item would have gone
-      with the agent.
-    - **It is scoped per agent.** For GitHub the owner pastes a fine-grained
-      token whose repository selection IS what this agent may touch — the only
-      per-repository scoping GitHub enforces on a credential that acts as a
-      person. Whether two agents hold the same token is the owner's business;
-      canopy stores one row each and never compares them.
-    - **canopy-web is its only home.** A
-      delegation has nowhere else to live, so it is held here — encrypted,
-      write-only, never returned to a browser — and handed to a runner one TURN
-      at a time (`POST /api/harness/runners/{id}/turns/{id}/github-token`).
-
-    `meta` is what canopy last learned about the secret, never the secret:
-    for GitHub `{login, user_id, name, expires_at, checks: [{repo, ok,
-    detail}], checked_at}`.
-    """
-
-    GITHUB = "github"
-    #: Retired: an agent once borrowed another agent's Salesforce credential through a
-    #: row of this service. Nothing reads or writes such rows now
-    #: — Salesforce for agents lives in a workspace vault holding `salesforce`,
-    #: attached to each agent that uses it. The choice stays so old rows still load.
-    SALESFORCE = "salesforce"
-    SERVICE_CHOICES = [(GITHUB, "GitHub"), (SALESFORCE, "Salesforce")]
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="agent_delegations",
-    )
-    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="delegations")
-    service = models.CharField(max_length=32, choices=SERVICE_CHOICES)
-    secret_enc = models.TextField(blank=True, default="")
-    meta = models.JSONField(default=dict, blank=True)
-    #: From the service when it says (GitHub's token-expiration header); null
-    #: for a token that never expires. A column, not just `meta`, so "what
-    #: expires soon" is a query.
-    expires_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["user", "agent", "service"],
-                                    name="uniq_agent_delegation"),
-        ]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"delegation:{self.user_id}->{self.agent_id}:{self.service}"
 
 
 class AgentLoginRequest(models.Model):

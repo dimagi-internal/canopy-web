@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import fixture from './agui.fixture.json'
-import { fromAgui, resetAguiState } from './agui'
+import { createAguiDecoder, fromAgui, resetAguiState } from './agui'
 import { sessionReducer } from './sessionReducer'
 import type { SessionState, WsEvent } from './protocol'
 
@@ -282,21 +282,33 @@ describe('the socket actually asks for it', () => {
     // ignores its path — i.e. by canopy-web's widget and by ace-web. Whether the
     // flag reaches the socket is asserted where it can be seen, against the URL
     // a socket really opens: `useSessionSocket.protocol.test.tsx`.
-    expect(source).toContain('fromAgui')
+    expect(source).toContain('createAguiDecoder')
     // And the default stays canopy's own vocabulary, which is what lets an
     // existing consumer — ace-web installs this package from npm — notice
     // nothing at all.
     expect(source).toContain('protocol = "canopy"')
   })
 
-  it('clears half-read state when it opens a connection', () => {
+  it('gives each connection its own decoder', () => {
     // Tool-call ids are per-stream, so an ARGS event from a new connection must
-    // not complete a call the previous one left open. The BEHAVIOUR is tested
-    // directly above ("does not carry a half-read call across a reconnect");
-    // what is checked here is that `connect` actually calls it, which no
-    // behavioural test of the pure module can see.
+    // not complete a call the previous one left open, and two chats open at
+    // once must not complete each other's. What is checked here is that
+    // `connect` makes a fresh decoder per socket, which no behavioural test of
+    // the pure module can see.
     const connectBody = hookSource().slice(hookSource().indexOf('const connect ='))
 
-    expect(connectBody).toContain('resetAguiState()')
+    expect(connectBody).toContain('createAguiDecoder()')
+    expect(connectBody).toContain('decoder.decode(raw)')
+  })
+
+  it('a decoder holds its own half-read calls', () => {
+    const a = createAguiDecoder()
+    const b = createAguiDecoder()
+    a.decode({ type: 'TOOL_CALL_START', toolCallId: 't1', toolCallName: 'search' })
+    expect(b.decode({ type: 'TOOL_CALL_ARGS', toolCallId: 't1', delta: '{}' })).toEqual([])
+    expect(a.decode({ type: 'TOOL_CALL_ARGS', toolCallId: 't1', delta: '{}' })).toHaveLength(1)
+    a.decode({ type: 'TOOL_CALL_START', toolCallId: 't2', toolCallName: 'x' })
+    a.reset()
+    expect(a.decode({ type: 'TOOL_CALL_ARGS', toolCallId: 't2', delta: '{}' })).toEqual([])
   })
 })

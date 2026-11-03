@@ -32,6 +32,35 @@ describe('sessionState', () => {
     expect(sessionState(s({ running: true }))).toBe('running')
     expect(sessionState(s({}))).toBe('idle')
   })
+
+  it('reads a session behind an offline or paused runner as held, never running', () => {
+    expect(sessionState(s({ running: true, runner_online: false, runner_status: 'disconnected' }))).toBe('held')
+    expect(sessionState(s({ waiting_on_you: true, runner_online: false, runner_status: 'paused' }))).toBe('held')
+    // Unbound (no runner yet) is not held.
+    expect(sessionState(s({ running: true, runner_online: null }))).toBe('running')
+  })
+})
+
+describe('matches — held', () => {
+  const held = s({ running: true, runner_online: false, runner_status: 'paused' })
+
+  it('hides held sessions only when held is switched off', () => {
+    expect(matches(held, DEFAULT_FILTERS)).toBe(true)
+    expect(matches(held, with_({ states: { ...DEFAULT_FILTERS.states, held: false } }))).toBe(false)
+    // Switching running off does not hide it: it is not running.
+    expect(matches(held, with_({ states: { ...DEFAULT_FILTERS.states, running: false } }))).toBe(true)
+  })
+
+  it('still shows held sessions under a filter saved before held existed', () => {
+    const old = { running: true, input: true, idle: true } as unknown as IdeFilters['states']
+    expect(matches(held, with_({ states: old }))).toBe(true)
+  })
+
+  it('counts held sessions in their folder', () => {
+    const tree = buildTree([{ ...held, emdash_project: 'p' }], DEFAULT_FILTERS)
+    expect(tree[0].counts.held).toBe(1)
+    expect(tree[0].counts.running).toBe(0)
+  })
 })
 
 describe('sessionMode', () => {
@@ -57,7 +86,7 @@ describe('matches', () => {
   })
 
   it('filters by state and mode independently', () => {
-    const states = { running: true, input: false, idle: true }
+    const states = { running: true, input: false, held: true, idle: true }
     expect(matches(s({ waiting_on_you: true }), with_({ states }))).toBe(false)
     const modes = { manual: true, auto: false, none: true }
     expect(matches(s({ turn_mode: 'auto' }), with_({ modes }))).toBe(false)
@@ -95,7 +124,7 @@ describe('buildTree', () => {
     const tree = buildTree(rows, DEFAULT_FILTERS)
     expect(tree.map((f) => f.key)).toEqual(['alpha', 'zeta', ''])
     expect(tree[0].sessions.map((r) => r.id)).toEqual(['c', 'b'])
-    expect(tree[0].counts).toEqual({ running: 1, input: 1, idle: 0 })
+    expect(tree[0].counts).toEqual({ running: 1, input: 1, held: 0, idle: 0 })
   })
 
   it('marks agent folders', () => {

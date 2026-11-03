@@ -26,7 +26,11 @@ from __future__ import annotations
 import ast
 from collections import Counter
 
+import pytest
+
 from tests._source import ROOT, iter_app_sources
+
+pytestmark = pytest.mark.guard
 
 
 def _product_tier() -> set[str]:

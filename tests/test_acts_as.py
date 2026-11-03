@@ -18,11 +18,11 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentCredential
 from apps.harness import claim
 from apps.harness.models import PrivateRunner, Runner, Turn
-from apps.tokens.models import PersonalToken
 from apps.workspaces import role_cap
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.access_helpers import editors_run
 from tests.fixtures.device_proof import accept_device_proof
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -50,11 +50,6 @@ def world(monkeypatch):
     return {"ws": ws, "hal": hal, "jj": jj, "other": other, "box": box}
 
 
-def _pat(user, **headers) -> Client:
-    raw, _tok = PersonalToken.create_for_user(user=user, label="cli")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}", **headers)
-
-
 def _make_private(client, box):
     return client.put(f"/api/harness/runners/{box.pk}/private",
                       data={"private": True}, content_type="application/json")
@@ -79,7 +74,7 @@ def _open_local(client, box, session="s1", **extra):
 # --- the private setting ----------------------------------------------------------
 
 def test_the_owner_makes_their_runner_private_and_nothing_else(world):
-    res = _make_private(_pat(world["jj"]), world["box"])
+    res = _make_private(pat_client(world["jj"]), world["box"])
     assert res.status_code == 200, res.content
     assert res.json()["private"] is True and "acts_as" not in res.json()
     world["box"].refresh_from_db()
@@ -90,15 +85,15 @@ def test_only_the_owner_may_change_it(world):
     from apps.harness.models import RunnerAdmin
 
     RunnerAdmin.objects.create(runner=world["box"], user=world["other"])
-    assert _make_private(_pat(world["other"]), world["box"]).status_code == 404
+    assert _make_private(pat_client(world["other"]), world["box"]).status_code == 404
 
 
 def test_making_it_private_links_a_registration_the_runner_reads(world):
-    res = _make_private(_pat(world["jj"]), world["box"])
+    res = _make_private(pat_client(world["jj"]), world["box"])
     pr_id = res.json()["private_runner_id"]
     pr = PrivateRunner.objects.get(pk=pr_id)
     assert (pr.owner, pr.runner_id, pr.name) == (world["jj"], world["box"].pk, "jj-mbp-cdp")
-    assert _make_private(_pat(world["jj"]), world["box"]).json()["private_runner_id"] == pr_id
+    assert _make_private(pat_client(world["jj"]), world["box"]).json()["private_runner_id"] == pr_id
     assert PrivateRunner.objects.filter(owner=world["jj"]).count() == 1
 
 
@@ -107,8 +102,8 @@ def test_a_private_runner_takes_no_routed_fleet_work(world):
 
     jj, box = world["jj"], world["box"]
     RunnerAssignment.objects.create(agent=world["hal"], runner=box, rank=0)
-    _make_private(_pat(jj), box)
-    _dispatch(_pat(world["other"]), key="k2")
+    _make_private(pat_client(jj), box)
+    _dispatch(pat_client(world["other"]), key="k2")
     box.refresh_from_db()
     assert claim.claim_next_turn(box) is None
 
@@ -131,7 +126,7 @@ def test_a_cap_only_lowers(world):
 
 def test_a_turn_started_as_an_editor_runs_as_one(world):
     jj, box = world["jj"], world["box"]
-    res = _dispatch(_pat(jj), box, acts_as="editor")
+    res = _dispatch(pat_client(jj), box, acts_as="editor")
     assert res.status_code == 201, res.content
     claimed = claim.claim_next_turn(box)
     assert claimed.origin_ref["acts_as"] == "editor"
@@ -140,33 +135,33 @@ def test_a_turn_started_as_an_editor_runs_as_one(world):
     assert caller_context.relationship(claimed, world["hal"]) == "member"
     # The cap is the turn's: the same person's next turn acts as themselves.
     Turn.objects.filter(pk=claimed.pk).update(status=Turn.DONE)
-    _dispatch(_pat(jj), box, key="k-plain")
+    _dispatch(pat_client(jj), box, key="k-plain")
     plain = claim.claim_next_turn(box)
     assert "acts_as" not in plain.origin_ref
 
 
 def test_a_capped_turn_may_not_ask_for_auto(world):
-    res = _dispatch(_pat(world["jj"]), world["box"], acts_as="editor", turn_mode="auto")
+    res = _dispatch(pat_client(world["jj"]), world["box"], acts_as="editor", turn_mode="auto")
     assert res.status_code == 403
 
 
 def test_a_turn_started_as_a_viewer_is_refused_like_a_viewers(world):
-    res = _dispatch(_pat(world["jj"]), world["box"], acts_as="viewer")
+    res = _dispatch(pat_client(world["jj"]), world["box"], acts_as="viewer")
     assert res.status_code in (403, 404)
     assert not Turn.objects.exists()
 
 
 def test_a_client_cannot_assert_a_cap_through_origin_ref(world):
     # Harmless (a cap only lowers) but the server stamps it, so the record is true.
-    res = _dispatch(_pat(world["jj"]), world["box"], origin_ref={"acts_as": "viewer"})
+    res = _dispatch(pat_client(world["jj"]), world["box"], origin_ref={"acts_as": "viewer"})
     assert res.status_code == 201
     assert "acts_as" not in Turn.objects.get().origin_ref
 
 
 def test_its_reads_on_the_owners_private_runner_go_out_under_the_license(world):
     jj, box = world["jj"], world["box"]
-    _make_private(_pat(jj), box)
-    _dispatch(_pat(jj), box, acts_as="editor")
+    _make_private(pat_client(jj), box)
+    _dispatch(pat_client(jj), box, acts_as="editor")
     box.refresh_from_db()
     turn = claim.claim_next_turn(box)
     as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
@@ -177,23 +172,23 @@ def test_its_reads_on_the_owners_private_runner_go_out_under_the_license(world):
 # --- a client in a lower mode (X-Canopy-Acts-As) -----------------------------------
 
 def test_a_request_in_a_lower_mode_is_judged_at_it(world):
-    capped = _pat(world["jj"], HTTP_X_CANOPY_ACTS_AS="editor")
+    capped = pat_client(world["jj"], HTTP_X_CANOPY_ACTS_AS="editor")
     body = capped.get("/api/agents/hal/credentials/access").json()
     assert (body["may_resolve"], body["via"]) == (False, None)
-    plain = _pat(world["jj"]).get("/api/agents/hal/credentials/access").json()
+    plain = pat_client(world["jj"]).get("/api/agents/hal/credentials/access").json()
     assert (plain["may_resolve"], plain["via"]) == (True, "admin")
-    assert _pat(world["jj"], HTTP_X_CANOPY_ACTS_AS="admin").get(
+    assert pat_client(world["jj"], HTTP_X_CANOPY_ACTS_AS="admin").get(
         "/api/agents/hal/credentials/access").json()["via"] == "admin"  # not a cap: ignored
 
 
 def test_a_runner_claiming_in_a_lower_mode_runs_its_owners_turns_in_it(world):
     jj, box = world["jj"], world["box"]
-    _dispatch(_pat(jj), box)
+    _dispatch(pat_client(jj), box)
     turn = claim.claim_next_turn(box, acts_as="editor")
     assert turn.origin_ref["acts_as"] == "editor" and turn.turn_mode == "manual"
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
     # Never loosens a cap the turn was started with.
-    _dispatch(_pat(jj), box, key="k-capped", acts_as="editor")
+    _dispatch(pat_client(jj), box, key="k-capped", acts_as="editor")
     t2 = claim.claim_next_turn(box, acts_as="editor")
     assert t2.origin_ref["acts_as"] == "editor"
 
@@ -203,7 +198,7 @@ def test_a_runners_mode_never_reaches_someone_elses_turn(world):
 
     box = world["box"]
     RunnerAdmin.objects.create(runner=box, user=world["other"])
-    res = _dispatch(_pat(world["other"]), box, key="k-other")
+    res = _dispatch(pat_client(world["other"]), box, key="k-other")
     assert res.status_code == 201, res.content
     turn = claim.claim_next_turn(box, acts_as="viewer")
     assert "acts_as" not in turn.origin_ref
@@ -211,7 +206,7 @@ def test_a_runners_mode_never_reaches_someone_elses_turn(world):
 
 def test_the_rest_claim_reads_the_header(world):
     jj, box = world["jj"], world["box"]
-    _dispatch(_pat(jj), box)
+    _dispatch(pat_client(jj), box)
     as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}", HTTP_X_CANOPY_ACTS_AS="editor")
     res = as_box.post(f"/api/harness/runners/{box.pk}/claim")
     assert res.status_code == 200, res.content
@@ -221,7 +216,7 @@ def test_the_rest_claim_reads_the_header(world):
 # --- direct sessions opened as a lower role -----------------------------------------
 
 def test_a_local_turn_opened_as_an_editor_is_an_editors(world):
-    c = _pat(world["jj"])
+    c = pat_client(world["jj"])
     res = _open_local(c, world["box"], turn_mode="auto", acts_as="editor")
     assert res.status_code == 201, res.content
     turn = Turn.objects.get(pk=res.json()["turn_id"])
@@ -233,9 +228,9 @@ def test_a_local_turn_opened_as_an_editor_is_an_editors(world):
 
 
 def test_its_reads_go_out_under_the_license_and_keep_the_cap(world):
-    c = _pat(world["jj"])
+    c = pat_client(world["jj"])
     turn_id = _open_local(c, world["box"], acts_as="editor").json()["turn_id"]
-    read = _pat(world["jj"], HTTP_X_CANOPY_TURN_ID=turn_id).get("/api/agents/hal/credentials/resolve")
+    read = pat_client(world["jj"], HTTP_X_CANOPY_TURN_ID=turn_id).get("/api/agents/hal/credentials/resolve")
     assert read.status_code == 200, read.content
     assert read.json()["values"]["hal-key"] == SECRET
     from apps.agents.models import AgentCredentialRead
@@ -243,7 +238,7 @@ def test_its_reads_go_out_under_the_license_and_keep_the_cap(world):
 
 
 def test_a_local_turn_opened_as_a_viewer_is_refused(world):
-    res = _open_local(_pat(world["jj"]), world["box"], acts_as="viewer")
+    res = _open_local(pat_client(world["jj"]), world["box"], acts_as="viewer")
     assert res.status_code == 403
     assert "may not use hal directly" in res.content.decode()
 
@@ -251,7 +246,7 @@ def test_a_local_turn_opened_as_a_viewer_is_refused(world):
 def test_a_revoked_license_refuses_the_capped_owner_too(world):
     from apps.agents.credentials import licenses
 
-    c = _pat(world["jj"])
+    c = pat_client(world["jj"])
     licenses.revoke(world["hal"], world["jj"], by=world["jj"])
     assert _open_local(c, world["box"], acts_as="editor").status_code == 403
 
@@ -269,7 +264,7 @@ def _box_token(box):
 
 def test_a_private_runners_key_opens_and_closes_its_owners_local_turn(world):
     jj, box = world["jj"], world["box"]
-    pr_id = _make_private(_pat(jj), box).json()["private_runner_id"]
+    pr_id = _make_private(pat_client(jj), box).json()["private_runner_id"]
     as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
     res = as_box.post("/api/harness/local-turns/", data={
         "agent": "hal", "private_runner": pr_id, "claude_session_id": "s-key", "acts_as": "editor"},
@@ -304,7 +299,7 @@ def test_a_shared_runners_key_opens_no_local_session(world):
 
 def test_a_private_runners_key_opens_only_its_own_registration(world):
     jj, box = world["jj"], world["box"]
-    _make_private(_pat(jj), box)
+    _make_private(pat_client(jj), box)
     elsewhere = PrivateRunner.objects.create(owner=jj, name="jj-other-laptop")
     as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
     res = as_box.post("/api/harness/local-turns/", data={

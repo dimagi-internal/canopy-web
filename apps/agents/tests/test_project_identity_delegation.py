@@ -13,8 +13,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents.credentials import delegations
-from apps.agents.models import Agent, AgentDelegation, RepoIdentity
-from apps.common.encryption import encrypt_secret
+from apps.agents.models import Agent, AgentCredential, RepoIdentity
 from apps.harness import services
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -28,11 +27,12 @@ def _agent_with_github_delegation(slug, owner_email, *, login, name, token="tok"
     ws = Workspace.objects.create(slug=f"ws-{slug}", display_name=slug, created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.OWNER)
     agent = Agent.objects.create(slug=slug, name=name, workspace=ws, owner=op)
-    AgentDelegation.objects.create(
-        user=op, agent=agent, service=AgentDelegation.GITHUB,
-        secret_enc=encrypt_secret(token),
-        meta={"login": login, "user_id": 1, "name": name},
-    )
+    # The token itself lives sealed in the vault, readable by no one here: the entry names
+    # whose identity it is, and that is what a turn is issued.
+    AgentCredential.objects.create(
+        agent=agent, name=delegations.accounts.GITHUB_ENTRY, account="delegated", provider="github",
+        delegated_by=op, value_zk=f"zks1:{token}", kv=0,
+        identity={"login": login, "user_id": 1, "name": name})
     return agent, ws
 
 
@@ -61,7 +61,7 @@ def test_a_project_turn_gets_its_repos_identity_agents_token():
 
     assert delegations.turn_agent(turn) == hal
     issued = delegations.github_token_for_turn(turn)
-    assert issued["token"] == "tok-hal"
+    assert issued["delegated"] == "github-token" and issued["token"] == ""
     assert issued["github_login"] == "hal-bot"
     assert issued["git_name"] == "Hal"
 
@@ -76,8 +76,8 @@ def test_two_projects_with_different_default_agents_do_not_leak_into_each_other(
     hal_turn = _project_turn("canopy-web", ws1, "k-hal2")
     echo_turn = _project_turn("connect-labs", ws2, "k-echo2")
 
-    assert delegations.github_token_for_turn(hal_turn)["token"] == "tok-hal"
-    assert delegations.github_token_for_turn(echo_turn)["token"] == "tok-echo"
+    assert delegations.github_token_for_turn(hal_turn)["github_login"] == "hal-bot"
+    assert delegations.github_token_for_turn(echo_turn)["github_login"] == "echo-bot"
 
 
 def test_the_agents_github_status_lists_the_repos_it_lends_identity_to():
@@ -97,3 +97,19 @@ def test_a_repo_maps_to_at_most_one_agent():
     RepoIdentity.objects.create(repo_slug="canopy-web", agent=hal)
     with pytest.raises(IntegrityError), transaction.atomic():
         RepoIdentity.objects.create(repo_slug="canopy-web", agent=echo)
+
+
+def test_session_identity_says_whose_token_a_chat_borrows_and_why():
+    from apps.canopy_sessions.models import Session
+
+    hal, ws = _agent_with_github_delegation("hal-id", "hal-id-owner@dimagi.com", login="hal-bot", name="Hal")
+    RepoIdentity.objects.create(repo_slug="canopy-web", agent=hal)
+
+    agent_chat = Session.objects.create(workspace=ws, agent=hal)
+    assert delegations.session_identity(agent_chat) == {"agent": hal, "source": "agent", "repo": ""}
+
+    repo_chat = Session.objects.create(workspace=ws, project="canopy-web")
+    assert delegations.session_identity(repo_chat) == {"agent": hal, "source": "repo_default", "repo": "canopy-web"}
+
+    bare = Session.objects.create(workspace=ws, project="undefaulted")
+    assert delegations.session_identity(bare) == {"agent": None, "source": "none", "repo": "undefaulted"}

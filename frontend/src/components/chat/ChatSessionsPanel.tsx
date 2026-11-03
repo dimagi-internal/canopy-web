@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { clsx } from 'clsx'
 import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { listRunners, recentRunners, type RunnerOut } from '@/api/harness'
@@ -12,12 +13,14 @@ import { ListTitle, listTitle } from './privateConversation'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeFailure, closeIntent, closeResultMessage, settleClosing } from './closeAction'
 import { CloseFailedNote } from './CloseFailedNote'
-import { parkedReason, parkedSummary, partitionByRunnerReachability, repoChoices } from './runnerEligibility'
+import { parkedSummary, partitionByRunnerReachability, repoChoices } from './runnerEligibility'
 import { NewChatMenu } from './NewChatMenu'
 import { TurnModeBadge } from './TurnModeBadge'
 import { TransferSessionMenu } from './TransferSessionMenu'
 import type { TransferResult } from '@/api/chat'
 import { WorkspaceBadge } from '@/components/WorkspaceBadge'
+import { StateDot } from '@/components/sessions/StateDot'
+import { sessionDisplay } from '@/components/sessions/sessionDisplay'
 import { scopedPath } from '../../lib/scopedLinks'
 
 /** An independent on/off filter — deliberately shaped unlike the sort segments
@@ -428,7 +431,8 @@ export function ChatSessionsPanel({
           {sortSessions(visible, sort).map((s, i, rows) => {
             const label = sessionTargetLabel(agentName(s.agent_slug), s.project ?? '')
             const header = projectHeader(rows, i, sort)
-            const parkedWhy = parkedReason(s)
+            const display = sessionDisplay(s)
+            const parked = display.tone === 'held'
             const intent = closeIntent(s)
             const closeFailed = closeFailure(s)
             return (
@@ -443,9 +447,9 @@ export function ChatSessionsPanel({
                 <div className="flex items-stretch">
                   <Link
                     to={scopedPath(s.workspace, `/sessions/${s.id}`)}
-                    data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
+                    data-testid={parked ? `session-parked-${s.id}` : undefined}
                     className={`flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
-                      parkedWhy || s.id in pendingClose ? ' opacity-60' : ''
+                      parked || s.id in pendingClose ? ' opacity-60' : ''
                     }`}
                   >
                     <div className="min-w-0">
@@ -463,33 +467,22 @@ export function ChatSessionsPanel({
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs">
-                      {/* Why this row is dimmed. Sits where `running` would, because
-                          it answers the same question — can this chat act right now. */}
-                      {parkedWhy ? (
-                        <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
-                          runner {parkedWhy}
-                        </span>
-                      ) : s.waiting_on_you ? (
-                        /* Outranks `running`: an agent blocked on a dialog is the
-                           one row here you can do something about, and it is the
-                           one that otherwise reads as merely quiet — a waiting
-                           session stops writing, so it sinks in a list ordered by
-                           activity and looks identical to an idle one. */
-                        <span className="flex items-center gap-1 font-medium text-warning">
-                          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
-                          waiting on you
-                        </span>
-                      ) : s.running ? (
-                        <span className="flex items-center gap-1 font-medium text-success">
-                          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
-                          running
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-muted-foreground">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                          idle
-                        </span>
-                      )}
+                      {/* One status in the shared precedence (sessionDisplay):
+                          a parked runner first — it says why the row is dimmed —
+                          then a question waiting on you, then running, then idle. */}
+                      <span
+                        data-testid={`session-status-${s.id}`}
+                        data-tone={display.tone}
+                        className={clsx(
+                          'flex items-center gap-1',
+                          display.tone === 'asking' && 'font-medium text-warning',
+                          display.tone === 'running' && 'font-medium text-success',
+                          (display.tone === 'held' || display.tone === 'idle') && 'text-muted-foreground',
+                        )}
+                      >
+                        <StateDot tone={display.tone} />
+                        {display.label}
+                      </span>
                       {/* The age used to REPLACE the status, so one slot held two
                           different kinds of fact — five rows read "running" and
                           the sixth read "6h ago", and the column could not be
@@ -499,10 +492,13 @@ export function ChatSessionsPanel({
                         <TurnModeBadge mode={s.turn_mode} testId={`session-mode-${s.id}`} />
                         {relativeAge(s.last_activity_at, now, { seconds: false })}
                       </span>
-                      {s.runner_name && (
-                        <span className="text-muted-foreground">
-                          {s.runner_name}
-                          {s.runner_location ? ` · ${s.runner_location}` : ''}
+                      {display.runner && (
+                        <span
+                          className="text-muted-foreground"
+                          title={display.runnerRequested ? `Starts on ${s.requested_runner_name} with its first message` : undefined}
+                        >
+                          {display.runner}
+                          {s.runner_name && s.runner_location ? ` · ${s.runner_location}` : ''}
                         </span>
                       )}
                     </div>

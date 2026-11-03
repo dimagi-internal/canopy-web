@@ -2,7 +2,8 @@
 // saved views, task settings, and a project by its address with its milestones
 // and updates. A thin typed wrapper over the generated client, like agents.ts;
 // apiV2 pins every call to the page's workspace (`/api/w/{ws}/…`).
-import { apiV2, WORKSPACE_HEADER } from './client.v2'
+import { apiV2 } from './client.v2'
+import { clean, pin, typed } from './requestHelpers'
 import type { components, operations } from './generated'
 import { ensureOk, unwrap } from './problem'
 
@@ -35,22 +36,6 @@ export type Health = 'on_track' | 'at_risk' | 'off_track'
 
 /** The task list's query: every filter `GET /api/tasks/` takes. */
 export type TaskQuery = NonNullable<operations['list_fleet_tasks']['parameters']['query']>
-
-// The generated shapes are readonly (--immutable), and openapi-fetch's Readable<T>
-// degrades their nested readonly arrays to ArrayLike (see agents.ts `toPage`), so
-// a response is not assignable to its own alias. The JSON is the alias's shape;
-// bridge the type at this one boundary.
-function typed<T>(value: unknown): T {
-  return value as T
-}
-
-function pin(workspace?: string) {
-  return workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}
-}
-
-function clean<T extends Record<string, unknown>>(q: T): T {
-  return Object.fromEntries(Object.entries(q).filter(([, v]) => v !== '' && v !== undefined && v !== null)) as T
-}
 
 // ---- tasks -----------------------------------------------------------------
 

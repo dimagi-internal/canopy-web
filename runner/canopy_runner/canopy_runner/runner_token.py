@@ -43,6 +43,11 @@ RENEW_SECONDS = 600
 #: After a failed exchange, wait this long before asking again (the PAT is used
 #: meanwhile) — a pending key must not cost a subprocess on every call.
 RETRY_SECONDS = 300
+#: ...but when the exchange never reached canopy-web (no network — a laptop asleep
+#: or just woken), ask again soon: the key is fine, and a runner with no PAT sends
+#: NOTHING meanwhile, so every call 401s until it does (2026-11-01: a Mac woke from
+#: sleep and crash-looped on 401s for the rest of a 300s back-off it took while offline).
+UNREACHABLE_RETRY_SECONDS = 20
 TIMEOUT = 60
 PREFIX = "crt_"
 SESSIONS_PATH = "/api/runner-sessions/"
@@ -86,7 +91,9 @@ class RunnerCredential:
         self._raw = ""
         self._exp = 0.0
         self._failed_at = -RETRY_SECONDS
-        self._mode = ""  # "keyless" | "pat" — logged only when it changes
+        self._backoff = RETRY_SECONDS
+        self._unreachable = False  # the last exchange never got an answer from canopy-web
+        self._mode = ""  # "keyless" | "pat" | "none" | "unreachable" — logged only when it changes
 
     @classmethod
     def for_config(cls, cfg, **kw) -> "RunnerCredential":
@@ -103,14 +110,18 @@ class RunnerCredential:
             now = self._clock()
             if self._raw and self._exp - now > RENEW_SECONDS:
                 return self._raw
-            if now - self._failed_at >= RETRY_SECONDS:
+            if now - self._failed_at >= self._backoff:
                 if self._exchange():
                     self._note("keyless", "signed in with this machine's device key (no PAT in use)")
                     return self._raw
                 self._failed_at = now
+                self._backoff = UNREACHABLE_RETRY_SECONDS if self._unreachable else RETRY_SECONDS
             if self._raw and self._exp > now:
                 return self._raw  # still good while the renewal is retried
-            if self._pat:
+            if self._unreachable:
+                self._note("unreachable", "could not reach canopy-web to renew this runner's "
+                                          f"token — retrying every {UNREACHABLE_RETRY_SECONDS}s")
+            elif self._pat:
                 self._note("pat", "device key could not get a runner token — using the owner's PAT")
             else:
                 self._note("none", "device key could not get a runner token, and this runner "
@@ -123,6 +134,7 @@ class RunnerCredential:
         with self._lock:
             had = bool(self._raw)
             self._raw, self._exp, self._failed_at = "", 0.0, -RETRY_SECONDS
+            self._backoff = RETRY_SECONDS
         return had
 
     def _note(self, mode: str, msg: str) -> None:
@@ -132,7 +144,9 @@ class RunnerCredential:
 
     def _exchange(self) -> bool:
         """canopy's CLI when this box has one (a developer install, unchanged), else —
-        or when it fails — the same exchange signed here (`_exchange_native`)."""
+        or when it fails — the same exchange signed here (`_exchange_native`).
+        Sets `_unreachable` when the native exchange could not get an answer at all."""
+        self._unreachable = False
         cli = self._cli or device_key.canopy_cli()
         if cli and self._exchange_cli(cli):
             return True
@@ -147,7 +161,9 @@ class RunnerCredential:
             logger.debug("canopy vault runner-session failed to run: %s", exc)
             return False
         if p.returncode != 0:
-            logger.debug("canopy vault runner-session: %s", (p.stderr or p.stdout or "").strip()[:300])
+            out = (p.stderr or p.stdout or "").strip()
+            logger.debug("canopy vault runner-session: %s", out[:300])
+            self._unreachable = _looks_unreachable(out)
             return False
         try:
             body = json.loads(p.stdout)
@@ -186,9 +202,11 @@ class RunnerCredential:
                 "POST", url, {**headers, "Content-Type": "application/json",
                               "User-Agent": user_agent()},
                 json.dumps({"runner": self._runner_id}).encode("utf-8"))
-        except Exception as exc:  # noqa: BLE001 — network: retried after RETRY_SECONDS
+        except Exception as exc:  # noqa: BLE001 — network: retried after UNREACHABLE_RETRY_SECONDS
             logger.debug("runner-session exchange failed: %s", exc)
+            self._unreachable = True
             return False
+        self._unreachable = False  # canopy-web answered: whatever it said, it is reachable
         if status != 201:
             logger.debug("runner-session refused (%s): %s", status, (text or "")[:300])
             return False
@@ -199,6 +217,22 @@ class RunnerCredential:
         except (ValueError, KeyError, TypeError):
             return False
         return self._accept(raw, exp)
+
+
+#: What a failed `canopy vault runner-session` says when it never reached canopy-web
+#: (its refusal reads "canopy-web refused the device proof (…)" instead).
+_UNREACHABLE_MARKERS = (
+    "nodename nor servname", "name or service not known", "temporary failure in name resolution",
+    "getaddrinfo", "network is unreachable", "no route to host", "connection refused",
+    "connection reset", "timed out", "urlopen error",
+)
+
+
+def _looks_unreachable(output: str) -> bool:
+    low = output.lower()
+    if "refused the device proof" in low:
+        return False
+    return any(m in low for m in _UNREACHABLE_MARKERS)
 
 
 def bearer_of(token) -> str:

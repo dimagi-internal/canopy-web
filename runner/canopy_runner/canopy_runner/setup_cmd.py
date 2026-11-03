@@ -93,11 +93,14 @@ def mac_plists(root: Path, home: Path, config: Path) -> dict[str, dict]:
     jobs = {
         platform_jobs.RUNNER_LABEL: {
             "Label": platform_jobs.RUNNER_LABEL,
-            "ProgramArguments": [runner_bin, "run", "--config", str(config)],
+            # The runner rotates runner.log itself (--log-file); launchd's own capture
+            # goes to a separate file that only sees what happens before logging starts.
+            "ProgramArguments": [runner_bin, "run", "--config", str(config),
+                                 "--log-file", str(canopy / "runner.log")],
             "RunAtLoad": True,
             "KeepAlive": True,
-            "StandardOutPath": str(canopy / "runner.log"),
-            "StandardErrorPath": str(canopy / "runner.log"),
+            "StandardOutPath": str(canopy / "runner-launchd.log"),
+            "StandardErrorPath": str(canopy / "runner-launchd.log"),
             "EnvironmentVariables": env,
             # Login Items › "App Background Activity" names this job after the app,
             # not after a bare `canopy-runner` script nobody recognises.

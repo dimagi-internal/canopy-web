@@ -36,7 +36,7 @@ def test_autotitle_from_first_user_message(ctx):
     user, ws, agent = ctx
     session = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="")
     Message.objects.create(
-        session=session, turn_index=0, role="user", content={},
+        session=session, turn_index=0, role="user", content={}, typed=True,
         plaintext="Help me plan the Q3 field visit schedule",
     )
     title = autotitle.maybe_autotitle(session.pk)
@@ -47,7 +47,7 @@ def test_autotitle_from_first_user_message(ctx):
 def test_autotitle_never_overwrites(ctx):
     user, ws, agent = ctx
     session = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="Existing")
-    Message.objects.create(session=session, turn_index=0, role="user", content={}, plaintext="hello")
+    Message.objects.create(session=session, turn_index=0, role="user", content={}, typed=True, plaintext="hello")
     assert autotitle.maybe_autotitle(session.pk) is None
     session.refresh_from_db()
     assert session.title == "Existing"
@@ -65,7 +65,7 @@ def test_autotitle_truncates_and_collapses_whitespace(ctx):
     user, ws, agent = ctx
     session = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="")
     long_text = "line one\n  line two   with   extra   spaces " + ("x" * 100)
-    Message.objects.create(session=session, turn_index=0, role="user", content={}, plaintext=long_text)
+    Message.objects.create(session=session, turn_index=0, role="user", content={}, typed=True, plaintext=long_text)
     title = autotitle.maybe_autotitle(session.pk)
     assert title is not None
     assert len(title) == autotitle.TITLE_MAX
@@ -80,7 +80,7 @@ def test_assistant_turn_event_triggers_autotitle_and_publishes(ctx):
     user, ws, agent = ctx
     session = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="")
     Message.objects.create(
-        session=session, turn_index=0, role="user", content={}, plaintext="hello there",
+        session=session, turn_index=0, role="user", content={}, typed=True, plaintext="hello there",
     )
     turn = Turn.objects.create(
         chat_session=session, origin=Turn.ORIGIN_API, idempotency_key="autotitle-1",
@@ -108,7 +108,7 @@ def test_non_assistant_turn_event_does_not_autotitle(ctx):
     user, ws, agent = ctx
     session = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="")
     Message.objects.create(
-        session=session, turn_index=0, role="user", content={}, plaintext="hello there",
+        session=session, turn_index=0, role="user", content={}, typed=True, plaintext="hello there",
     )
     turn = Turn.objects.create(
         chat_session=session, origin=Turn.ORIGIN_API, idempotency_key="autotitle-2",
@@ -135,7 +135,7 @@ def test_a_runner_backed_session_keeps_the_emdash_task_name():
     session = Session.objects.create(workspace=ws, created_by=user, title="")
     RunnerBinding.objects.create(session=session, runner=runner,
                                  session_key="canopy-web-api-7716")
-    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+    Message.objects.create(session=session, turn_index=0, role=Message.USER, typed=True,
                            plaintext="I think we basically implemented everything")
 
     assert autotitle.maybe_autotitle(session.pk) is None
@@ -149,7 +149,7 @@ def test_a_session_with_no_runner_still_autotitles():
     user = User.objects.create_user("t2", "t2@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-title2", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, created_by=user, title="")
-    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+    Message.objects.create(session=session, turn_index=0, role=Message.USER, typed=True,
                            plaintext="hello there")
     assert autotitle.maybe_autotitle(session.pk) == "hello there"
 
@@ -166,7 +166,7 @@ def test_a_cloud_session_is_named_from_its_first_message_not_its_uuid():
     key = "1fb14aa8-7289-4e43-827a-e989df77a07a"
     session = Session.objects.create(workspace=ws, created_by=user, title=key)
     RunnerBinding.objects.create(session=session, runner=runner, session_key=key)
-    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+    Message.objects.create(session=session, turn_index=0, role=Message.USER, typed=True,
                            plaintext="Fix the session name on supervisor launches")
 
     assert autotitle.maybe_autotitle(session.pk) == "Fix the session name on supervisor launches"

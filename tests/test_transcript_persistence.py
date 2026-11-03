@@ -366,6 +366,8 @@ def test_rows_written_under_a_superseded_ordinal_scheme_are_rebuilt():
     get_or_create can't tell that an old row and a new one are the same record.
     The first write under the current scheme drops the stale rows instead."""
     _u, _ws, _r, s, _c = _ctx()
+    Session.objects.filter(pk=s.pk).update(ordinal_scheme=0)
+    s.refresh_from_db()
     # Pre-existing rows keyed the old way (turn_index == raw record ordinal).
     Message.objects.create(session=s, turn_index=0, role=Message.USER,
                            plaintext="old q", content={"text": "old q"})
@@ -400,6 +402,8 @@ def test_a_legacy_ordinal_less_payload_never_triggers_a_rebuild():
     """An old runner that sends no ordinals says nothing about the scheme; wiping
     a session's history on its say-so would be destructive for no reason."""
     _u, _ws, _r, s, _c = _ctx()
+    Session.objects.filter(pk=s.pk).update(ordinal_scheme=0)
+    s.refresh_from_db()
     Message.objects.create(session=s, turn_index=0, role=Message.USER,
                            plaintext="kept", content={"text": "kept"})
     transcript_ingest.persist_transcript_rows(s, [{"index": -1, "role": "assistant", "text": "next"}])

@@ -18,6 +18,11 @@ from django.db import models
 class Session(models.Model):
     ACTIVE, ARCHIVED = "active", "archived"
     STATUS_CHOICES = [(ACTIVE, "Active"), (ARCHIVED, "Archived")]
+    #: `metadata` key: a person archived this session by hand
+    #: (`control.archive_session`). The runner's wholesale report does not revive
+    #: it while it keeps reporting the task; the task dropping out of a complete
+    #: report, an unarchive, or a send into the session clears it.
+    HAND_ARCHIVED_KEY = "archived_by_hand"
 
     # Provenance: was the session started in-app (web) or discovered on a
     # runner (runner)? Independent of which runner backs it.
@@ -97,8 +102,10 @@ class Session(models.Model):
     # tool calls addressable. A session still on an older scheme is re-derived
     # from its transcript on the next write (see _ensure_current_ordinal_scheme)
     # — the rows are a cache of a file on the runner's disk, so a rebuild is the
-    # cheap, self-healing move, not a migration to hand-write.
-    ordinal_scheme = models.PositiveSmallIntegerField(default=0)
+    # cheap, self-healing move, not a migration to hand-write. A new session starts
+    # on the current scheme (`transcript_ingest.ORDINAL_SCHEME`), so its first write
+    # never rebuilds.
+    ordinal_scheme = models.PositiveSmallIntegerField(default=1)
     # Opaque product linkage (e.g. {"opp_slug": "..."}) — never interpreted here.
     metadata = models.JSONField(default=dict, blank=True)
     # WHAT created this session and under which parent — the same shape and rules
@@ -227,6 +234,11 @@ class Message(models.Model):
     # The Turn a user line was delivered by, from the same marker. What lets the
     # queued list (`send.queued_messages`) know a send has landed.
     source_turn_id = models.UUIDField(null=True, blank=True, db_index=True)
+    # A USER row a person typed, decided once as the row is stored
+    # (`transcript_read.mark_typed`, the `is_human_input` rule) — not a skill's or
+    # slash command's injected body, a program's prompt, a compaction summary or
+    # harness output. What the tail reaches back to, and what names a conversation.
+    typed = models.BooleanField(default=False, db_default=False)
     # A SENSITIVE conversation's words ({"plaintext", "content"}), sealed to the
     # conversation's public key (`conversation_keys`, a `cc1:` envelope) and kept
     # apart from the columns above, which hold metadata only. canopy-web holds no key
@@ -243,7 +255,7 @@ class Message(models.Model):
                 fields=["session", "turn_index"], name="message_index_unique_per_session"
             )
         ]
-        # A session's newest message, one probe each (`transcript_read.last_message_at`).
+        # A session's newest message by insert time, one probe each.
         indexes = [models.Index(fields=["session", "-created_at"], name="message_session_created_idx")]
 
     def __str__(self) -> str:  # pragma: no cover
@@ -655,6 +667,14 @@ class RunnerBinding(models.Model):
     # into a session that has moved on: the runner echoes the id back and the
     # server clears only that one.
     pending_answer = models.JSONField(null=True, blank=True, default=None)
+
+    # A stop asked of this session that its runner has not carried out yet:
+    # {"id": str, "at": epoch seconds}. `control.interrupt_session` writes it
+    # beside the `runner.session_interrupt` frame (the doorbell); the runner drains
+    # it on its poll tick (`GET /runners/{id}/session-interrupts`) and retires it by
+    # id (`POST .../session-interrupt-result`). Older than `control.INTERRUPT_TTL`
+    # it is no longer offered: a stop is about the work running when it was asked.
+    pending_interrupt = models.JSONField(null=True, blank=True, default=None)
 
     # A close the runner has not carried out yet — same reasoning as
     # `pending_answer`, for the other verb that only ever existed as a WS frame.

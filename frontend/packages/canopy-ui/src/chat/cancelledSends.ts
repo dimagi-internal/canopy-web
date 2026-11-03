@@ -53,6 +53,9 @@ export function withCancelledSends(messages: Message[], cancelled: CancelledSend
         ...(c.client_id ? { client_id: c.client_id } : {}),
         cancelled: true,
         cancelled_by: c.cancelled_by,
+        ...(c.state && c.state !== "cancelled"
+          ? { undelivered: true, undelivered_detail: c.detail ?? "" }
+          : {}),
       },
       plaintext: c.text,
       status: "complete",

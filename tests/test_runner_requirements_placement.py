@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
-from tests.access_helpers import publish
-from tests.fixtures.sensitive import vault_key
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -14,12 +11,14 @@ from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Runner, RunnerFlag
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import allow, declare, editors_run
+from tests.fixtures.sensitive import vault_key
 
 pytestmark = pytest.mark.django_db
 
 # A sensitive-data box holds only an agent with a `data: sensitive` capability (dedicated box).
-SENSITIVE_IFACE = {"capabilities": {"data": {"callers": ["member"], "sites": ["connect-labs"],
-                                       "data": "sensitive", "tools": ["Read"]}}}
+SENSITIVE_IFACE = {"data": {"sites": ["connect-labs"],
+                             "data": "sensitive", "tools": ["Read"]}}
 
 
 def _capable(r):
@@ -35,7 +34,9 @@ def fleet():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
-    publish(echo, SENSITIVE_IFACE)
+    declare(echo, SENSITIVE_IFACE)
+    allow(echo, capability="data")
+    editors_run(echo)
     now = timezone.now()
     laptop = Runner.objects.create(
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
@@ -74,10 +75,10 @@ def test_a_sensitive_runner_is(fleet):
 
 def test_available_cloud_runner_skips_a_ordinary_box(fleet):
     s = _sensitive_session(fleet)
-    assert session_send.available_cloud_runner(s, user=fleet["user"]) is None
+    assert session_placement.available_cloud_runner(s, user=fleet["user"]) is None
     RunnerFlag.objects.create(runner=fleet["cloud"], flag="sensitive_data")
     _reports_sensitive(fleet["cloud"])
-    assert session_send.available_cloud_runner(s, user=fleet["user"]).id == fleet["cloud"].id
+    assert session_placement.available_cloud_runner(s, user=fleet["user"]).id == fleet["cloud"].id
 
 
 def test_sending_with_an_explicit_ordinary_placement_is_refused(fleet):
@@ -106,10 +107,10 @@ def test_placing_on_a_real_but_ordinary_runner_says_sensitive_is_why(fleet, move
                                           placement=laptop)
         elif move == "place":
             Turn.objects.create(chat_session=s, prompt="hi", status=Turn.QUEUED)
-            session_send.place_queued_turn(session=s, placement=laptop)
+            session_placement.place_queued_turn(session=s, placement=laptop)
         elif move == "move":
             Turn.objects.create(chat_session=s, prompt="hi", status=Turn.QUEUED)
-            session_send.move_queued_turns(session=s, placement=laptop)
+            session_placement.move_queued_turns(session=s, placement=laptop)
         else:
             RunnerBinding.objects.create(session=s, runner=fleet["cloud"])
             session_placement.transfer_session(session=s, placement=laptop, brief="b")

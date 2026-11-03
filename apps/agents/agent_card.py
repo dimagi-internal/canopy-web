@@ -93,11 +93,6 @@ def base_url() -> str:
     return (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
 
 
-def card_base(slug: str) -> str:
-    """The agent's A2A base URL; its card is `{this}/.well-known/agent-card.json`."""
-    return f"{base_url()}/api/a2a/agents/{slug}"
-
-
 # --- which capabilities appear -----------------------------------------------------
 
 def _capabilities(agent) -> dict:
@@ -112,33 +107,33 @@ def _outsider_lines(agent) -> list:
     address: the ones that reach outside the workspace. A line that gives the whole agent
     (editor) is a working session, not a skill, and is not advertised."""
     return [ln for ln in grants.lines_for(agent)
-            if ln.kind in grants.ADDRESS_ONLY and not roles.allows(ln.role, roles.RUN)]
+            if ln.kind in grants.ADDRESS_ONLY and not roles.holds(ln.permissions, roles.WRITE)]
 
 
-def _reaching(lines: list, cap: dict) -> list:
-    need = iface_mod.capability_role(cap)
-    return [ln for ln in lines if roles.at_least(ln.role, need)]
+def _reaching(lines: list, name: str) -> list:
+    return [ln for ln in lines if iface_mod.opens(ln.permissions, name)]
 
 
 def public_capabilities(agent) -> list[str]:
     """Capabilities someone outside the agent's workspace could use."""
     lines = _outsider_lines(agent)
-    return sorted(n for n, cap in _capabilities(agent).items() if _reaching(lines, cap))
+    return sorted(n for n in _capabilities(agent) if _reaching(lines, n))
 
 
-def _contact_token_reaches(lines: list, cap: dict) -> bool:
+def _contact_token_reaches(lines: list, name: str) -> bool:
     """Whether a visitor arriving by contact token can use this capability.
 
     `verified` is mail-only for a contact (grants.py), so a capability reached only by
     verified lines is reachable by email and nothing else."""
-    return any(ln.kind == grants.AgentGrant.CONTACT and not ln.verified for ln in _reaching(lines, cap))
+    return any(ln.kind == grants.AgentGrant.CONTACT and not ln.verified for ln in _reaching(lines, name))
 
 
 # --- rendering ---------------------------------------------------------------------
 
-def _tags(agent, cap: dict, *, outsiders_only: bool) -> list[str]:
+def _tags(agent, name: str, *, outsiders_only: bool) -> list[str]:
     tags: set[str] = set()
-    for ln in _reaching([ln for ln in grants.lines_for(agent) if not roles.allows(ln.role, roles.RUN)], cap):
+    for ln in _reaching([ln for ln in grants.lines_for(agent)
+                         if not roles.holds(ln.permissions, roles.WRITE)], name):
         outsider = ln.kind in grants.ADDRESS_ONLY
         if outsiders_only and not outsider:
             continue
@@ -158,12 +153,12 @@ def _requirement(*names: str) -> A2ASecurityRequirement:
 
 
 def _skill(agent, name: str, cap: dict, *, public: bool) -> A2AAgentSkill:
-    security = [_requirement(CONTACT)] if _contact_token_reaches(_outsider_lines(agent), cap) else []
+    security = [_requirement(CONTACT)] if _contact_token_reaches(_outsider_lines(agent), name) else []
     return A2AAgentSkill(
         id=name,
         name=name.replace("_", " ").capitalize(),
         description=(cap.get("description") or "").strip() or f"Ask {agent.name} ({name}).",
-        tags=_tags(agent, cap, outsiders_only=public),
+        tags=_tags(agent, name, outsiders_only=public),
         security_requirements=security or None,
     )
 
@@ -235,7 +230,7 @@ def _interfaces(agent, caps: dict, public_names: list[str]) -> list[A2AAgentInte
     base = base_url()
     outsider = []
     lines = _outsider_lines(agent)
-    if any(_contact_token_reaches(lines, caps[n]) for n in public_names):
+    if any(_contact_token_reaches(lines, n) for n in public_names):
         outsider.append(A2AAgentInterface(url=f"{base}/api/contact/sessions",
                                           protocol_binding=CONTACT_BINDING,
                                           protocol_version=A2A_PROTOCOL_VERSION))

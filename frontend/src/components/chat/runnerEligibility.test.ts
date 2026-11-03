@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  isBoundRunnerOffline,
   isDirectedOnly,
   isSessionCapable,
   findBoundRunner,
@@ -110,45 +109,6 @@ describe("satisfiesRequirements", () => {
     expect(satisfiesRequirements({ flags: [] }, ["sensitive_data"])).toBe(false);
     expect(satisfiesRequirements({ flags: [] }, [])).toBe(true);
     expect(satisfiesRequirements({ flags: [] }, undefined)).toBe(true);
-  });
-});
-
-describe("isBoundRunnerOffline", () => {
-  const fleet = [
-    runner({ name: "Alpha", status: "online" }),
-    runner({ name: "Beta", status: "offline" }),
-  ];
-
-  it("is false when there is no bound runner name", () => {
-    expect(isBoundRunnerOffline(null, fleet)).toBe(false);
-    expect(isBoundRunnerOffline(undefined, fleet)).toBe(false);
-    expect(isBoundRunnerOffline("", fleet)).toBe(false);
-  });
-
-  it("is false when the bound runner matches an online fleet entry", () => {
-    expect(isBoundRunnerOffline("Alpha", fleet)).toBe(false);
-  });
-
-  it("is true when the bound runner matches a non-online fleet entry", () => {
-    expect(isBoundRunnerOffline("Beta", fleet)).toBe(true);
-  });
-
-  it("fails quiet (false) when the fleet list has not loaded", () => {
-    expect(isBoundRunnerOffline("Unknown Runner", [])).toBe(false);
-  });
-
-  it("is true when a LOADED fleet does not contain the bound runner", () => {
-    // GET /runners/ omits retired runners, so absence from a loaded fleet means
-    // the runner can never claim again — the banner must offer placement rather
-    // than leaving the send queued forever.
-    expect(isBoundRunnerOffline("Retired Runner", fleet)).toBe(true);
-  });
-
-  it("prefers the server's runner_online over the fleet heuristic", () => {
-    // Authoritative: no name matching, no fleet fetch, no staleness.
-    expect(isBoundRunnerOffline("Alpha", fleet, false)).toBe(true);
-    expect(isBoundRunnerOffline("Retired Runner", fleet, true)).toBe(false);
-    expect(isBoundRunnerOffline("Beta", [], true)).toBe(false);
   });
 });
 

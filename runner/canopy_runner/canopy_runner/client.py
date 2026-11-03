@@ -446,6 +446,18 @@ class Client:
         self._call("POST", f"/runners/{runner_id}/menu-answer-result",
                    {"session_id": session_id, "answer_id": answer_id, "outcome": outcome})
 
+    def sync_session_interrupts(self, runner_id: str) -> list[dict]:
+        """Stops a person asked of a session here that we have not carried out yet
+        (the durable twin of the `session_interrupt` frame)."""
+        _, payload = self._call("GET", f"/runners/{runner_id}/session-interrupts")
+        return (payload or {}).get("interrupts", [])
+
+    def post_session_interrupt_result(self, runner_id: str, session_id: str,
+                                      interrupt_id: str, outcome: str) -> None:
+        """Retire a stop we have acted on, by its id (a newer stop stays)."""
+        self._call("POST", f"/runners/{runner_id}/session-interrupt-result",
+                   {"session_id": session_id, "interrupt_id": interrupt_id, "outcome": outcome})
+
     def sync_backfills(self, runner_id: str) -> list[dict]:
         """Sessions the server asked this runner to ship full history for."""
         _, payload = self._call("GET", f"/runners/{runner_id}/backfills")

@@ -54,6 +54,16 @@ describe('useIdePrefs', () => {
     expect(p.collapsed).toEqual(['a'])
   })
 
+  it('shows held sessions under a state filter saved before held existed', () => {
+    window.localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ filters: { states: { running: false, input: true, idle: true } } }),
+    )
+    const p = loadPrefs()
+    expect(p.filters.states.held).toBe(true)
+    expect(p.filters.states.running).toBe(false)
+  })
+
   it('writes every change back, but never the search text', () => {
     const { result } = renderHook(() => useIdePrefs())
     act(() => {

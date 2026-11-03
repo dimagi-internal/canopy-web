@@ -163,7 +163,7 @@ def test_a_withdrawn_send_is_listed_as_cancelled_in_send_order():
     session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user",
         "text": legacy_marker("B", name="Jon", user_id=owner.id, turn_id=b.pk)}])
     assert session_send.queued_messages(session) == []
-    cancelled = session_send.cancelled_sends(session)
+    cancelled = session_send.ended_sends(session)
     assert [(c["text"], c["client_id"], c["cancelled_by"]) for c in cancelled] == [("A", "ca", "Jon")]
     assert cancelled[0]["sent_at"] < b.created_at.isoformat()
     assert cancelled[0]["author"] == {"name": "Jon", "user_id": owner.id}
@@ -175,4 +175,4 @@ def test_a_send_that_reached_the_transcript_is_not_reported_cancelled():
     session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user",
         "text": legacy_marker("A", name="Jon", user_id=owner.id, turn_id=t.pk)}])
     Turn.objects.filter(pk=t.pk).update(status=Turn.CANCELLED)
-    assert session_send.cancelled_sends(session) == []
+    assert session_send.ended_sends(session) == []

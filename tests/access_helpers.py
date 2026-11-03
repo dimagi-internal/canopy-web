@@ -1,43 +1,40 @@
-"""Set up who may use an agent in tests, in the words the tests were written in.
+"""Set up who may use an agent in tests: its interface and its access list.
 
-The interface's `full:` rules, each capability's `callers`, `editors:` and the implicit
-"a workspace editor is an editor" rule are gone (migration `agents/0112`): who may use an agent
-is its access list. A test that is about something else (a turn's mode, a Slack thread, a
-widget) still wants "members may ask" or "workspace editors may drive it, manually", so
-`publish` takes the old-style document and writes the equivalent capabilities and lines.
+Who may use an agent is its access list (`AgentGrant` lines: a role, or one named capability)
+plus the default lines of its workspace; what the agent offers is its interface (capabilities).
+A test that is about something else (a turn's mode, a Slack thread, a widget) still wants
+"members may ask" or "workspace editors may drive it, manually", so these three helpers say
+that in a line each:
 
-    publish(agent, {"capabilities": {"ask": {"callers": ["member", "contact"], "tools": ["Read"]}}})
-    publish(agent, HAL, editors=False)       # the old `editors: confined`
-    editors_run(agent)                       # just the old default: workspace editors, manual only
+    declare(agent, {"ask": {"tools": ["Read"]}})          # what the agent offers
+    allow(agent, role=roles.READ_ONLY)                    # every member may ask (`read` opens `ask`)
+    allow(agent, capability="report", contact=True)       # any contact may use `report`
+    allow(agent, role=roles.EDITOR, contact=True, domain="dimagi.com", verified=True)
+    editors_run(agent)                                    # workspace editors drive it, manual only
 
-The translation is the one the data migration applied; tests that exercise it more finely
-live in `tests/test_agent_access_list.py` and `tests/test_access_list_decide.py`.
+Tests that exercise the rule itself build `AgentGrant` rows directly
+(`tests/test_access_matrix.py`, `tests/test_access_list_decide.py`).
 """
 from __future__ import annotations
-
-import copy
-import re
 
 from apps.agents import roles
 from apps.agents.interface import parse
 from apps.agents.models import AgentGrant
 
-_CALLER = re.compile(r"^(?P<base>member|contact|unknown)"
-                     r"(?:@(?P<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))?"
-                     r"(?::(?P<verified>verified))?$")
-_RANK = {roles.VIEWER: 1, roles.USER: 2, roles.EDITOR: 3}
 
-
-def _capability_role(cap: dict) -> str:
-    if cap.get("role") in (roles.VIEWER, roles.USER):
-        return cap["role"]
-    callers = cap.get("callers") or []
-    return roles.VIEWER if any(c.startswith(("contact", "unknown")) for c in callers) else roles.USER
+def declare(agent, capabilities: dict | None = None, **top_level):
+    """Publish `capabilities` as `agent`'s interface (none: an interface that offers nothing).
+    Says only what the agent offers, never who may use it. Other top-level keys of the
+    interface document (`pages=...`) ride along."""
+    agent.interface = parse({**top_level, "capabilities": capabilities}) if capabilities else {"version": 1, "capabilities": {}}
+    agent.interface_source = ""
+    agent.save(update_fields=["interface", "interface_source"])
+    return agent
 
 
 def editors_run(agent, *, manual_only: bool = True) -> AgentGrant:
-    """The old default: everyone in the agent's workspace at least editor may run the whole
-    agent, every turn manual."""
+    """Everyone in the agent's workspace at least editor may run the whole agent, every turn
+    manual (the default line of a workspace)."""
     return AgentGrant.objects.update_or_create(
         agent=agent, subject_key=AgentGrant.key_of(AgentGrant.WORKSPACE, subject_workspace=agent.workspace_id,
                                                    at_least="editor"),
@@ -45,45 +42,22 @@ def editors_run(agent, *, manual_only: bool = True) -> AgentGrant:
                       role=roles.EDITOR, manual_only=manual_only, verified=False))[0]
 
 
-def let_in(agent, who: str, role: str) -> AgentGrant:
-    """One old-style caller class (`member`, `contact@dimagi.com:verified`, ...) as a line."""
-    m = _CALLER.match(who)
-    assert m and m["base"] != "unknown", f"no line for {who!r}"
-    domain, verified = m["domain"] or "", bool(m["verified"])
-    if m["base"] == "member":
-        kind, ws, v = AgentGrant.WORKSPACE, agent.workspace_id, False
-    else:
+def allow(agent, *, role: str = "", capability: str = "", contact: bool = False,
+          domain: str = "", verified: bool = False) -> AgentGrant:
+    """One access-list line: `role` (or just the named `capability`) for the agent's workspace
+    members, or with `contact=True` for contacts (optionally of one email `domain`, `verified`
+    by the message's own proof). A second call for the same subject keeps the higher role."""
+    assert bool(role) != bool(capability), "a line names a role or a capability"
+    if contact:
         kind, ws, v = AgentGrant.CONTACT, None, verified
-    key = AgentGrant.key_of(kind, subject_workspace=ws, at_least="", domain=domain)
+    else:
+        kind, ws, v = AgentGrant.WORKSPACE, agent.workspace_id, False
+    key = AgentGrant.key_of(kind, subject_workspace=ws, at_least="", domain=domain, capability=capability)
     row, _ = AgentGrant.objects.get_or_create(
         agent=agent, subject_key=key,
-        defaults=dict(kind=kind, subject_workspace_id=ws, domain=domain, verified=v, role=role))
-    if _RANK[role] > _RANK[row.role]:
+        defaults=dict(kind=kind, subject_workspace_id=ws, domain=domain, verified=v, role=role,
+                      capability=capability))
+    if role and roles.rank(role) > roles.rank(row.role):
         row.role = role
         row.save(update_fields=["role"])
     return row
-
-
-def publish(agent, doc: dict | None, *, editors: bool = True):
-    """Write the capabilities of an old-style interface `doc` to `agent` and its `full:` rules,
-    `callers` and (unless `editors=False`, the old `editors: confined`) the implicit editor rule
-    as access-list lines. `doc=None` publishes nothing."""
-    doc = copy.deepcopy(doc or {})
-    caps = {}
-    for name, cap in (doc.get("capabilities") or {}).items():
-        role = _capability_role(cap)
-        for who in cap.pop("callers", None) or []:
-            let_in(agent, who, role)
-        cap["role"] = role
-        caps[name] = cap
-    for who in doc.pop("full", None) or []:
-        let_in(agent, who, roles.EDITOR)
-    if doc.pop("editors", "full") == "confined":
-        editors = False
-    doc.pop("callers_default", None)
-    agent.interface = parse({**doc, "capabilities": caps}) if caps else {"version": 1, "capabilities": {}}
-    agent.interface_source = ""
-    agent.save(update_fields=["interface", "interface_source"])
-    if editors:
-        editors_run(agent)
-    return agent

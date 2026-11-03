@@ -45,7 +45,7 @@ def sweep(user, slug: str, *, by=None) -> dict:
     """
     from django.db import transaction
 
-    from apps.agents.models import Agent, AgentAdmin, AgentDelegation
+    from apps.agents.models import Agent, AgentAdmin, AgentCredential
     from apps.canopy_sessions.models import SessionParticipant
     from apps.harness.models import (
         RunnerAdmin,
@@ -66,8 +66,9 @@ def sweep(user, slug: str, *, by=None) -> dict:
         user=user, runner__workspace_id__in=left).delete()[0]
     counts["session_participants"] = SessionParticipant.objects.filter(
         user=user, session__workspace_id__in=left).delete()[0]
-    counts["delegations"] = AgentDelegation.objects.filter(
-        user=user, agent__workspace_id__in=left).delete()[0]
+    # What they lent an agent (a GitHub token, their Google account) stops with them.
+    counts["delegations"] = AgentCredential.objects.filter(
+        delegated_by=user, agent__workspace_id__in=left).delete()[0]
     # Their box stops serving that tenant's agents. A runner holds an agent's
     # secrets and claimed turns; one owned by an outsider must not, even
     # disabled, sit on the list waiting for its owner to rejoin.

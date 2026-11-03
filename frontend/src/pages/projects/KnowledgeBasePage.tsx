@@ -8,6 +8,7 @@ import { listKbSources, listKbVersions, type KbSourceOut, type KbVersionOut } fr
 import { ApiError } from '@/api/problem'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
+import { errorText } from '../../api/problem'
 
 // A KNOWLEDGE BASE — `/w/:workspace/projects/:handle/kb`: where its documents come
 // from and its version log. Its steward agent publishes each version as a curator
@@ -19,11 +20,6 @@ function size(bytes: number | null | undefined): string {
   if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} KB`
   if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`
   return `${(bytes / 1e9).toFixed(1)} GB`
-}
-
-function errorText(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.detail || err.message || fallback
-  return err instanceof Error ? err.message : fallback
 }
 
 export function KnowledgeBasePage(): JSX.Element {

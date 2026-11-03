@@ -12,7 +12,9 @@ from canopy_transcript import BLOCK_STRIDE, contract
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
-from apps.harness import runner_requirements
+from apps.agents.credentials import secret_requests
+from apps.harness import runner_requirements, sensitivity
+from apps.mcp_apps_host import mcp_apps_views
 from apps.harness.models import Turn
 
 from . import authorship, staleness, transcript_ingest
@@ -43,6 +45,13 @@ _ROLE_FOR_KIND = {
 # detail to it. 3x holds the conversational density roughly where it was.
 SESSION_TAIL_DEFAULT = 60
 SCROLLBACK_PAGE_DEFAULT = 50
+# Rows still count tool calls, and an agent's turn can be 50 of them: on labs
+# (2026-10-31) a 60-row tail of an Ada session held 4 of its replies and none of
+# the person's messages — one turn, with no sign of what was asked. So the
+# default tail also reaches back to the start of the person's last few messages,
+# up to a ceiling that keeps a tool-heavy session's open from shipping megabytes.
+SESSION_TAIL_ASKS = 3
+SESSION_TAIL_MAX = 300
 
 
 def tail_messages(session: Session, limit: int | None = None):
@@ -50,8 +59,17 @@ def tail_messages(session: Session, limit: int | None = None):
 
     Returns (messages, has_more_before, oldest_loaded_turn_index). This is what
     a client gets by default — enough to continue, never the whole history.
+    The default reaches back to the person's last `SESSION_TAIL_ASKS` messages
+    (rows a person typed, `Message.typed`) too, at most `SESSION_TAIL_MAX` rows;
+    an explicit `limit` is exact.
     """
-    limit = SESSION_TAIL_DEFAULT if limit is None else limit
+    if limit is None:
+        limit = SESSION_TAIL_DEFAULT
+        asks = (session.messages.filter(role=Message.USER, typed=True)
+                .order_by("-turn_index").values_list("turn_index", flat=True)[:SESSION_TAIL_ASKS])
+        if asks:
+            reach = session.messages.filter(turn_index__gte=list(asks)[-1]).count()
+            limit = max(limit, min(reach, SESSION_TAIL_MAX))
     newest_first = list(session.messages.order_by("-turn_index")[:limit])
     messages = list(reversed(newest_first))
     if not messages:
@@ -96,7 +114,7 @@ def program_prompts(session: Session) -> set[str]:
     """
     from django.db.models import Q
 
-    match = Q(chat_session=session)
+    match = Q(chat_session_id=session.pk)
     binding = getattr(session, "runner_binding", None)
     if binding is not None and binding.session_key and session.agent_id:
         match |= Q(agent_id=session.agent_id, session_key=binding.session_key)
@@ -253,6 +271,25 @@ def is_human_input(message, program: set[str], injected: InjectedPrompts | None 
     return _normalized_prompt(text) not in program
 
 
+def mark_typed(session: Session, turn_indices) -> int:
+    """Set `Message.typed` on those of `session`'s USER rows at `turn_indices` that
+    a person typed (`is_human_input`). Run once as rows are stored, so every
+    reader of "what the person said" asks the column instead of re-deciding.
+    Returns how many rows were marked."""
+    indices = list(turn_indices)
+    if not indices:
+        return 0
+    rows = list(session.messages.filter(role=Message.USER, turn_index__in=indices, typed=False))
+    if not rows:
+        return 0
+    program = program_prompts(session)
+    injected = InjectedPrompts(session)
+    ids = [m.pk for m in rows if is_human_input(m, program, injected)]
+    if ids:
+        Message.objects.filter(pk__in=ids).update(typed=True)
+    return len(ids)
+
+
 def human_inputs(session: Session, *, after: int | None = None, limit: int = SCROLLBACK_PAGE_DEFAULT):
     """What PEOPLE typed into this session, oldest first, `limit` at a time.
 
@@ -318,11 +355,18 @@ def for_widget(messages):
 OPENING_CHARS = 140
 
 
+def first_typed(session):
+    """The first row a person typed into `session` (`Message.typed`), or None —
+    what names a conversation (`opening_of`, `autotitle`)."""
+    return session.messages.filter(role=Message.USER, typed=True).order_by("turn_index").first()
+
+
 def with_opening(sessions):
-    """`sessions` annotated with `_opening`: the text of each one's first user
-    message, in the same query — a list of fifty must not become fifty-one."""
+    """`sessions` annotated with `_opening`: the text of the first message a
+    person typed into each (`Message.typed`), in the same query — a list of fifty
+    must not become fifty-one."""
     first = (
-        Message.objects.filter(session=OuterRef("pk"), role=Message.USER)
+        Message.objects.filter(session=OuterRef("pk"), role=Message.USER, typed=True)
         .order_by("turn_index")
         .values("plaintext")[:1]
     )
@@ -361,37 +405,22 @@ def with_last_reply(sessions):
 
 
 def with_driving_turn(sessions):
-    """`sessions` annotated with `_turn_mode` / `_turn_origin`: the mode and origin
-    of the FIRST claimed turn that drove each one — the session's mode is fixed
-    when it starts (apps/harness/turn_mode.py), so the feed's "did the agent do
-    this on its own?" and the list's mode badge read how it started, not
-    whoever replied last.
-
-    A turn drives a session two ways: a chat send carries the session itself
-    (`chat_session`), and an agent turn the runner opened a session for carries
-    that session's key (`Turn.session_key`, the same value as the binding's) —
-    which is how a scheduled or email turn's session is found, since it was never
-    a chat. Unclaimed turns have no mode yet ("" until claim), so they say nothing.
-    """
-    driving = staleness.driving_turns().exclude(turn_mode="").order_by("created_at")
+    """`sessions` annotated with `_turn_mode` / `_turn_origin` / `_turn_by_agent`:
+    the mode, origin and starter of the FIRST claimed turn that drove each one
+    (`staleness.first_driving_turn`). A session's mode is fixed when it starts
+    (apps/harness/turn_mode.py), so the feed's "did it run on its own?"
+    (`staleness.ran_on_its_own`) and the list's mode badge read how it started,
+    not whoever replied last. `_turn_runner_name` is the runner that claimed its
+    newest turn."""
+    first = staleness.first_driving_turn()
     return sessions.annotate(
-        _turn_mode=Subquery(driving.values("turn_mode")[:1]),
-        _turn_origin=Subquery(driving.values("origin")[:1]),
+        _turn_mode=Subquery(first.values("turn_mode")[:1]),
+        _turn_origin=Subquery(first.values("origin")[:1]),
+        _turn_by_agent=Subquery(first.values("_by_agent")[:1]),
         _turn_runner_name=Subquery(
             staleness.driving_turns().exclude(claimed_by=None)
             .order_by("-claimed_at").values("claimed_by__name")[:1]
         ),
-    )
-
-
-def with_open_turn(sessions):
-    """`sessions` annotated with `_turn_open`: a turn that drives each one is
-    queued or in flight (`Turn.NON_TERMINAL`). The feed's evidence that a session
-    on a paused/offline runner is genuinely held up (`feed.status`)."""
-    from django.db.models import Exists
-
-    return sessions.annotate(
-        _turn_open=Exists(staleness.driving_turns().filter(status__in=Turn.NON_TERMINAL)),
     )
 
 
@@ -506,15 +535,19 @@ _BACKFILL_ROLES = contract.ROLES
 
 
 def last_message_at():
-    """Each session's newest message time, as a correlated subquery.
+    """Each session's newest message's time, as a correlated subquery.
 
-    Not `Max("messages__created_at")`: that joins every message row into the query
-    and groups them back down, so the planner read the whole message table (526k
-    rows, a sequential scan and a sort) on every session-list call, polled every
-    ~2s -- the largest single query on the shared labs RDS, 2026-10-24. This is
-    one probe per session on `message_session_created_idx`."""
+    "Newest" is by `turn_index`, the order the conversation happened in — the
+    same rule every other "latest" read uses (`with_last_reply`, the tail). Not
+    the newest INSERT: a backfill writes old history now, and that is not
+    activity.
+
+    Not `Max("messages__created_at")`: that joins every message row into the
+    query and groups them back down, a sequential scan of the message table on
+    every session-list call. This is one probe per session on the
+    (session, turn_index) unique index."""
     return Subquery(
-        Message.objects.filter(session=OuterRef("pk")).order_by("-created_at").values("created_at")[:1]
+        Message.objects.filter(session=OuterRef("pk")).order_by("-turn_index").values("created_at")[:1]
     )
 
 
@@ -637,6 +670,24 @@ def visible_transcript(session, *, full: bool = False):
         # the binding's rolling tail rather than an empty panel.
         rows = tail_as_messages(session, getattr(session, "runner_binding", None))
     return rows, has_more, oldest
+
+
+def readable_window(session, rows, *, user=None, contact=None, chat_surface: bool,
+                    widget: bool = False) -> list:
+    """A transcript window as this reader receives it — THE read pipeline every
+    transport runs (REST detail, REST scroll-back, the socket snapshot):
+
+    1. `sensitivity.readable`: a sensitive conversation's sealed words reach only
+       its own people on its chat surfaces; everyone else reads the metadata.
+    2. MCP Apps: a tool result whose call has a View carries it (`app`).
+    3. A tool result that opened a request for one of the agent's secrets
+       carries the card (`secret_request`).
+    4. `widget`: an embedded widget's window drops tool rows (`for_widget`).
+    """
+    rows = sensitivity.readable(rows, session, chat_surface=chat_surface, user=user, contact=contact)
+    mcp_apps_views.annotate(session, rows)
+    secret_requests.annotate(session, rows)
+    return for_widget(rows) if widget else rows
 
 
 class BackfillRefusedError(Exception):

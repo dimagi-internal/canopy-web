@@ -16,15 +16,17 @@ from apps.contacts.models import Person
 from apps.harness.dispatch import dispatch, enqueue_task_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import inherited_orders
-from apps.harness.runner_requirements import is_sensitive_data_box
 from apps.tokens.models import PersonalToken
 from apps.workspaces import permissions as perms
 from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import participants, sensitive_data, work
+from . import participants, work
 from .definition import definition_key, siblings
+from .holding import (
+    runner_may_hold_agent,  # noqa: F401 — re-export: CLAUDE.md names `agents.services.runner_may_hold_agent`
+)
 from .models import (
     MAX_TASK_DEPTH,
     Agent,
@@ -1943,41 +1945,6 @@ def caller_runs_agent(user, agent) -> bool:
 
     inh = inherited_orders([agent.id]).get(agent.id)
     return bool(inh) and any(r.owner_id == user.pk for r in inh.runners)
-
-
-def runner_may_hold_agent(runner, agent, *, standings=None) -> bool:
-    """May this box run AS this agent — hold its prompt, its caller's token, its
-    secrets and its owner's GitHub identity?
-
-    Only when its owner is one of the agent's admins (its owner, a
-    workspace owner, or an `AgentAdmin`). A runner speaks with its owner's
-    authority, so this is "is the owner trusted with the whole agent?", asked of
-    the box. The one predicate behind every place an agent's identity leaves
-    canopy: claiming an agent turn, the per-turn GitHub token, credential
-    resolve, and the routing writes that point work at a box.
-
-    The agent's OWN canopy login (`Agent.user`) is NOT a holder: pairing a box
-    as an agent has been refused since #1049, so a box owned by an agent login
-    is a pre-#1049 leftover, and the agent's own login is no admin of it.
-
-    Fails closed on a runner with no owner.
-
-    A sensitive-data box (`is_sensitive_data_box`) is dedicated: it holds only an
-    agent with a capability that handles sensitive data, whoever owns it — so no
-    other agent's full profile, secrets or GitHub identity ever shares a box with a
-    sensitive conversation (spec
-    2026-10-22-sensitive-data-agents §1, "A dedicated box").
-
-    `standings` (`access.Standings` holding the runner's owner and the agent)
-    answers the admin question from one read, for a caller asking many pairs."""
-    if getattr(runner, "owner_id", None) is None:
-        return False
-    if is_sensitive_data_box(runner) and not sensitive_data.sensitive_capabilities(agent.interface):
-        return False
-    if standings is not None:
-        return standings.is_admin(runner.owner, agent)
-    return agent.is_admin(runner.owner)
-
 
 
 # ---- what the BOX observed (spec 2026-09-07) ---------------------------------

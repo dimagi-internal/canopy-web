@@ -19,8 +19,8 @@ from apps.agents.services import runner_may_hold_agent
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.harness import routing
-from apps.harness.api import runner_or_404
 from apps.harness.models import Turn
+from apps.harness.runner_queries import runner_or_404
 
 from . import proofs, providers, services, tokens
 from .problems import problem_for, problem_for_wire

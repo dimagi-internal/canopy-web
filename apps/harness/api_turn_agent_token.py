@@ -13,6 +13,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents.holding import runner_may_hold_agent
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 
@@ -71,8 +72,6 @@ def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
         session = turn_agent_tokens.live_session(turn, runner) if turn is not None else None
         if session is None:
             raise HttpError(404, "turn not found")
-    from apps.agents.services import runner_may_hold_agent
-
     # A claim already requires this; re-asked because an owner can be demoted mid-turn.
     agent = turn_agent_tokens.turn_agent(turn)
     if agent is not None and not runner_may_hold_agent(runner, agent):

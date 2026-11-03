@@ -132,14 +132,17 @@ def test_queued_behind_a_busy_session_names_the_box_running_the_previous_message
     assert st.as_dict()["behind"] == "session"
 
 
-def test_queued_behind_a_busy_agent_says_agent_not_session():
-    reach = _reach("live", [_Runner("jj-mbp")])
-    reach.behind = _ahead(holder="jj-mbp")
-    st = ts.derive(_turn(Turn.QUEUED, agent_slug="hal"), reach=reach)
+def test_queued_while_its_session_moves_says_transfer():
+    """The source is still packing the session's work: no turn is ahead yet, but
+    the claim holds the follow-up until the transfer turn starts on the target."""
+    reach = _reach("live", [_Runner("cloud-ec2-2")])
+    reach.behind = None
+    reach.transfer = True
+    st = ts.derive(_turn(Turn.QUEUED), reach=reach)
     assert st.state == ts.QUEUED_BEHIND
-    assert st.behind == "agent"
-    assert st.runners == ("jj-mbp",)
-    assert not st.stuck
+    assert st.behind == "transfer"
+    assert st.runners == ("cloud-ec2-2",)
+    assert st.pending and not st.stuck
 
 
 def test_a_live_runner_with_nothing_ahead_is_still_picking_up():

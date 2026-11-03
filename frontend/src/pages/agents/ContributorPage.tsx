@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { Link, useOutletContext, useParams } from 'react-router-dom'
 
-import { AgentApiError, getContributorPage, type ContributorPageOut, type IdeaOut } from '@/api/agents'
+import { getContributorPage, type ContributorPageOut, type IdeaOut } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { IdeaRow } from '@/pages/agents/ideaParts'
 import { saidOn, tally, unwritten, type Stage } from '@/pages/agents/ideaStage'
@@ -9,6 +9,7 @@ import { Section } from '@/components/objectPage/settingsLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { scopedPath } from '../../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 // ONE CONTRIBUTOR on one project (hal T69): what they are trying to achieve, in
 // their own words with links to where they said it, and their ideas — built so
@@ -57,7 +58,7 @@ function ContributorPageView({
       .catch((err: unknown) => {
         if (cancelled) return
         const error =
-          err instanceof AgentApiError && err.status === 404
+          err instanceof ApiError && err.status === 404
             ? `No contributor ${person} on ${ref}.`
             : err instanceof Error
               ? err.message

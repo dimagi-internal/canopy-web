@@ -16,6 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.canopy_sessions import placement as session_placement
 from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import routing, topology
@@ -147,8 +148,8 @@ def test_explicit_placement_of_project_chat_needs_runner_admin(team):
                           placement=str(alices.id))
     _msg, turn = session_send.send_message(session=session, text="hi", user=bob, client_id="c2")
     with pytest.raises(ValueError, match="administers"):
-        session_send.place_queued_turn(session=session, placement=str(alices.id), user=bob)
-    session_send.place_queued_turn(session=session, placement=str(alices.id), user=alice)
+        session_placement.place_queued_turn(session=session, placement=str(alices.id), user=bob)
+    session_placement.place_queued_turn(session=session, placement=str(alices.id), user=alice)
     turn.refresh_from_db()
     assert turn.pinned_runner_id == alices.id
 
@@ -159,8 +160,8 @@ def test_offered_cloud_box_is_one_the_sender_administers(team):
     alice, bob, ws = team
     _box(alice, "alice-cloud")
     session = Session.objects.create(workspace=ws, created_by=bob, project="canopy-web")
-    assert session_send.available_cloud_runner(session, user=bob) is None
-    assert session_send.available_cloud_runner(session, user=alice).name == "alice-cloud"
+    assert session_placement.available_cloud_runner(session, user=bob) is None
+    assert session_placement.available_cloud_runner(session, user=alice).name == "alice-cloud"
 
 
 def test_the_cloud_offer_never_names_a_directed_box(team):
@@ -169,9 +170,9 @@ def test_the_cloud_offer_never_names_a_directed_box(team):
     alice, _bob, ws = team
     _box(alice, "a-test-box", directed=True)
     session = Session.objects.create(workspace=ws, created_by=alice, project="canopy-web")
-    assert session_send.available_cloud_runner(session, user=alice) is None
+    assert session_placement.available_cloud_runner(session, user=alice) is None
     _box(alice, "cloud-ec2-2")
-    assert session_send.available_cloud_runner(session, user=alice).name == "cloud-ec2-2"
+    assert session_placement.available_cloud_runner(session, user=alice).name == "cloud-ec2-2"
 
 
 def test_slack_move_to_cloud_offers_a_project_chat_its_senders_box(team):

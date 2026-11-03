@@ -2,9 +2,10 @@
 // OpenAPI client. Response entity types alias the generated schemas, so this
 // file cannot drift from the server. Workspace scoping is handled by apiV2's
 // middleware (see WS_SCOPED_API_PREFIXES in ./client.v2), not here.
-import { apiV2, WORKSPACE_HEADER } from './client.v2'
+import { apiV2 } from './client.v2'
+import { pin } from './requestHelpers'
 import type { components } from './generated'
-import { ApiError, ensureOk, unwrap } from './problem'
+import { ensureOk, unwrap } from './problem'
 import type { Cli } from '@/lib/clis'
 
 type Schemas = components['schemas']
@@ -64,10 +65,6 @@ export interface ListAgentsParams {
 // 401 never reaches here: apiV2's middleware redirects to login first. A few
 // failures ARE user-facing on a task card: acting on an already-closed ask (409
 // — the card refetches) and an empty reply (422).
-//
-// `AgentApiError` is the shared `ApiError` under its old name, so existing
-// `instanceof AgentApiError` checks keep working.
-export { ApiError as AgentApiError }
 
 // Generated shapes are readonly (--immutable); Page<T> is mutable. Copy across
 // the boundary rather than casting, so the compiler keeps checking us.
@@ -262,7 +259,7 @@ export async function actOnTask(
 ): Promise<ActResult> {
   const res = await apiV2.POST('/api/agents/{slug}/tasks/{ref}/actions', {
     params: { path: { slug, ref } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
     body: { action, comment: comment ?? '' },
   })
   return unwrap(res, 'actOnTask') as ActResult
@@ -359,7 +356,7 @@ export async function createProject(
 export async function getAgentRunners(slug: string, workspace?: string): Promise<AgentRunnerOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runners', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return Array.from(unwrap(res, 'getAgentRunners'))
 }
@@ -370,7 +367,7 @@ export async function getAgentRunners(slug: string, workspace?: string): Promise
 export async function getAgentPinnableRunners(slug: string, workspace?: string): Promise<AgentPinnableRunnerOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/pinnable-runners', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return Array.from(unwrap(res, 'getAgentPinnableRunners'))
 }
@@ -380,7 +377,7 @@ export async function getAgentPinnableRunners(slug: string, workspace?: string):
 export async function getAgentRoutePreview(slug: string, workspace?: string): Promise<AgentRoutePreviewOut> {
   const res = await apiV2.GET('/api/agents/{slug}/route-preview', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return unwrap(res, 'getAgentRoutePreview') as unknown as AgentRoutePreviewOut
 }
@@ -397,7 +394,7 @@ export async function getAgentRoutePreview(slug: string, workspace?: string): Pr
 export async function setAgentTurnMode(slug: string, mode: TurnMode, workspace?: string): Promise<TurnMode> {
   const res = await apiV2.PATCH('/api/agents/{slug}/turn-mode', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
     body: { turn_mode: mode },
   })
   return unwrap(res, 'setAgentTurnMode').turn_mode
@@ -485,7 +482,7 @@ export async function putAgentRunners(
 ): Promise<AgentRunnerOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/runners', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
     body: { runners: rows.map((r) => ({ runner_id: r.runnerId, enabled: r.enabled })) },
   })
   return Array.from(unwrap(res, 'putAgentRunners'))
@@ -628,7 +625,7 @@ export type AgentDefaultOrderOut = components['schemas']['AgentDefaultOrderOut']
 export async function getAgentDefaultOrder(slug: string, workspace?: string): Promise<AgentDefaultOrderOut> {
   const res = await apiV2.GET('/api/agents/{slug}/default-order', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return unwrap(res, 'getAgentDefaultOrder') as unknown as AgentDefaultOrderOut
 }
@@ -636,7 +633,7 @@ export async function getAgentDefaultOrder(slug: string, workspace?: string): Pr
 export async function getAgentRunnerRules(slug: string, workspace?: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', {
     params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))
 }
@@ -660,7 +657,7 @@ export async function saveAgentRunnerRules(
   next: readonly RunnerRuleEdit[],
   workspace?: string,
 ): Promise<AgentRunnerRuleOut[]> {
-  const headers = workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}
+  const headers = pin(workspace)
   const key = (r: { source: string; actor: string }) => `${r.source}\u0000${r.actor}`
   const before = new Map<string, AgentRunnerRuleOut[]>()
   for (const row of [...prev].sort((a, b) => a.rank - b.rank)) {
@@ -725,7 +722,7 @@ export type AgentAdminOut = Schemas['AgentAdminOut']
 export async function grantAgentAdmin(slug: string, userId: number, workspace?: string): Promise<AgentAdminOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/admins/{user_id}', {
     params: { path: { slug, user_id: userId } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return unwrap(res, 'grantAgentAdmin') as unknown as AgentAdminOut[]
 }
@@ -733,7 +730,7 @@ export async function grantAgentAdmin(slug: string, userId: number, workspace?: 
 export async function revokeAgentAdmin(slug: string, userId: number, workspace?: string): Promise<AgentAdminOut[]> {
   const res = await apiV2.DELETE('/api/agents/{slug}/admins/{user_id}', {
     params: { path: { slug, user_id: userId } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+    ...pin(workspace),
   })
   return unwrap(res, 'revokeAgentAdmin') as unknown as AgentAdminOut[]
 }
@@ -908,8 +905,6 @@ export type ProposedProjectOut = Schemas['ProposedProjectOut']
 export type ProposedTaskOut = Schemas['ProposedTaskOut']
 export type ProjectBackingOut = Schemas['ProjectBackingOut']
 export type BackingStance = Schemas['ProjectBackingIn']['stance']
-
-const pin = (workspace?: string) => (workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {})
 
 /** Approve / decline / reply on a proposed project's decision card (`actOnTask`, pinned). */
 export async function actOnProposal(

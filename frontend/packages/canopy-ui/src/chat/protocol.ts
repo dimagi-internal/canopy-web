@@ -153,6 +153,12 @@ export interface CancelledSend {
   sent_at: string;
   /** Who withdrew it; "" when nobody recorded it. */
   cancelled_by: string;
+  /** How its turn ended: `cancelled` (withdrawn or stopped), or `failed`, `lost`,
+   *  `missed` or `done` for one that never reached the agent. Absent on an older
+   *  server, which listed only cancelled sends. */
+  state?: string;
+  /** The runner's note on a send that was not delivered; "" otherwise. */
+  detail?: string;
 }
 
 export interface Participant {
@@ -262,9 +268,9 @@ export interface TurnStatus {
    *  blocked on a question is still RUNNING as far as the turn is concerned. */
   menu_pending: boolean;
   /** For `queued_behind`: what it waits behind — `session` (the previous
-   *  message in this conversation) or `agent` (another turn of the same
-   *  agent). Absent on an older server. */
-  behind?: "session" | "agent" | null;
+   *  message in this conversation), `agent` (another turn of the same agent) or
+   *  `transfer` (the session is moving to another runner). Absent on an older server. */
+  behind?: "session" | "agent" | "transfer" | null;
   /** Why a `failed` turn failed, in the runner's words; or why a `cancelled`
    *  one was never run (an admission rule rejected it). Null otherwise, and
    *  for a turn someone stopped. Absent on an older server. */
@@ -362,6 +368,17 @@ export interface SessionState {
   /** The connecting CONTACT, when the viewer is one; null for a member.
    *  Absent on an older server. */
   current_contact_id?: number | null;
+  /** The server holds rows older than the ones loaded here. In the snapshot,
+   *  and kept by the reducer across reconnects and scroll-back loads (see
+   *  `keepLoadedHistory`). Absent when nothing has said. */
+  has_more_before?: boolean;
+  /** The snapshot's oldest row's ordinal — where its tail begins. Absent on an
+   *  older server; the reducer then uses the snapshot's lowest `turn_index`. */
+  oldest_loaded_turn_index?: number | null;
+  /** This snapshot follows a reset: the conversation's rows were rebuilt, so it
+   *  replaces everything held rather than merging (`keepLoadedHistory` is
+   *  skipped). Only on the frame the server pushes when a rebuild lands. */
+  rebuilt?: boolean;
 }
 
 /** One subagent of a session, from the files Claude Code keeps beside its

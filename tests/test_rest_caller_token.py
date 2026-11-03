@@ -18,6 +18,7 @@ from django.http import HttpResponse
 from django.test import RequestFactory
 from django.utils import timezone
 
+from apps.agents import roles
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.harness import caller_tokens, services
@@ -26,8 +27,9 @@ from apps.harness.models import CallerToken, Turn
 from apps.mcp import api_tools
 from apps.tokens.middleware import BearerTokenAuthMiddleware
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import bearer_headers
 
-from .access_helpers import publish
+from .access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -54,10 +56,6 @@ def _chat_turn(w, user, *, assurance=who.SESSION, session=None):
                                initiator_user=user, initiator_assurance=assurance)
 
 
-def _bearer(raw):
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 def _messages(turn):
     return f"/api/harness/turns/{turn.pk}/messages"
 
@@ -70,13 +68,13 @@ def test_a_scoped_token_reads_rest_as_its_asker_and_nothing_more(client, w):
                                         created_by=w["lili"], title="lili's own chat")
     theirs = _chat_turn(w, w["lili"], session=lilis_chat)
     raw = caller_tokens.mint(mine, scoped=True)
-    assert client.get(_messages(mine), **_bearer(raw)).status_code == 200
-    assert client.get(_messages(theirs), **_bearer(raw)).status_code == 404
+    assert client.get(_messages(mine), **bearer_headers(raw)).status_code == 200
+    assert client.get(_messages(theirs), **bearer_headers(raw)).status_code == 404
 
 
 def test_the_canonical_tenant_url_works_too(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
-    assert client.get("/api/w/dimagi/harness/turns/", **_bearer(raw)).status_code == 200
+    assert client.get("/api/w/dimagi/harness/turns/", **bearer_headers(raw)).status_code == 200
 
 
 def test_the_request_records_the_caller_token_as_its_credential(w):
@@ -88,7 +86,7 @@ def test_the_request_records_the_caller_token_as_its_credential(w):
         seen.update(user=request.user, method=request.auth_method, cred=request.auth_credential)
         return HttpResponse()
 
-    request = RequestFactory().get("/api/harness/turns/", **_bearer(raw))
+    request = RequestFactory().get("/api/harness/turns/", **bearer_headers(raw))
     request.user = AnonymousUser()
     assert BearerTokenAuthMiddleware(view)(request).status_code == 200
     assert seen["user"] == w["jj"] and seen["method"] == "caller_token"
@@ -97,7 +95,7 @@ def test_the_request_records_the_caller_token_as_its_credential(w):
 
 
 def _me(client, raw):
-    resp = client.get("/api/me/", **_bearer(raw))
+    resp = client.get("/api/me/", **bearer_headers(raw))
     assert resp.status_code == 200, resp.content
     return resp.json()["email"]
 
@@ -118,14 +116,14 @@ def test_it_follows_the_conversations_current_asker(client, w):
 def test_a_route_mcp_leaves_out_is_refused(client, w, method, path):
     assert not api_tools.is_tool_route(method, path)
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
-    resp = getattr(client, method)(path, data={}, content_type="application/json", **_bearer(raw))
+    resp = getattr(client, method)(path, data={}, content_type="application/json", **bearer_headers(raw))
     assert resp.status_code == 403
     assert "serves as tools" in resp.json()["detail"]
 
 
 def test_a_path_that_is_no_api_operation_fails_closed(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
-    assert client.get("/admin/", **_bearer(raw)).status_code == 403
+    assert client.get("/admin/", **bearer_headers(raw)).status_code == 403
 
 
 def test_with_no_route_table_registered_nothing_qualifies(client, w, monkeypatch):
@@ -134,7 +132,7 @@ def test_with_no_route_table_registered_nothing_qualifies(client, w, monkeypatch
     assert middleware.caller_token_routes is not None       # the MCP app registered it
     monkeypatch.setattr(middleware, "caller_token_routes", None)
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
-    assert client.get("/api/me/", **_bearer(raw)).status_code == 403
+    assert client.get("/api/me/", **bearer_headers(raw)).status_code == 403
 
 
 def test_the_route_table_is_the_mcp_tool_list(w):
@@ -150,36 +148,38 @@ def test_the_route_table_is_the_mcp_tool_list(w):
 def test_a_token_whose_chat_has_no_verified_asker_now_is_refused(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
     _chat_turn(w, w["lili"], assurance=who.UNKNOWN)
-    assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 401
+    assert client.get("/api/harness/turns/", **bearer_headers(raw)).status_code == 401
 
 
 def test_an_expired_token_is_refused(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
     CallerToken.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
-    assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 401
+    assert client.get("/api/harness/turns/", **bearer_headers(raw)).status_code == 401
 
 
 def test_an_unscoped_token_on_a_full_turn_is_refused(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]))           # not scoped
-    assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 401
+    assert client.get("/api/harness/turns/", **bearer_headers(raw)).status_code == 401
 
 
 def test_a_confined_token_is_refused(client, w):
-    iface = {"capabilities": {"ask": {"callers": ["contact", "member"],
-                                      "tools": ["mcp__*canopy-web__harness_list_turns"]}}}
+    iface = {"ask": {"tools": ["mcp__*canopy-web__harness_list_turns"]}}
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=w["ws"], owner=w["jj"])
-    publish(agent, iface)
+    declare(agent, iface)
+    allow(agent, role=roles.READ_ONLY, contact=True)
+    allow(agent, role=roles.READ_ONLY)
+    editors_run(agent)
     turn, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_EMAIL, idempotency_key="e1",
                                     origin_ref={"from": "fatima@llo-foo.org", "thread_id": "t-1",
                                                 "headers": DMARC})
     assert turn.capability == "ask"
     raw = caller_tokens.mint(turn)
     assert caller_tokens.resolve(raw) is not None              # MCP would take it…
-    assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 401   # …REST will not
+    assert client.get("/api/harness/turns/", **bearer_headers(raw)).status_code == 401   # …REST will not
 
 
 def test_an_unknown_caller_token_is_refused(client, w):
-    assert client.get("/api/harness/turns/", **_bearer("cct_" + "x" * 43)).status_code == 401
+    assert client.get("/api/harness/turns/", **bearer_headers("cct_" + "x" * 43)).status_code == 401
 
 
 def test_a_browser_session_keeps_its_own_identity(client, w):
@@ -197,7 +197,7 @@ def test_a_caller_token_cannot_mint_an_agents_never_expiring_token(client, w):
     Agent.objects.create(slug="echo", name="Echo", workspace=w["ws"], owner=w["jj"])
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
     resp = client.post("/api/agents/echo/canopy-token", data={},
-                       content_type="application/json", **_bearer(raw))
+                       content_type="application/json", **bearer_headers(raw))
     assert resp.status_code == 403
     assert "caller_token" in resp.json()["detail"]
 
@@ -213,19 +213,19 @@ def test_an_agent_turns_caller_token_reads_but_never_writes_as_its_asker(client,
     it no act-as-you permission, so it reads as them and any write is refused."""
     turn = _agent_chat_turn(w, w["lili"])
     raw = caller_tokens.mint(turn, scoped=True)
-    resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **_bearer(raw))
+    resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **bearer_headers(raw))
     assert resp.status_code == 403
     assert "haven't granted it an act-as-you permission" in resp.json()["detail"]
-    assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 200
+    assert client.get("/api/harness/turns/", **bearer_headers(raw)).status_code == 200
     # Driving the asker's own open page is not a write it is refused.
     resp = client.post(f"/api/canopy-sessions/{turn.chat_session_id}/page-actions/invoke",
                        data={"name": "selectSkill", "args": {}}, content_type="application/json",
-                       **_bearer(raw))
+                       **bearer_headers(raw))
     assert "act-as-you" not in resp.content.decode()
 
 
 def test_a_repo_chats_caller_token_keeps_its_writes(client, w):
     """A repo chat is the person's own tool, not an agent acting for them."""
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
-    resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **_bearer(raw))
+    resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **bearer_headers(raw))
     assert "act-as-you" not in resp.content.decode()

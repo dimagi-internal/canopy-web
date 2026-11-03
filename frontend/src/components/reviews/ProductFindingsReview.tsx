@@ -603,7 +603,7 @@ export function ProductFindingsReview({
                 'px-6 py-2 rounded font-medium text-sm transition-colors',
                 !canSubmit
                   ? 'bg-input text-foreground-secondary cursor-not-allowed'
-                  : 'bg-primary hover:bg-primary/90 text-white',
+                  : 'bg-primary hover:bg-primary/90 text-primary-foreground',
               ].join(' ')}
             >
               {busy ? 'Saving…' : 'Save Edits'}

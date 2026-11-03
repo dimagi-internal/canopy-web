@@ -43,9 +43,9 @@ def _session_chat_events(turn, events):
     to ship: `/session-stream` sends every conversational record keyed by its
     durable composite ordinal, and the ledger's own copy of the same assistant
     text is a SECOND delivery under an id the client cannot reconcile with the
-    first (`seq:<ordinal>` from the tailer vs `<turn8>:<ledger seq>` here,
+    first (the stored row's id from the tailer vs `<turn8>:<ledger seq>` here,
     because a transcript-sourced session never projects Messages from a Turn,
-    so `_resolve_message_id_sync` falls back to a synthetic id).
+    so `_stored_identity_sync` falls back to a synthetic id).
 
     The other row kinds survive that on their own — tool rows reconcile on
     `tool_use_id` and user rows on their text — but an assistant row has no

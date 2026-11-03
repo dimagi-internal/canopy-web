@@ -9,6 +9,7 @@ import datetime as _dt
 import logging
 import re
 import uuid
+from dataclasses import dataclass, field
 
 from canopy_transcript import BLOCK_STRIDE, contract
 from django.db import transaction
@@ -151,42 +152,43 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
     with transaction.atomic():
         # The BINDING is the only row that needs locking — it holds the flag that
         # makes this idempotent, so serializing on it is what stops two concurrent
-        # ships both dropping. Deliberately NOT also locking the Session:
-        # `harness.replace_reported_sessions` takes its locks binding-first and
-        # then writes the session row, so grabbing them in the other order here
-        # would make the two a deadlock pair — every ~10s report against every
-        # ship. `persist_transcript_rows` still takes its own Session lock
-        # afterwards, in its own transaction, exactly as before.
+        # ships both dropping. Binding before session: the order
+        # `harness.replace_reported_sessions` and `record_transcript` use.
         binding = (
             RunnerBinding.objects.select_for_update().filter(session=session).first()
         )
-        if binding is None or binding.transcript_id == transcript_id:
-            return 0
-        if binding.transcript_id:
-            # Same session, new file: keep what is held and shift the new
-            # transcript above it. The markers reported back to the runner are
-            # scoped to the new epoch (apps/harness/api.py::get_session_streams),
-            # so they read empty and the runner ships the new file from its start.
-            _open_epoch(binding, session)
-            binding.transcript_id = transcript_id
-            binding.save(update_fields=["transcript_id", "index_offset", "updated_at"])
-            return 0
-        # First sighting (blank) still drops: a session that predates this field
-        # is exactly the state issue #615 describes — rows of unknown provenance,
-        # possibly a previous task's — and the shipper is sending the full history
-        # for precisely that reason. Rebuilding once is cheap and self-healing.
-        deleted, _ = Message.objects.filter(
-            session=session, turn_index__gte=binding.index_offset
-        ).delete()
+        return _adopt_transcript(binding, session, transcript_id)
+
+
+def _adopt_transcript(binding, session, transcript_id: str) -> int:
+    """`ensure_transcript_identity`'s work, for a caller that already holds the
+    binding lock (and not yet the session's). Updates `binding` in place, so the
+    caller reads the epoch it may have opened."""
+    if not transcript_id or binding is None or binding.transcript_id == transcript_id:
+        return 0
+    if binding.transcript_id:
+        # Same session, new file: keep what is held and shift the new
+        # transcript above it. The markers reported back to the runner are
+        # scoped to the new epoch (apps/harness/api.py::get_session_streams),
+        # so they read empty and the runner ships the new file from its start.
+        _open_epoch(binding, session)
         binding.transcript_id = transcript_id
-        binding.save(update_fields=["transcript_id", "updated_at"])
-        # Recount activity from what survived (inherited history below the
-        # offset), so the re-shipped rows are not counted twice. Locking the
-        # session AFTER the binding is the order replace_reported_sessions and
-        # fork_if_name_reused already use — the deadlock warned of above is the
-        # reverse order.
-        session_activity.rebuild(Session.objects.select_for_update().get(pk=session.pk))
-        return deleted
+        binding.save(update_fields=["transcript_id", "index_offset", "updated_at"])
+        return 0
+    # First sighting (blank) still drops: a session that predates this field
+    # is exactly the state issue #615 describes — rows of unknown provenance,
+    # possibly a previous task's — and the shipper is sending the full history
+    # for precisely that reason. Rebuilding once is cheap and self-healing.
+    deleted, _ = Message.objects.filter(
+        session=session, turn_index__gte=binding.index_offset
+    ).delete()
+    binding.transcript_id = transcript_id
+    binding.save(update_fields=["transcript_id", "updated_at"])
+    # Recount activity from what survived (inherited history below the
+    # offset), so the re-shipped rows are not counted twice. Session after
+    # binding, the lock order every writer here uses.
+    session_activity.rebuild(Session.objects.select_for_update().get(pk=session.pk))
+    return deleted
 
 
 #: Set on a session the runner report UN-ARCHIVED (harness.replace_reported_sessions)
@@ -355,9 +357,58 @@ def conforming_rows(session, rows) -> list[dict]:
     return out
 
 
+@dataclass(frozen=True)
+class StoredRow:
+    """One shipped row as the session holds it after `record_transcript`: the
+    identity every client sees for it, live or reloaded."""
+
+    #: The transcript ordinal it was shipped with (before the epoch shift).
+    index: int
+    #: Where the session keeps it — the ordinal shifted into its epoch.
+    turn_index: int
+    message_id: str
+    role: str
+    author: dict | None
+    #: The send's nonce the row carries, "" when it was no web send.
+    client_id: str
+    #: Written by this call; False when the session already held it.
+    fresh: bool
+
+
+@dataclass
+class Recorded:
+    """What `record_transcript` did: the session the rows went to (a reused task
+    name moves them to a successor) and each ordinal-keyed row as stored."""
+
+    session: Session
+    rows: list[StoredRow] = field(default_factory=list)
+    #: Rows written, ordinal-less ones (an old runner) included.
+    created: int = 0
+
+
 def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
+    """`record_transcript` for a caller that needs only how many rows it wrote."""
+    return record_transcript(session, rows, attribute=attribute).created
+
+
+def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | None = None,
+                      attribute: bool = True) -> Recorded:
     """THE durable write path for a runner session's transcript. rows:
     [{"index","role","text"[,"content"]}] chronological.
+
+    `transcript_id` is the file these ordinals index (the Claude session id). A
+    reused task name moves the binding to a successor session first
+    (`fork_if_name_reused`); a changed id opens a new epoch above the rows held
+    (`ensure_transcript_identity`). Both are decided here, under the same binding
+    lock the write takes, so the epoch the rows land in is the one just decided.
+
+    `epoch` places the rows at an explicit offset instead of the binding's — a
+    confined turn's own transcript, which is never the session's binding
+    (`harness.session_sync._turn_end_epoch`). Exactly one offset applies to a row.
+
+    Returns every ordinal-keyed row of the batch the session now holds (written
+    now or already held), so a caller fanning the batch out live publishes the
+    stored identity — `turn_index` and id — never the raw ordinal.
 
     `attribute=False` (used only by `write_backfill`) skips the text-match
     half of server-side attribution below — see that half's docstring for
@@ -382,14 +433,12 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     with session length, i.e. it was worst exactly where history matters most.
     Now: one existence probe plus batched inserts, regardless of row count.
 
-    Ordinals are shifted by the binding's `index_offset` on the way in, so a
-    transferred session's new box writes ABOVE the history it inherited instead of
-    colliding with it. THE single funnel for that shift, deliberately: live
-    stream, backfill and reset all come through here, so applying it anywhere
-    upstream would mean applying it three times and forgetting it once. The
-    identity property the docstring above rests on survives — a given
-    (transcript ordinal, epoch) still maps to exactly one `turn_index`, so
-    re-ships stay no-ops. Offset 0 (never transferred) is a no-op addition.
+    Ordinals are shifted by the binding's `index_offset` (or `epoch`) on the way
+    in, so a transferred session's new box writes ABOVE the history it inherited
+    instead of colliding with it. THE single place for that shift, read under the
+    binding lock: live stream, backfill, reset and a confined turn's rows all come
+    through here, and no caller shifts an ordinal itself. A given (transcript
+    ordinal, epoch) maps to exactly one `turn_index`, so re-ships stay no-ops.
 
     **Server-side attribution (2026-09-27), the primary path now that canopy no
     longer marks a chat send's prompt at claim** (authorship.py). A USER row
@@ -432,10 +481,21 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     can already be held: a row with none always gets a FRESH one from
     `_next_index`, one past the session's high-water mark, so it can never
     collide — the precomputed set below only needs to check those."""
+    if transcript_id:
+        session = fork_if_name_reused(session, transcript_id) or session
     rows = conforming_rows(session, rows)
-    offset = _index_offset(session)
     with transaction.atomic():
+        # Binding, then session: the lock order every writer here uses. The
+        # binding lock is what makes the identity decision and the offset read
+        # one step — a concurrent ship that opens an epoch waits for this write.
+        binding = RunnerBinding.objects.select_for_update().filter(session=session).first()
+        _adopt_transcript(binding, session, transcript_id)
         locked = Session.objects.select_for_update().get(pk=session.pk)
+        if epoch is not None:
+            offset = int(epoch)
+        else:
+            offset = int(binding.index_offset or 0) if binding is not None else 0
+        shipped: dict[int, int] = {}   # stored turn_index -> shipped ordinal
         # `is not None`, never a truthiness test: index 0 is a real ordinal (the
         # transcript's first record) and `x or -1` would read it as "no ordinal".
         if any(r.get("index") is not None and int(r["index"]) >= 0 for r in rows):
@@ -489,6 +549,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                 # Only ordinal-keyed rows shift. The `index < 0` leg above already
                 # assigns an ABSOLUTE index off the session's own high-water mark,
                 # so offsetting it too would double-count.
+                shipped[index + offset] = index
                 index += offset
                 if index > contract.ORDINAL_MAX:
                     # In range as shipped, past the column once shifted: one such
@@ -578,13 +639,26 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             act.context(row.get("cwd"), row.get("git_branch"))
         session_activity.fold_rows(act, ((m.role, m.plaintext, m.content) for m in fresh))
         session_activity.store(locked, act)
-        if not fresh:
-            return 0
-        # `ignore_conflicts` is belt-and-braces on top of the row lock above (which
-        # already serializes writers for THIS session), so a racing writer costs a
-        # skipped row rather than a failed batch.
-        Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
-        return len(fresh)
+        if fresh:
+            # `ignore_conflicts` is belt-and-braces on top of the row lock above
+            # (which already serializes writers for THIS session), so a racing
+            # writer costs a skipped row rather than a failed batch.
+            Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
+            transcript_read.mark_typed(locked, [m.turn_index for m in fresh if m.role == Message.USER])
+        new_indices = {m.turn_index for m in fresh}
+        stored = [
+            StoredRow(index=shipped[ti], turn_index=ti, message_id=str(pk), role=role,
+                      author=author, client_id=_client_id_of(content), fresh=ti in new_indices)
+            for pk, ti, role, author, content in Message.objects.filter(
+                session=locked, turn_index__in=[p[0] for p in prepared if p[0] in shipped],
+            ).order_by("turn_index").values_list("pk", "turn_index", "role", "author", "content")
+        ]
+        return Recorded(session=locked, rows=stored, created=len(fresh))
+
+
+def _client_id_of(content) -> str:
+    value = content.get("client_id") if isinstance(content, dict) else None
+    return value if isinstance(value, str) else ""
 
 
 def _marker_identity(author: dict) -> tuple[int | None, int | None]:
@@ -697,7 +771,7 @@ class _MatchPool:
         return None
 
 
-def write_backfill(session, messages) -> int:
+def write_backfill(session, messages, *, transcript_id: str = "") -> int:
     """Write a runner's shipped full transcript as Message rows. Ordinal-keyed
     payloads (a current runner) upsert-fill: they add the older rows the live
     stream never saw and skip anything already persisted. A legacy payload (no
@@ -717,7 +791,7 @@ def write_backfill(session, messages) -> int:
     # purged history back above the floor. Refuse it for a purged session.
     if not ordinal and session.content_purged_at is not None:
         return 0
-    return persist_transcript_rows(session, messages, attribute=False)
+    return record_transcript(session, messages, transcript_id=transcript_id, attribute=False).created
 
 
 def _set_stream_desired(session, desired: bool) -> bool:
@@ -807,16 +881,6 @@ def _next_index(session: Session) -> int:
         "retention_floor_index", flat=True
     ).first() or 0
     return max(0 if current is None else current + 1, floor)
-
-
-def _index_offset(session) -> int:
-    """This session's current transcript epoch base — see
-    `RunnerBinding.index_offset`. No binding means nothing has ever been
-    transferred, so 0."""
-    binding = RunnerBinding.objects.filter(session=session).values_list(
-        "index_offset", flat=True
-    ).first()
-    return int(binding or 0)
 
 
 def project_events(turn: Turn, rows) -> int:

@@ -379,7 +379,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     title: 'Email',
     audience: 'Workspace admin bringing their own domain to canopy',
     what: "Run a domain's email through canopy instead of a mail provider. Add the domain, publish the DNS records shown (each is checked live), and once it verifies, choose where each address goes: an agent's mailbox (mail becomes that agent's email turn and it replies as that address), a member of this workspace (forwarded to their canopy login email), or dropped. `*` catches every address not listed. Once every DNS record checks out, the addresses come first and the records fold away at the bottom. One switch gives every agent its own <slug>@domain address, here and in every workspace the domain is shared with, and keeps those addresses in step as agents are added or moved. The page warns before the MX switch takes mail from your current provider, caps how much a domain sends per day, and suspends sending automatically if bounces or complaints climb.",
-    actions: ['Add a domain and see its DNS records', 'Route an address to an agent or a member', 'Give every agent an address', 'Re-check DNS', 'Change the daily send cap or lift a suspension'],
+    actions: ['Add a domain and see its DNS records', 'See every message that reached the domain and what happened to it', 'Route an address to an agent or a member (optionally keeping a copy in their canopy inbox)', 'Give every agent an address', 'Re-check DNS', 'Change the daily send cap or lift a suspension'],
   },
   {
     path: '/w/:workspace/health',
@@ -584,6 +584,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'Anyone in the workspace',
     what: "Every task in the workspace, people's and agents' alike, as one dense table (or a board by status, or a calendar by due date). Tabs for My tasks (assigned to you), Waiting on me (an open ask, or parked on you), Created by me and All; filters for assignee, project, status, label, priority and due date; group and sort; save any of it as a view, yours or shared with the workspace. Select rows with X to change many at once; Space opens the task beside the list.",
     actions: ['See my tasks', 'Filter, group and sort', 'Save a view', 'Change many tasks at once', 'Create a task (C)', 'Open a task beside the list'],
+  },
+  {
+    path: '/w/:workspace/mail',
+    title: 'Mail',
+    audience: 'Anyone a forwarding address sends mail to',
+    what: "Your own mail client for the addresses an admin set to keep a copy (Settings → Email): read, search, archive, reply, reply all and compose, all from your own forwarding addresses on the workspace's domain. Everything is private to you — not admins, not other members. Inbox and Archived folders, an unread count, a filter per address, and keyboard shortcuts (j/k move, Enter open, c compose, r reply, a reply all, e archive, u unread, / search). Plain text only, no attachments on send, and only mail that arrives after Keep a copy was turned on is kept.",
+    needsFirst: 'An address that forwards to you with “Keep a copy in canopy” ticked in Settings → Email.',
+    actions: ['Read and search your mail', 'Reply or reply all', 'Compose from one of your addresses', 'Archive or mark unread'],
   },
   {
     path: '/w/:workspace/tasks/:taskKey',

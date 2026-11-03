@@ -205,6 +205,8 @@ function whereParam(where?: Record<string, unknown>): string {
   return where && Object.keys(where).length ? JSON.stringify(where) : "";
 }
 
+// Kept as a raw fetch: a multipart upload (the typed client would need a bodySerializer per
+// call) with the form built from the page's bytes. The CSRF header is added by hand.
 async function postFile(url: string, op: Extract<AppOp, { op: "upload" }>): Promise<unknown> {
   const form = new FormData();
   form.append("collection", op.collection);
@@ -218,6 +220,8 @@ async function postFile(url: string, op: Extract<AppOp, { op: "upload" }>): Prom
   return body;
 }
 
+// Kept as a raw fetch: the response is a binary blob opened in a new tab, which the typed
+// client (JSON-first) does not model.
 async function openFile(url: string): Promise<null> {
   const res = await fetch(apiUrl(url), { credentials: "same-origin" });
   if (!res.ok) throw new Error(`could not open the file (${res.status})`);
@@ -227,32 +231,26 @@ async function openFile(url: string): Promise<null> {
 }
 
 /**
- * Answer an app page's call. `door`:
- * - `member`: as the viewer, on the live app or (with `draft`) a draft's test copy;
- * - `preview`: a public page previewed by a maintainer on a draft's test copy,
- *   with the visitor's rules (`as_public`);
- * - `public`: an anonymous visitor on the live public door.
- */
-async function postJson(url: string, body: unknown, failure: string): Promise<unknown> {
-  const res = await fetch(apiUrl(url), {
-    method: "POST", body: JSON.stringify(body), credentials: "same-origin",
-    headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
-  });
-  const out = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((out && (out.detail || out.title)) || `${failure} (${res.status})`);
-  return out;
-}
-
-/**
  * Answer a LINK page's call: the holder of a private link may only run that
  * link's actions, on its one record; there is nothing else to read.
  */
 async function callLink(workspace: string, key: string, token: string, op: AppOp): Promise<unknown> {
   if (op.op !== "act") throw new Error("not available on this page");
-  const url = `/api/public-apps/${encodeURIComponent(workspace)}/${encodeURIComponent(key)}/link/${encodeURIComponent(token)}/actions/${encodeURIComponent(op.action)}`;
-  return postJson(url, { input: op.input ?? {} }, "That did not work");
+  const res = await apiV2.POST("/api/public-apps/{workspace}/{key}/link/{token}/actions/{action}", {
+    params: { path: { ...P(workspace, key), token, action: op.action } },
+    body: { input: op.input ?? {}, params: {} },
+  });
+  return unwrap(res, "That did not work");
 }
 
+/**
+ * Answer an app page's call. `door`:
+ * - `member`: as the viewer, on the live app or (with `draft`) a draft's test copy;
+ * - `preview`: a public page previewed by a maintainer on a draft's test copy,
+ *   with the visitor's rules (`as_public`);
+ * - `public`: an anonymous visitor on the live public door.
+ * - `link`: the holder of a private link, running that link's actions on its one record.
+ */
 export async function callApp(workspace: string, key: string, op: AppOp,
                               door: "member" | "preview" | "public" | "link", draft?: number | null,
                               token?: string): Promise<unknown> {
@@ -283,11 +281,17 @@ export async function callApp(workspace: string, key: string, op: AppOp,
   if (op.op === "upload") return postFile(`${base}/files${isPublic ? "" : q}`, op);
   if (isPublic || door === "preview") throw new Error("not available on a public page");
   if (op.op === "bulk") {
-    return postJson(`${base}/actions/${encodeURIComponent(op.action)}/bulk${q}`,
-      { records: op.records, input: op.input ?? {}, params: op.params ?? {} }, "The bulk action failed");
+    const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/actions/{action}/bulk", {
+      params: { path: { ...path, action: op.action }, query: { draft: d } },
+      body: { records: op.records, input: op.input ?? {}, params: op.params ?? {} },
+    });
+    return unwrap(res, "The bulk action failed");
   }
   if (op.op === "link") {
-    return postJson(`${base}/links/${encodeURIComponent(op.link)}/${op.record}${q}`, {}, "Could not make the link");
+    const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/links/{link}/{record_id}", {
+      params: { path: { ...path, link: op.link, record_id: op.record }, query: { draft: d } },
+    });
+    return unwrap(res, "Could not make the link");
   }
   if (op.op === "open_file") return openFile(`${base}/files/${op.id}${q}`);
   const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/records/{record_id}/history", {
@@ -301,48 +305,42 @@ export async function getPublicApp(workspace: string, key: string): Promise<Publ
   return unwrap(res, "This page is not available") as unknown as PublicApp;
 }
 
-export interface LinkPage {
-  key: string; name: string; workspace: string; workspace_name: string; link: string; label: string;
-  record: Record<string, unknown>; page: AppPage; actions: Record<string, unknown>;
-  data_model: Record<string, unknown>; settings: Record<string, unknown>; draft: boolean;
-}
+export type LinkPage = components["schemas"]["LinkPageOut"];
 
 export async function getLinkPage(workspace: string, key: string, token: string): Promise<LinkPage> {
-  const res = await fetch(apiUrl(`/api/public-apps/${encodeURIComponent(workspace)}/${encodeURIComponent(key)}/link/${encodeURIComponent(token)}`),
-    { credentials: "same-origin" });
-  if (!res.ok) throw new Error("This link is not valid");
-  return res.json();
+  const res = await apiV2.GET("/api/public-apps/{workspace}/{key}/link/{token}", {
+    params: { path: { ...P(workspace, key), token } },
+  });
+  return unwrap(res, "This link is not valid") as unknown as LinkPage;
 }
 
 /** A public collection's JobPosting entries (Google for Jobs structured data). */
 export async function getPublicFeed(workspace: string, key: string, collection: string): Promise<Record<string, unknown>[]> {
-  const res = await fetch(apiUrl(`/api/public-apps/${encodeURIComponent(workspace)}/${encodeURIComponent(key)}/feed/${encodeURIComponent(collection)}.json`));
-  return res.ok ? res.json() : [];
+  const res = await apiV2.GET("/api/public-apps/{workspace}/{key}/feed/{collection}.json", {
+    params: { path: { ...P(workspace, key), collection } },
+  });
+  return res.response.ok && res.data ? Array.from(res.data) : [];
 }
 
+// The retention routes answer untyped dicts in the schema, so the rule's shape is ours.
 export interface RetentionRule {
   name: string; label: string; collection: string; does: "anonymize" | "delete"; count: number;
   examples: { id: number; title: unknown }[];
 }
 
-async function getJson(url: string, failure: string): Promise<unknown> {
-  const res = await fetch(apiUrl(url), { credentials: "same-origin" });
-  const out = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((out && (out.detail || out.title)) || `${failure} (${res.status})`);
-  return out;
-}
-
-const appBase = (workspace: string, key: string) =>
-  `/api/workspace-apps/${encodeURIComponent(workspace)}/${encodeURIComponent(key)}`;
-
 export async function retentionPreview(workspace: string, key: string): Promise<RetentionRule[]> {
-  return getJson(`${appBase(workspace, key)}/retention`, "Could not read the retention rules") as Promise<RetentionRule[]>;
+  const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/retention", { params: { path: P(workspace, key) } });
+  return Array.from(unwrap(res, "Could not read the retention rules")) as unknown as RetentionRule[];
 }
 
 export async function retentionApply(workspace: string, key: string): Promise<Record<string, number>> {
-  return postJson(`${appBase(workspace, key)}/retention`, {}, "Could not run the rules") as Promise<Record<string, number>>;
+  const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/retention", { params: { path: P(workspace, key) } });
+  return unwrap(res, "Could not run the rules") as Record<string, number>;
 }
 
 export async function subjectExport(workspace: string, key: string, email: string): Promise<unknown> {
-  return getJson(`${appBase(workspace, key)}/subject-export?email=${encodeURIComponent(email)}`, "Could not export");
+  const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/subject-export", {
+    params: { path: P(workspace, key), query: { email } },
+  });
+  return unwrap(res, "Could not export");
 }

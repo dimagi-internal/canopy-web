@@ -15,7 +15,8 @@ from django.contrib.auth import get_user_model
 from django.test import Client, RequestFactory
 from ninja.errors import HttpError
 
-from apps.agents.models import Agent, AgentCredential, AgentDelegation
+from apps.agents.models import Agent, AgentCredential
+from apps.connections.models import ConnectionApp
 from apps.api.route_gates import gate
 from apps.api import change_capture
 from apps.events import audit
@@ -116,14 +117,14 @@ def test_a_save_that_changes_nothing_is_not_a_change(fleet, monkeypatch):
 
 def test_secrets_are_withheld(fleet, monkeypatch):
     def store(request, slug):
-        AgentDelegation.objects.create(user=fleet["jj"], agent=fleet["ace"], service="github",
-                                       secret_enc="ciphertext-of-ghp_SECRET")
+        ConnectionApp.objects.create(workspace=fleet["ws"], provider="salesforce", client_id="cid",
+                                     client_secret_enc="ciphertext-of-ghp_SECRET")
 
     _run(fleet, store, monkeypatch)
     row = SettingChange.objects.get()
     assert "ghp_SECRET" not in json.dumps(row.changes)
     assert row.changes[0]["before"] is None
-    assert row.changes[0]["after"]["secret_enc"] == audit.REDACTED
+    assert row.changes[0]["after"]["client_secret_enc"] == audit.REDACTED
 
 
 def test_logs_are_not_settings(fleet, monkeypatch):

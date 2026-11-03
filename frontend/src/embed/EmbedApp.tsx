@@ -432,7 +432,7 @@ export function EmbedApp({ link, app }: Props) {
                 ...await offeredKey(client, agent.workspace),
                 // `embed_app` is NOT sent: canopy stamps it server-side from the
                 // delegated token, and anything we sent under that key would be
-                // discarded (apps/canopy_sessions/api.py).
+                // discarded (apps/canopy_sessions/api_lifecycle.py).
                 metadata: initRef.current?.metadata ?? {},
               }),
             },

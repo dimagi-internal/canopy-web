@@ -1,23 +1,16 @@
 /**
- * Aggregate counts for the public explainer. Anonymous — deliberately a bare
- * fetch with no credentials and no CSRF, because this page is served to
- * visitors with no session and sending cookies would gain nothing.
+ * Aggregate counts for the public explainer. Anonymous: the page is served to
+ * visitors with no session, so there is nothing to send and a failure is silent.
  */
-import { apiUrl } from './base'
+import { apiV2 } from './client.v2'
+import type { components } from './generated'
 
-export interface PublicStats {
-  agents: number
-  skills: number
-  runners_online: number
-  turns_executed: number
-  demos_published: number
-}
+export type PublicStats = components['schemas']['PublicStatsOut']
 
 export async function getPublicStats(): Promise<PublicStats | null> {
   try {
-    const resp = await fetch(apiUrl('/api/system/public-stats'))
-    if (!resp.ok) return null
-    return (await resp.json()) as PublicStats
+    const res = await apiV2.GET('/api/system/public-stats')
+    return res.response.ok && res.data ? res.data : null
   } catch {
     // The page must render without numbers rather than fail — a visitor who
     // cannot reach the API should still learn what canopy is.

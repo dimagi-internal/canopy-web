@@ -141,6 +141,33 @@ def test_a_session_interrupt_stops_the_turn_driving_that_session(running):
     assert agent.cancels == 1
 
 
+def test_a_recorded_session_interrupt_is_carried_out_and_retired(running, monkeypatch):
+    """The `session_interrupt` frame is a doorbell; the server's record is what a
+    stop survives a dropped socket on. Drained on the poll tick and retired by id."""
+    mod = running
+    agent = _Agent()
+    mod._acp_register(TID, agent)
+    mod._announce_session(TID, "f988d1eb-02be-44c9-b301-2f87232da936")
+    calls = []
+
+    def _api(method, path, body=None, **_k):
+        calls.append((method, path, body))
+        if method == "GET":
+            return 200, {"interrupts": [{"session_id": "s1", "interrupt_id": "i1",
+                                         "session_key": "f988d1eb-02be-44c9-b301-2f87232da936"}]}
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(mod, "_api", _api)
+    assert mod._drain_session_interrupts("r1") == 1
+    assert agent.cancels == 1
+    assert calls[-1] == ("POST", "/runners/r1/session-interrupt-result",
+                         {"session_id": "s1", "interrupt_id": "i1", "outcome": "interrupted"})
+    src = open(mod.__file__).read()
+    assert "_drain_session_interrupts(runner_id)" in src[src.index("def run_over_rest"):src.index("def _ws_url")]
+    ws = src[src.index("def run_over_ws"):src.index("def main()")]
+    assert ws.count("_drain_session_interrupts(runner_id)") >= 2  # the frame, and the poll tick
+
+
 def test_the_ws_loop_and_every_heartbeat_honour_stops(cloud_runner):
     """The branches that were missing. Source-level, because the WS loop is a live
     socket — and an unhandled frame is indistinguishable from one never sent."""

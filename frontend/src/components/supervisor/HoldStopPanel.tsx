@@ -65,7 +65,7 @@ export function HoldStopPanel({
           }`}
         >
           <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-foreground shadow transition-all ${
               held ? 'left-[22px]' : 'left-0.5'
             }`}
           />
@@ -119,7 +119,7 @@ export function HoldStopPanel({
                   }
                   disabled={busy}
                   data-testid={`${testid}-stop-confirm`}
-                  className="rounded-md bg-destructive px-2.5 py-1 text-[12px] font-bold text-white disabled:opacity-50"
+                  className="rounded-md bg-destructive px-2.5 py-1 text-[12px] font-bold text-destructive-foreground disabled:opacity-50"
                 >
                   {busy ? '…' : 'Stop everything now'}
                 </button>

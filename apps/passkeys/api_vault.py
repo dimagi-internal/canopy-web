@@ -10,16 +10,23 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 
 from django.http import HttpRequest
-from ninja import Router
+from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
-from apps.passkeys import stepup
+from apps.passkeys import stepup, vault_log
 from apps.passkeys.models import Passkey, UserVaultKeyset
-from apps.passkeys.schemas import VaultKeysetIn, VaultKeysetOut, VaultKeysetPasskeyOut, VaultSetupOut
+from apps.passkeys.schemas import (
+    VaultClientReportIn,
+    VaultKeysetIn,
+    VaultKeysetOut,
+    VaultKeysetPasskeyOut,
+    VaultSetupOut,
+)
 
 router = Router(auth=session_auth, tags=["passkeys"])
 
@@ -74,6 +81,7 @@ def get_vault_keyset(request: HttpRequest) -> VaultKeysetOut:
     what to pass as `extensions.prf.eval.first` to open a passkey seal."""
     out = _out(request.user)
     if not out.exists:
+        vault_log.log("keyset_missing", request)
         raise ProblemError(404, "No vault key", type_=TYPE_NOT_FOUND,
                            detail="You have not set up a vault key (Settings → Vault key).",
                            members={"error": "no_vault_keyset", **out.model_dump(mode="json")})
@@ -106,7 +114,27 @@ def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeyse
         zk.put_keyset(request.user, public_jwk=payload.public_jwk, seals=payload.seals,
                       replace=payload.replace)
     except zk.ZkError as exc:
+        vault_log.log("keyset_write_refused", request, level=logging.WARNING, code=exc.code, status=exc.status,
+                      replace=payload.replace,
+                      new_seals=",".join(sorted(str(s.get("alg")) for s in payload.seals)) or "-")
         raise ProblemError(exc.status, "Vault key", type_=(
             TYPE_CONFLICT if exc.status == 409 else TYPE_VALIDATION), detail=str(exc),
             members={"error": exc.code}) from exc
+    vault_log.log("keyset_written", request, replace=payload.replace,
+                  new_seals=",".join(sorted(str(s.get("alg")) for s in payload.seals)) or "-")
     return _out(request.user)
+
+
+@router.post("/client-report", response={204: None}, summary="Report a vault unlock/setup outcome the browser saw")
+@gate("self", kind="telemetry")  # a diagnostic line in the server log; changes nothing
+def post_vault_client_report(request: HttpRequest, payload: VaultClientReportIn) -> Status:
+    """The browser alone sees why an unlock failed (which method, a seal that
+    did not open, a passkey that gave no PRF). It reports that here, with no
+    secret in it, and the server logs it beside the client and keyset facts."""
+    vault_log.log("client_report", request,
+                  level=logging.WARNING if payload.outcome != "ok" else logging.INFO,
+                  stage=payload.stage, method=payload.method, outcome=payload.outcome,
+                  error=payload.error[:200], browser_prf=payload.browser_prf,
+                  asked=",".join(payload.asked) or "-", secret_key_remembered=payload.secret_key_remembered,
+                  page=payload.page[:100])
+    return Status(204, None)

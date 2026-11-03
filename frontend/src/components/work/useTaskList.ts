@@ -1,9 +1,11 @@
 // A live task list: fetched once, edited optimistically (a row changes the
 // moment you pick, and goes back with the server's reason if it refuses), and
 // re-read — debounced — whenever any task in the workspace moves (`task://`).
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { actOn, updateTask, type Task, type TaskActionName, type TaskPatch } from '@/api/work'
+import { errorText } from '@/api/problem'
+import { useLoad } from '@/hooks/useLoad'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
 /** How long a burst of task changes waits before the list re-reads. */
@@ -21,29 +23,7 @@ export interface TaskList {
 }
 
 export function useTaskList(fetcher: () => Promise<Task[]>, deps: unknown[]): TaskList {
-  const [tasks, setTasksState] = useState<Task[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const latest = useRef(fetcher)
-  latest.current = fetcher
-  const seq = useRef(0)
-
-  const reload = useCallback(() => {
-    const mine = ++seq.current
-    latest
-      .current()
-      .then((rows) => {
-        if (mine !== seq.current) return
-        setTasksState(rows)
-        setError(null)
-      })
-      .catch((e: unknown) => {
-        if (mine !== seq.current) return
-        setError(e instanceof Error ? e.message : 'Could not load tasks')
-      })
-  }, [])
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the caller names what the fetch depends on
-  useEffect(() => reload(), deps)
+  const { data: tasks, error, reload, setData } = useLoad(() => fetcher(), deps, { keepData: true })
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useResource(TASK_RESOURCE, () => {
@@ -54,7 +34,7 @@ export function useTaskList(fetcher: () => Promise<Task[]>, deps: unknown[]): Ta
     if (timer.current) clearTimeout(timer.current)
   }, [])
 
-  const setTasks = useCallback((fn: (t: Task[]) => Task[]) => setTasksState((cur) => (cur ? fn(cur) : cur)), [])
+  const setTasks = useCallback((fn: (t: Task[]) => Task[]) => setData((cur) => (cur ? fn(cur) : cur)), [setData])
 
   const patch = useCallback(
     async (key: string, body: TaskPatch, optimistic?: Partial<Task>) => {
@@ -88,5 +68,5 @@ export function useTaskList(fetcher: () => Promise<Task[]>, deps: unknown[]): Ta
     [setTasks],
   )
 
-  return { tasks, error, reload, patch, act, setTasks }
+  return { tasks, error: error ? errorText(error, 'Could not load tasks') : null, reload, patch, act, setTasks }
 }

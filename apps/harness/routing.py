@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 
 from django.db.models import Q, prefetch_related_objects
 
+from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import RunnerBinding
+from apps.agents.standings import Standings
+from apps.canopy_sessions.models import RunnerBinding, SessionHandoff
 from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
 from apps.workspaces import permissions as perms
@@ -356,8 +358,6 @@ class ServingFacts:
 
     def standings(self):
         """Every runner owner's standing with every agent (`access.Standings`)."""
-        from apps.agents.access import Standings  # noqa: PLC0415 — cycle: it imports routing
-
         if self._standings is None:
             self._standings = Standings({r.owner for r in self.runners if r.owner_id}, self.agents)
         return self._standings
@@ -368,8 +368,6 @@ class ServingFacts:
 
     def may_hold(self, runner: Runner, agent) -> bool:
         """`runner_may_hold_agent`, with every owner's standing read once."""
-        from apps.agents.services import runner_may_hold_agent  # noqa: PLC0415 — cycle: it imports routing
-
         # Its own copy of a runner another list loaded, whose flags it read already.
         return runner_may_hold_agent(self._by_pk.get(runner.pk, runner), agent, standings=self.standings())
 
@@ -388,8 +386,6 @@ class ServingFacts:
 
 def agents_routed_to(runner: Runner):
     """Every agent `runner_routes_agent` holds for, by slug."""
-    from apps.agents.services import runner_may_hold_agent
-
     if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return Agent.objects.none()
     tenant = runner_tenant_slugs(runner)
@@ -471,8 +467,6 @@ def inherited_orders(agent_ids) -> dict:
     def may_hold(runner, agent) -> bool:
         key = (agent.id, runner.owner_id)
         if key not in held:
-            from apps.agents.services import runner_may_hold_agent
-
             held[key] = runner_may_hold_agent(runner, agent)
         return held[key]
 
@@ -814,6 +808,35 @@ def busy_session_ids():
                                rides_turn__isnull=True).values("chat_session_id")
 
 
+def _transfers_in_progress():
+    """Handoffs whose transfer turn has not started on the target yet: unsettled
+    (the source is still packing its work, `handoff.CAPTURE_WAIT`), or settled
+    with the transfer turn still QUEUED."""
+    return SessionHandoff.objects.filter(Q(settled_at__isnull=True) | Q(turn__status=Turn.QUEUED))
+
+
+def transfer_held_q() -> Q:
+    """For a Turn queryset: a turn of a session mid-transfer that is NOT that
+    transfer's own turn. Held until the transfer turn is claimed — from then on
+    the session's ordinary lane (`busy_session_ids`) holds it — so nothing reaches
+    the target box before it has restored the session's work. The claim excludes
+    these; `blocking_turn` / `transfer_holding` say so in the status line."""
+    moving = _transfers_in_progress()
+    return (Q(chat_session_id__in=moving.values("session_id"))
+            & ~Q(pk__in=moving.filter(turn__isnull=False).values("turn_id")))
+
+
+def transfer_holding(turn: Turn) -> SessionHandoff | None:
+    """The in-progress transfer this QUEUED turn waits for (`transfer_held_q`), or None."""
+    if turn.status != Turn.QUEUED or not turn.chat_session_id:
+        return None
+    h = (_transfers_in_progress().filter(session_id=turn.chat_session_id)
+         .order_by("-created_at").first())
+    if h is None or h.turn_id == turn.pk:
+        return None
+    return h
+
+
 def delivers_midturn(runner: Runner | None) -> bool:
     """This runner's code types a follow-up into a running turn (reported on its
     heartbeat as `midturn`). The cloud runner does not, and keeps queueing."""
@@ -870,17 +893,22 @@ def ridable_sessions(runner: Runner) -> dict:
 
 
 def blocking_turn(turn: Turn) -> Turn | None:
-    """The executing turn this QUEUED turn is waiting behind, or None.
+    """The turn this QUEUED turn is waiting behind, or None.
 
-    The question `claim_next_turn` answers with `busy_session_ids`, asked of one
-    turn — so "queued behind the current turn" in the status line and "not
-    claimable" in the claim cannot drift apart (`tests/test_turn_status.py` pins
-    the two together). That is the turn executing in its session: the one a person
-    can see ("the previous message in this thread"). An AGENT is never what a turn
-    waits behind: any number of an agent's turns run at once.
+    The questions `claim_next_turn` answers with `busy_session_ids` and
+    `transfer_held_q`, asked of one turn — so "queued behind" in the status line
+    and "not claimable" in the claim cannot drift apart (`tests/test_turn_status.py`
+    pins the two together). That is the turn executing in its session (the one a
+    person can see: "the previous message in this thread"), or a transfer's turn
+    still waiting to start. A transfer whose turn does not exist yet (its source is
+    still packing) holds it too; `transfer_holding` names that one. An AGENT is
+    never what a turn waits behind: any number of an agent's turns run at once.
     """
     if turn.status != Turn.QUEUED:
         return None
+    moving = transfer_holding(turn)
+    if moving is not None and moving.turn_id:
+        return Turn.objects.select_related("claimed_by").filter(pk=moving.turn_id).first()
     executing = Turn.objects.filter(status__in=EXECUTING).select_related("claimed_by")
     if turn.chat_session_id:
         held = executing.filter(chat_session_id=turn.chat_session_id,

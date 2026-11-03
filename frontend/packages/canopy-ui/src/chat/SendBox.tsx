@@ -224,6 +224,13 @@ export function SendBox({
     body.trim().length > 0 &&
     !blocked &&
     !attachmentsUploading;
+  // A send asked for while the chat is still connecting (no live socket, or no
+  // server draft yet) is remembered and goes the moment it can. Dropping the
+  // keypress left the words in the box with nothing saying they were not sent.
+  const sendWhenReady =
+    !canSend && body.trim().length > 0 && !blocked && !attachmentsUploading &&
+    (!connected || draft == null);
+  const [waitingToSend, setWaitingToSend] = useState(false);
 
   const handleChange = (value: string) => {
     setLocalBody(value);
@@ -327,10 +334,22 @@ export function SendBox({
   const handleSend = () => {
     // Clear locally rather than waiting for the server's cleared draft to
     // echo back — a round trip the person sending has no reason to wait on.
+    setWaitingToSend(false);
     setLocalBody("");
     if (persistKey) clearStoredDraft(store, persistKey);
     onSend(body);
   };
+
+  const requestSend = () => {
+    if (canSend) handleSend();
+    else if (sendWhenReady) setWaitingToSend(true);
+  };
+
+  useEffect(() => {
+    if (waitingToSend && canSend) handleSend();
+    else if (waitingToSend && !sendWhenReady) setWaitingToSend(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingToSend, canSend, sendWhenReady]);
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // `isComposing` is true during IME input (CJK, etc.). Pressing
@@ -358,7 +377,7 @@ export function SendBox({
     }
     if (e.key === "Enter" && !e.shiftKey && !isComposing) {
       e.preventDefault();
-      if (canSend) handleSend();
+      requestSend();
     }
     // Esc stops the agent, as it does in Claude Code and emdash — the same as
     // pressing Stop. Only while there is something to stop, so Esc stays free
@@ -554,6 +573,10 @@ export function SendBox({
             <span role="status" className="mr-auto text-xs text-muted-foreground">
               stopped
             </span>
+          ) : waitingToSend ? (
+            <span role="status" data-testid="send-waiting" className="mr-auto text-xs text-muted-foreground">
+              sends as soon as the chat connects…
+            </span>
           ) : null}
           {typingVisibility != null && onTypingVisibilityChange != null && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -587,8 +610,8 @@ export function SendBox({
             type="button"
             size="sm"
             data-testid="send"
-            disabled={!canSend}
-            onClick={handleSend}
+            disabled={!canSend && !sendWhenReady}
+            onClick={requestSend}
           >
             send
           </Button>

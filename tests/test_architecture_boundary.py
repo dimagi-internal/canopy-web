@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 from tests._source import ROOT, iter_app_sources
+
+pytestmark = pytest.mark.guard
 
 APPS = ROOT / "apps"
 

@@ -291,6 +291,9 @@ class MessageSecretRequestOut(Schema):
 
 
 class MessageOut(Schema):
+    #: The row's id — the same id the session socket's snapshot and live frames
+    #: carry for it, so a row loaded here and one that arrived live are one row.
+    id: str
     turn_index: int
     role: str
     plaintext: str
@@ -310,6 +313,12 @@ class MessageOut(Schema):
     #: conversation's own people on its chat surfaces (`sensitivity.readable`); null
     #: for every other reader and every ordinary conversation.
     sealed: str | None = None
+
+    @staticmethod
+    def resolve_id(obj) -> str:
+        if isinstance(obj, MessageOut):  # already built (a response re-validates it)
+            return obj.id
+        return str(obj.pk)
 
     # Read off the gate's own attribute, never the row's column: a route that forgot
     # `sensitivity.readable` hands out nothing rather than the ciphertext.
@@ -378,6 +387,10 @@ class HumanInputPageOut(Schema):
 class SlackBindingOut(Schema):
     """The Slack thread a session is connected to (apps/slack/share.py::binding_of)."""
     channel: str
+    #: The channel's name (no `#`), when canopy has looked it up; "" otherwise. Show this, not `channel`.
+    channel_name: str = ""
+    #: A direct message: there is no channel name to show.
+    is_dm: bool = False
     thread_ts: str = ""
     #: Opens the thread in Slack's web client; "" when canopy can't build one.
     url: str = ""
@@ -664,6 +677,17 @@ class SlashCommandOut(Schema):
     source: str = ""
 
 
+class GithubIdentityOut(Schema):
+    """Whose GitHub identity this session's turns borrow (`delegations.session_identity`)."""
+    #: The agent's slug; "" when none.
+    agent: str = ""
+    #: `agent` (an agent chat), `repo_default` (an agentless repo chat; the repo's default
+    #: agent, `RepoIdentity`) or `none` (turns get no GitHub token).
+    source: Literal["agent", "repo_default", "none"] = "none"
+    #: The repo whose default it is, for `repo_default` and `none`.
+    repo: str = ""
+
+
 class SessionInfoOut(Schema):
     """Everything canopy stores about a session, in one read — for the Session
     info panel. `session` is the same shape the list and detail reads serve."""
@@ -685,6 +709,7 @@ class SessionInfoOut(Schema):
     turns_limit: int = 0
     participant_count: int = 0
     message_count: int = 0
+    github_identity: GithubIdentityOut = GithubIdentityOut()
 
 
 class SendOut(Schema):

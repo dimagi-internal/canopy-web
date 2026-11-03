@@ -43,21 +43,35 @@ function toolResultId(message: Message): string | null {
   return typeof id === "string" && id !== "" ? id : null;
 }
 
+/** A line a person sent (not a compaction summary, not a withdrawn send). */
+function isPersonLine(m: Message): boolean {
+  const record = m.content?.record as Record<string, unknown> | undefined;
+  return m.role === "user" && m.content?.cancelled !== true && !record?.compact_summary;
+}
+
 /**
  * A pending live row (`status: "pending"` from PreToolUse, no ordinal) is a
  * PLACEHOLDER. It is meant to be replaced when its result arrives — but if that
  * never lands (the turn ended, the runner stopped streaming, a hook was dropped),
- * it strands a row rendering "running…" forever, which reads as an agent stuck
- * mid-call. Observed live 2026-07-27: one orphan row per turn, and it vanished on
- * reload because the durable transcript never contained it.
+ * it strands a row rendering "running…" that the durable transcript never holds.
  *
- * A pending row is therefore dropped once ANY later row exists — later activity
- * is proof that whatever it was waiting on is no longer in flight. It survives
- * only while it is genuinely the newest thing in the session, which is exactly
- * when "running…" is true.
+ * So a pending row is dropped once a later row exists — UNLESS the last turn is
+ * still `live` and the row belongs to it: an agent makes parallel calls, and
+ * call A is still running while call B's row arrives after it. Once the turn
+ * is over, or a person has spoken since, later activity proves it is no longer
+ * in flight.
  */
-function dropStaleLiveRows(messages: Message[]): Message[] {
+function dropStaleLiveRows(messages: Message[], live: boolean): Message[] {
   const lastIndex = messages.length - 1;
+  let lastPerson = -1;
+  if (live) {
+    for (let i = lastIndex; i >= 0; i--) {
+      if (isPersonLine(messages[i])) {
+        lastPerson = i;
+        break;
+      }
+    }
+  }
   return messages.filter((m, i) => {
     if (m.role !== "tool_use") return true;
     const content = m.content as Record<string, unknown> | undefined;
@@ -74,13 +88,41 @@ function dropStaleLiveRows(messages: Message[]): Message[] {
     ) {
       return true;
     }
-    // Still the newest row: genuinely in flight.
-    return i === lastIndex;
+    // Still the newest row, or part of the turn that is still running.
+    return i === lastIndex || (live && i > lastPerson);
   });
 }
 
-export function pairToolMessages(messages: Message[]): ChatRow[] {
-  messages = dropStaleLiveRows(messages);
+/**
+ * Row keys that survive the row changing identity. A send's optimistic row
+ * (`local:<cid>`) takes the server's id on its receipt, and a live tool row
+ * (`seq:-1`) takes the durable row's id when the transcript catches up — keyed
+ * by id, each would remount, and its whole turn with it (the turn is keyed by
+ * its first row). So a person's line is keyed by the send's `client_id` and a
+ * tool call by its `tool_use` id, and the id is only the fallback. A repeat is
+ * suffixed, so keys stay unique even among several id-less live rows.
+ */
+function rowKeys(): (base: string) => string {
+  const used = new Set<string>();
+  return (base) => {
+    let key = base;
+    for (let n = 1; used.has(key); n++) key = `${base}#${n}`;
+    used.add(key);
+    return key;
+  };
+}
+
+function messageKeyBase(m: Message): string {
+  const cid = m.role === "user" ? m.content?.client_id : undefined;
+  return typeof cid === "string" && cid ? `msg-${cid}` : `msg-${m.id}`;
+}
+
+export function pairToolMessages(
+  messages: Message[],
+  { live = false }: { live?: boolean } = {},
+): ChatRow[] {
+  messages = dropStaleLiveRows(messages, live);
+  const keyFor = rowKeys();
   const rows: ChatRow[] = [];
   // Map of tool_use_id → index into rows[] for that pair. Lets a tool_result
   // arriving later in the stream slot itself into the existing pair row.
@@ -97,7 +139,7 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
         kind: "tool_pair",
         use: m,
         result: null,
-        key: `pair-${m.id}`,
+        key: keyFor(`pair-${id ?? m.id}`),
       };
       rows.push(row);
       const idx = rows.length - 1;
@@ -123,7 +165,7 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
         // An id that matches no pending id-tagged use — a genuine ghost,
         // never absorbed by the no-id fallback queue (that queue is for
         // results that carry no id of their own, not for stray ids).
-        rows.push({ kind: "message", message: m, key: `msg-${m.id}` });
+        rows.push({ kind: "message", message: m, key: keyFor(messageKeyBase(m)) });
         continue;
       }
       // No id on the result at all — fall back to the oldest still-open
@@ -142,11 +184,11 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
       if (!paired) {
         // Nothing left in the fallback queue to pair with — standalone so
         // content isn't silently dropped.
-        rows.push({ kind: "message", message: m, key: `msg-${m.id}` });
+        rows.push({ kind: "message", message: m, key: keyFor(messageKeyBase(m)) });
       }
       continue;
     }
-    rows.push({ kind: "message", message: m, key: `msg-${m.id}` });
+    rows.push({ kind: "message", message: m, key: keyFor(messageKeyBase(m)) });
   }
   return rows;
 }
@@ -154,6 +196,23 @@ export function pairToolMessages(messages: Message[]): ChatRow[] {
 export interface ToolCallStatus {
   kind: "success" | "error" | "pending";
   label: string;
+}
+
+/**
+ * Did this call fail? THE rule — the row's badge, a collapsed run's "contains
+ * an error", a turn's error count and its files changed all ask it. A call
+ * with no result has not failed yet.
+ *
+ * Failure is any of: an error status on either row, the result's own
+ * `is_error`, or a result whose text opens with "Error" / "Traceback" — some
+ * MCP servers say it only in the content.
+ */
+export function toolFailed(use: Message, result: Message | null): boolean {
+  if (result === null) return false;
+  if (result.status === "error" || use.status === "error") return true;
+  if ((result.content as { is_error?: unknown } | undefined)?.is_error === true) return true;
+  const head = (result.plaintext || "").trim().slice(0, 80).toLowerCase();
+  return head.startsWith("error") || head.startsWith("traceback");
 }
 
 /** Derive a status badge for a paired tool row. */
@@ -164,14 +223,7 @@ export function deriveToolStatus(
   if (result === null) {
     return { kind: "pending", label: "running…" };
   }
-  if (result.status === "error" || use.status === "error") {
-    return { kind: "error", label: "error" };
-  }
-  // Some MCP servers signal failure in the result content rather than
-  // setting an HTTP-style status — sniff for the common "Error" / "error"
-  // prefixes so the badge reflects reality without server changes.
-  const head = (result.plaintext || "").trim().slice(0, 80).toLowerCase();
-  if (head.startsWith("error") || head.startsWith("traceback")) {
+  if (toolFailed(use, result)) {
     return { kind: "error", label: "error" };
   }
   return { kind: "success", label: "ok" };

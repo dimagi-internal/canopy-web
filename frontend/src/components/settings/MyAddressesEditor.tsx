@@ -6,16 +6,13 @@ import {
   type AddressKind,
   type PersonAddress,
 } from '@/api/people'
+import { errorText } from '../../api/problem'
 
 // More ways to reach a person (apps/contacts/models.py `PersonAddress`): a
 // labelled email or phone beside the login that identifies them — Gina's work
 // email, say — which agents read when they act (invite her work address to the
 // family calendar). They belong to the person's ACCOUNT, not a workspace, and
 // only the person changes them, in account settings.
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback
-}
 
 /** One person's addresses; a Remove on each when they are yours. */
 export function AddressList({

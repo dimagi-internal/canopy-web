@@ -101,13 +101,6 @@ APPS = {
         # failed the build with `429 toomanyrequests: Data limit exceeded`
         # (runs 38857394563, 38857717539, 2026-10-15).
         "public_ecr_login": True,
-        # Canopy Vault's KMS key (canopy-web.cfn.yaml `VaultKmsKey`, behind the
-        # `EnableVaultKms` condition, default "false"). NOT LIVE until a human
-        # applies this file's policy — and that must happen BEFORE anyone
-        # deploys with EnableVaultKms=true, or the deploy fails on kms:CreateKey
-        # (the 2026-09-13 shape). preflight.py maps both KMS types so the
-        # failure is a named refusal, not a rollout 403.
-        "vault_kms": True,
         # Runner installers (.github/workflows build the macOS/Windows bundles on
         # main and upload them, manifest.json last). The bucket is the
         # attachments bucket; only this prefix, and only PutObject: the workflow
@@ -348,46 +341,6 @@ def policy_for(app: str, cfg: dict) -> dict:
         })
         # Deliberately NOT GetSecretValue: the deploy role writes secrets, the
         # ECS task execution role reads them at runtime.
-
-    if cfg.get("vault_kms"):
-        # CreateKey has no ARN to scope to, so it is conditioned on the tag the
-        # template puts on the key instead; every later call is scoped to keys
-        # carrying that tag. No kms:Decrypt / GenerateDataKey here — the deploy
-        # role manages the key, the TASK role (named in the key policy) uses it.
-        tag = {"canopy-app": cfg["stack"]}
-        st.append({
-            "Sid": "VaultKmsCreateKeyTagged",
-            "Effect": "Allow",
-            "Action": ["kms:CreateKey", "kms:TagResource"],
-            "Resource": "*",
-            "Condition": {"StringEquals": {f"aws:RequestTag/{k}": v for k, v in tag.items()}},
-        })
-        st.append({
-            "Sid": "VaultKmsKeyManagement",
-            "Effect": "Allow",
-            "Action": [
-                "kms:DescribeKey", "kms:PutKeyPolicy", "kms:GetKeyPolicy",
-                "kms:EnableKeyRotation", "kms:GetKeyRotationStatus",
-                "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource",
-                "kms:ListResourceTags", "kms:ScheduleKeyDeletion",
-                "kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias",
-            ],
-            "Resource": f"arn:aws:kms:{REGION}:{ACCT}:key/*",
-            "Condition": {"StringEquals": {f"aws:ResourceTag/{k}": v for k, v in tag.items()}},
-        })
-        # An alias call is authorized against the alias ARN as well as the key.
-        st.append({
-            "Sid": "VaultKmsOwnAlias",
-            "Effect": "Allow",
-            "Action": ["kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias"],
-            "Resource": f"arn:aws:kms:{REGION}:{ACCT}:alias/{cfg['stack']}-vault",
-        })
-        st.append({
-            "Sid": "VaultKmsListTakesNoResource",
-            "Effect": "Allow",
-            "Action": ["kms:ListAliases", "kms:ListKeys"],
-            "Resource": "*",
-        })
 
     if cfg.get("runner_releases"):
         st.append({

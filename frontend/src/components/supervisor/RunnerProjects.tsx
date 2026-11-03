@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
+import { useState, type JSX } from 'react'
 import clsx from 'clsx'
 import type { AgentOut } from '@/api/agents'
 import {
@@ -8,6 +8,8 @@ import {
   type RunnerProjectRequest,
   type RunnerProjects as RunnerProjectsData,
 } from '@/api/harness'
+import { errorText } from '@/api/problem'
+import { usePolled } from '@/hooks/usePolled'
 
 // "Add a repo to this runner" (canopy-web `runner_projects`): a laptop runs an
 // agent in the emdash project named after it, and routing skips a laptop without
@@ -23,28 +25,25 @@ export function useRunnerProjects(runnerId: string | null): {
   error: string | null
   reload: () => void
 } {
-  const [data, setData] = useState<RunnerProjectsData | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const live = useRef(true)
-  const reload = useCallback(() => {
-    if (!runnerId) return
-    listRunnerProjects(runnerId)
-      .then((d) => { if (live.current) { setData(d); setError(null) } })
-      .catch((e: unknown) => { if (live.current) setError(e instanceof Error ? e.message : 'could not load its projects') })
-  }, [runnerId])
-  useEffect(() => {
-    live.current = true
-    setData(null)
-    reload()
-    return () => { live.current = false }
-  }, [reload])
-  const pending = data?.requests.some((r) => r.status === 'pending') ?? false
-  useEffect(() => {
-    if (!pending) return
-    const t = setInterval(reload, POLL_MS)
-    return () => clearInterval(t)
-  }, [pending, reload])
-  return { data, error, reload }
+  // Re-read every POLL_MS while an ask is pending (and not at all otherwise);
+  // `usePolled` pauses on a hidden tab. The runner id rides with the result so a
+  // switch to another runner never shows the previous one's projects.
+  const { data, error, refresh } = usePolled(
+    async (signal) => {
+      const d = await listRunnerProjects(runnerId as string)
+      return signal.aborted ? undefined : { runnerId, d }
+    },
+    {
+      ms: ({ data: last }) => (last?.d.requests.some((r) => r.status === 'pending') ? POLL_MS : null),
+      deps: [runnerId],
+      enabled: Boolean(runnerId),
+    },
+  )
+  return {
+    data: data && data.runnerId === runnerId ? data.d : null,
+    error: error ? errorText(error, 'could not load its projects') : null,
+    reload: () => void refresh(),
+  }
 }
 
 function StatusText({ request }: { request: RunnerProjectRequest }): JSX.Element {

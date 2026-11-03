@@ -23,10 +23,9 @@ pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 _ACE_OLD = json.loads((pathlib.Path(__file__).parent.parent / "apps/agents/tests/fixtures/ace_interface.json").read_text())
 # ACE's published interface in today's words: the `full:` rules and each capability's `callers` are
-# the access list's business; a capability keeps what it is and the lowest role that may use it.
+# the access list's business; a capability keeps only what it is.
 ACE = {"version": 1, "capabilities": {
-    name: {**{k: v for k, v in cap.items() if k != "callers"},
-           "role": "viewer" if any(c.startswith("contact") for c in cap.get("callers", [])) else "user"}
+    name: {k: v for k, v in cap.items() if k != "callers"}
     for name, cap in _ACE_OLD["capabilities"].items()}}
 
 
@@ -98,9 +97,9 @@ def test_reset_to_default_after_a_save(w):
 def test_validate_reports_each_fault_next_to_its_field(w):
     draft = {"full": ["contactt"], "capabilities": {
         "ask": {"tool": ["Read"]},
-        "site": {"role": "user", "ceiling": ["x*"]},
+        "site": {"ceiling": ["x*"]},
         "old": {"callers": ["member"]},
-        "fine": {"role": "user"}}}
+        "fine": {}}}
     r = w["c"].post("/api/agents/echo/interface/validate", {"interface": draft}, content_type="application/json")
     assert r.status_code == 200
     paths = {e["path"] for e in r.json()["errors"]}
@@ -111,7 +110,7 @@ def test_validate_reports_each_fault_next_to_its_field(w):
 
 def test_validate_a_good_draft_saves_nothing(w):
     r = w["c"].post("/api/agents/echo/interface/validate",
-                    {"interface": {"capabilities": {"ask": {"role": "user"}}}},
+                    {"interface": {"capabilities": {"ask": {}}}},
                     content_type="application/json")
     assert r.json()["errors"] == [] and "summary" not in r.json() and "warnings" not in r.json()
     w["agent"].refresh_from_db()
@@ -127,9 +126,9 @@ def test_parse_refuses_the_retired_keys_and_points_at_the_access_list(doc):
 
 def test_validate_hands_back_the_model_and_its_yaml_so_the_form_and_yaml_can_switch(w):
     import yaml
-    src = "capabilities:\n  ask:\n    role: user  # colleagues\n"
+    src = "capabilities:\n  ask:\n    description: Colleagues  # comment\n"
     r = w["c"].post("/api/agents/echo/interface/validate", {"source": src}, content_type="application/json").json()
-    assert r["yaml"].strip() == src.strip() and r["interface"]["capabilities"]["ask"]["role"] == "user"
+    assert r["yaml"].strip() == src.strip() and r["interface"]["capabilities"]["ask"]["description"] == "Colleagues"
     back = w["c"].post("/api/agents/echo/interface/validate", {"interface": r["interface"]},
                        content_type="application/json").json()
     assert yaml.safe_load(back["yaml"]) == r["interface"]

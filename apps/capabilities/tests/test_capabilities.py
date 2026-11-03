@@ -18,9 +18,10 @@ from apps.capabilities.models import AgentCapability, CapabilityGrant, Capabilit
 from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.workspaces.models import WorkspaceMembership as M
+from tests.token_helpers import pat_client
 
 from .fakes import OUTPUTS, transient
-from .helpers import MANIFEST, _acquire, _as, _grant, _json, _kinds, _pat, _publish
+from .helpers import MANIFEST, _acquire, _as, _grant, _json, _kinds, _publish
 
 pytestmark = pytest.mark.django_db
 
@@ -39,7 +40,7 @@ def test_publish_resolves_the_stack_outputs(tenancy):
 
 def test_the_agents_own_pat_may_publish(tenancy):
     """Publishing is the agent's deploy: its own login, whatever its workspace role."""
-    assert _publish(_pat(tenancy["bot"])).status_code == 200
+    assert _publish(pat_client(tenancy["bot"])).status_code == 200
 
 
 def test_publish_names_the_missing_contract_outputs(tenancy, world):
@@ -473,7 +474,7 @@ def test_a_viewer_may_read_the_declaration_but_not_lease(ready_to_lease, tenancy
 
 
 def test_the_agents_own_pat_leases_below_the_editor_role(ready_to_lease, tenancy, world):
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     lease = _acquire(bot)
     assert lease.status_code == 200, lease.content
     assert _json(bot, "get", f"/api/capabilities/leases/{lease.json()['lease_id']}").status_code == 200
@@ -484,7 +485,7 @@ def test_the_agents_own_login_is_a_stranger_once_it_is_not_a_member(ready_to_lea
     one a move left behind) gets the same 404 as anyone outside the workspace."""
     lease = _acquire(ready_to_lease).json()
     M.objects.filter(user=tenancy["bot"]).delete()
-    bot = _pat(tenancy["bot"])
+    bot = pat_client(tenancy["bot"])
     assert _acquire(bot).status_code == 404
     assert _json(bot, "get", f"/api/capabilities/leases/{lease['lease_id']}").status_code == 404
     assert _json(bot, "get", "/api/capabilities/leases").json()["leases"] == []

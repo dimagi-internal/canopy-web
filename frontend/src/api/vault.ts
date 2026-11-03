@@ -131,6 +131,18 @@ export async function setVaultAgentLink(slug: string, linked: boolean): Promise<
     params: { path: { slug } }, body: { linked, role: 'member' } }), 'Could not change the vault’s link to this agent')
 }
 
+// ---- what a new vault key affects (vault/newKeyImpact.ts) ----
+// These two REFUSE on failure, unlike listWorkspaces (./workspaces), which answers [] and
+// would read as "you hold no vaults".
+
+export async function listMyAgentsWithVaults(limit: number): Promise<{ items: { slug: string; name: string }[]; total: number }> {
+  return need(await apiV2.GET('/api/me/agents/', { params: { query: { limit } } }), 'Could not list your agents')
+}
+
+export async function listMyWorkspacesWithVaults(): Promise<{ slug: string; name: string }[]> {
+  return need(await apiV2.GET('/api/workspaces/'), 'Could not list your workspaces')
+}
+
 // ---- workspace vaults (spec §4): any number per workspace, layered under an agent's own ----
 
 export type WorkspaceVaultOut = Schemas['WorkspaceVaultOut']
@@ -247,4 +259,32 @@ export async function setTestVaultKey(slug: string, enabled: boolean): Promise<T
     body: { enabled },
   })
   return need<TestVaultKeyOut>(res, 'setTestVaultKey')
+}
+
+export interface VaultClientReport {
+  stage: string
+  method: 'passkey' | 'passphrase' | 'recovery' | 'none'
+  outcome: 'ok' | 'failed' | 'cancelled' | 'unsupported'
+  error?: string
+  browser_prf?: boolean | null
+  asked?: string[]
+  secret_key_remembered?: boolean
+}
+
+/** Tell the server's log what the browser saw while unlocking or setting up the
+ *  vault key. Fire-and-forget and secret-free: it never throws, so a diagnostic
+ *  cannot turn a failed unlock into a second failure. The page is the path alone, never a
+ *  query or fragment, and both strings are cut to the server's limits: over them the report
+ *  is refused, which here would be silent. */
+export function reportVaultClient(report: VaultClientReport): void {
+  void (async () => {
+    try {
+      await apiV2.POST('/api/vault/client-report', {
+        body: { asked: [], ...report, error: (report.error ?? '').slice(0, 300),
+                page: window.location.pathname.slice(0, 100) } as never,
+      })
+    } catch {
+      // diagnostics only
+    }
+  })()
 }

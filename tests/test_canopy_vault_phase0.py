@@ -20,7 +20,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import services
-from apps.agents.models import Agent, AgentCredentialRead, AgentDelegation
+from apps.agents.models import Agent, AgentCredentialRead
+from apps.connections.models import ConnectionApp
 from apps.common.encryption import encrypt_secret
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.harness.models import Runner, RunnerAssignment
@@ -128,16 +129,15 @@ def test_a_runner_header_naming_someone_elses_box_is_not_recorded(fleet):
 
 # ---- reencrypt_secrets ----------------------------------------------------------
 
-def _held(fleet, value: str) -> AgentDelegation:
-    """A row with an encrypted column to re-encrypt: a person's token lent to the agent."""
-    row, _ = AgentDelegation.objects.update_or_create(
-        user=fleet["user"], agent=fleet["agent"], service=AgentDelegation.GITHUB,
-        defaults={"secret_enc": value})
+def _held(fleet, value: str) -> ConnectionApp:
+    """A row with an encrypted column to re-encrypt: a workspace's OAuth client secret."""
+    row, _ = ConnectionApp.objects.update_or_create(
+        workspace=fleet["agent"].workspace, provider="salesforce", defaults={"client_id": "x", "client_secret_enc": value})
     return row
 
 
 def _stored(fleet) -> str:
-    return AgentDelegation.objects.get(agent=fleet["agent"]).secret_enc
+    return ConnectionApp.objects.get(workspace=fleet["agent"].workspace).client_secret_enc
 
 
 def _legacy(secret_key: str, plaintext: str) -> str:
@@ -150,7 +150,7 @@ def test_secret_columns_are_discovered_not_listed():
 
     found = {f"{m._meta.label}.{f}" for m, f in secret_columns()}
     assert {
-        "agents.AgentDelegation.secret_enc",
+        "connections.ConnectionApp.client_secret_enc",
         "slack.SlackInstallation.bot_token_enc",
         "contacts.HcpClient.webhook_secret_encrypted",
     } <= found
@@ -278,29 +278,26 @@ def test_field_encryption_key_is_its_own_generated_secret_in_the_task():
     assert {"Name": "FIELD_ENCRYPTION_KEY", "ValueFrom": {"Ref": "FieldEncryptionKey"}} in container["Secrets"]
 
 
-def test_vault_kms_is_off_by_default_and_fully_conditional():
+def test_the_retired_vault_kms_key_is_gone_from_the_stack():
+    """Nothing encrypts under the Canopy Vault envelope key now (an agent's vault is zero-knowledge),
+    so the stack neither creates it, nor passes it to the task, nor has a switch for it. (Its removal
+    scheduled the live key for deletion: the policy had been set to Delete the deploy before.)"""
     t = _template()
-    assert t["Parameters"]["EnableVaultKms"]["Default"] == "false"
-    for name in ("VaultKmsKey", "VaultKmsAlias"):
-        assert t["Resources"][name]["Condition"] == "VaultKmsEnabled"
-    stmts = {s["Sid"]: s for s in t["Resources"]["VaultKmsKey"]["Properties"]["KeyPolicy"]["Statement"]}
-    assert stmts["TaskRoleEnvelopeEncryption"]["Principal"] == {"AWS": {"Ref": "TaskRoleArn"}}
-    assert set(stmts["TaskRoleEnvelopeEncryption"]["Action"]) == {"kms:GenerateDataKey", "kms:Decrypt"}
+    assert "EnableVaultKms" not in t.get("Parameters", {})
+    assert not t.get("Conditions")
+    assert not [n for n in t["Resources"] if "Kms" in n]
     env = t["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
-    conditional = [e for e in env if "If" in e]
-    assert conditional and conditional[0]["If"][0] == "VaultKmsEnabled"
-    assert conditional[0]["If"][1]["Name"] == "VAULT_KMS_KEY_ID"
+    assert not any("VAULT_KMS_KEY_ID" in str(e) for e in env)
 
 
-def test_deploy_role_carries_the_kms_grants_the_key_needs():
+def test_no_deploy_role_holds_kms_grants_now_that_the_vault_key_is_gone():
+    """The Canopy Vault envelope key is retired, so the deploy role no longer manages KMS keys
+    (it held `VaultKmsKeyManagement`, tag-scoped, only for that key)."""
     from deploy.aws import deploy_roles as dr
-    from deploy.aws import preflight as pf
 
-    pol = dr.policy_for("canopy-web", dr.APPS["canopy-web"])
-    granted = {a for s in pol["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
-    for rtype in ("AWS::KMS::Key", "AWS::KMS::Alias"):
-        for action in pf.actions_for(rtype, "Add") + pf.actions_for(rtype, "Modify"):
-            assert action in granted, f"{rtype} needs {action}"
-    # Only canopy-web gets them.
-    other = dr.policy_for("ace-web", dr.APPS["ace-web"])
-    assert not any("Kms" in s["Sid"] for s in other["Statement"])
+    for app, cfg in dr.APPS.items():
+        pol = dr.policy_for(app, cfg)
+        assert not any("Kms" in s["Sid"] for s in pol["Statement"]), app
+        granted = {a for s in pol["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
+        assert not {a for a in granted if a.startswith("kms:")}, app
+

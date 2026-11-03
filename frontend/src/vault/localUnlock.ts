@@ -13,7 +13,7 @@
 import { rememberSelf } from './trust'
 import type { Unlocked, UnlockChoice, UnlockPrompt } from './operations'
 import { rememberedSecretKey } from './operations'
-import { PrfUnsupportedError } from './prf'
+import { PrfUnsupportedError, WRONG_PASSPHRASE } from './prf'
 import { requirePasskeysHere } from '@/auth/passkeyHere'
 import {
   importPrivateScalar,
@@ -97,5 +97,5 @@ export async function unlockLocally(ks: KeysetInHand, prompt: UnlockPrompt): Pro
       // the next passphrase seal, if any
     }
   }
-  throw new Error('That passphrase and Secret Key do not open your vault key.')
+  throw new Error(WRONG_PASSPHRASE)
 }

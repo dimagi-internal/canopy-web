@@ -1,5 +1,6 @@
 import type { Draft, Message, MessageAuthor, QueuedMessage, SessionState, WsEvent } from "./protocol";
 import { isUnconfirmed, sameAuthor } from "./identity";
+import { prependHistory } from "./history";
 
 // Pure reducer for SessionState — extracted from useSessionSocket so it
 // can be unit-tested without WebSocket plumbing. Side-effect events
@@ -46,11 +47,7 @@ export function comparableText(text: string): string {
 /**
  * Every frame `sessionReducer` handles. The socket hook hands the reducer ONLY
  * these, and gives anything else to `onUnknownEvent`, so a frame missing from
- * here is a frame the reducer never sees. That happened: from #775
- * (2026-09-13) the hook kept its own hand-written list, which lacked every
- * `draft.*` and `presence.*` frame and `session.turn_status`. Your own line did
- * not appear when you sent it (`draft.committed`), and the co-edited draft,
- * the presence roster and the live turn status all went quiet, with no error.
+ * here is a frame the reducer never sees, silently.
  * `sessionReducer.events.test.ts` fails if this and the switch below differ.
  */
 export const REDUCER_EVENTS: ReadonlySet<string> = new Set([
@@ -77,8 +74,17 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
   }
   switch (frame.event) {
     case "session.state": {
-      const messages = keepUnechoedSends(prev.messages, frame.data.messages, frame.data.queued);
-      return messages === frame.data.messages ? frame.data : { ...frame.data, messages };
+      const carried = keepUnechoedSends(prev.messages, frame.data.messages, frame.data.queued);
+      // A rebuild renumbers the rows, so nothing held before it can be kept.
+      const { messages, hasMoreBefore } = frame.data.rebuilt
+        ? { messages: carried, hasMoreBefore: frame.data.has_more_before }
+        : keepLoadedHistory(prev, frame.data, carried);
+      if (messages === frame.data.messages && hasMoreBefore === frame.data.has_more_before) return frame.data;
+      return {
+        ...frame.data,
+        messages,
+        ...(hasMoreBefore !== undefined ? { has_more_before: hasMoreBefore } : {}),
+      };
     }
 
     case "chat.stream_start": {
@@ -120,7 +126,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       //
       // A `blocked` frame that carries no menu does NOT, and that asymmetry is
       // load-bearing. The hook path reports `blocked` without one on purpose
-      // (#510 — reading the screen stole emdash's focus), so treating a bare
+      // (reading the screen steals emdash's focus), so treating a bare
       // `blocked` as a retraction would erase every menu the snapshot and the
       // session report supply, which is now all of them.
       if (frame.data.state !== "blocked") {
@@ -167,18 +173,19 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       // different ids — so the upsert missed and the message rendered twice
       // live, while a reload showed it once (get_or_create dedupes server-side).
       //
-      // Falling back to matching identical text on a recent user row closes it.
-      // Deliberately narrow: same role, same text, and only against the tail, so
-      // a genuine repeat of a short message ("yes") sent much later still lands
-      // as its own row.
+      // The send's own nonce first: exact, author-proof, and not limited to the
+      // tail. The echo of a web send carries it (session_sync → stream_map →
+      // the AG-UI metadata), and when it does nothing else may match: a line
+      // with a nonce this page does not hold is someone else's send, or one this
+      // tab never drew, and it is a row of its own.
       //
-      // And only against a row that can still be THIS line (final review I5):
-      // two people answering "yes" are two lines, so the fallback never lets a
-      // different author's frame adopt a row. A row is a candidate while it is
-      // unconfirmed (an optimistic or receipted send still waiting for the line
-      // the agent read) or when it already names the same person — the ledger
-      // path's authored row meeting its transcript echo. An unauthored optimistic
-      // row is the viewer's own, so it is compared as the viewer.
+      // Without one (typed straight into emdash, or a server that predates it),
+      // the stored row by id, then identical text — but only against a line of
+      // yours still waiting for its echo, newest first. A line already echoed is
+      // a different send, however alike the words: re-keying it would move an
+      // old "yes" down to the new one's place and lose the new one. Two people
+      // answering "yes" are two lines, so the author must agree too; an
+      // unauthored optimistic row is the viewer's own.
       const RECENT_USER_ROWS = 6;
       const incomingAuthor = frame.data.author ?? null;
       const me: MessageAuthor | null =
@@ -188,54 +195,41 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
             ? { name: "", contact_id: prev.current_contact_id }
             : null;
       const incomingText = comparableText(frame.data.plaintext);
-      const sameText = (m: Message) => {
-        if (
-          m.role !== "user" ||
-          m.plaintext.trim() === "" ||
-          comparableText(m.plaintext) !== incomingText
-        ) return false;
-        if (isUnconfirmed(m)) return sameAuthor(m.author ?? me, incomingAuthor);
-        return m.author != null && incomingAuthor != null && sameAuthor(m.author, incomingAuthor);
-      };
-      const recentUsers = prev.messages.filter((m) => m.role === "user").slice(-RECENT_USER_ROWS);
-      // The send's own nonce first: exact, author-proof, and not limited to the
-      // tail. The echo of a web send carries it (session_sync → stream_map); the
-      // text fallback below is only for lines that never had one — typed straight
-      // into emdash, or from a server that predates it.
+      const sameText = (m: Message) =>
+        m.role === "user" &&
+        isUnconfirmed(m) &&
+        m.plaintext.trim() !== "" &&
+        comparableText(m.plaintext) === incomingText &&
+        sameAuthor(m.author ?? me, incomingAuthor);
       const cid = frame.data.client_id;
-      const existing =
-        (cid ? prev.messages.find((m) => m.role === "user" && m.content?.client_id === cid) : undefined) ??
-        prev.messages.find(
-          (m) => m.id === frame.data.message_id ||
-            (m.role === "user" && m.turn_index === frame.data.turn_index),
-        ) ?? recentUsers.find(sameText);
+      const byId = prev.messages.find((m) => m.id === frame.data.message_id);
+      const existing = cid
+        ? prev.messages.find((m) => m.role === "user" && m.content?.client_id === cid) ?? byId
+        : byId ??
+          prev.messages.find((m) => m.role === "user" && !isUnconfirmed(m) && m.turn_index === frame.data.turn_index) ??
+          prev.messages.filter((m) => m.role === "user").slice(-RECENT_USER_ROWS).reverse().find(sameText);
       if (existing) {
-        return {
-          ...prev,
-          messages: prev.messages.map((m) =>
-            m === existing
-              ? {
-                  ...m,
-                  id: frame.data.message_id,
-                  // Take the incoming ordinal: the transcript's composite index
-                  // is the durable one, so the row sorts where a reload puts it.
-                  turn_index: frame.data.turn_index,
-                  plaintext: frame.data.plaintext,
-                  // A transcript-sourced session's durable row carries no user
-                  // beyond the runner's own login, so this frame is the only
-                  // chance to say who actually typed it — keep it if we already
-                  // had it (an optimistic send knows its own author) and the
-                  // frame is silent, but let the frame win otherwise.
-                  author: frame.data.author ?? m.author ?? null,
-                  ...(frame.data.record
-                    ? { content: { ...m.content, record: frame.data.record } }
-                    : {}),
-                  // The agent read it, so a pending or unconfirmed row is sent.
-                  ...(m.role === "user" ? { status: "complete" as const, error_detail: null } : {}),
-                }
-              : m,
-          ),
+        const echoed: Message = {
+          ...existing,
+          id: frame.data.message_id,
+          // Take the incoming ordinal: the transcript's composite index
+          // is the durable one, so the row sorts where a reload puts it.
+          turn_index: frame.data.turn_index,
+          plaintext: frame.data.plaintext,
+          // A transcript-sourced session's durable row carries no user
+          // beyond the runner's own login, so this frame is the only
+          // chance to say who actually typed it — keep it if we already
+          // had it (an optimistic send knows its own author) and the
+          // frame is silent, but let the frame win otherwise.
+          author: frame.data.author ?? existing.author ?? null,
+          ...(frame.data.record
+            ? { content: { ...existing.content, record: frame.data.record } }
+            : {}),
+          // The agent read it, so a pending or unconfirmed row is sent.
+          status: "complete" as const,
+          error_detail: null,
         };
+        return { ...prev, messages: placeByOrdinal(prev.messages.filter((m) => m !== existing), echoed) };
       }
       const nowIso = new Date().toISOString();
       const user: Message = {
@@ -258,7 +252,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         created_at: nowIso,
         author: frame.data.author ?? null,
       };
-      return { ...prev, messages: [...prev.messages, user] };
+      return { ...prev, messages: placeByOrdinal(prev.messages, user) };
     }
 
     case "chat.delta":
@@ -292,9 +286,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       };
 
     case "chat.stream_error":
-      // NOTE: backend emits chat.stream_error with detail="cancelled"
-      // for stop-driven cancellation; there's no separate
-      // chat.stream_cancelled event in practice. Distinguished by detail.
+      // A stop-driven cancellation arrives as `chat.stream_error` with
+      // detail "cancelled"; `chat.stream_cancelled` (below) is the server's
+      // frame for a stream it abandoned part-way.
       return {
         ...prev,
         messages: prev.messages.map((m) =>
@@ -460,26 +454,24 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       return { ...prev, queued: frame.data.queued, cancelled: frame.data.cancelled ?? prev.cancelled };
 
     case "draft.committed": {
-      // The sender already shows its line (a pending row stamped with this
-      // client_id, see `withPendingSend`). Confirm it rather than add a second.
+      // Every one of the author's sockets hears this. The draft is spent in
+      // all of them: the server starts a new empty one, and leaving the sent
+      // text in a box lets Enter send the same turn again.
+      const clearedDraft = prev.active_draft ? { ...prev.active_draft, body: "" } : prev.active_draft;
       const cid = frame.data.client_id;
+      // The tab that sent it shows its line already (a pending row stamped
+      // with this client_id, see `withPendingSend`): confirm it.
       if (cid && prev.messages.some((m) => m.content?.client_id === cid)) {
-        return {
-          ...markSendDelivered(prev, cid, frame.data.user_message_id),
-          active_draft: prev.active_draft ? { ...prev.active_draft, body: "" } : prev.active_draft,
-        };
+        return { ...markSendDelivered(prev, cid, frame.data.user_message_id), active_draft: clearedDraft };
       }
-      // Insert the optimistic USER message from the draft body that's about
-      // to be cleared. The assistant reply is NOT inserted here — canopy's
-      // draft.committed carries no assistant id; `chat.stream_start` upserts
-      // that row when the reply begins.
-      //
-      // Also clear active_draft.body here. The server creates a new empty
-      // draft with last_editor=sender, so the follow-up draft.updated hits
-      // the "keep local body" branch above and would otherwise leave the
-      // just-sent text in the textarea — which lets Enter re-send the same
-      // turn repeatedly.
+      // Another tab of the same author: it never held the words (its own box
+      // may say anything, or nothing), so it adds no row. The line arrives
+      // with the transcript's echo like anyone else's.
+      if (cid) return { ...prev, active_draft: clearedDraft };
+      // A send with no client id (a server that predates it): the only copy
+      // of the words is the draft being cleared, so show it from there.
       const prevDraftBody = prev.active_draft?.body ?? "";
+      if (!prevDraftBody.trim()) return { ...prev, active_draft: clearedDraft };
       const maxTurnIndex = prev.messages.reduce(
         (acc, msg) => Math.max(acc, msg.turn_index),
         0,
@@ -589,21 +581,33 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
 
 
 // ---------------------------------------------------------------------------
-// A send the SENDER is waiting to hear back about.
+// A send the SENDER is waiting to hear back about — every send, socket or HTTP,
+// goes through these three.
 //
 // Your line goes on screen the moment you press send, as "pending", stamped
 // with the send's client_id. It becomes "complete" on the server's receipt
-// (`draft.committed` carrying that id), or when an HTTP resend succeeds, or when
-// the transcript echoes it back. If none of those happen it becomes "error",
-// and the words stay on screen. Before this the composer cleared on send and
-// nothing showed the line until the agent read it, so a send lost on a dead
-// socket simply vanished (2026-09-23).
+// (`draft.committed` carrying that id), when an HTTP send or resend succeeds,
+// or when the transcript echoes it back. If none of those happen it becomes
+// "error", and the words stay on screen.
 // ---------------------------------------------------------------------------
+
+/** `messages` with `row` inserted where its ordinal puts it: before the first
+ *  durable row numbered above it, else at the end. The live list is otherwise
+ *  in arrival order, and a line echoed while the turn before it was still
+ *  shipping its last rows belongs above those rows' successors, not below them —
+ *  where a reload, which reads in ordinal order, puts it. A row still waiting
+ *  for its echo has only a number this page made up, so it never decides. */
+function placeByOrdinal(messages: Message[], row: Message): Message[] {
+  const at = messages.findIndex((m) => !isUnconfirmed(m) && m.turn_index > row.turn_index);
+  return at < 0 ? [...messages, row] : [...messages.slice(0, at), row, ...messages.slice(at)];
+}
 
 export function withPendingSend(
   prev: SessionState,
   { clientId, text }: { clientId: string; text: string },
 ): SessionState {
+  // Once per send: a host that reports the same send twice gets one row.
+  if (prev.messages.some((m) => m.content?.client_id === clientId)) return prev;
   const nowIso = new Date().toISOString();
   const row: Message = {
     id: `local:${clientId}`,
@@ -663,14 +667,15 @@ export function markSendFailed(prev: SessionState, clientId: string, detail: str
  *  a long reply's tool rows push the line out of its window, and carrying it
  *  re-numbered it to the bottom, below the reply it started.
  *
- *  Unconfirmed is the client's guess, and it can be wrong: a line whose live
- *  echo this page never matched stays unconfirmed after the agent has read it,
- *  and the tail is too short to show it — so it was carried below its own
- *  reply, until a reload. The snapshot's `queued` is the server's answer
- *  (`send.queued_messages`: sends whose line has not landed), so where it is
- *  present a send the server has accepted is carried only while it is listed.
- *  One the server has not accepted yet (pending) or refused (error) has no
- *  turn to list, and is always kept.
+ *  The snapshot's `queued` is the server's answer to "has it landed": it lists
+ *  a send until its line is stored, including for a while after its turn ends
+ *  (`send.queued_messages`), so where it is present an accepted send is carried
+ *  only while it is listed. One the server has not accepted yet (pending) or
+ *  refused (error) has no turn to list, and is always kept.
+ *
+ *  A snapshot row with a nonce is a different send unless the nonce matches, so
+ *  only rows without one are compared by words (an echo the server could not
+ *  attribute).
  */
 function keepUnechoedSends(
   previous: Message[],
@@ -692,10 +697,42 @@ function keepUnechoedSends(
   // send with a file carries the runner's attachment note, so an exact match
   // missed it and carried the line to the bottom on every reconnect.
   const recent = new Set(
-    snapshot.filter((m) => m.role === "user").slice(-12).map((m) => comparableText(m.plaintext)),
+    snapshot.filter((m) => m.role === "user" && !m.content?.client_id).slice(-12)
+      .map((m) => comparableText(m.plaintext)),
   );
   const carried = mine.filter((m) => !recent.has(comparableText(m.plaintext)));
   if (carried.length === 0) return snapshot;
   const top = snapshot.reduce((acc, m) => Math.max(acc, m.turn_index), 0);
   return [...snapshot, ...carried.map((m, i) => ({ ...m, turn_index: top + 1 + i }))];
+}
+
+/** Older history this tab had loaded, kept across a snapshot.
+ *
+ *  A snapshot is only the TAIL, and it replaces the list — so a reconnect threw
+ *  away everything "Load all messages" had brought in. Rows below the
+ *  snapshot's oldest (`oldest_loaded_turn_index`, else its lowest ordinal) are
+ *  kept and merged in as a scroll-back page would be (`prependHistory`) — but
+ *  only when what this tab holds reaches the snapshot (some row is in both).
+ *  When it does not, so much happened while away that keeping the old rows
+ *  would leave a hole in the middle, so they go, and the server holds more
+ *  before the tail again.
+ *
+ *  `hasMoreBefore` follows the rows: the kept older rows' own answer when they
+ *  are kept, `true` when they are dropped, else the snapshot's. Undefined when
+ *  nothing says (a server that does not send `has_more_before`). */
+function keepLoadedHistory(
+  prev: SessionState,
+  snapshot: SessionState,
+  messages: Message[],
+): { messages: Message[]; hasMoreBefore: boolean | undefined } {
+  const fromServer = snapshot.has_more_before;
+  if (snapshot.messages.length === 0) return { messages, hasMoreBefore: fromServer };
+  const lowest =
+    snapshot.oldest_loaded_turn_index ??
+    snapshot.messages.reduce((acc, m) => Math.min(acc, m.turn_index), Infinity);
+  const older = prev.messages.filter((m) => m.turn_index < lowest && m.turn_index >= 0 && !isUnconfirmed(m));
+  if (older.length === 0) return { messages, hasMoreBefore: fromServer ?? prev.has_more_before };
+  const ids = new Set(snapshot.messages.map((m) => m.id));
+  if (!prev.messages.some((m) => ids.has(m.id))) return { messages, hasMoreBefore: true };
+  return { messages: prependHistory(messages, older), hasMoreBefore: prev.has_more_before ?? fromServer };
 }

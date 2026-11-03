@@ -509,12 +509,17 @@ THE predicate; every surface below asks it, one test each in
     which they are `needs_key` again. A re-add or role change keeps a current copy. Until they hold a copy the
     live socket, whose frames carry the words, turns them away (`sensitivity.hears_live`,
     asked at connect and on every re-check; `session.error` `needs_key`).
-  - *A new vault key.* Replacing one (Settings → Vault key → Start over) names the private
-    conversations at stake, unlocks the OLD key, opens every copy the person holds
-    (`GET /my-keys`), sets the new key, and stores each copy re-wrapped to it
-    (`PUT /my-keys`; `vault/conversationCopies.ts`). A copy the old key no longer opened, or
-    a starter who replaced their key elsewhere, is refreshed by an editor in it
-    (`POST …/key-copies` takes the starter too, since their copy is provably stale).
+  - *A new vault key.* Settings → Vault key → Create a new vault key needs no passphrase,
+    Secret Key or passkey that opens the current key, and deletes nothing stored in any vault. One screen lists
+    every vault the person holds a copy of, who can let them back in, and any only they can
+    open (`vault/newKeyImpact.ts`). If they are in private conversations it asks whether they
+    can unlock the current key. If so, it opens every copy they hold (`GET /my-keys`), sets
+    the new key, and stores each copy re-wrapped to it (`PUT /my-keys`;
+    `vault/conversationCopies.ts`). If not, the new key is set without them. A passkey with no
+    PRF output seals nothing, so the new key is sealed by a new passphrase and Secret Key
+    instead. A copy that was not carried, or a starter who replaced their key elsewhere, is
+    refreshed by an editor in it (`POST …/key-copies` takes the starter too, since their copy
+    is provably stale).
   - *Rows from before it became sensitive.* Sealed in the transaction that makes it
     sensitive (`services.add_runner_requirements` → `conversation_keys.seal_existing`): the
     server holds the conversation's PUBLIC key, so it seals what it can no longer read back,

@@ -27,7 +27,7 @@ RUNNER_SCALER_TICK_S (default 30 s), per active fleet:
    `Pending` waking, `Warmed:*` stopped). A member whose instance left the group is
    retired, and a turn it was running is queued again;
 2. **fail over**: a chat bound to a member that is gone, with a turn waiting, is
-   moved to a live member (`send.move_queued_turns`, carrying its work when the
+   moved to a live member (`placement.move_queued_turns`, carrying its work when the
    old member still answers, else from its history) — before demand is measured,
    so a moved turn counts against the member it moved to;
 3. **grow** when turns the fleet could take have waited past RUNNER_WAKE_AFTER_S
@@ -847,10 +847,10 @@ def _gone(r: Runner, now: dt.datetime) -> bool:
 
 def fail_over(fleet: RunnerFleet, now: dt.datetime) -> list[str]:
     """Move each chat that is bound to a gone member and has a turn waiting to the
-    live member with the most room. `send.move_queued_turns` does the move: a real
+    live member with the most room. `placement.move_queued_turns` does the move: a real
     transfer, carrying the work when the old member still answers and the history
     when it does not. Acts as the fleet's owner, who administers every member."""
-    from apps.canopy_sessions import send as session_send  # noqa: PLC0415 — canopy_sessions imports harness
+    from apps.canopy_sessions import placement as session_placement  # noqa: PLC0415 — canopy_sessions imports harness
     from apps.canopy_sessions.models import RunnerBinding  # noqa: PLC0415 — as above
 
     from . import initiator as who  # noqa: PLC0415 — initiator imports the agents stack
@@ -877,7 +877,7 @@ def fail_over(fleet: RunnerFleet, now: dt.datetime) -> list[str]:
             continue  # a sealed conversation is moved by its own people
         target = min(targets, key=lambda m: load[m.pk])
         try:
-            moved = session_send.move_queued_turns(
+            moved = session_placement.move_queued_turns(
                 session=session, placement=str(target.id), user=fleet.owner,
                 initiator=who.for_user(fleet.owner, via="fleet", assurance=""))
         except (LookupError, ValueError, RuntimeError) as exc:

@@ -14,7 +14,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.utils import timezone
 
-from apps.canopy_sessions import api as sessions_api
+from apps.canopy_sessions import session_row
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding
@@ -62,7 +62,7 @@ def test_the_runner_reports_its_model_and_the_session_serves_it():
     RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
     runner.refresh_from_db()
     assert runner.capabilities["claude_model"] == "opus[1m]"
-    assert sessions_api._out(session)["runner_model"] == "opus[1m]"
+    assert session_row.session_out(session)["runner_model"] == "opus[1m]"
     # Absent (older code) clears it, like every other reported capability.
     harness.heartbeat(runner, active_turn_ids=[])
     runner.refresh_from_db()
@@ -71,7 +71,7 @@ def test_the_runner_reports_its_model_and_the_session_serves_it():
 
 def test_an_unbound_session_has_no_runner_model():
     _user, session, _runner = _ctx()
-    assert sessions_api._out(session)["runner_model"] == ""
+    assert session_row.session_out(session)["runner_model"] == ""
 
 
 def test_claude_model_is_reported_not_set_by_hand(client):

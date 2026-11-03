@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Plus, Search } from 'lucide-react'
 
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
@@ -54,6 +54,7 @@ export function VaultEditor({
   onReveal,
   onDelete,
   usage,
+  details,
   badge,
   describeError = (e, fallback) => (e instanceof Error ? e.message : fallback),
   revealMs = REVEAL_MS,
@@ -67,8 +68,11 @@ export function VaultEditor({
   onReveal?: (name: string) => Promise<string>
   /** Omit to offer no Delete. */
   onDelete?: (name: string) => Promise<void>
-  /** The "Last used" cell. Defaults to when it was last read and how often. */
+  /** The "Last used" cell. Defaults to when it was last read. */
   usage?: (entry: VaultEntry) => ReactNode
+  /** What a row's Activity button opens beneath it, full width (who reads it, alerts).
+   * Return null for a row with none. Never inline in the row: a click on the row is for the value. */
+  details?: (entry: VaultEntry) => ReactNode
   /** Shown at the right of the toolbar, e.g. how values are held. */
   badge?: ReactNode
   describeError?: (e: unknown, fallback: string) => string
@@ -82,6 +86,7 @@ export function VaultEditor({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<{ name: string; value: string } | null>(null)
+  const [detailsFor, setDetailsFor] = useState<string | null>(null)
 
   useEffect(() => {
     if (!revealed) return
@@ -216,7 +221,9 @@ export function VaultEditor({
   )
 
   const lastUsed = (e: VaultEntry) =>
-    usage ? usage(e) : e.lastReadAt ? `${relativeAge(e.lastReadAt)} · ${e.readCount ?? 0}×` : e.set ? 'never' : ''
+    usage ? usage(e) : e.lastReadAt ? relativeAge(e.lastReadAt) : e.set ? 'never' : ''
+
+  const detailsNode = (e: VaultEntry) => (details && e.set ? details(e) : null)
 
   return (
     <div data-testid="vault-editor">
@@ -296,17 +303,25 @@ export function VaultEditor({
                 </TableCell>
               </TableRow>
             ) : (
-              <VaultRow
-                key={e.name}
-                entry={e}
-                lastUsed={lastUsed(e)}
-                revealed={revealed?.name === e.name ? revealed.value : null}
-                canEdit={canEdit}
-                busy={busy}
-                onChange={() => { close(); setEditing(e.name) }}
-                onReveal={onReveal && e.set && !e.sealed ? () => reveal(e.name) : undefined}
-                onDelete={onDelete && e.set ? () => remove(e.name) : undefined}
-              />
+              <Fragment key={e.name}>
+                <VaultRow
+                  entry={e}
+                  lastUsed={lastUsed(e)}
+                  revealed={revealed?.name === e.name ? revealed.value : null}
+                  canEdit={canEdit}
+                  busy={busy}
+                  detailsOpen={detailsFor === e.name}
+                  onChange={() => { close(); setEditing(e.name) }}
+                  onReveal={onReveal && e.set && !e.sealed ? () => reveal(e.name) : undefined}
+                  onDelete={onDelete && e.set ? () => remove(e.name) : undefined}
+                  onDetails={detailsNode(e) ? () => setDetailsFor(detailsFor === e.name ? null : e.name) : undefined}
+                />
+                {detailsFor === e.name && (
+                  <TableRow data-testid={`vault-details-row-${e.name}`}>
+                    <TableCell colSpan={5} className="bg-muted/30">{detailsNode(e)}</TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
             )
           ))}
 

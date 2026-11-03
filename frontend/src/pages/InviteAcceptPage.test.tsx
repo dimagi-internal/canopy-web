@@ -4,24 +4,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import type { InvitePreviewOut, WorkspaceOut } from '@/api/workspaces'
+import { ApiError } from '@/api/problem'
 
 // Same hoist-then-dynamic-import pattern as WorkspaceMembersPage.test.tsx /
 // RunnerAssignments.test.tsx.
 const previewInvite = vi.fn<(token: string) => Promise<InvitePreviewOut>>()
 const acceptInvite = vi.fn<(token: string) => Promise<WorkspaceOut>>()
 
-class FakeWorkspaceApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
 vi.mock('@/api/workspaces', () => ({
   previewInvite,
   acceptInvite,
-  WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
 type AuthState =
@@ -120,7 +112,7 @@ describe('InviteAcceptPage', () => {
   )
 
   it('an unknown token 404s to a terminal error, no Accept button', async () => {
-    previewInvite.mockRejectedValue(new FakeWorkspaceApiError(404, 'invite not found'))
+    previewInvite.mockRejectedValue(new ApiError(404, 'invite not found'))
 
     renderPage()
 
@@ -131,7 +123,7 @@ describe('InviteAcceptPage', () => {
   it('a 403 (email mismatch) on accept explains the bound address and offers to sign out', async () => {
     mockAuth = { status: 'authenticated', user: { email: 'wrong@dimagi.com', name: 'W', avatar_url: null } }
     previewInvite.mockResolvedValue(preview())
-    acceptInvite.mockRejectedValue(new FakeWorkspaceApiError(403, 'email_mismatch'))
+    acceptInvite.mockRejectedValue(new ApiError(403, 'email_mismatch'))
 
     renderPage()
 

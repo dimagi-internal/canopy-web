@@ -26,4 +26,5 @@ def place(route: MailRoute, parsed) -> MailThread:
         if hit is not None:
             return hit.thread
     return MailThread.objects.create(workspace=route.workspace, route=route,
+                                     owner=route.forward_to if route.kind == MailRoute.FORWARD else None,
                                      subject=parsed.subject[:998])

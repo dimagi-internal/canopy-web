@@ -130,3 +130,48 @@ def test_jabbing_the_button_does_not_multiply_the_escapes(monkeypatch):
 def test_a_ring_with_no_session_key_is_ignored():
     session_interrupt.ring("", "sess-1")
     assert session_interrupt._pending == {}
+
+
+class _DurableClient(_FakeClient):
+    """The server's record of stops (`/session-interrupts`) and their retirement."""
+
+    def __init__(self, interrupts):
+        super().__init__()
+        self.interrupts = interrupts
+        self.retired = []
+
+    def sync_session_interrupts(self, runner_id):
+        return list(self.interrupts)
+
+    def post_session_interrupt_result(self, runner_id, session_id, interrupt_id, outcome):
+        self.retired.append((session_id, interrupt_id, outcome))
+        self.interrupts = [i for i in self.interrupts if i["interrupt_id"] != interrupt_id]
+
+
+def test_a_stop_whose_frame_was_lost_is_pulled_carried_out_and_retired(monkeypatch):
+    """The frame is the doorbell; the server's record is what makes the stop
+    survive a control channel that was down when it was pressed."""
+    session_interrupt._done_ids.clear()
+    calls = _interrupts(monkeypatch, "interrupted")
+    client = _DurableClient([{"session_id": "sess-1", "session_key": "hal-1", "interrupt_id": "i1"}])
+
+    assert session_interrupt.pull(_cfg(), client, "r1") == 1
+    assert session_interrupt.drain(_cfg(), client, "r1") == 1
+
+    assert calls == ["hal-1"]
+    assert client.retired == [("sess-1", "i1", "interrupted")]
+    # Read again before the server retired it, it is not pressed a second time.
+    client.interrupts = [{"session_id": "sess-1", "session_key": "hal-1", "interrupt_id": "i1"}]
+    assert session_interrupt.pull(_cfg(), client, "r1") == 0
+    assert session_interrupt._pending == {}
+
+
+def test_a_rung_stop_carries_its_id_so_the_record_is_retired_not_replayed(monkeypatch):
+    session_interrupt._done_ids.clear()
+    calls = _interrupts(monkeypatch, "interrupted")
+    client = _DurableClient([{"session_id": "sess-1", "session_key": "hal-1", "interrupt_id": "i2"}])
+    session_interrupt.ring("hal-1", "sess-1", "i2")           # the frame arrived first
+    assert session_interrupt.pull(_cfg(), client, "r1") == 0  # same stop, not a second one
+    session_interrupt.drain(_cfg(), client, "r1")
+    assert calls == ["hal-1"]
+    assert client.retired == [("sess-1", "i2", "interrupted")]

@@ -25,21 +25,27 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
+from apps.agents import roles
 from apps.agents.models import Agent, AgentAdmin
 from apps.attention.models import Alert
 from apps.harness import alerts_trigger, caller_context, schedule_turns, services, triggers, turn_mode
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 
 SNS = "no-reply@sns.amazonaws.com"
-#: Hal's real interface shape: ask-only, Dimagi callers. SNS is not listed.
-HAL = {"capabilities": {"ask": {"description": "Ask", "callers": ["member@dimagi.com",
-                                                                  "contact@dimagi.com:verified"],
-                                "tools": ["Read"]}}}
+#: Hal's real interface shape: ask-only, Dimagi callers (see `_let_in_hal`). SNS is not listed.
+HAL = {"ask": {"description": "Ask", "tools": ["Read"]}}
+
+
+def _let_in_hal(agent):
+    declare(agent, HAL)
+    allow(agent, role=roles.READ_ONLY, domain="dimagi.com")
+    allow(agent, role=roles.READ_ONLY, contact=True, domain="dimagi.com", verified=True)
+    editors_run(agent)
 
 
 def _dkim(domain):
@@ -59,7 +65,7 @@ def w():
         M.objects.create(user=u, workspace=ws, role=role)
         EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
     agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=op, turn_mode="auto")
-    publish(agent, HAL)
+    _let_in_hal(agent)
     other = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=op)
     return {"ws": ws, "agent": agent, "other": other, "boss": boss, "op": op, "ed": ed}
 

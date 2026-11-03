@@ -32,6 +32,17 @@ close).
   session socket, drawn by `canopy-ui/chat/turnStatus.ts`
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
+- **"Is the last turn live" is answered once in the browser**:
+  `canopy-ui/chat/turnView.ts::useTurnView` → `{phase, inFlight, live, listLive,
+  canStop, label, runner}`, read by the chat header (`SessionStatusChip`) and by
+  `ChatPanel` (activity line, Stop, the fold); `MessageList`/`planFold` take `live`
+  as given. Only the NEWEST assistant row can be in flight, and not once the
+  status is settled with `finished_at` at or after that row began
+  (`inFlightRow`) — a lost `chat.stream_complete` never holds "working" up.
+- **The placement banner and the composer lock read the turn status**:
+  `waiting_runner` (paused when `parked`) or `paused` raise them
+  (`pages/chat/useRunnerPlacement.ts::heldByAbsentRunner`); the fleet list is read
+  only for the "Continue on…" choices and Resume's runner id.
 - **Claude Code's own error notice is not a reply.** An `isApiErrorMessage` record
   ("Not logged in · Please run /login", a usage cap) becomes an assistant row with
   `content.api_error` (+ `signed_out`) (`canopy_transcript.rows_for_record`), carried
@@ -40,6 +51,20 @@ close).
 - **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog. Slack says the same from `TurnStatus.quiet_since` (`apps/harness/turn_status.py`, `QUIET_AFTER_SECONDS`) in Slack date tokens — "*cloud-ec2-2* took this at 15:45 and nothing has come back from it since" — so its sweep edits the line only when something changes, never every minute.
 - **The composer says whether a follow-up rides the running turn.** For `working`, the status carries `midturn` (a message sent now is typed into the live session and read mid-turn, `Turn.rides_turn`) or `midturn_blocked` — `runner` (the holding box does not report `midturn`: the cloud runner), `dialog` (a parsed menu is up; it waits for the answer) or `confined` — from `turn_status.midturn_of`, the holder-side half of `routing.may_ride`. `canopy-ui/chat/turnStatus.ts::composerPlaceholder` words it; a claimed rider is listed in `queued` as `state: "midturn"` and drawn "delivered into the current turn".
 - **Context meter.** Each assistant record's last row carries `content.usage` = `{context_tokens, model}` (input + both cache counts, `canopy_transcript.record_window`; never a sidechain call), stored and on `chat.stream_complete`. `ChatPanel` draws `ContextMeter` from the newest row that has it. The window is 1M when the model id or the bound runner's model setting (`SessionOut.runner_model`, reported on the heartbeat as `claude_model`) has `[1m]` or the prompt is past 200k, 200k when the runner names a model without it, else "unknown" — the transcript's model id never carries `[1m]`. A compaction summary row (`record.compact_summary`) draws as a divider and voids the older reading.
+- **What a session is doing: `apps/canopy_sessions/session_state.py`.** One
+  resolver for every list (the session list's `running`, `/ide`, Home, the
+  supervisor Feed, stop-everything) and the socket snapshot: a session is
+  **running** when a turn that drives it (`staleness.driving_turns`) is claimed or
+  running on a reachable runner — the fact `turn_status` reads as `working`, true
+  on the cloud runner too — or when its engine reports it working
+  (`transcript_read.is_session_running`, the laptop's `agent_status`: the only
+  evidence for work no turn owns, typed straight into emdash or outliving a
+  fire-and-continue turn). Its **activity** is `blocked` (a dialog up) / `working`
+  / `idle`. The connect snapshot carries `activity` (and AG-UI gets an
+  `ACTIVITY_SNAPSHOT` after `MESSAGES_SNAPSHOT`), and `status_feed` says `idle`
+  when a turn settles and the resolver agrees, so a missed live
+  `session.activity` frame never leaves a client drawing "working". Never compute
+  "running" from the binding alone.
 - **Every channel reacts to the same three events:** enqueue
   (`harness.signals.turn_status_changed` — enqueue appends no `status` event, and
   it is the moment someone is watching), a `status` event row, and the throttled
@@ -71,7 +96,27 @@ close).
   `Message.turn_index`. A send authors **no** second copy of the user's line — it
   becomes durable as the transcript record the agent read; until then it lives in
   `Turn.prompt` and the client's optimistic echo. Streamed transcript rows persist
-  through `transcript_ingest.persist_transcript_rows`.
+  through `transcript_ingest.record_transcript` (`persist_transcript_rows` is its
+  count-only form).
+- **One identity per row, from runner to screen.** `record_transcript` decides the
+  transcript identity (`fork_if_name_reused`, `ensure_transcript_identity`) and
+  shifts every ordinal into its epoch (`RunnerBinding.index_offset`, or a confined
+  turn's own `_turn_end_epoch`) in one place, under the binding lock; no caller
+  shifts an ordinal. It returns the rows as stored, and `session_sync._ingest`
+  builds each live `chat.turn_event` from them: the event carries the row's
+  `turn_index` and `message_id`, which `stream_map` and the consumer use in place of
+  the raw `seq` — so a live row and the same row from a reload are one row on the
+  client. `seq` alone remains only on events with no row (`activity:`, `stop:`, an
+  old runner's ordinal-less event).
+- **What a person typed is decided once**, as a row is stored: `Message.typed`
+  (`transcript_read.mark_typed`, the `is_human_input` rule). The tail's reach back
+  to the person's last messages, a conversation's opening (`with_opening`) and its
+  autotitle read the column. "Newest" is by `turn_index` everywhere — the tail,
+  the last reply, and a session's last activity (`last_message_at`).
+- **REST and the socket give a row one shape**: `message_dto` is `MessageOut` (with
+  `id`) plus the streaming fields, the snapshot carries `has_more_before` /
+  `oldest_loaded_turn_index` as `GET /{id}` does, and all three readers (`GET /{id}`,
+  `GET /{id}/messages`, the snapshot) run `transcript_read.readable_window`.
 - **Ledger-sourced** (no transcript: the dev stub, and sessions predating the flag
   until reset): rows are projected from the turn's event ledger with a dense
   counter. Don't mix the two in one session — the dense counter collides with
@@ -163,6 +208,12 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   (`handoff.suppressed_tasks`). A failed close is retried each tick and raises the
   `transfer_left_open` alert; so does a task KEPT because it holds the only copy
   (pack failed, restore mismatched, sensitive) — "Close it anyway" forces it.
+- **The transfer turn runs first.** Until it has been claimed — while the source
+  packs, and while it is queued — the claim holds every other turn of the session
+  (`routing.transfer_held_q`) and their status reads `queued_behind` (`behind:
+  "transfer"` before the transfer turn exists, `"session"` after), so nothing
+  reaches the target before it has restored the work. A `record_session` from the
+  source meanwhile leaves the binding on the target.
 - **Onto another agent CLI.** `cli` on `POST /{id}/transfer` (and `/transfer-all`,
   and a pending `TransferRequest`) continues the conversation on another CLI its agent
   is set up for — off a box whose Claude ran out onto Codex, or back
@@ -200,9 +251,34 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   (Slack) passes `()` explicitly.
 - **A send only enqueues.** `send.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
-  `client_id` so the sender's optimistic row dedupes against the queued entry.
+  `client_id` so the sender's optimistic row dedupes against the queued entry. A
+  DONE send stays listed (`delivering`) for `DONE_LANDING_GRACE` while no person's
+  line has been stored since it was sent, so a reconnect always finds it in this
+  list or in `ended_sends`.
+- **The echo of your line is matched by its `client_id`.** The stored row keeps the
+  send's nonce and the live `chat.user_message` carries it (in the AG-UI chunk's
+  metadata too); the sender's page matches it exactly, falls back to words only for
+  a line that has none and only against a line still waiting for its echo, and
+  places the row by its ordinal (`sessionReducer`).
+- **The open page checks itself against the server.** After each turn ends, and on
+  coming back to a tab hidden a minute or more, `ChatPage`'s `useTailCheck` reads
+  `GET /{id}` and compares it with what it holds (`canopy-ui/chat/tailDivergence`);
+  on a difference it applies the server's rows (`resyncTail`) and records a
+  `web.chat` / `chat.diverged` event (ids only).
+- **A send that never lands is still shown.** `send.ended_sends` (wire key
+  `cancelled`, in the snapshot and `session.queued`) lists every send whose turn
+  ended without its row reaching the transcript, each with `state` (its final
+  turn status: `cancelled`, `failed`, `lost`, `missed`, or `done` once
+  `DONE_LANDING_GRACE` passed with no row carrying its turn id, in a session whose
+  rows carry ids; never a slash command), `cancelled_by` and `detail` (the
+  runner's note). A client draws anything but `cancelled` as not delivered.
 - **Stop cancels every live turn; Cancel withdraws one send.** Stop (the button, or
-  Esc in the composer while the agent has the floor) is `control.stop_session`.
+  Esc in the composer while the agent has the floor) is `control.stop_session`:
+  the session's turns first (`cancel_session_turns`), else `interrupt_session`,
+  which records `RunnerBinding.pending_interrupt` and rings the
+  `runner.session_interrupt` frame; the runner drains the record on its poll tick
+  (`GET /runners/{id}/session-interrupts`, retired by id through
+  `…/session-interrupt-result`, offered for `control.INTERRUPT_TTL`).
   The socket action `chat.unqueue {turn_id}` is `send.unqueue_send`: your OWN
   send, only while still `QUEUED` (a claimed one may already be in the agent's
   input), finished CANCELLED and the queued list re-sent; anything else is refused
@@ -233,13 +309,13 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   byte-for-byte the row's text, in send order; `Message.author` / `source_turn_id`
   come from that turn's initiator. No match → `author=None` (correct for a line
   typed straight into emdash).
-- `authorship.parse` still reads the legacy `[canopy from="…" user=N turn=<hex>]`
-  marker (newline optional) for old and backfilled rows; don't emit it.
+- `authorship.parse` also reads the legacy `[canopy from="…" user=N turn=<hex>]`
+  marker (newline optional), which old and backfilled rows carry; never emit it.
 - A ledger-sourced session fans `chat.user_message` out on commit
   (`send._publish_user_message` → `consumers.chat_user_message`) so peers see a
   send live; transcript-sourced sessions get this from the streamed rows.
-- `onTakeOver` / `takeOverDraft` stay in `canopy-ui`'s public API as deprecated
-  no-ops — ace-web still passes them.
+- `onTakeOver` / `takeOverDraft` are deprecated no-ops in `canopy-ui`'s public API,
+  kept because ace-web still passes them.
 - Spec: `docs/superpowers/specs/2026-09-26-per-person-drafts-and-authored-messages-design.md`.
 
 ## Which box takes a chat's first turn
@@ -282,9 +358,9 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 - **Not extended to claim routing:** a stale binding still pins its session to its
   holder (continuing elsewhere means a fresh session without context); moving it is
   the user's call via the placement banner.
-- The banner must fail **closed**: `frontend/src/components/chat/runnerEligibility.ts`
-  (`isBoundRunnerOffline`) treats a runner missing from `GET /runners/` (which omits
-  retired runners) as offline, not unknown.
+- The chat's placement banner follows the turn status (above), so a turn queued
+  for a retired runner shows it from the server's `waiting_runner`. The session
+  list's "runner offline" reads `runner_online` (`runnerEligibility.parkedReason`).
 - Code: `apps/canopy_sessions/staleness.py`. Spec:
   `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md`.
 
@@ -301,7 +377,7 @@ session, or changes who can see it or where it is listed, is ONE `Event` row
 | `session.created` | a Session row is born, by any path (REST, Slack, email, panel, dispatch, runner report, a successor or fork) | observed on the row (`post_save`) |
 | `session.close_requested` | a close relayed to the box holding it (`/close`, a runner admin's `/sessions/{id}/close`, an agent being deleted) | `control.close_session` / `close_agent_sessions` |
 | `session.closed` | archived because it ended: closed from canopy (no box to ask), archived in emdash, or gone from two complete reports | `control.close_session` (observed, `acting(closing=True)`); `session_sync.replace_reported_sessions` (`record_many`) |
-| `session.archived` / `session.unarchived` | `/archive` / `/unarchive`, a contact's archive, a successor taking its binding, `staleness.archive_stale_sessions`; reported open again | observed; staleness (`record_many`) |
+| `session.archived` / `session.unarchived` | `/archive` / `/unarchive` (`control.archive_session` / `unarchive_session`), a send into an archived session, a contact's archive, a successor taking its binding, `staleness.archive_stale_sessions`; reported open again | observed; staleness (`record_many`) |
 | `session.deleted` | the row deleted (a ghost pruned by `/reset`, any other delete) | observed (`post_delete`) |
 | `session.moved` | filed in another workspace — written to BOTH workspaces | observed (`filing.move`); `filing.rehome_agent_sessions` (`record_many`) |
 | `session.slack_bound` / `slack_detached` / `slack_rebound` | its `metadata.slack_thread` set, removed or replaced (share-with-bind, detach, new thread, the front door) | observed |
@@ -361,10 +437,12 @@ written — when no runner has reported it within `SESSION_LIVE_WINDOW`
 
 - One rule, `apps/canopy_sessions/feed.py`, decides whether a session is on a
   person's supervisor Feed: `needs_next_prompt` (blocked on a dialog, or the agent
-  had the last word and stopped) and not `held` — `not_yours` (on someone else's
-  runner and they did not start it; on a cloud box an agent-opened session belongs
-  to the agent's owner), `parked` (runner paused/offline) or `auto` (an agent's own
-  auto-mode run, not a chat).
+  had the last word, is not running (`session_state`) and nothing is queued for
+  it) and not `held` — `not_yours` (on someone else's runner and they did not
+  start it; on a cloud box an agent-opened session belongs to the agent's owner),
+  `parked` (runner paused/offline) or `auto` (it ran on its own:
+  `staleness.ran_on_its_own`, the same rule the cloud retire leg uses — auto mode
+  and not a person's web chat or Slack thread, or started by an agent).
 - `parked` needs evidence: a dialog (`waiting_on_you`) or a turn for the session
   queued/in flight (`Turn.NON_TERMINAL`, via `driving_turns`). An idle session on a
   paused/offline runner is not parked and not on the Feed; Supervisor → Runners
@@ -455,7 +533,7 @@ written — when no runner has reported it within `SESSION_LIVE_WINDOW`
 - A spawned `claude` must not inherit the parent session: `runner/ec2/cloud_runner.py::_child_safe_env` strips `INHERITED_SESSION_MARKERS` (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_PID`, `CLAUDE_EFFORT`) — an inherited child marker turns transcript saving off. `CLAUDE_CODE_OAUTH_TOKEN` is never stripped (it is the box's login).
 - A watched session ships every conversational transcript row, `tool_use`/`tool_result` included (`packages/canopy_transcript::conversational_messages`); a row's payload is its stored `Message.content`, so live and history render identically. Tool payloads are capped at the runner (`TOOL_TEXT_MAX`, `TOOL_INPUT_STR_MAX`). The live chat bridge stays prose-only (tools there would render twice).
 - Optional hook path: the laptop runner installs `PreToolUse`/`PostToolUse`/`UserPromptSubmit`/`Stop` hooks in the user-level `~/.claude/settings.json` with a loopback listener (`hook_port`, default 8787; 0 disables); `forward_sessions` (default off) forwards them as view-only rows (`index=-1`); counters ride the heartbeat every 300s.
-- Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this; a stale session is reset automatically on its next write.
+- Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this (a new session starts on the current scheme); a stale session is reset automatically on its next write.
 - The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the owner's sessions out as `supervisor.sessions` frames (typed in `frontend/src/api/types.ws.ts`; no page consumes them today).
 
 ## Secrets shared with a chat: sealed to the machine running it

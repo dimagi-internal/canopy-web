@@ -1,12 +1,10 @@
 // The pieces of the capabilities editor: the lines field and one capability's card. The editor and its state are `InterfaceEditor`.
 import { useState } from 'react'
 import {
-  CAPABILITY_ROLES,
   fromLines,
   problemsFor,
   toLines,
   type Capability,
-  type CapabilityRole,
   type Problem,
 } from './interfaceModel'
 
@@ -99,21 +97,6 @@ export function CapabilityCard({
         </button>
       </div>
       <Errors messages={problemsFor(problems, name)} testId="card-error" />
-      <label className="flex flex-col gap-0.5 text-[12px] font-medium text-foreground">
-        <span>Role</span>
-        <select
-          aria-label={`${name} role`}
-          value={cap.role ?? 'user'}
-          onChange={(e) => set({ role: e.target.value as CapabilityRole })}
-          className={`${field} w-auto max-w-full`}
-        >
-          {CAPABILITY_ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-        </select>
-        <span className="text-[11px] font-normal text-muted-foreground">
-          This is the lowest role that may use it. Who has which role is set on the agent&apos;s Access setting.
-        </span>
-        <Errors messages={err('role')} />
-      </label>
       <details open className="flex flex-col gap-2">
         <summary className="cursor-pointer text-[12px] font-medium text-foreground">What it may use</summary>
         <div className="mt-2 flex flex-col gap-2">

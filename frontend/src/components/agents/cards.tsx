@@ -16,18 +16,11 @@ import { TurnTranscript } from '@/components/activity/TurnTranscript'
 import { statusToken } from '@/components/activity/turnLog'
 import { promptHasMore, turnBody, turnDuration, turnHeadline, turnTrigger } from './turnText'
 import { scopedPath } from '../../lib/scopedLinks'
-
-export function formatDate(s: string): string {
-  return new Date(s).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
+import { fmtDate } from '../../lib/format'
 
 export function formatPeriod(start: string, end: string): string {
-  const s = formatDate(start)
-  const e = formatDate(end)
+  const s = fmtDate(start)
+  const e = fmtDate(end)
   return s === e ? s : `${s} – ${e}`
 }
 
