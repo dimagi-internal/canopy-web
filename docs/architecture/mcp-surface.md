@@ -113,7 +113,7 @@ caller via `get_access_token()`.
   `apps/oauth_server/mcp_oauth.py` (the authorization server; the protocol rules it
   shares with the HCP service — PKCE, redirect_uri at the token endpoint,
   one-time redemption with replay → revoke — are `apps/common/oauth_core.py`),
-  `apps/oauth_server/views.py` (register + consent), `apps/host_grants/views_oauth.py::token`
+  `apps/oauth_server/views.py` (register + consent), `apps/oauth_server/views_oauth.py::token`
   (one token endpoint for both grants). On labs the RFC-located documents sit at the ROOT
   of the shared host (`/.well-known/…/canopy…`), which the ALB routes to canopy.
 

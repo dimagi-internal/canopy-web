@@ -56,7 +56,7 @@ PUBLIC_PATH_PREFIXES = (
     # canopy's OAuth CLIENT identity — the metadata document whose URL is its
     # client_id, and the public client key it names. A host reads both before
     # it trusts a redemption, so they cannot sit behind a login; neither holds
-    # anything that can sign (apps/host_grants/views_oauth.py). Exact paths.
+    # anything that can sign (apps/oauth_server/views_oauth.py). Exact paths.
     "/oauth/client.json",
     "/oauth/jwks.json",
     # The OAuth token endpoint and discovery documents. The token endpoint

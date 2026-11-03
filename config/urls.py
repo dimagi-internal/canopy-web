@@ -18,9 +18,9 @@ from apps.github_connect.views import github_connect_callback, github_connect_st
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
-from apps.host_grants import views_oauth
-from apps.host_grants.views_oauth import client_metadata as oauth_client_metadata
-from apps.host_grants.views_oauth import jwks as oauth_jwks
+from apps.oauth_server import views_oauth
+from apps.oauth_server.views_oauth import client_metadata as oauth_client_metadata
+from apps.oauth_server.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
 
@@ -53,7 +53,7 @@ urlpatterns = [
     # Metadata Document — whose URL IS canopy's client_id — and the JWKS it
     # names. Bare views because the URL is the identifier a host allowlists;
     # public (a host must read them before trusting anything) and carrying
-    # public keys only. See apps/host_grants/views_oauth.py.
+    # public keys only. See apps/oauth_server/views_oauth.py.
     path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
     path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
     # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): the

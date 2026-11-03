@@ -19,7 +19,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from . import client_identity
+from apps.host_grants import client_identity
 
 #: Short enough that a rotation propagates, long enough that a host is not
 #: fetching per redemption. The contract caps a host's own cache at one hour.
@@ -74,7 +74,7 @@ def _host_unconfigured() -> JsonResponse:
 
 
 def _host_document(build) -> JsonResponse:
-    from . import self_host
+    from apps.host_grants import self_host
 
     if not self_host.configured():
         return _host_unconfigured()
@@ -88,7 +88,7 @@ def host_jwks(request: HttpRequest) -> JsonResponse:
     """The HOST signing key's public half — what the `canopy-web` Connected
     site's JWKS URL names, and what verifies the ID-JAGs canopy signs for its
     own pages. Distinct from `/oauth/jwks.json` (the CLIENT key)."""
-    from . import self_host
+    from apps.host_grants import self_host
 
     return _host_document(lambda: self_host.config().jwks())
 
@@ -99,7 +99,7 @@ def host_site_document(request: HttpRequest) -> HttpResponse:
     its host keys and at `/.well-known/canopy-site.json` — where canopy looks
     for any site's, so canopy's own registration fills from its address alone.
     Public like the keys: it names public URLs and page keys, never a person."""
-    from . import self_host  # noqa: PLC0415 — as every host view here: loads the SDK host stack per request
+    from apps.host_grants import self_host  # noqa: PLC0415 — as every host view here: loads the SDK host stack per request
 
     if not self_host.configured():
         return _host_unconfigured()
@@ -120,7 +120,7 @@ def authorization_server_metadata(request: HttpRequest, rest: str = "") -> JsonR
     from apps.oauth_server import mcp_oauth
     from apps.oauth_server.views import cors, issuer, preflight
 
-    from . import self_host
+    from apps.host_grants import self_host
 
     if request.method == "OPTIONS":
         return preflight()
@@ -136,7 +136,7 @@ def protected_resource_metadata(request: HttpRequest, rest: str = "") -> JsonRes
     from apps.oauth_server import mcp_oauth
     from apps.oauth_server.views import cors, issuer, mcp_resource, preflight
 
-    from . import self_host
+    from apps.host_grants import self_host
 
     if request.method == "OPTIONS":
         return preflight()
@@ -165,7 +165,7 @@ def token(request: HttpRequest) -> JsonResponse:
     from apps.oauth_server import mcp_oauth
     from apps.oauth_server.views import cors, preflight
 
-    from . import self_host
+    from apps.host_grants import self_host
 
     if request.method == "OPTIONS":
         return preflight()
@@ -198,7 +198,7 @@ def probe(request: HttpRequest) -> JsonResponse:
     user. Never logs the form."""
     from canopy_sdk import contract
 
-    from . import self_host
+    from apps.host_grants import self_host
 
     status, body, headers = self_host.handle_probe_request(
         request.POST.dict(), request.headers.get(contract.DPOP_HEADER))
