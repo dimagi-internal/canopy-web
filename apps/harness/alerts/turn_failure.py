@@ -90,10 +90,13 @@ def _first_sentence(note: str) -> str:
 
 def title_for(inv) -> str:
     runners = ", ".join(inv.runners or []) or "the fleet"
+    # One failure is not a pattern: saying "keep failing" sends the reader looking
+    # for an outage (2026-11-03, investigation 26: one test turn, read as a recurring fault).
+    subject = "turns keep failing" if (inv.occurrences or 0) > 1 else "a turn failed"
     lead = {
         FailureInvestigation.PENDING_DEPLOY: f"Fix pending deploy on {runners}",
-        FailureInvestigation.ESCALATED: f"Needs you — turns keep failing on {runners}",
-    }.get(inv.status, f"Turns keep failing on {runners}")
+        FailureInvestigation.ESCALATED: f"Needs you — {subject} on {runners}",
+    }.get(inv.status, f"{subject[0].upper()}{subject[1:]} on {runners}")
     return f"{lead}: {_first_sentence(inv.sample_note)}"
 
 
