@@ -16,3 +16,8 @@ class ConnectionsConfig(AppConfig):
         from .agent_move import participant  # noqa: PLC0415 - same
 
         move.register(participant)
+
+        # Revoking rows nobody will finish, and removed apps, on the off-request clock.
+        from . import scheduler  # noqa: PLC0415 - same
+
+        scheduler.register()

@@ -5,7 +5,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from apps.agents.models import Agent
@@ -64,15 +63,22 @@ def test_unique_per_owner_provider_account(user, agent):
         _conn(agent=agent, connected_by=user).save()
 
 
-def test_needs_reconnect_states(user):
+def test_needs_reconnect_is_a_failed_refresh(user):
     c = _conn(user=user, connected_by=user)
-    assert c.needs_reconnect is True  # no refresh token
-    c.refresh_token_enc = "x"
-    assert c.needs_reconnect is False
+    assert c.needs_reconnect is False  # canopy-web holds no token; a machine's refresh reports failure
     from django.utils import timezone
 
     c.refresh_failed_at = timezone.now()
     assert c.needs_reconnect is True
+
+
+def test_a_new_row_is_unshared_with_a_uuid_and_its_binding(user):
+    c = _conn(user=user, connected_by=user, sealed="zks1:x")
+    c.save()
+    c.refresh_from_db()
+    assert c.state == Connection.UNSHARED and c.statement_version == 0
+    assert c.binding == f"connection:{c.id}"
+    assert {Connection.UNSHARED, Connection.ACTIVE, Connection.REVOKING} == {"unshared", "active", "revoking"}
 
 
 def test_owner_label(user, agent):
@@ -80,13 +86,12 @@ def test_owner_label(user, agent):
     assert "eva" in _conn(agent=agent, connected_by=user).owner_label
 
 
-def test_grant_only_for_agent_owned_connections(user, agent):
+def test_any_connection_may_be_granted_once_per_agent(user, agent):
     ws = agent.workspace
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     personal = _conn(user=user, connected_by=user)
     personal.save()
-    with pytest.raises(ValidationError):
-        ConnectionGrant(connection=personal, agent=echo, granted_by=user).save()
+    ConnectionGrant(connection=personal, agent=echo, granted_by=user).save()  # a person may lend theirs
     owned = _conn(agent=agent, connected_by=user, account_id="00D1/005Z")
     owned.save()
     ConnectionGrant(connection=owned, agent=echo, granted_by=user).save()

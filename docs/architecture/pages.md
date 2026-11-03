@@ -302,7 +302,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     show gaps".
   - **connections** — the workspace's OAuth apps (one per provider, Salesforce and Google):
     client ID, a write-only secret, the extra permissions to ask for, and the callback URL to
-    register (`apps/connections`, [`vault.md`](vault.md) § OAuth connections are server-held).
+    register (`apps/connections`, [`vault.md`](vault.md) § OAuth connections are sealed to their owner).
   - **access-requests** (+ `/:requestId`, the page the admins' notification
     links to) — requests to be invited; approve at a role or deny.
   - **slack** — the workspace's Slack connection (one Slack may serve several
@@ -584,6 +584,22 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
+- **`/w/:workspace/connections/:id/share`** — "Connected as …": where the OAuth
+  callback lands (and where Settings' Share on a not-shared connection leads). Your
+  passkey (`useVaultUnlock`) opens the connection in this browser and shows
+  the account from the opened envelope; the owner then ticks agents they administer
+  and their own computers (name plus fingerprint) and shares
+  (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the
+  owner agent is fixed on. Never shared and nobody chosen: Share is off and Not now
+  leaves it unshared ("Not shared yet: no agent or computer can use it."); once shared,
+  unticking everyone withdraws it. Machines left out are named with why; a chosen machine
+  vouched for only by someone this browser has not trusted offers "Trust <name>'s
+  vouching" with their fingerprint; a changed endorser key stops the share; an envelope
+  that fails verification says "can't be opened safely" and offers Reconnect;
+  a reconnect over an earlier share warns first; opened by someone whose key is not the
+  one it is sealed to, it says why and to disconnect and connect again. Afterwards it goes to `return_to`
+  (a same-site path) or Settings. The key lives in a ref for the flow, never state
+  (`pages/connections/ShareConnectionPage.tsx`).
 - **`/act-as/:requestId`** — an agent, in a turn you started, asking to act as you
   on canopy (the push and the supervisor feed card link here): the agent, its reason
   verbatim, the conversation, what it asked for. "Allow read-only (30 min)" (first),

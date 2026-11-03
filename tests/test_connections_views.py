@@ -1,6 +1,7 @@
 """The browser legs of the connections flow (start, callback), person and agent.
 
-The service layer is covered in `test_connections_services.py`; this pins what
+The service layer is covered in `test_connections_services.py` and
+`test_connections_connect.py`; this pins what
 only the views decide: who may start a flow for whom, where the browser lands
 afterwards, that `return_to` cannot leave the site, and that an agent flow is
 re-authorized at completion (admin can be revoked between the two legs).
@@ -17,14 +18,16 @@ from django.urls import reverse
 from apps.agents.models import Agent
 from apps.connections.models import Connection
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FakeSF, _resp, _token_body, sf_app
+from tests.fixtures.connections import FakeSF, _resp, _token_body, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
 def user():
-    return get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    u = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 @pytest.fixture
@@ -78,15 +81,23 @@ def test_start_redirects_to_salesforce_for_self(client):
     assert q["code_challenge_method"] == ["S256"]
 
 
-def test_full_person_flow_connects_and_returns(client, user):
+def test_full_person_flow_connects_and_lands_on_the_share_screen(client, user):
     state = _state(_start(client, return_to="/settings?tab=x"))
     with FakeSF():
         resp = _callback(client, state)
-    path, q = _landing(resp)
-    assert path == "/settings"
-    assert q == {"tab": "x", "connection": "salesforce", "status": "connected"}
     conn = Connection.objects.get()
     assert conn.user_id == user.pk and conn.agent_id is None
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/settings?tab=x"})
+
+
+def test_a_refused_person_flow_lands_back_and_stores_nothing(client, user):
+    state = _state(_start(client, return_to="/settings?tab=x"))
+    with FakeSF(identity=_resp(403, {"error": "nope"})):
+        resp = _callback(client, state)
+    path, q = _landing(resp)
+    assert path == "/settings"
+    assert q == {"tab": "x", "connection": "salesforce", "status": "error", "reason": "provider_error"}
+    assert not Connection.objects.exists()
 
 
 def test_start_for_agent_requires_admin(client, user, eva):
@@ -102,8 +113,9 @@ def test_agent_flow_stores_agent_owned_connection(client, eva):
     state = _state(_start(client, agent="eva"))
     with FakeSF():
         resp = _callback(client, state)
-    assert _landing(resp)[1]["status"] == "connected"
-    assert Connection.objects.get().agent_id == eva.pk
+    conn = Connection.objects.get()
+    assert conn.agent_id == eva.pk
+    assert _landing(resp)[0] == f"/w/w/connections/{conn.pk}/share"
 
 
 def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):
@@ -123,9 +135,14 @@ def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):
                                  "/\t/evil.example", "/\r\n/evil.example", "/x\nLocation: //evil.example"])
 def test_return_to_rejects_offsite(client, bad):
     state = _state(_start(client, return_to=bad))
-    with FakeSF():
+    with FakeSF(identity=_resp(403, {"error": "nope"})):          # refused: lands on return_to
         resp = _callback(client, state)
     assert _landing(resp)[0] == "/settings"
+    assert "evil" not in resp["Location"]
+    state = _state(_start(client, return_to=bad))
+    with FakeSF():                                                # connected: carried to the share screen
+        resp = _callback(client, state)
+    assert _landing(resp)[1] == {"return_to": "/settings"}
     assert "evil" not in resp["Location"]
 
 

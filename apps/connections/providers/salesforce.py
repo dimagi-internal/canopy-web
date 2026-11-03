@@ -9,9 +9,10 @@ and identity is read from the `id` URL the token response names.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import requests
 
@@ -26,9 +27,34 @@ DEFAULT_LOGIN_URL = "https://login.salesforce.com"
 # own login hosts or a My Domain.
 LOGIN_HOSTS = ("login.salesforce.com", "test.salesforce.com")
 MY_DOMAIN_SUFFIX = ".my.salesforce.com"
+# One or more DNS labels before the suffix: nothing that could smuggle a port, a
+# userinfo or a path. The same rule every machine applies to a sealed host.
+_LABELS = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_MAX_HOST = 253
 # The access-token lifetime an app may declare: above the runner's re-stage margin
 # is advisable (see docs/architecture/deploy.md), never longer than a day.
 MIN_ACCESS_TOKEN_SECONDS, MAX_ACCESS_TOKEN_SECONDS = 300, 86400
+
+
+def _my_domain(host: str) -> bool:
+    return (host.endswith(MY_DOMAIN_SUFFIX) and len(host) <= _MAX_HOST
+            and _LABELS.fullmatch(host[:-len(MY_DOMAIN_SUFFIX)]) is not None)
+
+
+def _login_host_ok(host: str) -> bool:
+    return host in LOGIN_HOSTS or _my_domain(host)
+
+
+def _instance_url(url: str) -> tuple[str, str]:
+    """`(the url as sealed, its host)`: `https://<lower-case My Domain>` and nothing
+    more, or `""` for the url when a machine would refuse it."""
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return "", ""
+    bare = parts.netloc.lower() == host and parts.path in ("", "/") and not parts.query and not parts.fragment
+    return (f"https://{host}" if parts.scheme == "https" and bare and _my_domain(host) else ""), host
 
 
 class SalesforceProvider(Provider):
@@ -60,7 +86,7 @@ class SalesforceProvider(Provider):
     def clean_options(cls, raw):
         cleaned = super().clean_options(raw)
         host = (urlparse(cleaned["login_url"]).hostname or "").lower()
-        if host not in LOGIN_HOSTS and not (host.endswith(MY_DOMAIN_SUFFIX) and len(host) > len(MY_DOMAIN_SUFFIX)):
+        if not _login_host_ok(host):
             raise ValueError("Login URL must be login.salesforce.com, test.salesforce.com "
                              "or a My Domain (….my.salesforce.com)")
         cleaned["login_url"] = f"https://{host}"
@@ -92,6 +118,18 @@ class SalesforceProvider(Provider):
 
     def instance_url(self, body: Mapping[str, Any]) -> str:
         return str(body.get("instance_url") or "")
+
+    def sealed_hosts(self, token: TokenResponse) -> tuple[str, str]:
+        # Through `_base`, so a missing `login_url` seals the default rather than "".
+        login_host = (urlparse(self._base).hostname or "").lower()
+        if not _login_host_ok(login_host):
+            raise ProviderError(f"Salesforce login host {login_host!r} is not a Salesforce login host or a My Domain",
+                                code="bad_login_host")
+        instance_url, host = _instance_url(token.instance_url)
+        if not instance_url:
+            raise ProviderError(f"Salesforce instance URL (host {host!r}) is not https://<My Domain>{MY_DOMAIN_SUFFIX}",
+                                code="bad_instance_url")
+        return login_host, instance_url
 
     def _identity_host_ok(self, url: str) -> bool:
         parsed = urlparse(url)

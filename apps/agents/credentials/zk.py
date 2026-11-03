@@ -167,11 +167,16 @@ def eligible_device_keys(agent, facts=None) -> list:
     return list(eligible_device_keys_qs(agent, facts))
 
 
+def member_ids(agent, facts=None) -> set[int]:
+    """The members of the agent's vault, read once per `facts` when given."""
+    return (facts.once(("vault-members", agent.pk), lambda: vault_members.agent_member_ids(agent)) if facts
+            else vault_members.agent_member_ids(agent))
+
+
 def eligible_device_keys_qs(agent, facts=None):
     """`eligible_device_keys` as a queryset, for a caller that only asks whether any exist."""
 
-    ids = (facts.once(("vault-members", agent.pk), lambda: vault_members.agent_member_ids(agent)) if facts
-           else vault_members.agent_member_ids(agent))
+    ids = member_ids(agent, facts)
     return vault_members.devices_working_for(
         device_keys.keys_for_agent(agent, facts)
         .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
@@ -206,10 +211,10 @@ def devices_waiting(agent, keys) -> set:
     return {k.pk for k in keys if k.pk not in wrapped}
 
 
-def eligible_members(agent) -> list:
+def eligible_members(agent, facts=None) -> list:
     """Every member of the agent's vault with a vault keyset, as UserVaultKeyset rows."""
 
-    return list(UserVaultKeyset.objects.filter(user_id__in=vault_members.agent_member_ids(agent))
+    return list(UserVaultKeyset.objects.filter(user_id__in=member_ids(agent, facts))
                 .select_related("user"))
 
 

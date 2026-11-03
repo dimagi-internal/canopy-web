@@ -2,9 +2,10 @@
 
 Connect already holds "an agent connects with its own workspace's app"; this pins
 the use-time half (final review I1): a moved agent's old connection is
-`not_connected` for its turns and absent from what the runner stages, a grant of
-it stops wherever the grantee is, a grant across workspaces from an owner that
-stayed keeps working, and the move's dry run names what stops.
+`not_connected` for its turns and absent from what the runner stages, and a grant
+of it stops. A grant is in force only while the grantee is in the app's workspace
+too (spec §3), so one across workspaces, or to a grantee that moved, does not
+count. The move's dry run names what stops.
 """
 from __future__ import annotations
 
@@ -17,11 +18,11 @@ from django.utils import timezone
 
 from apps.agents import move
 from apps.agents.models import Agent, AgentAdmin
-from apps.connections import services
+from apps.connections import services, sharing
 from apps.connections.models import Connection, ConnectionGrant
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import _stored, sf_app
+from tests.fixtures.connections import _stored, browser_share, in_force, sealed_to_owner, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -60,7 +61,7 @@ def _moved(agent, dest):
 
 def test_a_moved_agents_old_connection_is_not_connected(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
-    _stored({"agent": eva}, user, app=sf_app(dimagi))
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)))
     assert services.connection_for_agent(eva, "salesforce")
     assert services.providers_for_agent(eva) == ["salesforce"]
     eva = _moved(eva, x)
@@ -71,41 +72,43 @@ def test_a_moved_agents_old_connection_is_not_connected(user, dimagi, x):
 
 def test_reconnecting_after_a_move_is_one_connection_not_ambiguous(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
-    _stored({"agent": eva}, user, app=sf_app(dimagi))
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)))
     eva = _moved(eva, x)
-    here = _stored({"agent": eva}, user, app=sf_app(x), access="00D!new")
+    here = in_force(_stored({"agent": eva}, user, app=sf_app(x)))
     assert services.connection_for_agent(eva, "salesforce").pk == here.pk
 
 
-def test_a_grant_across_workspaces_works_while_its_owner_stays(user, dimagi, x):
+def test_a_grant_to_an_agent_outside_the_apps_workspace_is_not_in_force(user, dimagi, x):
     eva, echo = _agent(dimagi, user, "eva"), _agent(x, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
-    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
-    assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
-    assert services.providers_for_agent(echo) == ["salesforce"]
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)), echo, by=user)
+    with pytest.raises(services.NotConnected):
+        services.connection_for_agent(echo, "salesforce")
+    assert services.providers_for_agent(echo) == []
 
 
 def test_a_grant_stops_when_its_owner_moves(user, dimagi, x):
     eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
-    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
+    conn = in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)), echo, by=user)
+    assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
     _moved(eva, x)
     with pytest.raises(services.NotConnected):
         services.connection_for_agent(echo, "salesforce")
     assert services.providers_for_agent(echo) == []
 
 
-def test_a_grantee_that_moves_keeps_the_grant(user, dimagi, x):
+def test_a_grantee_that_moves_out_of_the_apps_workspace_loses_the_grant(user, dimagi, x):
     eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
-    ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
-    echo = _moved(echo, x)
+    conn = in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)), echo, by=user)
     assert services.connection_for_agent(echo, "salesforce").pk == conn.pk
+    echo = _moved(echo, x)
+    with pytest.raises(services.NotConnected):
+        services.connection_for_agent(echo, "salesforce")
 
 
-def test_a_moved_agents_turn_token_is_not_connected(user, dimagi, x):
+def test_a_moved_agents_turn_lists_no_connection(user, dimagi, x):
     eva = _agent(dimagi, user, "eva")
-    _stored({"agent": eva}, user, app=sf_app(dimagi))
+    in_force(_stored({"agent": eva}, user, app=sf_app(dimagi)))
+    assert services.providers_for_agent(eva) == ["salesforce"]  # it lists before the move, so its absence means something
     eva = _moved(eva, x)
     runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=user, workspace=x,
                                    last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
@@ -116,9 +119,6 @@ def test_a_moved_agents_turn_token_is_not_connected(user, dimagi, x):
     turn = Turn.objects.create(agent=eva, origin=Turn.ORIGIN_EMAIL, prompt="x",
                                idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=runner)
     base = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}"
-    r = Client().post(f"{base}/connection-token", {"provider": "salesforce"}, content_type="application/json",
-                      HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 409 and r.json()["error"] == "not_connected"
     listed = Client().get(f"{base}/connections", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert listed.json() == {"providers": []}
 
@@ -156,12 +156,13 @@ def test_an_agent_without_connections_adds_nothing_to_a_move(user, dimagi, x):
 
 
 def test_a_moved_agents_connection_cannot_be_shared(user, dimagi, x):
+    priv = vault_key(user)
     eva, echo = _agent(dimagi, user, "eva"), _agent(dimagi, user, "echo")
-    conn = _stored({"agent": eva}, user, app=sf_app(dimagi))
+    conn = sealed_to_owner({"agent": eva}, user, app=sf_app(dimagi))
     _moved(eva, x)
-    with pytest.raises(services.ConnectionError) as e:
-        services.grant(Connection.objects.get(pk=conn.pk), echo, by=user)
-    assert e.value.code == "not_usable"
+    with pytest.raises(sharing.WireError) as e:
+        sharing.share(conn, user=user, **browser_share(conn, user, priv, agents=[eva, echo], to=[]))
+    assert e.value.code == "agent_outside_workspace"
     assert not ConnectionGrant.objects.exists()
 
 
@@ -174,3 +175,37 @@ def test_disconnecting_a_moved_agents_connection_is_recorded_in_the_apps_workspa
     services.disconnect(Connection.objects.get(pk=conn.pk), by=user)
     kinds = set(Event.objects.filter(kind="connections.disconnected").values_list("workspace_id", flat=True))
     assert kinds == {"dimagi", "x"}
+
+
+def test_moved_agent_loses_its_grants(django_capture_on_commit_callbacks):
+    """A grant is in force only while the grantee is in the app's workspace (spec §3):
+    moving the grantee out ends it. The dry run says so (never naming the lender or
+    the account); the move deletes the grant, records `grant_revoked`, and once it
+    commits drops the agent's boxes from the envelope."""
+    from apps.events.models import Event
+    from tests.fixtures.connections import ShareWorld
+
+    world = ShareWorld()
+    conn = world.shared(world.evas(), agents=[world.eva, world.echo])
+    assert ("device", world.echo_box.ecdh_jkt) in zk_seal_targets(conn)
+    x = _ws(world.person, "x")
+    p = move.plan(world.echo, x, by=world.person)
+    [stop] = [s for s in p.stops_working if s["kind"] == "connections_lent"]
+    assert "1 connection(s) lent to it" in stop["detail"] and "Salesforce" in stop["detail"]
+    assert "jj@dimagi.com" not in stop["detail"] and "eva" not in stop["detail"]
+    assert ConnectionGrant.objects.filter(agent=world.echo).exists()  # the dry run wrote nothing
+
+    with django_capture_on_commit_callbacks(execute=True):
+        move.move(world.echo, x, by=world.person)
+    assert not ConnectionGrant.objects.filter(agent=world.echo).exists()
+    assert ("device", world.echo_box.ecdh_jkt) not in zk_seal_targets(conn)
+    assert ("device", world.eva_box.ecdh_jkt) in zk_seal_targets(conn)
+    revoked = [e for e in Event.objects.filter(kind="connections.grant_revoked")
+               if e.payload.get("grantee") == "echo"]
+    assert revoked and {e.payload["during"] for e in revoked} == {"moved"}
+
+
+def zk_seal_targets(conn):
+    from apps.agents.credentials import zk_seal
+
+    return zk_seal.sealed_targets(Connection.objects.get(pk=conn.pk).sealed)

@@ -63,6 +63,9 @@ class GoogleProvider(Provider):
         f"{_SCOPE}calendar.events": "Edit calendar events",
     }
     rotates_refresh_token = False
+    # Revoking at Google ends every token of that account on this OAuth client, so
+    # a grant refused at connect is only dropped: other connections may hold one.
+    revokes_refused_grant = False
     option_fields = (
         # Empty (the default): any Google account, including personal @gmail.com
         # ones and other organisations' Workspace accounts.

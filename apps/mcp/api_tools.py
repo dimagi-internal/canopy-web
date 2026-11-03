@@ -64,6 +64,7 @@ WORKSPACE_ARG = "workspace"
 # -- what is not a tool, and why -------------------------------------------
 
 _RUNNER = "runner protocol: a runner calls this on its own tick, not a person"
+_SEALED_FOR_A_MACHINE = "sealed credentials and an app secret for a machine, never a model's context"
 _BROWSER = "a browser tab's own plumbing (page state, live viewer, push subscription)"
 _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
@@ -178,12 +179,28 @@ EXCLUDED: dict[str, str] = {
     # A connected site telling canopy its resources changed: signed by the site's own
     # key, a host's door, never a person's or an agent's.
     "resources_updated": _HOST,
-    # Connection tokens (apps/connections): a live provider access token is the
-    # answer, so a tool would put it in a model's context. The route refuses an
-    # MCP call too; leaving it out also keeps a caller token off it over REST.
-    "turn_connection_token": _RUNNER,
+    # A turn's connections (apps/connections): the runner's own question.
     "turn_connections": _RUNNER,
-    "my_connection_token": "a person's own token, for their CLI — never into a model's context",
+    # A connection's material, lease and write-back (routes 7-12): sealed credentials
+    # and an app secret for a machine, never a model's context. The person's routes
+    # refuse an MCP call too (`_plain_pat`); the runner's take only a box's token.
+    "my_connection_material": _SEALED_FOR_A_MACHINE,
+    # Sharing happens in the owner's browser, which opens the envelope and signs with their
+    # vault key. No tool could do either, and the read is sealed envelopes for that browser.
+    "get_share_state": "what the owner's browser opens and signs with their vault key, which no tool holds",
+    "share_connection": "signed and sealed in the owner's browser with their vault key, which no tool holds",
+    "take_my_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "release_my_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "write_back_my_connection": _SEALED_FOR_A_MACHINE,
+    "my_connection_reconnect_required": _SEALED_FOR_A_MACHINE,
+    "turn_connection_material": _SEALED_FOR_A_MACHINE,
+    "take_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "release_refresh_lease": _SEALED_FOR_A_MACHINE,
+    "write_back_connection": _SEALED_FOR_A_MACHINE,
+    "connection_reconnect_required": _SEALED_FOR_A_MACHINE,
+    "get_connection_keeper_work": _SEALED_FOR_A_MACHINE,
+    "put_connection_reseal": _SEALED_FOR_A_MACHINE,
+    "post_connection_revoked": _SEALED_FOR_A_MACHINE,
     # A workspace's OAuth client for connections: the body carries the client
     # secret, which a tool call would put in a model's context; removing it
     # disconnects a whole workspace. Reading it (never the secret) stays a tool.

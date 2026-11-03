@@ -1431,6 +1431,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
     def _loop() -> None:
         failing = 0
+        restaging = None
         while not stop.wait(LEASE_HEARTBEAT_SECONDS):
             status, reply = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
             if status != 200:
@@ -1446,7 +1447,15 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
             _restage_delegated_google()
-            _restage_connections(turn_id)
+            # Its own thread: a stage can take minutes, and this thread's beat is the
+            # turn's lease and how it hears a stop.
+            if restaging is None or not restaging.is_alive():
+                restaging = threading.Thread(target=_restage_connections, args=(turn_id,), daemon=True,
+                                             name=f"restage-{turn_id[:8]}")
+                try:
+                    restaging.start()
+                except RuntimeError as exc:  # no thread to be had: the next beat tries again
+                    _log(f"warn: could not start a re-stage for turn {turn_id}: {exc}")
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1621,6 +1630,13 @@ INHERITED_SESSION_MARKERS = (
 )
 
 
+def _cli_base_env() -> dict:
+    """Where a canopy CLI this runner starts must call: this box's canopy-web. Each name
+    is read by different CLI code, and with `CANOPY_WEB_API_URL` unset the CLI's default
+    is production, so a box elsewhere would send production its runner token and proofs."""
+    return {"CANOPY_BASE_URL": BASE_URL, "CANOPY_WEB_API_URL": BASE_URL}
+
+
 def _child_safe_env() -> dict:
     """`os.environ` with the parent's Claude session identity removed.
 
@@ -1749,7 +1765,7 @@ def _stage_delegated_google(slug: str, *, now: float | None = None) -> list[str]
         except (OSError, ValueError, AttributeError):
             pass
         env = _child_safe_env()
-        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+        env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
         try:
             res = subprocess.run([_canopy_cli(), "cred", "google-token", "--runner", "--agent", slug,
                                   "--delegated", account], env=env, capture_output=True, text=True,
@@ -1774,28 +1790,51 @@ def _restage_delegated_google() -> None:
 
 # ── Connections: the agent's provider tokens (Salesforce, …), staged per TURN ──
 #
-# canopy-web holds each connection (the agent's own, or one another agent shares with
-# it); the refresh token never reaches the box. At turn start the runner asks canopy-web
-# which providers the turn's agent can use (`GET …/turns/{tid}/connections` — for most
-# agents none, and nothing else runs), and for each one the canopy CLI
-# (`cred connection-token <provider> --runner`, this box's bearer + the turn id) writes a
-# short-lived ACCESS token 0600 to ~/.canopy/connections/<slug>/<provider>.json. Each file
-# is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+# canopy-web stores each connection (the agent's own, or one lent to it) sealed, and can
+# read none of it: the refresh token opens only on a machine it is sealed to. At turn
+# start the runner asks canopy-web which providers the turn's agent can use
+# (`GET …/turns/{tid}/connections` — for most agents none, and nothing else runs), and for
+# each one the canopy CLI (`cred connection-token <provider> --runner`, this box's bearer +
+# device proof + the turn id) opens the sealed token HERE, refreshes it under a lease when
+# it has to, and writes a short-lived ACCESS token 0600 to
+# ~/.canopy/connections/<slug>/<provider>.json. Each file is re-staged on the lease
+# heartbeat near expiry and removed when the turn ends. The runner never sees a token and
+# there is no server fallback: a stage that cannot succeed leaves the turn without one.
 #
 # Log lines use the connections vocabulary: `warn: connections.stage_failed agent=
 # provider= turn= reason="…"` when a token could not be staged (the turn still runs;
-# `provider=*` when the listing itself failed). An agent with no connection is silent,
-# and so is a canopy-web too old to have the listing route (404).
-#: Seconds a staged token must still live; also sent to canopy-web (`--min-life`), so the
-#: server refreshes rather than hand back a cached token that lapses before the next re-stage.
+# `provider=*` when the listing itself failed, or the CLI is too old to open a sealed
+# connection), and one `connections.waiting agent= provider= turn=` when no copy has
+# reached this box yet. An agent with no connection is silent, and so is a canopy-web too
+# old to have the listing route (404).
+#: Seconds a staged token must still live; also given to the CLI (`--min-life`), so it
+#: refreshes rather than reuse an access token that lapses before the next re-stage.
 CONNECTION_TOKEN_MIN_LIFE = 900
-#: CLI exit code for "this agent has no connection for that provider" (409 not_connected).
+#: CLI exit code for "nothing to stage for this box": not connected, or being revoked. One line per turn.
 CONNECTION_NOT_CONNECTED_EXIT = 3
+#: CLI exit code for "no copy has reached this box yet": a keeper seals one to it within
+#: minutes, so the turn keeps its hold and the heartbeat tries again.
+CONNECTION_WAITING_EXIT = 4
+#: How long one stage may run. Holding a just-rotated refresh token, the CLI retries its
+#: write-back for up to 90 s, on top of its per-call timeouts; a kill there loses the
+#: token, and the person has to reconnect, so this is generous on purpose.
+CONNECTION_STAGE_TIMEOUT_SECONDS = 300
+#: The CLI that opens sealed connections (`cred connection-token --runner` through the
+#: material route). An older one knows only a route canopy-web no longer has.
+CONNECTIONS_ZK_MIN_CLI = (0, 2, 833)
 #: A provider key canopy-web may name; anything else never becomes a path or an argv.
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 #: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
 _CONN_HOLDS: dict = {}
 _CONN_LOCK = threading.Lock()
+#: (turn_id, provider) that has said it is waiting, so it says so once. Under _CONN_LOCK.
+_CONN_WAITING: set = set()
+#: (turn, provider) already logged as listed for this box's turn yet not for this box.
+_CONN_NOT_FOR_BOX: set = set()
+#: CLI stages running now: {(slug, provider): how many}. A heartbeat does not start one
+#: over a file already being staged. Its own lock: nothing here touches a hold or a file.
+_CONN_STAGING: dict = {}
+_CONN_STAGING_LOCK = threading.Lock()
 
 
 def _connection_token_path(slug: str, provider: str) -> pathlib.Path:
@@ -1832,11 +1871,21 @@ def _stage_failed_line(slug: str, provider: str, turn_id: str, reason: str) -> N
          f"reason={json.dumps(' '.join(str(reason).split())[-300:], ensure_ascii=False)}")
 
 
+def _cli_too_old_for_connections() -> bool:
+    """Known to be older than `CONNECTIONS_ZK_MIN_CLI`. A CLI that cannot say is run, and
+    its own failure is the line, rather than a guess costing the turn its token."""
+    v = _canopy_cli_version()
+    return v is not None and v < CONNECTIONS_ZK_MIN_CLI
+
+
 def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
     """Turn start: stage a token for each provider the turn's agent can use. One
     canopy-web call for an agent with none; a failure to list is a warn line and the
-    turn runs without. A 404 is a canopy-web without the listing route: silent.
-    Returns the providers canopy-web listed (none when the listing failed)."""
+    turn runs without. A 404 is a canopy-web without the listing route: silent. A CLI
+    too old for connections is one warn line and is not run.
+    Returns the providers being staged (none when the listing failed or the CLI is too
+    old). Runs before the turn's CLI starts, so a slow stage delays the turn's start, by
+    up to CONNECTION_STAGE_TIMEOUT_SECONDS per provider."""
     if not slug:
         return frozenset()
     try:
@@ -1847,13 +1896,17 @@ def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
         status, body = -1, None
         _stage_failed_line(slug, "", turn_id, f"listing failed: {exc}")
     if status == 200 and isinstance(body, dict):
-        listed = set()
+        listed = []
         for provider in body.get("providers") or []:
             if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
-                listed.add(provider)
-                _stage_connection_token(runner_id, turn_id, slug, provider)
+                listed.append(provider)
             else:
                 _stage_failed_line(slug, "", turn_id, "unusable provider key")
+        if listed and _cli_too_old_for_connections():
+            _stage_failed_line(slug, "", turn_id, "canopy CLI too old for connections")
+            return frozenset()
+        for provider in listed:
+            _stage_connection_token(runner_id, turn_id, slug, provider)
         return frozenset(listed)
     if status == 0:
         _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
@@ -1871,9 +1924,14 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
     holding that file, and discards its work if the turn ended meanwhile. Only `refresh`
     may keep a file that is still fresh: a turn's FIRST stage always asks canopy-web, so
     the turn is checked (runner holds it, agent still connected) and its token issue
-    recorded, never inherited from a file another turn left. Exit 3 from the CLI is
-    silent (and clears a stale file); any other failure is a warn line and the turn still
-    runs. No token is ever logged."""
+    recorded, never inherited from a file another turn left. For the same reason only
+    `refresh` stands aside for a stage already running for this file, which may take
+    minutes; two first stages settle it in the CLI (one takes the refresh lease, the
+    other waits for its result). Exit 3 from the CLI clears a stale file and says so once
+    per turn and provider, since canopy-web listed the provider and this box then got
+    nothing; exit 4 keeps the hold, so the heartbeat retries (a held file that is missing
+    always counts as needing a stage), and says so once; any other failure is a warn line
+    and the turn still runs. No token is ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
@@ -1883,6 +1941,11 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
         if refresh and (held is None or provider not in held[2]):
             return
         _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | {provider})
+    key = (slug, provider)
+    with _CONN_STAGING_LOCK:
+        if refresh and _CONN_STAGING.get(key):
+            return
+        _CONN_STAGING[key] = _CONN_STAGING.get(key, 0) + 1
     try:
         if refresh:
             try:
@@ -1891,11 +1954,14 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
             except (OSError, ValueError, AttributeError):
                 pass
         env = _child_safe_env()
-        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+        # The CLI cannot renew this bearer, so it must outlive the whole stage: a 401 in
+        # the middle of a write-back would lose a rotated token.
+        env.update(CANOPY_TOKEN=_bearer(min_life=CONNECTION_STAGE_TIMEOUT_SECONDS + 60),
+                   **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
         res = subprocess.run([_canopy_cli(), "cred", "connection-token", provider, "--runner", "--agent", slug,
                               "--runner-id", runner_id, "--turn", turn_id,
                               "--min-life", str(CONNECTION_TOKEN_MIN_LIFE)],
-                             env=env, capture_output=True, text=True, timeout=120)
+                             env=env, capture_output=True, text=True, timeout=CONNECTION_STAGE_TIMEOUT_SECONDS)
     except BaseException as exc:
         if isinstance(exc, Exception):
             _stage_failed_line(slug, provider, turn_id, str(exc))
@@ -1903,6 +1969,12 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
             return
         _drop_holds(turn_id)   # an interrupt: nothing may stay held
         raise
+    finally:
+        with _CONN_STAGING_LOCK:
+            if _CONN_STAGING.get(key, 0) > 1:
+                _CONN_STAGING[key] -= 1
+            else:
+                _CONN_STAGING.pop(key, None)
     if res.returncode == CONNECTION_NOT_CONNECTED_EXIT:
         # One lock section: a first stage lets go of its hold; a heartbeat keeps the
         # turn's (it is still running, just without a connection). Either way the
@@ -1910,10 +1982,27 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
         # where this turn's hold is dropped and re-added, which a sibling's unstage
         # could fall into.
         with _CONN_LOCK:
+            first = (provider in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2]
+                     and (turn_id, provider) not in _CONN_NOT_FOR_BOX)
+            if first:
+                _CONN_NOT_FOR_BOX.add((turn_id, provider))
             if not refresh:
                 _release(turn_id, provider)
             if not _held_elsewhere(slug, provider, turn_id):
                 _unlink_quietly(target)
+        if first:
+            _log(f"connections.not_for_this_box agent={slug} provider={provider} turn={turn_id}")
+        return
+    if res.returncode == CONNECTION_WAITING_EXIT:
+        with _CONN_LOCK:
+            first = (provider in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2]
+                     and (turn_id, provider) not in _CONN_WAITING)
+            if first:
+                _CONN_WAITING.add((turn_id, provider))
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
+        if first:
+            _log(f"connections.waiting agent={slug} provider={provider} turn={turn_id}")
         return
     if res.returncode != 0:
         _stage_failed_line(slug, provider, turn_id, (res.stderr or "").strip() or f"exit {res.returncode}")
@@ -1943,6 +2032,8 @@ def _drop_holds(turn_id: str) -> None:
     """Release every hold of this turn, deleting (inside the lock) each file no other
     running turn of the same agent holds."""
     with _CONN_LOCK:
+        _CONN_WAITING.difference_update({w for w in _CONN_WAITING if w[0] == turn_id})
+        _CONN_NOT_FOR_BOX.difference_update({w for w in _CONN_NOT_FOR_BOX if w[0] == turn_id})
         held = _CONN_HOLDS.pop(turn_id, None)
         if not held:
             return
@@ -3662,7 +3753,7 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         if hit and now - hit[0] < _AGENT_ENV_TTL_SECONDS:
             return hit[1]
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
     if turn_id:
         env["CANOPY_TURN_ID"] = turn_id
@@ -7949,7 +8040,7 @@ def _run_vault_cli(runner_id: str) -> dict:
     """`canopy vault runner-credentials`, as this box: `{values, vault_layers}`. Raises
     with the CLI's own words when it cannot."""
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env())
     res = subprocess.run([_canopy_cli(), "vault", "runner-credentials", "--runner", runner_id,
                           "--print-json"], env=env, capture_output=True, text=True, timeout=120)
     lines = (res.stdout or "").strip().splitlines()
@@ -7993,7 +8084,7 @@ _VAULT_STATE: dict = {"open": False}
 def _run_seal_cli(runner_id: str, values: dict) -> dict:
     """`canopy vault runner-seal`, as this box: the values go in on stdin, never argv."""
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env())
     res = subprocess.run([_canopy_cli(), "vault", "runner-seal", "--runner", runner_id],
                          input=json.dumps(values), env=env, capture_output=True, text=True, timeout=120)
     lines = (res.stdout or "").strip().splitlines()
@@ -9789,7 +9880,7 @@ def _run_google_mint_cli(runner_id: str, slug: str, work: dict) -> dict:
     """`canopy vault google-mint`, as this box: the work (code + verifier) goes in on stdin,
     never argv; one JSON line comes back — ciphertext, or `{error, detail}`."""
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env())
     res = subprocess.run([_canopy_cli(), "vault", "google-mint", "--agent", slug, "--runner", runner_id],
                          input=json.dumps(work), env=env, capture_output=True, text=True, timeout=120)
     lines = (res.stdout or "").strip().splitlines()
@@ -13258,7 +13349,7 @@ _KEEP_STATE = {"at": 0.0, "thread": None, "last": ""}
 def _keep_vaults() -> None:
     try:
         out = subprocess.run([_canopy_cli(), "vault", "zk", "keep"], capture_output=True, text=True,
-                             timeout=KEEP_INTERVAL_SECONDS)
+                             env={**_child_safe_env(), **_cli_base_env()}, timeout=KEEP_INTERVAL_SECONDS)
     except Exception as exc:  # noqa: BLE001 — a keeper hiccup never touches the loop
         _log(f"vault keeper: could not run ({exc})")
         return

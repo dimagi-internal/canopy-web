@@ -4,15 +4,14 @@
 `Provider` subclass with endpoints, its own authorize parameters and an
 identity lookup, used with a workspace's app (client id and secret). It is registered for these tests only, and
 then driven through every surface — the Settings list, the browser connect flow
-for a person and for an agent, the CLI token route, the runner's turn routes
-and disconnect — without touching shared code. It also differs from Salesforce
-where the next providers do: the token response carries `expires_in`, there is
-no per-account API host, and refresh does not rotate the refresh token.
+for a person and for an agent, the runner's turn routes and disconnect —
+without touching shared code. It also differs from Salesforce where the next
+providers do: the token response carries `expires_in`, there is no per-account
+API host, and refresh does not rotate the refresh token.
 """
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
@@ -24,14 +23,12 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.common.encryption import decrypt_secret
 from apps.connections import providers
 from apps.connections.models import Connection
 from apps.connections.providers.base import Identity, Provider
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey, Turn
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import sf_app
+from tests.fixtures.connections import in_force, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
@@ -120,7 +117,9 @@ def acme(monkeypatch):
 
 @pytest.fixture
 def user():
-    return get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    u = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 @pytest.fixture
@@ -151,7 +150,7 @@ def _connect(client, **agent):
     return authorize, query, landed
 
 
-def test_a_person_connects_lists_and_fetches_a_token(acme, user, ws):
+def test_a_person_lists_starts_a_connect_and_disconnects(acme, user, ws):
     client = Client()
     client.force_login(user)
     listed = client.get("/api/connections/").json()
@@ -162,41 +161,24 @@ def test_a_person_connects_lists_and_fetches_a_token(acme, user, ws):
     assert f"{authorize.scheme}://{authorize.netloc}{authorize.path}" == AUTHORIZE
     assert query["access_type"] == "offline" and query["prompt"] == "consent"
     assert query["scope"] == "books.read offline_access" and query["code_challenge_method"] == "S256"
-    assert landed.status_code == 302 and "connection=acme&status=connected" in landed["Location"]
 
     conn = Connection.objects.get(provider="acme", user=user)
-    assert conn.account_id == "acme-user-1" and conn.account_label == "jj@acme.test"
-    assert conn.instance_url == ""                                   # no per-account API host
-    # Expiry from the response's `expires_in` (1200 s), not a configured lifetime.
-    assert timezone.now() + timedelta(seconds=1100) < conn.access_token_expires_at \
-        <= timezone.now() + timedelta(seconds=1200)
-
+    assert landed["Location"].startswith(f"/w/w/connections/{conn.pk}/share")
+    assert (conn.account_id, conn.account_label, conn.instance_url) == ("acme-user-1", "jj@acme.test", "")
     row = client.get("/api/connections/").json()["connections"][0]
     assert row["title"] == "Acme Books" and row["scopes"] == ["books.read", "offline_access"]
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    pat = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    got = pat.post("/api/me/connections/acme/token")
-    assert got.status_code == 200 and got.json()["access_token"] == "acme-access-1"
-    assert got.json()["instance_url"] == ""
-    refreshed = pat.post("/api/me/connections/acme/token?refresh=true")
-    assert refreshed.json()["access_token"] == "acme-access-2"
-    conn.refresh_from_db()
-    assert decrypt_secret(conn.refresh_token_enc) == "acme-refresh"   # not rotated: kept
-
-    assert client.delete(f"/api/connections/{conn.pk}").status_code == 204
-    assert acme.calls[-1] == (REVOKE, {"token": "acme-refresh", "token_type_hint": "refresh_token",
-                                       "client_id": "acme-client", "client_secret": "acme-secret"})
+    calls = len(acme.calls)
+    assert client.delete(f"/api/connections/{conn.pk}").status_code == 200
+    assert len(acme.calls) == calls                              # canopy-web holds no token to revoke
 
 
-def test_an_agent_connects_and_its_turn_lists_and_fetches_the_token(acme, user, eva):
+def test_an_agent_starts_a_connect_and_its_turn_lists_the_connection(acme, user, eva):
     client = Client()
     client.force_login(user)
-    _, query, landed = _connect(client, agent="eva")
+    _, query, _ = _connect(client, agent="eva")
     assert query["prompt"] == "select_account consent"          # the provider's own agent parameter
     assert query["login_hint"] == "eva@agents.test"             # it was given the agent itself
-    assert "status=connected" in landed["Location"]
-    assert Connection.objects.filter(provider="acme", agent=eva).exists()
+    assert Connection.objects.get(provider="acme", agent=eva).state == Connection.UNSHARED
 
     runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=user, workspace=eva.workspace,
                                    last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
@@ -207,18 +189,17 @@ def test_an_agent_connects_and_its_turn_lists_and_fetches_the_token(acme, user, 
     turn = Turn.objects.create(agent=eva, origin=Turn.ORIGIN_EMAIL, prompt="x", idempotency_key="k",
                                status=Turn.CLAIMED, claimed_by=runner)
     box = Client(HTTP_AUTHORIZATION=f"Bearer {bearer}")
-    base = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}"
-    assert box.get(f"{base}/connections").json() == {"providers": ["acme"]}
-    got = box.post(f"{base}/connection-token", {"provider": "acme"}, content_type="application/json")
-    assert got.status_code == 200 and got.json()["access_token"] == "acme-access-1"
+    listed = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/connections"
+    # Not shared yet: no machine can use it, so the turn stages nothing.
+    assert box.get(listed).json() == {"providers": []}
+    in_force(Connection.objects.get(provider="acme", agent=eva))
+    assert box.get(listed).json() == {"providers": ["acme"]}
 
 
 def test_an_unregistered_provider_is_404_everywhere(user):
     client = Client()
     client.force_login(user)
     assert client.get(reverse("connections_start", args=["nope", "w"])).status_code == 404
-    raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    assert Client(HTTP_AUTHORIZATION=f"Bearer {raw}").post("/api/me/connections/nope/token").status_code == 404
 
 
 def test_a_grant_with_fewer_scopes_than_required_is_refused(acme, user, ws):

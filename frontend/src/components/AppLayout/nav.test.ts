@@ -165,6 +165,7 @@ describe('switchWorkspacePath', () => {
     expect(switchWorkspacePath('/w/dimagi/agents/hal/settings', 'm')).toBe('/w/m/agents')
     expect(switchWorkspacePath('/w/dimagi/sessions/abc', 'm')).toBe('/w/m/sessions')
     expect(switchWorkspacePath('/w/dimagi/threads/7', 'm')).toBe('/w/m/huddles')
+    expect(switchWorkspacePath('/w/dimagi/connections/abc/share', 'm')).toBe('/w/m/settings')
     expect(switchWorkspacePath('/w/dimagi', 'm')).toBe('/w/m/agents')
     expect(switchWorkspacePath('/home', 'm')).toBe('/w/m/agents')
   })

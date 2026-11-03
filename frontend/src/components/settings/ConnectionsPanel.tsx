@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartPath,
   disconnectMine,
   listMyConnections,
   type ConnectionOut,
   type ConnectionsView,
+  type DisconnectOutcome,
   type ProviderOut,
 } from '@/api/connections'
 import { Button } from 'canopy-ui/ui'
+import { scopedPath } from '@/lib/scopedLinks'
 
 /**
  * Connect the services canopy acts on for you: one section per provider the API
- * lists (`providers`), nothing hard-coded here. Same shape as the GitHub panel:
- * a per-user grant canopy holds, started by a full-page navigation to the
+ * lists (`providers`), nothing hard-coded here. Same shape as the GitHub panel: a
+ * per-user grant, sealed to its owner, started by a full-page navigation to the
  * provider and reported back through the query string.
  *
  * A provider is set up per WORKSPACE (its admin registers the OAuth app), so the
@@ -24,7 +26,8 @@ import { Button } from 'canopy-ui/ui'
 export function ConnectionsPanel() {
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [notice, setNotice] = useState('')
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
@@ -43,8 +46,9 @@ export function ConnectionsPanel() {
   async function disconnect(c: ConnectionOut) {
     setBusy(c.id)
     setError('')
+    setNotice('')
     try {
-      await disconnectMine(c.id)
+      setNotice(disconnected(await disconnectMine(c.id), c.owner_key_replaced))
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not disconnect.')
@@ -60,18 +64,21 @@ export function ConnectionsPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Connections</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Accounts canopy holds for you, so your tools can act as you without a token on your laptop.
+          Accounts you sign in to here are sealed to your vault key, so canopy cannot read them. You choose which
+          of your agents and enrolled computers may use each one.
         </p>
       </div>
       <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
       {error && <p className="text-[13px] text-destructive">{error}</p>}
+      {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
       {groupByProvider(data.providers).map((rows) => (
         <ProviderSection
           key={rows[0].name}
           rows={rows}
-          connections={data.connections.filter((c) => c.provider === rows[0].name)}
-          nameWorkspaces={new Set(data.connections.map((c) => c.workspace ?? '')).size > 1}
+          connections={listed(data.connections).filter((c) => c.provider === rows[0].name)}
+          nameWorkspaces={new Set(listed(data.connections).map((c) => c.workspace ?? '')).size > 1}
           startPath={(ws) => connectionStartPath(rows[0].name, ws, pathname)}
+          returnTo={pathname}
           busy={busy}
           onDisconnect={disconnect}
         />
@@ -79,6 +86,19 @@ export function ConnectionsPanel() {
     </div>
   )
 }
+
+/** What a disconnect did: a machine, not canopy, revokes at the provider, when one that holds it is up. */
+export function disconnected(outcome: DisconnectOutcome, keyReplaced = false): string {
+  if (outcome === 'revoking') return 'Disconnected. A machine will revoke it shortly.'
+  const idles = 'Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.'
+  // Nothing else kills that token now, and the old key can still read it.
+  return keyReplaced ? `${idles} Revoke it at Salesforce or Google yourself.` : idles
+}
+
+const KEY_REPLACED = 'Sealed to a vault key you replaced. New tokens stay readable by the old key until you '
+  + 'disconnect and connect again. If it may have leaked, disconnect now.'
+const THEIR_KEY_REPLACED = 'Sealed to a vault key the person who connected it replaced. New tokens stay readable by '
+  + 'the old key until it is disconnected and connected again. If that key may have leaked, disconnect now.'
 
 /** What a callback `reason` code says, as a fixed sentence (never the query text). */
 const REASONS: Record<string, string> = {
@@ -89,8 +109,16 @@ const REASONS: Record<string, string> = {
   // not only a missing admin role.
   forbidden: 'is no longer allowed for this account or workspace.',
   insufficient_scope: 'was connected without every permission canopy needs. Connect again and allow them all.',
+  no_vault_key: 'needs your vault key first. Set up your vault key in Settings, then connect again.',
+  revoking: 'is being disconnected. Wait for that to finish, then connect again.',
   wrong_account:
     'was signed in with an account this connection may not use — sign in as the agent’s own account, or one in the workspace’s allowed domains.',
+}
+
+/** Reasons that are a whole sentence, not a continuation of the provider's name. */
+const WHOLE_REASONS: Record<string, string> = {
+  owner_changed: 'This account is connected with a vault key that is not yours now. Disconnect it first, then connect again.',
+  provider_error: 'Salesforce or Google refused this sign-in. Check the app’s settings, then try again.',
 }
 
 /** The `?connection=…&status=…&reason=…` result banner, shared with the agent panel.
@@ -111,9 +139,12 @@ export function ConnectOutcome({
   const who = known ? known.title : 'The connection'
   const ok = params.get('status') === 'connected'
   const reason = REASONS[params.get('reason') ?? '']
+  const whole = WHOLE_REASONS[params.get('reason') ?? '']
   const text = ok
     ? `${who} connected.`
-    : reason
+    : whole
+      ? whole
+      : reason
       ? `${who} ${reason}`
       : `Connecting ${known ? known.title : 'the service'} failed. Try again.`
   return (
@@ -165,6 +196,99 @@ export function detailLine(c: ConnectionOut): string {
   return [c.instance_url, lastUsed(c)].filter(Boolean).join(' · ')
 }
 
+/** Where lending, withdrawing, "use on my computers" and re-sharing all happen: the one
+ *  screen that signs. A withdrawal is a re-share with the agent unticked. */
+export function sharePath(c: ConnectionOut, returnTo: string): string {
+  return `${scopedPath(c.workspace, `/connections/${c.id}/share`)}?${new URLSearchParams({ return_to: returnTo })}`
+}
+
+/** A revoking connection is never listed (the server hides it; this is the second line). */
+export function listed(cs: readonly ConnectionOut[]): ConnectionOut[] {
+  return cs.filter((c) => c.state !== 'revoking')
+}
+
+const shareLink = 'text-primary hover:underline'
+
+/** Why no machine can receive a connection for an agent it is lent to (`unreachable`). */
+const NOT_REACHING: Record<string, string> = {
+  unvouched: 'no machine is vouched for yet.',
+  no_machine: 'no machine runs it yet.',
+  lapsed: 'this lending no longer holds.',
+}
+
+/**
+ * What a connection of the viewer's (or an agent's own) is shared as, in plain words, and the
+ * links to the share page. Everything here is read from the list view; nothing signs. Machines
+ * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
+ * are not in this view, so the share page explains them and this links to it.
+ */
+export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+  const { c, canChange = true } = props
+  return (
+    <>
+      {c.owner_key_replaced && (
+        <p role="alert" className="text-[12px] text-warning">{canChange ? KEY_REPLACED : THEIR_KEY_REPLACED}</p>
+      )}
+      <Sharing {...props} />
+    </>
+  )
+}
+
+function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+  if (!c.usable) return null
+  if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
+  const only = canChange ? null : (
+    <span className="block">
+      {c.connected_by_email
+        ? `Connected by ${c.connected_by_email}; only they can change who uses it.`
+        : 'The person who connected it no longer has an account. To change who uses it, disconnect it and connect again.'}
+    </span>
+  )
+  const href = sharePath(c, returnTo)
+  if (c.state === 'unshared') {
+    return (
+      <p className="text-[12px] text-warning">
+        Not shared yet: no agent or computer can use it.{' '}
+        {canChange && <Link to={href} className={shareLink}>Share</Link>}
+        {only}
+      </p>
+    )
+  }
+  const agents = c.statement?.agents ?? []
+  const machines = c.my_machines ?? []
+  const holders = c.holders ?? []
+  const waiting = c.waiting ?? []
+  return (
+    <div className="space-y-0.5 text-[12px] text-muted-foreground">
+      {agents.length > 0 && <p>Lent to: {agents.join(', ')}</p>}
+      {machines.length > 0 && (
+        <p>Used on your computers: {machines.map((m) => `${m.name || 'Unnamed computer'} (${m.fingerprint})`).join(', ')}</p>
+      )}
+      {holders.length > 0 && <p>Held by: {holders.join(', ')}</p>}
+      {(c.unreachable ?? []).map((u) => (
+        <p key={u.agent} className="text-warning">
+          Not reaching {u.agent}: {NOT_REACHING[u.reason]}{' '}
+          {canChange && <Link to={href} className={shareLink}>Open to fix it</Link>}
+        </p>
+      ))}
+      {waiting.length > 0 && (
+        <>
+          <p className="text-warning">
+            Waiting for a machine that holds it: {waiting.map((w) => (w.agent ? `${w.runner} (${w.agent})` : w.runner)).join(', ')}
+          </p>
+          {canChange && <p><Link to={href} className={shareLink}>Give waiting machines a copy</Link></p>}
+        </>
+      )}
+      {canChange ? (
+        <p className="flex flex-wrap gap-x-3">
+          <Link to={href} className={shareLink}>Change who can use it</Link>
+          <Link to={href} className={shareLink}>Open to check its machines</Link>
+        </p>
+      ) : only}
+    </div>
+  )
+}
+
 /** The provider rows, grouped by provider, in the order the API listed them. */
 function groupByProvider(providers: readonly ProviderOut[]): ProviderOut[][] {
   const groups = new Map<string, ProviderOut[]>()
@@ -181,6 +305,7 @@ function ProviderSection({
   connections,
   nameWorkspaces,
   startPath,
+  returnTo,
   busy,
   onDisconnect,
 }: {
@@ -189,7 +314,8 @@ function ProviderSection({
   /** The person has connections in more than one workspace: say which each is in. */
   nameWorkspaces: boolean
   startPath: (workspace: string) => string
-  busy: number | null
+  returnTo: string
+  busy: string | null
   onDisconnect: (c: ConnectionOut) => void
 }) {
   const { name, title } = rows[0]
@@ -216,11 +342,12 @@ function ProviderSection({
                 <p className="text-[12px] text-warning">
                   You are no longer in {workspaceLabel(c)}, so this connection no longer works. Disconnect it.
                 </p>
-              ) : c.needs_reconnect ? (
-                <p className="text-[12px] text-warning">This connection expired or was revoked. Reconnect it.</p>
-              ) : missing ? (
-                <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>
-              ) : null}
+              ) : (
+                <>
+                  <SharingStatus c={c} returnTo={returnTo} />
+                  {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
+                </>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {reconnect && <ConnectLink label="Reconnect" href={startPath(c.workspace ?? '')} />}
