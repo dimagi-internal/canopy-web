@@ -544,13 +544,13 @@ def attach_pending_questions(
         question = pending_question_for(
             project, task, home=home, claude_home=claude_home, emdash_db=emdash_db,
         )
-        # The transcript is the WEAKER source here and has to be, because Claude
-        # Code writes the ask's record only once it is answered — so it reports
-        # dialogs that are over and never one that is waiting. The hook fires
-        # when the ask STARTS, which is the only moment worth reporting; it is
-        # consulted second purely so the durable file wins on a session whose
-        # hooks were never installed. `None` still ships (see the docstring):
-        # that is what retires a menu somebody answered at the laptop.
-        if question is None and hook_menu_for is not None:
-            question = hook_menu_for(project, task)
+        # The hook's copy wins: it fires when the ask starts, and it is the copy
+        # an answer is reconciled onto, so it alone carries `answer_note`. Serving
+        # the transcript's over it brought a refused dialog back with no reason.
+        # An option-less marker never beats a real menu, and the transcript covers
+        # a session whose hooks were never installed. `None` still ships (see the
+        # docstring): that is what retires a menu somebody answered at the laptop.
+        held = hook_menu_for(project, task) if hook_menu_for is not None else None
+        if held is not None and (question is None or held.get("options")):
+            question = held
         s["question"] = question
