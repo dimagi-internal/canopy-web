@@ -30,6 +30,8 @@ import logging
 import subprocess
 import time
 
+from .platform_jobs import no_window
+
 logger = logging.getLogger("canopy_runner")
 
 #: How soon to retry after the candidate list could not be fetched at all. Much
@@ -93,7 +95,7 @@ def token_pairs(*, runner=subprocess.run) -> tuple[set[tuple[str, str]] | None, 
     """
     try:
         r = runner(["gog", "auth", "tokens", "list", "--json"],
-                   capture_output=True, text=True, timeout=30)
+                   capture_output=True, text=True, timeout=30, **no_window())
     except FileNotFoundError:
         return None, "gog not installed"
     except subprocess.TimeoutExpired:

@@ -35,6 +35,7 @@ import urllib.request
 from typing import Callable, Optional
 
 from . import device_key
+from .platform_jobs import no_window
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class RunnerCredential:
         try:
             p = self._run([cli, "vault", "runner-session", "--runner", self._runner_id,
                            "--base-url", self._base_url],
-                          capture_output=True, text=True, timeout=TIMEOUT)
+                          capture_output=True, text=True, timeout=TIMEOUT, **no_window())
         except Exception as exc:  # noqa: BLE001 — never a new failure; the PAT still works
             logger.debug("canopy vault runner-session failed to run: %s", exc)
             return False
