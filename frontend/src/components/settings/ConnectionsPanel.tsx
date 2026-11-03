@@ -106,7 +106,7 @@ const REASONS: Record<string, string> = {
 
 /** Reasons that are a whole sentence, not a continuation of the provider's name. */
 const WHOLE_REASONS: Record<string, string> = {
-  owner_changed: 'Someone else connected this account. Disconnect it first, then connect again.',
+  owner_changed: 'This account is connected with a vault key that is not yours now. Disconnect it first, then connect again.',
   provider_error: 'Salesforce or Google refused this sign-in. Check the app’s settings, then try again.',
 }
 

@@ -79,6 +79,7 @@ def _world() -> tuple[Connection, object]:
         id=FIXTURE["connection"], app=sf_app(ws), provider="salesforce", account_id=state["account_id"],
         account_label=state["account_label"], instance_url="https://acme.my.salesforce.com", user=person,
         sealed=state["sealed"], sealed_digest=state["sealed_digest"], owner_key=KEYS["owner"]["jkt"], signer=person,
+        owner_public_jwk=UserVaultKeyset.objects.get(user=person).public_jwk, owner_user_id=str(person.pk),
         connected_by=person, state=Connection.UNSHARED)
     return conn, person
 

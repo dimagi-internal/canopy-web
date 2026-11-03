@@ -54,7 +54,7 @@ describe('ConnectionsPanel', () => {
   it('names the owner_changed refusal exactly', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     at('/settings?connection=salesforce&status=error&reason=owner_changed')
-    expect(await screen.findByText('Someone else connected this account. Disconnect it first, then connect again.')).toBeTruthy()
+    expect(await screen.findByText('This account is connected with a vault key that is not yours now. Disconnect it first, then connect again.')).toBeTruthy()
   })
 
   it('shows what the grant allows', async () => {

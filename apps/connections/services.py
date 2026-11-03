@@ -602,6 +602,8 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "access_sig": None,
         "access_expires_at": None,
         "owner_key": owner_key,
+        "owner_public_jwk": keyset.public_jwk,
+        "owner_user_id": str(keyset.user_id),
         "signer": keyset.user,
         "refresh_failed_at": None,
         "connected_by": by,

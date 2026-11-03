@@ -54,8 +54,8 @@ def _owner_keyset(conn: Connection, user, by_jkt: str | None = None) -> UserVaul
     if (ks is None or conn.signer_id != user.pk or not conn.owner_key or jkt != conn.owner_key
             or (by_jkt is not None and by_jkt != jkt)):
         raise WireError(403, "not_the_owner_key",
-                        "Only the person whose vault key this connection was sealed to can share it. "
-                        "Disconnect it, then connect it again to share it yourself.")
+                        "Only the vault key this connection was sealed to can share it, and yours is not that "
+                        "key now. Disconnect it, then connect it again to share it yourself.")
     return ks
 
 
@@ -102,7 +102,7 @@ def share_state(conn: Connection, user) -> dict:
         "statement": conn.statement, "statement_sig": conn.statement_sig,
         "endorsers": (conn.statement or {}).get("endorsers", []),
         "owner_agent": _agent_out(conn.agent) if conn.agent_id is not None else None,
-        "owner": {"user_id": str(user.pk), "public_jwk": ks.public_jwk},
+        "owner": tokens._owner(conn),
         "candidates": candidates, "endorsements": endorsements,
         "agents": [_agent_out(a) for a in agents],
     }

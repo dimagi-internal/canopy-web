@@ -262,7 +262,7 @@ def sealed_to_owner(owner_kw, signer, *, app=None, **fields) -> Connection:
     `signer`'s member key only (their `vault_key` must exist), `owner_key` its thumbprint."""
     ks = UserVaultKeyset.objects.get(user=signer)
     conn = _stored(owner_kw, signer, app=app, sealed="", owner_key=zk_ref.jkt(zk.public_key(ks.public_jwk)),
-                   signer=signer, **fields)
+                   owner_public_jwk=ks.public_jwk, owner_user_id=str(signer.pk), signer=signer, **fields)
     conn.sealed = zk_seal.seal_to(_refresh_plain(conn), agent_id=conn.binding, name="refresh", kv=0,
                                   recipients=[("member", str(signer.pk), ks.public_jwk)])
     conn.sealed_digest = hashlib.sha256(conn.sealed.encode()).hexdigest()

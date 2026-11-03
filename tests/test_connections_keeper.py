@@ -26,17 +26,29 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk, zk_seal
-from apps.agents.models import AgentAdmin
+from apps.agents.models import AgentAdmin, AgentVaultEndorsement
 from apps.common import ticks
-from apps.connections import keeper, services
+from apps.connections import keeper, services, sharing
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection, ConnectionApp
 from apps.events.models import Event
+from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerAccessToken, Turn
 from apps.mcp import api_tools
 from apps.workspaces.models import WorkspaceMembership
-from tests.fixtures.connections import REDIRECT, REVOKE_URL, FakeSF, ShareWorld, _stored, sealed_to_owner, sf_app
+from tests.fixtures.connections import (
+    REDIRECT,
+    REVOKE_URL,
+    FakeSF,
+    ShareWorld,
+    _stored,
+    browser_share,
+    sealed_to_owner,
+    sf_app,
+    vault_key,
+)
 from tests.fixtures.vault_zk import conn_ref
+from tests.fixtures.vault_zk import ref as zk_ref
 
 pytestmark = pytest.mark.django_db
 
@@ -492,6 +504,99 @@ def test_a_person_with_a_row_deleted_at_once_connects_again_freely(world):
     with FakeSF():
         conn = _connect(world, ("user", world.person.pk), world.person)
     assert conn.state == Connection.UNSHARED
+
+
+# ---- an owner key replaced, or its signer gone ---------------------------------------
+
+def _validates_as_a_box_does(body, owner_key):
+    """What a box checks before trusting anything: the key shown has the thumbprint sealed
+    in the envelope, and the statement verifies under it."""
+    jwk = body["owner"]["public_jwk"]
+    assert jwk and device_keys.thumbprint(jwk) == owner_key
+    assert body["owner"]["user_id"]
+    assert conn_ref.verify_statement(body["statement"], body["statement_sig"], zk.public_key(jwk))
+
+
+def test_a_person_who_replaced_their_key_disconnects_a_holder_revokes_and_they_connect(world):
+    conn = world.shared(world.persons(), agents=[world.eva])
+    old_key = conn.owner_key
+    vault_key(world.person)
+
+    # Boxes keep being able to judge it.
+    r = material(world, "eva-cloud")
+    assert r.status_code == 200, r.content
+    _validates_as_a_box_does(r.json(), old_key)
+    # The share page explains; connecting straight over it is refused (R10).
+    c = Client()
+    c.force_login(world.person)
+    r = c.get(f"/api/connections/{conn.pk}/share")
+    assert r.status_code == 403 and r.json()["error"] == "not_the_owner_key"
+    assert "Disconnect it, then connect it again" in r.json()["detail"]
+    with FakeSF(), pytest.raises(services.ConnectionError) as e:
+        _connect(world, ("user", world.person.pk), world.person)
+    assert e.value.code == "owner_changed"
+
+    # The way out: disconnect, a holder can read it and revokes it, connect again.
+    assert c.delete(f"/api/connections/{conn.pk}").status_code == 204
+    [item] = work(world, "eva-cloud").json()["connections"]
+    assert item["revoking"] is True
+    _validates_as_a_box_does(item, old_key)
+    assert confirm(world, "eva-cloud", conn).status_code == 204
+    with FakeSF():
+        fresh = _connect(world, ("user", world.person.pk), world.person)
+    assert fresh.pk != conn.pk and fresh.owner_key != old_key
+    assert device_keys.thumbprint(fresh.owner_public_jwk) == fresh.owner_key
+
+
+def _adas_connection(world):
+    """eva's, connected and shared by ada, who could be deleted: eva-cloud vouched for by jj,
+    whom she names, and sealed to it."""
+    conn = sealed_to_owner({"agent": world.eva}, world.ada, app=world.app)
+    box = ("device", world.eva_box.ecdh_jkt, world.eva_box.ecdh_public_jwk)
+    jj = zk_ref.jkt(world.person_priv.public_key())
+    return sharing.share(conn, user=world.ada, **browser_share(conn, world.ada, world.ada_priv, agents=[world.eva],
+                                                               to=[box], endorsers=[jj]))
+
+
+def test_an_agents_connection_whose_signer_was_deleted_can_still_be_revoked(world):
+    conn = _adas_connection(world)
+    signer_id, old_key = str(world.ada.pk), conn.owner_key
+    world.ada.delete()
+    conn.refresh_from_db()
+    assert conn.signer_id is None
+
+    services.disconnect(conn, by=world.op)
+    conn.refresh_from_db()
+    assert conn.state == Connection.REVOKING
+    [item] = work(world, "eva-cloud").json()["connections"]
+    assert item["revoking"] is True and item["owner"]["user_id"] == signer_id
+    _validates_as_a_box_does(item, old_key)
+    assert confirm(world, "eva-cloud", conn).status_code == 204
+    assert not Connection.objects.filter(pk=conn.pk).exists()
+
+
+def test_an_envelope_no_holder_could_accept_is_deleted_at_once_on_disconnect(world):
+    # A device wrote it, and the only endorsement of that device went with its deleted signer.
+    conn = _adas_connection(world)
+    AgentVaultEndorsement.objects.filter(target=world.eva_box.ecdh_jkt).delete()
+    conn.sealed_sig = {**conn.sealed_sig, "by": {"kind": "device", "target": world.eva_box.ecdh_jkt,
+                                                 "public_jwk": world.eva_box.ecdh_public_jwk}}
+    conn.save()
+    assert rcpt.revokers(conn) == []
+    services.disconnect(conn, by=world.op)
+    assert not Connection.objects.filter(pk=conn.pk).exists()
+
+
+def test_a_replaced_key_still_verifies_what_the_owner_vouched_for_and_only_that(world):
+    conn = world.shared(world.persons(), agents=[world.eva])
+    new = vault_key(world.person)
+    # The owner's old endorsement stands, under the old key, for this connection.
+    assert world.eva_box.ecdh_jkt in {t for k, t, _ in rcpt.recipients(conn) if k == "device"}
+    # A row claiming to be the owner's, signed by the new key, does not.
+    forged = zk_ref.endorse(world.eva.pk, "device", world.eva_box.ecdh_jkt, zk.public_key(world.eva_box.ecdh_public_jwk),
+                            new, world.person.pk)
+    AgentVaultEndorsement.objects.filter(target=world.eva_box.ecdh_jkt).update(sig=forged["sig"])
+    assert world.eva_box.ecdh_jkt not in {t for k, t, _ in rcpt.recipients(conn) if k == "device"}
 
 
 # ---- not model tools -------------------------------------------------------------------

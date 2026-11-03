@@ -19,6 +19,7 @@ from apps.agents.credentials import zk, zk_seal
 from apps.agents.models import Agent, AgentVaultEndorsement
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection, ConnectionGrant
+from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace
@@ -92,11 +93,13 @@ def test_an_agent_moved_out_of_the_apps_workspace_is_not_in_force(world):
     assert [a.slug for a in rcpt.grants_in_force(conn)] == ["eva"]
 
 
-def test_owner_member_is_gone_once_the_signer_changes_their_vault_key(world):
+def test_owner_member_stays_the_key_the_envelope_names_after_the_signer_replaced_it(world):
     conn = world.persons()
-    assert rcpt.owner_member(conn)[:2] == ("member", str(world.person.pk))
+    before = rcpt.owner_member(conn)
+    assert before[:2] == ("member", str(world.person.pk))
+    assert device_keys.thumbprint(before[2]) == conn.owner_key
     vault_key(world.person)
-    assert rcpt.owner_member(conn) is None
+    assert rcpt.owner_member(conn) == before
 
 
 def test_holders_and_waiting(world):

@@ -29,6 +29,8 @@ const RECONNECTED = 'This connection was reconnected. If you did not just do tha
 const CHANGED = 'This connection changed in another tab or computer. Loading it again.'
 const RELOCK = 'Unlock your vault key and try again.'
 const NOT_YOURS = "This connection isn't yours to share."
+const KEY_MOVED = 'To share it, disconnect it in Settings, then connect it again.'
+const CANNOT_OPEN = "You can't open this connection's sharing right now."
 const UNSAFE = "This connection can't be opened safely. Reconnect it."
 
 interface Opened {
@@ -63,6 +65,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   const [notice, setNotice] = useState('')
   const [dropped, setDropped] = useState<string[]>([])
   const [notYours, setNotYours] = useState(false)
+  const [notOwnerKey, setNotOwnerKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [agents, setAgents] = useState<Set<string>>(new Set())
   const [computers, setComputers] = useState<Set<string>>(new Set())
@@ -73,7 +76,9 @@ export function ShareConnectionPage(): JSX.Element | null {
       .then((s) => !cancelled && setState(s))
       .catch((e: unknown) => {
         if (cancelled) return
-        if (e instanceof ApiError && (e.status === 404 || e.status === 403)) setNotYours(true)
+        if (e instanceof ApiError && e.code === 'not_the_owner_key') setNotOwnerKey(e.detail || NOT_YOURS)
+        else if (e instanceof ApiError && e.status === 404) setNotYours(true)
+        else if (e instanceof ApiError && e.status === 403) setLoadError(e.detail ? `${CANNOT_OPEN} ${e.detail}` : CANNOT_OPEN)
         else setLoadError(e instanceof Error ? e.message : 'Could not read this connection.')
       })
     return () => { cancelled = true; me.current = null }
@@ -95,6 +100,15 @@ export function ShareConnectionPage(): JSX.Element | null {
     return (
       <div className="max-w-2xl space-y-2">
         <p role="alert" className="text-sm text-destructive">{NOT_YOURS}</p>
+        <Link to={returnTo} className="text-sm text-primary underline">Back</Link>
+      </div>
+    )
+  }
+  if (notOwnerKey) {
+    return (
+      <div className="max-w-2xl space-y-2">
+        <p role="alert" className="text-sm text-destructive">{notOwnerKey}</p>
+        <p className="text-sm text-foreground">{KEY_MOVED}</p>
         <Link to={returnTo} className="text-sm text-primary underline">Back</Link>
       </div>
     )

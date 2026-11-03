@@ -147,6 +147,12 @@ class Connection(models.Model):
     signer = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )
+    # That key and that person as they were at connect, kept so machines can still judge
+    # and revoke this row after the signer replaced their key or was deleted. A convenience
+    # and never a trust: a reader checks this key's thumbprint against the `owner_key`
+    # sealed in the envelope, so a server that changes these only gets itself refused.
+    owner_public_jwk = models.JSONField(default=dict, blank=True)
+    owner_user_id = models.CharField(max_length=32, blank=True, default="")
     # The owner's signed grant statement (the machines it may reach); version 0 = none yet.
     statement = models.JSONField(null=True, blank=True)
     statement_sig = models.CharField(max_length=128, blank=True, default="")

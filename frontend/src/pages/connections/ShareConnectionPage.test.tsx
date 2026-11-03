@@ -280,11 +280,28 @@ describe('ShareConnectionPage: fixes', () => {
     expect(screen.getByRole('button', { name: /unlock/i })).toBeTruthy()
   })
 
-  it.each([404, 403])('a %s on load says it is not theirs, with a link back', async (status) => {
-    getShareState.mockRejectedValue(apiError(status, 'not_the_owner_key'))
+  it('a 404 on load says it is not theirs, with a link back', async () => {
+    getShareState.mockRejectedValue(apiError(404, ''))
     open()
     expect(await screen.findByText("This connection isn't yours to share.")).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/settings/connections')
+  })
+
+  it("not_the_owner_key shows the server's reason and the way out, not \"isn't yours\"", async () => {
+    const detail = 'Only the vault key this connection was sealed to can share it, and yours is not that key now.'
+    getShareState.mockRejectedValue(new ApiError(403, detail, { status: 403, error: 'not_the_owner_key', detail }))
+    open()
+    expect(await screen.findByText(detail)).toBeTruthy()
+    expect(screen.getByText('To share it, disconnect it in Settings, then connect it again.')).toBeTruthy()
+    expect(screen.queryByText("This connection isn't yours to share.")).toBeNull()
+    expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/settings/connections')
+  })
+
+  it('any other 403 does not claim it is not theirs', async () => {
+    getShareState.mockRejectedValue(new ApiError(403, 'x', { status: 403, error: 'step_up_failed', detail: 'Try again.' }))
+    open()
+    expect(await screen.findByText("You can't open this connection's sharing right now. Try again.")).toBeTruthy()
+    expect(screen.queryByText("This connection isn't yours to share.")).toBeNull()
   })
 
   it('goes back through the router to return_to, not a full page load', async () => {

@@ -18,8 +18,7 @@ never this list; what this module computes can only NARROW it:
   person the statement lists in `endorsers` vouches for its exact key for that
   agent (`_vouched`, contract §0.5): what is listed here is never something a box
   would refuse;
-- plus the owner's member key, while it is still the key the envelope names
-  (`owner_member`).
+- plus the owner's member key, the one the envelope names (`owner_member`).
 
 A recipient that stops qualifying is pruned from both envelopes without
 decrypting anything (`prune`), except one active cloud box when no remaining
@@ -35,7 +34,6 @@ from apps.agents.models import Agent
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerDeviceKey
 from apps.harness.routing import ServingFacts
-from apps.passkeys.models import UserVaultKeyset
 
 from . import wire
 from .models import Connection
@@ -117,6 +115,18 @@ def endorsements_for(agent: Agent, facts: ServingFacts | None = None) -> list[di
     return facts.once(("endorsements", agent.pk), lambda: zk_endorse.endorsements(agent, facts))
 
 
+def as_signed(conn: Connection, endorsements: list[dict]) -> list[dict]:
+    """`endorsements` with the key each of the owner's was signed by. An endorsement names
+    its endorser's CURRENT key, so one the owner signed before replacing theirs would verify
+    against nothing and every machine they vouched for would drop out. Nothing is believed
+    because of this: a reader still verifies the signature under this key and takes the
+    signer's thumbprint from it."""
+    if not conn.owner_key or not conn.owner_public_jwk:
+        return endorsements
+    return [{**e, "by_public_jwk": conn.owner_public_jwk} if e.get("by_jkt") == conn.owner_key else e
+            for e in endorsements]
+
+
 def _agent_devices(conn: Connection, agent: Agent, facts: ServingFacts) -> list[RunnerDeviceKey]:
     if conn.agent_id is not None:
         # An agent's own: every machine that runs it and whose owner may hold it. A
@@ -136,12 +146,12 @@ def my_machines(user, jkts=None) -> list[RunnerDeviceKey]:
             if accounts.may_hold_for(k.runner, user, own_use=True)]
 
 
-def _vouched(agent: Agent, trusted: set[str], facts: ServingFacts) -> set[str]:
+def _vouched(conn: Connection, agent: Agent, trusted: set[str], facts: ServingFacts) -> set[str]:
     """The ECDH thumbprints of the machines a person key in `trusted` vouches for, for
     `agent`, by the check a box makes (contract §0.5) on the endorsements it is handed:
     the endorser is who the key that verifies the signature says, not what a row claims."""
     out = set()
-    for e in endorsements_for(agent, facts):
+    for e in as_signed(conn, endorsements_for(agent, facts)):
         jwk = e["by_public_jwk"]
         if (e["kind"] == "device" and e["target"] == e["key_jkt"] and jwk
                 and device_keys.thumbprint(jwk) in trusted
@@ -163,7 +173,7 @@ def device_reasons(conn: Connection, statement: dict | None = None,
     out: list[tuple[RunnerDeviceKey, Agent | None]] = []
     facts = facts or (device_keys.serving_facts(agents) if agents else None)
     for a in agents:
-        vouched = _vouched(a, trusted, facts)
+        vouched = _vouched(conn, a, trusted, facts)
         out += [(k, a) for k in _agent_devices(conn, a, facts) if k.ecdh_jkt in vouched]
     if conn.user_id is not None and st.get("my_computers"):
         out += [(k, None) for k in my_machines(conn.user, st["my_computers"])]
@@ -196,15 +206,13 @@ def devices(conn: Connection, statement: dict | None = None) -> list[RunnerDevic
 
 
 def owner_member(conn: Connection) -> Recipient | None:
-    """`("member", user id, public JWK)` of the signer while their vault key is still
-    the one the envelope names (`owner_key`); None once it is not (R10: disconnect it,
-    then connect again)."""
-    if conn.signer_id is None or not conn.owner_key:
+    """`("member", user id, public JWK)` of the key the envelope names (`owner_key`), as
+    stored at connect. It stays while the row does, even once the signer replaced that key
+    or was deleted: a machine seals to it because its thumbprint is `owner_key`, and the
+    way off it is to disconnect and connect again (R10). None for a row with no such key."""
+    if not conn.owner_user_id or not conn.owner_public_jwk or not conn.owner_key:
         return None
-    ks = UserVaultKeyset.objects.filter(user_id=conn.signer_id).first()
-    if ks is None or device_keys.thumbprint(ks.public_jwk) != conn.owner_key:
-        return None
-    return ("member", str(ks.user_id), ks.public_jwk)
+    return ("member", conn.owner_user_id, conn.owner_public_jwk)
 
 
 def recipients(conn: Connection, statement: dict | None = None) -> list[Recipient]:
@@ -253,10 +261,41 @@ def _revokers(jkts) -> list[str]:
         .values_list("ecdh_jkt", flat=True))
 
 
+def _writer_provable(conn: Connection, sig: dict | None) -> bool:
+    """Could a machine accept the envelope `sig` belongs to? Its writer must be the owner's
+    key, one of the statement's computers, or a device a key the statement names vouches
+    for: the check a box makes before it uses, or revokes, anything (contract §0.4)."""
+    by = (sig or {}).get("by") or {}
+    if by.get("kind") == "member":
+        return by.get("target") == conn.owner_user_id
+    target = by.get("target")
+    if by.get("kind") != "device" or not target:
+        return False
+    st = conn.statement or {}
+    if target in st.get("my_computers", []):
+        return True
+    trusted = {conn.owner_key, *st.get("endorsers", [])} - {""}
+    agents = statement_agent_pks(st)
+    for e in as_signed(conn, zk_endorse.endorsements_of_device(agents, target)):
+        jwk = e["by_public_jwk"]
+        if (jwk and device_keys.thumbprint(jwk) in trusted
+                and zk_endorse.verify(e["agent_id"], kind="device", target=target, key_jkt=target, sig=e["sig"],
+                                      endorser_jwk=jwk)):
+            return True
+    return False
+
+
 def revokers(conn: Connection) -> list[str]:
-    """The machines holding `conn` that could revoke it (`_revokers`): an active cloud
-    box it is sealed to. None means nothing ever will: a disconnect deletes it at once."""
-    return _revokers(t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device")
+    """The machines holding `conn` that could revoke it now: an active cloud box it is
+    sealed to (`_revokers`), and an envelope that box can accept. A signer deleted with
+    their endorsements can leave one no machine will read, which no holder will ever
+    revoke. None means nothing will: a disconnect deletes it at once."""
+    able = _revokers(t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device")
+    if not able or not _writer_provable(conn, conn.sealed_sig):
+        return []
+    if conn.access_sealed and not _writer_provable(conn, conn.access_sig):
+        return []
+    return able
 
 
 def _last_holder(kept: set[tuple[str, str]], dropped: set[tuple[str, str]]) -> tuple[str, str] | None:

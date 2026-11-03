@@ -31,7 +31,6 @@ from django.utils import timezone
 from apps.agents.credentials import delegations, vault_engine, zk_endorse, zk_seal
 from apps.agents.credentials.zk import ZkError
 from apps.harness.models import RunnerDeviceKey
-from apps.passkeys.models import UserVaultKeyset
 
 from . import providers, services, wire
 from . import recipients as rcpt
@@ -93,10 +92,10 @@ def _lease_view(conn: Connection, key: RunnerDeviceKey, now: datetime) -> dict |
 
 
 def _owner(conn: Connection) -> dict:
-    # The signer's current key: a machine checks its thumbprint against the
-    # `owner_key` sealed in the envelope, so a changed key is refused there.
-    ks = UserVaultKeyset.objects.filter(user_id=conn.signer_id).first() if conn.signer_id else None
-    return {"user_id": str(conn.signer_id or ""), "public_jwk": ks.public_jwk if ks is not None else {}}
+    # The key as it was at connect, so a signer who replaced theirs or was deleted leaves a
+    # connection machines can still read and revoke. A machine trusts it only because its
+    # thumbprint is the `owner_key` sealed in the envelope.
+    return {"user_id": conn.owner_user_id, "public_jwk": conn.owner_public_jwk}
 
 
 def _record_issued(conn: Connection, key: RunnerDeviceKey, *, turn, runner) -> None:
@@ -199,8 +198,9 @@ def with_writer_endorsements(conn: Connection, endorsements: list[dict]) -> list
     agent_pks = rcpt.statement_agent_pks(conn.statement)
     have = {(e["agent_id"], e["by"], e["target"]) for e in endorsements}
     # None left (say the key was deleted): this still answers; the reader refuses.
-    return endorsements + [e for jkt in sorted(writers) for e in zk_endorse.endorsements_of_device(agent_pks, jkt)
-                           if (e["agent_id"], e["by"], e["target"]) not in have]
+    return rcpt.as_signed(conn, endorsements + [
+        e for jkt in sorted(writers) for e in zk_endorse.endorsements_of_device(agent_pks, jkt)
+        if (e["agent_id"], e["by"], e["target"]) not in have])
 
 
 # ---- the lease ----------------------------------------------------------------------
