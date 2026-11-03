@@ -62,6 +62,7 @@ function member(overrides: Partial<MemberOut> = {}): MemberOut {
   return {
     user_id: 1,
     email: 'alice@dimagi.com',
+    display_name: 'Alice',
     role: 'owner',
     joined_at: '2026-01-01T00:00:00Z',
     inherited: false,
