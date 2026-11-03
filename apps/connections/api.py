@@ -309,9 +309,12 @@ def set_server_use(request: HttpRequest, connection_id: uuid.UUID, payload: Serv
 @router.delete("/{connection_id}", response=DisconnectOut, summary="Disconnect one of my connections")
 @gate("self", setting=True)
 def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> DisconnectOut:
-    """Disconnect it: it leaves every list at once and is handed to no machine; a
-    cloud box that holds it revokes it at the provider and it is then deleted
-    (`outcome` `revoking`). With none to do that it is deleted at once (`deleted`).
+    """Disconnect it: it leaves every list at once and is handed to no machine.
+    canopy-web's own key, where it is sealed to it, ends it at the provider now
+    (`outcome` `revoked`). Otherwise a cloud box that holds it (`machine_revokes`) or
+    canopy-web's retries revoke it and it is then deleted (`revoking`). With nothing to
+    revoke it, or another connection of the account needing the sign-in, it is deleted
+    at once (`deleted`).
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
     conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
@@ -354,7 +357,7 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
 @gate("agent-admin", setting=True, step_up=True)
 def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: uuid.UUID) -> DisconnectOut:
     """Stop this agent using this connection; agents it is lent to lose it too. `outcome`
-    says whether a machine will revoke it or its copy was deleted at once, as for a
+    says whether it was revoked, will be, or its copy was deleted at once, as for a
     person's. From a browser this needs a fresh passkey check."""
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):

@@ -402,6 +402,7 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
     })
     at('/settings')
     expect(await screen.findByText("canopy-web couldn't be reached when this was connected. Connect again to fix it.")).toBeTruthy()
+    expect(screen.queryByText(/Share it again/)).toBeNull()
     expect(screen.getByText('Not working')).toBeTruthy()
     expect(screen.queryByText('Off')).toBeNull()
     expect(screen.queryByText('On')).toBeNull()
@@ -417,6 +418,8 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
     at('/settings')
     expect(await screen.findByText('Not working')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Turn off Used by canopy-web' })).toBeTruthy()
+    expect(screen.getByText("canopy-web can't open this sign-in. Share it again to fix it; connecting again would stop your machines.")).toBeTruthy()
+    expect(screen.queryByText(/Connect again to fix it/)).toBeNull()
   })
 
   describe('the key cannot be read right now (null)', () => {

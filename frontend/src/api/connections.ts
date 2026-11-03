@@ -1,4 +1,4 @@
-// OAuth connections, whose tokens canopy-web cannot read: `apps/connections/api.py`. Which providers exist
+// OAuth connections, whose tokens canopy-web can read only with the owner's switch on: `apps/connections/api.py`. Which providers exist
 // (and what to call them) comes from the API's `providers`, never from here.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
@@ -46,7 +46,7 @@ export async function disconnectMine(id: string): Promise<DisconnectOut> {
 }
 
 // ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----
-// canopy-web never opens these envelopes. Sharing needs a fresh passkey; the step-up
+// canopy-web opens these envelopes only if the owner's statement names it. Sharing needs a fresh passkey; the step-up
 // middleware answers that, and refusals carry their `code` on the `ApiError`.
 
 export async function getShareState(id: string): Promise<ShareStateOut> {

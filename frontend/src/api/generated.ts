@@ -488,9 +488,12 @@ export interface paths {
         readonly post?: never;
         /**
          * Disconnect one of my connections
-         * @description Disconnect it: it leaves every list at once and is handed to no machine; a
-         *     cloud box that holds it revokes it at the provider and it is then deleted
-         *     (`outcome` `revoking`). With none to do that it is deleted at once (`deleted`).
+         * @description Disconnect it: it leaves every list at once and is handed to no machine.
+         *     canopy-web's own key, where it is sealed to it, ends it at the provider now
+         *     (`outcome` `revoked`). Otherwise a cloud box that holds it (`machine_revokes`) or
+         *     canopy-web's retries revoke it and it is then deleted (`revoking`). With nothing to
+         *     revoke it, or another connection of the account needing the sign-in, it is deleted
+         *     at once (`deleted`).
          *
          *     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed.
          */
@@ -6647,7 +6650,7 @@ export interface paths {
         /**
          * Disconnect an agent's connection
          * @description Stop this agent using this connection; agents it is lent to lose it too. `outcome`
-         *     says whether a machine will revoke it or its copy was deleted at once, as for a
+         *     says whether it was revoked, will be, or its copy was deleted at once, as for a
          *     person's. From a browser this needs a fresh passkey check.
          */
         readonly delete: operations["disconnect_agent_connection"];

@@ -325,6 +325,7 @@ const NOT_WORKING = 'Not working'
 const USED_BY_WHY = 'With this on, project screens and apps can use this account with nobody present. '
   + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
 const UNREACHED = "canopy-web couldn't be reached when this was connected. Connect again to fix it."
+const UNREACHED_SHARED = "canopy-web can't open this sign-in. Share it again to fix it; connecting again would stop your machines."
 const UNREACHABLE_NOW = "canopy-web can't be reached right now. Nothing needs doing; this usually clears on its own."
 const DEAD_SIGN_IN = 'Reconnect required. This sign-in stopped working, so nothing can use it until you connect it again.'
 const NEEDS_PASSKEY = 'Changing this needs your passkey.'
@@ -388,7 +389,7 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
           </>
         )}
       </p>
-      {stuck && <p className="text-warning">{UNREACHED}</p>}
+      {stuck && <p className="text-warning">{c.state === 'active' ? UNREACHED_SHARED : UNREACHED}</p>}
       {unknown && <p>{UNREACHABLE_NOW}</p>}
       <p>{USED_BY_WHY}</p>
       {canChange && !((on || stuck) && c.state === 'unshared') && <p>{NEEDS_PASSKEY}</p>}

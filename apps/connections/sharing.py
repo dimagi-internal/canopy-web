@@ -1,7 +1,8 @@
 """The owner shares a connection: a signed grant statement and an envelope their
 browser re-sealed to the machines it allows.
 
-canopy-web never opens the envelope and never signs. The owner's browser opens
+canopy-web signs nothing, and opens the envelope only if the statement names it
+(`canopy_web`), which only the owner can sign. The owner's browser opens
 the refresh token with their vault key, signs the statement (contract §0.3) and
 seals the token again to its owner and the devices the statement allows, with
 a writer MAC per recipient (§0.4). Here canopy-web checks what it can:
