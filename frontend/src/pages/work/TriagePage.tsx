@@ -21,6 +21,7 @@ import { usePeek } from '@/components/work/usePeek'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
+import { Th } from '@/components/DataTable'
 
 /** How long a burst of task changes waits before Triage re-reads. */
 const REFRESH_DEBOUNCE_MS = 600
@@ -253,7 +254,7 @@ export function TriagePage(): JSX.Element {
             </colgroup>
             <thead>
               <tr className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                <th className="px-2 py-1.5 font-medium">Kind</th>
+                <Th density="tight">Kind</Th>
                 <th className="sr-only">Priority</th>
                 <th className="px-1 py-1.5 font-medium">Key</th>
                 <th className="py-1.5 font-medium">What and why</th>

@@ -9,6 +9,7 @@ import { roleAllows } from '@/lib/workspaceRoles'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { CapabilityRow, LeaseTable } from './CapabilityParts'
+import { Th } from '@/components/DataTable'
 
 // WHAT CLOUD MACHINES THIS AGENT MAY LEASE, and the one place a workspace admin
 // says yes (docs/architecture/capabilities.md).
@@ -73,12 +74,12 @@ export function AgentCapabilitiesSection() {
           <table className="w-full text-left text-[12px]">
             <thead className="border-b border-border text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Capability</th>
-                <th className="px-3 py-2 font-medium">Kind</th>
-                <th className="px-3 py-2 font-medium">Where</th>
-                <th className="px-3 py-2 font-medium">Limits</th>
-                <th className="px-3 py-2 font-medium">Grant</th>
-                {canGrant && <th className="px-3 py-2 font-medium" aria-label="Actions" />}
+                <Th density="roomy">Capability</Th>
+                <Th density="roomy">Kind</Th>
+                <Th density="roomy">Where</Th>
+                <Th density="roomy">Limits</Th>
+                <Th density="roomy">Grant</Th>
+                {canGrant && <Th density="roomy" aria-label="Actions" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">

@@ -9,6 +9,7 @@ import {
   RunnerInvitationError,
   type RunnerInvitationOut,
 } from '@/api/runnerInvitations'
+import { Th } from '@/components/DataTable'
 
 const STATUS_TEXT: Record<RunnerInvitationOut['status'], string> = {
   pending: 'Waiting for your approval.',
@@ -151,10 +152,10 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
             <table className="mt-4 w-full text-left text-[13px]" aria-label="Runners">
               <thead className="text-[12px] text-muted-foreground">
                 <tr>
-                  <th className="py-1 pr-3 font-medium">Runner</th>
-                  <th className="py-1 pr-3 font-medium">Serves</th>
-                  <th className="py-1 pr-3 font-medium">Workspace</th>
-                  <th className="py-1 font-medium">Paired</th>
+                  <Th density="compact-gap">Runner</Th>
+                  <Th density="compact-gap">Serves</Th>
+                  <Th density="compact-gap">Workspace</Th>
+                  <Th>Paired</Th>
                 </tr>
               </thead>
               <tbody>

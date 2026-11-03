@@ -8,6 +8,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { statusTone } from '@/pages/runnerTopology'
 import { fixHref } from '@/components/supervisor/RunnerHealth'
 import { runnerHref, scopedPath } from '../../lib/scopedLinks'
+import { Th } from '@/components/DataTable'
 
 // THE RUNNER TABLE — one table for Health and Topology → Runners, over the
 // topology's own runner rows (`harness.topology.build`). Facts and states only:
@@ -47,7 +48,7 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
     <div className="overflow-x-auto">
       <table className="w-full min-w-[960px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="runners-table">
         <thead className="text-left text-muted-foreground">
-          <tr><th className="py-1 font-medium">Runner</th><th className="font-medium">Owner</th>
+          <tr><Th>Runner</Th><th className="font-medium">Owner</th>
             <th className="font-medium">Status</th><th className="font-medium" title="Running the code the deployed server expects">Code</th>
             <th className="font-medium">Its own checks</th><th className="font-medium text-right">Agents</th>
             <th className="font-medium" title="When the box last sent the token counts of its sessions">Usage report</th>

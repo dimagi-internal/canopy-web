@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 
 import { fetchInboundLog, type MailInboundLogOut } from '@/api/mail'
 import { relativeAge } from '@/lib/relativeAge'
+import { Th } from '@/components/DataTable'
 
 // What happened to each message that reached a domain: forwarded, handed to an agent, or
 // dropped and why. Metadata only (no bodies), kept for `retention_days`. For "I sent mail
@@ -67,11 +68,11 @@ export function InboundMailLog({ workspace, domainId }: { workspace: string; dom
         <table className="mt-1 w-full text-[12px]">
           <thead className="text-left text-muted-foreground">
             <tr className="border-b border-border">
-              <th className="py-1 pr-3 font-medium">When</th>
-              <th className="py-1 pr-3 font-medium">To</th>
-              <th className="py-1 pr-3 font-medium">From</th>
-              <th className="py-1 pr-3 font-medium">Subject</th>
-              <th className="py-1 font-medium">What happened</th>
+              <Th density="compact-gap">When</Th>
+              <Th density="compact-gap">To</Th>
+              <Th density="compact-gap">From</Th>
+              <Th density="compact-gap">Subject</Th>
+              <Th>What happened</Th>
             </tr>
           </thead>
           <tbody>

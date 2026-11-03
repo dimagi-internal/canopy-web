@@ -6,6 +6,7 @@ import { Button } from 'canopy-ui/ui'
 import { createMilestone, deleteMilestone, updateMilestone, type Milestone } from '@/api/work'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { ProgressBar } from '@/components/work/projectBits'
+import { Th } from '@/components/DataTable'
 
 export function MilestonesSection({
   milestones,
@@ -39,8 +40,8 @@ export function MilestonesSection({
             <thead className="border-b border-border">
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                 <th className="px-3 py-1.5 font-medium">Milestone</th>
-                <th className="px-2 py-1.5 font-medium">Progress</th>
-                <th className="px-2 py-1.5 font-medium">Target</th>
+                <Th density="tight">Progress</Th>
+                <Th density="tight">Target</Th>
                 {editable && <th className="w-16 px-2 py-1.5" aria-label="Actions" />}
               </tr>
             </thead>

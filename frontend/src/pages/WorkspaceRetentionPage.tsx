@@ -13,6 +13,7 @@ import {
 } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { ApiError } from '@/api/problem'
+import { Th } from '@/components/DataTable'
 
 // How long this workspace keeps the CONTENT of its chats and turns
 // (apps/retention). Any member can read the policy, since it decides when their
@@ -167,9 +168,9 @@ export function WorkspaceRetentionPage(): JSX.Element {
           <table className="mt-2 w-full text-[12px]" data-testid="retention-rules">
             <thead className="text-left text-muted-foreground">
               <tr className="border-b border-border">
-                <th className="py-1 pr-3 font-medium">Rule</th>
-                <th className="py-1 pr-3 font-medium">Why</th>
-                <th className="py-1 pr-3 font-medium">Set by</th>
+                <Th density="compact-gap">Rule</Th>
+                <Th density="compact-gap">Why</Th>
+                <Th density="compact-gap">Set by</Th>
                 {manage && <th className="py-1" />}
               </tr>
             </thead>

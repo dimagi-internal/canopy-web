@@ -6,6 +6,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { DailyBars } from './DailyBars'
 import { AdminOnly, HealthViews } from './HealthViews'
 import { useTreeRead } from './useTreeRead'
+import { Th } from '@/components/DataTable'
 
 // WORKSPACE ANALYTICS: turns, chats, messages, tokens and people over time,
 // across this workspace and (by default) every one below it. Every number comes
@@ -106,7 +107,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         <h2 className="mb-2 text-[13px] font-semibold text-foreground">People</h2>
         <table className="w-full min-w-[920px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="analytics-people">
           <thead className="text-left text-muted-foreground">
-            <tr><th className="py-1 font-medium">Person</th><NumHead>Active days</NumHead><NumHead>Messages</NumHead><NumHead>Turns</NumHead>
+            <tr><Th>Person</Th><NumHead>Active days</NumHead><NumHead>Messages</NumHead><NumHead>Turns</NumHead>
               <NumHead>Chats</NumHead><NumHead>Settings changed</NumHead><NumHead>MCP calls</NumHead>
               <th className="font-medium">Works with most</th><NumHead>From cache</NumHead><NumHead>Input · output</NumHead>
               <th className="font-medium">Last active</th></tr>
@@ -150,7 +151,7 @@ function Breakdown({ title, column, testid, rows, note, empty }: {
       {note && <p className="text-[11px] text-muted-foreground">{note}</p>}
       <table className="mt-2 w-full min-w-[820px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid={testid}>
         <thead className="text-left text-muted-foreground">
-          <tr><th className="py-1 font-medium">{column}</th>
+          <tr><Th>{column}</Th>
             <NumHead>Turns</NumHead><NumHead>Failed or lost</NumHead><NumHead>Chats</NumHead>
             <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>From cache</NumHead>
             <NumHead>Input · output</NumHead><th className="font-medium">Last activity</th></tr>

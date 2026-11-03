@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { getRunnerDownloads, RunnerPairingError, type RunnerDownloadOut } from '@/api/runnerPairings'
 import { currentNext, loginHref } from '@/auth/loginHref'
+import { Th } from '@/components/DataTable'
 
 type State =
   | { kind: 'loading' }
@@ -80,12 +81,12 @@ export function RunnerDownloads({ authed, developerCommand }: { authed: boolean;
         <table className="w-full text-left text-[13px]" aria-label="Canopy Runner downloads">
           <thead className="text-[12px] text-muted-foreground">
             <tr>
-              <th className="py-1 pr-3 font-medium">Computer</th>
-              <th className="py-1 pr-3 font-medium">Size</th>
-              <th className="py-1 pr-3 font-medium">Build</th>
-              <th className="py-1 font-medium">
+              <Th density="compact-gap">Computer</Th>
+              <Th density="compact-gap">Size</Th>
+              <Th density="compact-gap">Build</Th>
+              <Th>
                 <span className="sr-only">Download</span>
-              </th>
+              </Th>
             </tr>
           </thead>
           <tbody>

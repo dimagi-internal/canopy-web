@@ -5,6 +5,7 @@ import { listTurns } from "@/api/turns";
 import { EventLedger } from "@/components/activity/EventLedger";
 import { EventLogTable, McpCallsTable } from "@/components/activity/WorkspaceLogs";
 import { relativeAge } from "@/lib/relativeAge";
+import { Th } from '@/components/DataTable'
 import {
   type Turn,
   type TurnFilters,
@@ -120,11 +121,11 @@ export default function ActivityPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Agent</th>
-                <th className="px-3 py-2 font-medium">Trigger</th>
-                <th className="px-3 py-2 font-medium">Runner</th>
-                <th className="px-3 py-2 font-medium">Status</th>
+                <Th density="roomy">Time</Th>
+                <Th density="roomy">Agent</Th>
+                <Th density="roomy">Trigger</Th>
+                <Th density="roomy">Runner</Th>
+                <Th density="roomy">Status</Th>
               </tr>
             </thead>
             <tbody>
