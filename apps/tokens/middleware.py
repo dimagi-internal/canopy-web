@@ -183,6 +183,7 @@ class BearerTokenAuthMiddleware:
                     return problem_response(403, detail=f"X-Canopy-On-Behalf-Of refused: {exc}")
             else:
                 turn_asker.attach(request.user, found.credential)
+            turn_asker.remember(request.user, found.credential)
             return
 
         # A CONTACT token must never be mistaken for a user. It resolves to no
@@ -289,6 +290,12 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool | HttpResponse | None:
         request.auth_credential = dict(cred)
     request.via_mcp = True
     request.mcp_tool = principal.get("mcp_tool") or ""
+    if user is not None and cred and kinds.kind_of(cred) is kinds.KINDS[kinds.PAT]:
+        # An agent's turn login through MCP is the same login as over REST: note it, so
+        # a read that depends on whom the turn answers to (access leg 5) asks the same.
+        from apps.harness import turn_asker  # noqa: PLC0415 — only an MCP call pays for it
+
+        turn_asker.remember(user, cred)
     request._dont_enforce_csrf_checks = True
     if kinds.kind_of(cred) is kinds.KINDS[kinds.ACT_AS]:
         refused = _act_as_mcp_refusal(request, cred)

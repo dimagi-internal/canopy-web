@@ -62,8 +62,28 @@ def _let_in(w, slug="trellis"):
     return r.json()
 
 
+def _sweep(agent) -> Client:
+    """The agent's login inside a running turn canopy started (a coaching sweep: nobody
+    asked, so every grantor's sessions are in reach — who may ask is
+    tests/test_agent_session_reads_bind_to_the_asker.py)."""
+    from django.utils import timezone
+
+    from apps.harness import turn_agent_tokens
+    from apps.harness.models import Runner, Turn
+
+    box = Runner.objects.create(name=f"box-{agent.slug}-{Runner.objects.count()}", kind=Runner.CLOUD, owner=agent.owner,
+                                workspace=agent.workspace, last_heartbeat_at=timezone.now(),
+                                status=Runner.ONLINE)
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="sweep",
+                               idempotency_key=f"sweep-{agent.slug}-{Turn.objects.count()}",
+                               status=Turn.RUNNING, claimed_by=box, initiator_kind="system",
+                               initiator_via="schedule", initiator_assurance="internal")
+    bearer = turn_agent_tokens.issue(turn, box)["token"]
+    return Client(HTTP_AUTHORIZATION=f"Bearer {bearer}")
+
+
 def _reads(agent, session) -> bool:
-    return _as(agent.user).get(f"/api/canopy-sessions/{session.pk}").status_code == 200
+    return _sweep(agent).get(f"/api/canopy-sessions/{session.pk}").status_code == 200
 
 
 def test_the_person_lets_the_coach_in_and_it_is_audited(w):
@@ -111,9 +131,12 @@ def test_reading_works_while_live_and_stops_on_revoke(w):
     _let_in(w)
     assert _reads(trellis, w["chat"])
     assert not _reads(trellis, w["bos"])                                  # only the granter's sessions
-    listed = _as(trellis.user).get(f"/api/canopy-sessions/?of_user={w['lili'].pk}").json()
+    listed = _sweep(trellis).get(f"/api/canopy-sessions/?of_user={w['lili'].pk}").json()
     assert {s["id"] for s in listed} == {str(w["chat"].pk)}
     # Read-only: the grant never lets it write, send or share.
+    from apps.harness import turn_asker
+
+    setattr(trellis.user, "_canopy_turn_standing", turn_asker.Standing("t", unattended=True))
     assert access.role_for(trellis.user, w["chat"]) == "viewer"
     assert not access.can_write(trellis.user, w["chat"])
     assert not access.can_share(trellis.user, w["chat"])
