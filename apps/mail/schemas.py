@@ -145,6 +145,8 @@ class MailMessageOut(Schema):
     verdicts: dict[str, str] = {}
     created_at: str
     attachments: list[MailAttachmentOut] = []
+    thread_id: str = ""
+    """Set on the answer to a send: the thread the message started."""
 
 
 class MailThreadOut(Schema):
@@ -167,10 +169,10 @@ class MailThreadListOut(Schema):
     agent_address: str = ""
     items: list[MailThreadOut]
     unread_total: int = 0
-    """`forwarded=true` only: unread threads in the caller's inbox (archived ones excluded)."""
+    """Unread threads in this inbox, archived ones excluded."""
     addresses: list[str] = []
-    """`forwarded=true` only: the addresses the caller can send from — their own forwarding
-    addresses on a live domain (never a catch-all)."""
+    """The addresses this inbox can send from: an agent's live addresses, or the caller's own
+    forwarding addresses on a live domain (never a catch-all)."""
 
 
 class MailReplyIn(Schema):
@@ -180,16 +182,10 @@ class MailReplyIn(Schema):
     cc: list[str] = []
 
 
-class MailInboxSendIn(Schema):
-    from_address: str
-    to: list[str]
-    cc: list[str] = []
-    subject: str
-    text: str
-
-
 class MailSendIn(Schema):
-    agent: str
+    agent: str = ""
+    """The agent to send as. Omitted: send as yourself, from `from_address` — one of your own
+    forwarding addresses (never someone else's or a catch-all); the thread is private to you."""
     to: list[str]
     cc: list[str] = []
     subject: str

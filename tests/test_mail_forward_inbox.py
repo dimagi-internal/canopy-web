@@ -209,12 +209,12 @@ def test_reply_refused_once_the_route_no_longer_forwards_to_me(w, sent):
 
 
 def test_compose_from_my_address_starts_a_private_thread(w, sent):
-    r = _post(w.owner, "/api/mail/inbox/marshellis/send",
+    r = _post(w.owner, "/api/mail/send/marshellis",
               {"from_address": "jjackson@marshellis.com", "to": ["friend@example.org"],
                "subject": "Hello", "text": "Hi"})
     assert r.status_code == 200, r.content
     body = r.json()
-    assert body["subject"] == "Hello" and body["forwarded"] is True and len(body["messages"]) == 1
+    assert body["subject"] == "Hello" and body["thread_id"] == str(MailThread.objects.get().uuid)
     assert sent[-1]["from_addr"] == "jjackson@marshellis.com" and sent[-1]["to"] == ["friend@example.org"]
     t = MailThread.objects.get()
     assert t.owner == w.owner
@@ -226,7 +226,7 @@ def test_compose_cannot_send_as_someone_elses_or_the_catch_all_address(w, sent):
     MailRoute.objects.create(domain=w.d, local_part="*", kind="forward", forward_to=w.owner)
     base = {"to": ["friend@example.org"], "subject": "s", "text": "t"}
     for frm in ("support@marshellis.com", "anything@marshellis.com", "*@marshellis.com", "ceo@gmail.com"):
-        r = _post(w.owner, "/api/mail/inbox/marshellis/send", {**base, "from_address": frm})
+        r = _post(w.owner, "/api/mail/send/marshellis", {**base, "from_address": frm})
         assert r.status_code == 422, frm
     assert sent == []
 
@@ -239,3 +239,24 @@ def test_reply_on_a_catch_all_thread_is_from_the_address_the_mail_was_sent_to(w,
     r = _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "yo"})
     assert r.status_code == 200, r.content
     assert sent[-1]["from_addr"] == "ada@marshellis.com"
+
+
+def test_an_agents_inbox_gets_the_same_list_features(w):
+    from apps.agents.models import Agent
+
+    a = Agent.objects.create(slug="mada", name="Ada", workspace=w.ws, owner=w.owner)
+    r = MailRoute.objects.create(domain=w.d, local_part="ada", kind="agent", agent=a)
+    t = MailThread.objects.create(workspace=w.ws, route=r, subject="Grant question", message_count=1)
+    MailMessage.objects.create(thread=t, direction="in", message_id="<g1@x.org>", from_addr="amy@x.org",
+                               subject="Grant question", text="budget attached")
+    get = lambda **q: _c(w.owner).get("/api/mail/threads/marshellis", {"agent": "mada", **q}).json()  # noqa: E731
+    body = get()
+    assert body["agent_address"] == "ada@marshellis.com" and body["addresses"] == ["ada@marshellis.com"]
+    assert body["unread_total"] == 1 and len(body["items"]) == 1
+    assert len(get(q="budget")["items"]) == 1 and get(q="zzz")["items"] == []
+    assert get(address="other@marshellis.com")["items"] == []
+    _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/state", {"archived": True})
+    assert get()["items"] == [] and len(get(archived=True)["items"]) == 1 and get()["unread_total"] == 0
+    # and never mixed with anyone's forwarded copies
+    inbound.handle(_note("jjackson@marshellis.com"))
+    assert all(i["forwarded"] is False for i in get(archived=True)["items"])

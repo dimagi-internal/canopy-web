@@ -918,9 +918,11 @@ export interface paths {
         };
         /**
          * List mail threads
-         * @description `forwarded=true`: the caller's own inbox of mail kept from forward routes (`q` searches
-         *     subject, sender and text; `address` narrows to one of their addresses). Otherwise the
-         *     workspace's threads (agents' mail), never another person's forwarded copies.
+         * @description One list for every inbox. `agent=`: that agent's threads. `forwarded=true`: the caller's
+         *     own inbox of mail kept from forward routes. Neither: the workspace's agent threads, never
+         *     another person's forwarded copies. `q` searches subject, sender and text; `address` narrows
+         *     to one address. `unread_total` counts the inbox's unread threads (archived excluded) and
+         *     `addresses` the addresses it can send from.
          */
         readonly get: operations["list_mail_threads"];
         readonly put?: never;
@@ -957,29 +959,11 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Reply on a thread as its agent */
-        readonly post: operations["reply_mail_thread"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/mail/inbox/{workspace}/send": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
         /**
-         * Start a new message from one of your own forwarding addresses
-         * @description Compose from your inbox: the From must be one of your own forwarding addresses (never the
-         *     catch-all). The thread it starts is private to you, like the mail it answers.
+         * Reply on a thread as its mailbox
+         * @description Reply as the thread's agent, or — on your own kept mail — as your own address.
          */
-        readonly post: operations["send_inbox_mail"];
+        readonly post: operations["reply_mail_thread"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -995,7 +979,11 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Start a new thread as an agent */
+        /**
+         * Start a new thread
+         * @description Start a thread as an agent (`agent` + optionally one of its `from_address`es), or — with
+         *     no `agent` — from one of your own forwarding addresses, as a thread private to you.
+         */
         readonly post: operations["send_mail"];
         readonly delete?: never;
         readonly options?: never;
@@ -19308,6 +19296,11 @@ export interface components {
              * @default []
              */
             readonly attachments: readonly components["schemas"]["MailAttachmentOut"][];
+            /**
+             * Thread Id
+             * @default
+             */
+            readonly thread_id: string;
         };
         /** MailThreadListOut */
         readonly MailThreadListOut: {
@@ -19388,25 +19381,12 @@ export interface components {
              */
             readonly cc: readonly string[];
         };
-        /** MailInboxSendIn */
-        readonly MailInboxSendIn: {
-            /** From Address */
-            readonly from_address: string;
-            /** To */
-            readonly to: readonly string[];
-            /**
-             * Cc
-             * @default []
-             */
-            readonly cc: readonly string[];
-            /** Subject */
-            readonly subject: string;
-            /** Text */
-            readonly text: string;
-        };
         /** MailSendIn */
         readonly MailSendIn: {
-            /** Agent */
+            /**
+             * Agent
+             * @default
+             */
             readonly agent: string;
             /** To */
             readonly to: readonly string[];
@@ -46463,32 +46443,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MailMessageOut"];
-                };
-            };
-        };
-    };
-    readonly send_inbox_mail: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly workspace: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["MailInboxSendIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MailThreadOut"];
                 };
             };
         };

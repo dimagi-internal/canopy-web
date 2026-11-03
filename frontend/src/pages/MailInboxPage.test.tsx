@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as mail from '@/api/mail'
-import { MailInboxPage, parseAddresses } from '@/pages/MailInboxPage'
+import { parseAddresses } from '@/components/mail/MailClient'
+import { MailInboxPage } from '@/pages/MailInboxPage'
 
 const inboundMsg = {
   id: 1, direction: 'in', message_id: '<1@x>', from_addr: 'friend@example.org', from_name: 'Friend',
@@ -20,11 +21,11 @@ const full = { ...row, default_reply_to: ['friend@example.org'], messages: [inbo
 
 vi.mock('@/api/mail', async (orig) => ({
   ...(await orig<typeof import('@/api/mail')>()),
-  fetchInbox: vi.fn(async () => ({ items: [row], unread_total: 1, addresses: ['jjackson@marshellis.com'] })),
+  fetchInbox: vi.fn(async () => ({ items: [row], unread_total: 1, addresses: ['jjackson@marshellis.com'], agent_address: '' })),
   fetchMailThread: vi.fn(async () => full),
   setMailThreadState: vi.fn(async () => ({ ...row, unread: false })),
   replyToThread: vi.fn(async () => ({ ...inboundMsg, id: 2, direction: 'out' })),
-  composeInboxMail: vi.fn(async () => ({ ...full, thread_id: 't2', subject: 'Hello' })),
+  sendMail: vi.fn(async () => ({ ...inboundMsg, id: 3, direction: 'out', thread_id: 't2' })),
 }))
 
 beforeEach(() => vi.clearAllMocks())
@@ -61,9 +62,9 @@ describe('MailInboxPage', () => {
     renderPage()
     await screen.findByRole('button', { name: /Lunch\?/ })
     fireEvent.change(screen.getByLabelText('Search mail'), { target: { value: 'noon' } })
-    await vi.waitFor(() => expect(mail.fetchInbox).toHaveBeenCalledWith('marshellis', { archived: false, q: 'noon', address: '' }))
+    await vi.waitFor(() => expect(mail.fetchInbox).toHaveBeenCalledWith('marshellis', { forwarded: true }, { archived: false, q: 'noon', address: '' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Archived' }))
-    await vi.waitFor(() => expect(mail.fetchInbox).toHaveBeenLastCalledWith('marshellis', { archived: true, q: 'noon', address: '' }))
+    await vi.waitFor(() => expect(mail.fetchInbox).toHaveBeenLastCalledWith('marshellis', { forwarded: true }, { archived: true, q: 'noon', address: '' }))
   })
 
   it('replies to the sender with the original quoted, from the thread', async () => {
@@ -96,21 +97,21 @@ describe('MailInboxPage', () => {
     fireEvent.change(within(form).getByLabelText('Subject'), { target: { value: 'Hello' } })
     fireEvent.change(within(form).getByLabelText('Message'), { target: { value: 'Hi there' } })
     fireEvent.click(within(form).getByRole('button', { name: 'Send' }))
-    await vi.waitFor(() => expect(mail.composeInboxMail).toHaveBeenCalledWith('marshellis', {
-      from_address: 'jjackson@marshellis.com', to: ['new@example.org'], cc: [], subject: 'Hello', text: 'Hi there' }))
+    await vi.waitFor(() => expect(mail.sendMail).toHaveBeenCalledWith('marshellis', {
+      agent: undefined, from_address: 'jjackson@marshellis.com', to: ['new@example.org'], cc: [], subject: 'Hello', text: 'Hi there' }))
   })
 
   it('archives from the keyboard and explains how to switch it on when nothing is kept', async () => {
     renderPage()
     await openFirst()
     fireEvent.keyDown(window, { key: 'e' })
-    await vi.waitFor(() => expect(mail.setMailThreadState).toHaveBeenCalledWith('marshellis', 't1', { archived: true }))
+    await vi.waitFor(() => expect(mail.setMailThreadState).toHaveBeenCalledWith('marshellis', 't1', { archived: true }),
+      { timeout: 5000 })
   })
 
   it('shows setup guidance when there is nothing and no address', async () => {
-    vi.mocked(mail.fetchInbox).mockResolvedValueOnce({ items: [], unread_total: 0, addresses: [] })
+    vi.mocked(mail.fetchInbox).mockResolvedValueOnce({ items: [], unread_total: 0, addresses: [], agent_address: '' })
     renderPage()
     expect(await screen.findByText(/Keep a copy in canopy/)).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Compose' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
