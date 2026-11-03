@@ -26,12 +26,15 @@ from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from urllib.parse import quote, quote_plus
+from uuid import UUID
 
 import orjson
 import requests
 import urllib3
 from django.core.cache import cache
+from django.db.models import F
 from django.urls import reverse
 from django.utils import timezone
 
@@ -40,7 +43,7 @@ from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
 
 from . import calls, declarations, providers, server_key, server_tokens, services
-from .models import Connection
+from .models import Connection, ConnectionOperation, ConnectionSurfaceShare
 
 CALLS_PER_MINUTE = 300
 RATE_WINDOW_SECONDS = 60
@@ -53,6 +56,9 @@ LAST_USED_EVERY_SECONDS = 60
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_TEXT_CHARS = 1000
+OPERATION_SECONDS = 120
+OPERATION_MAX_WRITES = 500
+OPERATIONS_PER_MINUTE = 60
 _CHUNK_BYTES = 64 * 1024
 _REDACTED = b"[redacted]"
 
@@ -102,11 +108,30 @@ def call(request, provider: str, payload) -> dict:
             finally:
                 if sent.sent:
                     _mark_used(conn)
-                    _audit(conn, user, surface, matched, payload.operation_id, sent)
+                    _audit(conn, user, surface, matched, payload.operation_id, payload.as_, sent)
     except services.NotConnected as exc:
-        exc.members = {"connect_url": request.build_absolute_uri(
-            reverse("connections_start", args=[provider, surface.workspace]))}
+        if payload.as_ == "viewer":  # connecting their own account wouldn't bring an agent's back
+            exc.members = {"connect_url": request.build_absolute_uri(
+                reverse("connections_start", args=[provider, surface.workspace]))}
         raise
+
+
+def open_operation(request, surface_ref: dict) -> dict:
+    """A lease on this person writing from this screen at this revision: `{operation_id, expires_at,
+    writes}`. Nothing here sees a click, which is the page's to check before it asks. What the lease
+    does is limit how far a script that gets one can go."""
+    _require_session(request)
+    surface = declarations.resolve_surface(request, surface_ref)
+    writes = surface.write_lines()
+    if not writes:
+        raise services.ConnectionError("not_declared", "This screen didn't declare any changes it can make.")
+    if over(f"connections:operations:{request.user.pk}", OPERATIONS_PER_MINUTE, RATE_WINDOW_SECONDS):
+        raise services.ConnectionError("rate_limited", "Too many clicks in the last minute; wait a moment and try "
+                                                       "again.")
+    row = ConnectionOperation.objects.create(
+        user=request.user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
+        expires_at=timezone.now() + timedelta(seconds=OPERATION_SECONDS))
+    return {"operation_id": row.pk, "expires_at": row.expires_at, "writes": writes}
 
 
 @contextmanager
@@ -177,16 +202,71 @@ def _viewer_connection(user, provider: str, surface: declarations.Surface) -> Co
 
 
 def _shared_connection(user, provider: str, surface: declarations.Surface, agent: str | None) -> Connection:
-    """An agent's connection shared with this screen, as its admin approved. Not yet."""
-    raise services.ConnectionError("needs_approval", f"This screen uses a shared {_title(provider)} account that an "
-                                                     "admin hasn't approved for it yet.")
+    """The agent's connection shared with this screen, its project's or app's, when its admin has
+    approved all this screen now declares of it. The agent and the connection's app are both of the
+    surface's own workspace, or the share is no share. The surface's gate has said who may call."""
+    title = _title(provider)
+    key = surface.share_key
+    if key is None:
+        raise services.ConnectionError("needs_approval", f"This screen isn't in a project, so it can't use {agent}'s "
+                                                         f"{title} account. Put it in a project, and ask an admin of "
+                                                         f"{agent} to approve that project.")
+    shares = list(ConnectionSurfaceShare.objects
+                  .filter(kind=key[0], ref=key[1], connection__provider=provider, connection__agent__slug=agent,
+                          connection__agent__workspace_id=surface.workspace,
+                          connection__app__workspace_id=surface.workspace)
+                  .select_related("connection__app__workspace", "connection__agent__workspace").order_by("pk"))
+    if not shares:
+        raise services.ConnectionError("needs_approval", f"An admin of {agent} hasn't approved this screen to use "
+                                                         f"{agent}'s {title} account yet.")
+    live = [s for s in shares if s.connection.state == Connection.ACTIVE and not s.connection.expired]
+    if not live:
+        raise services.NotConnected(f"The {title} account {agent} shared with this screen is no longer connected. An "
+                                    f"admin of {agent} can connect it again.")
+    usable = [s for s in live if s.connection.server_use and not s.connection.limited]
+    if not usable:
+        raise services.ConnectionError("server_use_off", f"canopy-web isn't allowed to use the {title} account {agent} "
+                                                         f"shared with this screen. An admin of {agent} can turn that "
+                                                         f"on in {agent}'s accounts.")
+    if len(usable) > 1:
+        labels = ", ".join(sorted(s.connection.account_label for s in usable))
+        raise services.ConnectionError("ambiguous", f"{agent} has shared more than one {title} account with this "
+                                                    f"screen ({labels}). An admin of {agent} can stop all but one.")
+    share = usable[0]
+    reads, writes = declarations.shared_lines(surface.current_declared, provider, agent)
+    if (declarations.not_covered(reads, share.approved_reads)
+            or declarations.not_covered(writes, share.approved_writes)):
+        raise services.ConnectionError("needs_approval", f"This screen now asks more of {agent}'s {title} account than "
+                                                         f"was approved. An admin of {agent} can approve the changes.")
+    return share.connection
 
 
 def _check_operation(user, conn: Connection, surface: declarations.Surface, matched: calls.Match,
                      operation_id: str | None) -> None:
-    """A write needs a live operation: a real click, for this write. Not yet."""
-    raise services.ConnectionError("needs_operation", f"Changing {_title(conn.provider)} from a screen needs a click "
-                                                      "on that screen first.")
+    """A write spends one place on this person's lease for this screen at this revision."""
+    _spend_write(user, operation_id, surface)
+
+
+def _spend_write(user, operation_id: str | None, surface: declarations.Surface) -> None:
+    """One conditional update, so two callers can't both take the last place. A place is spent before
+    the call and not given back if the call then fails: the count is an upper limit on what was sent."""
+    pk = _operation_pk(operation_id)
+    lease = ConnectionOperation.objects.none() if pk is None else ConnectionOperation.objects.filter(
+        pk=pk, user=user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
+        expires_at__gt=timezone.now())
+    if lease.filter(writes_used__lt=OPERATION_MAX_WRITES).update(writes_used=F("writes_used") + 1):
+        return
+    if lease.exists():
+        raise services.ConnectionError("needs_operation", f"One click can make at most {OPERATION_MAX_WRITES} "
+                                                          "changes; click again to make more.")
+    raise services.ConnectionError("needs_operation", "Making a change from this screen needs a click on it first.")
+
+
+def _operation_pk(operation_id: str | None) -> UUID | None:
+    try:
+        return UUID(operation_id) if operation_id else None
+    except ValueError:
+        return None
 
 
 def _token(conn: Connection) -> server_tokens.Access:
@@ -324,13 +404,15 @@ def _answer(status: int, raw: bytes, provider: str, matched: calls.Match, sent: 
 
 
 def _audit(conn: Connection, user, surface: declarations.Surface, matched: calls.Match, operation_id: str | None,
-           sent: _Sent) -> None:
+           as_: str, sent: _Sent) -> None:
     """A write as an Event in the connection's workspace, a person's connection too: `Subject.of` has
-    no workspace for one, and who changed what from which screen is the workspace's history."""
+    no workspace for one, and who changed what from which screen is the workspace's history. `by` is
+    who was looking and `connection` whose account it was, which differ on a shared one."""
     kind = "connection_call" if matched.rule.kind == "write" else "connection_read"
     subject = replace(services.Subject.of(conn), workspace=conn.app.workspace)
     method, path = matched.rule.method, matched.path
     services.record(subject, kind, by=user, surface=f"{surface.kind}:{surface.ref}", revision=surface.revision,
                     operation_id=operation_id, method=method, path=path, status=sent.status, outcome=sent.outcome,
+                    **{"as": as_},
                     summary=f"{method} {path} on {conn.provider} from {surface.kind} {surface.ref}: "
                             f"{sent.status or sent.outcome}")

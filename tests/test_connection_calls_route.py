@@ -17,7 +17,6 @@ import pytest
 import requests
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.core.cache import cache
-from django.db import connection as db_connection
 from django.test import Client
 from django.utils import timezone
 
@@ -28,7 +27,7 @@ from apps.events.models import Event
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
 from apps.workspace_apps.models import AppInstallation, AppTemplate
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connection_calls import TokensWorld
+from tests.fixtures.connection_calls import Answer, Salesforce, TokensWorld
 from tests.fixtures.connections import FakeSF, _resp, _stored, _token_body, sealed_to_owner, sf_app
 
 pytestmark = pytest.mark.django_db
@@ -42,57 +41,6 @@ ACCESS = "00D!access_1"
 READ_QUERY = {"method": "GET", "path": "query"}
 WRITE_LEAD = {"method": "PATCH", "path": "sobjects/Lead/*"}
 DECL = {"provider": "salesforce", "as": "viewer", "reads": [READ_QUERY], "writes": [WRITE_LEAD]}
-
-
-class Answer:
-    """A streamed `requests` response, as far as the route may look at one."""
-
-    def __init__(self, status=200, body=None, raw=None, headers=None):
-        self.status_code = status
-        self.headers = {"Content-Type": J, "Sforce-Limit-Info": "api-usage=1/15000", **(headers or {})}
-        self.raw_bytes = raw if raw is not None else json.dumps({} if body is None else body).encode()
-        self.closed = False
-
-    @property
-    def raw(self):
-        return self
-
-    def read1(self, amt=None, decode_content=None):
-        chunk, self.raw_bytes = self.raw_bytes[:amt], self.raw_bytes[amt:]
-        return chunk
-
-    def close(self):
-        self.closed = True
-
-
-class Salesforce:
-    """`requests.request`, for the API: answers in turn, the last repeating; records every call."""
-
-    def __init__(self, *answers):
-        self.answers = list(answers) or [Answer(body={"totalSize": 1, "records": []})]
-        self.calls: list[dict] = []
-        self.in_atomic: list[bool] = []
-
-    def __call__(self, method, url, **kw):
-        self.calls.append({"method": method, "url": url, **kw})
-        self.in_atomic.append(db_connection.in_atomic_block)
-        what = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
-        if callable(what):
-            what = what()
-        if isinstance(what, Exception):
-            raise what
-        return what
-
-    def __enter__(self):
-        self._p = mock.patch("apps.connections.call_service.requests.request", self)
-        self._p.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._p.stop()
-
-    def bearer(self, i=0) -> str:
-        return self.calls[i]["headers"]["Authorization"]
 
 
 @pytest.fixture(autouse=True)
@@ -303,7 +251,7 @@ def test_limited_connection_refused(w, limit):
     assert sf.calls == []
 
 
-def test_shared_answers_needs_approval_for_now(w):
+def test_shared_with_no_project_needs_approval(w):
     entry = {"provider": "salesforce", "as": "shared", "agent": "eva", "reads": [READ_QUERY], "writes": []}
     view = view_services.create(workspace_id="w", project=None, user=w.person,
                                 data={"title": "Shared", "code": CODE, "connections": [entry]})
@@ -313,7 +261,7 @@ def test_shared_answers_needs_approval_for_now(w):
     assert sf.calls == []
 
 
-def test_a_write_answers_needs_operation_for_now(w):
+def test_a_write_with_no_operation_needs_one(w):
     with Salesforce() as sf:
         r = post(w, method="PATCH", path=f"sobjects/Lead/{LEAD}", query=None, body={"Status": "Open"})
     assert r.status_code == 409 and error_of(r) == "needs_operation"

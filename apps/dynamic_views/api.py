@@ -14,6 +14,7 @@ from ninja.errors import HttpError
 
 from apps.agents import services as agent_services
 from apps.agents.gates import listed_agent_workspaces, may_edit_project, visible_agent_workspaces
+from apps.agents.models import AgentProject
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.connections import declarations
@@ -72,7 +73,19 @@ def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
         raise HttpError(404, f"view {view.pk} has no version {ref['version']}")
     return declarations.Surface(kind="view", ref=str(view.pk), workspace=view.workspace_id,
                                 revision=revision.version, declared=revision.connections or [],
-                                current=None if revision.version == view.version else view.connections or [])
+                                current=None if revision.version == view.version else view.connections or [],
+                                project=str(view.project_id) if view.project_id else None)
+
+
+def connection_share_target(ref: str) -> declarations.ShareTarget | None:
+    """A project, for sharing an agent's connection with: what its views declare now, all of them."""
+    project = AgentProject.objects.filter(pk=int(ref)).first() if ref.isdecimal() else None
+    if project is None:
+        return None
+    declared = [entry for connections in DynamicView.objects.filter(project=project).order_by("pk")
+                .values_list("connections", flat=True) for entry in connections or []]
+    return declarations.ShareTarget(ref=str(project.pk), title=project.name, workspace=project.workspace_id,
+                                    declared=declared)
 
 
 def _project_or_422(workspace: str, handle: str):

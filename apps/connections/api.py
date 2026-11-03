@@ -34,7 +34,7 @@ from apps.workspaces.gates import workspace_for
 
 from . import call_service, proofs, providers, server_key, services, sharing, tokens
 from . import recipients as rcpt
-from .models import Connection, ConnectionApp
+from .models import Connection, ConnectionApp, ConnectionSurfaceShare
 from .problems import problem_for, problem_for_call, problem_for_wire
 from .schemas import (
     ConnectionAppIn,
@@ -43,6 +43,8 @@ from .schemas import (
     ConnectionCallIn,
     ConnectionCallOut,
     ConnectionMaterialOut,
+    ConnectionOperationIn,
+    ConnectionOperationOut,
     ConnectionOut,
     ConnectionsOut,
     ConnectionStatementOut,
@@ -57,6 +59,9 @@ from .schemas import (
     ServerUseIn,
     ShareIn,
     ShareStateOut,
+    SurfaceShareIn,
+    SurfaceShareOut,
+    SurfaceSharesOut,
     UnreachableOut,
     WaitingOut,
     WriteBackIn,
@@ -241,7 +246,8 @@ def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
              summary="A screen's call to a provider, through the signed-in person's session")
 # A session only; the surface's own read gate decides who may open it (`member` on an app).
 @gate("member", kind="action",
-      viewer_write="a member who may open a screen makes the calls it declared, with their own account")
+      viewer_write="a member who may open a screen makes the calls it declared, with their own account or the "
+                   "agent's its admin approved for that screen")
 def request_connection_call(request: HttpRequest, provider: str, payload: ConnectionCallIn) -> dict:
     """Make one call a dynamic view or an app page declared, and return the provider's status and JSON body.
 
@@ -255,6 +261,98 @@ def request_connection_call(request: HttpRequest, provider: str, payload: Connec
         return call_service.call(request, provider, payload)
     except services.ConnectionError as exc:
         raise problem_for_call(exc) from None
+
+
+@router.post("/operations", response=ConnectionOperationOut,
+             summary="A short lease on writing from one screen, through the signed-in person's session")
+# A session only; the surface's own read gate decides who may open it (`member` on an app).
+@gate("member", kind="ephemeral-credential",
+      viewer_write="a member who may open a screen may write what it declared; this lease only limits how much")
+def open_connection_operation(request: HttpRequest, payload: ConnectionOperationIn) -> dict:
+    """Open the lease every write from this screen must name as `operation_id`.
+
+    canopy-web can't verify a click. The page around the screen checks for one before it asks; a script
+    that reaches this route with the person's session gets a lease too. What the lease does is limit how
+    far that goes: only what this screen declared, for 120 seconds, at most 500 writes, for this person,
+    this screen and this revision. Each write is still checked against the declaration, so on a page
+    behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
+
+    Only a person signed in here: a personal access token or OAuth token is refused 403
+    `session_required`. 403 `not_declared` when there is nothing this screen may write; 429 `rate_limited`
+    past 60 in a minute. Whoever can't open the screen gets its own 404."""
+    try:
+        return call_service.open_operation(request, payload.surface.model_dump())
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
+
+
+def _shareable(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
+    # An agent's that I administer. Someone else's id is a 404, so ids cannot be probed; my own
+    # person's connection gets told why it can't be.
+    conn = _visible(request, connection_id)
+    if conn.agent_id is None:
+        raise _not_shareable("A person's own connection can't serve other people's screens; only an agent's can.")
+    return conn
+
+
+def _not_shareable(why: str) -> ProblemError:
+    return ProblemError(422, "This can't be shared", detail=why, members={"error": "not_shareable"})
+
+
+@router.get("/{connection_id}/surface-shares", response=SurfaceSharesOut,
+            summary="The projects and apps whose screens may use an agent's connection")
+@gate("agent-admin")
+def list_surface_shares(request: HttpRequest, connection_id: uuid.UUID) -> SurfaceSharesOut:
+    """Each project or app sharing this agent's connection: what was approved of it, what its screens
+    declare now beyond that (`pending_reads`, `pending_writes`), and whether that has stopped them
+    (`needs_approval`). `title` is null for one that no longer exists. Only the agent's admins: anyone
+    else's id is a 404; a person's own connection, which is never shared, is a 422."""
+    conn = _shareable(request, connection_id)
+    return SurfaceSharesOut(shares=[SurfaceShareOut(**services.surface_share_state(s))
+                                    for s in conn.surface_shares.select_related("connection__agent").order_by("pk")])
+
+
+@router.post("/{connection_id}/surface-shares", response=SurfaceShareOut,
+             summary="Let a project's or app's screens use an agent's connection")
+@gate("agent-admin", setting=True, step_up=True)
+def approve_surface_share(request: HttpRequest, connection_id: uuid.UUID, payload: SurfaceShareIn) -> SurfaceShareOut:
+    """Approve what this project or app declares of the agent now, and let its screens use this connection:
+    anyone who can open one of them then acts as the agent's account, within what was approved. Approving
+    what a screen declares is the only way to approve it: canopy-web reads it here and takes no list.
+    Sharing again approves what is declared by then. A screen that later declares more stops until
+    someone does; one that declares less goes on working.
+
+    `ref` is a project's id (each of its views is covered) or an app's `<workspace>/<key>`. A view in no
+    project can't be covered. The share does nothing until the connection's own switch for canopy-web is
+    on. 422 `not_shareable` for a person's connection, a lend with limits, or a project or app outside
+    the agent's workspace; 409 `revoking` while it is being disconnected. From a browser this needs a
+    fresh passkey check. Only the agent's admins: anyone else's id is a 404."""
+    conn = _shareable(request, connection_id)
+    # After the admin check: a non-admin gets 404, never a step-up prompt.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        share = services.share_with_surface(conn, payload.kind, payload.ref, by=request.user)
+    except ValueError as exc:
+        raise _not_shareable(str(exc)) from None
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
+    return SurfaceShareOut(**services.surface_share_state(share))
+
+
+@router.delete("/{connection_id}/surface-shares/{share_id}", response={204: None},
+               summary="Stop a project's or app's screens using an agent's connection")
+@gate("agent-admin", setting=True, step_up=True)
+def stop_surface_share(request: HttpRequest, connection_id: uuid.UUID, share_id: int) -> Status:
+    """Those screens stop using this connection at once. From a browser this needs a fresh passkey check.
+    Only the agent's admins: anyone else's id is a 404."""
+    conn = _shareable(request, connection_id)
+    share = get_object_or_404(ConnectionSurfaceShare.objects.select_related("connection__agent"), pk=share_id,
+                              connection=conn)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    services.stop_surface_share(share, by=request.user)
+    return Status(204, None)
 
 
 @router.get("/{connection_id}/share", response=ShareStateOut, summary="What sharing a connection needs")

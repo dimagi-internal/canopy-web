@@ -147,7 +147,7 @@ workspace revokes; `tests/test_departure_revokers.py` lists the expected names),
 `events.audit.register_operation_id` (the API root) and `register_workspace_resolver` (agents, harness), and
 `events.after_record.register` (harness: a box's first event of the day; the log itself emits no signal) and
 `harness.schedule_hooks.register` (huddles: a check-in's schedule announces a run instead of enqueuing a turn) and
-`connections.declarations.register_surface` (dynamic views, workspace apps: what a screen calling a provider is, and who may open it). A report that reads core
+`connections.declarations.register_surface` and `register_share_target` (dynamic views, workspace apps: what a screen calling a provider is, who may open it, and what an agent's connection shared with its project or app would be approving). A report that reads core
 models lives with them (`harness/usage.py`, `mcp/audit_api.py`, the `backfill_activity` command in `mcp`).
 
 ## Structural guards

@@ -84,6 +84,9 @@ EXCLUDED: dict[str, str] = {
     "health": "health check",
     "request_connection_call": "a screen's call, on a person's session; a token is refused, and an agent "
                                "uses its own connection in its turn",
+    "open_connection_operation": "a lease for a screen's write, on a person's session; a token is refused",
+    "approve_surface_share": "an admin's approval that lets a screen's code act as an agent; a model that wrote "
+                             "the screen must not be the one approving it",
     # HCP v1 Appendix B: the MCP tool set is the preference operations only;
     # grants, the audit log and export are the PERSON's, reached over REST and
     # the /people/me page. The full-HCPEntry POST is REST's; MCP adds through

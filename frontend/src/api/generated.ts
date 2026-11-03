@@ -434,6 +434,94 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/connections/operations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A short lease on writing from one screen, through the signed-in person's session
+         * @description Open the lease every write from this screen must name as `operation_id`.
+         *
+         *     canopy-web can't verify a click. The page around the screen checks for one before it asks; a script
+         *     that reaches this route with the person's session gets a lease too. What the lease does is limit how
+         *     far that goes: only what this screen declared, for 120 seconds, at most 500 writes, for this person,
+         *     this screen and this revision. Each write is still checked against the declaration, so on a page
+         *     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
+         *
+         *     Only a person signed in here: a personal access token or OAuth token is refused 403
+         *     `session_required`. 403 `not_declared` when there is nothing this screen may write; 429 `rate_limited`
+         *     past 60 in a minute. Whoever can't open the screen gets its own 404.
+         */
+        readonly post: operations["open_connection_operation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/connections/{connection_id}/surface-shares": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The projects and apps whose screens may use an agent's connection
+         * @description Each project or app sharing this agent's connection: what was approved of it, what its screens
+         *     declare now beyond that (`pending_reads`, `pending_writes`), and whether that has stopped them
+         *     (`needs_approval`). `title` is null for one that no longer exists. Only the agent's admins: anyone
+         *     else's id is a 404; a person's own connection, which is never shared, is a 422.
+         */
+        readonly get: operations["list_surface_shares"];
+        readonly put?: never;
+        /**
+         * Let a project's or app's screens use an agent's connection
+         * @description Approve what this project or app declares of the agent now, and let its screens use this connection:
+         *     anyone who can open one of them then acts as the agent's account, within what was approved. Approving
+         *     what a screen declares is the only way to approve it: canopy-web reads it here and takes no list.
+         *     Sharing again approves what is declared by then. A screen that later declares more stops until
+         *     someone does; one that declares less goes on working.
+         *
+         *     `ref` is a project's id (each of its views is covered) or an app's `<workspace>/<key>`. A view in no
+         *     project can't be covered. The share does nothing until the connection's own switch for canopy-web is
+         *     on. 422 `not_shareable` for a person's connection, a lend with limits, or a project or app outside
+         *     the agent's workspace; 409 `revoking` while it is being disconnected. From a browser this needs a
+         *     fresh passkey check. Only the agent's admins: anyone else's id is a 404.
+         */
+        readonly post: operations["approve_surface_share"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/connections/{connection_id}/surface-shares/{share_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop a project's or app's screens using an agent's connection
+         * @description Those screens stop using this connection at once. From a browser this needs a fresh passkey check.
+         *     Only the agent's admins: anyone else's id is a 404.
+         */
+        readonly delete: operations["stop_surface_share"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/connections/{connection_id}/share": {
         readonly parameters: {
             readonly query?: never;
@@ -19079,6 +19167,109 @@ export interface components {
              * @description The revision the page drew. What that revision declares is what is checked, not the view's latest.
              */
             readonly version: number;
+        };
+        /** ConnectionOperationOut */
+        readonly ConnectionOperationOut: {
+            /**
+             * Operation Id
+             * Format: uuid
+             * @description Send this with each write.
+             */
+            readonly operation_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Writes
+             * @description What this screen may write. Each write is still checked.
+             */
+            readonly writes: readonly components["schemas"]["OperationWriteOut"][];
+        };
+        /** OperationWriteOut */
+        readonly OperationWriteOut: {
+            /** Provider */
+            readonly provider: string;
+            /** Method */
+            readonly method: string;
+            /**
+             * Path
+             * @description A declared pattern: `*` stands for one segment.
+             */
+            readonly path: string;
+        };
+        /** ConnectionOperationIn */
+        readonly ConnectionOperationIn: {
+            /**
+             * Surface
+             * @description The screen the writes will come from, at the revision the page drew.
+             */
+            readonly surface: components["schemas"]["ViewSurfaceIn"] | components["schemas"]["AppSurfaceIn"];
+        };
+        /** SurfaceLineOut */
+        readonly SurfaceLineOut: {
+            /** Method */
+            readonly method: string;
+            /** Path */
+            readonly path: string;
+        };
+        /** SurfaceShareOut */
+        readonly SurfaceShareOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Ref */
+            readonly ref: string;
+            /**
+             * Title
+             * @description The project's or app's name. Null when it no longer exists.
+             */
+            readonly title: string | null;
+            /** Approved Reads */
+            readonly approved_reads: readonly components["schemas"]["SurfaceLineOut"][];
+            /** Approved Writes */
+            readonly approved_writes: readonly components["schemas"]["SurfaceLineOut"][];
+            /**
+             * Pending Reads
+             * @description Declared now and not approved.
+             */
+            readonly pending_reads: readonly components["schemas"]["SurfaceLineOut"][];
+            /**
+             * Pending Writes
+             * @description Declared now and not approved.
+             */
+            readonly pending_writes: readonly components["schemas"]["SurfaceLineOut"][];
+            /**
+             * Needs Approval
+             * @description Something is pending, so the screens that declare it have stopped.
+             */
+            readonly needs_approval: boolean;
+        };
+        /** SurfaceSharesOut */
+        readonly SurfaceSharesOut: {
+            /** Shares */
+            readonly shares: readonly components["schemas"]["SurfaceShareOut"][];
+        };
+        /** SurfaceShareIn */
+        readonly SurfaceShareIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "project" | "app";
+            /**
+             * Ref
+             * @description A project's id, or an app's `<workspace>/<key>`.
+             */
+            readonly ref: string;
+            /**
+             * Approve
+             * @description What to approve: what the surface declares of this agent now. It is read here; no list of lines is accepted.
+             * @constant
+             */
+            readonly approve: "current";
         };
         /** ShareAgentOut */
         readonly ShareAgentOut: {
@@ -47207,6 +47398,99 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ConnectionCallOut"];
                 };
+            };
+        };
+    };
+    readonly open_connection_operation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionOperationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionOperationOut"];
+                };
+            };
+        };
+    };
+    readonly list_surface_shares: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SurfaceSharesOut"];
+                };
+            };
+        };
+    };
+    readonly approve_surface_share: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SurfaceShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SurfaceShareOut"];
+                };
+            };
+        };
+    };
+    readonly stop_surface_share: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+                readonly share_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -23,7 +23,8 @@ This module imports only `calls`: the view and app code that saves a declaration
 may import it, and it knows no model. So it also holds the registry of surfaces:
 what a screen is lives in a product app, which connections may not import, so each
 kind of surface registers how to find one and who may open it (`register_surface`,
-from its `AppConfig.ready()`).
+from its `AppConfig.ready()`), and each kind of thing an agent's connection can be
+shared with registers what is there to approve (`register_share_target`).
 """
 from __future__ import annotations
 
@@ -60,13 +61,55 @@ class Surface:
     #: The view's current declaration, when the page is on an older revision. A call must fit both:
     #: an old page never gets more than it drew, and a narrowing reaches it at once.
     current: list[dict] | None = None
+    #: The project a view is in, by id; an app, and a view in none, have none.
+    project: str | None = None
 
     def allows(self, provider: str, as_: str, agent_slug: str | None, match_result: calls.Match, method: str) -> bool:
         return all(allows(lists, provider, as_, agent_slug, match_result, method)
                    for lists in (self.declared, *(() if self.current is None else (self.current,))))
 
+    @property
+    def full_ref(self) -> str:
+        """This screen and no other: an app's key means something only in its workspace."""
+        return f"{self.workspace}/{self.ref}" if self.kind == "app" else self.ref
+
+    @property
+    def share_key(self) -> tuple[str, str] | None:
+        """The `(kind, ref)` a share with this screen is under. None: nothing can be shared with it."""
+        if self.kind == "app":
+            return ("app", self.full_ref)
+        return ("project", self.project) if self.project else None
+
+    @property
+    def current_declared(self) -> list[dict]:
+        return self.declared if self.current is None else self.current
+
+    def write_lines(self) -> list[dict]:
+        """The writes this screen may ask for: on an older revision, those both declarations hold."""
+        lines = _writes(self.declared)
+        if self.current is not None:
+            now = _writes(self.current)
+            lines = [line for line in lines if line in now]
+        out: list[dict] = []
+        for line in lines:
+            shown = {"provider": line["provider"], "method": line["method"], "path": line["path"]}
+            if shown not in out:
+                out.append(shown)
+        return out
+
+
+@dataclass(frozen=True)
+class ShareTarget:
+    """What an agent's connection can be shared with, whoever is asking. `ref` is its canonical
+    spelling, `declared` every entry declared there now: a project's holds each of its views'."""
+    ref: str
+    title: str
+    workspace: str
+    declared: list[dict]
+
 
 _surfaces: dict[str, Callable[..., Surface]] = {}
+_share_targets: dict[str, Callable[[str], ShareTarget | None]] = {}
 
 
 def register_surface(kind: str, resolve: Callable[..., Surface]) -> None:
@@ -77,6 +120,39 @@ def register_surface(kind: str, resolve: Callable[..., Surface]) -> None:
 
 def resolve_surface(request, ref: dict) -> Surface:
     return _surfaces[ref["kind"]](request, ref)
+
+
+def register_share_target(kind: str, lookup: Callable[[str], ShareTarget | None]) -> None:
+    """`lookup(ref)` answers with what is there, or None when nothing is. It checks no person: the
+    caller has already decided who may ask."""
+    _share_targets[kind] = lookup
+
+
+def share_target(kind: str, ref: str) -> ShareTarget | None:
+    return _share_targets[kind](ref)
+
+
+def _writes(declared: list[dict]) -> list[dict]:
+    return [{"provider": e.get("provider"), "as": e.get("as"), "agent": e.get("agent"),
+             "method": line.get("method"), "path": line.get("path")}
+            for e in declared or [] for line in e.get("writes") or []]
+
+
+def shared_lines(declared: list[dict], provider: str, agent_slug: str) -> tuple[list[dict], list[dict]]:
+    """`(reads, writes)`: every line `declared` asks of this agent's shared connection, each once."""
+    reads: list[dict] = []
+    writes: list[dict] = []
+    for e in declared or []:
+        if e.get("provider") != provider or e.get("as") != "shared" or e.get("agent") != agent_slug:
+            continue
+        for lines, found in ((e.get("reads") or [], reads), (e.get("writes") or [], writes)):
+            found.extend(line for line in lines if line not in found)
+    return reads, writes
+
+
+def not_covered(lines: list[dict], approved: list[dict]) -> list[dict]:
+    """Those of `lines` an approval doesn't hold, by exact line: a `*` approved is not an id asked."""
+    return [line for line in lines if line not in approved]
 
 
 def _line(where: str, raw, kind: str) -> dict:

@@ -486,6 +486,51 @@ class ConnectionCallIn(StrictModel):
     operation_id: str | None = Field(default=None, max_length=100, description="The click a write belongs to.")
 
 
+class ConnectionOperationIn(StrictModel):
+    surface: Annotated[ViewSurfaceIn | AppSurfaceIn, Field(discriminator="kind")] = Field(
+        description="The screen the writes will come from, at the revision the page drew.")
+
+
+class OperationWriteOut(StrictModel):
+    provider: str
+    method: str
+    path: str = Field(description="A declared pattern: `*` stands for one segment.")
+
+
+class ConnectionOperationOut(StrictModel):
+    operation_id: uuid.UUID = Field(description="Send this with each write.")
+    expires_at: datetime
+    writes: list[OperationWriteOut] = Field(description="What this screen may write. Each write is still checked.")
+
+
+class SurfaceLineOut(StrictModel):
+    method: str
+    path: str
+
+
+class SurfaceShareIn(StrictModel):
+    kind: Literal["project", "app"]
+    ref: str = Field(max_length=200, description="A project's id, or an app's `<workspace>/<key>`.")
+    approve: Literal["current"] = Field(description="What to approve: what the surface declares of this agent now. "
+                                                    "It is read here; no list of lines is accepted.")
+
+
+class SurfaceShareOut(StrictModel):
+    id: int
+    kind: str
+    ref: str
+    title: str | None = Field(description="The project's or app's name. Null when it no longer exists.")
+    approved_reads: list[SurfaceLineOut]
+    approved_writes: list[SurfaceLineOut]
+    pending_reads: list[SurfaceLineOut] = Field(description="Declared now and not approved.")
+    pending_writes: list[SurfaceLineOut] = Field(description="Declared now and not approved.")
+    needs_approval: bool = Field(description="Something is pending, so the screens that declare it have stopped.")
+
+
+class SurfaceSharesOut(StrictModel):
+    shares: list[SurfaceShareOut]
+
+
 class ConnectionCallOut(StrictModel):
     status: int = Field(description="The provider's own status, also when it refused the call.")
     body: Any = Field(default=None, description="The provider's JSON answer. Null when it sent none, or not JSON.")

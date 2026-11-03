@@ -17,12 +17,19 @@ class WorkspaceAppsConfig(AppConfig):
         from apps.connections import declarations  # noqa: PLC0415 — the registry of what a screen is
 
         declarations.register_surface("app", _connection_surface)
+        declarations.register_share_target("app", _connection_share_target)
 
 
 def _connection_surface(request, ref):
     from .api import connection_surface  # noqa: PLC0415 — models: the app registry is not ready at module load
 
     return connection_surface(request, ref)
+
+
+def _connection_share_target(ref):
+    from .api import connection_share_target  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    return connection_share_target(ref)
 
 
 def _retention() -> None:

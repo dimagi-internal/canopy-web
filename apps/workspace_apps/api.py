@@ -98,6 +98,17 @@ def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
                                 declared=inst.manifest.get("connections") or [])
 
 
+def connection_share_target(ref: str) -> declarations.ShareTarget | None:
+    """An app, by `<workspace>/<key>`, for sharing an agent's connection with: what its live manifest
+    declares. A switched-off app is still there to approve; its pages just answer nobody."""
+    workspace, _, key = ref.partition("/")
+    inst = AppInstallation.objects.filter(workspace_id=workspace, key=key).first()
+    if inst is None:
+        return None
+    return declarations.ShareTarget(ref=f"{inst.workspace_id}/{inst.key}", title=inst.name,
+                                    workspace=inst.workspace_id, declared=inst.manifest.get("connections") or [])
+
+
 def _require_manage(request: HttpRequest, workspace: str) -> None:
     if not access.may_manage(request.user, workspace):
         raise HttpError(403, "managing apps needs the workspace's integrations permission (admin)")
