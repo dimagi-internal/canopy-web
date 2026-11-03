@@ -31,6 +31,7 @@ from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent, AgentAdmin
 from apps.connections import problems, services
 from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
+from apps.connections.providers.salesforce import SalesforceProvider
 from apps.events.models import Event
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -336,7 +337,8 @@ def test_a_concurrent_first_connect_is_sealed_to_the_winners_row(world, fake_pro
     """Another completion for the same account inserted the row between our lookup
     and our insert: we update the winner, and the envelope names ITS binding."""
     winner = Connection.objects.create(app=world.app, provider="salesforce", user=world.person,
-                                       account_id="00Dorg/005user", sealed="zks1:theirs")
+                                       account_id="00Dorg/005user", sealed="zks1:theirs",
+                                       owner_key=zk_ref.jkt(world.person_priv.public_key()))
     real = Connection.objects.select_for_update
     misses = []
 
@@ -384,5 +386,144 @@ def test_unshared_connection_is_listed_as_not_shared_yet(world, fake_provider):
     client.force_login(world.person)
     (row,) = client.get("/api/connections/").json()["connections"]
     assert row["state"] == "unshared"
-    assert row["statement"] == {"version": 0, "agents": [], "my_computers": []}
+    assert row["statement"] == {"version": 0, "agents": [], "my_computers": [], "endorsers": []}
     assert row["holders"] == []
+
+
+# ---- a row's owner key never changes -------------------------------------------------
+
+def _reconnect_refused(world, fake, **kw):
+    with fake, pytest.raises(services.ConnectionError) as e:
+        connect(world, **kw)
+    assert e.value.code == "owner_changed"
+
+
+def test_another_admin_reconnecting_an_agents_connection_is_refused(world, fake_provider):
+    first = connect(world, by=world.ada, agent=world.eva)
+    before = model_to_dict(Connection.objects.get(pk=first.pk))
+    fake = FakeSF(token=[_resp(body=_token_body(refresh_token="5Aep_other"))])
+    _reconnect_refused(world, fake, by=world.person, agent=world.eva)
+    assert model_to_dict(Connection.objects.get(pk=first.pk)) == before
+    assert Connection.objects.count() == 1
+    # Salesforce: the new grant is revoked, the old one is left alone.
+    assert [c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL] == ["5Aep_other"]
+    assert _plain(Connection.objects.get(), world.ada_priv, world.ada)["refresh_token"] == FAKE_REFRESH
+
+
+def test_a_person_who_replaced_their_vault_key_is_refused(world, fake_provider):
+    first = connect(world)
+    before = model_to_dict(Connection.objects.get(pk=first.pk))
+    vault_key(world.person)
+    _reconnect_refused(world, FakeSF(token=[_resp(body=_token_body(refresh_token="5Aep_other"))]))
+    assert model_to_dict(Connection.objects.get(pk=first.pk)) == before
+
+
+def test_a_changed_owner_at_google_is_discarded_without_a_revoke(world, fake_google):
+    world.google()
+    first = connect(world, provider="google")
+    before = model_to_dict(Connection.objects.get(pk=first.pk))
+    vault_key(world.person)
+    with pytest.raises(services.ConnectionError) as e:
+        connect(world, provider="google")
+    assert e.value.code == "owner_changed"
+    assert fake_google.revokes() == [] and model_to_dict(Connection.objects.get(pk=first.pk)) == before
+
+
+def test_disconnecting_first_lets_the_new_owner_connect_on_a_new_row(world, fake_provider):
+    first = connect(world, by=world.ada, agent=world.eva)
+    services.disconnect(first, by=world.ada)
+    again = connect(world, by=world.person, agent=world.eva)
+    assert again.pk != first.pk and again.owner_key == zk_ref.jkt(world.person_priv.public_key())
+
+
+def test_owner_changed_is_a_conflict_and_the_callback_lands_with_the_reason(world, fake_provider):
+    connect(world)
+    vault_key(world.person)
+    problem = problems.problem_for(services.ConnectionError("owner_changed", "disconnect first"),
+                                   title="Salesforce", owner="Your")
+    assert problem.status_code == 409 and problem.problem_members["error"] == "owner_changed"
+    client = Client()
+    client.force_login(world.person)
+    start = client.get(reverse("connections_start", args=["salesforce", "w"]), {"return_to": "/settings"})
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    resp = client.get(reverse("connections_callback", args=["salesforce", "w"]), {"code": "c0de", "state": state})
+    landed = parse_qs(urlparse(resp["Location"]).query)
+    assert landed["reason"] == ["owner_changed"] and landed["status"] == ["error"]
+
+
+# ---- the host rule (contract §0.2): what every machine would refuse does not connect ----
+
+@pytest.mark.parametrize("url", [
+    "https://na1.salesforce.com",               # legacy instance: no My Domain
+    "http://acme.my.salesforce.com",            # not https
+    "https://.my.salesforce.com",               # no label
+    "https://my.salesforce.com",
+    "https://acme.my.salesforce.com.evil.example",
+    "https://evil.example",
+    "https://acme.my.salesforce.com:8443",      # nothing but the host
+    "https://user@acme.my.salesforce.com",
+    "https://acme.my.salesforce.com/services",
+    "https://acme.my.salesforce.com?x=1",
+    "https://[bad",
+    "",
+])
+def test_an_instance_url_no_machine_would_accept_is_refused_and_revoked(world, url, caplog):
+    fake = FakeSF(token=[_resp(body=_token_body(instance_url=url))])
+    with caplog.at_level("WARNING", logger="apps.connections.services"), fake, \
+            pytest.raises(services.ConnectionError) as e:
+        connect(world)
+    assert e.value.code == "provider_error"
+    assert not Connection.objects.exists()
+    assert [c[2]["token"] for c in fake.calls if c[1] == REVOKE_URL] == [FAKE_REFRESH]
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("connections.provider_error ")]
+    assert any("during=connect" in line and "error=bad_instance_url" in line for line in lines)
+    assert FAKE_REFRESH not in "".join(lines)
+
+
+@pytest.mark.parametrize("url,want", [
+    ("https://Acme.MY.Salesforce.com", "https://acme.my.salesforce.com"),
+    ("HTTPS://acme.my.salesforce.com/", "https://acme.my.salesforce.com"),
+])
+def test_an_instance_url_is_sealed_and_stored_normalised(world, url, want):
+    with FakeSF(token=[_resp(body=_token_body(instance_url=url))]):
+        conn = connect(world)
+    conn.refresh_from_db()
+    assert conn.instance_url == want
+    assert _plain(conn, world.person_priv, world.person)["instance_url"] == want
+
+
+def test_a_missing_login_url_seals_the_default_login_host(world):
+    ConnectionApp.objects.filter(pk=world.app.pk).update(options={"access_token_seconds": 1800})
+    with FakeSF():
+        conn = connect(world)
+    assert _plain(conn, world.person_priv, world.person)["login_host"] == "login.salesforce.com"
+
+
+def test_a_stored_login_url_that_bypassed_the_settings_check_is_refused(world):
+    ConnectionApp.objects.filter(pk=world.app.pk).update(options={"login_url": "https://evil.example"})
+    fake = FakeSF()
+    fake.post = lambda url, data=None, headers=None, timeout=None: (
+        _resp(body=_token_body()) if url.endswith("/token") else _resp())
+    with fake, pytest.raises(services.ConnectionError) as e:
+        connect(world)
+    assert e.value.code == "provider_error" and not Connection.objects.exists()
+
+
+def test_a_my_domain_login_host_is_sealed_lower_case(world):
+    app = SalesforceProvider(mock.Mock(options={"login_url": "https://Acme.MY.salesforce.com/"}))
+    token = mock.Mock(instance_url="https://acme.my.salesforce.com")
+    assert app.sealed_hosts(token) == ("acme.my.salesforce.com", "https://acme.my.salesforce.com")
+
+
+@pytest.mark.parametrize("url", ["https://.my.salesforce.com", "https://a_b.my.salesforce.com",
+                                 "https://login.salesforce.com.evil.example"])
+def test_settings_refuse_a_login_url_no_machine_would_accept(url):
+    with pytest.raises(ValueError, match="Login URL"):
+        SalesforceProvider.clean_options({"login_url": url})
+
+
+def test_a_google_connection_seals_no_hosts(world, fake_google):
+    world.google()
+    conn = connect(world, provider="google")
+    plain = _plain(conn, world.person_priv, world.person)
+    assert (plain["login_host"], plain["instance_url"]) == ("", "")

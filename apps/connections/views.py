@@ -41,7 +41,8 @@ no longer administers the agent, the agent left the workspace, or the person
 left it), `access_denied`,
 `insufficient_scope`, `wrong_account` (the provider signed in an account this
 owner may not connect: not the agent's own, or outside the app's allowed
-domains), `provider_error`.
+domains), `owner_changed` (the account is connected with another vault key, and a
+connection's key never changes: disconnect it first), `provider_error`.
 """
 from __future__ import annotations
 

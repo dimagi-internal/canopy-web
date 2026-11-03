@@ -14,6 +14,10 @@ never this list; what this module computes can only NARROW it:
 - a person's reaches, per such agent, `accounts.delegated_devices` (cloud boxes
   that run it, or the person's own runners) — never another admin's laptop — and
   the person's own enrolled computers they listed in `my_computers`;
+- a machine admitted through an agent counts only while the owner's key or a
+  person the statement lists in `endorsers` vouches for its exact key for that
+  agent (`_vouched`, contract §0.5): what is listed here is never something a box
+  would refuse;
 - plus the owner's member key, while it is still the key the envelope names
   (`owner_member`).
 
@@ -26,7 +30,7 @@ from __future__ import annotations
 from django.db import transaction
 
 from apps.agents import access
-from apps.agents.credentials import accounts, vault_engine, zk_seal
+from apps.agents.credentials import accounts, vault_engine, zk_endorse, zk_seal
 from apps.agents.models import Agent
 from apps.agents.services import runner_may_hold_agent
 from apps.harness import device_keys
@@ -39,7 +43,7 @@ from .models import Connection
 Recipient = tuple[str, str, dict]
 
 
-def _statement_agent_pks(statement: dict | None) -> list[int]:
+def statement_agent_pks(statement: dict | None) -> list[int]:
     return [int(a) for a in (statement or {}).get("agents", []) if str(a).isdigit()]
 
 
@@ -77,7 +81,7 @@ def grants_in_force(conn: Connection) -> list[Agent]:
     granted = set(conn.grants.values_list("agent_id", flat=True))
     if conn.agent_id is not None:
         granted.add(conn.agent_id)
-    return _in_force(conn, [pk for pk in _statement_agent_pks(conn.statement) if pk in granted])
+    return _in_force(conn, [pk for pk in statement_agent_pks(conn.statement) if pk in granted])
 
 
 def _ready(keys):
@@ -104,15 +108,45 @@ def my_machines(user, jkts=None) -> list[RunnerDeviceKey]:
             if accounts.may_hold_for(k.runner, user, own_use=True)]
 
 
+def _vouched(agent: Agent, trusted: set[str]) -> set[str]:
+    """The ECDH thumbprints of the machines a person key in `trusted` vouches for, for
+    `agent`, by the check a box makes (contract §0.5) on the endorsements it is handed:
+    the endorser is who the key that verifies the signature says, not what a row claims."""
+    out = set()
+    for e in zk_endorse.endorsements(agent):
+        jwk = e["by_public_jwk"]
+        if (e["kind"] == "device" and e["target"] == e["key_jkt"] and jwk
+                and device_keys.thumbprint(jwk) in trusted
+                and zk_endorse.verify(agent.pk, kind="device", target=e["target"], key_jkt=e["key_jkt"],
+                                      sig=e["sig"], endorser_jwk=jwk)):
+            out.add(e["target"])
+    return out
+
+
 def device_reasons(conn: Connection, statement: dict | None = None) -> list[tuple[RunnerDeviceKey, Agent | None]]:
     """Each device `statement` (default: the stored one, through `grants_in_force`)
     lets `conn` reach, with the agent that admits it (None: one of the owner's own
     computers). A device admitted twice is listed twice."""
-    agents = _in_force(conn, _statement_agent_pks(statement)) if statement is not None else grants_in_force(conn)
+    agents = _in_force(conn, statement_agent_pks(statement)) if statement is not None else grants_in_force(conn)
     st = statement if statement is not None else (conn.statement or {})
-    out: list[tuple[RunnerDeviceKey, Agent | None]] = [(k, a) for a in agents for k in _agent_devices(conn, a)]
+    trusted = {conn.owner_key, *st.get("endorsers", [])} - {""}
+    out: list[tuple[RunnerDeviceKey, Agent | None]] = []
+    for a in agents:
+        vouched = _vouched(a, trusted)
+        out += [(k, a) for k in _agent_devices(conn, a) if k.ecdh_jkt in vouched]
     if conn.user_id is not None and st.get("my_computers"):
         out += [(k, None) for k in my_machines(conn.user, st["my_computers"])]
+    return out
+
+
+def candidate_reasons(conn: Connection, agents, user) -> list[tuple[RunnerDeviceKey, Agent | None]]:
+    """What the owner `user` could choose among: every machine of each of `agents`, and
+    for a person's connection their own computers, with the agent that admits it (None:
+    their computer). Not narrowed by who vouches: that is the owner's browser's to
+    decide (it names them in `endorsers`), so it is shown what it has not yet trusted."""
+    out: list[tuple[RunnerDeviceKey, Agent | None]] = [(k, a) for a in agents for k in _agent_devices(conn, a)]
+    if conn.user_id is not None:
+        out += [(k, None) for k in my_machines(user)]
     return out
 
 
@@ -129,8 +163,8 @@ def devices(conn: Connection, statement: dict | None = None) -> list[RunnerDevic
 
 def owner_member(conn: Connection) -> Recipient | None:
     """`("member", user id, public JWK)` of the signer while their vault key is still
-    the one the envelope names (`owner_key`); None once it is not (R10: another
-    admin reconnects)."""
+    the one the envelope names (`owner_key`); None once it is not (R10: disconnect it,
+    then connect again)."""
     if conn.signer_id is None or not conn.owner_key:
         return None
     ks = UserVaultKeyset.objects.filter(user_id=conn.signer_id).first()

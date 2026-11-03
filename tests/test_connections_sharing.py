@@ -21,9 +21,10 @@ from apps.agents.models import Agent
 from apps.connections import services, sharing
 from apps.connections.models import Connection
 from apps.events.models import Event
+from apps.harness.models import Runner
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FAKE_REFRESH, ShareWorld, browser_share, revoke_admin
+from tests.fixtures.connections import FAKE_REFRESH, ShareWorld, browser_share, endorse, revoke_admin
 from tests.fixtures.vault_zk import ref as zk_ref
 
 pytestmark = pytest.mark.django_db
@@ -248,6 +249,66 @@ def test_listed_connection_names_my_machines_and_waiting(world):
     assert row["waiting"] == [{"agent": "echo", "runner": "echo-cloud"}, {"agent": "", "runner": "jj-computer"}]
     assert [m["name"] for m in row["my_machines"]] == ["jj-computer"]
     assert len(row["my_machines"][0]["fingerprint"].split(" ")) == 8
+
+
+# ---- who may vouch (contract §0.3, §0.5) ---------------------------------------------
+
+@pytest.fixture
+def vouched(world):
+    """A box that runs eva, endorsed by ada alone (an admin of eva, not the owner)."""
+    world.box2, _, _ = world._box("eva-cloud-2", Runner.CLOUD, world.op, world.eva, endorsed=False)
+    endorse(world.eva, world.box2, world.ada, world.ada_priv)
+    world.ada_jkt = zk_ref.jkt(world.ada_priv.public_key())
+    return world
+
+
+def _to(key):
+    return ("device", key.ecdh_jkt, key.ecdh_public_jwk)
+
+
+def test_a_share_sealed_to_a_machine_no_listed_person_vouches_for_is_refused(vouched):
+    world, conn = vouched, vouched.persons()
+    refused(conn, world.person, "foreign_reader", **browser_share(
+        conn, world.person, world.person_priv, agents=[world.eva], to=[_to(world.eva_box), _to(world.box2)]))
+
+
+def test_a_share_listing_the_endorser_reaches_their_machine_and_is_stored(vouched):
+    world, conn = vouched, vouched.persons()
+    conn = world.shared(conn, agents=[world.eva], endorsers=[world.ada_jkt],
+                        to=[_to(world.eva_box), _to(world.box2)])
+    conn.refresh_from_db()
+    assert conn.statement["endorsers"] == [world.ada_jkt]
+    assert ("device", world.box2.ecdh_jkt) in zk_seal.sealed_targets(conn.sealed)
+    (row,) = client(world.person).get("/api/connections/").json()["connections"]
+    assert row["statement"]["endorsers"] == [world.ada_jkt]
+
+
+def test_a_malformed_endorsers_list_is_a_bad_statement(world):
+    conn = world.persons()
+    body = browser_share(conn, world.person, world.person_priv, agents=[world.eva])
+    st = {**body["statement"], "endorsers": ["short"]}
+    refused(conn, world.person, "bad_statement", **{**body, "statement": st})
+
+
+def test_share_state_offers_every_machine_and_each_endorsers_key(vouched):
+    """The browser decides whom to trust, so the server shows it all: a machine no
+    trusted person vouches for yet is still a candidate, with who did vouch."""
+    world = vouched
+    conn = world.shared(world.persons(), agents=[world.eva], endorsers=[world.ada_jkt])
+    r = client(world.person).get(f"/api/connections/{conn.pk}/share")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["endorsers"] == [world.ada_jkt] == body["statement"]["endorsers"]
+    assert world.box2.ecdh_jkt in {c["target"] for c in body["candidates"]}
+    [e] = [e for e in body["endorsements"] if e["target"] == world.box2.ecdh_jkt]
+    assert e["by_public_jwk"] == zk_ref.jwk(world.ada_priv.public_key()) and e["agent_id"] == str(world.eva.pk)
+
+
+def test_share_state_before_any_share_still_offers_a_machine_only_someone_else_vouches_for(vouched):
+    world, conn = vouched, vouched.persons()
+    body = client(world.person).get(f"/api/connections/{conn.pk}/share").json()
+    assert body["endorsers"] == [] and body["statement"] is None
+    assert world.box2.ecdh_jkt in {c["target"] for c in body["candidates"]}
 
 
 def test_the_grant_service_is_gone():

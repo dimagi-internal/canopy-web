@@ -18568,6 +18568,11 @@ export interface components {
              * @description ECDH key thumbprints of the owner's own computers it may be used on.
              */
             readonly my_computers?: readonly string[];
+            /**
+             * Endorsers
+             * @description Key thumbprints of the people, besides the owner, whose endorsement of a machine the statement accepts.
+             */
+            readonly endorsers?: readonly string[];
         };
         /** ConnectionsOut */
         readonly ConnectionsOut: {
@@ -18767,6 +18772,11 @@ export interface components {
             readonly statement?: {
                 readonly [key: string]: unknown;
             } | null;
+            /**
+             * Endorsers
+             * @description The stored statement's `endorsers`: key thumbprints of the people, besides the owner, whose endorsement of a machine it accepts. Empty before the first share.
+             */
+            readonly endorsers?: readonly string[];
             readonly owner: components["schemas"]["ShareOwnerOut"];
             /**
              * Candidates
@@ -18775,7 +18785,7 @@ export interface components {
             readonly candidates: readonly components["schemas"]["ShareCandidateOut"][];
             /**
              * Endorsements
-             * @description Endorsements of those machines' keys, each with its `agent_id`.
+             * @description Endorsements of those machines' keys, each with its `agent_id` and its signer's `by_public_jwk`, whose thumbprint is what `endorsers` lists.
              */
             readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
             /**
@@ -18934,7 +18944,7 @@ export interface components {
             readonly owner: components["schemas"]["ShareOwnerOut"];
             /**
              * Endorsements
-             * @description Endorsements of the recipient machines' keys, each with its `agent_id`.
+             * @description Endorsements of the recipient machines' keys and of the device that last wrote each envelope (even one no longer a recipient), each with its `agent_id`.
              */
             readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
             /**
@@ -37588,7 +37598,7 @@ export interface components {
             readonly owner: components["schemas"]["ShareOwnerOut"];
             /**
              * Endorsements
-             * @description Endorsements of the recipient machines' keys, each with its `agent_id`.
+             * @description Endorsements of the recipient machines' keys and of the device that last wrote each envelope (even one no longer a recipient), each with its `agent_id`.
              */
             readonly endorsements?: readonly components["schemas"]["ZkEndorsementOut"][];
             /**

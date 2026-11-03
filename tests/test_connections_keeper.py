@@ -26,6 +26,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk, zk_seal
+from apps.agents.models import AgentAdmin
 from apps.common import ticks
 from apps.connections import keeper, services
 from apps.connections import recipients as rcpt
@@ -140,6 +141,24 @@ def test_keeper_work_lists_only_connections_this_box_holds(world):
     Connection.objects.all().delete()
     world.shared(world.evas(), agents=[world.eva])
     assert work(world, "eva-cloud").json() == {"connections": []}
+
+
+def test_keeper_work_includes_a_pruned_writers_endorsement(world):
+    """Nobody can re-seal an envelope they cannot validate, so the box re-sealing for
+    a waiting machine still gets what vouches for the writer that has left."""
+    conn = world.shared(world.persons(), agents=[world.eva, world.echo], to=[
+        ("device", world.eva_box.ecdh_jkt, world.eva_box.ecdh_public_jwk),
+        ("device", world.echo_box.ecdh_jkt, world.echo_box.ecdh_public_jwk)])
+    Connection.objects.filter(pk=conn.pk).update(sealed_sig={
+        **conn.sealed_sig, "by": {"kind": "device", "target": world.echo_box.ecdh_jkt,
+                                  "public_jwk": world.echo_box.ecdh_public_jwk}})
+    AgentAdmin.objects.filter(agent=world.echo, user=world.person).delete()
+    conn.refresh_from_db()
+    assert rcpt.prune(conn) == ["echo-cloud"]
+    [item] = work(world, "eva-cloud").json()["connections"]
+    assert world.eva_box2.ecdh_jkt in item["waiting"]
+    [e] = [e for e in item["endorsements"] if e["target"] == world.echo_box.ecdh_jkt]
+    assert e["agent_id"] == str(world.echo.pk) and e["by_public_jwk"]
 
 
 def test_keeper_work_needs_a_device_proof(world):

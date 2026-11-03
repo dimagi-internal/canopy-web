@@ -159,8 +159,40 @@ def test_other_malformed_statements_are_refused(bad):
     assert (e.value.status, e.value.code) == (422, "bad_statement")
 
 
+def _jkts(n: int) -> list[str]:
+    """`n` well-formed thumbprints, sorted."""
+    return sorted(base64.urlsafe_b64encode(hashlib.sha256(str(i).encode()).digest()).rstrip(b"=").decode()
+                  for i in range(n))
+
+
+def test_the_vector_statement_names_who_may_vouch():
+    assert set(GOOD) == {"account_id", "agents", "connection", "endorsers", "my_computers", "v", "version"}
+    assert GOOD["endorsers"] and GOOD["endorsers"] == sorted(set(GOOD["endorsers"]))
+    v = vectors()["statement"]
+    # Signed: a server that adds an endorser breaks the signature.
+    assert not wire.verify_statement({**v["statement"], "endorsers": []}, v["sig"], v["signer_jwk"])
+    assert not wire.verify_statement({**v["statement"], "endorsers": [*_jkts(1), *GOOD["endorsers"]]}, v["sig"],
+                                     v["signer_jwk"])
+
+
+@pytest.mark.parametrize("endorsers", [[], _jkts(1), _jkts(64)])
+def test_a_statement_may_list_up_to_64_endorsers_or_none(endorsers):
+    st = {**GOOD, "endorsers": endorsers}
+    assert wire.check_statement(st, connection_id=CID, account_id=GOOD["account_id"]) == st
+
+
+@pytest.mark.parametrize("endorsers", [
+    _jkts(65), list(reversed(_jkts(2))), [_jkts(1)[0]] * 2, ["short"], [_jkts(1)[0] + "\n"], [1], "x", None,
+])
+def test_malformed_endorsers_are_refused(endorsers):
+    with pytest.raises(wire.WireError) as e:
+        wire.check_statement({**GOOD, "endorsers": endorsers}, connection_id=CID, account_id=GOOD["account_id"])
+    assert (e.value.status, e.value.code) == (422, "bad_statement")
+
+
 def test_a_statement_missing_a_member_or_not_an_object_is_refused():
-    for st in ({k: v for k, v in GOOD.items() if k != "my_computers"}, [], "statement", None):
+    for st in ({k: v for k, v in GOOD.items() if k != "my_computers"},
+               {k: v for k, v in GOOD.items() if k != "endorsers"}, [], "statement", None):
         with pytest.raises(wire.WireError) as e:
             wire.check_statement(st, connection_id=CID, account_id=GOOD["account_id"])
         assert (e.value.status, e.value.code) == (422, "bad_statement")

@@ -108,7 +108,8 @@ def _statement(conn: Connection) -> ConnectionStatementOut:
     pks = [int(a) for a in st.get("agents", []) if str(a).isdigit()]
     slugs = dict(Agent.objects.filter(pk__in=pks).values_list("pk", "slug")) if pks else {}
     return ConnectionStatementOut(version=conn.statement_version, agents=sorted(slugs[p] for p in pks if p in slugs),
-                                  my_computers=sorted(st.get("my_computers", [])))
+                                  my_computers=sorted(st.get("my_computers", [])),
+                                  endorsers=sorted(st.get("endorsers", [])))
 
 
 def _holders(conn: Connection) -> list[str]:

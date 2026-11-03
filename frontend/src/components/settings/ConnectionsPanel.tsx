@@ -89,6 +89,7 @@ const REASONS: Record<string, string> = {
   // not only a missing admin role.
   forbidden: 'is no longer allowed for this account or workspace.',
   insufficient_scope: 'was connected without every permission canopy needs. Connect again and allow them all.',
+  owner_changed: 'is already connected with another vault key, which never changes. Disconnect it first, then connect again.',
   wrong_account:
     'was signed in with an account this connection may not use — sign in as the agent’s own account, or one in the workspace’s allowed domains.',
 }

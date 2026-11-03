@@ -143,7 +143,7 @@ class Connection(models.Model):
     # too; only its holder signs the grant statement.
     owner_key = models.CharField(max_length=64, blank=True, default="")
     # Whose member key `owner_key` is: the person, or the admin who connected an
-    # agent's. SET_NULL: the row outlives them (another admin reconnects).
+    # agent's. SET_NULL: the row outlives them (another admin disconnects it, then connects).
     signer = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )

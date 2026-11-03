@@ -22,6 +22,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "ambiguous": (409, "More than one account connected"),
     "insufficient_scope": (409, "Missing permissions"),
     "no_vault_key": (409, "No vault key"),
+    "owner_changed": (409, "Connected with another vault key"),
     "revoking": (409, "Being disconnected"),
     "provider_error": (502, "Provider error"),
     "provider_unavailable": (503, "Provider unavailable"),

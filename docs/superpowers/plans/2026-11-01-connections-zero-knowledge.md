@@ -49,8 +49,8 @@
 - **R7 Disconnecting a connection no device holds deletes it at once** (`revoke_unconfirmed`): no machine can ever receive it without the owner.
 - **R8 Connecting needs the owner's vault key** (person, or the connecting admin for an agent): 409 `no_vault_key` at start, pointing at vault setup.
 - **R9 `client_id` is sealed in the plaintext**; a refresher refuses material whose app `client_id` differs (`client-mismatch`). `client_id` is already locked while connections exist (`app_locked`).
-- **R10 Only the `owner_key` holder re-signs.** If an agent's connecting admin leaves, another admin reconnects.
-- **R11 Statement agents are agent primary keys** (what endorsements sign); boxes pin `(owner_jkt, version)` per connection and refuse rollback.
+- **R10 Only the `owner_key` holder re-signs, and a row's `owner_key` never changes.** Boxes pin it per connection, and only that pin catches a self-consistent forged set. If an agent's connecting admin leaves, or a person replaces their vault key, connecting the same account again is refused (`owner_changed`, the new grant discarded, the row untouched): disconnect the old connection first, then connect, which makes a new row with a new id and so a new pin.
+- **R11 Statement agents are agent primary keys** (what endorsements sign); boxes pin `(owner_jkt, version)` per connection, and refuse rollback and a changed owner (`statement-owner-changed`, see R10).
 - **R12 Removing an app** sets `removed_at` and hides it; the sweep deletes it once its connections are revoked (a cascade would delete revoking rows before any holder revoked them).
 - **R13 A write-back on an expired lease is accepted if nobody took the lease since.**
 - **R14 The browser trusts devices** by endorsements from people it trusts (`vault/trust.ts`, as `sealAndStore`/`approveAndGrant` do), and the owner's own machines by the owner's choice (name + fingerprint).
@@ -90,9 +90,10 @@ App block in material (plain JSON over the authenticated route, never sealed): `
 
 Object (ASCII values; `account_id` matches `^[\x21-\x7e]{1,255}$` without `"` or `\`):
 ```json
-{"account_id":"00D…/005…","agents":["12","40"],"connection":"<uuid>","my_computers":["<ecdh jkt>"],"v":1,"version":3}
+{"account_id":"00D…/005…","agents":["12","40"],"connection":"<uuid>","endorsers":["<person key jkt>"],"my_computers":["<ecdh jkt>"],"v":1,"version":3}
 ```
-- `agents`: agent pks as decimal strings, sorted as strings, unique; agent-owned MUST contain the owner agent. `my_computers`: ECDH thumbprints, sorted, unique (empty for agent-owned). `version` ≥ 1, strictly greater than the stored one.
+- Keys are exactly these six; `v` is 1.
+- `agents`: agent pks as decimal strings, sorted as strings, unique; agent-owned MUST contain the owner agent. `my_computers`: ECDH thumbprints, sorted, unique (empty for agent-owned). `endorsers`: RFC 7638 thumbprints of person public keys, sorted, unique, at most 64, same pattern as `my_computers`; may be empty, and then only the owner vouches. `version` ≥ 1, strictly greater than the stored one.
 - Message: `"canopy-connections/v1/grant|" + json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`, UTF-8. The browser writes keys in that sorted order.
 - Signature: ECDSA P-256/SHA-256 by the owner's person scalar (as `endorse` in `frontend/src/vault/zk.ts`), P1363 `r‖s` 64 bytes, b64u. Stored `{statement, sig, by_jkt}`; `by_jkt` must equal `owner_key`.
 
@@ -117,7 +118,9 @@ A reader recomputes its own MAC (constant-time) and accepts only if `by` is a de
 For statement `S` and owner key `O` (`owner_key` from the `refresh` plaintext):
 - `("member", owner_user_id)` whose key thumbprint is `O`;
 - a device whose ECDH thumbprint ∈ `S.my_computers`;
-- a device with a valid zk-v1 §7 endorsement of its exact ECDH key (`kind=device, target=key_jkt=jkt`) for agent id `a ∈ S.agents`, by a person the writer trusts (CLI: `vault_keeper._trust_person` pins; browser: `vault/trust.ts`).
+- a device with a valid zk-v1 §7 endorsement of its exact ECDH key (`kind=device, target=key_jkt=jkt`) for agent id `a ∈ S.agents`, signed by a person key whose thumbprint is `O` or is in `S.endorsers`. The endorser's thumbprint is computed from the key used to verify the signature. First-sight pinning plays no part for connections.
+
+canopy-web's `recipients` narrows by the same rule, so what it lists is never something a box would refuse. Who the signed statement names as `endorsers` is the owner's browser's choice (`vault/trust.ts`), so `ShareStateOut.candidates` is not narrowed by it.
 
 ## 0.6 Routes
 
@@ -128,14 +131,14 @@ Errors are RFC 7807 with an `error` member. "Device proof" = DPoP verified by `a
 | # | Route | Gate | Request → Response | Errors |
 |---|---|---|---|---|
 | 1 | `GET/PUT/DELETE /api/workspaces/{ws}/connection-apps[/{provider}]` | `integrations` (PUT/DELETE setting, step_up) | unchanged (`client_secret` write-only, `has_secret`); DELETE marks connections `revoking` and sets `removed_at` | 409 `app_locked` |
-| 2 | `GET /api/connections/` | `self` | → `ConnectionsOut`; `ConnectionOut` gains `id: uuid`, `state`, `statement {version, agents:[slug], my_computers:[jkt]}`, `holders:[runner]`, `waiting:[{agent, runner}]`, `my_machines:[{jkt, name, fingerprint}]` | — |
-| 3 | `GET /api/connections/{id}/share` | `self` | → `ShareStateOut {id, binding, provider, account_id, account_label, state, sealed, sealed_sig, sealed_digest, access_sealed, access_sig, statement, owner{user_id, public_jwk}, candidates:[{kind, target, public_jwk, agent_id?, runner_name, mine: bool}], endorsements:[ZkEndorsementOut + agent_id], agents:[{id, slug, name}]}` — owner only | 403 `not_the_owner_key`, 409 `revoking` |
+| 2 | `GET /api/connections/` | `self` | → `ConnectionsOut`; `ConnectionOut` gains `id: uuid`, `state`, `statement {version, agents:[slug], my_computers:[jkt], endorsers:[jkt]}`, `holders:[runner]`, `waiting:[{agent, runner}]`, `my_machines:[{jkt, name, fingerprint}]` | — |
+| 3 | `GET /api/connections/{id}/share` | `self` | → `ShareStateOut {id, binding, provider, account_id, account_label, state, sealed, sealed_sig, sealed_digest, access_sealed, access_sig, statement, endorsers:[jkt], owner{user_id, public_jwk}, candidates:[{kind, target, public_jwk, agent_id?, runner_name, mine: bool}], endorsements:[ZkEndorsementOut + agent_id; `by_public_jwk` is the signer's key], agents:[{id, slug, name}]}` — owner only | 403 `not_the_owner_key`, 409 `revoking` |
 | 4 | `PUT /api/connections/{id}/share` | `self`, setting, step_up | `ShareIn {statement, sig, by_jkt, sealed, sealed_sig, access_sealed?, access_sig?, expect}` → `ConnectionOut` | 422 `bad_statement`, 422 `bad_signature`, 403 `not_the_owner_key`, 409 `statement_stale`, 403 `not_an_admin`, 422 `agent_outside_workspace`, 422 `not_your_machine`, 422 `statement_missing_owner_agent`, 409 `zk_value_changed`, 422 `foreign_reader`, 422 `bad_writer_sig`, 409 `revoking` |
 | 5 | `DELETE /api/connections/{id}` · `DELETE /api/agents/{slug}/connections/{id}` | `self` / `agent-admin` (+step_up), setting | → 204; `revoking`, or deleted at once when no device holds it | — |
 | 6 | `GET /api/agents/{slug}/connections` | `agent-admin` | → `ConnectionsOut` (owned + lent) | — |
 | — | `PUT/DELETE /api/agents/{slug}/connections/{id}/grants/{other}`, `POST /api/me/connections/{provider}/token` | removed | lending is route 4 | — |
 
-Bare views (paths unchanged): `auth/connections/<provider>/<workspace>/start/` (adds R8 check), `…/callback/` (exchange, policy, seal to owner, redirect to `/w/<ws>/connections/<id>/share`).
+Bare views (paths unchanged): `auth/connections/<provider>/<workspace>/start/` (adds R8 check), `…/callback/` (exchange, policy, seal to owner, redirect to `/w/<ws>/connections/<id>/share`). Connect errors, each landing as `reason=<code>`: `owner_changed` (409 in the problem mapping; R10), and `provider_error` also for a Salesforce host the rule in Global Constraints refuses (the provider normalises the host to lower case, derives `login_host` through its own base URL); a refused grant is discarded (Google without revoke, Salesforce with).
 
 **Person CLI (plain PAT over REST, as `_plain_pat`, plus device proof of a machine the caller owns)**
 
@@ -160,6 +163,7 @@ Bare views (paths unchanged): `auth/connections/<provider>/<workspace>/start/` (
 
 **Shapes**
 - `ConnectionMaterialOut {id, provider, workspace, binding, account_id, account_label, sealed, sealed_sig, sealed_digest, access_sealed, access_sig, access_expires_at, statement, statement_sig, owner{user_id, public_jwk}, endorsements:[ZkEndorsementOut + agent_id], recipients:[{kind, target, public_jwk, runner_name}], app:{client_id, client_secret, options}, lease:{mine: bool, ttl_seconds}|null, rotates_refresh_token}`.
+- `endorsements` in material always include those covering the device named in `sealed_sig.by` and `access_sig.by`, for any agent the statement lists, even when that device has left `recipients` (its key travels in `by.public_jwk`), or nobody could validate that envelope to re-seal it. If that endorsement no longer exists the route still answers; the box refuses and the owner re-shares.
 - `ConnectionKeeperWorkOut` = material fields + `waiting:[target]`, `revoking: bool`, `revoke_at_provider: bool`, `reseal_path`, `revoked_path`.
 
 ## 0.7 CLI commands
@@ -675,7 +679,7 @@ def test_heartbeat_restage_still_only_refreshes_held_files(fake_run): ...
 
 **Interfaces:**
 - Produces (`connections.ts`): `getShareState(id: string): Promise<ShareStateOut>`, `putShare(id: string, body: ShareIn): Promise<ConnectionOut>`, `disconnectMine(id: string)`, `disconnectAgentConnection(slug: string, id: string)`; remove `grantConnection`, `revokeConnectionGrant`.
-- Produces (`connectionShare.ts`): `statementMessage(st: Statement): string`; `openForOwner(state: ShareStateOut, me: Unlocked): Promise<{account: {account_id, provider, instance_url}; refresh: Bytes}>` (accepts `sealed_sig === null` only when `state.state === 'unshared'`, otherwise verifies the MAC; the plaintext stays inside this module); `chooseRecipients(state: ShareStateOut, choice: {agents: string[]; myComputers: string[]}, trusted: Trust): Recipient[]` (Part 0.5 with `vault/trust.ts`; a candidate without a trusted endorsement is left out and named); `buildShare(state: ShareStateOut, me: Unlocked, choice): Promise<ShareIn>` (next statement with `version + 1`, signs it as `endorse` does, re-seals `refresh` (and `access` when present) with `sealValue`, writes member-writer MACs, `expect = state.sealed_digest`).
+- Produces (`connectionShare.ts`): `statementMessage(st: Statement): string`; `openForOwner(state: ShareStateOut, me: Unlocked): Promise<{account: {account_id, provider, instance_url}; refresh: Bytes}>` (accepts `sealed_sig === null` only when `state.state === 'unshared'`, otherwise verifies the MAC; the plaintext stays inside this module); `chooseRecipients(state: ShareStateOut, choice: {agents: string[]; myComputers: string[]}, trusted: Trust): Recipient[]` (Part 0.5 with `vault/trust.ts`; a candidate without a trusted endorsement is left out and named); `buildShare(state: ShareStateOut, me: Unlocked, choice): Promise<ShareIn>` (next statement with `version + 1`, `endorsers` set to the people whose endorsements it trusts (`vault/trust.ts`) for the chosen machines, signs it as `endorse` does, re-seals `refresh` (and `access` when present) with `sealValue`, writes member-writer MACs, `expect = state.sealed_digest`).
 
 - [ ] **Step 1: Write the failing tests** (vitest; vectors via `import raw from '../../../docs/vault/zk-v1/connections_v1_vectors.json?raw'`)
 

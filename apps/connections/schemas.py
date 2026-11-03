@@ -44,6 +44,10 @@ class ConnectionStatementOut(StrictModel):
     my_computers: list[str] = Field(
         default_factory=list,
         description="ECDH key thumbprints of the owner's own computers it may be used on.")
+    endorsers: list[str] = Field(
+        default_factory=list,
+        description="Key thumbprints of the people, besides the owner, whose endorsement of a machine the "
+                    "statement accepts.")
 
 
 class WaitingOut(StrictModel):
@@ -217,13 +221,18 @@ class ShareStateOut(StrictModel):
     access_sig: dict[str, Any] | None = None
     statement: dict[str, Any] | None = Field(
         default=None, description="The stored signed grant statement; null before the first share.")
+    endorsers: list[str] = Field(
+        default_factory=list,
+        description="The stored statement's `endorsers`: key thumbprints of the people, besides the owner, whose "
+                    "endorsement of a machine it accepts. Empty before the first share.")
     owner: ShareOwnerOut
     candidates: list[ShareCandidateOut] = Field(
         description="Everyone the owner could seal to: their member key, each machine of an agent they could "
                     "lend it to (one row per agent that admits it), and their own computers. A machine is sealed "
                     "to only when the statement allows it AND the browser trusts its endorsement.")
     endorsements: list[ZkEndorsementOut] = Field(
-        default_factory=list, description="Endorsements of those machines' keys, each with its `agent_id`.")
+        default_factory=list, description="Endorsements of those machines' keys, each with its `agent_id` and its "
+                                          "signer's `by_public_jwk`, whose thumbprint is what `endorsers` lists.")
     agents: list[ShareAgentOut] = Field(description="The agents the owner may lend it to.")
 
 
@@ -282,7 +291,9 @@ class ConnectionMaterialOut(StrictModel):
     statement_sig: str = Field(description="Its signature, by the owner's key.")
     owner: ShareOwnerOut
     endorsements: list[ZkEndorsementOut] = Field(
-        default_factory=list, description="Endorsements of the recipient machines' keys, each with its `agent_id`.")
+        default_factory=list,
+        description="Endorsements of the recipient machines' keys and of the device that last wrote each envelope "
+                    "(even one no longer a recipient), each with its `agent_id`.")
     recipients: list[MaterialRecipientOut] = Field(
         description="Who canopy-web lets the envelopes reach now. A machine seals only to those the signed "
                     "statement also allows: this list narrows, never widens.")

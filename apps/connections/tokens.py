@@ -155,7 +155,8 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None) -
     admission check and no record: `material` (a machine about to use it) and the
     keeper (`keeper.work`: a box that holds it, re-sealing or revoking) both answer it.
     `recipients` and the endorsements are those of the statement in force
-    (`pairs`, default `recipients.device_reasons`)."""
+    (`pairs`, default `recipients.device_reasons`), plus what vouches for the last
+    writer (`_writer_endorsements`)."""
     pairs = rcpt.device_reasons(conn) if pairs is None else pairs
     devices, seen = [], set()
     for k, _ in pairs:
@@ -170,6 +171,8 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None) -
     agents = {a.pk: a for _, a in pairs if a is not None}
     endorsements = [{**e, "agent_id": str(a.pk)} for a in agents.values() for e in zk_endorse.endorsements(a)
                     if e["kind"] == "device" and e["target"] in seen]
+    have = {(e["agent_id"], e["by"], e["target"]) for e in endorsements}
+    endorsements += [e for e in _writer_endorsements(conn) if (e["agent_id"], e["by"], e["target"]) not in have]
     return {
         "id": conn.pk, "provider": conn.provider, "workspace": conn.app.workspace_id, "binding": conn.binding,
         "account_id": conn.account_id, "account_label": conn.account_label,
@@ -184,6 +187,17 @@ def material_fields(conn: Connection, device_key: RunnerDeviceKey, pairs=None) -
         "rotates_refresh_token": bool(getattr(providers.CLASSES.get(conn.provider), "rotates_refresh_token",
                                               False)),
     }
+
+
+def _writer_endorsements(conn: Connection) -> list[dict]:
+    """What vouches for the device that last wrote each envelope, for every agent the
+    statement lists. A reader must validate the writer to open it, or nobody could
+    re-seal it after that device was pruned; its key travels in the sig's `by`."""
+    writers = {sig["by"]["target"] for sig in (conn.sealed_sig, conn.access_sig)
+               if sig and (sig.get("by") or {}).get("kind") == "device"}
+    agent_pks = rcpt.statement_agent_pks(conn.statement)
+    # None left (say the key was deleted): this still answers; the box refuses, the owner re-shares.
+    return [e for jkt in sorted(writers) for e in zk_endorse.endorsements_of_device(agent_pks, jkt)]
 
 
 # ---- the lease ----------------------------------------------------------------------

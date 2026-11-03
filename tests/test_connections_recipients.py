@@ -15,14 +15,15 @@ import hashlib
 
 import pytest
 
-from apps.agents.credentials import zk_seal
-from apps.agents.models import Agent
+from apps.agents.credentials import zk, zk_seal
+from apps.agents.models import Agent, AgentVaultEndorsement
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection, ConnectionGrant
-from apps.harness.models import Runner, RunnerDeviceKey
+from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace
-from tests.fixtures.connections import ShareWorld, revoke_admin, vault_key
+from tests.fixtures.connections import ShareWorld, endorse, revoke_admin, sealed_to_owner, vault_key
+from tests.fixtures.vault_zk import ref as zk_ref
 
 pytestmark = pytest.mark.django_db
 
@@ -171,6 +172,100 @@ def test_prune_leaves_a_revoking_connection_alone(world):
     Connection.objects.filter(pk=conn.pk).update(state=Connection.REVOKING)
     assert rcpt.prune(conn) == []
     assert held(conn) == {world.eva_box.ecdh_jkt, world.echo_box.ecdh_jkt}
+
+
+# ---- who may vouch for a machine (contract §0.5) ----------------------------------------
+
+def _statement(world, *agents, endorsers=()):
+    return {"agents": sorted(str(a.pk) for a in agents), "my_computers": [], "endorsers": sorted(endorsers)}
+
+
+@pytest.fixture
+def vouched(world):
+    """A box that runs eva, endorsed by ada alone (an admin of eva, not the owner)."""
+    world.box2, _, _ = world._box("eva-cloud-2", Runner.CLOUD, world.op, world.eva, endorsed=False)
+    endorse(world.eva, world.box2, world.ada, world.ada_priv)
+    world.ada_jkt = zk_ref.jkt(world.ada_priv.public_key())
+    return world
+
+
+def test_a_machine_counts_only_through_the_owner_or_a_listed_endorser(vouched):
+    world, conn = vouched, vouched.persons()
+    owners_only = _statement(world, world.eva)
+    assert jkts(rcpt.recipients(conn, owners_only)) == {world.eva_box.ecdh_jkt}
+    listed = _statement(world, world.eva, endorsers=[world.ada_jkt])
+    assert jkts(rcpt.recipients(conn, listed)) == {world.eva_box.ecdh_jkt, world.box2.ecdh_jkt}
+
+
+def test_a_machine_nobody_endorsed_is_not_a_recipient_of_any_statement(vouched):
+    world, conn = vouched, vouched.persons()
+    AgentVaultEndorsement.objects.filter(target=world.box2.ecdh_jkt).delete()
+    listed = _statement(world, world.eva, endorsers=[world.ada_jkt])
+    assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn, listed))
+
+
+def test_an_agents_own_connection_is_narrowed_by_the_same_rule(vouched):
+    world = vouched
+    conn = sealed_to_owner({"agent": world.eva}, world.person, app=world.app)
+    assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn, _statement(world, world.eva)))
+    listed = _statement(world, world.eva, endorsers=[world.ada_jkt])
+    assert world.box2.ecdh_jkt in jkts(rcpt.recipients(conn, listed))
+
+
+def test_the_stored_statements_endorsers_decide_by_default(vouched):
+    world = vouched
+    conn = world.shared(world.persons(), agents=[world.eva], endorsers=[world.ada_jkt])
+    assert world.box2.ecdh_jkt in jkts(rcpt.recipients(conn))
+    Connection.objects.filter(pk=conn.pk).update(statement={**conn.statement, "endorsers": []})
+    conn.refresh_from_db()
+    assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn))
+    assert rcpt.waiting(conn) == []
+    assert rcpt.prune(conn) == ["eva-cloud-2"]
+
+
+def test_the_endorser_is_who_the_verifying_key_says_not_what_the_row_claims(vouched):
+    """A stranger's endorsement stored as if ada made it: a box computes the thumbprint
+    from the key that verifies the signature, so it is the stranger's."""
+    world, conn = vouched, vouched.persons()
+    stranger_priv = vault_key(world.op)
+    endorse(world.eva, world.box2, world.op, stranger_priv, endorser_jkt=world.ada_jkt)
+    AgentVaultEndorsement.objects.filter(target=world.box2.ecdh_jkt, endorser=world.ada).delete()
+    listed = _statement(world, world.eva, endorsers=[world.ada_jkt])
+    assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn, listed))
+    # The stranger, listed by their real key, does count.
+    real = _statement(world, world.eva, endorsers=[zk_ref.jkt(stranger_priv.public_key())])
+    assert world.box2.ecdh_jkt in jkts(rcpt.recipients(conn, real))
+
+
+def test_an_endorsement_that_does_not_verify_counts_for_nothing(vouched):
+    world, conn = vouched, vouched.persons()
+    forged = zk_ref.endorse(world.echo.pk, "device", world.box2.ecdh_jkt, zk.public_key(world.box2.ecdh_public_jwk),
+                            world.ada_priv, world.ada.pk)["sig"]  # signed for another agent
+    AgentVaultEndorsement.objects.filter(target=world.box2.ecdh_jkt).update(sig=forged)
+    listed = _statement(world, world.eva, endorsers=[world.ada_jkt])
+    assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn, listed))
+
+
+def test_an_endorser_who_replaced_their_key_vouches_for_nothing(vouched):
+    world, conn = vouched, vouched.persons()
+    new = vault_key(world.ada)
+    for who in (world.ada_jkt, zk_ref.jkt(new.public_key())):
+        assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn, _statement(world, world.eva, endorsers=[who])))
+
+
+def test_an_endorsement_for_another_agent_does_not_admit_a_machine(vouched):
+    world, conn = vouched, vouched.persons()
+    AgentVaultEndorsement.objects.filter(target=world.box2.ecdh_jkt).delete()
+    RunnerAssignment.objects.create(agent=world.echo, runner=world.box2.runner, rank=1)
+    endorse(world.echo, world.box2, world.person, world.person_priv)
+    assert world.box2.ecdh_jkt not in jkts(rcpt.recipients(conn, _statement(world, world.eva)))
+    assert world.box2.ecdh_jkt in jkts(rcpt.recipients(conn, _statement(world, world.echo)))
+
+
+def test_my_computers_need_no_endorsement(world):
+    conn = world.persons()
+    st = {"agents": [], "my_computers": [world.computer.ecdh_jkt], "endorsers": []}
+    assert jkts(rcpt.recipients(conn, st)) == {world.computer.ecdh_jkt}
 
 
 def test_prune_leaves_an_unshared_connection_alone(world):

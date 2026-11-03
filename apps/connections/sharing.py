@@ -13,6 +13,8 @@ a writer MAC per recipient (§0.4). Here canopy-web checks what it can:
   workspace (one already lent may stay listed after its lender stopped
   administering it: `recipients.grants_in_force` drops it);
 - `my_computers` are the signer's own enrolled machines (none for an agent's);
+- `endorsers` is well formed; whom to trust is the owner's to say, and `recipients`
+  holds the envelope to it;
 - the write replaces what the browser read (`expect`), and its recipients are
   the owner and machines the statement allows (`recipients`), nobody else;
 - the writer MAC list covers the envelope and names the owner as the writer.
@@ -53,7 +55,7 @@ def _owner_keyset(conn: Connection, user, by_jkt: str | None = None) -> UserVaul
             or (by_jkt is not None and by_jkt != jkt)):
         raise WireError(403, "not_the_owner_key",
                         "Only the person whose vault key this connection was sealed to can share it. "
-                        "Connect it again to share it yourself.")
+                        "Disconnect it, then connect it again to share it yourself.")
     return ks
 
 
@@ -78,14 +80,12 @@ def share_state(conn: Connection, user) -> dict:
     _not_revoking(conn)
     ks = _owner_keyset(conn, user)
     agents = _choosable(conn, user)
-    everything = {"agents": [str(a.pk) for a in agents],
-                  "my_computers": ([k.ecdh_jkt for k in rcpt.my_machines(user)] if conn.user_id else [])}
     candidates = [{"kind": "member", "target": str(user.pk), "public_jwk": ks.public_jwk, "agent_id": "",
                    "runner_name": "", "mine": True}]
     candidates += [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
                     "agent_id": str(a.pk) if a else "", "runner_name": k.runner.name,
                     "mine": k.runner.owner_id == user.pk}
-                   for k, a in rcpt.device_reasons(conn, everything)]
+                   for k, a in rcpt.candidate_reasons(conn, agents, user)]
     devices = {c["target"] for c in candidates if c["kind"] == "device"}
     endorsements = [{**e, "agent_id": str(a.pk)} for a in agents for e in zk_endorse.endorsements(a)
                     if e["kind"] == "device" and e["target"] in devices]
@@ -94,7 +94,8 @@ def share_state(conn: Connection, user) -> dict:
         "account_label": conn.account_label, "state": conn.state,
         "sealed": conn.sealed, "sealed_sig": conn.sealed_sig, "sealed_digest": conn.sealed_digest,
         "access_sealed": conn.access_sealed, "access_sig": conn.access_sig,
-        "statement": conn.statement, "owner": {"user_id": str(user.pk), "public_jwk": ks.public_jwk},
+        "statement": conn.statement, "endorsers": (conn.statement or {}).get("endorsers", []),
+        "owner": {"user_id": str(user.pk), "public_jwk": ks.public_jwk},
         "candidates": candidates, "endorsements": endorsements,
         "agents": [{"id": str(a.pk), "slug": a.slug, "name": a.name} for a in agents],
     }

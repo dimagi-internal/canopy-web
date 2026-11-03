@@ -20,12 +20,14 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.credentials import zk_seal
+from apps.agents.credentials import zk_endorse, zk_seal
+from apps.agents.models import AgentVaultEndorsement
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection
 from apps.events.models import Event
-from apps.harness.models import RunnerAccessToken
+from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment
 from apps.mcp import api_tools
+from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connection_calls import (
     TokensWorld,
@@ -369,6 +371,89 @@ def test_person_refreshes_and_writes_back_on_their_own_computer(world):
     # Someone else's connection id is a 404 to me.
     assert person_call(world, "POST", f"/{cid}/refresh-lease", user=world.ada,
                        machine="ada-computer").status_code == 404
+
+
+# ---- readers can always check the last writer ----------------------------------------
+
+def _last_written_by_echos_box(world) -> Connection:
+    """Shared to eva and echo; echo's box then refreshed and rotated it, so it is the
+    writer of both envelopes; then jj stopped administering echo and the box was pruned."""
+    world.conn = world.shared(world.persons(), agents=[world.eva, world.echo])
+    lease_id = lease(world, "echo-cloud").json()["lease_id"]
+    r = write_back(world, "echo-cloud", machine_write(world, world.conn, "echo-cloud", lease_id, rotated=True))
+    assert r.status_code == 200, r.content
+    revoke_admin(world.person, world.echo)
+    assert "echo-cloud" in rcpt.prune(world.conn)
+    world.conn.refresh_from_db()
+    assert world.conn.sealed_sig["by"]["target"] == world.conn.access_sig["by"]["target"] == world.echo_box.ecdh_jkt
+    return world.conn
+
+
+def _writer_endorsements(body, world) -> list[dict]:
+    return [e for e in body["endorsements"] if e["target"] == world.echo_box.ecdh_jkt]
+
+
+def test_material_includes_a_pruned_writers_endorsement(world):
+    conn = _last_written_by_echos_box(world)
+    r = material_for(world, world.box_a)
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert world.echo_box.ecdh_jkt not in {x["target"] for x in body["recipients"]}
+    [e] = _writer_endorsements(body, world)
+    assert (e["kind"], e["key_jkt"], e["agent_id"]) == ("device", world.echo_box.ecdh_jkt, str(world.echo.pk))
+    # A reader checks it with what it was handed: the writer's key travels in `by`.
+    assert e["by_public_jwk"] == zk_ref.jwk(world.person_priv.public_key())
+    assert zk_endorse.verify(world.echo.pk, kind="device", target=e["target"], key_jkt=e["key_jkt"], sig=e["sig"],
+                             endorser_jwk=e["by_public_jwk"])
+    assert body["sealed_sig"]["by"]["public_jwk"] == world.echo_box.ecdh_public_jwk
+    assert conn.statement["agents"] == sorted([str(world.eva.pk), str(world.echo.pk)])
+
+
+def test_a_writer_that_stopped_running_the_agent_still_has_its_endorsement_listed(world):
+    _last_written_by_echos_box(world)
+    RunnerAssignment.objects.filter(runner=world.echo_box.runner).delete()
+    assert len(_writer_endorsements(material_for(world, world.box_a).json(), world)) == 1
+
+
+def test_only_the_writers_own_endorsements_are_added(world):
+    # echo-cloud's is there as the writer's; another box of echo's that wrote nothing is not.
+    other, _, _ = world._box("echo-cloud-2", Runner.CLOUD, world.op, world.echo)
+    _last_written_by_echos_box(world)
+    targets = {e["target"] for e in material_for(world, world.box_a).json()["endorsements"]}
+    assert world.echo_box.ecdh_jkt in targets and other.ecdh_jkt not in targets
+
+
+def test_a_writer_whose_endorsement_is_gone_still_gets_an_answer(world):
+    _last_written_by_echos_box(world)
+    AgentVaultEndorsement.objects.filter(target=world.echo_box.ecdh_jkt).delete()
+    r = material_for(world, world.box_a)
+    assert r.status_code == 200 and _writer_endorsements(r.json(), world) == []
+
+
+def test_a_writers_endorsement_whose_signer_has_no_key_is_left_out(world):
+    _last_written_by_echos_box(world)
+    AgentVaultEndorsement.objects.filter(target=world.echo_box.ecdh_jkt).update(endorser=world.ada)
+    UserVaultKeyset.objects.filter(user=world.ada).delete()
+    r = material_for(world, world.box_a)
+    assert r.status_code == 200 and _writer_endorsements(r.json(), world) == []
+
+
+def test_a_member_writer_adds_no_endorsement(world):
+    world.conn = world.shared(world.persons(), agents=[world.eva])
+    world.conn.refresh_from_db()
+    assert world.conn.sealed_sig["by"]["kind"] == "member"
+    assert {e["target"] for e in material_for(world, world.box_a).json()["endorsements"]} == {
+        world.eva_box.ecdh_jkt, world.eva_box2.ecdh_jkt}
+
+
+# ---- a machine no trusted person vouches for ------------------------------------------
+
+def test_material_refuses_a_machine_the_statement_does_not_vouch_for(world):
+    world.conn = world.shared(world.persons(), agents=[world.eva], to=[
+        ("device", world.eva_box.ecdh_jkt, world.eva_box.ecdh_public_jwk)])
+    AgentVaultEndorsement.objects.filter(target=world.eva_box.ecdh_jkt).delete()
+    r = material_for(world, world.box_a)
+    assert r.status_code == 409 and r.json()["error"] == "not_connected"
 
 
 # ---- never a tool ------------------------------------------------------------------

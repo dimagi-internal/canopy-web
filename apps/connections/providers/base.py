@@ -52,6 +52,9 @@ What a provider declares, and where providers differ:
   other connections hold.
 - `instance_url(body)`: the account's own API base, when the provider has one
   per account (Salesforce's `instance_url`); "" when the API host is fixed.
+- `sealed_hosts(token)`: the `login_host` and `instance_url` sealed in the envelope
+  at connect, or a `ProviderError` when no machine would accept them (Salesforce's
+  host rule); `("", token.instance_url)` by default.
 - `identity(token)`: who the account is — a stable `account_id`, a label, and
   the verified `email` when the provider vouches for one (what `check_owner`
   compares; the label is display only).
@@ -185,6 +188,11 @@ class Provider:
 
     def instance_url(self, body: Mapping[str, Any]) -> str:
         return ""
+
+    def sealed_hosts(self, token: TokenResponse) -> tuple[str, str]:
+        """`(login_host, instance_url)` as the envelope seals them. Raise `ProviderError`
+        for a value every machine would refuse, so it never connects."""
+        return "", token.instance_url
 
     def identity(self, token: TokenResponse) -> Identity:
         raise NotImplementedError

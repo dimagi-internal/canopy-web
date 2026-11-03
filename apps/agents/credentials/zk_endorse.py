@@ -76,12 +76,32 @@ def endorsements(agent) -> list[dict]:
     rows = [e for e in AgentVaultEndorsement.objects.filter(agent=agent, endorser_id__in=endorsers)
             .select_related("endorser")
             if (e.kind, e.target, e.key_jkt) in live]
-    keys = {ks.user_id: ks.public_jwk for ks in
+    keys = _endorser_keys(rows)
+    return [_row(e, keys) for e in rows]
+
+
+def endorsements_of_device(agent_ids, jkt: str) -> list[dict]:
+    """Every endorsement of device key `jkt` for the agents `agent_ids`, each with its
+    `agent_id` and its endorser's public key: unlike `endorsements`, whether or not the
+    device still reads the agent or its endorser is still a member. For a reader
+    judging a past write, which is signed for what was true then. One whose endorser no
+    longer has a key can be verified by nobody, so it is left out."""
+
+    rows = list(AgentVaultEndorsement.objects.filter(agent_id__in=list(agent_ids), kind="device", target=jkt,
+                                                     key_jkt=jkt).select_related("endorser"))
+    keys = _endorser_keys(rows)
+    return [{**_row(e, keys), "agent_id": str(e.agent_id)} for e in rows if e.endorser_id in keys]
+
+
+def _endorser_keys(rows) -> dict[int, dict]:
+    return {ks.user_id: ks.public_jwk for ks in
             UserVaultKeyset.objects.filter(user_id__in={e.endorser_id for e in rows})}
-    return [{"kind": e.kind, "target": e.target, "key_jkt": e.key_jkt, "by": str(e.endorser_id),
-             "by_email": e.endorser.email, "by_jkt": e.endorser_jkt, "by_public_jwk": keys.get(e.endorser_id),
-             "sig": e.sig}
-            for e in rows]
+
+
+def _row(e: AgentVaultEndorsement, keys: dict[int, dict]) -> dict:
+    return {"kind": e.kind, "target": e.target, "key_jkt": e.key_jkt, "by": str(e.endorser_id),
+            "by_email": e.endorser.email, "by_jkt": e.endorser_jkt, "by_public_jwk": keys.get(e.endorser_id),
+            "sig": e.sig}
 
 
 def add(agent, *, user, items: list, own_machines_only: bool = False) -> int:

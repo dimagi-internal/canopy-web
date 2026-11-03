@@ -17,7 +17,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.credentials import zk, zk_seal
-from apps.agents.models import Agent, AgentAdmin
+from apps.agents.models import Agent, AgentAdmin, AgentVaultEndorsement
 from apps.connections import recipients as rcpt
 from apps.connections import sharing
 from apps.connections.models import Connection, ConnectionApp, ConnectionGrant
@@ -239,7 +239,7 @@ def in_force(conn, *agents, by=None) -> Connection:
             ConnectionGrant.objects.get_or_create(connection=conn, agent=a, defaults={"granted_by": by})
     conn.state = Connection.ACTIVE
     conn.statement = {"account_id": conn.account_id, "agents": sorted(str(pk) for pk in pks),
-                      "connection": str(conn.pk), "my_computers": [], "v": 1,
+                      "connection": str(conn.pk), "endorsers": [], "my_computers": [], "v": 1,
                       "version": conn.statement_version + 1}
     conn.statement_version += 1
     conn.save()
@@ -269,17 +269,27 @@ def sealed_to_owner(owner_kw, signer, *, app=None, **fields) -> Connection:
     return conn
 
 
-def browser_share(conn, user, priv, *, agents=(), my_computers=(), to=None, version=None, sign_with=None,
-                  writer=None) -> dict:
+def endorse(agent, key, user, priv, **row) -> AgentVaultEndorsement:
+    """`user`'s zk-v1 §7 endorsement, signed by `priv`, that machine `key`'s ECDH key
+    may read `agent`. `row` overrides what is stored, to forge one."""
+    e = zk_ref.endorse(agent.pk, "device", key.ecdh_jkt, zk.public_key(key.ecdh_public_jwk), priv, user.pk)
+    defaults = {"key_jkt": e["key_jkt"], "endorser_jkt": e["by_jkt"], "sig": e["sig"], **row}
+    return AgentVaultEndorsement.objects.update_or_create(agent=agent, kind="device", target=key.ecdh_jkt,
+                                                          endorser=user, defaults=defaults)[0]
+
+
+def browser_share(conn, user, priv, *, agents=(), my_computers=(), endorsers=(), to=None, version=None,
+                  sign_with=None, writer=None) -> dict:
     """The `sharing.share` keyword arguments the owner's browser sends (contract
-    §0.3-0.4): a statement lending `conn` to `agents` and its use on `my_computers`
-    (ECDH thumbprints), signed with `sign_with` (default `priv`); the refresh token
+    §0.3-0.4): a statement lending `conn` to `agents`, its use on `my_computers` (ECDH
+    thumbprints) and the other people who may vouch for machines (`endorsers`, person
+    key thumbprints), signed with `sign_with` (default `priv`); the refresh token
     sealed to `user` and to `to` (`[(kind, target, public_jwk)]`; default every
     machine canopy-web lists for that statement), with writer MACs by `writer`
     (default `priv`, as `user`)."""
     conn.refresh_from_db()
     st = {"account_id": conn.account_id, "agents": sorted(str(a.pk) for a in agents), "connection": str(conn.pk),
-          "my_computers": sorted(my_computers), "v": 1,
+          "endorsers": sorted(endorsers), "my_computers": sorted(my_computers), "v": 1,
           "version": conn.statement_version + 1 if version is None else version}
     if to is None:
         to = [r for r in rcpt.recipients(conn, st) if r[0] == "device"]
@@ -299,7 +309,8 @@ def browser_share(conn, user, priv, *, agents=(), my_computers=(), to=None, vers
 class ShareWorld:
     """jj (a person with a vault key) administers eva (their own) and echo (op's,
     by an AgentAdmin row). op runs a cloud box for each; ada, another admin of
-    eva, runs eva on her laptop; jj has a computer of their own (plain Claude Code)."""
+    eva, runs eva on her laptop; jj has a computer of their own (plain Claude Code).
+    jj vouches for every machine that runs an agent (`endorse`), unless `_box` is told not to."""
 
     def __init__(self):
         users = get_user_model().objects
@@ -325,12 +336,14 @@ class ShareWorld:
         self.computer, _, _ = self._box("jj-computer", Runner.COMPUTER, self.person, None)
         self.ada_computer, _, _ = self._box("ada-computer", Runner.COMPUTER, self.ada, None)
 
-    def _box(self, name, kind, owner, agent):
+    def _box(self, name, kind, owner, agent, *, endorsed=True):
         r = Runner.objects.create(name=name, kind=kind, owner=owner, workspace=self.ws,
                                   last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
         if agent is not None:
             RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
         self.machines[name] = a_machine(r, owner)
+        if agent is not None and endorsed:
+            endorse(agent, self.machines[name][0], self.person, self.person_priv)
         return self.machines[name]
 
     def persons(self) -> Connection:
@@ -339,9 +352,10 @@ class ShareWorld:
     def evas(self) -> Connection:
         return sealed_to_owner({"agent": self.eva}, self.person, app=self.app)
 
-    def shared(self, conn, agents=(), my_computers=(), to=None) -> Connection:
+    def shared(self, conn, agents=(), my_computers=(), to=None, endorsers=()) -> Connection:
         return sharing.share(conn, user=self.person, **browser_share(
-            conn, self.person, self.person_priv, agents=agents, my_computers=my_computers, to=to))
+            conn, self.person, self.person_priv, agents=agents, my_computers=my_computers, to=to,
+            endorsers=endorsers))
 
 
 def revoke_admin(user, agent):

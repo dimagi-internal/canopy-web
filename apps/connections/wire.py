@@ -22,7 +22,7 @@ REFRESH_NAME = "refresh"
 ACCESS_NAME = "access"
 STATEMENT_PREFIX = "canopy-connections/v1/grant|"
 
-_STATEMENT_KEYS = {"account_id", "agents", "connection", "my_computers", "v", "version"}
+_STATEMENT_KEYS = {"account_id", "agents", "connection", "endorsers", "my_computers", "v", "version"}
 #: Printable ASCII without '"' or '\', so the signed message has one spelling everywhere.
 _ACCOUNT_ID = re.compile(r'^[\x21\x23-\x5b\x5d-\x7e]{1,255}$')
 _AGENT_PK = re.compile(r"^[1-9][0-9]*$")
@@ -32,6 +32,7 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAC_LEN = 32
 #: The statement's lists are bounded like the recipients of one sealed value.
 _MAX_LISTED = zk_seal.MAX_RECIPIENTS
+_MAX_ENDORSERS = 64
 
 
 class WireError(Exception):
@@ -60,9 +61,9 @@ def _bad_statement(detail: str) -> WireError:
     return WireError(422, "bad_statement", f"grant statement: {detail}")
 
 
-def _sorted_unique(items, pattern: re.Pattern, what: str) -> None:
-    if not isinstance(items, list) or len(items) > _MAX_LISTED:
-        raise _bad_statement(f"{what} must be a list of at most {_MAX_LISTED}")
+def _sorted_unique(items, pattern: re.Pattern, what: str, limit: int = _MAX_LISTED) -> None:
+    if not isinstance(items, list) or len(items) > limit:
+        raise _bad_statement(f"{what} must be a list of at most {limit}")
     if not all(isinstance(i, str) and pattern.fullmatch(i) for i in items):
         raise _bad_statement(f"{what} has an entry of the wrong form")
     if items != sorted(set(items)):
@@ -87,6 +88,7 @@ def check_statement(st: dict, *, connection_id, account_id: str) -> dict:
         raise _bad_statement("it names another connection")
     _sorted_unique(st["agents"], _AGENT_PK, "agents")
     _sorted_unique(st["my_computers"], _JKT, "my_computers")
+    _sorted_unique(st["endorsers"], _JKT, "endorsers", limit=_MAX_ENDORSERS)
     return st
 
 
