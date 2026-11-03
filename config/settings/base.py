@@ -848,7 +848,7 @@ REVIEW_SUGGESTION_NOTIFY_TO = env.list("REVIEW_SUGGESTION_NOTIFY_TO", default=["
 # Who reads access requests from the public site's request-access form
 # (apps/beta_requests). Empty = record them without mailing anyone.
 CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")
-# Who may SET the fleet hold (apps/harness/models.py::FleetHold) without being a
+# Who may SET the fleet hold (apps/harness/models/fleet.py::FleetHold) without being a
 # superuser. Holding only stops new work and loses nothing, so the agent that conducts
 # the fleet (Ada) can pull the brake the moment something looks wrong; RELEASING stays
 # superuser-only, so an agent can stop the fleet but never restart it.

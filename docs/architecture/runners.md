@@ -9,9 +9,11 @@ identity and credentials a turn is handed, keyless sign-in, the runner software)
 [runner-fleets.md](runner-fleets.md) (fleets, credential sets, readiness). Who may *edit* each of these is in
 [`access.md`](access.md) (→ "Runner roles", "Turn mode"); the routes are in
 [`api-surface.md`](api-surface.md) (→ Harness, Agents). Code: `apps/harness/claim.py`
-(the claim), `apps/harness/routing.py` (every routing predicate — the claim, turn
-status, the unclaimable report and the topology all ask the same functions, so
-they cannot disagree).
+(the claim) and `apps/harness/claim_reach.py` (its read-only explanations: `turn_reach`,
+`unclaimable_queued_turns`), `apps/harness/routing.py` (every routing predicate, re-exported
+from `routing_orders`, `routing_machine`, `routing_serving` and `routing_projects` — the claim,
+turn status, the unclaimable report and the topology all ask the same functions, so they
+cannot disagree).
 
 ## Two ways an agent runs
 
@@ -244,7 +246,7 @@ role assuming the same role) off the box.
 ## Opted-in projects (`ProjectOptIn`)
 
 Canopy is opt-in per repo, and the choice is part of the person's account
-(`apps/harness/models.py::ProjectOptIn`, `GET|PUT /api/me/canopy-projects/`,
+(`apps/harness/models/runner.py::ProjectOptIn`, `GET|PUT /api/me/canopy-projects/`,
 Settings → Canopy projects), never config on a box. A person picks **every repo**
 (`everything`) or **only the repos they name** (`projects`). With no row the
 answer is nothing. Every repo outside the choice is plain Claude Code.

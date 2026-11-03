@@ -10,7 +10,7 @@ import {
 
 /**
  * "Use canopy in…" — every repo, or only the ones you tick
- * (apps/harness/models.py::ProjectOptIn). Everything else on your boxes is plain
+ * (apps/harness/models/runner.py::ProjectOptIn). Everything else on your boxes is plain
  * Claude Code: canopy routes nothing to it and mirrors nothing from it. Lists the
  * repos your own runners report, plus any you type in.
  */
