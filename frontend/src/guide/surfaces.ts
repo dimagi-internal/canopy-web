@@ -194,6 +194,15 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Watch the walkthrough', 'Copy or rotate the public link (owner)', 'Toggle visibility (owner)', 'Delete it (owner)'],
   },
   {
+    path: '/w/:workspace/connections/:id/connected',
+    home: '/w/:workspace/settings/connections',
+    title: 'Connected',
+    audience: 'The person who just connected Salesforce or Google',
+    what: "Where a successful sign-in lands. It says which account was connected and whether project screens and apps can use it now, then offers the one step left: choose who else can use it (agents or your own computers) on the Share screen, or Done. It asks for nothing and unlocks nothing; your passkey is only needed on Share.",
+    needsFirst: 'A connection you just made.',
+    actions: ['Read which account was connected', 'Choose who can use it', 'Done'],
+  },
+  {
     path: '/w/:workspace/connections/:id/share',
     home: '/w/:workspace/settings/connections',
     title: 'Connected as … (share a connection)',

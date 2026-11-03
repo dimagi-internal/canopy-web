@@ -87,7 +87,7 @@ def test_full_person_flow_connects_and_lands_on_the_share_screen(client, user):
         resp = _callback(client, state)
     conn = Connection.objects.get()
     assert conn.user_id == user.pk and conn.agent_id is None
-    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/settings?tab=x"})
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/settings?tab=x"})
 
 
 def test_a_refused_person_flow_lands_back_and_stores_nothing(client, user):
@@ -115,7 +115,7 @@ def test_agent_flow_stores_agent_owned_connection(client, eva):
         resp = _callback(client, state)
     conn = Connection.objects.get()
     assert conn.agent_id == eva.pk
-    assert _landing(resp)[0] == f"/w/w/connections/{conn.pk}/share"
+    assert _landing(resp)[0] == f"/w/w/connections/{conn.pk}/connected"
 
 
 def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):

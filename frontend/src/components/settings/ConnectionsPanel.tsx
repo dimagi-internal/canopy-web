@@ -4,6 +4,7 @@ import {
   connectionStartPath,
   disconnectMine,
   listMyConnections,
+  turnOffServerUse,
   type ConnectionOut,
   type ConnectionsView,
   type DisconnectOutcome,
@@ -81,6 +82,7 @@ export function ConnectionsPanel() {
           returnTo={pathname}
           busy={busy}
           onDisconnect={disconnect}
+          onChanged={load}
         />
       ))}
     </div>
@@ -222,7 +224,7 @@ const NOT_REACHING: Record<string, string> = {
  * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
  * are not in this view, so the share page explains them and this links to it.
  */
-export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void }) {
   const { c, canChange = true } = props
   return (
     <>
@@ -234,7 +236,9 @@ export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canCh
   )
 }
 
-function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo: string; canChange?: boolean }) {
+function Sharing({ c, returnTo, canChange = true, onChanged }: {
+  c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void
+}) {
   if (!c.usable) return null
   if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
   const only = canChange ? null : (
@@ -247,11 +251,14 @@ function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo
   const href = sharePath(c, returnTo)
   if (c.state === 'unshared') {
     return (
-      <p className="text-[12px] text-warning">
-        Not shared yet: no agent or computer can use it.{' '}
-        {canChange && <Link to={href} className={shareLink}>Share</Link>}
-        {only}
-      </p>
+      <>
+        <p className="text-[12px] text-warning">
+          Not shared yet: no agent or computer can use it.{' '}
+          {canChange && <Link to={href} className={shareLink}>Share</Link>}
+          {only}
+        </p>
+        <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
+      </>
     )
   }
   const agents = c.statement?.agents ?? []
@@ -279,12 +286,72 @@ function Sharing({ c, returnTo, canChange = true }: { c: ConnectionOut; returnTo
           {canChange && <p><Link to={href} className={shareLink}>Give waiting machines a copy</Link></p>}
         </>
       )}
+      <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
       {canChange ? (
         <p className="flex flex-wrap gap-x-3">
           <Link to={href} className={shareLink}>Change who can use it</Link>
           <Link to={href} className={shareLink}>Open to check its machines</Link>
         </p>
       ) : only}
+    </div>
+  )
+}
+
+const USED_BY = 'Used by canopy-web'
+const USED_BY_WHY = 'With this on, project screens and apps can use this account with nobody present. '
+  + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+const NEEDS_PASSKEY = 'Changing this needs your passkey.'
+
+/**
+ * "Used by canopy-web": whether project screens and apps may use this account. Shown only for a
+ * provider canopy-web makes calls for. Off is the one change made here: on an unshared connection
+ * nothing is signed, so it is a plain switch. Anything else (turning it on, or off once shared)
+ * needs a signed share, so it links to Share and says a passkey is needed there; none is asked here.
+ */
+function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
+  c: ConnectionOut; href: string; canChange: boolean; onChanged?: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  if (!c.provider_calls) return null
+  const on = !!c.server_use
+  async function turnOff() {
+    setBusy(true)
+    setError('')
+    try {
+      await turnOffServerUse(c.id)
+      onChanged?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not turn this off.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="space-y-0.5 text-[12px] text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-x-2">
+        <span className="font-medium text-foreground">{USED_BY}</span>
+        {canChange && on && c.state === 'unshared' ? (
+          <button
+            type="button" role="switch" aria-checked="true" aria-label={USED_BY} disabled={busy} onClick={turnOff}
+            className="inline-flex h-4 w-7 items-center justify-end rounded-full bg-primary px-0.5 disabled:opacity-50"
+          >
+            <span className="h-3 w-3 rounded-full bg-primary-foreground" />
+          </button>
+        ) : (
+          <>
+            <span>{on ? 'On' : 'Off'}</span>
+            {canChange && (
+              <Link to={href} aria-label={`${on ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
+                {on ? 'Turn off' : 'Turn on'}
+              </Link>
+            )}
+          </>
+        )}
+      </p>
+      <p>{USED_BY_WHY}</p>
+      {canChange && !(on && c.state === 'unshared') && <p>{NEEDS_PASSKEY}</p>}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
     </div>
   )
 }
@@ -308,6 +375,7 @@ function ProviderSection({
   returnTo,
   busy,
   onDisconnect,
+  onChanged,
 }: {
   rows: ProviderOut[]
   connections: ConnectionOut[]
@@ -317,6 +385,7 @@ function ProviderSection({
   returnTo: string
   busy: string | null
   onDisconnect: (c: ConnectionOut) => void
+  onChanged: () => void
 }) {
   const { name, title } = rows[0]
   const configured = rows.filter((r) => r.configured)
@@ -344,7 +413,7 @@ function ProviderSection({
                 </p>
               ) : (
                 <>
-                  <SharingStatus c={c} returnTo={returnTo} />
+                  <SharingStatus c={c} returnTo={returnTo} onChanged={onChanged} />
                   {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
                 </>
               )}

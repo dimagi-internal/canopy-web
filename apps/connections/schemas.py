@@ -115,6 +115,9 @@ class ConnectionOut(StrictModel):
         default=False, description="canopy-web can open the stored sign-in now: the switch is on and the envelope "
                                     "is sealed to its key. False after a sign-in while the key service was "
                                     "failing; connect again to fix.")
+    provider_calls: bool = Field(
+        default=False, description="canopy-web makes calls for this provider, so the connection has a "
+                                   "\"Used by canopy-web\" switch (Salesforce; not Google).")
     usable: bool = Field(
         description="Whether it can hand out a token now. A person's: only while they can still read "
                     "`workspace` (False once they have left it; disconnect it). An agent's own: only while the "

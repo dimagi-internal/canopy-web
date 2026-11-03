@@ -97,6 +97,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 busy={busy === c.id}
                 returnTo={pathname}
                 canChange={!!email && !!c.connected_by_email && c.connected_by_email.toLowerCase() === email.toLowerCase()}
+                onChanged={load}
                 onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id), c.owner_key_replaced))}
               />
             ))}
@@ -144,7 +145,7 @@ function ConnectForm({ label, action, returnTo, agent }: { label: string } & Sta
 }
 
 function Row({
-  c, start, busy, returnTo, canChange, onDisconnect,
+  c, start, busy, returnTo, canChange, onDisconnect, onChanged,
 }: {
   c: ConnectionOut
   start: StartForm
@@ -152,6 +153,7 @@ function Row({
   returnTo: string
   canChange: boolean
   onDisconnect: () => void
+  onChanged: () => void
 }) {
   // One lent to this agent: its owner changes or withdraws it by sharing again, not here.
   const lent = !!c.granted_from
@@ -179,7 +181,7 @@ function Row({
               : missing ? <p className="text-[12px] text-warning">Its owner must reconnect to allow: {missing}</p> : null
           ) : (
             <>
-              <SharingStatus c={c} returnTo={returnTo} canChange={canChange} />
+              <SharingStatus c={c} returnTo={returnTo} canChange={canChange} onChanged={onChanged} />
               {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
             </>
           )}

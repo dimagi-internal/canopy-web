@@ -587,8 +587,18 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
-- **`/w/:workspace/connections/:id/share`** — "Connected as …": where the OAuth
-  callback lands (and where Settings' Share on a not-shared connection leads). Your
+- **`/w/:workspace/connections/:id/connected`** — "Connected": where the OAuth callback
+  lands. Reads the share state (facts and ciphertext) but never unlocks the vault: no
+  passkey. One sentence says which account was connected and, only when
+  `server.reachable` and the provider is one canopy-web calls, that project screens and apps
+  can use it now (Done goes back to `return_to`; "Also let agents or my computers use it"
+  goes to Share). An agent's connection offers "Turn on for <agent>'s machines" instead of
+  Done. Otherwise it says one step is left and offers Choose (Share); a switch left on
+  with nothing sealed to canopy-web says canopy-web couldn't be reached. The lists show
+  "Used by canopy-web" for those providers: a plain switch to turn off an unshared
+  connection (`POST /api/connections/{id}/server-use`), a link to Share for anything else.
+- **`/w/:workspace/connections/:id/share`** — "Share this connection": where Connected and
+  Settings' Share on a not-shared connection lead. Your
   passkey (`useVaultUnlock`) opens the connection in this browser and shows
   the account from the opened envelope; the owner then ticks agents they administer
   and their own computers (name plus fingerprint) and shares

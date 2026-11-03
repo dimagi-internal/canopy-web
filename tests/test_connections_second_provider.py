@@ -163,7 +163,7 @@ def test_a_person_lists_starts_a_connect_and_disconnects(acme, user, ws):
     assert query["scope"] == "books.read offline_access" and query["code_challenge_method"] == "S256"
 
     conn = Connection.objects.get(provider="acme", user=user)
-    assert landed["Location"].startswith(f"/w/w/connections/{conn.pk}/share")
+    assert landed["Location"].startswith(f"/w/w/connections/{conn.pk}/connected")
     assert (conn.account_id, conn.account_label, conn.instance_url) == ("acme-user-1", "jj@acme.test", "")
     row = client.get("/api/connections/").json()["connections"][0]
     assert row["title"] == "Acme Books" and row["scopes"] == ["books.read", "offline_access"]

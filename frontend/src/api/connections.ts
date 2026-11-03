@@ -64,6 +64,16 @@ export async function putShare(id: string, body: ShareIn): Promise<ConnectionOut
   return unwrap(res, 'Could not share this connection.') as unknown as ConnectionOut
 }
 
+/** Stop canopy-web using a connection (no passkey: giving up access is always easy). Turning it on is
+ *  part of the signed share, so only `false` is sent. A shared connection answers 409 `needs_share`. */
+export async function turnOffServerUse(id: string): Promise<ConnectionOut> {
+  const res = await apiV2.POST('/api/connections/{connection_id}/server-use', {
+    params: { path: { connection_id: id } },
+    body: { on: false },
+  })
+  return unwrap(res, 'Could not turn this off.') as unknown as ConnectionOut
+}
+
 export async function listAgentConnections(slug: string): Promise<ConnectionsView> {
   const res = await apiV2.GET('/api/agents/{slug}/connections', { params: { path: { slug } } })
   return view(unwrap(res, 'Could not read the agent’s connections.'))

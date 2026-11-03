@@ -18778,6 +18778,12 @@ export interface components {
              */
             readonly server_reachable: boolean;
             /**
+             * Provider Calls
+             * @description canopy-web makes calls for this provider, so the connection has a "Used by canopy-web" switch (Salesforce; not Google).
+             * @default false
+             */
+            readonly provider_calls: boolean;
+            /**
              * Usable
              * @description Whether it can hand out a token now. A person's: only while they can still read `workspace` (False once they have left it; disconnect it). An agent's own: only while the agent is in `workspace` (False once it has moved; disconnect it and connect again in its workspace). One lent to an agent: only while that grant is in force (the agent is in `workspace`, the lender still administers it, and an owning agent has not moved).
              */

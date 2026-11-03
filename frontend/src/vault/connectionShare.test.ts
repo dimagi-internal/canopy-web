@@ -25,6 +25,7 @@ import {
   verifyStatement,
   writerSig,
   ShareRefused,
+  type ShareChoice,
   type Statement,
   type Trust,
 } from './connectionShare'
@@ -672,7 +673,7 @@ describe('chooseRecipients', () => {
 })
 
 describe('buildShare', () => {
-  const withPins = async (state: ShareStateOut, choice = { agents: [EVA, ECHO], myComputers: [computer.jkt] }) =>
+  const withPins = async (state: ShareStateOut, choice: ShareChoice = { agents: [EVA, ECHO], myComputers: [computer.jkt] }) =>
     (await buildShare(state, me, choice, await trustFor(state, me, { pins: PINS() }))).share
   const open = async (stored: string, name: string, kind: string, target: string, priv: CryptoKey) =>
     JSON.parse(await openSealedValue(stored, BINDING, name, kind, target, priv))

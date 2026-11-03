@@ -380,7 +380,7 @@ class Browser:
             r = self.req("GET", f"/auth/connections/{provider}/{workspace}/callback/?"
                          + urllib.parse.urlencode({"code": "the-code", "state": state}))
         assert r.status_code == 302, f"callback: {r.status_code} {r.text[:300]}"
-        found = re.match(r"/w/[^/]+/connections/([0-9a-f-]{36})/share", r.headers["Location"])
+        found = re.match(r"/w/[^/]+/connections/([0-9a-f-]{36})/connected", r.headers["Location"])
         assert found, f"callback landed on {r.headers['Location']}"
         return found.group(1)
 

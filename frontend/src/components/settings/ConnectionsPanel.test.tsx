@@ -3,14 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { listMyConnections, disconnectMine } = vi.hoisted(() => ({
+const { listMyConnections, disconnectMine, turnOffServerUse } = vi.hoisted(() => ({
   listMyConnections: vi.fn(),
   disconnectMine: vi.fn(),
+  turnOffServerUse: vi.fn(),
 }))
 vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
   listMyConnections,
   disconnectMine,
+  turnOffServerUse,
 }))
 
 import { ConnectionsPanel } from './ConnectionsPanel'
@@ -304,3 +306,75 @@ describe('ConnectionsPanel', () => {
     })
   })
 })
+
+describe('ConnectionsPanel: Used by canopy-web', () => {
+  const WHY = 'With this on, project screens and apps can use this account with nobody present. '
+    + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+  const PASSKEY = 'Changing this needs your passkey.'
+  const sw = () => screen.queryByRole('switch', { name: 'Used by canopy-web' }) as HTMLButtonElement | null
+
+  beforeEach(() => { turnOffServerUse.mockResolvedValue(conn()) })
+
+  it('no switch for Google (a provider canopy-web never calls)', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [{ ...PROVIDER, name: 'google', title: 'Google' }],
+      connections: [conn({ provider: 'google', provider_calls: false, server_use: false })],
+    })
+    at('/settings')
+    await screen.findByText('jj@dimagi.com')
+    expect(screen.queryByText(/Used by canopy-web/)).toBeNull()
+    expect(screen.queryByText(WHY)).toBeNull()
+  })
+
+  it('turning off an unshared connection calls server-use', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true })],
+    })
+    at('/settings')
+    expect(await screen.findByText(WHY)).toBeTruthy()
+    expect(sw()?.getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByText(PASSKEY)).toBeNull()
+    fireEvent.click(sw()!)
+    await waitFor(() => expect(turnOffServerUse).toHaveBeenCalledWith(7))
+    await waitFor(() => expect(listMyConnections).toHaveBeenCalledTimes(2))
+  })
+
+  it('turning off a shared one goes to Share, with the passkey sentence', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'active', provider_calls: true, server_use: true })],
+    })
+    at('/settings/connections')
+    expect(await screen.findByText(WHY)).toBeTruthy()
+    expect(sw()).toBeNull()
+    expect(screen.getByText(PASSKEY)).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Turn off Used by canopy-web' })
+    expect(a.getAttribute('href')).toBe('/w/w/connections/7/share?return_to=%2Fsettings%2Fconnections')
+    expect(turnOffServerUse).not.toHaveBeenCalled()
+  })
+
+  it.each(['unshared', 'active'])('turning it on (%s) always goes to Share, with the passkey sentence', async (state) => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state, provider_calls: true, server_use: false })],
+    })
+    at('/settings/connections')
+    expect(await screen.findByText(WHY)).toBeTruthy()
+    expect(sw()).toBeNull()
+    expect(screen.getByText(PASSKEY)).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Turn on Used by canopy-web' })
+    expect(a.getAttribute('href')).toBe('/w/w/connections/7/share?return_to=%2Fsettings%2Fconnections')
+    expect(turnOffServerUse).not.toHaveBeenCalled()
+  })
+
+  it('shows a failed turn-off and leaves the switch', async () => {
+    turnOffServerUse.mockRejectedValue(new Error('Could not turn this off.'))
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true })],
+    })
+    at('/settings')
+    await screen.findByText(WHY)
+    fireEvent.click(sw()!)
+    expect(await screen.findByText('Could not turn this off.')).toBeTruthy()
+    expect(sw()?.getAttribute('aria-checked')).toBe('true')
+  })
+})
+

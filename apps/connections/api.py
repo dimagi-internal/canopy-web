@@ -158,6 +158,7 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, fac
                  if w["agent"] or not lent],
         owner_key_replaced=not lent and conn.pk in (replaced or ()),
         server_use=conn.server_use, server_reachable=rcpt.server_reachable(conn),
+        provider_calls=bool(getattr(providers.CLASSES.get(conn.provider), "server_calls", False)),
         unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
         my_machines=[] if lent else _my_machines(conn),
         connected_at=conn.created_at,

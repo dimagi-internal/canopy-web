@@ -61,7 +61,7 @@ def _connect_in_browser(client, secrets, **agent):
     with FakeSF():
         landed = client.get(reverse("connections_callback", args=["salesforce", "w"]),
                             {"code": "c0de-secret", "state": state})
-    assert "/share?" in landed["Location"]                       # sealed to its owner
+    assert "/connected?" in landed["Location"]                       # sealed to its owner
 
 
 @pytest.fixture
@@ -288,7 +288,7 @@ def test_connect_exchange_leaves_no_token_in_logs_events_responses_or_rows(world
             landed = browser.get(reverse("connections_callback", args=["salesforce", "w"]),
                                  {"code": CODE_SENTINEL, "state": state})
         seen.append(landed)
-        assert "/share?" in landed["Location"]
+        assert "/connected?" in landed["Location"]
     for c in Connection.objects.all():
         seen.append(browser.get(f"/api/connections/{c.pk}/share"))
         assert seen[-1].status_code == 200
