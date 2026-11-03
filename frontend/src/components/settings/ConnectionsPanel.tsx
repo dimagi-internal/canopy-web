@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartPath,
   disconnectMine,
@@ -9,6 +9,7 @@ import {
   type ProviderOut,
 } from '@/api/connections'
 import { Button } from 'canopy-ui/ui'
+import { scopedPath } from '@/lib/scopedLinks'
 
 /**
  * Connect the services canopy acts on for you: one section per provider the API
@@ -69,9 +70,10 @@ export function ConnectionsPanel() {
         <ProviderSection
           key={rows[0].name}
           rows={rows}
-          connections={data.connections.filter((c) => c.provider === rows[0].name)}
-          nameWorkspaces={new Set(data.connections.map((c) => c.workspace ?? '')).size > 1}
+          connections={listed(data.connections).filter((c) => c.provider === rows[0].name)}
+          nameWorkspaces={new Set(listed(data.connections).map((c) => c.workspace ?? '')).size > 1}
           startPath={(ws) => connectionStartPath(rows[0].name, ws, pathname)}
+          returnTo={pathname}
           busy={busy}
           onDisconnect={disconnect}
         />
@@ -176,6 +178,64 @@ export function detailLine(c: ConnectionOut): string {
   return [c.instance_url, lastUsed(c)].filter(Boolean).join(' · ')
 }
 
+/** Where lending, withdrawing, "use on my computers" and re-sharing all happen: the one
+ *  screen that signs. A withdrawal is a re-share with the agent unticked. */
+export function sharePath(c: ConnectionOut, returnTo: string): string {
+  return `${scopedPath(c.workspace, `/connections/${c.id}/share`)}?${new URLSearchParams({ return_to: returnTo })}`
+}
+
+/** A revoking connection is never listed (the server hides it; this is the second line). */
+export function listed(cs: readonly ConnectionOut[]): ConnectionOut[] {
+  return cs.filter((c) => c.state !== 'revoking')
+}
+
+const shareLink = 'text-primary hover:underline'
+
+/**
+ * What a connection of the viewer's (or an agent's own) is shared as, in plain words, and the
+ * links to the share page. Everything here is read from the list view; nothing signs. Machines
+ * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
+ * are not in this view, so the share page explains them and this links to it.
+ */
+export function SharingStatus({ c, returnTo }: { c: ConnectionOut; returnTo: string }) {
+  if (!c.usable) return null
+  if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
+  const href = sharePath(c, returnTo)
+  if (c.state === 'unshared') {
+    return (
+      <p className="text-[12px] text-warning">
+        Not shared yet: no agent or computer can use it.{' '}
+        <Link to={href} className={shareLink}>Share</Link>
+      </p>
+    )
+  }
+  const agents = c.statement?.agents ?? []
+  const machines = c.my_machines ?? []
+  const holders = c.holders ?? []
+  const waiting = c.waiting ?? []
+  return (
+    <div className="space-y-0.5 text-[12px] text-muted-foreground">
+      {agents.length > 0 && <p>Lent to: {agents.join(', ')}</p>}
+      {machines.length > 0 && (
+        <p>Used on your computers: {machines.map((m) => `${m.name || 'Unnamed computer'} (${m.fingerprint})`).join(', ')}</p>
+      )}
+      {holders.length > 0 && <p>Held by: {holders.join(', ')}</p>}
+      {waiting.length > 0 && (
+        <>
+          <p className="text-warning">
+            Waiting for a machine that holds it: {waiting.map((w) => (w.agent ? `${w.runner} (${w.agent})` : w.runner)).join(', ')}
+          </p>
+          <p><Link to={href} className={shareLink}>Give waiting machines a copy</Link></p>
+        </>
+      )}
+      <p className="flex flex-wrap gap-x-3">
+        <Link to={href} className={shareLink}>Change who can use it</Link>
+        <Link to={href} className={shareLink}>Open to check its machines</Link>
+      </p>
+    </div>
+  )
+}
+
 /** The provider rows, grouped by provider, in the order the API listed them. */
 function groupByProvider(providers: readonly ProviderOut[]): ProviderOut[][] {
   const groups = new Map<string, ProviderOut[]>()
@@ -192,6 +252,7 @@ function ProviderSection({
   connections,
   nameWorkspaces,
   startPath,
+  returnTo,
   busy,
   onDisconnect,
 }: {
@@ -200,6 +261,7 @@ function ProviderSection({
   /** The person has connections in more than one workspace: say which each is in. */
   nameWorkspaces: boolean
   startPath: (workspace: string) => string
+  returnTo: string
   busy: string | null
   onDisconnect: (c: ConnectionOut) => void
 }) {
@@ -227,11 +289,12 @@ function ProviderSection({
                 <p className="text-[12px] text-warning">
                   You are no longer in {workspaceLabel(c)}, so this connection no longer works. Disconnect it.
                 </p>
-              ) : c.needs_reconnect ? (
-                <p className="text-[12px] text-warning">This connection expired or was revoked. Reconnect it.</p>
-              ) : missing ? (
-                <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>
-              ) : null}
+              ) : (
+                <>
+                  <SharingStatus c={c} returnTo={returnTo} />
+                  {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
+                </>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {reconnect && <ConnectLink label="Reconnect" href={startPath(c.workspace ?? '')} />}

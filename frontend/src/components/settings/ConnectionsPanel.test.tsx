@@ -21,7 +21,8 @@ function conn(over: Record<string, unknown> = {}) {
     id: 7, provider: 'salesforce', title: 'Salesforce', account_label: 'jj@dimagi.com', workspace: 'w', workspace_name: 'W',
     instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false, usable: true, missing_scopes: [],
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
-    granted_from: null, ...over,
+    granted_from: null, state: 'active', statement: { version: 1, agents: [], my_computers: [], endorsers: [] },
+    holders: [], waiting: [], my_machines: [], ...over,
   }
 }
 const at = (url: string) =>
@@ -196,5 +197,69 @@ describe('ConnectionsPanel', () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     at('/settings?connection=salesforce&status=error&reason=insufficient_scope')
     expect(await screen.findByText(/Salesforce was connected without every permission canopy needs/)).toBeTruthy()
+  })
+
+  describe('sharing', () => {
+    const SHARE = '/w/w/connections/7/share?return_to=%2Fsettings'
+    const href = (name: string | RegExp) => (screen.getByRole('link', { name }) as HTMLAnchorElement).getAttribute('href')
+
+    it('says an unshared connection is not shared yet, and Share goes to the share page', async () => {
+      listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
+      at('/settings')
+      expect(await screen.findByText('Not shared yet: no agent or computer can use it.')).toBeTruthy()
+      expect(href('Share')).toBe(SHARE)
+    })
+
+    it('shows who it is lent to, the computers it is used on, and who holds it', async () => {
+      listMyConnections.mockResolvedValue({
+        providers: [PROVIDER],
+        connections: [conn({
+          statement: { version: 2, agents: ['eva', 'echo'], my_computers: ['j'], endorsers: [] },
+          my_machines: [{ jkt: 'j', name: 'Laptop', fingerprint: 'aaaa bbbb' }],
+          holders: ['eva box'],
+        })],
+      })
+      at('/settings')
+      expect(await screen.findByText('Lent to: eva, echo')).toBeTruthy()
+      expect(screen.getByText('Used on your computers: Laptop (aaaa bbbb)')).toBeTruthy()
+      expect(screen.getByText('Held by: eva box')).toBeTruthy()
+      expect(href('Change who can use it')).toBe(SHARE)
+      expect(screen.queryByText(/Not shared yet/)).toBeNull()
+    })
+
+    it('names the machines still waiting and sends Give waiting machines a copy to the share page', async () => {
+      listMyConnections.mockResolvedValue({
+        providers: [PROVIDER],
+        connections: [conn({ waiting: [{ agent: 'eva', runner: 'eva box' }, { agent: '', runner: 'Laptop' }] })],
+      })
+      at('/settings')
+      expect(await screen.findByText('Waiting for a machine that holds it: eva box (eva), Laptop')).toBeTruthy()
+      expect(href('Give waiting machines a copy')).toBe(SHARE)
+    })
+
+    it('always offers a neutral way to check a shared connection’s machines', async () => {
+      listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
+      at('/settings')
+      expect(await screen.findByRole('link', { name: 'Open to check its machines' })).toBeTruthy()
+      expect(href('Open to check its machines')).toBe(SHARE)
+    })
+
+    it('says Reconnect required and lends nothing to change', async () => {
+      listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ needs_reconnect: true })] })
+      at('/settings')
+      expect(await screen.findByText('Reconnect required.')).toBeTruthy()
+      expect(screen.queryByRole('link', { name: 'Change who can use it' })).toBeNull()
+      expect(screen.queryByRole('link', { name: 'Share' })).toBeNull()
+      expect(href('Reconnect')).toContain('/auth/connections/salesforce/w/start/')
+    })
+
+    it('never lists a connection that is being disconnected', async () => {
+      listMyConnections.mockResolvedValue({
+        providers: [PROVIDER], connections: [conn({ state: 'revoking', account_label: 'gone@dimagi.com' })],
+      })
+      at('/settings')
+      await screen.findByTestId('connection-provider-salesforce')
+      expect(screen.queryByText('gone@dimagi.com')).toBeNull()
+    })
   })
 })

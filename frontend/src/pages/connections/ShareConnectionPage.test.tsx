@@ -101,6 +101,12 @@ describe('ShareConnectionPage', () => {
     expect(screen.queryByText(/Account ID:/)).toBeNull()
   })
 
+  it('tells a person with no enrolled computers how to enrol one', async () => {
+    getShareState.mockResolvedValue({ ...STATE, candidates: STATE.candidates.filter((c: { kind: string }) => c.kind !== 'device') })
+    await unlocked()
+    expect(screen.getByText('No enrolled computers. Run: canopy vault device --enroll')).toBeTruthy()
+  })
+
   it('sends a signed statement and a re-sealed envelope with the chosen agents', async () => {
     await unlocked()
     fireEvent.click(screen.getByLabelText('Eva'))

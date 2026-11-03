@@ -248,7 +248,7 @@ export function ShareConnectionPage(): JSX.Element | null {
             <fieldset className="space-y-2">
               <legend className="text-sm font-semibold text-foreground">Use on my computers</legend>
               {machines.length === 0 && (
-                <p className="text-[13px] text-muted-foreground">You have no enrolled computers.</p>
+                <p className="text-[13px] text-muted-foreground">No enrolled computers. Run: canopy vault device --enroll</p>
               )}
               {machines.map((m) => (
                 <div key={m.target} className="flex items-start gap-2 text-sm">

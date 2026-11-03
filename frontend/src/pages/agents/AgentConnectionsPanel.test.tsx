@@ -25,7 +25,8 @@ function conn(over: Record<string, unknown> = {}) {
     id: 3, provider: 'salesforce', title: 'Salesforce', account_label: 'eva@dimagi-ai.com', workspace: 'w', workspace_name: 'W',
     instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false, usable: true, missing_scopes: [],
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
-    granted_from: null, shared_with: [], ...over,
+    granted_from: null, shared_with: [], state: 'active',
+    statement: { version: 1, agents: [], my_computers: [], endorsers: [] }, holders: [], waiting: [], my_machines: [], ...over,
   }
 }
 const show = () =>
@@ -103,27 +104,57 @@ describe('AgentConnectionsPanel', () => {
     expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
-  it('says lending moved to Settings instead of calling a route that is gone', async () => {
-    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ shared_with: [] })] })
+  it('an unshared agent connection says so and Share goes to the share page', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
     show()
-    const sel = (await screen.findByLabelText('Share with')) as HTMLSelectElement
-    await screen.findByRole('option', { name: 'echo' })
-    // The agent itself is never offered.
-    expect(screen.queryByRole('option', { name: 'eva' })).toBeNull()
-    fireEvent.change(sel, { target: { value: 'echo' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
-    expect(await screen.findByText(/Settings → Connections \(Share\)/)).toBeTruthy()
+    expect(await screen.findByText('Not shared yet: no agent or computer can use it.')).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Share' }) as HTMLAnchorElement
+    expect(a.getAttribute('href')).toBe('/w/w/connections/3/share?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
+    expect(screen.queryByLabelText('Share with')).toBeNull()
   })
 
-  it('shows a connection shared by another agent; stopping points at the same place', async () => {
+  it('shows who it is lent to read-only, with one link to change it and waiting machines named', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({
+        shared_with: ['echo'], statement: { version: 2, agents: ['echo'], my_computers: [], endorsers: [] },
+        waiting: [{ agent: 'echo', runner: 'echo box' }],
+      })],
+    })
+    show()
+    expect(await screen.findByText('Lent to: echo')).toBeTruthy()
+    expect(screen.getByText('Waiting for a machine that holds it: echo box (echo)')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Stop sharing/ })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Change who can use it' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Give waiting machines a copy' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Open to check its machines' })).toBeTruthy()
+  })
+
+  it('shows a connection lent by another agent as lent, with nothing to change', async () => {
     m.listAgentConnections.mockResolvedValue({
       providers: [PROVIDER], connections: [conn({ id: 9, granted_from: 'hal' })],
     })
     show()
-    expect(await screen.findByText(/shared by hal/)).toBeTruthy()
+    expect(await screen.findByText(/Lent by hal/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Stop using' }))
-    expect(await screen.findByText(/Settings → Connections \(Share\)/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Stop using' })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Share|Change who/ })).toBeNull()
+  })
+
+  it('says Reconnect required for an agent’s own expired connection', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ needs_reconnect: true })] })
+    show()
+    expect(await screen.findByText('Reconnect required.')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Change who can use it' })).toBeNull()
+  })
+
+  it('never lists a connection that is being disconnected', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'revoking', account_label: 'gone@x.test' })],
+    })
+    show()
+    await screen.findByTestId('agent-connection-provider-salesforce')
+    expect(screen.queryByText('gone@x.test')).toBeNull()
   })
 
   it('never prints query-string text it does not know', async () => {
@@ -171,7 +202,7 @@ describe('AgentConnectionsPanel', () => {
     show()
     expect(await screen.findByText('Made in Dimagi before the move — disconnect it and connect here.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Share' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy()
     const connect = screen.getByRole('button', { name: 'Connect Salesforce' })
     expect((connect.closest('form') as HTMLFormElement).getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/x\/start\/$/)
@@ -184,7 +215,7 @@ describe('AgentConnectionsPanel', () => {
     })
     show()
     expect(await screen.findByText('hal is no longer in Dimagi, where this was made, so it no longer works.')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Stop using' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Stop using' })).toBeNull()
   })
 
   it('prompts to reconnect for a scope the app added since', async () => {
