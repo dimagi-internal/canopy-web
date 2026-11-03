@@ -24,6 +24,21 @@ def default_interface() -> dict:
 # `tests/test_default_read_profile.py` so a code change that widens every agent at once cannot
 # pass unnoticed. Spec: `docs/superpowers/specs/2026-11-03-agent-read-mode-and-doors-design.md`.
 
+#: The two names of read mode: `read` (the default, canopy's own profile) and `ask` (an agent's
+#: own published override, and every turn stamped before read mode existed).
+READ_MODE = "read"
+ASK_MODE = "ask"
+READ_MODE_NAMES = (ASK_MODE, READ_MODE)
+
+
+def is_read_mode(name: str | None) -> bool:
+    """THE one place that says `read` and `ask` are the same thing. The decision, `opens`,
+    `profile`, the envelope and admission matching all ask this; the enforcement layers never
+    read a capability's name, so it is a decision-time alias only. Stored names are never
+    rewritten."""
+    return name in READ_MODE_NAMES
+
+
 #: Bump on ANY change to what `default_read_profile` returns; the envelope records it.
 READ_PROFILE_VERSION = 1
 

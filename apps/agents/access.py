@@ -232,8 +232,10 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     if name is None and turn is not None:
         name = iface_mod._page_capability(turn, iface, opens) or iface_mod._site_capability(turn, iface, opens)
     name = name or iface_mod.ASK
-    cap = (iface.get("capabilities") or {}).get(name)
-    return (name, cap) if cap and opens(name, cap) else (None, None)
+    # Read mode is `read` and `ask` alike: it resolves to the agent's published one, and the turn
+    # is stamped with that name.
+    published, cap = iface_mod.published_capability(iface, name)
+    return (published, cap) if cap and opens(published, cap) else (None, None)
 
 
 def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
