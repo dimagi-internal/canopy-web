@@ -81,7 +81,6 @@ FROZEN: dict[tuple[str, str], int] = {
     ("events", "inbound"): 1,
     ("harness", "agent_runs"): 1,
     ("harness", "capabilities"): 1,
-    ("harness", "huddles"): 4,
     ("harness", "session_sharing"): 2,
     ("harness", "slack"): 1,
     ("harness", "threads"): 1,

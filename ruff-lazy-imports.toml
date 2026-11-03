@@ -171,7 +171,7 @@
 "apps/harness/runner_releases.py" = ["PLC0415"]  # 2
 "apps/harness/runners.py" = ["PLC0415"]  # 6
 "apps/harness/schedule_clock.py" = ["PLC0415"]  # 2
-"apps/harness/schedule_turns.py" = ["PLC0415"]  # 10
+"apps/harness/schedule_turns.py" = ["PLC0415"]  # 8
 "apps/harness/schemas/runners.py" = ["PLC0415"]  # 3
 "apps/harness/schemas/turns.py" = ["PLC0415"]  # 3
 "apps/harness/sensitivity.py" = ["PLC0415"]  # 3

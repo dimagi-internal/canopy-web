@@ -25,9 +25,8 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.models import AgentTask
-from apps.huddles.models import ProjectCheckin
 
-from . import triggers
+from . import schedule_hooks, triggers
 from .models import (
     AgentSchedule,
     Turn,
@@ -73,11 +72,6 @@ def schedule_initiator(schedule, *, manual: bool = False):
     from . import initiator as who
     via = f"schedule:{schedule.id}" + (":manual" if manual else "")
     return who.system(via=via, accountable=schedule.created_by)
-
-
-def checkin_of(schedule):
-    """The project check-in (apps/huddles) this schedule runs, or None."""
-    return ProjectCheckin.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
 
 
 def fire_after_of(schedule) -> dt.datetime:
@@ -156,10 +150,8 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
             f"schedule {schedule.id} is a one-off for {schedule.run_once_at.isoformat()}, "
             f"not {slot.isoformat()}"
         )
-    if checkin_of(schedule) is not None:
-        from apps.huddles import checkins
-
-        _run, created = checkins.announce(schedule, slot)
+    if schedule_hooks.owns(schedule):
+        _run, created = schedule_hooks.announce(schedule, slot)
         return None, created
     key = f"sched:{schedule.id}:{slot.isoformat()}"
     with transaction.atomic():
@@ -213,10 +205,8 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
     from .services import enqueue_turn  # services.py imports this module
 
     _refuse_if_stopped(schedule)
-    if checkin_of(schedule) is not None:
-        from apps.huddles import checkins
-
-        checkins.announce(schedule, timezone.now(), manual=True)
+    if schedule_hooks.owns(schedule):
+        schedule_hooks.announce(schedule, timezone.now(), manual=True)
         return None
 
     with transaction.atomic():
