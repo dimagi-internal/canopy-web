@@ -97,12 +97,17 @@ def open_for(value: str, *, agent_id, name: str, kv: int, kind: str, target: str
             raise ZkError(422, "zk_not_a_recipient", "this value is not sealed to that recipient")
         blob = b64u_bytes(entry["ct"], "ct")
         info = seal_info(agent_id, name, kv, kind, target)
-        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"", info=info.encode()).derive(derive(entry["epk"]))
+        epk = entry["epk"]
+        if not isinstance(epk, dict):
+            raise ZkError(422, "zk_bad_seal", "this sealed value could not be opened")
+        zk.public_key(epk)  # on the curve, right length: before anything is asked to derive with it
+        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"", info=info.encode()).derive(derive(epk))
         return AESGCM(key).decrypt(blob[:NONCE_LEN], blob[NONCE_LEN:], value_aad(agent_id, name, kv)).decode()
     except ZkError:
         raise
-    except (ValueError, KeyError, TypeError, InvalidTag, UnicodeDecodeError) as exc:
-        raise ZkError(422, "zk_bad_seal", "this sealed value could not be opened") from exc
+    except (ValueError, KeyError, TypeError, InvalidTag, UnicodeDecodeError):
+        # `from None`: a chained UnicodeDecodeError keeps the decrypted bytes in `.object`.
+        raise ZkError(422, "zk_bad_seal", "this sealed value could not be opened") from None
 
 
 def recipients_for(agent) -> list[tuple[str, str, dict]]:

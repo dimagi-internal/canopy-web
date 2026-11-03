@@ -16,6 +16,7 @@ import json
 import threading
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -31,7 +32,7 @@ class Unavailable(Exception):  # noqa: N818 — the name is the interface
 
 
 _lock = threading.Lock()
-_cached: dict | None = None
+_cached: tuple[str, dict] | None = None  # (key id, public JWK)
 _software: ec.EllipticCurvePrivateKey | None = None
 
 
@@ -55,7 +56,9 @@ def available() -> bool:
 
 
 def _client():
-    return boto3.client("kms", region_name=getattr(settings, "AWS_REGION", None) or None)
+    # Short timeouts: a sign-in must not hang on KMS being down.
+    cfg = Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 1, "mode": "standard"})
+    return boto3.client("kms", region_name=getattr(settings, "AWS_REGION", None) or None, config=cfg)
 
 
 def _b64u(b: bytes) -> str:
@@ -74,19 +77,23 @@ def public_jwk() -> dict:
         raise Unavailable("canopy-web's connection key is not configured")
     if _software is not None:
         return _jwk(_software.public_key())
+    key_id = settings.CONNECTIONS_SERVER_KMS_KEY
     with _lock:
-        if _cached is None:
-            try:
-                out = _client().get_public_key(KeyId=settings.CONNECTIONS_SERVER_KMS_KEY)
-                if out.get("KeySpec") != KEY_SPEC or out.get("KeyUsage") != KEY_USAGE:
-                    raise Unavailable("canopy-web's connection key is not a P-256 key-agreement key")
-                pub = serialization.load_der_public_key(bytes(out["PublicKey"]))
-                _cached = _jwk(pub)
-            except Unavailable:
-                raise
-            except (ClientError, BotoCoreError, KeyError, ValueError, TypeError):
-                raise Unavailable("canopy-web's connection key could not be read") from None
-        return dict(_cached)
+        hit = _cached
+    if hit is not None and hit[0] == key_id:
+        return dict(hit[1])
+    try:  # the network call holds no lock
+        out = _client().get_public_key(KeyId=key_id)
+        if out.get("KeySpec") != KEY_SPEC or out.get("KeyUsage") != KEY_USAGE:
+            raise Unavailable("canopy-web's connection key is not a P-256 key-agreement key")
+        jwk = _jwk(serialization.load_der_public_key(bytes(out["PublicKey"])))
+    except Unavailable:
+        raise
+    except (ClientError, BotoCoreError, KeyError, ValueError, TypeError):
+        raise Unavailable("canopy-web's connection key could not be read") from None
+    with _lock:
+        _cached = (key_id, jwk)
+    return dict(jwk)
 
 
 def thumbprint() -> str:

@@ -25,6 +25,13 @@ def key():
     server_key.use_software_key_for_tests(None)
 
 
+@pytest.fixture(autouse=True)
+def _clean_cache():
+    server_key._reset()
+    yield
+    server_key._reset()
+
+
 def _jwk(priv):
     return ref.jwk(priv.public_key())
 
@@ -70,6 +77,39 @@ def test_a_tampered_entry_raises_zkerror(key):
     bad = "zks1:" + zk_seal._b64u(json.dumps(body).encode())
     with pytest.raises(zk.ZkError):
         _open(bad)
+
+
+@pytest.mark.parametrize("epk", [
+    {"kty": "EC", "crv": "P-256", "x": zk_seal._b64u(b"\x01" * 32), "y": zk_seal._b64u(b"\x02" * 32)},  # off curve
+    {"kty": "EC", "crv": "P-256", "x": zk_seal._b64u(b"\x01" * 5), "y": zk_seal._b64u(b"\x02" * 5)},  # short
+    "not-a-jwk", None, {}])
+def test_a_tampered_epk_raises_zkerror_before_kms_is_asked(key, epk):
+    v = _seal(key)
+    body = json.loads(zk.b64u_bytes(v[len("zks1:"):], "v"))
+    body["r"][0]["epk"] = epk
+    bad = "zks1:" + zk_seal._b64u(json.dumps(body).encode())
+    called = mock.Mock()
+    with pytest.raises(zk.ZkError):
+        _open(bad, derive=called)
+    called.assert_not_called()
+
+
+def test_a_failed_open_does_not_chain_the_decrypted_plaintext(key):
+    v = _seal(key, plain="\xff\xfe".encode("latin-1").decode("latin-1"))
+    # AES-GCM of non-UTF-8 bytes: seal raw bytes by hand
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    body = json.loads(zk.b64u_bytes(v[len("zks1:"):], "v"))
+    e = body["r"][0]
+    z = key.exchange(ec.ECDH(), zk.public_key(e["epk"]))
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    k = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"",
+             info=zk_seal.seal_info(AGENT, "refresh", 3, "device", server_key.thumbprint()).encode()).derive(z)
+    n = b"n" * 12
+    e["ct"] = zk_seal._b64u(n + AESGCM(k).encrypt(n, b"\xff\xfe", zk_seal.value_aad(AGENT, "refresh", 3)))
+    with pytest.raises(zk.ZkError) as exc:
+        _open("zks1:" + zk_seal._b64u(json.dumps(body).encode()))
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__
 
 
 def test_a_value_that_is_not_sealed_raises_zkerror(key):
@@ -139,6 +179,31 @@ def test_a_key_of_the_wrong_kind_is_unavailable(settings):
         "KeySpec": "RSA_2048", "KeyUsage": "ENCRYPT_DECRYPT", "PublicKey": b"x"}))
     with ctx, pytest.raises(server_key.Unavailable):
         server_key.public_jwk()
+
+
+def test_the_cache_is_per_key_id_and_the_network_call_holds_no_lock(settings):
+    k1, k2 = (ec.generate_private_key(ec.SECP256R1()) for _ in range(2))
+    from cryptography.hazmat.primitives import serialization
+
+    def der(k):
+        return k.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def get(KeyId):  # noqa: N803 — boto kwarg name
+        assert not server_key._lock.locked()
+        return {"KeySpec": "ECC_NIST_P256", "KeyUsage": "KEY_AGREEMENT", "PublicKey": der(k1 if KeyId == "a" else k2)}
+    ctx, _ = _kms(settings, get_public_key=get)
+    with ctx:
+        settings.CONNECTIONS_SERVER_KMS_KEY = "a"
+        assert server_key.public_jwk() == _jwk(k1)
+        settings.CONNECTIONS_SERVER_KMS_KEY = "b"
+        assert server_key.public_jwk() == _jwk(k2)
+
+
+def test_the_client_has_short_timeouts_and_one_retry():
+    with mock.patch("boto3.client") as c:
+        server_key._client()
+    cfg = c.call_args.kwargs["config"]
+    assert (cfg.connect_timeout, cfg.read_timeout, cfg.retries["max_attempts"]) == (2, 5, 1)
 
 
 def test_public_key_from_kms_is_cached_per_process(settings):
