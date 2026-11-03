@@ -66,7 +66,7 @@ from apps.events import activity
 from apps.workspaces import permissions as perms
 
 from . import aws_iam_proof, credential_sets, device_keys
-from .claim import _assignment_rows_for_turns, _coverage
+from .claim_reach import _assignment_rows_for_turns, _coverage
 from .models import (
     SERVES,
     FleetHold,

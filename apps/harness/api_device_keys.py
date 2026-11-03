@@ -1,22 +1,4 @@
-"""Runner device keys — `/api/runner-device-keys/` (Canopy Vault, canopy-web#1538).
-
-The contract, which canopy's CLI/runner half builds against (canopy#946):
-
-* `POST /api/runner-device-keys/` `{runner, public_jwk, kind, label}` →
-  `{id, jkt, status: "pending", approve_url}`; the same `jkt` again is idempotent.
-  An EC2 box registers its instance role instead (canopy-web#1549):
-  `{runner, kind: "aws-iam", role_arn, proof}`, the proof an
-  `X-Canopy-Aws-Proof` value for this URL (`aws_iam_proof.py`).
-* `GET /api/runner-device-keys/?runner=<id>` → the keys, with status.
-* `POST /api/runner-device-keys/{id}/approve` → `active`. A BROWSER session of
-  the runner's owner or an admin, behind a fresh passkey step-up.
-* `DELETE /api/runner-device-keys/{id}` → `revoked`, immediately.
-
-Who: the runner's owner or an explicit runner admin (`can_administer_runner`)
-for every route. A key belongs to a box, and the box is administered by them —
-except that on a PRIVATE runner only its owner registers or approves a key
-(`may_trust_device_keys`): that box's token signs in as its owner.
-"""
+"""/api/harness/device-keys routes: register, list, approve, revoke a runner device key."""
 from __future__ import annotations
 
 import uuid
@@ -34,14 +16,12 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.passkeys import stepup
-from apps.passkeys.models import UserVaultKeyset
 
 from . import device_key_notify, device_keys
+from .device_key_out import agents_key_opens, key_out, zk_agents_to_vouch_for, zk_agents_waiting_on
 from .models import Runner, RunnerAdmin, RunnerDeviceKey, RunnerFleet
 from .runners import can_administer_runner, may_trust_device_keys, set_runner_machine
 from .schemas import (
-    DeviceKeyAgentOut,
-    DeviceKeyVouchOut,
     RunnerDeviceKeyCreatedOut,
     RunnerDeviceKeyIn,
     RunnerDeviceKeyOut,
@@ -89,21 +69,6 @@ def waiting_approval_url(runner) -> str:
         if key.status == RunnerDeviceKey.PENDING or key.ecdh_waiting:
             return approve_url(key)
     return ""
-
-
-def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
-    return RunnerDeviceKeyOut(
-        id=key.pk, runner=key.runner_id, runner_name=key.runner.name,
-        runner_host=key.runner.host, runner_kind=key.runner.kind, jkt=key.jkt,
-        kind=key.kind, label=key.label, role_arn=key.role_arn, status=key.status,
-        ecdh_jkt=key.ecdh_jkt, ecdh_public_jwk=key.ecdh_public_jwk or {}, ecdh_store=key.ecdh_store,
-        reapproval=key.status == RunnerDeviceKey.PENDING and key.approved_at is not None,
-        ecdh_waiting=key.ecdh_waiting,
-        created_at=key.created_at,
-        approved_at=key.approved_at,
-        approved_by_email=(key.approved_by.email if key.approved_by_id else ""),
-        revoked_at=key.revoked_at, last_used_at=key.last_used_at, can_manage=can_manage,
-    )
 
 
 def _is_browser_session(request: HttpRequest) -> bool:
@@ -326,75 +291,6 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     out.zk_pending_agents = zk_agents_waiting_on(request.user, key)
     out.zk_vouch_agents = zk_agents_to_vouch_for(request.user, key)
     return out
-
-
-def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = False, agents=None, facts=None) -> list[str]:
-    """Zero-knowledge agents `user` administers that this (now active) key
-    should be granted the vault key of — the "Grant" offer after approving.
-    `assume_active`: as if it were approved (the list, for a pending key).
-
-    An agent born zero-knowledge (kv 0) has no vault key to grant, only values
-    sealed to whoever could read it when each was saved. It is listed when one
-    of those values was not sealed to this key: the browser then creates the
-    agent's vault key in the same passkey touch (opening the sealed values with
-    the person's own key), so a machine approved later can read them too —
-    nobody has to "finish setting up" an agent by hand."""
-    if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
-        return []
-    from apps.agents.credentials import zk
-
-    if agents is None:
-        agents = Agent.objects.select_related("workspace", "owner")
-    return sorted(
-        agent.slug for agent in agents
-        if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent, facts)
-        and zk.device_waits(agent, key)
-    )
-
-
-def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = False, agents=None,
-                           facts=None) -> list[DeviceKeyVouchOut]:
-    """Zero-knowledge agents whose vault `user` is a member of WITHOUT managing it, that
-    this key — `user`'s own machine — waits on a copy of the vault key for.
-
-    A member cannot wrap the key (only its managers grant), but the spec has their
-    approval sign the machine (2026-10-22 vault-access-follows-canopy-access §1): a
-    keeper then wraps to it, with nobody else asked. Without this, a member who approved
-    their own box was told nothing and the agent's owner got a "no vault-key wrap" alert
-    (DIM-W154, 2026-10-29). The agents `zk_agents_waiting_on` lists are left out: their
-    manager grants directly."""
-    if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
-        return []
-    from apps.agents.credentials import vault_members, zk  # noqa: PLC0415 — cycle via apps.agents.credentials
-
-    # Whose machine it is: the runner's owner, else whoever approves it — the caller,
-    # for a key they are about to approve.
-    person = key.runner.owner_id or key.approved_by_id or (user.pk if assume_active else None)
-    if person != user.pk or not UserVaultKeyset.objects.filter(user=user).exists():
-        return []
-    out = []
-    if agents is None:
-        agents = Agent.objects.select_related("workspace", "owner")
-    for agent in (a for a in agents if a.zk_kv > 0):
-        vault = vault_members.vault_for_agent(agent)
-        role = vault_members.role_of(vault, user)
-        if role is None or (agent.is_admin(user) and vault_members.is_admin(role)):
-            continue
-        if device_keys.runner_serves_agent(key.runner, agent, facts) and zk.device_waits(agent, key):
-            out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
-    return sorted(out, key=lambda a: a.slug)
-
-
-def agents_key_opens(key: RunnerDeviceKey, agents: list, facts=None) -> list[DeviceKeyAgentOut]:
-    """Of `agents`, the ones this key can open right now: its decryption key is
-    approved, the box serves the agent, and nothing of the agent's is still
-    waiting on it (`zk.device_waits`) — "can open Hal, Eva" on Settings."""
-    if not key.ecdh_ready:
-        return []
-    from apps.agents.credentials import zk
-
-    return [DeviceKeyAgentOut(slug=a.slug, name=a.name or a.slug) for a in agents
-            if device_keys.runner_serves_agent(key.runner, a, facts) and not zk.device_waits(a, key)]
 
 
 @router.delete("/{key_id}", response=RunnerDeviceKeyOut, summary="Revoke a device key")

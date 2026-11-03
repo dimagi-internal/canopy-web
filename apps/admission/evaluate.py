@@ -113,12 +113,12 @@ def reach_facts(turn) -> tuple[dict, str]:
     """Where the turn stands with the runners that could take it, as rule
     facts, plus the sentence naming them (who paused which box, when, why;
     or since when it was last heard from) for whoever is told."""
-    from apps.harness import claim
+    from apps.harness import claim_reach
 
-    reach = claim.turn_reach(turn)
-    if reach.kind == claim.PARKED:
+    reach = claim_reach.turn_reach(turn)
+    if reach.kind == claim_reach.PARKED:
         state = HELD if reach.held_until is not None else AdmissionRule.PAUSED
-    elif reach.kind in (claim.OFFLINE, claim.SIGNED_OUT):
+    elif reach.kind in (claim_reach.OFFLINE, claim_reach.SIGNED_OUT):
         # A signed-out box is up but runs nothing — for a rule, that is down.
         state = AdmissionRule.OFFLINE
     else:
@@ -126,7 +126,7 @@ def reach_facts(turn) -> tuple[dict, str]:
     waited = (timezone.now() - turn.created_at).total_seconds() / 3600
     detail = ""
     if state in (AdmissionRule.PAUSED, AdmissionRule.OFFLINE):
-        detail = "; ".join(claim.runner_situation(r) for r in reach.runners) + "."
+        detail = "; ".join(claim_reach.runner_situation(r) for r in reach.runners) + "."
         if why := why_only_these(turn, reach.runners):
             detail += f" {why}"
         if waited >= 1:
@@ -206,7 +206,7 @@ def recheck_stranded(runner) -> int:
     """A runner was just paused with no time to resume: re-check every queued
     turn it was one of the takers for. Returns how many were rejected. Never
     raises — the pause has happened either way."""
-    from apps.harness.claim import queued_turns_covered_by
+    from apps.harness.claim_reach import queued_turns_covered_by
 
     rejected = 0
     try:

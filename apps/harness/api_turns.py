@@ -21,7 +21,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import (
-    claim,
+    claim_reach,
     clis,
     ledger,
     sensitivity,
@@ -83,9 +83,9 @@ def list_unclaimable_turns(request: HttpRequest):
     # a caller in two trees who names none gets a 422).
     ws_slugs = wsvc.request_workspace_slugs(request)
     site_q = site_turn_q(request)
-    rows = (claim.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
+    rows = (claim_reach.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
             if site_q is not None else
-            claim.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
+            claim_reach.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
     # Each row says whether the caller may cancel it, so the warning offers the
     # one fix that always works right where it is shown.
     turns = Turn.objects.select_related("agent", "chat_session").in_bulk([r["turn_id"] for r in rows])

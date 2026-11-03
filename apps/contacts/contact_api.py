@@ -866,10 +866,10 @@ def my_unclaimable(request: HttpRequest) -> list[dict]:
 
     from apps.canopy_sessions.access import contact_session_q
     from apps.canopy_sessions.models import Session
-    from apps.harness import claim
+    from apps.harness import claim_reach
 
     mine = _bound(request, Session.objects.filter(contact_session_q(request.contact))).values("pk")
-    return claim.unclaimable_queued_turns(
+    return claim_reach.unclaimable_queued_turns(
         ws_slugs={request.contact.workspace_id}, turn_q=Q(chat_session__in=mine))
 
 

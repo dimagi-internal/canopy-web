@@ -16,7 +16,7 @@ things (a test account, a seat), with no machine and no AWS call (§6). Design r
 | (a) | **Interface capability**: a door an agent publishes (`ask`, a page's resource), run in an allowlisted profile for callers on its access list | `apps/agents/interface.py`, `docs/architecture/access.md` |
 | (b) | **Workspace permission**: a named right a workspace role holds (`perms.can(user, ws, perms.X)`) | `apps/workspaces/permissions.py`, `docs/architecture/roles.md` |
 | (c) | **Cloud capability**: a leased machine or named pool slot | `apps/capabilities`, this page |
-| (d) | **`Runner.capabilities`**: the JSON a box reports about itself (what it serves, its repos) | `apps/harness/models.py`, `docs/architecture/runners.md` |
+| (d) | **`Runner.capabilities`**: the JSON a box reports about itself (what it serves, its repos) | `apps/harness/models/runner.py`, `docs/architecture/runners.md` |
 | (e) | **`Storyboard.capability`**: the level a share link grants (read, comment, ...) | `apps/storyboards/models.py` |
 
 **Who owns what.** canopy-web owns the generic half and nothing domain-specific: the
