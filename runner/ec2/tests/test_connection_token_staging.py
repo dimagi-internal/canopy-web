@@ -3,8 +3,8 @@ which opens the sealed token on this box and refreshes it here.
 
 Pinned: the runner asks canopy-web which providers the turn's agent has and calls the CLI
 once per provider listed (none for an agent without connections); the CLI is called with
-the runner bearer + runner/turn ids; exit 3 (not connected, revoking) is silent and clears
-a stale file; exit 4 (waiting for a holder to seal to this box) keeps the hold, so heartbeats
+the runner bearer + runner/turn ids; exit 3 (not connected, revoking) clears a stale file
+and says so once per turn and provider; exit 4 (waiting for a holder to seal to this box) keeps the hold, so heartbeats
 retry, and says so once; other failures warn (never with a token) and the turn runs; a CLI too old for sealed connections costs one warn line and is not run; the
 heartbeat re-stages only near expiry, never over a stage already running for that file,
 and never at the lease's expense; each file goes when the turn ends.
@@ -26,6 +26,7 @@ def cr(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "_canopy_cli", lambda: "/bin/canopy")
     monkeypatch.setattr(cloud_runner, "_canopy_cli_version", lambda **k: (0, 2, 9999))
     monkeypatch.setattr(cloud_runner, "_CONN_HOLDS", {})
+    monkeypatch.setattr(cloud_runner, "_CONN_NOT_FOR_BOX", set())
     logs = []
     monkeypatch.setattr(cloud_runner, "_log", lambda m, *a, **k: logs.append(m))
     cloud_runner.calls = []
@@ -62,12 +63,13 @@ def test_stages_through_the_cli_with_the_runner_bearer(cr, monkeypatch, tmp_path
     assert _path(tmp_path).exists() and "SECRET" not in " ".join(cr.logs)
 
 
-def test_exit_3_is_silent_and_removes_a_stale_file(cr, monkeypatch, tmp_path):
+def test_exit_3_says_so_once_and_removes_a_stale_file(cr, monkeypatch, tmp_path):
     _path(tmp_path).parent.mkdir(parents=True)
     _path(tmp_path).write_text(json.dumps({"expires_at": 1}))
     _cli(cr, monkeypatch, tmp_path, code=3, stderr="not_connected")
     cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=100)
-    assert not _path(tmp_path).exists() and cr.logs == []
+    assert not _path(tmp_path).exists()
+    assert cr.logs == ["connections.not_for_this_box agent=eva provider=salesforce turn=t1"]
 
 
 def test_other_failure_warns_and_the_turn_runs(cr, monkeypatch, tmp_path):
@@ -490,6 +492,30 @@ def test_an_adoptable_turn_records_its_providers_and_no_token(wired, monkeypatch
 
 # ---- the CLI opens the sealed token on this box -----------------------------------------
 
+def test_the_stage_tells_the_cli_this_boxs_canopy_web_by_the_name_it_reads(cr, monkeypatch, tmp_path):
+    """The CLI's connection path reads only CANOPY_WEB_API_URL and otherwise calls production:
+    a box elsewhere would send production its runner token and device proofs."""
+    monkeypatch.setattr(cr, "BASE_URL", "https://canopy.staging.example")
+    monkeypatch.delenv("CANOPY_WEB_API_URL", raising=False)
+    _cli(cr, monkeypatch, tmp_path, expires=10_000)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    env = cr.calls[0][1]["env"]
+    assert env["CANOPY_WEB_API_URL"] == env["CANOPY_BASE_URL"] == "https://canopy.staging.example"
+
+
+def test_a_listed_provider_that_is_not_for_this_box_says_so_once_per_turn_and_provider(cr, monkeypatch, tmp_path):
+    _cli(cr, monkeypatch, tmp_path, code=3, stderr="not_connected")
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
+    cr._stage_connection_token("r1", "t1", "eva", "google", now=0)
+    cr._stage_connection_token("r1", "t2", "eva", "salesforce", now=0)
+    assert cr.logs == ["connections.not_for_this_box agent=eva provider=salesforce turn=t1",
+                       "connections.not_for_this_box agent=eva provider=google turn=t1",
+                       "connections.not_for_this_box agent=eva provider=salesforce turn=t2"]
+    cr._drop_holds("t1")
+    assert not {w for w in cr._CONN_NOT_FOR_BOX if w[0] == "t1"}
+
+
 def test_stage_runs_the_cli_with_min_life_900(cr, monkeypatch, tmp_path):
     _cli(cr, monkeypatch, tmp_path, expires=10_000)
     cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
@@ -594,7 +620,7 @@ def test_waiting_on_a_restage_keeps_the_hold_in_one_lock_section(cr, monkeypatch
 def test_not_connected_still_drops_the_hold_on_a_first_stage(cr, monkeypatch, tmp_path):
     _cli(cr, monkeypatch, tmp_path, code=3)
     cr._stage_connection_token("r1", "t1", "eva", "salesforce", now=0)
-    assert cr._CONN_HOLDS == {} and cr.logs == []
+    assert cr._CONN_HOLDS == {} and cr.logs == ["connections.not_for_this_box agent=eva provider=salesforce turn=t1"]
 
 
 def test_heartbeat_restage_still_only_refreshes_held_files(cr, monkeypatch, tmp_path):
