@@ -198,7 +198,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/settings',
     title: 'Connected as … (share a connection)',
     audience: 'The person who just connected Salesforce or Google, or who is finishing a share from Settings',
-    what: "Where the sign-in lands. One passkey touch opens the connection in your browser, which shows which account was connected; you then choose which agents and which of your own computers (by name and fingerprint) may use it, and share. canopy-web never reads the token. Not now leaves it unshared, so no agent or computer can use it. A connection that cannot be opened safely says so and offers Reconnect.",
+    what: "Where the sign-in lands. Your passkey opens the connection in your browser, which shows which account was connected; you then choose which agents and which of your own computers (by name and fingerprint) may use it, and share. canopy-web never reads the token. Not now leaves it unshared, so no agent or computer can use it. A connection that cannot be opened safely says so and offers Reconnect.",
     needsFirst: 'A connection you just made (or one marked not shared yet in Settings), a passkey on this device, and your vault key set up.',
     actions: ['Unlock with your passkey', 'Choose agents and your computers', 'Share', 'Not now', 'Reconnect'],
   },

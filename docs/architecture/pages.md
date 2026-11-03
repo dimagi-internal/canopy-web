@@ -583,8 +583,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
 - **`/w/:workspace/connections/:id/share`** — "Connected as …": where the OAuth
-  callback lands (and where Settings' Share on a not-shared connection leads). One
-  passkey touch (`useVaultUnlock`) opens the connection in this browser and shows
+  callback lands (and where Settings' Share on a not-shared connection leads). Your
+  passkey (`useVaultUnlock`) opens the connection in this browser and shows
   the account from the opened envelope; the owner then ticks agents they administer
   and their own computers (name plus fingerprint) and shares
   (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the

@@ -30,6 +30,7 @@ vi.mock('@/vault/connectionShare', async (orig) => ({
 
 import { ShareConnectionPage, safeReturnTo } from './ShareConnectionPage'
 import { ShareRefused } from '@/vault/connectionShare'
+import { ApiError } from '@/api/problem'
 
 const T1 = 'A'.repeat(43)
 const T2 = 'B'.repeat(43)
@@ -200,6 +201,71 @@ describe('ShareConnectionPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /unlock/i }))
     await screen.findByText(/Connected as/)
     expect(container.innerHTML).not.toMatch(/refresh_token|access_token/)
+  })
+})
+
+const apiError = (status: number, code: string) =>
+  new ApiError(status, 'x', { status, code, error: code })
+
+describe('ShareConnectionPage: fixes', () => {
+  it.each(['statement_stale', 'zk_value_changed'])(
+    'on %s reloads the state, opens again with the key in hand and keeps the ticks', async (code) => {
+      await unlocked()
+      fireEvent.click(screen.getByLabelText('Eva'))
+      const fresh = { ...STATE, sealed_digest: 'new' }
+      putShare.mockRejectedValueOnce(apiError(409, code))
+      getShareState.mockResolvedValueOnce(fresh)
+      fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+      expect(await screen.findByText('This connection changed in another tab or computer. Loading it again.')).toBeTruthy()
+      await waitFor(() => expect(openForOwner).toHaveBeenCalledTimes(2))
+      expect(openForOwner.mock.calls[1]).toEqual([fresh, ME])
+      expect(unlock).toHaveBeenCalledTimes(1)
+      expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(true)
+      fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+      await waitFor(() => expect(putShare).toHaveBeenCalledTimes(2))
+      expect(buildShare.mock.calls[1][0]).toBe(fresh)
+    })
+
+  it('drops an earlier agent or computer no longer listed, says so, and does not send it', async () => {
+    openForOwner.mockResolvedValue({
+      account: ACCOUNT,
+      statement: { agents: ['12', '99'], my_computers: [T1, T2], endorsers: [], version: 2 },
+    })
+    await unlocked()
+    expect(screen.getByTestId('dropped').textContent).toContain('agent 99')
+    expect(screen.getByTestId('dropped').textContent).toContain('BBBB')
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    await waitFor(() => expect(buildShare).toHaveBeenCalled())
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [T1] })
+  })
+
+  it('sends no computers for an agent-owned connection', async () => {
+    getShareState.mockResolvedValue({ ...STATE, owner_agent: { id: '12', slug: 'eva', name: 'Eva' } })
+    openForOwner.mockResolvedValue({
+      account: ACCOUNT, statement: { agents: ['12'], my_computers: [T1], endorsers: [], version: 2 },
+    })
+    await unlocked()
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    await waitFor(() => expect(buildShare).toHaveBeenCalled())
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [] })
+  })
+
+  it.each(['no-scalar', 'bad-owner-key'])('%s asks to unlock again, not to Reconnect', async (code) => {
+    await unlocked()
+    fireEvent.click(screen.getByLabelText('Eva'))
+    buildShare.mockRejectedValueOnce(new ShareRefused(code, 'd'))
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe('Unlock your vault key and try again.')
+    expect(screen.queryByRole('link', { name: 'Reconnect' })).toBeNull()
+    expect(screen.getByRole('button', { name: /unlock/i })).toBeTruthy()
+  })
+
+  it.each([404, 403])('a %s on load says it is not theirs, with a link to Settings', async (status) => {
+    getShareState.mockRejectedValue(apiError(status, 'not_the_owner_key'))
+    open()
+    expect(await screen.findByText("This connection isn't yours to share.")).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Back to Settings' }).getAttribute('href')).toBe('/settings')
   })
 })
 
