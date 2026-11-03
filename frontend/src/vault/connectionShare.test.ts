@@ -539,10 +539,11 @@ describe('canopy-web as a writer', () => {
     await refused(openForOwner({ ...state, sealed_sig: forged } as unknown as ShareStateOut, me), 'bad-mac')
   })
 
-  it('does not trust a server key it did not report while unshared', async () => {
-    const state = await byServer(await unshared({ server: serverOf({ thumbprint: strangerBox.jkt }) }))
-    await refused(openForOwner(state, me), 'bad-writer')
-  })
+  it.each([['not available', { available: false, thumbprint: '', public_jwk: null }], ['another key', { thumbprint: 'S'.repeat(43) }]])(
+    'opens a device-written envelope while unshared when its MAC verifies, server key %s', async (_n, over) => {
+      const state = await byServer(await unshared({ server: serverOf(over) }))
+      await expect(openForOwner(state, me)).resolves.toBeTruthy()
+    })
 
   it('refuses server-written envelope under a statement not naming it', async () => {
     const base = await byServer(await unshared({ server: serverOf() }))
@@ -962,6 +963,11 @@ async function browserShareFixture() {
   const { share: secondShare } = await buildShare(second, me, { agents: [EVA], myComputers: [] },
     await trustFor(second, me, { pins: PINS() }))
 
+  // The first share again, this time naming canopy-web (its key is `cwBox`).
+  const withServerKey = { ...first, server: serverOf() } as unknown as ShareStateOut
+  const { share: thirdShare } = await buildShare(withServerKey, me, { ...choice, canopyWeb: true },
+    await trustFor(withServerKey, me, { pins: PINS() }))
+
   const key = (w: Who) => ({ scalar_hex: Array.from(w.scalar, (b) => b.toString(16).padStart(2, '0')).join(''),
                              public_jwk: w.pub, jkt: w.jkt })
   return {
@@ -969,9 +975,10 @@ async function browserShareFixture() {
     connection: CONNECTION, account_id: ACCOUNT, refresh_token: REFRESH_TOKEN, access_token: ACCESS_TOKEN,
     users: { owner: OWNER, ada: ADA, stranger: STRANGER }, agents: { eva: EVA },
     keys: { owner: key(owner), ada: key(ada), stranger: key(stranger), eva_box: key(evaBox), ada_box: key(adaBox),
-            stranger_box: key(strangerBox), computer: key(computer) },
+            stranger_box: key(strangerBox), computer: key(computer), canopy_web: key(cwBox) },
     first: { state: first, share: firstShare, msg: statementMessage(statement) },
     second: { state: second, share: secondShare, msg: statementMessage(secondShare.statement as unknown as Statement) },
+    third: { state: withServerKey, share: thirdShare, msg: statementMessage(thirdShare.statement as unknown as Statement) },
   }
 }
 
@@ -991,7 +998,7 @@ describe('the share the Python side checks', () => {
       typeof val === 'string' && (val.length > 40 || /^[A-Za-z0-9_-]{43}$/.test(val)) ? 'x' : val)
     expect(shapeOf(fresh)).toBe(shapeOf(held))
     expect(held.keys.owner.jkt).toBe(owner.jkt)
-    for (const c of [held.first, held.second]) {
+    for (const c of [held.first, held.second, held.third]) {
       const st = c.share.statement as unknown as Statement
       expect(statementMessage(st)).toBe(c.msg)
       expect(await verifyStatement(st, c.share.sig, owner.pub)).toBe(true)

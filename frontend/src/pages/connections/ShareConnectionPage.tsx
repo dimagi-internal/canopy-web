@@ -36,12 +36,14 @@ const CANOPY_WEB_WHY = 'canopy-web can use this account for you, with nobody pre
   + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
 const CANOPY_WEB_TURNS_OFF = 'Sharing with agents or your computers turns off project screens and apps for now.'
 const CANOPY_WEB_NOT_YET = "This isn't available yet."
+const CANOPY_WEB_CHANGED = "canopy-web's key has changed. Turn this off, or check with your administrator before keeping it on."
+const CANOPY_WEB_UNREACHABLE = "Sharing now turns off project screens and apps, because canopy-web can't be reached right now."
 const UNSAFE = "This connection can't be opened safely. Reconnect it."
 
 interface Opened {
   account: OpenedAccount
   /** The statement the owner last signed, verified by `openForOwner`: the only source of earlier choices. */
-  statement: { agents: string[]; my_computers: string[] } | null
+  statement: { agents: string[]; my_computers: string[]; canopy_web?: string } | null
   trust: Trust
 }
 
@@ -140,8 +142,9 @@ export function ShareConnectionPage(): JSX.Element | null {
     const trust = await trustFor(s, key, { accept: accepted.current })
     const listedAgents = new Set(s.agents.map((a) => a.id))
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
-    const sv = s.server
-    setCanopyWebTicked(keep ? !!keep.canopyWeb : !!sv?.on)
+    // The box starts from what the owner signed, never from the row's served `on`. Only an
+    // unshared row has no statement in force, and there `on` is canopy-web's own sealing at sign-in.
+    setCanopyWebTicked(keep ? !!keep.canopyWeb : s.state === 'unshared' ? !!s.server?.on : !!statement?.canopy_web)
     const wantAgents = keep ? keep.agents : statement?.agents ?? []
     const wantComputers = s.owner_agent ? [] : keep ? keep.myComputers : statement?.my_computers ?? []
     const lost = [
@@ -235,7 +238,12 @@ export function ShareConnectionPage(): JSX.Element | null {
   // grant is withdrawn: a statement naming nobody, signed like any other.
   const nothingToShare = !opened?.statement && choice.agents.length === 0 && choice.myComputers.length === 0
     && !choice.canopyWeb
-  const reconnected = !!opened?.statement && state.sealed_sig == null
+  // A reconnect clears the writer's signature; canopy-web may then write its own (a device) while
+  // the row is still unshared, which must not hide the warning.
+  const writerKind = (state.sealed_sig as { by?: { kind?: string } } | null | undefined)?.by?.kind
+  const reconnected = !!opened?.statement && state.state === 'unshared' && (state.sealed_sig == null || writerKind === 'device')
+  const keyChanged = !!opened?.statement?.canopy_web && choice.canopyWeb && state.server?.thumbprint !== opened.statement.canopy_web
+  const unreachableOn = !!server && !server.available && !!server.on
 
   return (
     <div className="max-w-2xl space-y-4" data-testid="share-connection">
@@ -350,6 +358,13 @@ export function ShareConnectionPage(): JSX.Element | null {
                 </p>
               )}
             </fieldset>
+          )}
+
+          {keyChanged && (
+            <p data-testid="canopy-web-key-changed" role="alert" className="text-[13px] text-destructive">{CANOPY_WEB_CHANGED}</p>
+          )}
+          {unreachableOn && (
+            <p data-testid="canopy-web-unreachable" className="text-[13px] text-foreground">{CANOPY_WEB_UNREACHABLE}</p>
           )}
 
           {leftOut.length > 0 && (

@@ -302,12 +302,12 @@ async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statem
   return false
 }
 
-/** canopy-web's own first seal, while the row is `unshared`: the one time the owner has signed
- *  nothing yet, as with any first seal. Once shared, only a statement the owner signed that
- *  names the writer's key admits it (`deviceAllowed`); `server.thumbprint` alone never does. */
-function firstServerSeal(state: ShareStateOut, thumb: string): boolean {
-  return state.state === 'unshared' && !!state.server?.available && state.server.thumbprint === thumb
-}
+/** While the row is `unshared` the owner has signed nothing yet, so a device writer is accepted
+ *  on its MAC alone (`authenticate` checked it by the writer's own key), as the unsigned first seal
+ *  is: canopy-web's seal after sign-in, whether or not it can report its key just now. Once shared,
+ *  only a statement the owner signed that names the writer admits it (`deviceAllowed`);
+ *  `server.thumbprint` never does. */
+const whileUnshared = (state: ShareStateOut): boolean => state.state === 'unshared'
 
 /** Refuse unless `sig` proves who wrote this recipient's entry, and they may have. */
 async function authenticate(state: ShareStateOut, stored: Statement | null, owner: OwnerKey, me: Unlocked, name: Name,
@@ -323,7 +323,7 @@ async function authenticate(state: ShareStateOut, stored: Statement | null, owne
   }
   const allowed = by.kind === 'member'
     ? by.target === owner.userId && thumb === owner.jkt
-    : firstServerSeal(state, thumb) || await deviceAllowed(thumb, state, stored, owner.jkt)
+    : whileUnshared(state) || await deviceAllowed(thumb, state, stored, owner.jkt)
   if (!allowed) throw new ShareRefused('bad-writer', 'This connection’s envelope was written by someone it does not allow.')
 }
 
@@ -544,8 +544,9 @@ function decide(state: ShareStateOut, choice: ShareChoice, trust: Trust): Decisi
   return { sealTo, computers: [...mine], agentDevices, leftOut: out }
 }
 
-/** Who a share with `choice` is sealed to: the owner, and each chosen machine this browser
- *  will vouch for. Why the rest were left out is `leftOut`. */
+/** Who a share with `choice` is sealed to besides canopy-web: the owner, and each chosen machine
+ *  this browser will vouch for. Why the rest were left out is `leftOut`. `choice.canopyWeb` is not
+ *  read here: `buildShare` adds canopy-web (`serverRecipient`) to both envelopes when it is ticked. */
 export function chooseRecipients(state: ShareStateOut, choice: ShareChoice, trust: Trust): Recipient[] {
   const owner: Recipient = { kind: 'member', target: trust.owner.userId, publicJwk: trust.owner.publicJwk }
   return [owner, ...decide(state, choice, trust).sealTo.values()]

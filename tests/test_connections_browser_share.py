@@ -210,3 +210,26 @@ def test_the_route_refuses_a_browser_share_replayed_over_a_newer_write():
     assert r.json()["error"] == "statement_stale"
     conn.refresh_from_db()
     assert conn.statement_version == 1
+
+
+def test_a_share_naming_canopy_web_the_browser_writes_is_accepted_and_seals_to_its_key(settings):
+    from apps.connections import server_key
+
+    settings.CONNECTIONS_SERVER_STATEMENTS = True
+    conn, person = _world()
+    third = FIXTURE["third"]
+    assert KEYS["canopy_web"]["jkt"] == third["state"]["server"]["thumbprint"]
+    server_key.use_software_key_for_tests(_priv("canopy_web"))
+    try:
+        r = _put(person, third["share"])
+        assert r.status_code == 200, r.json()
+        conn.refresh_from_db()
+        share = third["share"]
+        assert conn.server_use is True
+        assert share["statement"]["canopy_web"] == KEYS["canopy_web"]["jkt"]
+        assert conn_ref.statement_msg(share["statement"]).decode() == third["msg"]
+        assert conn_ref.verify_statement(share["statement"], share["sig"], _priv("owner").public_key())
+        _check_envelope(conn.sealed, conn.sealed_sig, "refresh", third["state"]["sealed_digest"],
+                        _recipients("eva_box", "ada_box", "computer", "canopy_web"), _refresh_plain(1))
+    finally:
+        server_key.use_software_key_for_tests(None)
