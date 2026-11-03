@@ -80,12 +80,13 @@ part of a site); absent, canopy adds none. It can never widen what the host
 granted. The page's `backing_tool` tells the agent where to read the rows on
 screen; it is not a filter (until 2026-09-29 it was).
 
-**Default deny.** Every agent HAS an interface; until its owner changes it, it is the default
-(`default_interface()`: no capability). An agent that has published nothing is reachable by its
-owner, admins and anyone its access list gives `write`, and by nobody else. A capability
-with no `pages` is never selected by a page. `ask` is OFF by default: an agent with no `ask`
-capability cannot be asked by a `read_only` line even if the list names them: a line can only
-open a capability that exists.
+**Read mode is on for every agent.** Every agent HAS an interface; until its owner changes it, it is
+the default (`default_interface()`: no capability). Someone whose lines give `read` and not
+`write` is answered in READ MODE, a confined session that exists from the start: the agent's own
+published `ask` when it has one (an override that replaces the default whole), else canopy's
+`default_read_profile`. `read` and `ask` are the same thing (`is_read_mode`). Any OTHER capability
+is a door and must be published: a line can only open a door that exists, and an unknown or retired
+name yields the empty deny-all profile. A capability with no `pages` is never selected by a page.
 
 A capability carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
 one is an access-list line (a role, or one that names the capability). A published interface that
@@ -627,11 +628,26 @@ def _held_permissions(d, stamped: str | None) -> list[str]:
     # stamp confines here too: `profile == full` iff `write` is in the list.
     if d.access == access.FULL and not stamped:
         return sorted(held)
-    kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
     name = stamped or d.capability
+    if is_read_mode(name):
+        # Read mode is `read`, not a door: nothing is named after it (no `use:read`, no `use:ask`).
+        return [roles.READ]
+    kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
     if name:
         kept.add(roles.use(name))
     return sorted(kept)
+
+
+def reachable(permissions, iface: dict | None) -> list[str]:
+    """The capability names someone confined by `permissions` can use: the published ones their
+    lines open, plus read mode itself (`read`) when they hold it and the agent published no `ask`
+    of its own, since read mode exists on every agent. One list for the roster, the topology and the
+    extended card, so none reads "published nothing" as "offers nothing"."""
+    caps = (iface or {}).get("capabilities") or {}
+    names = [n for n in caps if opens(permissions, n)]
+    if read_mode_override(iface) is None and opens(permissions, READ_MODE):
+        names.append(READ_MODE)
+    return sorted(names)
 
 
 def offered_to(user, agent) -> list[str]:
@@ -641,8 +657,9 @@ def offered_to(user, agent) -> list[str]:
     for anyone else, the capabilities their role on the agent's access list may use. Nothing
     for someone the list does not name.
     """
-    caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
-    if not caps or not getattr(user, "is_authenticated", False):
+    iface = getattr(agent, "interface", None) or {}
+    caps = iface.get("capabilities") or {}
+    if not getattr(user, "is_authenticated", False):
         return []
     from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
@@ -650,7 +667,7 @@ def offered_to(user, agent) -> list[str]:
     if d.access == access.FULL:
         return sorted(caps)
     if d.access == access.CONFINED:
-        return sorted(n for n in caps if opens(d.permissions, n))
+        return reachable(d.permissions, iface)
     return []
 
 
@@ -664,12 +681,20 @@ def profile(agent, capability: str) -> dict | None:
     if capability == FULL:
         return None
     _published, cap = published_capability(getattr(agent, "interface", None), capability)
+    default_version = None
+    if cap is None and is_read_mode(capability):
+        # Read mode on an agent that published no `ask`: canopy's own default, built from the agent
+        # as it stands now (a skill added or removed changes the next turn, never a stored one).
+        cap, default_version = default_read_profile(agent), READ_PROFILE_VERSION
     cap = cap or {"description": "", "entry": None,
                   "tools": [], "bash": [], "read_paths": [], "write_paths": [], "input": {},
                   "pages": [], "sites": [], "ceiling": []}
     out = {"name": capability, **{k: cap.get(k) for k in
                                   ("description", "entry", "tools", "bash", "read_paths",
                                    "write_paths", "input")}}
+    if default_version is not None:
+        # Which pinned default this turn ran under (`tests/test_default_read_profile.py`).
+        out["default_profile_version"] = default_version
     if cap.get("data"):
         out["data"] = cap["data"]
     if cap.get("sites"):

@@ -55,10 +55,7 @@ def test_an_unpublished_name_still_fails_closed():
     gone = interface.profile(A, "retired-door")
     assert gone["tools"] == [] and gone["bash"] == [] and gone["write_paths"] == []
 
-    class Bare:
-        interface = {"version": 1, "capabilities": {}}
-
-    assert interface.profile(Bare, "read")["tools"] == []           # nothing resolves read yet (step 3)
+    # (a bare agent's `read` now builds the default read profile: tests/test_read_mode.py)
 
 
 def _rule(**kw):

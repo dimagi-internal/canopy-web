@@ -20,6 +20,7 @@ from apps.workspaces.models import Workspace
 
 from . import access, grants, roles
 from .gates import agent_for_admin, agent_for_read
+from .interface import is_read_mode
 from .models import Agent, AgentGrant
 from .schemas import (
     AccessImplicitOut,
@@ -36,7 +37,7 @@ router = Router(tags=["agents"])
 defaults_router = Router(tags=["workspaces"])
 
 #: The words a person sees beside each permission.
-_CAN = {roles.READ: "ask, in a confined session, through the agent's ask capability (nothing, until the agent publishes one)",
+_CAN = {roles.READ: "be answered in read mode: a confined session that exists on every agent",
         roles.WRITE: "drive the whole agent", roles.AGENT_EDIT: "change its skills and capabilities",
         roles.ADMINISTER: "configure it", roles.OWN: "transfer or delete it"}
 _PERMISSIONS = (roles.READ, roles.WRITE, roles.AGENT_EDIT, roles.ADMINISTER, roles.OWN)
@@ -105,8 +106,9 @@ def _summary(line: AgentGrant) -> dict:
 def _capability_warning(line: AgentGrant, agent: Agent) -> str:
     """Advice, never a refusal: a capability line names a capability this agent has not published,
     so it opens nothing until it does."""
-    if not line.capability or line.capability in ((agent.interface or {}).get("capabilities") or {}):
-        return ""
+    if not line.capability or is_read_mode(line.capability) \
+            or line.capability in ((agent.interface or {}).get("capabilities") or {}):
+        return ""   # (read mode exists on every agent)
     return (f"{agent.slug} has not published a capability called {line.capability!r}, so this line "
             "opens nothing until it does")
 

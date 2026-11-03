@@ -82,8 +82,3 @@ def test_a_fresh_dict_each_call():
     a = default_read_profile(_agent(), skills=[])
     a["tools"].append("Bash")
     assert "Bash" not in default_read_profile(_agent(), skills=[])["tools"]
-
-
-def test_nothing_reads_it_yet():
-    # Phase 1 change 1 is a pure function; resolution comes with change 3.
-    assert interface.profile(_agent(interface={}), "read")["tools"] == []
