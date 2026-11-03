@@ -264,45 +264,51 @@ def owner_member(conn: Connection) -> Recipient | None:
     return ("member", conn.owner_user_id, conn.owner_public_jwk)
 
 
-def server_recipient(conn: Connection, statement: dict | None = None) -> Recipient | None:
+def server_recipient(conn: Connection, statement: dict | None = None, *,
+                     cached_only: bool = False) -> Recipient | None:
     """`("device", thumbprint, public JWK)` of canopy-web's key while `conn` may be sealed to it:
     the switch is on, the key is configured, and a statement in force names exactly this key. A
     row `unshared` with no statement passed needs none: the one it kept from before a reconnect
     decides nothing. A `statement` passed is the one about to be in force, so it decides even
-    there. None while KMS can't say what the key is (a machine can't seal to a key it wasn't
-    shown); `unconfirmed_server_target` keeps that from costing canopy-web its copy."""
+    there. None while the key can't be read (a machine can't seal to a key it wasn't shown);
+    `unconfirmed_server_target` keeps that from costing canopy-web its copy. `cached_only`: a
+    caller holding a row lock, where a key not yet cached counts as unreadable (no KMS call)."""
     if not conn.server_use or not server_key.available():
         return None
     any_statement = statement is None and conn.state == Connection.UNSHARED
     named = (conn.statement or {} if statement is None else statement).get("canopy_web")
     if not any_statement and not named:  # asks KMS nothing
         return None
-    try:
-        jwk = server_key.public_jwk()
-    except server_key.Unavailable:
+    if cached_only:
+        jwk = server_key.cached_public_jwk()
+    else:
+        try:
+            jwk = server_key.public_jwk()
+        except server_key.Unavailable:
+            jwk = None
+    if jwk is None:
         return None
     jkt = device_keys.thumbprint(jwk)
     return ("device", jkt, jwk) if any_statement or named == jkt else None
 
 
 def unconfirmed_server_target(conn: Connection) -> set[tuple[str, str]]:
-    """canopy-web's target as the stored statement names it, when that can't be checked because
-    KMS is failing: what an outage must not take from it. Only the owner's statement drops
-    canopy-web, so a `prune` keeps it and a write may still reach it, though no write must."""
+    """canopy-web's target as the stored statement names it, when nothing can say it is the wrong
+    key: the key is unset, or not cached (KMS failing, or not read yet). Only the owner's statement,
+    or a key readable and different, drops canopy-web, so a `prune` keeps it and a write may still
+    reach it, though no write must. Reads the cache only: callers hold a row lock."""
     named = (conn.statement or {}).get("canopy_web")
-    if not (named and conn.server_use and conn.state == Connection.ACTIVE and server_key.available()):
+    if not (named and conn.server_use and conn.state == Connection.ACTIVE):
         return set()
-    try:
-        server_key.public_jwk()
-    except server_key.Unavailable:
+    if not server_key.available() or server_key.cached_public_jwk() is None:
         return {("device", named)}
     return set()
 
 
 def warm_server_key(conn: Connection) -> None:
-    """Read canopy-web's public key, cached per process, before a caller takes `conn`'s row lock:
-    `recipients` under the lock then asks KMS nothing (`server_key.RETRY_AFTER_SECONDS` covers a
-    failure too)."""
+    """Read canopy-web's public key into the process's cache before a caller takes `conn`'s row
+    lock, since under the lock only the cache is read (`cached_only`). A best effort: `conn` may
+    be stale and KMS may be down, and a miss then only counts as unavailable for that write."""
     if conn.server_use and server_key.available():
         try:
             server_key.public_jwk()
@@ -310,12 +316,13 @@ def warm_server_key(conn: Connection) -> None:
             pass
 
 
-def recipients(conn: Connection, statement: dict | None = None) -> list[Recipient]:
+def recipients(conn: Connection, statement: dict | None = None, *, cached_only: bool = False) -> list[Recipient]:
     """THE rule: everyone `conn` may be sealed to — the owner's member key, the machines
-    `statement` (default: the stored one) still allows, and canopy-web (`server_recipient`)."""
+    `statement` (default: the stored one) still allows, and canopy-web (`server_recipient`).
+    `cached_only`: the caller holds a row lock, so no KMS call."""
     out = [("device", k.ecdh_jkt, k.ecdh_public_jwk) for k in devices(conn, statement)]
     owner = owner_member(conn)
-    server = server_recipient(conn, statement)
+    server = server_recipient(conn, statement, cached_only=cached_only)
     return ([owner] if owner else []) + out + ([server] if server else [])
 
 
@@ -448,15 +455,16 @@ def prune(conn: Connection) -> list[str]:
     nothing. When no kept machine could revoke it, one dropped machine that could (an
     active cloud box) stays, so a revoke still has a holder. Only an `active` row:
     nothing while `unshared` (sealed to the owner alone) or `revoking` (its holders
-    are revoking it). canopy-web's key goes only because the statement stopped naming it,
-    never because KMS is down (`unconfirmed_server_target`). Returns what was dropped (runner
-    names, `person <id>`); empty when nothing changed."""
+    are revoking it). canopy-web's key goes only because the statement stopped naming it or a
+    readable key differs, never because its key can't be read or is unset
+    (`unconfirmed_server_target`). Returns what was dropped (runner names, `person <id>`);
+    empty when nothing changed."""
     warm_server_key(conn)
     with transaction.atomic():
         fresh = Connection.objects.select_for_update().filter(pk=conn.pk).first()
         if fresh is None or fresh.state != Connection.ACTIVE or not fresh.sealed:
             return []
-        allowed = targets(recipients(fresh)) | unconfirmed_server_target(fresh)
+        allowed = targets(recipients(fresh, cached_only=True)) | unconfirmed_server_target(fresh)
         _, dropped = zk_seal.keep_only(fresh.sealed, allowed)
         if dropped:
             last = _last_holder(zk_seal.sealed_targets(fresh.sealed) - dropped, dropped)

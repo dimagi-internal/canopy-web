@@ -601,7 +601,9 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
         "instance_url": instance_url,
         "scopes": scopes,
         "state": Connection.UNSHARED,
-        "sealed_sig": None,  # canopy-web has no writer key: only the owner's browser accepts this seal
+        # A first seal carries no writer MACs: no machine reads a row until the owner shares it, and
+        # only the owner's browser opens this one.
+        "sealed_sig": None,
         "access_sealed": "",
         "access_sig": None,
         "access_expires_at": None,

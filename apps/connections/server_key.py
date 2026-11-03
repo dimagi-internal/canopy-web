@@ -100,6 +100,17 @@ def public_jwk() -> dict:
     return dict(jwk)
 
 
+def cached_public_jwk() -> dict | None:
+    """The public JWK if this process already holds it, else None. Never a network call: what
+    code holding a row lock reads, where a miss counts as the key being unavailable."""
+    if _software is not None:
+        return _jwk(_software.public_key())
+    key_id = getattr(settings, "CONNECTIONS_SERVER_KMS_KEY", "")
+    with _lock:
+        hit = _cached
+    return dict(hit[1]) if key_id and hit is not None and hit[0] == key_id else None
+
+
 def _read_public_jwk(key_id: str) -> dict:
     try:
         out = _client().get_public_key(KeyId=key_id)

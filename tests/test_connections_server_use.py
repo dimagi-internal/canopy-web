@@ -16,15 +16,17 @@ import pytest
 from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.test import override_settings
+from django.utils import timezone
 
 from apps.agents.credentials import zk_seal
-from apps.connections import keeper, server_key, services, tokens
+from apps.connections import keeper, server_key, services, sharing, tokens
 from apps.connections import recipients as rcpt
 from apps.connections.models import Connection, ConnectionApp
 from apps.connections.providers.google import GoogleProvider
 from apps.connections.providers.salesforce import SalesforceProvider
+from apps.connections.wire import WireError
 from tests.fixtures.connection_calls import TokensWorld, lease, machine_write, write_back
-from tests.fixtures.connections import REDIRECT, FakeGoogle, FakeSF, ShareWorld, sealed_to_owner
+from tests.fixtures.connections import REDIRECT, FakeGoogle, FakeSF, ShareWorld, browser_share, sealed_to_owner
 from tests.fixtures.vault_zk import ref as zk_ref
 
 pytestmark = pytest.mark.django_db
@@ -90,6 +92,13 @@ def statement_says(conn, **over) -> Connection:
     conn.statement = {**(conn.statement or {}), **over}
     conn.save(update_fields=["statement"])
     return conn
+
+
+def kms_outage():
+    """Every read of canopy-web's key fails, and nothing is cached."""
+    down = server_key.Unavailable("down")
+    return mock.patch.multiple(server_key, public_jwk=mock.Mock(side_effect=down),
+                               cached_public_jwk=mock.Mock(return_value=None))
 
 
 # ---- connecting ---------------------------------------------------------------------
@@ -205,7 +214,37 @@ def test_reconnect_keeps_on_and_goes_unshared(world, key):
     assert again.statement is not None  # kept, and it decides nothing now
 
 
+def test_reconnect_of_an_on_row_with_no_statement_seals_to_canopy_web(world, key):
+    conn = on_row(world)
+    assert conn.statement is None
+    with FakeSF():
+        again = connect(world)
+    again.refresh_from_db()
+    assert again.pk == conn.pk and again.server_use is True and again.state == Connection.UNSHARED
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world), canopy_target()}
+
+
+def test_reconnect_of_an_off_row_with_a_statement_stays_off(world, key):
+    conn = world.shared(world.persons(), agents=[world.eva])
+    assert conn.statement is not None and conn.server_use is False
+    with FakeSF():
+        again = connect(world)
+    again.refresh_from_db()
+    assert again.pk == conn.pk and again.server_use is False and again.state == Connection.UNSHARED
+    assert again.statement is not None
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world)}
+
+
 def test_reconnect_of_an_on_row_whose_statement_omits_canopy_web_still_seals_to_it(world, key):
+    conn = world.shared(on_row(world), agents=[world.eva])
+    assert "canopy_web" not in conn.statement and conn.server_use is True
+    with FakeSF():
+        again = connect(world)
+    assert again.server_use is True
+    assert zk_seal.sealed_targets(again.sealed) == {owner_target(world), canopy_target()}
+
+
+def test_reconnect_of_an_on_row_whose_statement_names_another_key_still_seals_to_it(world, key):
     conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
     statement_says(conn, canopy_web=OTHER_KEY)
     with FakeSF():
@@ -284,10 +323,32 @@ def test_a_kms_outage_never_prunes_canopy_web(world, key):
     """Only the owner's statement drops it: an outage says nothing about what they chose."""
     conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
     target = canopy_target()
-    with mock.patch.object(server_key, "public_jwk", side_effect=server_key.Unavailable("down")):
+    with kms_outage():
         assert rcpt.prune(conn) == []
     conn.refresh_from_db()
     assert target in zk_seal.sealed_targets(conn.sealed)
+
+
+def test_prune_keeps_named_canopy_web_when_key_unset(world, key):
+    """A deployment that lost the setting says nothing about what the owner chose."""
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    target = canopy_target()
+    server_key.use_software_key_for_tests(None)
+    assert not server_key.available()
+    assert rcpt.server_recipient(conn) is None  # it behaves as off
+    assert rcpt.prune(conn) == []
+    conn.refresh_from_db()
+    assert target in zk_seal.sealed_targets(conn.sealed)
+
+
+def test_wrong_key_prunes_named_canopy_web(world, key):
+    """The key can be read and it isn't the one the owner named: that is not an outage."""
+    conn = world.shared(on_row(world), agents=[world.eva], canopy_web=server_key.thumbprint())
+    target = canopy_target()
+    server_key.use_software_key_for_tests(ec.generate_private_key(ec.SECP256R1()))
+    assert rcpt.prune(conn)
+    conn.refresh_from_db()
+    assert target not in zk_seal.sealed_targets(conn.sealed)
 
 
 def test_prune_reads_the_key_before_it_takes_the_row_lock(world, key):
@@ -403,7 +464,7 @@ def test_a_kms_outage_refuses_no_machine_write(machines):
     lid = lease(w, w.box_a).json()["lease_id"]
     reaching = machine_write(w, w.conn, w.box_a, lid)
     without = [r for r in rcpt.recipients(w.conn) if r[1] != server_key.thumbprint()]
-    with mock.patch.object(server_key, "public_jwk", side_effect=server_key.Unavailable("down")):
+    with kms_outage():
         assert rcpt.server_recipient(w.conn) is None
         rows = tokens.material_fields(w.conn, w.machines[w.box_a][0])["recipients"]
         assert "canopy-web" not in {r["runner_name"] for r in rows}
@@ -411,3 +472,80 @@ def test_a_kms_outage_refuses_no_machine_write(machines):
         lid = lease(w, w.box_a, w.conn, lid).json()["lease_id"]
         leaving_out = machine_write(w, w.conn, w.box_a, lid, to=without)
         assert write_back(w, w.box_a, leaving_out).status_code == 200
+
+
+# ---- under a row lock, the cached key or nothing ------------------------------------------
+
+@pytest.fixture
+def cold_kms(machines):
+    """The key is configured and nothing is cached. `warm_server_key` does nothing, as when it
+    read a stale `server_use` or its failure memo lapsed during the lock wait, so the code under
+    the lock is on its own. KMS would answer, but must not be asked."""
+    client = mock.Mock()
+    server_key.use_software_key_for_tests(None)
+    with override_settings(CONNECTIONS_SERVER_KMS_KEY="alias/canopy-web-connections"), \
+            mock.patch.object(server_key, "_client", return_value=client), \
+            mock.patch.object(rcpt, "warm_server_key"):
+        yield client
+    server_key._reset()
+
+
+def test_a_cold_cache_under_a_lock_asks_no_kms_in_the_rule(machines, cold_kms):
+    assert rcpt.server_recipient(machines.conn, cached_only=True) is None
+    assert rcpt.unconfirmed_server_target(machines.conn) == {("device", machines.conn.statement["canopy_web"])}
+    cold_kms.get_public_key.assert_not_called()
+
+
+def test_a_cold_cache_in_prune_asks_no_kms_and_keeps_canopy_web(machines, cold_kms):
+    before = zk_seal.sealed_targets(machines.conn.sealed)
+    assert rcpt.prune(machines.conn) == []
+    machines.conn.refresh_from_db()
+    assert zk_seal.sealed_targets(machines.conn.sealed) == before
+    cold_kms.get_public_key.assert_not_called()
+
+
+def test_a_cold_cache_in_write_back_asks_no_kms(machines, key):
+    w = machines
+    lid = lease(w, w.box_a).json()["lease_id"]
+    body = machine_write(w, w.conn, w.box_a, lid)
+    client = mock.Mock()
+    server_key.use_software_key_for_tests(None)
+    with override_settings(CONNECTIONS_SERVER_KMS_KEY="alias/k"), \
+            mock.patch.object(server_key, "_client", return_value=client), \
+            mock.patch.object(rcpt, "warm_server_key"):
+        machine_key = w.machines[w.box_a][0]
+        tokens.write_back(w.conn, device_key=machine_key, lease_id=lid, access_sealed=body["access_sealed"],
+                          access_sig=body["access_sig"], access_expires_at=timezone.now(), expect=body["expect"],
+                          rotated=False)
+    client.get_public_key.assert_not_called()
+    server_key._reset()
+
+
+def test_a_cold_cache_in_reseal_asks_no_kms(machines, key):
+    w = machines
+    body = machine_write(w, w.conn, w.box_a, "unused", rotated=True)
+    client = mock.Mock()
+    server_key.use_software_key_for_tests(None)
+    with override_settings(CONNECTIONS_SERVER_KMS_KEY="alias/k"), \
+            mock.patch.object(server_key, "_client", return_value=client), \
+            mock.patch.object(rcpt, "warm_server_key"):
+        machine_key = w.machines[w.box_a][0]
+        keeper.reseal(w.conn, machine_key.runner, machine_key, sealed=body["sealed"], sealed_sig=body["sealed_sig"],
+                      expect=w.conn.sealed_digest)
+    client.get_public_key.assert_not_called()
+    server_key._reset()
+
+
+def test_a_cold_cache_in_share_asks_no_kms_and_refuses_the_named_key(world, key):
+    conn = on_row(world)
+    body = browser_share(conn, world.person, world.person_priv, agents=[world.eva],
+                         canopy_web=server_key.thumbprint())
+    client = mock.Mock()
+    server_key.use_software_key_for_tests(None)
+    with override_settings(CONNECTIONS_SERVER_KMS_KEY="alias/k"), \
+            mock.patch.object(server_key, "_client", return_value=client), \
+            mock.patch.object(rcpt, "warm_server_key"), pytest.raises(WireError) as e:
+        sharing.share(conn, user=world.person, **body)
+    assert e.value.code == "foreign_reader"
+    client.get_public_key.assert_not_called()
+    server_key._reset()

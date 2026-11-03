@@ -243,3 +243,22 @@ def test_a_failed_read_is_not_retried_for_a_while(settings):
             with pytest.raises(server_key.Unavailable):
                 server_key.public_jwk()
     assert client.get_public_key.call_count == 1
+
+
+def test_cached_public_jwk_never_asks_kms(settings):
+    settings.CONNECTIONS_SERVER_KMS_KEY = "alias/k"
+    client = mock.Mock()
+    client.get_public_key.side_effect = ClientError({"Error": {"Code": "Down", "Message": "x"}}, "GetPublicKey")
+    with mock.patch.object(server_key, "_client", return_value=client):
+        assert server_key.cached_public_jwk() is None
+    client.get_public_key.assert_not_called()
+
+
+def test_cached_public_jwk_answers_once_read_and_for_that_key_only(settings, key):
+    assert server_key.cached_public_jwk() == server_key.public_jwk()
+    server_key.use_software_key_for_tests(None)
+    settings.CONNECTIONS_SERVER_KMS_KEY = "alias/a"
+    server_key._cached = ("alias/a", {"kty": "EC"})
+    assert server_key.cached_public_jwk() == {"kty": "EC"}
+    settings.CONNECTIONS_SERVER_KMS_KEY = "alias/b"
+    assert server_key.cached_public_jwk() is None

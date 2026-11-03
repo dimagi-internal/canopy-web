@@ -183,7 +183,7 @@ def share(conn: Connection, *, user, statement: dict, sig: str, by_jkt: str, sea
         if (expect or "").strip().lower() != conn.sealed_digest:
             raise WireError(409, "zk_value_changed",
                             "The connection changed since you read it; reload and share again.")
-        allowed = rcpt.targets(rcpt.recipients(conn, statement))
+        allowed = rcpt.targets(rcpt.recipients(conn, statement, cached_only=True))
         owner = ("member", str(user.pk))
         _check_envelope(sealed, sealed_sig, name=wire.REFRESH_NAME, allowed=allowed, user=user, ks=ks,
                         expect=conn.sealed_digest, must_include=[owner])

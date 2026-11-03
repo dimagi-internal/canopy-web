@@ -326,9 +326,10 @@ def write_back(conn: Connection, *, device_key: RunnerDeviceKey, lease_id, acces
         _check_lease(row, device_key, lease_id)
         if (expect or "").strip().lower() != row.sealed_digest:
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
-        allowed = rcpt.targets(rcpt.recipients(row))
+        allowed = rcpt.targets(rcpt.recipients(row, cached_only=True))
         keep = zk_seal.sealed_targets(row.sealed) & allowed
-        # Never refused over a KMS outage: this machine's new token may be the only copy.
+        # Never refused because canopy-web's key can't be read: this machine's new token may be
+        # the only copy.
         allowed |= rcpt.unconfirmed_server_target(row)
         check_write(access_sealed, access_sig, name=wire.ACCESS_NAME, allowed=allowed, keep=keep,
                      writer=device_key, expect=vault_engine.value_digest(row.access_sealed))

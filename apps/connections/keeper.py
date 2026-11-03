@@ -128,9 +128,9 @@ def reseal(conn: Connection, runner: Runner, device_key: RunnerDeviceKey, *, sea
             raise _not_a_holder("This machine holds no copy of the connection to re-seal.")
         if (expect or "").strip().lower() != row.sealed_digest:
             raise WireError(409, "zk_value_changed", "The connection changed since you read it; read it again.")
-        allowed = rcpt.targets(rcpt.recipients(row))
+        allowed = rcpt.targets(rcpt.recipients(row, cached_only=True))
         keep = old & allowed
-        allowed |= rcpt.unconfirmed_server_target(row)  # a KMS outage refuses nobody's write
+        allowed |= rcpt.unconfirmed_server_target(row)  # an unreadable key refuses nobody's write
         tokens.check_write(sealed, sealed_sig, name=wire.REFRESH_NAME, allowed=allowed, keep=keep,
                            writer=device_key, expect=row.sealed_digest)
         if row.access_sealed:
