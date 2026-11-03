@@ -25491,7 +25491,7 @@ export interface components {
         };
         /**
          * AgentLicenseOut
-         * @description One person's license to use the agent directly (`apps/agents/licenses.py`).
+         * @description One person's license to use the agent directly (`apps/agents/credentials/licenses.py`).
          */
         readonly AgentLicenseOut: {
             /** User Id */
