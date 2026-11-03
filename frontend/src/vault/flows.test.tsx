@@ -10,7 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
   putZkValues: vi.fn(), rotateZk: vi.fn(), getVaultMembers: vi.fn(), listWorkspaceVaults: vi.fn(),
-  listMyAgentsWithVaults: vi.fn(), listMyWorkspacesWithVaults: vi.fn(),
+  listMyAgentsWithVaults: vi.fn(), listMyWorkspacesWithVaults: vi.fn(), reportVaultClient: vi.fn(),
   VaultApiError: class extends Error {
     status: number
     constructor(status: number, message: string) { super(message); this.status = status }
@@ -345,7 +345,23 @@ describe('Create a new vault key', () => {
     await expect(unlockVaultKey(async () => ({ method: 'passphrase', passphrase: 'not the right one!' }),
       keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal] }) as never))
       .rejects.toThrow('Lost your passphrase or Secret Key? Create a new vault key - it does not need them.')
+    expect(api.reportVaultClient).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'unlock', method: 'passphrase', outcome: 'failed', asked: ['passphrase'], secret_key_remembered: true,
+      error: 'no passphrase seal opened (1 tried, Secret Key remembered)',
+    }))
+    expect(JSON.stringify(api.reportVaultClient.mock.calls)).not.toContain('not the right one!')
   }, 20000)
+
+  it('reports a Secret Key that will not parse without any character of what was typed', async () => {
+    const me = await person()
+    const seal = await zk.sealUserKey2skd(me.scalar, USER, 'the right passphrase', zk.randomBytes(16))
+    const typed = 'CV1-' + '#'.repeat(26)
+    await expect(unlockVaultKey(async () => ({ method: 'passphrase', passphrase: 'the right passphrase', secretKey: typed }),
+      keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal] }) as never)).rejects.toThrow('Secret Key')
+    const sent = JSON.stringify(api.reportVaultClient.mock.calls)
+    expect(sent).toContain('Secret Key did not parse')
+    expect(sent).not.toContain('#')
+  })
 })
 
 describe('An agent page: nothing to set up by hand', () => {

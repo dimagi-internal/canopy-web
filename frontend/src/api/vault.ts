@@ -260,3 +260,31 @@ export async function setTestVaultKey(slug: string, enabled: boolean): Promise<T
   })
   return need<TestVaultKeyOut>(res, 'setTestVaultKey')
 }
+
+export interface VaultClientReport {
+  stage: string
+  method: 'passkey' | 'passphrase' | 'recovery' | 'none'
+  outcome: 'ok' | 'failed' | 'cancelled' | 'unsupported'
+  error?: string
+  browser_prf?: boolean | null
+  asked?: string[]
+  secret_key_remembered?: boolean
+}
+
+/** Tell the server's log what the browser saw while unlocking or setting up the
+ *  vault key. Fire-and-forget and secret-free: it never throws, so a diagnostic
+ *  cannot turn a failed unlock into a second failure. The page is the path alone, never a
+ *  query or fragment, and both strings are cut to the server's limits: over them the report
+ *  is refused, which here would be silent. */
+export function reportVaultClient(report: VaultClientReport): void {
+  void (async () => {
+    try {
+      await apiV2.POST('/api/vault/client-report', {
+        body: { asked: [], ...report, error: (report.error ?? '').slice(0, 300),
+                page: window.location.pathname.slice(0, 100) } as never,
+      })
+    } catch {
+      // diagnostics only
+    }
+  })()
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button } from 'canopy-ui/ui'
-import { getKeyset, type VaultKeysetOut } from '@/api/vault'
+import { getKeyset, reportVaultClient, type VaultKeysetOut } from '@/api/vault'
 import {
   createVaultKeyWithPasskey,
   passkeyCanHoldVaultKey,
@@ -116,6 +116,9 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
         setKs(out)
       }
     } catch (e) {
+      reportVaultClient({ stage: 'vault_key_panel', method: 'none', error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+                          outcome: e instanceof Error && e.name === 'NotAllowedError' ? 'cancelled'
+                            : e instanceof PrfUnsupportedError ? 'unsupported' : 'failed', browser_prf: prfHint })
       if (e instanceof PrfUnsupportedError) {
         setMode('passphrase')
         setError(USE_A_PASSPHRASE)

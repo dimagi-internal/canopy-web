@@ -92,3 +92,23 @@ class VaultKeysetOut(StrictModel):
     updated_at: dt.datetime | None = None
     #: An agent's own login holding its TEST vault key (`login_test_key`), not a person's.
     test_key: bool = False
+
+
+class VaultClientReportIn(StrictModel):
+    """What the browser saw while unlocking or setting up. Never a secret."""
+
+    #: Where: "unlock" | "setup" | "change_passphrase" | "recover" | "approve_runner" | …
+    stage: str = Field(max_length=40)
+    #: How the person tried: "passkey" | "passphrase" | "recovery" | "none".
+    method: str = Field(max_length=20)
+    #: "ok" | "failed" | "cancelled" | "unsupported".
+    outcome: str = Field(max_length=20)
+    #: The error's name/message (already user-facing text; no secret is ever in one).
+    error: str = Field(default="", max_length=300)
+    #: `PublicKeyCredential.getClientCapabilities()['extension:prf']`; None = unreported.
+    browser_prf: bool | None = None
+    #: Unlock options the prompt offered: subset of "passkey", "passphrase".
+    asked: list[str] = Field(default_factory=list, max_length=4)
+    #: Whether this browser already remembered a Secret Key (the key itself is never sent).
+    secret_key_remembered: bool | None = None
+    page: str = Field(default="", max_length=100)
