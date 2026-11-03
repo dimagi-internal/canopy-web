@@ -31,6 +31,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 #                                      -> memory-embeddings here
 #   apps/agents/api_aws.py             sts AssumeRole on labs-jj-observe-readonly
 #                                      -> assume-labs-observe here
+#   apps/connections/server_key.py     kms DeriveSharedSecret + GetPublicKey on
+#                                      canopy-web's connection key -> the KEY POLICY in
+#                                      canopy-web-connections-key.cfn.yaml names this role
+#                                      (Principal = its ARN); nothing is granted here
 # Secrets and logs are the EXECUTION role's (labs-jj-ecs-task-execution-role),
 # not this one.
 #

@@ -54,6 +54,11 @@ Parameters:
   MailEnabled:
     Type: String
     Default: "false"
+  # canopy-web's own sealed-connection key (canopy-web-connections-key.cfn.yaml, its KeyAlias
+  # output). Empty = canopy-web can't use any connection on its own.
+  ConnectionsServerKmsKey:
+    Type: String
+    Default: ""
   MailInboundBucket:
     Type: String
     Default: ""
@@ -501,6 +506,7 @@ Resources:
             - { Name: CANOPY_EMAIL_ENABLED, Value: "true" }
             # Workspace email domains (apps/mail): off until canopy-mail.cfn.yaml is
             # deployed and its Outputs are passed in as the Mail* parameters.
+            - { Name: CONNECTIONS_SERVER_KMS_KEY, Value: !Ref ConnectionsServerKmsKey }
             - { Name: MAIL_ENABLED, Value: !Ref MailEnabled }
             - { Name: MAIL_INBOUND_BUCKET, Value: !Ref MailInboundBucket }
             - { Name: MAIL_INBOUND_TOPIC_ARN, Value: !Ref MailInboundTopicArn }

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -79,6 +80,29 @@ def seal_to(plaintext: str, *, agent_id, name: str, kv: int, recipients: list[tu
                     "ct": _b64u(nonce + AESGCM(key).encrypt(nonce, plaintext.encode(), aad))})
     body = json.dumps({"kv": kv, "r": out}, separators=(",", ":"))
     return SEALED_PREFIX + _b64u(body.encode())
+
+
+def open_for(value: str, *, agent_id, name: str, kv: int, kind: str, target: str, derive) -> str:
+    """The plaintext of a `zks1:` value, for the recipient `(kind, target)`. `derive(epk_jwk)` returns
+    the raw ECDH secret between that recipient's private key and the entry's ephemeral key (KMS
+    does it for canopy-web's own key). The reverse of `seal_to`: the same HKDF info and AAD, so an
+    entry moved to another agent, name, key version or recipient does not open. Raises ZkError for
+    a missing entry, a binding that does not match, or any tampering."""
+    if not isinstance(value, str) or not value.startswith(SEALED_PREFIX):
+        raise ZkError(422, "zk_not_sealed", "not a sealed value")
+    try:
+        body = json.loads(b64u_bytes(value[len(SEALED_PREFIX):], "value_zk"))
+        entry = next((r for r in body["r"] if r["kind"] == kind and r["target"] == target), None)
+        if entry is None or int(body["kv"]) != kv:
+            raise ZkError(422, "zk_not_a_recipient", "this value is not sealed to that recipient")
+        blob = b64u_bytes(entry["ct"], "ct")
+        info = seal_info(agent_id, name, kv, kind, target)
+        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"", info=info.encode()).derive(derive(entry["epk"]))
+        return AESGCM(key).decrypt(blob[:NONCE_LEN], blob[NONCE_LEN:], value_aad(agent_id, name, kv)).decode()
+    except ZkError:
+        raise
+    except (ValueError, KeyError, TypeError, InvalidTag, UnicodeDecodeError) as exc:
+        raise ZkError(422, "zk_bad_seal", "this sealed value could not be opened") from exc
 
 
 def recipients_for(agent) -> list[tuple[str, str, dict]]:

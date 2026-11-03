@@ -145,3 +145,15 @@ def test_the_canopy_web_deploy_role_may_upload_runner_releases_and_nothing_more(
         "arn:aws:s3:::labs-jj-canopy-web-attachments-858923557655"]
     for app in ("ace-web", "connect-labs"):
         assert "runner-releases" not in str(mod.policy_for(app, mod.APPS[app])), app
+
+
+def test_the_connections_key_is_granted_by_its_key_policy_not_by_the_role():
+    """canopy-web's connection key names the task role in ITS policy (canopy-web-connections-key.cfn.yaml);
+    the role stack grants no kms, and the app stack's CONNECTIONS_SERVER_KMS_KEY is an empty-by-default parameter."""
+    st = _statements(_load("canopy-web-task-role.cfn.yaml")["Resources"]["TaskRole"]["Properties"])
+    assert not any(str(a).startswith("kms:") for s in st.values() for a in
+                   ([s["Action"]] if isinstance(s["Action"], str) else s["Action"]))
+    app = _load("canopy-web.cfn.yaml")
+    assert app["Parameters"]["ConnectionsServerKmsKey"]["Default"] == ""
+    env = app["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
+    assert {"Name": "CONNECTIONS_SERVER_KMS_KEY", "Value": {"Ref": "ConnectionsServerKmsKey"}} in env
