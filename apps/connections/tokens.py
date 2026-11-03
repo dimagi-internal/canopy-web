@@ -144,6 +144,8 @@ def material(conn: Connection, device_key: RunnerDeviceKey, *, turn=None, runner
                         "gives it one, or the owner does from Settings.")
 
     out = material_fields(conn, device_key, pairs, facts)
+    if turn is not None:
+        out.update(agent_id=str(agent.pk), agent_slug=agent.slug)
     now = timezone.now()
     Connection.objects.filter(pk=conn.pk).update(last_used_at=now)
     _record_issued(conn, device_key, turn=turn, runner=runner)

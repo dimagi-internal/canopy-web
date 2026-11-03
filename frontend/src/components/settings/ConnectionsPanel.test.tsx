@@ -28,7 +28,7 @@ function conn(over: Record<string, unknown> = {}) {
 const at = (url: string) =>
   render(<MemoryRouter initialEntries={[url]}><ConnectionsPanel /></MemoryRouter>)
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => { vi.clearAllMocks(); disconnectMine.mockResolvedValue('revoking') })
 afterEach(cleanup)
 
 describe('ConnectionsPanel', () => {
@@ -42,13 +42,21 @@ describe('ConnectionsPanel', () => {
 
   it('shows account and instance when connected, and disconnect calls DELETE', async () => {
     listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
-    disconnectMine.mockResolvedValue(undefined)
+    disconnectMine.mockResolvedValue('revoking')
     at('/settings')
     expect(await screen.findByText('jj@dimagi.com')).toBeTruthy()
     expect(screen.getByText(/dimagi\.my\.salesforce\.com/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
     await waitFor(() => expect(disconnectMine).toHaveBeenCalledWith(7))
     expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
+  })
+
+  it('says plainly when nothing will revoke it', async () => {
+    listMyConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn()] })
+    disconnectMine.mockResolvedValue('deleted')
+    at('/settings')
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText('Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.')).toBeTruthy()
   })
 
   it('says which lent agent a connection is not reaching, with a link to the share page', async () => {

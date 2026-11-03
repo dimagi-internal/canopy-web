@@ -134,10 +134,10 @@ def _keeper_box(request: HttpRequest, runner_id: uuid.UUID):
 @gate("runner", step_up="runner protocol: ciphertext only machines open")
 def get_connection_keeper_work(request: HttpRequest, runner_id: uuid.UUID) -> ConnectionKeeperOut:
     """Each connection this cloud box holds that machines are waiting for (`waiting`:
-    re-seal the same plaintext for those the signed statement allows, at
-    `reseal_path`) or that is being disconnected (`revoking`: revoke it — at the
-    provider only when `revoke_at_provider` — and confirm at `revoked_path`). Empty
-    for a machine that is not a cloud box. 401 `device_proof_required`."""
+    re-seal the same plaintext for those the signed statement allows) or that is
+    being disconnected (`revoking`: revoke it — at the provider only when
+    `revoke_at_provider` — and confirm). Empty for a machine that is not a cloud box.
+    401 `device_proof_required`."""
     runner, _ = _keeper_box(request, runner_id)
     return ConnectionKeeperOut(connections=keeper.work(runner))
 

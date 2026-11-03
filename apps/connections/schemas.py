@@ -131,6 +131,13 @@ class ConnectionOut(StrictModel):
     )
 
 
+class DisconnectOut(StrictModel):
+    outcome: Literal["revoking", "deleted"] = Field(
+        description="`revoking`: a machine that holds it will revoke it at the provider, then it is deleted. "
+                    "`deleted`: no machine that holds it is there to revoke it, so canopy deleted its copy; the "
+                    "provider may keep the old sign-in alive until it idles out.")
+
+
 class ConnectionsOut(StrictModel):
     providers: list[ProviderOut]
     connections: list[ConnectionOut]
@@ -322,6 +329,10 @@ class ConnectionMaterialOut(StrictModel):
                                            description="The live refresh lease, if any; null when none is held.")
     rotates_refresh_token: bool = Field(description="A refresh may hand back a new refresh token (write it back "
                                                     "as `sealed`).")
+    agent_id: str = Field(default="", description="On a turn's read: the pk of the agent it is for, as the statement "
+                                                  "lists it. A box refuses a statement that does not list it.")
+    agent_slug: str = Field(default="", description="On a turn's read: that agent's slug. A box refuses material for "
+                                                    "another agent than the one it is staging.")
 
 
 class LeaseIn(StrictModel):
@@ -367,11 +378,9 @@ class ReconnectRequiredIn(StrictModel):
 class ConnectionKeeperWorkOut(ConnectionMaterialOut):
     waiting: list[str] = Field(default_factory=list, description="ECDH thumbprints of the machines the statement "
                                                                  "allows that hold no copy yet: re-seal for them.")
-    revoking: bool = Field(description="Being disconnected: revoke it and confirm at `revoked_path`.")
+    revoking: bool = Field(description="Being disconnected: revoke it and confirm.")
     revoke_at_provider: bool = Field(description="Revoke at the provider too; false while another connection of "
                                                  "the same account through the same app remains.")
-    reseal_path: str
-    revoked_path: str
 
 
 class ConnectionKeeperOut(StrictModel):

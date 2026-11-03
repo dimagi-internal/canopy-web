@@ -50,12 +50,6 @@ def _not_a_holder(why: str) -> WireError:
     return WireError(403, "zk_not_a_holder", why)
 
 
-def _paths(runner: Runner, conn: Connection) -> dict:
-    base = f"/api/harness/runners/{runner.pk}"
-    return {"reseal_path": f"{base}/vault-keeper/connections/{conn.pk}",
-            "revoked_path": f"{base}/connections/{conn.pk}/revoked"}
-
-
 def work(runner: Runner) -> list[dict]:
     """`ConnectionKeeperWorkOut` for every connection a device key of `runner` holds
     that needs it: `revoking` (revoke and confirm), or `active` with machines waiting
@@ -101,7 +95,6 @@ def work(runner: Runner) -> list[dict]:
             # remains — one that appeared since would die with it, and one that was
             # deleted since without a revoke must not leave this token live.
             "revoke_at_provider": revoking and not services.other_live_connections(conn).exists(),
-            **_paths(runner, conn),
         })
     return out
 
@@ -188,7 +181,7 @@ def confirm_revoked(conn: Connection, runner: Runner, device_key: RunnerDeviceKe
 
 def sweep(now: datetime | None = None) -> dict:
     """Delete what no holder will ever finish: each `revoking` row unconfirmed for
-    `REVOKE_GRACE`, or held by no cloud box any more (`recipients.revokers`), recorded
+    `REVOKE_GRACE`, or held by no cloud box that is up (`recipients.revokers`), recorded
     `revoke_unconfirmed`; then each removed app with no connection left — after
     disconnecting any still live there (one that slipped past `remove_app`), so a
     removal always finishes. Returns the counts `{revoke_unconfirmed, apps_deleted}`."""

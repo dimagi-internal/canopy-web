@@ -8,7 +8,7 @@ import {
   type ConnectionsView,
 } from '@/api/connections'
 import { getCsrfToken } from '@/api/base'
-import { ConnectOutcome, DISCONNECTED, Scopes, SharingStatus, detailLine, listed, missingScopes } from '@/components/settings/ConnectionsPanel'
+import { ConnectOutcome, Scopes, SharingStatus, detailLine, disconnected, listed, missingScopes } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
@@ -16,8 +16,8 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 /**
- * What an agent can act as through canopy-held connections: its own, and ones
- * another agent shares with it. Admin-only (the server enforces it too).
+ * What an agent can act as through connections: its own, and ones lent to it by
+ * another agent or a person. Admin-only (the server enforces it too).
  *
  * Disconnecting asks for a fresh passkey; the API client's step-up middleware
  * prompts and retries, so this just calls DELETE.
@@ -60,13 +60,12 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
     setParams(next, { replace: true })
   }
 
-  async function run(id: string, what: () => Promise<void>, done: string) {
+  async function run(id: string, what: () => Promise<string>) {
     setBusy(id)
     setError('')
     setNotice('')
     try {
-      await what()
-      setNotice(done)
+      setNotice(await what())
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That did not work.')
@@ -98,7 +97,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 busy={busy === c.id}
                 returnTo={pathname}
                 canChange={!!email && !!c.connected_by_email && c.connected_by_email.toLowerCase() === email.toLowerCase()}
-                onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id), DISCONNECTED)}
+                onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id)))}
               />
             ))}
             {!p.configured ? (
@@ -154,7 +153,7 @@ function Row({
   canChange: boolean
   onDisconnect: () => void
 }) {
-  // One lent by another agent: its owner changes or withdraws it by sharing again, not here.
+  // One lent to this agent: its owner changes or withdraws it by sharing again, not here.
   const lent = !!c.granted_from
   const where = c.workspace_name || c.workspace
   const missing = c.usable ? missingScopes(c) : ''
@@ -176,6 +175,7 @@ function Row({
             </p>
           ) : lent ? (
             c.needs_reconnect ? <p className="text-[12px] text-warning">Reconnect required: its owner must reconnect it.</p>
+              : c.state === 'unshared' ? <p className="text-[12px] text-warning">Not shared yet: its owner must share it again before this agent can use it.</p>
               : missing ? <p className="text-[12px] text-warning">Its owner must reconnect to allow: {missing}</p> : null
           ) : (
             <>

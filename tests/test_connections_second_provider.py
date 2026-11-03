@@ -168,7 +168,7 @@ def test_a_person_lists_starts_a_connect_and_disconnects(acme, user, ws):
     row = client.get("/api/connections/").json()["connections"][0]
     assert row["title"] == "Acme Books" and row["scopes"] == ["books.read", "offline_access"]
     calls = len(acme.calls)
-    assert client.delete(f"/api/connections/{conn.pk}").status_code == 204
+    assert client.delete(f"/api/connections/{conn.pk}").status_code == 200
     assert len(acme.calls) == calls                              # canopy-web holds no token to revoke
 
 

@@ -97,7 +97,7 @@ def test_delete_mine_removes_and_calls_no_provider(client, user):
     cid = conn.pk
     with FakeSF() as fake:
         resp = client.delete(f"/api/connections/{cid}")
-    assert resp.status_code == 204
+    assert resp.status_code == 200 and resp.json() == {"outcome": "deleted"}
     assert not Connection.objects.filter(pk=cid).exists()
     assert fake.calls == []
 
@@ -170,7 +170,7 @@ def test_agent_disconnect_needs_step_up_in_a_browser(user, eva):
 def test_agent_disconnect_with_step_up(client, user, eva):
     conn = _stored({"agent": eva}, user)
     with FakeSF():
-        assert client.delete(f"/api/agents/eva/connections/{conn.pk}").status_code == 204
+        assert client.delete(f"/api/agents/eva/connections/{conn.pk}").status_code == 200
     assert not Connection.objects.filter(pk=conn.pk).exists()
 
 
@@ -178,7 +178,7 @@ def test_agent_disconnect_with_a_pat_needs_no_step_up(user, eva):
     conn = _stored({"agent": eva}, user)
     with FakeSF():
         resp = Client().delete(f"/api/agents/eva/connections/{conn.pk}", **pat_headers(user))
-    assert resp.status_code == 204
+    assert resp.status_code == 200
 
 
 def test_agent_disconnect_of_another_agents_connection_is_404(client, user, eva, echo):
@@ -329,7 +329,7 @@ def test_disconnecting_a_shared_connection_records_each_grant_it_takes(client, u
     ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
     ConnectionGrant.objects.create(connection=conn, agent=hal, granted_by=user)
     with FakeSF():
-        assert client.delete(f"/api/agents/eva/connections/{conn.pk}").status_code == 204
+        assert client.delete(f"/api/agents/eva/connections/{conn.pk}").status_code == 200
     revoked = Event.objects.filter(kind="connections.grant_revoked").order_by("id")
     assert [(e.workspace_id, e.payload["grantee"], e.payload["by"], e.payload["during"]) for e in revoked] == [
         ("w", "echo", "jj@dimagi.com", "disconnected"),

@@ -720,18 +720,18 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
 
 # ---- disconnecting -----------------------------------------------------------
 
-def disconnect(conn: Connection, *, by) -> None:
-    """Disconnect `conn`. canopy-web holds no token, so it revokes nothing at the
+def disconnect(conn: Connection, *, by) -> Literal["revoking", "deleted"]:
+    """Disconnect `conn`, and say which of the two below happened. canopy-web holds no token, so it revokes nothing at the
     provider itself: a machine that holds it does (spec §4.5).
 
-    When a cloud box holds it (`recipients.revokers`; only cloud runners revoke),
+    When a cloud box that is up holds it (`recipients.revokers`; only cloud runners revoke),
     the row becomes `revoking` at once: it leaves every list, is handed to no
     machine, and its holders are told to revoke it (`keeper.work`) — at the provider
     only when no other connection of that account through that app remains
     (`revoke_at_provider`: revoking at Google ends every token of the account on the
     client). The first holder to confirm deletes it (`keeper.confirm_revoked`); the
-    sweep deletes one nobody confirms. When no cloud box holds it (never shared, or
-    only laptops), nothing ever could revoke it, so it is deleted now and recorded
+    sweep deletes one nobody confirms. When none does (never shared, only laptops, or
+    every holder stopped), nothing is there to revoke it, so it is deleted now and recorded
     `revoke_unconfirmed` (R7): the provider's own idle expiry finishes it.
 
     Records `disconnected` (in the app's workspace too, for a moved agent's) and
@@ -740,8 +740,10 @@ def disconnect(conn: Connection, *, by) -> None:
     with transaction.atomic():
         row = (Connection.objects.select_for_update(of=("self",)).select_related("app__workspace", "agent__workspace")
                .filter(pk=conn.pk).first())
-        if row is None or row.state == Connection.REVOKING:
-            return
+        if row is None:
+            return "deleted"
+        if row.state == Connection.REVOKING:
+            return "revoking"
         subject = Subject.of(row)
         grantees = _grantees(row)
         held = rcpt.revokers(row)
@@ -767,6 +769,7 @@ def disconnect(conn: Connection, *, by) -> None:
         record(subject, "revoke_unconfirmed", by=by, reason="no_holder",
                summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: no machine "
                        "holds it to revoke it")
+    return "revoking" if held else "deleted"
 
 
 def other_live_connections(conn: Connection) -> QuerySet[Connection]:

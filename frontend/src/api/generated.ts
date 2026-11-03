@@ -462,8 +462,8 @@ export interface paths {
         /**
          * Disconnect one of my connections
          * @description Disconnect it: it leaves every list at once and is handed to no machine; a
-         *     cloud box that holds it revokes it at the provider and it is then deleted (at
-         *     once, when no cloud box holds it).
+         *     cloud box that holds it revokes it at the provider and it is then deleted
+         *     (`outcome` `revoking`). With none up to do that it is deleted at once (`deleted`).
          *
          *     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed.
          */
@@ -6528,8 +6528,9 @@ export interface paths {
         readonly post?: never;
         /**
          * Disconnect an agent's connection
-         * @description Stop canopy holding this agent's connection. From a browser this needs a
-         *     fresh passkey check; agents it is lent to lose access too.
+         * @description Stop this agent using this connection; agents it is lent to lose it too. `outcome`
+         *     says whether a machine will revoke it or its copy was deleted at once, as for a
+         *     person's. From a browser this needs a fresh passkey check.
          */
         readonly delete: operations["disconnect_agent_connection"];
         readonly options?: never;
@@ -11373,7 +11374,8 @@ export interface paths {
          *     disconnected, or this box no longer serves an agent it is lent to;
          *     `needs_reconnect` when its refresh token is dead; `waiting` when this box may
          *     use it but holds no copy yet; `ambiguous`, `no_agent`. Each turn's reads are
-         *     recorded once (`token_issued`, naming the runner).
+         *     recorded once (`token_issued`, naming the runner). `agent_id` and `agent_slug` say
+         *     which agent the answer is for.
          */
         readonly get: operations["turn_connection_material"];
         readonly put?: never;
@@ -11488,10 +11490,10 @@ export interface paths {
         /**
          * Connections this box holds that need its keeper
          * @description Each connection this cloud box holds that machines are waiting for (`waiting`:
-         *     re-seal the same plaintext for those the signed statement allows, at
-         *     `reseal_path`) or that is being disconnected (`revoking`: revoke it — at the
-         *     provider only when `revoke_at_provider` — and confirm at `revoked_path`). Empty
-         *     for a machine that is not a cloud box. 401 `device_proof_required`.
+         *     re-seal the same plaintext for those the signed statement allows) or that is
+         *     being disconnected (`revoking`: revoke it — at the provider only when
+         *     `revoke_at_provider` — and confirm). Empty for a machine that is not a cloud box.
+         *     401 `device_proof_required`.
          */
         readonly get: operations["get_connection_keeper_work"];
         readonly put?: never;
@@ -19006,6 +19008,15 @@ export interface components {
              */
             readonly expect: string;
         };
+        /** DisconnectOut */
+        readonly DisconnectOut: {
+            /**
+             * Outcome
+             * @description `revoking`: a machine that holds it will revoke it at the provider, then it is deleted. `deleted`: no machine that holds it is there to revoke it, so canopy deleted its copy; the provider may keep the old sign-in alive until it idles out.
+             * @enum {string}
+             */
+            readonly outcome: "revoking" | "deleted";
+        };
         /** ConnectionMaterialOut */
         readonly ConnectionMaterialOut: {
             /**
@@ -19091,6 +19102,18 @@ export interface components {
              * @description A refresh may hand back a new refresh token (write it back as `sealed`).
              */
             readonly rotates_refresh_token: boolean;
+            /**
+             * Agent Id
+             * @description On a turn's read: the pk of the agent it is for, as the statement lists it. A box refuses a statement that does not list it.
+             * @default
+             */
+            readonly agent_id: string;
+            /**
+             * Agent Slug
+             * @description On a turn's read: that agent's slug. A box refuses material for another agent than the one it is staging.
+             * @default
+             */
+            readonly agent_slug: string;
         };
         /** MaterialAppOut */
         readonly MaterialAppOut: {
@@ -37860,13 +37883,25 @@ export interface components {
              */
             readonly rotates_refresh_token: boolean;
             /**
+             * Agent Id
+             * @description On a turn's read: the pk of the agent it is for, as the statement lists it. A box refuses a statement that does not list it.
+             * @default
+             */
+            readonly agent_id: string;
+            /**
+             * Agent Slug
+             * @description On a turn's read: that agent's slug. A box refuses material for another agent than the one it is staging.
+             * @default
+             */
+            readonly agent_slug: string;
+            /**
              * Waiting
              * @description ECDH thumbprints of the machines the statement allows that hold no copy yet: re-seal for them.
              */
             readonly waiting?: readonly string[];
             /**
              * Revoking
-             * @description Being disconnected: revoke it and confirm at `revoked_path`.
+             * @description Being disconnected: revoke it and confirm.
              */
             readonly revoking: boolean;
             /**
@@ -37874,10 +37909,6 @@ export interface components {
              * @description Revoke at the provider too; false while another connection of the same account through the same app remains.
              */
             readonly revoke_at_provider: boolean;
-            /** Reseal Path */
-            readonly reseal_path: string;
-            /** Revoked Path */
-            readonly revoked_path: string;
         };
         /** ResealOut */
         readonly ResealOut: {
@@ -46621,12 +46652,14 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description No Content */
-            readonly 204: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    readonly "application/json": components["schemas"]["DisconnectOut"];
+                };
             };
         };
     };
@@ -55059,12 +55092,14 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description No Content */
-            readonly 204: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    readonly "application/json": components["schemas"]["DisconnectOut"];
+                };
             };
         };
     };

@@ -44,6 +44,7 @@ from .schemas import (
     ConnectionOut,
     ConnectionsOut,
     ConnectionStatementOut,
+    DisconnectOut,
     LeaseIn,
     LeaseOut,
     MyMachineOut,
@@ -256,18 +257,17 @@ def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: Sh
     return _out(conn, usable=usable)
 
 
-@router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")
+@router.delete("/{connection_id}", response=DisconnectOut, summary="Disconnect one of my connections")
 @gate("self", setting=True)
-def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> Status:
+def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> DisconnectOut:
     """Disconnect it: it leaves every list at once and is handed to no machine; a
-    cloud box that holds it revokes it at the provider and it is then deleted (at
-    once, when no cloud box holds it).
+    cloud box that holds it revokes it at the provider and it is then deleted
+    (`outcome` `revoking`). With none up to do that it is deleted at once (`deleted`).
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
     conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
                              user=request.user)
-    services.disconnect(conn, by=request.user)
-    return Status(204, None)
+    return DisconnectOut(outcome=services.disconnect(conn, by=request.user))
 
 
 # ---- an agent's ------------------------------------------------------------------
@@ -298,19 +298,19 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     )
 
 
-@agents_router.delete("/{slug}/connections/{connection_id}", response={204: None},
+@agents_router.delete("/{slug}/connections/{connection_id}", response=DisconnectOut,
                       summary="Disconnect an agent's connection")
 @gate("agent-admin", setting=True, step_up=True)
-def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: uuid.UUID) -> Status:
-    """Stop canopy holding this agent's connection. From a browser this needs a
-    fresh passkey check; agents it is lent to lose access too."""
+def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: uuid.UUID) -> DisconnectOut:
+    """Stop this agent using this connection; agents it is lent to lose it too. `outcome`
+    says whether a machine will revoke it or its copy was deleted at once, as for a
+    person's. From a browser this needs a fresh passkey check."""
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
                              agent=agent)
-    services.disconnect(conn, by=request.user)
-    return Status(204, None)
+    return DisconnectOut(outcome=services.disconnect(conn, by=request.user))
 
 
 # ---- my CLI, on my own enrolled computer -------------------------------------------

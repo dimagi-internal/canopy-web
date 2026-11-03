@@ -276,13 +276,15 @@ def unreachable(conn: Connection, *, pairs=None, facts: ServingFacts | None = No
     return out
 
 
-def _revokers(jkts) -> list[str]:
+def _revokers(jkts, *, up: bool = False) -> list[str]:
     """Those of `jkts` that could revoke at the provider: an ACTIVE, ECDH-ready key on
-    a cloud runner (only cloud runners keep or revoke). Sorted."""
-    return sorted(RunnerDeviceKey.objects.filter(
+    a cloud runner (only cloud runners keep or revoke). `up`: and that runner is there now
+    (`Runner.is_reachable`, a recent heartbeat). Sorted."""
+    keys = (RunnerDeviceKey.objects.filter(
         ecdh_jkt__in=list(jkts), status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False,
         runner__kind=Runner.CLOUD).exclude(ecdh_jkt="").exclude(runner__status=Runner.RETIRED)
-        .values_list("ecdh_jkt", flat=True))
+        .select_related("runner"))
+    return sorted(k.ecdh_jkt for k in keys if not up or k.runner.is_reachable)
 
 
 def _writer_provable(conn: Connection, sig: dict | None) -> bool:
@@ -311,10 +313,11 @@ def _writer_provable(conn: Connection, sig: dict | None) -> bool:
 
 def revokers(conn: Connection) -> list[str]:
     """The machines holding `conn` that could revoke it now: an active cloud box it is
-    sealed to (`_revokers`), and an envelope that box can accept. A signer deleted with
-    their endorsements can leave one no machine will read, which no holder will ever
-    revoke. None means nothing will: a disconnect deletes it at once."""
-    able = _revokers(t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device")
+    sealed to and that is up (`_revokers`), and an envelope that box can accept. A signer
+    deleted with their endorsements can leave one no machine will read, and a stopped box
+    revokes nothing: waiting on either would refuse a reconnect for days. None means
+    nothing will: a disconnect deletes it at once, and the sweep any it was waiting on."""
+    able = _revokers((t for kind, t in zk_seal.sealed_targets(conn.sealed) if kind == "device"), up=True)
     if not able or not _writer_provable(conn, conn.sealed_sig):
         return []
     if conn.access_sealed and not _writer_provable(conn, conn.access_sig):

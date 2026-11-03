@@ -89,7 +89,8 @@ def turn_connection_material(request: HttpRequest, runner_id: uuid.UUID, turn_id
     disconnected, or this box no longer serves an agent it is lent to;
     `needs_reconnect` when its refresh token is dead; `waiting` when this box may
     use it but holds no copy yet; `ambiguous`, `no_agent`. Each turn's reads are
-    recorded once (`token_issued`, naming the runner)."""
+    recorded once (`token_issued`, naming the runner). `agent_id` and `agent_slug` say
+    which agent the answer is for."""
     try:
         cls = providers.get_class(provider)
     except providers.UnknownProvider:

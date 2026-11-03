@@ -6,6 +6,7 @@ import {
   listMyConnections,
   type ConnectionOut,
   type ConnectionsView,
+  type DisconnectOutcome,
   type ProviderOut,
 } from '@/api/connections'
 import { Button } from 'canopy-ui/ui'
@@ -13,8 +14,8 @@ import { scopedPath } from '@/lib/scopedLinks'
 
 /**
  * Connect the services canopy acts on for you: one section per provider the API
- * lists (`providers`), nothing hard-coded here. Same shape as the GitHub panel:
- * a per-user grant canopy holds, started by a full-page navigation to the
+ * lists (`providers`), nothing hard-coded here. Same shape as the GitHub panel: a
+ * per-user grant, sealed to its owner, started by a full-page navigation to the
  * provider and reported back through the query string.
  *
  * A provider is set up per WORKSPACE (its admin registers the OAuth app), so the
@@ -47,8 +48,7 @@ export function ConnectionsPanel() {
     setError('')
     setNotice('')
     try {
-      await disconnectMine(c.id)
-      setNotice(DISCONNECTED)
+      setNotice(disconnected(await disconnectMine(c.id)))
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not disconnect.')
@@ -64,7 +64,8 @@ export function ConnectionsPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Connections</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Accounts canopy holds for you, so your tools can act as you without a token on your laptop.
+          Accounts you sign in to here are sealed to your vault key, so canopy cannot read them. You choose which
+          of your agents and enrolled computers may use each one.
         </p>
       </div>
       <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
@@ -86,8 +87,12 @@ export function ConnectionsPanel() {
   )
 }
 
-/** What a disconnect does: a machine, not canopy, revokes at the provider. */
-export const DISCONNECTED = 'Disconnected. A machine will revoke it shortly.'
+/** What a disconnect did: a machine, not canopy, revokes at the provider, when one that holds it is up. */
+export function disconnected(outcome: DisconnectOutcome): string {
+  return outcome === 'revoking'
+    ? 'Disconnected. A machine will revoke it shortly.'
+    : 'Disconnected. Salesforce or Google may keep the old sign-in alive until it idles out.'
+}
 
 /** What a callback `reason` code says, as a fixed sentence (never the query text). */
 const REASONS: Record<string, string> = {
@@ -215,7 +220,11 @@ export function SharingStatus({ c, returnTo, canChange = true }: { c: Connection
   if (!c.usable) return null
   if (c.needs_reconnect) return <p className="text-[12px] text-warning">Reconnect required.</p>
   const only = canChange ? null : (
-    <p>Connected by {c.connected_by_email}; only they can change who uses it.</p>
+    <span className="block">
+      {c.connected_by_email
+        ? `Connected by ${c.connected_by_email}; only they can change who uses it.`
+        : 'The person who connected it no longer has an account. To change who uses it, disconnect it and connect again.'}
+    </span>
   )
   const href = sharePath(c, returnTo)
   if (c.state === 'unshared') {

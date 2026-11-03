@@ -43,7 +43,7 @@ beforeEach(() => {
   m.role.current = null
   me.current = 'jj@dimagi.com'
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
-  m.disconnectAgentConnection.mockResolvedValue(undefined)
+  m.disconnectAgentConnection.mockResolvedValue('revoking')
 })
 afterEach(cleanup)
 
@@ -167,6 +167,31 @@ describe('AgentConnectionsPanel', () => {
     show()
     expect(await screen.findByText('Reconnect required.')).toBeTruthy()
     expect(screen.queryByRole('link', { name: 'Change who can use it' })).toBeNull()
+  })
+
+  it('says so when a connection lent to it is not shared yet', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ granted_from: 'jj@dimagi.com', state: 'unshared', usable: true })] })
+    show()
+    expect(await screen.findByText('Not shared yet: its owner must share it again before this agent can use it.')).toBeTruthy()
+  })
+
+  it('tells someone else who may change an unshared connection, without nesting paragraphs', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    me.current = 'ada@dimagi.com'
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
+    show()
+    const line = await screen.findByText(/Connected by jj@dimagi.com; only they can change who uses it\./)
+    expect(line.closest('p')?.parentElement?.closest('p')).toBeNull()
+    expect(error.mock.calls.join(' ')).not.toContain('validateDOMNesting')
+    error.mockRestore()
+  })
+
+  it('does not say connected by nobody', async () => {
+    me.current = 'ada@dimagi.com'
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ connected_by_email: '' })] })
+    show()
+    expect(await screen.findByText(/The person who connected it no longer has an account\./)).toBeTruthy()
+    expect(screen.queryByText(/Connected by ;/)).toBeNull()
   })
 
   it('never lists a connection that is being disconnected', async () => {

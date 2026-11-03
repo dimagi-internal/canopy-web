@@ -82,6 +82,7 @@ def test_material_is_ciphertext_plus_the_app_client(shared):
         ("member", str(world.person.pk), ""), ("device", world.eva_box.ecdh_jkt, "eva-cloud")}
     assert body["workspace"] == "w" and body["rotates_refresh_token"] is True
     assert body["lease"] is None and body["access_sealed"] == "" and body["access_expires_at"] is None
+    assert body["agent_id"] == str(world.eva.pk) and body["agent_slug"] == "eva"
 
 
 def test_material_without_device_proof_is_401(shared):

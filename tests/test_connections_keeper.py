@@ -35,6 +35,7 @@ from apps.events.models import Event
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerAccessToken, Turn
 from apps.mcp import api_tools
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.connections import (
     REDIRECT,
@@ -43,6 +44,7 @@ from tests.fixtures.connections import (
     ShareWorld,
     _stored,
     browser_share,
+    revoke_admin,
     sealed_to_owner,
     sf_app,
     vault_key,
@@ -143,8 +145,6 @@ def test_keeper_work_lists_only_connections_this_box_holds(world):
     assert item["waiting"] == sorted([world.eva_box2.ecdh_jkt, world.ada_laptop.ecdh_jkt])
     assert item["revoking"] is False and item["sealed"] == Connection.objects.get().sealed
     assert item["app"]["client_secret"] and item["statement"] == Connection.objects.get().statement
-    assert item["reseal_path"] == f"/api/harness/runners/{world.eva_box.runner_id}/vault-keeper/connections/{conn.pk}"
-    assert item["revoked_path"] == f"/api/harness/runners/{world.eva_box.runner_id}/connections/{conn.pk}/revoked"
     assert {e["agent_id"] for e in item["endorsements"]} <= {str(world.eva.pk)}
     # The waiting box holds nothing; another agent's box holds nothing.
     assert work(world, "eva-cloud-2").json() == {"connections": []}
@@ -265,7 +265,7 @@ def test_a_persons_disconnect_route_hides_it_from_their_list(world):
     conn = world.shared(world.persons(), agents=[world.eva])
     c = Client()
     c.force_login(world.person)
-    assert c.delete(f"/api/connections/{conn.pk}").status_code == 204
+    assert c.delete(f"/api/connections/{conn.pk}").json() == {"outcome": "revoking"}
     assert Connection.objects.get().state == Connection.REVOKING
     assert c.get("/api/connections/").json()["connections"] == []
 
@@ -506,6 +506,42 @@ def test_a_person_with_a_row_deleted_at_once_connects_again_freely(world):
     assert conn.state == Connection.UNSHARED
 
 
+# ---- a holder that stopped -----------------------------------------------------------
+
+def _stopped(*boxes):
+    Runner.objects.filter(pk__in=[b.runner_id for b in boxes]).update(
+        last_heartbeat_at=timezone.now() - timedelta(minutes=5))
+
+
+def test_a_stopped_holder_is_no_revoker_so_a_disconnect_deletes_at_once(world):
+    conn = world.only_on_box_a()
+    _stopped(world.eva_box)
+    assert rcpt.revokers(conn) == []
+    c = Client()
+    c.force_login(world.person)
+    grant_step_up(c)
+    assert c.delete(f"/api/agents/eva/connections/{conn.pk}").json() == {"outcome": "deleted"}
+    assert not Connection.objects.exists()
+
+
+def test_a_revoking_row_whose_holders_stopped_is_swept_and_the_account_can_connect_again(world):
+    conn = world.shared(world.persons(), agents=[world.eva], to=[
+        ("device", world.eva_box.ecdh_jkt, world.eva_box.ecdh_public_jwk)])
+    services.disconnect(conn, by=world.person)
+    assert keeper.sweep()["revoke_unconfirmed"] == 0  # still up: it has its chance
+    _stopped(world.eva_box)
+    assert keeper.sweep()["revoke_unconfirmed"] == 1
+    with FakeSF():
+        assert _connect(world, ("user", world.person.pk), world.person).state == Connection.UNSHARED
+
+
+def test_a_stopped_box_still_counts_as_one_prune_keeps_to_revoke(world):
+    conn = world.shared(world.persons(), agents=[world.echo])
+    _stopped(world.echo_box)
+    revoke_admin(world.person, world.echo)
+    assert rcpt.prune(conn) == []  # it may come back; only a disconnect asks whether it is up now
+
+
 # ---- an owner key replaced, or its signer gone ---------------------------------------
 
 def _validates_as_a_box_does(body, owner_key):
@@ -537,7 +573,7 @@ def test_a_person_who_replaced_their_key_disconnects_a_holder_revokes_and_they_c
     assert e.value.code == "owner_changed"
 
     # The way out: disconnect, a holder can read it and revokes it, connect again.
-    assert c.delete(f"/api/connections/{conn.pk}").status_code == 204
+    assert c.delete(f"/api/connections/{conn.pk}").json() == {"outcome": "revoking"}
     [item] = work(world, "eva-cloud").json()["connections"]
     assert item["revoking"] is True
     _validates_as_a_box_does(item, old_key)
