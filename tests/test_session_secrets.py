@@ -27,19 +27,13 @@ from apps.harness.models import Runner, RunnerDeviceKey
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.vault_zk import ref
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
 TOKEN = "ghp_not_a_real_token_0123456789"
 MINE = "eb742bd8-0000-0000-0000-00000000000a"    # this conversation's Claude session id
 OTHER = "eb742bd8-0000-0000-0000-00000000000b"   # another conversation of the same agent
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
 
 
 def _device(runner, *, approved=True, status=RunnerDeviceKey.ACTIVE):
@@ -109,7 +103,7 @@ def _share(world, name="GH_TOKEN", value=TOKEN, session=None, client=None):
 
 
 def _agent(world, user=None):
-    return Client(HTTP_AUTHORIZATION=f"Bearer {_pat(user or world['bot'])}")
+    return Client(HTTP_AUTHORIZATION=f"Bearer {pat_token(user or world['bot'])}")
 
 
 def _listed(world, chat="mine", user=None):
@@ -376,5 +370,5 @@ def test_a_browser_shares_only_after_a_passkey_step_up(world):
 
 
 def test_a_token_shares_without_a_step_up(world):
-    res = _share(world, client=Client(HTTP_AUTHORIZATION=f"Bearer {_pat(world['owner'])}"))
+    res = _share(world, client=Client(HTTP_AUTHORIZATION=f"Bearer {pat_token(world['owner'])}"))
     assert res.status_code == 201

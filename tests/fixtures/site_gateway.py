@@ -20,6 +20,7 @@ from django.utils import timezone
 from fastmcp import FastMCP
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
+from apps.agents import roles
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import encrypt_secret
@@ -31,16 +32,28 @@ from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 RESOURCE = "https://host.test/mcp/"
 HOST_TOKEN = "host-at-SECRET"
 IFACE = {"capabilities": {
-    "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
+    "connect": {"sites": ["connect-labs"],
                 "ceiling": ["mcp__*connect_labs__marketplace_*"],
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
-    "ask": {"callers": ["contact", "member"], "tools": ["mcp__*canopy-web__who_is_asking"]},
+    "ask": {"tools": ["mcp__*canopy-web__who_is_asking"]},
 }}
+
+
+def let_visitors_in(agent, capabilities=("connect", "ask")):
+    """Members and contacts may use each named capability (`ask` is what a `read_only` line
+    opens), and workspace editors run the agent, manually: IFACE's access list."""
+    for name in capabilities:
+        for contact in (True, False):
+            if name == "ask":
+                allow(agent, role=roles.READ_ONLY, contact=contact)
+            else:
+                allow(agent, capability=name, contact=contact)
+    editors_run(agent)
 
 
 # --- the host -------------------------------------------------------------------
@@ -142,7 +155,8 @@ def world():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(agent, IFACE)
+    declare(agent, IFACE["capabilities"])
+    let_visitors_in(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.host_issuer = "https://host.test"
     app.host_mcp_resource = RESOURCE

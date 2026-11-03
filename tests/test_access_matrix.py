@@ -5,8 +5,8 @@ what a person may make an agent do, and every entry point that makes an agent
 work asks it — the harness API, a canopy-web chat send, Slack intake, email
 intake and the caller envelope. This matrix walks roles × entry points ×
 access list (none / editors only / Eva-like "members and verified dimagi staff are editors" /
-Hal-like ask-only, each with and without the editors line; written in the old words through
-`tests/access_helpers.publish`) and pins, for each cell, the profile the turn runs in, why
+Hal-like ask-only, each with and without the editors line; set up through
+`tests/access_helpers`) and pins, for each cell, the profile the turn runs in, why
 (`granted_by`), and the mode it is claimed in — plus who may REQUEST `auto`, the
 pin rule, and the routing-auto gate.
 """
@@ -19,30 +19,39 @@ from django.test import Client
 
 from apps.agents import access, roles
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
-from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import send as session_send
-from apps.harness import caller_context, services
+from apps.canopy_sessions import services as chat
+from apps.harness import caller_context, services, turn_mode
 from apps.harness import initiator as who
-from apps.harness import turn_mode
 from apps.harness.models import Runner, RunnerAdmin, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
-from .access_helpers import publish
+from .access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 
 #: Eva's real setup: members and verified dimagi staff get her whole.
-EVA = {"full": ["member", "contact@dimagi.com:verified"]}
+def _eva(agent):
+    allow(agent, role=roles.EDITOR)
+    allow(agent, role=roles.EDITOR, contact=True, domain="dimagi.com", verified=True)
+
+
 #: Hal-like: everyone not an admin is confined to `ask`.
-HAL = {"capabilities": {"ask": {"description": "Ask", "callers": ["member", "contact"],
-                                "tools": ["Read"]}}}
-#: The interface, in the old words, and whether the old implicit "workspace editors drive it,
-#: manual" rule is also a line on the list. `none` is the new default (an agent nothing was
-#: said about: owner and admins only); `editors` is that rule alone, what an absent interface
-#: used to mean; `*_confined` was `editors: confined`.
-IFACES = {"none": (None, False), "editors": (None, True), "eva": (EVA, True), "hal": (HAL, True),
-          "eva_confined": (EVA, False), "hal_confined": (HAL, False)}
+HAL = {"ask": {"description": "Ask", "tools": ["Read"]}}
+
+
+def _hal(agent):
+    declare(agent, HAL)
+    allow(agent, role=roles.READ_ONLY)
+    allow(agent, role=roles.READ_ONLY, contact=True)
+
+
+#: How an agent is set up, and whether the workspace-editors-drive-it-manually line is also on
+#: the list. `none` is the default (an agent nothing was said about: owner and admins only);
+#: `editors` is that line alone; `*_confined` leave it off.
+IFACES = {"none": (None, False), "editors": (None, True), "eva": (_eva, True), "hal": (_hal, True),
+          "eva_confined": (_eva, False), "hal_confined": (_hal, False)}
 #: Why, for each access-list line the matrix uses (`Decision.basis`).
 MEMBER_LINE = "grant:workspace:connect::"
 EDITORS_LINE = "grant:workspace:connect:editor:"
@@ -75,8 +84,12 @@ def w():
 
 
 def _publish(agent, iface):
-    doc, editors = IFACES[iface]
-    publish(agent, doc, editors=editors)
+    setup, editors = IFACES[iface]
+    declare(agent, None)
+    if setup:
+        setup(agent)
+    if editors:
+        editors_run(agent)
 
 
 # --- the entry points ---------------------------------------------------------------------
@@ -212,8 +225,10 @@ def test_a_refusal_says_what_the_caller_can_do(w):
     _publish(w["agent"], "none")
     t = _via_chat(w, w["viewer"], "r1")
     assert "access list" in t.result_note and "editor" in t.result_note and w["owner"].email in t.result_note
-    publish(w["agent"], {"capabilities": {"ask": {"callers": ["member"]},
-                                          "status": {"callers": ["member"]}}})
+    declare(w["agent"], {"ask": {}, "status": {}})
+    allow(w["agent"], role=roles.READ_ONLY)
+    allow(w["agent"], capability="status")
+    editors_run(w["agent"])
     d = access.decide(w["agent"], w["viewer"], verified=True, capability="deploy")
     assert d.access == access.NONE        # a line cannot use a capability the agent does not have
     assert "access list" in d.reason and w["owner"].email in d.reason
@@ -224,11 +239,12 @@ def test_the_mcp_tool_list_follows_the_rule(w):
     from apps.agents.interface import offered_to
 
     _publish(w["agent"], "hal")
-    assert offered_to(w["editor"], w["agent"]) == ["ask"]      # full: every capability
+    assert offered_to(w["editor"], w["agent"]) == ["ask"]      # a whole-agent line: every capability
     assert offered_to(w["viewer"], w["agent"]) == ["ask"]
     AgentGrant.objects.filter(agent=w["agent"]).delete()
-    publish(w["agent"], {"capabilities": {"ask": {"callers": ["contact"]},
-                                          "admin_only": {"callers": []}}})
+    declare(w["agent"], {"ask": {}, "admin_only": {}})
+    allow(w["agent"], role=roles.READ_ONLY, contact=True)
+    editors_run(w["agent"])
     assert offered_to(w["editor"], w["agent"]) == ["admin_only", "ask"]
     assert offered_to(w["viewer"], w["agent"]) == []
 
@@ -236,11 +252,11 @@ def test_the_mcp_tool_list_follows_the_rule(w):
 # --- the permission model: one line, one person, every door ----------------------------------
 
 #: A person with ONE line of each kind on an agent that publishes `ask` and `status` (no
-#: callers: who may use them is the list's business). (profile, why, mode) per line, through
+#: capabilities-only: who may use them is the list's business). (profile, why, mode) per line, through
 #: the doors that can confine. `read_only` is `read`: it opens `ask` and nothing else; a
 #: named-capability line opens just that capability; `write` (read_write, editor) is the whole agent.
-HAL_NO_CALLERS = {"capabilities": {"ask": {"description": "Ask", "tools": ["Read"]},
-                                   "status": {"description": "Status", "tools": ["Read"]}}}
+HAL_NO_CALLERS = {"ask": {"description": "Ask", "tools": ["Read"]},
+                  "status": {"description": "Status", "tools": ["Read"]}}
 LINES = {
     "read_only": {"role": roles.READ_ONLY},
     "read_write": {"role": roles.READ_WRITE},
@@ -263,7 +279,7 @@ def _expect_line(kind, user):
 @pytest.mark.parametrize("kind", list(LINES))
 @pytest.mark.parametrize("door", ["chat", "slack"])
 def test_each_kind_of_line_through_the_doors_that_can_confine(w, door, kind):
-    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    declare(w["agent"], HAL_NO_CALLERS)
     user = w["viewer"]
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=user, **LINES[kind])
     turn = ENTRY_POINTS[door](w, user, f"line-{door}-{kind}")
@@ -272,7 +288,7 @@ def test_each_kind_of_line_through_the_doors_that_can_confine(w, door, kind):
 
 @pytest.mark.parametrize("kind", list(LINES))
 def test_each_kind_of_line_by_verified_email(w, kind):
-    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    declare(w["agent"], HAL_NO_CALLERS)
     user = w["viewer"]
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=user, **LINES[kind])
     _check(_via_email(w, user.email, f"line-email-{kind}"), _expect_line(kind, user))
@@ -281,7 +297,7 @@ def test_each_kind_of_line_by_verified_email(w, kind):
 def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
     """The harness API asks `decide` like every other door: `write` is the whole agent, `read` or a
     capability line is a confined turn, and a line naming another capability is refused."""
-    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    declare(w["agent"], HAL_NO_CALLERS)
     user = w["editor"]                    # a workspace editor may start work through the API
     for kind in LINES:
         AgentGrant.objects.filter(agent=w["agent"]).delete()
@@ -296,15 +312,15 @@ def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
 
 def test_ask_is_off_until_the_owner_publishes_it(w):
     """`read` opens the `ask` capability: with none published, a read_only line opens nothing."""
-    publish(w["agent"], None, editors=False)
+    declare(w["agent"], None)
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["viewer"], role=roles.READ_ONLY)
     _check(_via_chat(w, w["viewer"], "off"), REFUSED)
-    publish(w["agent"], {"capabilities": {"ask": {"tools": ["Read"]}}}, editors=False)
+    declare(w["agent"], {"ask": {"tools": ["Read"]}})
     _check(_via_chat(w, w["viewer"], "on"), ("confined", "capability:ask", "auto"))
 
 
 def test_manual_only_gates_whoever_is_driving_the_whole_agent_whatever_the_role(w):
-    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    declare(w["agent"], HAL_NO_CALLERS)
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["viewer"],
                               role=roles.READ_WRITE, manual_only=True)
     _check(_via_chat(w, w["viewer"], "gated"), ("full", f"grant:person:{w['viewer'].pk}", "manual"))
@@ -316,7 +332,7 @@ def test_a_workspace_line_with_the_subtree_option_reaches_a_person_in_a_child(w)
     w["ws"].save()
     kid = User.objects.create_user("kid", "kid@dimagi.com", "pw")      # only in connect, below org
     M.objects.create(user=kid, workspace=w["ws"], role=M.VIEWER)
-    publish(w["agent"], HAL_NO_CALLERS, editors=False)
+    declare(w["agent"], HAL_NO_CALLERS)
     line = AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE, subject_workspace=root,
                                      role=roles.READ_ONLY)
     _check(_via_chat(w, kid, "plain"), REFUSED)                         # org alone does not reach a child

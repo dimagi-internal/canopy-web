@@ -20,6 +20,7 @@ from apps.agents.models import Agent, AgentCredentialRead
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -31,13 +32,6 @@ def _jwk(key) -> dict:
     from canopy_sdk.keys import header_jwk
 
     return header_jwk(key)
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="t")
-    return raw
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +63,7 @@ def fleet(client):
                content_type="application/json")
     key = ec.generate_private_key(ec.SECP256R1())
     return {"client": client, "agent": agent, "runner": runner, "user": jj, "ws": ws,
-            "pat": _pat(jj), "key": key}
+            "pat": pat_token(jj), "key": key}
 
 
 def _register(fleet, key=None, runner=None, kind="secure-enclave"):
@@ -136,7 +130,7 @@ def test_someone_else_cannot_register_a_key_on_your_runner(fleet):
     res = Client().post("/api/runner-device-keys/",
                         data={"runner": str(fleet["runner"].pk), "public_jwk": _jwk(fleet["key"]),
                               "kind": "software"},
-                        content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {_pat(other)}")
+                        content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {pat_token(other)}")
     assert res.status_code == 404
 
 
@@ -301,7 +295,7 @@ def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
     body = Client().post("/api/runner-device-keys/",
                          data={"runner": str(theirs.pk), "public_jwk": _jwk(key), "kind": "software"},
                          content_type="application/json",
-                         HTTP_AUTHORIZATION=f"Bearer {_pat(other)}").json()
+                         HTTP_AUTHORIZATION=f"Bearer {pat_token(other)}").json()
     assert c.post(f"/api/runner-device-keys/{body['id']}/approve").status_code == 200
     res = _resolve(fleet, make_dpop_proof(key, "GET", HTU))
     assert res.status_code == 401
@@ -357,7 +351,7 @@ def test_someone_elses_laptop_reading_outside_a_turn_still_alerts(fleet):
     body = Client().post("/api/runner-device-keys/",
                          data={"runner": str(laptop.pk), "public_jwk": _jwk(key), "kind": "software"},
                          content_type="application/json",
-                         HTTP_AUTHORIZATION=f"Bearer {_pat(other)}").json()
+                         HTTP_AUTHORIZATION=f"Bearer {pat_token(other)}").json()
     assert c.post(f"/api/runner-device-keys/{body['id']}/approve").status_code == 200
     # The OWNER's token, but the proof is a laptop the owner does not own.
     assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 200

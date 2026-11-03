@@ -24,8 +24,8 @@ from apps.agents.models import (
 )
 from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.testing import give_vault_key, grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_token
 
 RESOLVE = "/api/agents/eva/credentials/resolve"
 
@@ -46,11 +46,6 @@ ASSUMED = "arn:aws:sts::123456789012:assumed-role/canopy-runner/i-0abc123"
 
 
 BODY = "Action=GetCallerIdentity&Version=2011-06-15"
-
-
-def _pat(user) -> str:
-    raw, _ = PersonalToken.create_for_user(user=user, label="t")
-    return raw
 
 
 @pytest.fixture
@@ -133,7 +128,7 @@ def fleet(client):
                content_type="application/json")
     mail.outbox.clear()
     return {"client": client, "agent": agent, "runner": runner, "user": jj, "ws": ws,
-            "pat": _pat(jj)}
+            "pat": pat_token(jj)}
 
 
 def _enroll(fleet, *, role_arn=ROLE, proof=None, runner=None):

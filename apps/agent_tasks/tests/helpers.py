@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import json
 
-from django.test import Client
 
 from apps.agents.models import Agent
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member, a_workspace
 
@@ -33,11 +31,6 @@ def make_world():
     agent = Agent.objects.create(slug="bailey", name="Bailey", workspace=ws, owner=owner, user=bot)
     return {"ws": ws, "owner": owner, "editor": editor, "viewer": viewer, "outsider": outsider,
             "bot": bot, "agent": agent}
-
-
-def _pat(user) -> Client:
-    raw, _ = PersonalToken.create_for_user(user=user, label="script")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
 def _post(c, path, body):

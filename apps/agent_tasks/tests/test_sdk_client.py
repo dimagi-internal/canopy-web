@@ -10,8 +10,9 @@ from django.test import Client
 
 from apps.agent_tasks import services
 from apps.agent_tasks.models import AgentTask
+from tests.token_helpers import pat_client
 
-from .helpers import GOOD, INPUT, SCHEMA, _pat, _post
+from .helpers import GOOD, INPUT, SCHEMA, _post
 
 pytestmark = pytest.mark.django_db
 
@@ -40,7 +41,7 @@ def _token(user) -> str:
 
 def test_run_returns_the_agents_validated_result(world, monkeypatch):
     monkeypatch.setattr(services, "_sleep", lambda _s: None)
-    bot = _pat(world["bot"])
+    bot = pat_client(world["bot"])
 
     def the_agent_answers():
         task = AgentTask.objects.filter(status__in=AgentTask.OPEN).first()

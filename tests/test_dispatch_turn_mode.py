@@ -18,12 +18,12 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.harness import caller_context
-from apps.harness import claim
+from apps.harness import caller_context, claim
 from apps.harness import turn_mode as modes
 from apps.harness.models import Runner, RunnerAssignment, Turn
-from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
+from apps.tokens.models import AppCredential, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_client
 
 from .access_helpers import editors_run
 
@@ -64,11 +64,6 @@ def _session(user) -> Client:
     return c
 
 
-def _pat(user) -> Client:
-    raw, _tok = PersonalToken.create_for_user(user=user, label="cli")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
 def _post(client, key="k1", **extra):
     body = {"agent_slug": "hal", "origin": "api", "idempotency_key": key, "prompt": "ping"}
     body.update(extra)
@@ -78,7 +73,7 @@ def _post(client, key="k1", **extra):
 # --- who may ask --------------------------------------------------------------
 
 def test_an_admin_on_a_pat_may_request_auto(fleet):
-    r = _post(_pat(fleet["ada"]), turn_mode="auto")
+    r = _post(pat_client(fleet["ada"]), turn_mode="auto")
     assert r.status_code == 201, r.content
     body = r.json()
     assert (body["requested_turn_mode"], body["requested_turn_mode_by_email"]) == ("auto", ADA)
@@ -147,7 +142,7 @@ def test_omitting_turn_mode_changes_nothing(fleet):
 # --- the request wins, and keeps winning --------------------------------------
 
 def test_requested_auto_wins_over_the_agents_manual_switch(fleet):
-    _post(_pat(fleet["ada"]), turn_mode="auto")
+    _post(pat_client(fleet["ada"]), turn_mode="auto")
     claimed = claim.claim_next_turn(fleet["other"])
     assert claimed.turn_mode == "auto"
     assert claimed.turn_mode_basis == f"dispatch by {ADA} (admin)"
@@ -157,7 +152,7 @@ def test_requested_manual_wins_over_an_actor_auto_rule(fleet):
     hal = fleet["hal"]
     RunnerAssignment.objects.create(agent=hal, runner=fleet["other"], rank=0,
                                     source=Turn.ORIGIN_API, actor=ADA, turn_mode="auto")
-    _post(_pat(fleet["ada"]), turn_mode="manual")
+    _post(pat_client(fleet["ada"]), turn_mode="manual")
     claimed = claim.claim_next_turn(fleet["other"])
     assert (claimed.turn_mode, claimed.turn_mode_basis) == (
         "manual", f"dispatch by {ADA} (admin)")
@@ -169,12 +164,12 @@ def test_requested_auto_wins_over_an_actor_manual_rule(fleet):
     hal.save(update_fields=["turn_mode"])
     RunnerAssignment.objects.create(agent=hal, runner=fleet["other"], rank=0,
                                     source=Turn.ORIGIN_API, actor=ADA, turn_mode="manual")
-    _post(_pat(fleet["ada"]), turn_mode="auto")
+    _post(pat_client(fleet["ada"]), turn_mode="auto")
     assert claim.claim_next_turn(fleet["other"]).turn_mode == "auto"
 
 
 def test_the_request_survives_a_lost_lease_and_reclaim(fleet):
-    _post(_pat(fleet["ada"]), turn_mode="auto")
+    _post(pat_client(fleet["ada"]), turn_mode="auto")
     first = claim.claim_next_turn(fleet["other"])
     # Lease lost: back to the queue with the old stamp; the claim decides afresh.
     Turn.objects.filter(pk=first.pk).update(status=Turn.QUEUED, claimed_by=None,
@@ -186,7 +181,7 @@ def test_the_request_survives_a_lost_lease_and_reclaim(fleet):
 
 
 def test_a_revoked_admin_s_queued_auto_runs_manual_and_says_why(fleet):
-    _post(_pat(fleet["ada"]), turn_mode="auto")
+    _post(pat_client(fleet["ada"]), turn_mode="auto")
     AgentAdmin.objects.filter(user=fleet["ada"]).delete()
     claimed = claim.claim_next_turn(fleet["other"])
     assert claimed.turn_mode == "manual"
@@ -194,7 +189,7 @@ def test_a_revoked_admin_s_queued_auto_runs_manual_and_says_why(fleet):
 
 
 def test_the_envelope_carries_the_dispatch_basis(fleet):
-    _post(_pat(fleet["ada"]), turn_mode="auto")
+    _post(pat_client(fleet["ada"]), turn_mode="auto")
     turn = Turn.objects.get()
     # Before a claim the envelope resolves live; after, it reads the stamp.
     assert caller_context.build(turn)["turn_mode"] == {
@@ -208,7 +203,7 @@ def test_the_envelope_carries_the_dispatch_basis(fleet):
 
 def test_a_pin_and_a_mode_together(fleet):
     box = fleet["box"]
-    r = _post(_pat(fleet["ada"]), turn_mode="manual", runner_id=str(box.id))
+    r = _post(pat_client(fleet["ada"]), turn_mode="manual", runner_id=str(box.id))
     assert r.status_code == 201, r.content
     body = r.json()
     assert (body["pinned_runner_id"], body["pinned_runner_name"]) == (str(box.id), box.name)

@@ -11,9 +11,9 @@ from apps.agents import api_aws
 from apps.agents.models import Agent
 from apps.events.models import Event
 from apps.mcp.api_tools import EXCLUDED
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member, a_workspace
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 
@@ -54,18 +54,13 @@ def tenancy():
     return {"owner": owner, "viewer": viewer, "outsider": outsider, "bot": bot, "agent": agent}
 
 
-def _pat(user) -> Client:
-    raw, _ = PersonalToken.create_for_user(user=user, label="cli")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
 def _post(c, role="labs-observe", slug="hal"):
     return c.post(f"/api/agents/{slug}/aws-credentials", data=json.dumps({"role": role}),
                   content_type="application/json")
 
 
 def test_agent_own_login_gets_credential_process_json_stamped_with_the_agent(tenancy, sts):
-    r = _post(_pat(tenancy["bot"]))
+    r = _post(pat_client(tenancy["bot"]))
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["Version"] == 1
@@ -84,13 +79,13 @@ def test_agent_own_login_gets_credential_process_json_stamped_with_the_agent(ten
 
 
 def test_an_editor_token_may_ask_too(tenancy, sts):
-    assert _post(_pat(tenancy["owner"])).status_code == 200
+    assert _post(pat_client(tenancy["owner"])).status_code == 200
     assert {"Key": "caller", "Value": f"user-{tenancy['owner'].pk}"} in sts.calls[0]["Tags"]
 
 
 def test_a_viewer_is_refused_and_an_outsider_sees_no_agent(tenancy, sts):
-    assert _post(_pat(tenancy["viewer"])).status_code == 403
-    assert _post(_pat(tenancy["outsider"])).status_code == 404
+    assert _post(pat_client(tenancy["viewer"])).status_code == 403
+    assert _post(pat_client(tenancy["outsider"])).status_code == 404
     assert sts.calls == []
 
 
@@ -102,7 +97,7 @@ def test_a_browser_session_is_refused(tenancy, sts):
 
 
 def test_only_roles_canopy_vends(tenancy, sts):
-    r = _post(_pat(tenancy["bot"]), role="labs-admin")
+    r = _post(pat_client(tenancy["bot"]), role="labs-admin")
     assert r.status_code == 404
     assert "labs-observe" in r.json()["detail"]
     assert sts.calls == []
@@ -111,7 +106,7 @@ def test_only_roles_canopy_vends(tenancy, sts):
 def test_aws_refusal_is_a_502_with_the_reason(tenancy, monkeypatch, settings):
     settings.CANOPY_AWS_ROLES = {"labs-observe": ROLE_ARN}
     monkeypatch.setattr(api_aws, "sts_client", lambda: FakeSts(fail=RuntimeError("AccessDenied")))
-    r = _post(_pat(tenancy["bot"]))
+    r = _post(pat_client(tenancy["bot"]))
     assert r.status_code == 502
     assert "AccessDenied" in r.json()["detail"]
 

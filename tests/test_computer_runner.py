@@ -21,8 +21,8 @@ from django.utils import timezone
 
 from apps.agents.credentials import licenses, zk
 from apps.agents.models import Agent
-from apps.harness import device_keys, runner_auth
-from apps.harness import claim as harness_claim, runners
+from apps.harness import claim as harness_claim
+from apps.harness import device_keys, runner_auth, runners
 from apps.harness.models import (
     PrivateRunner,
     Runner,
@@ -32,8 +32,8 @@ from apps.harness.models import (
     Turn,
 )
 from apps.passkeys.testing import grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_client
 
 from .access_helpers import editors_run
 
@@ -58,11 +58,6 @@ def world():
     return {"ws": ws, "jj": jj, "aath": aath, "hal": hal, "eva": eva, "box": box}
 
 
-def _pat(user) -> Client:
-    raw, _tok = PersonalToken.create_for_user(user=user, label="cli")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
 def _browser(user) -> Client:
     c = Client()
     c.force_login(user)
@@ -71,14 +66,14 @@ def _browser(user) -> Client:
 
 
 def _register(user, name="aath-mbp"):
-    return _pat(user).post("/api/private-runners/", data={"name": name, "host": "aath-mbp.local"},
+    return pat_client(user).post("/api/private-runners/", data={"name": name, "host": "aath-mbp.local"},
                            content_type="application/json")
 
 
 def _enrol(user, runner_id):
     jwk = header_jwk(ec.generate_private_key(ec.SECP256R1()))
     ecdh = header_jwk(ec.generate_private_key(ec.SECP256R1()))
-    return _pat(user).post("/api/runner-device-keys/", data={
+    return pat_client(user).post("/api/runner-device-keys/", data={
         "runner": str(runner_id), "public_jwk": jwk, "ecdh_public_jwk": ecdh,
         "kind": "secure-enclave", "label": "aath-mbp"}, content_type="application/json")
 
@@ -117,7 +112,7 @@ def test_a_computer_that_runs_the_runner_app_keeps_that_runner(world):
     jj = world["jj"]
     app = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=jj, workspace=world["ws"],
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={})
-    res = _pat(jj).post("/api/private-runners/", data={"name": "jj-mbp", "runner": str(app.pk)},
+    res = pat_client(jj).post("/api/private-runners/", data={"name": "jj-mbp", "runner": str(app.pk)},
                         content_type="application/json")
     assert res.json()["runner_id"] == str(app.pk)
     assert not Runner.objects.filter(kind=Runner.COMPUTER, owner=jj).exists()
@@ -128,7 +123,7 @@ def test_linking_the_runner_app_later_retires_the_computer_runner(world):
     body = _register(aath).json()
     app = Runner.objects.create(name="aath-app", kind=Runner.EMDASH, owner=aath, workspace=world["ws"],
                                 capabilities={})
-    res = _pat(aath).post("/api/private-runners/", data={"name": "aath-mbp", "runner": str(app.pk)},
+    res = pat_client(aath).post("/api/private-runners/", data={"name": "aath-mbp", "runner": str(app.pk)},
                           content_type="application/json")
     assert res.json()["runner_id"] == str(app.pk)
     assert Runner.objects.get(pk=body["runner_id"]).status == Runner.RETIRED
@@ -137,7 +132,7 @@ def test_linking_the_runner_app_later_retires_the_computer_runner(world):
 def test_retiring_the_computer_retires_its_runner_and_reregistering_makes_a_fresh_one(world):
     pr_id, box, key = _computer(world)
     as_box = _token(key)
-    assert _pat(world["aath"]).post(f"/api/private-runners/{pr_id}/retire").status_code == 200
+    assert pat_client(world["aath"]).post(f"/api/private-runners/{pr_id}/retire").status_code == 200
     box.refresh_from_db()
     assert box.status == Runner.RETIRED
     assert not device_keys.runner_serves_agent(box, world["hal"])
@@ -165,7 +160,7 @@ def test_only_the_owner_registers_or_approves_a_key_on_their_computer(world):
     key_id = _enrol(world["aath"], body["runner_id"]).json()["id"]
     assert _browser(world["jj"]).post(f"/api/runner-device-keys/{key_id}/approve").status_code == 404
     # The owner, from a browser behind a passkey — not with a token.
-    assert _pat(world["aath"]).post(f"/api/runner-device-keys/{key_id}/approve").status_code == 403
+    assert pat_client(world["aath"]).post(f"/api/runner-device-keys/{key_id}/approve").status_code == 403
     assert _browser(world["aath"]).post(f"/api/runner-device-keys/{key_id}/approve").status_code == 200
 
 
@@ -234,8 +229,8 @@ def test_a_computer_never_claims(world):
                         enqueued_by=world["jj"], pinned_runner=box)
     assert harness_claim.claim_next_turn(box) is None
     # Nor is it reachable as a runner, even by its owner's own token.
-    assert _pat(world["jj"]).post(f"/api/harness/runners/{box.pk}/claim").status_code == 404
-    assert _pat(world["jj"]).post(f"/api/harness/runners/{box.pk}/workspaces",
+    assert pat_client(world["jj"]).post(f"/api/harness/runners/{box.pk}/claim").status_code == 404
+    assert pat_client(world["jj"]).post(f"/api/harness/runners/{box.pk}/workspaces",
                                   data={"workspace": "dimagi"},
                                   content_type="application/json").status_code == 404
     with pytest.raises(runners.EnrollmentRefused):
@@ -249,7 +244,7 @@ def test_a_computer_is_in_no_fleet_list_picker_or_report(world):
     from apps.realtime.snapshot import supervisor_snapshot
 
     _pr, box, _key = _computer(world, user=world["jj"])
-    jj = _pat(world["jj"])
+    jj = pat_client(world["jj"])
     ids = {r["id"] for r in jj.get("/api/harness/runners/").json()}
     assert str(world["box"].pk) in ids and str(box.pk) not in ids
     assert str(box.pk) not in {r["id"] for r in jj.get("/api/w/dimagi/harness/runners/").json()}

@@ -16,6 +16,7 @@ from django.contrib.auth.models import User
 from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
+from apps.agents import roles
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.harness import caller_tokens, claiming, services
@@ -25,7 +26,7 @@ from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -42,7 +43,9 @@ def w():
     for u in (matt, lili):
         M.objects.create(user=u, workspace=ws, role=M.VIEWER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op)
-    publish(agent, {"full": ["member"]})
+    declare(agent, None)
+    allow(agent, role=roles.EDITOR)      # every workspace member is an editor
+    editors_run(agent)
     return {"op": op, "matt": matt, "lili": lili, "ws": ws, "agent": agent}
 
 

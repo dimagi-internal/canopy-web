@@ -18,8 +18,9 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
+from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import delegated_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -36,11 +37,6 @@ def _ctx(app_name="connect-labs"):
     return user, ws, agent, app
 
 
-def _bearer(app, user):
-    raw, _tok = DelegatedToken.issue(app=app, user=user, ttl_seconds=3600)
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 def _create(headers, body=None):
     return Client().post(
         "/api/canopy-sessions/",
@@ -52,7 +48,7 @@ def _create(headers, body=None):
 
 def test_a_delegated_create_is_stamped_with_the_acting_app():
     user, _ws, _agent, app = _ctx()
-    r = _create(_bearer(app, user))
+    r = _create(delegated_headers(app, user))
     assert r.status_code == 200
     session = Session.objects.get(pk=r.json()["id"])
     assert session.metadata["embed_app"] == "connect-labs"
@@ -63,7 +59,7 @@ def test_a_client_cannot_claim_a_different_app():
     or create under another host's name."""
     user, _ws, _agent, app = _ctx()
     r = _create(
-        _bearer(app, user),
+        delegated_headers(app, user),
         {"agent_slug": "labs-helper", "metadata": {"embed_app": "ace-web"}},
     )
     session = Session.objects.get(pk=r.json()["id"])
@@ -101,7 +97,7 @@ def test_other_metadata_still_passes_through():
     (`workflow_id`, `opportunity_id`, …) is the reason metadata exists."""
     user, _ws, _agent, app = _ctx()
     r = _create(
-        _bearer(app, user),
+        delegated_headers(app, user),
         {"agent_slug": "labs-helper", "metadata": {"workflow_id": 42, "embed_app": "spoof"}},
     )
     session = Session.objects.get(pk=r.json()["id"])
@@ -115,7 +111,7 @@ def test_origin_key_is_left_to_the_host():
     embed_app answers a different question."""
     user, _ws, _agent, app = _ctx()
     r = _create(
-        _bearer(app, user),
+        delegated_headers(app, user),
         {"agent_slug": "labs-helper", "metadata": {"origin_key": "ace-web:connect"}},
     )
     session = Session.objects.get(pk=r.json()["id"])
@@ -130,10 +126,10 @@ def test_the_list_can_be_scoped_to_this_app():
         workspace=ws,
     )
     AppCredentialAgent.objects.create(app=other_app, agent=agent)
-    mine = _create(_bearer(app, user)).json()["id"]
-    theirs = _create(_bearer(other_app, user)).json()["id"]
+    mine = _create(delegated_headers(app, user)).json()["id"]
+    theirs = _create(delegated_headers(other_app, user)).json()["id"]
 
-    rows = Client().get("/api/canopy-sessions/?embed_app=connect-labs", **_bearer(app, user)).json()
+    rows = Client().get("/api/canopy-sessions/?embed_app=connect-labs", **delegated_headers(app, user)).json()
     ids = {r["id"] for r in rows}
     assert mine in ids
     assert theirs not in ids
@@ -142,8 +138,8 @@ def test_the_list_can_be_scoped_to_this_app():
 def test_an_unfiltered_list_still_returns_everything_the_user_may_see():
     """The filter is opt-in; adding it must not quietly narrow canopy's own UI."""
     user, _ws, _agent, app = _ctx()
-    mine = _create(_bearer(app, user)).json()["id"]
-    rows = Client().get("/api/canopy-sessions/", **_bearer(app, user)).json()
+    mine = _create(delegated_headers(app, user)).json()["id"]
+    rows = Client().get("/api/canopy-sessions/", **delegated_headers(app, user)).json()
     assert mine in {r["id"] for r in rows}
 
 
@@ -181,7 +177,7 @@ def test_a_host_sees_only_its_own_conversations_even_if_it_names_another():
     mine = _session_from("connect-labs", user, ws, agent, title="from connect-labs")
     theirs = _session_from("canopy-web", user, ws, agent, title="from canopy-web")
 
-    ids = _listed(_bearer(app, user), "&embed_app=canopy-web")
+    ids = _listed(delegated_headers(app, user), "&embed_app=canopy-web")
 
     assert str(mine.id) in ids
     assert str(theirs.id) not in ids, "a host enumerated another host's conversations"
@@ -211,7 +207,7 @@ def test_history_filters_by_the_page_it_was_had_on():
     _session_from("connect-labs", user, ws, agent, "stock",
                   {"path": "/stock", "resource": "stock://"})
 
-    assert _listed(_bearer(app, user), "&resource=task://") == {str(on_tasks.id)}
+    assert _listed(delegated_headers(app, user), "&resource=task://") == {str(on_tasks.id)}
 
 
 def test_it_filters_by_exact_path_too():
@@ -219,7 +215,7 @@ def test_it_filters_by_exact_path_too():
     a = _session_from("connect-labs", user, ws, agent, "a", {"path": "/w/w1/agents/echo/tasks"})
     _session_from("connect-labs", user, ws, agent, "b", {"path": "/supervisor"})
 
-    assert _listed(_bearer(app, user), "&page_path=/w/w1/agents/echo/tasks") == {str(a.id)}
+    assert _listed(delegated_headers(app, user), "&page_path=/w/w1/agents/echo/tasks") == {str(a.id)}
 
 
 def test_a_session_that_declared_no_page_matches_no_page_filter():
@@ -228,4 +224,4 @@ def test_a_session_that_declared_no_page_matches_no_page_filter():
     user, ws, agent, app = _ctx()
     _session_from("connect-labs", user, ws, agent, title="no page")
 
-    assert _listed(_bearer(app, user), "&resource=task://") == set()
+    assert _listed(delegated_headers(app, user), "&resource=task://") == set()

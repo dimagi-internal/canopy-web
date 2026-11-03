@@ -28,17 +28,30 @@ from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 
 SITE = "connect-labs"
-SENSITIVE_IFACE = {"capabilities": {"data": {
+SENSITIVE_CAPS = {"data": {
     "description": "Ask data questions about the workflow you are looking at",
-    "callers": ["contact", "member"], "sites": [SITE], "data": "sensitive",
-    "tools": ["mcp__*canopy-web__who_is_asking"]}}}
-PLAIN_IFACE = {"capabilities": {"connect": {
-    "callers": ["contact"], "sites": [SITE], "tools": ["mcp__*canopy-web__who_is_asking"]}}}
+    "sites": [SITE], "data": "sensitive",
+    "tools": ["mcp__*canopy-web__who_is_asking"]}}
+PLAIN_CAPS = {"connect": {
+    "sites": [SITE], "tools": ["mcp__*canopy-web__who_is_asking"]}}
+
+
+def _sensitive(agent):
+    declare(agent, SENSITIVE_CAPS)
+    allow(agent, capability="data", contact=True)
+    allow(agent, capability="data")
+    editors_run(agent)
+
+
+def _plain(agent):
+    declare(agent, PLAIN_CAPS)
+    allow(agent, capability="connect", contact=True)
+    editors_run(agent)
 
 
 @pytest.fixture(autouse=True)
@@ -57,12 +70,12 @@ def w():
     labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=owner,
                                     description="data questions", interface_published_by=owner,
                                     interface_published_at=timezone.now())
-    publish(labsdata, SENSITIVE_IFACE)
+    _sensitive(labsdata)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(ace, PLAIN_IFACE)
+    _plain(ace)
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=ws, owner=owner)
     unlisted = Agent.objects.create(slug="unlisted", name="Unlisted", workspace=ws, owner=owner)
-    publish(unlisted, PLAIN_IFACE)
+    _plain(unlisted)
     key = generate_private_key("EdDSA")
     app = AppCredential.create_credential(name=SITE, created_by=owner, workspace=ws)
     app.public_keys = [public_pem(key)]
@@ -189,7 +202,7 @@ def test_an_agent_of_another_workspace_is_never_listed(w):
     stranger = get_user_model().objects.create_user("s", "s@dimagi.com", "pw")
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=stranger)
     foreign = Agent.objects.create(slug="foreign", name="Foreign", workspace=other)
-    publish(foreign, PLAIN_IFACE)
+    _plain(foreign)
     AppCredentialAgent.objects.create(app=w["app"], agent=foreign)
     assert "foreign" not in _agents(w).slugs
 

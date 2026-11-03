@@ -21,24 +21,24 @@ from apps.canopy_sessions.models import Session
 from apps.common.encryption import encrypt_secret
 from apps.harness import caller_tokens
 from apps.harness.models import Turn
+from apps.host_grants import client_identity, host_gateway
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
 from apps.mcp_apps_host import mcp_apps
-from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 from tests.mcp_apps_host import VIEW_URI, FakeLabs
 
 pytestmark = pytest.mark.django_db
 
 RESOURCE = "https://labs.test/mcp/"
 TOKEN = "grant-visitor"
-IFACE = {"capabilities": {
-    "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
+IFACE = {
+    "connect": {"sites": ["connect-labs"],
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
-}}
+}
 
 
 @pytest.fixture()
@@ -54,7 +54,10 @@ def w():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(agent, IFACE)
+    declare(agent, IFACE)
+    allow(agent, capability="connect", contact=True)
+    allow(agent, capability="connect")
+    editors_run(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     app.host_issuer = "https://labs.test"
     app.host_mcp_resource = RESOURCE

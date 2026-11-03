@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from django.test import Client
 
+from apps.agents import roles
 from apps.agents.models import Agent
 from apps.canopy_sessions.access import visible_session_q
 from apps.canopy_sessions.models import Session
@@ -30,6 +31,7 @@ from apps.slack.models import SlackInstallation, SlackUserLink
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_user, a_workspace
+from tests.access_helpers import allow, declare, editors_run
 from tests.fixtures.slack import (
     ALICE,
     BOB,
@@ -45,7 +47,6 @@ from tests.fixtures.slack import (
     mention,
     thread_reply,
 )
-from tests.access_helpers import editors_run, publish
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
@@ -2302,7 +2303,7 @@ def test_declaring_without_a_config_token_says_so(slack, ws, installation, owner
 def test_a_confined_reply_says_it_is_a_separate_session(slack, installation, hal):
     """In Slack a confined turn looks exactly like typing into the thread, but it
     runs in its own session on the runner. Shayoni's reply did this, 2026-10-01."""
-    publish(hal, {"capabilities": {"ask": {"description": "Ask Hal", "callers": ["contact"]}}})
+    _ask_for_contacts(hal, "Ask Hal")
     mention("hal who owns the budget?")
     assert Turn.objects.get().capability == "ask"
     text = _line(slack)["text"]
@@ -2320,8 +2321,10 @@ def test_a_member_in_full_gets_no_separate_session_note(slack, linked, hal):
 ROOT = "1700000999.000100"   # FakeSlack's ts for every chat.postMessage
 
 
-def _ask_for_contacts(agent):
-    publish(agent, {"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
+def _ask_for_contacts(agent, description="Ask"):
+    declare(agent, {"ask": {"description": description}})
+    allow(agent, role=roles.READ_ONLY, contact=True)
+    editors_run(agent)
 
 
 def test_a_confined_reply_in_a_members_thread_forks_to_its_own_thread(slack, linked, hal, alice):

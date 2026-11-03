@@ -15,18 +15,18 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 from apps.agents.models import Agent, AgentTask
+from apps.host_grants import host_gateway, self_host
 from apps.mcp import delegation
 from apps.mcp.server import mcp
-from apps.host_grants import host_gateway, self_host
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 BASE = "https://canopy.test"
 
 
 IFACE = {"capabilities": {
-    "workbench": {"callers": ["member"], "sites": ["canopy-web"],
+    "workbench": {"sites": ["canopy-web"],
                   "ceiling": ["mcp__*canopy-web__list_*", "mcp__*canopy-web__skill_*"],
                   "tools": ["mcp__*canopy-web__who_is_asking"]},
 }}
@@ -50,7 +50,9 @@ def self_host_world():
     WorkspaceMembership.objects.create(user=visitor, workspace=ws, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(user=owner, workspace=other, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(agent, IFACE)
+    declare(agent, IFACE["capabilities"])
+    allow(agent, capability="workbench")
+    editors_run(agent)
     app = AppCredential.create_credential(name="canopy-web", created_by=owner, workspace=ws)
     # The site configured exactly as the docs say: its JWKS URL is canopy's own
     # host key, its issuer and MCP resource are this deployment.

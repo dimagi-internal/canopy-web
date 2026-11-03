@@ -21,7 +21,8 @@ from apps.agents.models import Vault, VaultAttachment, VaultKeyWrap, VaultSecret
 from apps.harness.models import Runner, RunnerCredentialRead, RunnerDeviceKey, RunnerLogin
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership
-from tests.fixtures.aws_proof import _active_role, _pat, _proof
+from tests.fixtures.aws_proof import _active_role, _proof
+from tests.token_helpers import pat_token
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("fresh_cache")]
 
@@ -211,7 +212,7 @@ def test_the_box_reads_its_vault_with_its_own_token_and_proof(fleet, sts):
 def test_a_persons_token_or_session_never_reads_it(fleet, sts):
     _held(fleet, sts)
     path = _resolve_path(fleet["runner"])
-    pat = Client().get(path, HTTP_AUTHORIZATION=f"Bearer {_pat(fleet['user'])}",
+    pat = Client().get(path, HTTP_AUTHORIZATION=f"Bearer {pat_token(fleet['user'])}",
                        HTTP_X_CANOPY_AWS_PROOF=_proof(f"http://testserver{path}"))
     assert pat.status_code == 403 and pat.json()["error"] == "runner_only"
     browser = Client()
@@ -297,7 +298,7 @@ def test_no_one_but_the_box_writes_its_vault_values(fleet, sts):
     _, v = _open_vault(fleet, sts)
     _token_entry(fleet["runner"])
     res = _box_put(fleet, {"vault_id": str(v.pk), "kv": 1,
-                           "values": [{"name": "claude-token:t1", "value_zk": ZK}]}, token=_pat(fleet["user"]))
+                           "values": [{"name": "claude-token:t1", "value_zk": ZK}]}, token=pat_token(fleet["user"]))
     assert res.status_code == 403 and res.json()["error"] == "runner_only"
     assert not VaultSecret.objects.filter(vault=v).exists()
 

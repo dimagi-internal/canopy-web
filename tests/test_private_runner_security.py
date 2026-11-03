@@ -7,7 +7,6 @@ direct sessions are all decisions that must stay with the owner.
 """
 from __future__ import annotations
 
-
 import pytest
 from canopy_sdk.keys import header_jwk
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -21,8 +20,8 @@ from apps.events.models import SettingChange
 from apps.harness import runner_auth
 from apps.harness.models import PrivateRunner, Runner, RunnerAdmin, RunnerDeviceKey, Turn
 from apps.passkeys.testing import grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -44,11 +43,6 @@ def world():
     return {"ws": ws, "hal": hal, "jj": jj, "admin": admin, "box": box}
 
 
-def _pat(user) -> Client:
-    raw, _tok = PersonalToken.create_for_user(user=user, label="cli")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
 def _browser(user) -> Client:
     c = Client()
     c.force_login(user)
@@ -57,13 +51,13 @@ def _browser(user) -> Client:
 
 
 def _set_private(user, box, private=True):
-    return _pat(user).put(f"/api/harness/runners/{box.pk}/private",
+    return pat_client(user).put(f"/api/harness/runners/{box.pk}/private",
                           data={"private": private}, content_type="application/json")
 
 
 def _register_key(user, box):
     jwk = header_jwk(ec.generate_private_key(ec.SECP256R1()))
-    return _pat(user).post("/api/runner-device-keys/", data={
+    return pat_client(user).post("/api/runner-device-keys/", data={
         "runner": str(box.pk), "public_jwk": jwk, "kind": "secure-enclave", "label": "k"},
         content_type="application/json")
 
@@ -98,9 +92,9 @@ def test_a_key_an_admin_left_pending_is_not_theirs_to_approve_once_private(world
 def test_an_admin_still_sees_a_private_runners_keys_but_cannot_manage_them(world):
     _register_key(world["jj"], world["box"])
     _set_private(world["jj"], world["box"])
-    rows = _pat(world["admin"]).get(f"/api/runner-device-keys/?runner={world['box'].pk}").json()
+    rows = pat_client(world["admin"]).get(f"/api/runner-device-keys/?runner={world['box'].pk}").json()
     assert len(rows) == 1 and rows[0]["can_manage"] is False
-    mine = _pat(world["jj"]).get(f"/api/runner-device-keys/?runner={world['box'].pk}").json()
+    mine = pat_client(world["jj"]).get(f"/api/runner-device-keys/?runner={world['box'].pk}").json()
     assert mine[0]["can_manage"] is True
 
 
@@ -131,7 +125,7 @@ def test_a_private_runners_token_cannot_register_or_list_private_runners(world):
 def test_a_shared_runners_token_cannot_finish_its_owners_local_turn(world):
     jj, box = world["jj"], world["box"]
     pr = PrivateRunner.objects.create(owner=jj, name="jj-mbp", runner=box)
-    opened = _pat(jj).post("/api/harness/local-turns/", data={
+    opened = pat_client(jj).post("/api/harness/local-turns/", data={
         "agent": "hal", "private_runner": str(pr.pk), "claude_session_id": "s1"},
         content_type="application/json")
     assert opened.status_code == 201, opened.content
@@ -143,7 +137,7 @@ def test_a_shared_runners_token_cannot_finish_its_owners_local_turn(world):
                        content_type="application/json").status_code == 404
     assert Turn.objects.get(pk=tid).status == Turn.RUNNING
     # The person's own token still does.
-    assert _pat(jj).post(f"/api/harness/turns/{tid}/finish", data={"status": "done"},
+    assert pat_client(jj).post(f"/api/harness/turns/{tid}/finish", data={"status": "done"},
                          content_type="application/json").status_code == 200
 
 
@@ -151,7 +145,7 @@ def test_a_private_runners_token_reports_only_on_turns_opened_on_it(world):
     jj, box = world["jj"], world["box"]
     _set_private(jj, box)
     elsewhere = PrivateRunner.objects.create(owner=jj, name="jj-other-laptop")
-    tid = _pat(jj).post("/api/harness/local-turns/", data={
+    tid = pat_client(jj).post("/api/harness/local-turns/", data={
         "agent": "hal", "private_runner": str(elsewhere.pk), "claude_session_id": "s2"},
         content_type="application/json").json()["turn_id"]
     box.refresh_from_db()
@@ -219,7 +213,7 @@ def test_it_adopts_an_unlinked_registration_of_its_name_from_its_own_host(world)
 def test_retiring_a_linked_registration_makes_its_runner_shared(world):
     jj, box = world["jj"], world["box"]
     pr_id = _set_private(jj, box).json()["private_runner_id"]
-    res = _pat(jj).post(f"/api/private-runners/{pr_id}/retire")
+    res = pat_client(jj).post(f"/api/private-runners/{pr_id}/retire")
     assert res.status_code == 200, res.content
     box.refresh_from_db()
     pr = PrivateRunner.objects.get(pk=pr_id)
@@ -234,7 +228,7 @@ def test_retiring_a_linked_registration_makes_its_runner_shared(world):
 def test_a_zero_knowledge_agent_resolves_only_with_a_device_proof(world):
     hal = world["hal"]
     Agent.objects.filter(pk=hal.pk).update(zk_kv=0)
-    res = _pat(world["jj"]).get("/api/agents/hal/credentials/resolve")
+    res = pat_client(world["jj"]).get("/api/agents/hal/credentials/resolve")
     assert res.status_code == 401 and res.json()["error"] == "device_proof_required"
 
 

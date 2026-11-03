@@ -18,8 +18,9 @@ from apps.capabilities import aws, services
 from apps.capabilities.models import AgentCapability, CapabilityLease
 from apps.events.models import Event
 from apps.harness.models import Turn
+from tests.token_helpers import pat_client
 
-from .helpers import MANIFEST, _as, _json, _kinds, _pat, _publish
+from .helpers import MANIFEST, _as, _json, _kinds, _publish
 
 pytestmark = pytest.mark.django_db
 
@@ -336,7 +337,7 @@ def test_machine_routes_refuse_a_pool_lease(pool):
 
 def test_the_lease_list_shows_who_holds_which_slot(pool, tenancy):
     mine = _take(pool).json()
-    theirs = _take(_pat(tenancy["bot"])).json()
+    theirs = _take(pat_client(tenancy["bot"])).json()
     queued_count = len(SLOTS) - 2
     for _ in range(queued_count + 1):
         _take(pool)

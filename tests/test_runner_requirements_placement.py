@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
-from tests.access_helpers import publish
-from tests.fixtures.sensitive import vault_key
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -14,12 +11,14 @@ from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Runner, RunnerFlag
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.access_helpers import allow, declare, editors_run
+from tests.fixtures.sensitive import vault_key
 
 pytestmark = pytest.mark.django_db
 
 # A sensitive-data box holds only an agent with a `data: sensitive` capability (dedicated box).
-SENSITIVE_IFACE = {"capabilities": {"data": {"callers": ["member"], "sites": ["connect-labs"],
-                                       "data": "sensitive", "tools": ["Read"]}}}
+SENSITIVE_IFACE = {"data": {"sites": ["connect-labs"],
+                             "data": "sensitive", "tools": ["Read"]}}
 
 
 def _capable(r):
@@ -35,7 +34,9 @@ def fleet():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
-    publish(echo, SENSITIVE_IFACE)
+    declare(echo, SENSITIVE_IFACE)
+    allow(echo, capability="data")
+    editors_run(echo)
     now = timezone.now()
     laptop = Runner.objects.create(
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,

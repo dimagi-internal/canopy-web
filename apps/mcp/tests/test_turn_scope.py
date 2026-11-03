@@ -13,20 +13,20 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
+from apps.agents import roles
 from apps.agents.models import Agent
 from apps.harness import caller_tokens, services
 from apps.harness.models import CallerToken, Turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 DMARC = [{"name": "Authentication-Results",
           "value": "mx.google.com; dkim=pass; dmarc=pass header.from=llo-foo.org"}]
-IFACE = {"capabilities": {"ask": {"callers": ["contact", "member"],
-                                  "tools": ["Read", "mcp__*canopy-web__who_is_asking"]}}}
+IFACE = {"capabilities": {"ask": {"tools": ["Read", "mcp__*canopy-web__who_is_asking"]}}}
 
 
 @pytest.fixture()
@@ -35,7 +35,10 @@ def w():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op)
-    publish(agent, IFACE)
+    declare(agent, IFACE["capabilities"])
+    allow(agent, role=roles.READ_ONLY, contact=True)    # contacts and members may ask
+    allow(agent, role=roles.READ_ONLY)
+    editors_run(agent)
     return {"op": op, "ws": ws, "agent": agent}
 
 
