@@ -19,13 +19,13 @@ export function explainEdge(e: AgentEdgeOut, src: AgentTopologyAgentOut, dst: Ag
     case 'admin':
       return `${login} is an admin of ${dst.name}, so ${src.name} gets all of ${dst.name}.`
     case 'editor':
-      return `${login} is an editor of ${dst.workspace}, so ${src.name} may send ${dst.name} work in its whole profile, but every such turn runs manual. Making it an admin of ${dst.name} lets it ask for auto.`
+      return `${dst.name}'s access list gives ${login} write, so ${src.name} may send ${dst.name} work in its whole profile; a line marked manual-only makes every such turn run manual. Making it an admin of ${dst.name} lets it ask for auto.`
     case 'no-interface':
-      return `${dst.name} has published no interface, so it takes work only from its editors, agent admins and owner; ${login} has less than that there. Work ${src.name} sends is refused.`
+      return `${dst.name}'s access list gives ${login} nothing and ${dst.name} has published no capability, so work ${src.name} sends is refused.`
     case 'capabilities':
-      return `${dst.name}'s interface confines ${login} to ${e.capabilities.join(', ')}. Work ${src.name} sends runs as that and nothing more, or is refused.`
+      return `${dst.name}'s access list confines ${login} to ${e.capabilities.join(', ')}. Work ${src.name} sends runs as that and nothing more, or is refused.`
     case 'nothing-offered':
-      return `${login} is a member of ${dst.workspace}, but ${dst.name}'s interface offers it no capability. Work ${src.name} sends is refused.`
+      return `${login} is a member of ${dst.workspace}, but ${dst.name}'s access list gives it nothing. Work ${src.name} sends is refused.`
     case 'not-member':
       return `${login} is not a member of ${dst.workspace}, so ${src.name} cannot reach ${dst.name} at all. Add it to ${dst.workspace} first.`
     case 'no-login':

@@ -15,8 +15,10 @@ There are two ladders, and they are different questions:
 
 THE rule that joins them is one function, `apps/agents/access.decide(agent, who,
 *, verified, origin, capability=None, turn=None, standing=None, lines=None)`, which returns a
-`Decision(role, access, capability, may_request_auto, may_pin_runner, manual_only, basis, reason,
-agent_role, source, via)`. Every entry point that makes an agent do work asks it (see "Where it
+keyword-only `Decision(relationship, access, capability, may_request_auto, may_pin_runner,
+manual_only, basis, reason, agent_role, source, via, permissions)`; `relationship` is how canopy
+knows the asker (`owner | admin | member | contact | system`), `agent_role` is the named role their
+lines give. Every entry point that makes an agent do work asks it (see "Where it
 is asked" below); `tests/test_access_matrix.py` asks it through every entry point. Don't write a
 second predicate for "may this person make this agent do X" — ask `decide`.
 
