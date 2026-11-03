@@ -329,33 +329,10 @@ a default whose role contains `write` (`read_write` or `editor`: the whole of ev
 change is audited as `agent-defaults:<workspace>`. A default line shows on each agent's list
 marked `scope: workspace`, and is removed there only by going to the workspace.
 
-### Where the old ladder went
-
-Migration `agents/0118` (spec `docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md`)
-replaced `owner > admin > editor > user > viewer`: `editor` lines stay `editor`; `viewer` lines
-became `read_only` (plus a capability line for every other capability that was open to viewers, so a
-site's visitors kept their door); `user` lines became one capability line per capability that role
-could open. A capability lost its `role:`; a published interface that still carries one is refused
-(422) with a pointer here. Each agent's old lines and interface are in the settings audit
-(`access_roles_migration`). Two consequences: an agent whose `ask` was user-level and which had only
-viewer lines gives those lines no role (read_only would newly open `ask`), and a `user` line on an
-agent with nothing published is dropped (it admitted nobody to anything).
-
-### Where the older rules went
-
-Before this list, access was spread over the interface's `full:` rules, each capability's
-`callers`, `editors: confined` and the implicit rule that a workspace editor is an agent editor
-whose every turn is manual. Migration `agents/0112` moved every agent's rules onto its list
-(`full: member` → everyone in the agent's workspace as `editor`; contact classes → `contact`
-lines; a capability's callers → lines at `viewer` if it was open to contacts, else `user`, which
-`0118` above then turned into `read_only` / capability lines; the
-implicit editor rule → "everyone in the workspace, at least editor → `editor`, `manual_only`",
-unless the agent said `editors: confined`), gave each capability its `role`, stripped the old keys
-and kept each agent's old interface and source in the settings audit. The old rules are gone from
-the code: an interface that still carries `full:`, `editors:` or a capability's `callers:` is
-refused (422) with a pointer to the access list. One consequence worth knowing: **a workspace
-editor is no longer an agent editor.** The workspace role still gates the routes that reshape an
-agent; whether a person's own turn runs the whole agent is the access list.
+A line cannot give `admin` or `owner`, and a workspace editor is not an agent editor: the workspace
+role gates the routes that reshape an agent, while whether a person's own turn runs the whole agent
+is the access list. An interface that still carries `role:`, `full:`, `editors:` or `callers:` is
+refused (422) with a pointer here.
 
 ## Access levels
 

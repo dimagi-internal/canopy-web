@@ -14,10 +14,9 @@ turn mode at claim, and the roster below — so no two of them can disagree.
 **Agent roles and permissions** (`roles.py`): owner > admin > editor > read_write > read_only,
 each a named bundle of permissions (read, write, agent_edit, admin, own), plus `system` (canopy
 itself, the agent's OWN login, an approved item's dispatch). A line may instead open one named
-capability (`use:<name>`). `Decision.role` is the older relationship word (owner / admin /
-member / contact / system), kept for readers that have not moved; `Decision.agent_role` is the
-named role (None for someone who holds only capability lines) and `Decision.permissions` is
-everything their lines grant.
+capability (`use:<name>`). `Decision.relationship` is how canopy knows the asker (owner / admin /
+member / contact / system); `Decision.agent_role` is the named role (None for someone who holds
+only capability lines) and `Decision.permissions` is everything their lines grant.
 **Access:** `full` (the agent's whole profile) / `confined` (one capability) / `none` (refused).
 
 The tiers, strongest first:
@@ -53,17 +52,18 @@ from . import grants, roles
 from . import interface as iface_mod
 from .models import AgentAdmin
 
-#: A person's role on the agent, strongest first. `system` is not a person.
-OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = "owner", "admin", "member", "contact", "system"
+#: How canopy knows the asker, strongest first (defined once, in `caller_context`). `system` is
+#: not a person. Not agent roles: those are `roles.py`.
+OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = cc.OWNER, cc.ADMIN, cc.MEMBER, cc.CONTACT, cc.SYSTEM
 #: What a turn may reach.
 FULL, CONFINED, NONE = "full", "confined", "none"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Decision:
     """The answer for one (agent, asker, message). See docs/architecture/access.md."""
 
-    role: str                 # owner | admin | member | contact | system
+    relationship: str         # owner | admin | member | contact | system (how canopy knows them)
     access: str               # full | confined | none
     capability: str | None    # the capability a `confined` turn runs in
     may_request_auto: bool    # may ask for turn_mode=auto on a dispatch
@@ -75,9 +75,7 @@ class Decision:
     # For `none`: what was refused and what the asker CAN do instead.
     reason: str = ""
     # The asker's named role (`roles.py`): owner | admin | editor | read_write | read_only |
-    # system, or None when refused or when they hold only named-capability lines. `role` above
-    # is the older relationship word (owner | admin | member | contact | system), kept until
-    # its readers move.
+    # system, or None when refused or when they hold only named-capability lines.
     agent_role: str | None = None
     # WHERE the role came from: `owner` | `admin` | `system` | `session` | `list:<line>`.
     source: str = ""
@@ -256,11 +254,11 @@ def _sensitive_rule(agent, d: Decision, *, capability: str | None, turn) -> Deci
 
 def _stamp(d: Decision) -> Decision:
     """Name where the rules that need no list put `d` on the role ladder."""
-    if d.role == OWNER:
+    if d.relationship == OWNER:
         return replace(d, agent_role=roles.OWNER, source="owner")
-    if d.role == ADMIN:
+    if d.relationship == ADMIN:
         return replace(d, agent_role=roles.ADMIN, source="admin")
-    if d.role == SYSTEM:
+    if d.relationship == SYSTEM:
         return replace(d, agent_role=roles.SYSTEM, source="system")
     if d.access == FULL:
         return replace(d, agent_role=roles.EDITOR, source="session")
@@ -314,14 +312,16 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
         # makes someone an agent ADMIN is still `Agent.is_admin` (owner, workspace owner,
         # `AgentAdmin`), never a list line, so a line never raises `may_request_auto`.
         line = got.line_for(roles.WRITE)
-        return Decision(d.role, FULL, None, False, False, got.manual_only, got.basis,
+        return Decision(relationship=d.relationship, access=FULL, capability=None, may_request_auto=False,
+                        may_pin_runner=False, manual_only=got.manual_only, basis=got.basis,
                         agent_role=got.role, source=f"list:{line.subject_key}", via=grants.describe(line),
                         permissions=got.permissions)
     name, _cap = _capability_for(agent, iface, got.permissions, capability, turn)
     if name is None:
         return d
     line = got.line_opening(name)
-    return Decision(d.role, CONFINED, name, False, False, False, f"capability:{name}",
+    return Decision(relationship=d.relationship, access=CONFINED, capability=name, may_request_auto=False,
+                    may_pin_runner=False, manual_only=False, basis=f"capability:{name}",
                     agent_role=got.role, source=f"list:{line.subject_key}", via=grants.describe(line),
                     permissions=got.permissions)
 
@@ -355,13 +355,16 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
     may_auto = bool(is_admin and verified)
 
     if rel in (OWNER, ADMIN, SYSTEM):
-        return Decision(rel, FULL, None, may_auto, is_admin or rel in (OWNER, ADMIN), False, rel)
+        return Decision(relationship=rel, access=FULL, capability=None, may_request_auto=may_auto,
+                        may_pin_runner=is_admin or rel in (OWNER, ADMIN), manual_only=False, basis=rel)
     if turn is not None:
         role = iface_mod.session_writer(turn, agent)
         if role:
-            return Decision(rel, FULL, None, False, False, False, f"session:{role}")
-    return Decision(rel, NONE, None, False, False, False, "refused",
-                    _list_refusal(agent, verified_contact=rel == CONTACT and bool(verified)))
+            return Decision(relationship=rel, access=FULL, capability=None, may_request_auto=False,
+                            may_pin_runner=False, manual_only=False, basis=f"session:{role}")
+    return Decision(relationship=rel, access=NONE, capability=None, may_request_auto=False,
+                    may_pin_runner=False, manual_only=False, basis="refused",
+                    reason=_list_refusal(agent, verified_contact=rel == CONTACT and bool(verified)))
 
 
 def decide_for_turn(turn, agent, requested: str | None = None) -> Decision:

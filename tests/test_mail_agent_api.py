@@ -139,7 +139,8 @@ def test_viewer_is_refused_on_every_write(w):
 def test_access_decide_denial_is_a_403_with_its_reason(w, monkeypatch):
     from apps.agents import access
     monkeypatch.setattr(access, "decide", lambda *a, **k: access.Decision(
-        "member", access.NONE, None, False, False, False, "refused", "ada offers nothing to you"))
+        relationship="member", access=access.NONE, capability=None, may_request_auto=False,
+        may_pin_runner=False, manual_only=False, basis="refused", reason="ada offers nothing to you"))
     for r in (_reply(w, {"text": "x"}),
               _c(w.owner).post("/api/mail/send/marshellis",
                                {"agent": "mada", "to": ["a@b.org"], "subject": "s", "text": "x"},
