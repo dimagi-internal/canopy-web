@@ -20098,6 +20098,11 @@ export interface components {
             /** Outcome */
             readonly outcome: string;
             /**
+             * Delivery
+             * @default
+             */
+            readonly delivery: string;
+            /**
              * Verdicts
              * @default {}
              */
