@@ -92,11 +92,11 @@ def _no_live_dns(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_stale_unclaimable_memo():
-    """`alerts_unclaimable.stuck_by_agent` memoises its fleet-wide diagnosis per
+    """`alerts.unclaimable.stuck_by_agent` memoises its fleet-wide diagnosis per
     process for 30 s; a memo from the last test (whose rows were rolled back)
     must not answer this one."""
     try:
-        from apps.harness import alerts_unclaimable
+        from apps.harness.alerts import unclaimable as alerts_unclaimable
     except Exception:  # a suite with no Django (runner/*) has nothing to clear
         yield
         return

@@ -34,7 +34,7 @@
 "apps/agents/credentials/zk_notify.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk_seal.py" = ["PLC0415"]  # 1
 "apps/agents/engagement.py" = ["PLC0415"]  # 1
-"apps/agents/fleet_api.py" = ["PLC0415"]  # 3
+"apps/agents/api_fleet.py" = ["PLC0415"]  # 3
 "apps/agents/ideas.py" = ["PLC0415"]  # 2
 "apps/agents/interface.py" = ["PLC0415"]  # 2
 "apps/agents/kb_store.py" = ["PLC0415"]  # 4
@@ -130,7 +130,7 @@
 "apps/harness/api.py" = ["PLC0415"]  # 7
 "apps/harness/api_device_key_requests.py" = ["PLC0415"]  # 3
 "apps/harness/api_device_keys.py" = ["PLC0415"]  # 2
-"apps/harness/api_local.py" = ["PLC0415"]  # 4
+"apps/harness/api_local_turns.py" = ["PLC0415"]  # 4
 "apps/harness/api_runner_invitations.py" = ["PLC0415"]  # 1
 "apps/harness/api_runner_pairings.py" = ["PLC0415"]  # 1
 "apps/harness/api_runners.py" = ["PLC0415"]  # 1
@@ -152,8 +152,8 @@
 "apps/harness/channels/email.py" = ["PLC0415"]  # 3
 "apps/harness/claim.py" = ["PLC0415"]  # 6
 "apps/harness/claim_reach.py" = ["PLC0415"]  # 3
-"apps/harness/claiming.py" = ["PLC0415"]  # 4
-"apps/harness/closing.py" = ["PLC0415"]  # 8
+"apps/harness/claim_payload.py" = ["PLC0415"]  # 4
+"apps/harness/turn_close.py" = ["PLC0415"]  # 8
 "apps/harness/credential_notify.py" = ["PLC0415"]  # 3
 "apps/harness/device_key_notify.py" = ["PLC0415"]  # 7
 "apps/harness/device_key_out.py" = ["PLC0415"]  # 2
@@ -162,7 +162,7 @@
 "apps/harness/drills.py" = ["PLC0415"]  # 8
 "apps/harness/initiator.py" = ["PLC0415"]  # 1
 "apps/harness/ledger.py" = ["PLC0415"]  # 4
-"apps/harness/local.py" = ["PLC0415"]  # 4
+"apps/harness/local_turns.py" = ["PLC0415"]  # 4
 "apps/harness/machine_pairing.py" = ["PLC0415"]  # 4
 "apps/harness/models/credentials.py" = ["PLC0415"]  # 1
 "apps/harness/models/runner.py" = ["PLC0415"]  # 1

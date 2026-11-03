@@ -392,7 +392,7 @@ THE predicate; every surface below asks it, one test each in
 - **Metadata in every readable column:** every stored event and every `Message`'s
   `plaintext`/`content` (the person's, the agent's, a tool call's) keeps kind, tool name,
   argument names, ids, error flags, size and hash only (`sensitivity.redact_payload`). The
-  prompt is wiped at the turn's end (`closing.close_turn`), the result note withheld, and
+  prompt is wiped at the turn's end (`turn_close.close_turn`), the result note withheld, and
   there is no owner-ask line, live tail (`RunnerBinding.tail`) or autotitle.
 - **The conversation, sealed to its own people** (spec
   `2026-10-23-sensitive-conversations-sealed-to-their-people` §2,
@@ -670,7 +670,7 @@ THE predicate; every surface below asks it, one test each in
   sensitive one out (the turn in it still reads and acts on its own, by its caller token
   or chat key, asked again at the call), an action's arguments and answer are not kept on
   its row (`page_actions._forget`), and the page is forgotten when its
-  last live turn ends (`closing._forget_the_page`), or after
+  last live turn ends (`turn_close._forget_the_page`), or after
   `CANOPY_SENSITIVE_PAGE_TTL_SECONDS` (15 min) with no live turn
   (`page_state.forget_idle_sensitive_pages`, a tick); the unbound stream door
   (`api_session_sync._turn_end_session`) takes only the confined turn's own transcript

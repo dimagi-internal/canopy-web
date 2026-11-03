@@ -21,7 +21,7 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 from apps.agents.credentials import delegations
 from apps.agents.models import Agent, RepoIdentity
 from apps.canopy_sessions.models import Session
-from apps.harness import caller_tokens, claiming, services
+from apps.harness import caller_tokens, claim_payload, services
 from apps.harness import initiator as who
 from apps.harness.models import CallerToken, Turn
 from apps.mcp.auth import CanopyPATVerifier
@@ -75,7 +75,7 @@ def test_a_project_chat_turn_claims_a_token_that_acts_as_its_asker(w):
     t = _chat_turn(w, w["jj"])
     assert t.acting_agent is None
     assert caller_tokens.is_caller_scoped(t)
-    raw = claiming.issue_credentials(t).mcp_token
+    raw = claim_payload.issue_credentials(t).mcp_token
     assert raw.startswith("cct_") and CallerToken.objects.get().scoped is True
     with as_token(raw) as access:
         assert access.claims["user_id"] == w["jj"].pk
@@ -93,7 +93,7 @@ def test_a_project_turn_with_no_person_behind_it_gets_no_token(w):
     t, _ = services.enqueue_turn(project="canopy-web", workspace=w["ws"], origin=Turn.ORIGIN_API,
                                  idempotency_key="s1", initiator=who.system(via="schedule"))
     assert not caller_tokens.is_caller_scoped(t)
-    assert getattr(claiming.issue_credentials(t), "mcp_token", None) is None
+    assert getattr(claim_payload.issue_credentials(t), "mcp_token", None) is None
 
 
 def test_an_unverified_asker_gets_no_token(w):

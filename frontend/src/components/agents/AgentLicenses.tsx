@@ -8,6 +8,7 @@ import {
 } from '@/api/agents'
 import { relativeAge } from '@/lib/relativeAge'
 import { toneText } from 'canopy-ui/lib'
+import { Th } from '@/components/DataTable'
 
 // WHO USES THIS AGENT DIRECTLY (canopy-web#1704).
 //
@@ -87,13 +88,13 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
         <table className="w-full text-[12px]">
           <thead className="text-left text-muted-foreground">
             <tr>
-              <th className="py-1 pr-3 font-medium">Person</th>
-              <th className="py-1 pr-3 font-medium">License</th>
-              <th className="py-1 pr-3 font-medium">Why</th>
-              <th className="py-1 pr-3 font-medium">Computers</th>
-              <th className="py-1 pr-3 font-medium">Last used</th>
-              <th className="py-1 pr-3 text-right font-medium">Turns</th>
-              <th className="py-1 pr-3 text-right font-medium">Reads</th>
+              <Th density="compact-gap">Person</Th>
+              <Th density="compact-gap">License</Th>
+              <Th density="compact-gap">Why</Th>
+              <Th density="compact-gap">Computers</Th>
+              <Th density="compact-gap">Last used</Th>
+              <Th density="compact-gap" className="text-right">Turns</Th>
+              <Th density="compact-gap" className="text-right">Reads</Th>
               {canEdit && <th className="py-1" />}
             </tr>
           </thead>

@@ -32,7 +32,7 @@ from apps.attention.alerts import DISMISS, Action, Raise
 from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
 
-from . import topology
+from .. import topology
 
 KIND = "agent_cant_run"
 SEVERITY = "setup"

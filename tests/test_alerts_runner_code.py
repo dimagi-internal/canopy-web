@@ -9,13 +9,13 @@ from django.utils import timezone
 
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_runner_code as src
+from apps.harness.alerts import runner_code as src
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-SOURCE = "apps.harness.alerts_runner_code"
+SOURCE = "apps.harness.alerts.runner_code"
 
 
 def _user(name):

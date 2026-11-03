@@ -74,5 +74,5 @@ def test_the_guard_sees_a_private_import():
     """The walker is not vacuous: a relative and an absolute private import both resolve."""
     rel = ast.parse("from .api import _get_agent_or_404").body[0]
     absolute = ast.parse("from apps.agents.api import _agent_for_admin").body[0]
-    assert _resolve(rel, "apps.agents.fleet_api") == TARGET
+    assert _resolve(rel, "apps.agents.api_fleet") == TARGET
     assert _resolve(absolute, "apps.mail.api") == TARGET

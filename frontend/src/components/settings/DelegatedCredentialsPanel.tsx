@@ -4,6 +4,7 @@ import {
   withdrawMyDelegatedCredential,
   type MyDelegatedCredential,
 } from '@/api/delegatedCredentials'
+import { Th } from '@/components/DataTable'
 
 const REVOKE: Record<string, string> = {
   github: 'https://github.com/settings/personal-access-tokens',
@@ -66,10 +67,10 @@ export function DelegatedCredentialsPanel() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">Agent</th>
-              <th className="py-1 font-medium">Account</th>
-              <th className="py-1 font-medium">Machines that can open it</th>
-              <th className="py-1 font-medium">Status</th>
+              <Th>Agent</Th>
+              <Th>Account</Th>
+              <Th>Machines that can open it</Th>
+              <Th>Status</Th>
               <th />
             </tr>
           </thead>

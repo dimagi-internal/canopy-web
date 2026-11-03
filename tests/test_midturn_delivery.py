@@ -79,7 +79,7 @@ def test_a_follow_up_is_claimed_into_the_running_turn():
 
 
 def test_the_claimed_turn_tells_the_runner_what_it_rides():
-    from apps.harness.claiming import issue_credentials
+    from apps.harness.claim_payload import issue_credentials
 
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)

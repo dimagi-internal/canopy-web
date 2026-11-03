@@ -9,6 +9,7 @@ import {
 } from '@/api/capabilities'
 import { relativeAge } from '@/lib/relativeAge'
 import { type Limits, manifestLimits, manifestSlots, limitsText, duration, optionalInt } from './capabilityLimits'
+import { Th } from '@/components/DataTable'
 
 export function CapabilityRow({
   cap,
@@ -235,12 +236,12 @@ export function LeaseTable({ leases }: { leases: CapabilityLeaseOut[] }) {
       <table className="w-full text-left text-[12px]">
         <thead className="border-b border-border text-muted-foreground">
           <tr>
-            <th className="px-3 py-2 font-medium">Capability</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Slot / machine</th>
-            <th className="px-3 py-2 font-medium">Holder</th>
-            <th className="px-3 py-2 font-medium">Since</th>
-            <th className="px-3 py-2 font-medium">Expires</th>
+            <Th density="roomy">Capability</Th>
+            <Th density="roomy">Status</Th>
+            <Th density="roomy">Slot / machine</Th>
+            <Th density="roomy">Holder</Th>
+            <Th density="roomy">Since</Th>
+            <Th density="roomy">Expires</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">

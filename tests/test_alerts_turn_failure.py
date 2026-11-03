@@ -13,13 +13,13 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_turn_failure as src
+from apps.harness.alerts import turn_failure as src
 from apps.harness.models import FailureInvestigation, Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-SOURCE = "apps.harness.alerts_turn_failure"
+SOURCE = "apps.harness.alerts.turn_failure"
 NOTE = "Couldn't confirm your message was delivered to the session. Details: see the runner log."
 
 

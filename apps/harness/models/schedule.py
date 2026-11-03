@@ -29,7 +29,7 @@ class AgentSchedule(models.Model):
     the concept, the UI and `/api/agents/{slug}/triggers/` say trigger. A trigger's
     turn runs with no more authority than its creator has on the agent, and one
     whose creator lost that right stops firing, loudly (`triggers.refusal`,
-    `alerts_trigger`). docs/superpowers/specs/2026-10-27-agent-triggers-design.md.
+    `alerts.trigger`). docs/superpowers/specs/2026-10-27-agent-triggers-design.md.
 
     Config lives here (server-side, so it is visible and editable in the Agent
     UI); canopy-web fires it itself (schedule_clock.py, a loop in the web

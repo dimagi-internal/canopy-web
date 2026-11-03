@@ -294,7 +294,7 @@ class PrivateRunner(models.Model):
 
     On its own it never claims a turn and nothing routes to it. It exists so a session a person
     opens there with an agent is a real, recorded turn (`Turn.ORIGIN_LOCAL`,
-    `apps/harness/local.py`): who ran it, on which machine, under which license.
+    `apps/harness/local_turns.py`): who ran it, on which machine, under which license.
     It belongs to the person, not to an agent or a workspace — one private runner serves
     every agent they use. canopy-web#1704. When the machine also runs the runner app,
     `runner` links the two, and that runner is marked `private` (canopy-web#1705).

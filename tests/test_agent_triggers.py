@@ -28,7 +28,8 @@ from django.utils import timezone
 from apps.agents import roles
 from apps.agents.models import Agent, AgentAdmin
 from apps.attention.models import Alert
-from apps.harness import alerts_trigger, caller_context, schedule_turns, services, triggers, turn_mode
+from apps.harness import caller_context, schedule_turns, services, triggers, turn_mode
+from apps.harness.alerts import trigger as alerts_trigger
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.access_helpers import allow, declare, editors_run

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listMyHostGrants, stopMyHostGrant, type HostGrant } from '@/api/hostGrants'
 import { listMyActAsRequests, stopActAsRequest, type ActAsRequest } from '@/api/actAs'
+import { Th } from '@/components/DataTable'
 
 function time(iso: string): string {
   const when = new Date(iso)
@@ -70,10 +71,10 @@ export function ActAsYouPanel() {
           <table className="mt-1 w-full text-xs">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 font-medium">Agent</th>
-                <th className="py-1 font-medium">Why</th>
-                <th className="py-1 font-medium">May</th>
-                <th className="py-1 font-medium">Until</th>
+                <Th>Agent</Th>
+                <Th>Why</Th>
+                <Th>May</Th>
+                <Th>Until</Th>
                 <th />
               </tr>
             </thead>
@@ -114,10 +115,10 @@ export function ActAsYouPanel() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">Site</th>
-              <th className="py-1 font-medium">Agent</th>
-              <th className="py-1 font-medium">May read</th>
-              <th className="py-1 font-medium">Until</th>
+              <Th>Site</Th>
+              <Th>Agent</Th>
+              <Th>May read</Th>
+              <Th>Until</Th>
               <th />
             </tr>
           </thead>

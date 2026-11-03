@@ -11,6 +11,7 @@ import { LoadFailed } from '@/components/vault/LoadFailed'
 import { RecoveryCodeBox } from '@/components/vault/RecoveryCodeBox'
 import { keyFlowError } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
+import { Th } from '@/components/DataTable'
 
 // Zero-knowledge for this agent (Canopy Vault Phase 2, canopy-web#1550). With
 // it on, values are encrypted in a member's browser (or by the canopy CLI on a
@@ -128,9 +129,9 @@ export function AgentZkSection({
           <table className="w-full text-[12px]" data-testid="zk-wraps">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 font-medium">Can open them</th>
-                <th className="py-1 font-medium" />
-                <th className="py-1 font-medium" />
+                <Th>Can open them</Th>
+                <Th />
+                <Th />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">

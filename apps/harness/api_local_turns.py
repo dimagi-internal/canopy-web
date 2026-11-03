@@ -7,7 +7,7 @@ a session there starts using an agent: it opens (or re-opens) that session's tur
 and hands back the caller envelope a runner would have received at claim.
 Finishing it and uploading its transcript use the ordinary turn routes
 (`/api/harness/turns/{id}/finish`, `/transcript`), which accept a direct turn's own
-initiator. Rules: `apps/harness/local.py`; canopy-web#1704.
+initiator. Rules: `apps/harness/local_turns.py`; canopy-web#1704.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from apps.api.route_gates import gate
 from apps.workspaces import links as wslinks
 from apps.workspaces import services as wsvc
 
-from . import local
+from . import local_turns
 from .models import PrivateRunner, Runner, Turn
 from .schemas import (
     LocalTurnIn,
@@ -57,7 +57,7 @@ def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
         if runner is None:
             raise HttpError(422, "no live runner of yours with that id")
     try:
-        ws, created = local.register_private_runner(request.user, name=payload.name, host=payload.host,
+        ws, created = local_turns.register_private_runner(request.user, name=payload.name, host=payload.host,
                                                     runner=runner)
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -118,7 +118,7 @@ def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
     # registration still takes no fleet work, and its token opens nothing.
     from apps.events import audit
 
-    ws = local.private_runner_of(request.user, private_runner_id)
+    ws = local_turns.private_runner_of(request.user, private_runner_id)
     if ws is None:
         raise HttpError(404, "private runner not found")
     with transaction.atomic():
@@ -127,7 +127,7 @@ def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
         ws.save(update_fields=["retired_at", "runner"])
         if box is not None and box.kind == Runner.COMPUTER:
             # The computer's own key holder goes with it: its keys and tokens stop.
-            local.retire_computer_runner(box)
+            local_turns.retire_computer_runner(box)
         elif box is not None and box.private:
             box.private = False
             box.save(update_fields=["private"])
@@ -139,7 +139,7 @@ def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
 def _local_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     turn = (Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL)
             .select_related("agent", "private_runner").first())
-    if turn is None or not local.may_report(turn, request):
+    if turn is None or not local_turns.may_report(turn, request):
         raise HttpError(404, "turn not found")
     return turn
 
@@ -172,7 +172,7 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
     # A non-member gets the same 404 as a missing agent (no existence leak).
     if agent is None or not wsvc.is_member(request.user, agent.workspace_id):
         raise HttpError(404, f"agent '{payload.agent}' not found")
-    ws = local.private_runner_of(request.user, payload.private_runner)
+    ws = local_turns.private_runner_of(request.user, payload.private_runner)
     if ws is None:
         raise HttpError(404, "private runner not found — register it with `canopy private-runner register`")
     rtok = getattr(request, "runner_token", None)
@@ -180,10 +180,10 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
         # A box's key opens only ITS OWN owner's sessions, and only while it is private.
         raise HttpError(403, "a runner signs in a direct session only as its own private runner")
     try:
-        turn, created = local.open_turn(
+        turn, created = local_turns.open_turn(
             request, agent, private_runner=ws, claude_session_id=payload.claude_session_id,
             cwd=payload.cwd, requested_mode=payload.turn_mode, acts_as=payload.acts_as)
-    except local.LocalRefusedError as exc:
+    except local_turns.LocalRefusedError as exc:
         raise HttpError(exc.status, str(exc)) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -200,5 +200,5 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
                          summary="Keep your direct turn's lease alive")
 @gate("self", kind="turn")  # the direct turn's own initiator
 def renew_local_turn(request: HttpRequest, turn_id: uuid.UUID):
-    turn = local.renew(_local_turn_or_404(request, turn_id))
+    turn = local_turns.renew(_local_turn_or_404(request, turn_id))
     return {"turn_id": turn.pk, "status": turn.status, "lease_expires_at": turn.lease_expires_at}

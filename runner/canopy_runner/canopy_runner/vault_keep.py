@@ -19,6 +19,7 @@ import time
 from typing import Callable, Optional
 
 from .device_key import canopy_cli
+from .platform_jobs import no_window
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ def once(run: Runner = subprocess.run, last: str = "") -> str:
     if cli is None:
         return last
     try:
-        out = run([cli, "vault", "zk", "keep"], capture_output=True, text=True, timeout=TIMEOUT)
+        out = run([cli, "vault", "zk", "keep"], capture_output=True, text=True, timeout=TIMEOUT,
+                  **no_window())
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("vault keeper: could not run (%s)", e)
         return last

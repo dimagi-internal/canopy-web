@@ -2,7 +2,7 @@
 (`/api/tasks/{key}/`), bulk edits, relations, Triage, labels, saved views, a
 workspace's task settings, and a project's milestones and updates.
 
-The lists are `fleet_api` (`GET /api/tasks/`, `/api/projects/`); an agent's
+The lists are `api_fleet` (`GET /api/tasks/`, `/api/projects/`); an agent's
 view of the same rows is `api_board`. Design:
 `docs/superpowers/specs/2026-10-24-workspace-tasks-and-projects-design.md`.
 """

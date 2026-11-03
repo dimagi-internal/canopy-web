@@ -55,7 +55,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   that needs attention carries a dot) and `Section`/`Setting`
   (`settingsLayout.tsx`). Each tab is a route (`…/:tab`), so a deep link names a
   place and a tab loads only its own data. Every other surface LINKS to that page
-  (`runnerHref`, `vaultHref` in `lib/scopedLinks.ts`; `alerts_runner_credential.runner_path`
+  (`runnerHref`, `vaultHref` in `lib/scopedLinks.ts`; `alerts.runner_credential.runner_path`
   server-side) or embeds one of its read-only pieces (the fleet map shows
   `RunnerFacts`) — it never rebuilds the object's controls. An object page in
   the agent rail (Agent settings) renders `ObjectTabs` inside the rail's section.

@@ -295,7 +295,7 @@ def _withhold_what_it_kept(session: Session) -> None:
     """A conversation that just became sensitive, held to what a sensitive one keeps
     (docs/architecture/tenancy.md § Sensitive conversations) for everything it kept
     before: an ended turn's prompt wiped and its note withheld (a live turn keeps
-    its prompt until it ends, `closing.close_turn`); every stored event reduced to
+    its prompt until it ends, `turn_close.close_turn`); every stored event reduced to
     its metadata and a tool's result to its call; no raw transcript; the binding's
     tail, summary and pending dialog's words gone. Its Message rows are sealed
     beside this (`conversation_keys.seal_existing`)."""

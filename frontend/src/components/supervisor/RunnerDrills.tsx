@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { startDrill, listDrills, type RunnerDrillOut } from '@/api/drills'
 import { relativeAge } from '@/lib/relativeAge'
+import { Th } from '@/components/DataTable'
 
 // Per-agent readiness grid for one runner — the drill-down behind the
 // RunnerStatus badge. Loads the runner's drill outcomes, offers a "Drill
@@ -154,11 +155,11 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
           <table className="w-full text-[12px]">
             <thead>
               <tr className="border-b border-border bg-muted text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-2 py-1.5 font-medium">Agent</th>
-                <th className="px-2 py-1.5 font-medium">Outcome</th>
-                <th className="px-2 py-1.5 font-medium">Age</th>
-                <th className="px-2 py-1.5 font-medium">Summary</th>
-                <th className="px-2 py-1.5 font-medium">Turn</th>
+                <Th density="tight">Agent</Th>
+                <Th density="tight">Outcome</Th>
+                <Th density="tight">Age</Th>
+                <Th density="tight">Summary</Th>
+                <Th density="tight">Turn</Th>
               </tr>
             </thead>
             <tbody>

@@ -42,7 +42,7 @@ session_menu_changed = Signal()
 # drops any pending "your chat is done" push).
 session_turn_enqueued = Signal()
 
-# Sent with: sender=Turn, turn=<Turn> when a chat turn closes (`closing.close_turn`
+# Sent with: sender=Turn, turn=<Turn> when a chat turn closes (`turn_close.close_turn`
 # with its chat hooks). apps/push arms "your chat is done".
 session_turn_finished = Signal()
 

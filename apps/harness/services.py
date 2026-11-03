@@ -74,7 +74,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
         fields = ["status", "finished_at", "result_note"]
         if sensitivity.is_sensitive(turn):
-            # Ended before it began, so `closing.close_turn` — where a sensitive
+            # Ended before it began, so `turn_close.close_turn` — where a sensitive
             # turn's prompt is otherwise wiped — never sees it: metadata only here
             # too. The note is canopy's own refusal, not anything the turn read.
             turn.prompt = ""
@@ -903,7 +903,7 @@ def finish_turn(
         drill_summary = result_note or "drill turn failed"
     else:
         drill_summary = None
-    from .closing import close_turn
+    from .turn_close import close_turn
 
     # close_turn also tells the debugger about a turn that really ENDED failed —
     # one requeued sessionless, or a rider sent back to wait, returned above.
@@ -922,8 +922,8 @@ def finish_turn(
 
 
 def _finish_riders(turn: Turn, status: str | None = None) -> None:
-    """The follow-ups delivered into `turn` end when it does (`closing.close_riders`)."""
-    from .closing import close_riders
+    """The follow-ups delivered into `turn` end when it does (`turn_close.close_riders`)."""
+    from .turn_close import close_riders
 
     close_riders(turn, status)
 
@@ -960,7 +960,7 @@ def cancel_turn(turn: Turn, *, by: str = "") -> Turn | None:
         # force-finish the now-claimed turn as CANCELLED out from under the
         # runner that just picked it up. Guard the UPDATE itself on
         # status=QUEUED so only a turn still queued at write-time is affected.
-        from .closing import close_turn
+        from .turn_close import close_turn
 
         # A queued drill cancelled this way must not strand OUTCOME_PENDING.
         if close_turn(turn, Turn.CANCELLED, "cancelled", from_states=[Turn.QUEUED],

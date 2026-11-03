@@ -7,7 +7,7 @@ How a person who is not the agent's owner uses an agent directly, what a caller'
 ## Direct use of an agent
 
 A person may run an agent in their **own** Claude Code, with the agent's plugin and
-skills, and canopy keeps the record (`apps/harness/local.py`). The word for it is
+skills, and canopy keeps the record (`apps/harness/local_turns.py`). The word for it is
 **direct** (against a session a runner box claims). The stored names stay `local`:
 `Turn.origin = local`, `LocalTurnIn`, `/api/harness/local-turns/`; prose and screens say
 direct (a direct turn).

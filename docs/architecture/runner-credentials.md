@@ -92,7 +92,7 @@ back to the stored PAT; phase 2 removes the PAT).
   recorded as a `TurnAgentToken`; logged as an `AgentCredentialRead`
   (`turn-agent-token`, `via=turn`) and an `agent.canopy_token.issued` event.
 - Revoked when the turn stops executing on that runner: `finish_turn` (every exit,
-  requeues included), every terminal transition (`harness.closing.close_turn`: the
+  requeues included), every terminal transition (`harness.turn_close.close_turn`: the
   lease sweep, a stop, an admission refusal, a moved turn), and `revoke_stale` on
   every queue-sweep tick.
 - **Session-scoped on a laptop.** An emdash turn finishes as soon as its Claude session
@@ -314,7 +314,7 @@ each also mails and Web-Pushes the runner's approvers (owner + runner admins)
 once per (runner, alert) per UTC day, linking to the runner on `/supervisor`
 (`apps/harness/credential_notify.py`). The exception: a signed-out credential on
 a box whose health reports a signed-out `claude.probe.<slot>` check is the
-`runner_credential` alert instead (`apps/harness/alerts_runner_credential.py`; so is
+`runner_credential` alert instead (`apps/harness/alerts/runner_credential.py`; so is
 an out-of-credit one, "… is out of credit") —
 titled with the token's name or the login's account (never the slot), notified
 once to the owner and runner admins, resolved when the probe passes — and its

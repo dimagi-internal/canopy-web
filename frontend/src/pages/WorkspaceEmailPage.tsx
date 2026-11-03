@@ -21,6 +21,7 @@ import { listMembers, type MemberOut } from '@/api/workspaces'
 import { scopedPath } from '@/lib/scopedLinks'
 import { InboundMailLog } from '@/pages/InboundMailLog'
 import { errorText } from '../api/problem'
+import { Th } from '@/components/DataTable'
 
 // A workspace's own email domain run through canopy (apps/mail, SES). Any member
 // can read it; the server answers `can_manage` for the list and per domain, so this
@@ -154,12 +155,12 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         <table className="mt-1 w-full text-[12px]" data-testid="mail-records">
           <thead className="text-left text-muted-foreground">
             <tr className="border-b border-border">
-              <th className="py-1 pr-3 font-medium">Purpose</th>
-              <th className="py-1 pr-3 font-medium">Type</th>
-              <th className="py-1 pr-3 font-medium">Name</th>
-              <th className="py-1 pr-3 font-medium">Value</th>
-              <th className="py-1 pr-3 font-medium">Priority</th>
-              <th className="py-1 font-medium">Status</th>
+              <Th density="compact-gap">Purpose</Th>
+              <Th density="compact-gap">Type</Th>
+              <Th density="compact-gap">Name</Th>
+              <Th density="compact-gap">Value</Th>
+              <Th density="compact-gap">Priority</Th>
+              <Th>Status</Th>
             </tr>
           </thead>
           <tbody>
@@ -276,12 +277,12 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
           <table className="mt-1 w-full text-[12px]" data-testid="mail-routes">
             <thead className="text-left text-muted-foreground">
               <tr className="border-b border-border">
-                <th className="py-1 pr-3 font-medium">Address</th>
-                <th className="py-1 pr-3 font-medium">Goes to</th>
-                <th className="py-1 pr-3 font-medium">Enabled</th>
-                <th className="py-1 pr-3 font-medium" title="Also keep each forwarded message in the member's canopy inbox, readable only by them">
+                <Th density="compact-gap">Address</Th>
+                <Th density="compact-gap">Goes to</Th>
+                <Th density="compact-gap">Enabled</Th>
+                <Th density="compact-gap" title="Also keep each forwarded message in the member's canopy inbox, readable only by them">
                   Keep a copy in canopy
-                </th>
+                </Th>
                 {manage && <th className="py-1" />}
               </tr>
             </thead>

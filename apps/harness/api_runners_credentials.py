@@ -20,7 +20,7 @@ from apps.passkeys import stepup
 from . import (
     credential_sets,
     routing,
-    runner_credential_resolve,
+    runner_vault_resolve,
     sensitivity,
 )
 from . import runners as harness_runners
@@ -214,8 +214,8 @@ def resolve_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> Run
     `runner_only` for a person's token or session, 401 `device_proof_required` without
     a proof. Every value handed out is logged."""
     runner = runner_or_404(request, runner_id)
-    out = runner_credential_resolve.resolve(request, runner)
-    if isinstance(out, runner_credential_resolve.Refusal):
+    out = runner_vault_resolve.resolve(request, runner)
+    if isinstance(out, runner_vault_resolve.Refusal):
         raise ProblemError(out.status, "Runner credentials", detail=out.detail, members={"error": out.code})
     return RunnerCredentialResolveOut(vaults=out)
 
@@ -231,7 +231,7 @@ def put_runner_vault_values(request: HttpRequest, runner_id: uuid.UUID,
     filled drops its stored copy here. Only the box's own runner token with a device
     proof of a key on this runner (as `…/credential/resolve`)."""
     runner = runner_or_404(request, runner_id)
-    refused = runner_credential_resolve.box_refusal(request, runner)
+    refused = runner_vault_resolve.box_refusal(request, runner)
     if refused is not None:
         raise ProblemError(refused.status, "Runner credentials", detail=refused.detail,
                            members={"error": refused.code})

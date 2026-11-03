@@ -6,6 +6,7 @@ import { copyText } from 'canopy-ui/lib'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 import { relativeAge } from '@/lib/relativeAge'
+import { Th } from '@/components/DataTable'
 
 /**
  * List / mint / revoke Personal Access Tokens.
@@ -157,10 +158,10 @@ export function TokensPanel() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">Label</th>
-              <th className="py-1 font-medium">Created</th>
-              <th className="py-1 font-medium">Last used</th>
-              <th className="py-1 font-medium">Status</th>
+              <Th>Label</Th>
+              <Th>Created</Th>
+              <Th>Last used</Th>
+              <Th>Status</Th>
               <th />
             </tr>
           </thead>

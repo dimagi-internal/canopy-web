@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { disconnectApp, listConnectedApps, type ConnectedApps } from '@/api/tokens'
 import { CopyBlock } from '@/components/CopyBlock'
 import { copyText } from 'canopy-ui/lib'
+import { Th } from '@/components/DataTable'
 
 /**
  * Apps connected to canopy's MCP server by signing in, and how to connect one.
@@ -64,9 +65,9 @@ export function ConnectedAppsPanel() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">App</th>
-              <th className="py-1 font-medium">Connected</th>
-              <th className="py-1 font-medium">Last used</th>
+              <Th>App</Th>
+              <Th>Connected</Th>
+              <Th>Last used</Th>
               <th />
             </tr>
           </thead>

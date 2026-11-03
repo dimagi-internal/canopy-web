@@ -28,9 +28,9 @@ from apps.canopy_sessions import conversation_keys, private_attachments
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import Attachment, Message, SessionKey, SessionKeyWrap, SessionParticipant
 from apps.common import ecdh_es
-from apps.harness.closing import close_turn
 from apps.harness.models import Runner, Turn, TurnEvent
 from apps.harness.sweeps import expire_unrun_sensitive_turns
+from apps.harness.turn_close import close_turn
 from apps.workspaces.models import WorkspaceMembership
 from tests.access_helpers import allow, declare, editors_run
 from tests.fixtures.sensitive import minted, unwrap, vault_key, world
