@@ -5,31 +5,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { ApiError } from '@/api/problem'
 
 const { getAgentCredentialStatus, setAgentCredentials,
-        deleteAgentCredential, startGoogleMint, revealZkValue, AgentApiError } = vi.hoisted(() => {
-  class AgentApiError extends Error {
-    status: number
-    detail: string
-    constructor(message: string, status: number, detail: string) {
-      super(message)
-      this.status = status
-      this.detail = detail
-    }
-  }
+        deleteAgentCredential, startGoogleMint, revealZkValue } = vi.hoisted(() => {
   return {
     getAgentCredentialStatus: vi.fn(),
     setAgentCredentials: vi.fn(),
     deleteAgentCredential: vi.fn(),
     startGoogleMint: vi.fn(),
     revealZkValue: vi.fn(),
-    AgentApiError,
   }
 })
 
 vi.mock('@/api/agents', () => ({
   getAgentCredentialStatus, setAgentCredentials,
-  deleteAgentCredential, startGoogleMint, AgentApiError, getGoogleMint: vi.fn(),
+  deleteAgentCredential, startGoogleMint, getGoogleMint: vi.fn(),
   // The GitHub section has its own tests; here it only has to not throw.
   getAgentGitHub: () => new Promise(() => {}),
 }))
@@ -150,7 +141,9 @@ describe('Security — its secrets', () => {
       { name: 'nova-api-key', declared: true, set: true, source: 'canopy', updated_at: null },
     ])
     revealZkValue.mockRejectedValue(
-      new AgentApiError('getZkState failed: {...}', 403, 'Confirm it’s you with your passkey, then try again.'),
+      new ApiError(403, 'Confirm it’s you with your passkey, then try again.', {
+        detail: 'Confirm it’s you with your passkey, then try again.',
+      }),
     )
     inRouter(<AgentSecretsPanel agent={AGENT} />)
     fireEvent.click(await screen.findByTestId('reveal-nova-api-key'))

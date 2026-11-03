@@ -14,7 +14,6 @@ import { runnerHref } from '@/lib/scopedLinks'
 import {
   getAgentTopology,
   getRunnerTopology,
-  WorkspaceApiError,
   type AgentEdgeOut,
   type TopologyRunnerOut,
 } from '@/api/workspaces'
@@ -36,6 +35,7 @@ import {
   type MapWorkspace,
 } from './topologyMap'
 import { scopedPath } from '../../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 // THE FLEET MAP: workspaces as nested boxes, each holding a lane per owner with
 // that owner's runners and agents, and — for the selected agent — arrows to
@@ -114,7 +114,7 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
       })
       .catch((e: unknown) => {
         if (off) return
-        if (e instanceof WorkspaceApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
         else setError(e instanceof Error ? e.message : 'Could not load the fleet map')
       })
     return () => { off = true }

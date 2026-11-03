@@ -52,6 +52,7 @@ import {
   type Layout,
   type TabId,
 } from './viewState'
+import { errorText } from '../../api/problem'
 
 const SELECT = 'h-7 rounded border border-input bg-input px-1.5 text-[12px] text-foreground'
 const COUNT_KEYS = ['agent', 'project', 'status', 'waiting', 'assignee', 'created_by', 'label', 'priority', 'category', 'kind'] as const
@@ -73,10 +74,6 @@ export interface TasksViewProps {
   storageKey?: string
   /** After any change this list makes to a task (a rail badge re-reads). */
   onChanged?: () => void
-}
-
-function message(e: unknown, fallback: string): string {
-  return e instanceof Error ? e.message : fallback
 }
 
 function readStored(key: string | undefined): string | null {
@@ -209,7 +206,7 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
       list
         .patch(key, body, optimistic)
         .then(changed)
-        .catch((e: unknown) => setError(`${key}: ${message(e, 'not changed')}`))
+        .catch((e: unknown) => setError(`${key}: ${errorText(e, 'not changed')}`))
     },
     [list, changed],
   )
@@ -286,7 +283,7 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
         .patch(key, body, { status })
         .then(changed)
         .catch((e: unknown) => {
-          setError(`${key}: ${message(e, 'not moved')}`)
+          setError(`${key}: ${errorText(e, 'not moved')}`)
           list.reload()
         })
     },

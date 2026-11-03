@@ -10,7 +10,7 @@ export type PushConfigOut = components['schemas']['PushConfigOut']
 export type MailboxOut = components['schemas']['MailboxOut']
 export type WatchState = MailboxOut['watch_state']
 
-// Mirrors WorkspaceApiError: callers need the status (403 for a non-owner write,
+// Mirrors ApiError: callers need the status (403 for a non-owner write,
 // 404 for a non-member, 409 for an address already registered) to branch, not
 // just a message.
 export { ApiError as InboundApiError }

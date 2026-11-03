@@ -4,23 +4,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import type { BetaRequestOut } from '@/api/betaRequests'
+import { ApiError } from '@/api/problem'
 
 const getBetaRequest = vi.fn<(id: number) => Promise<BetaRequestOut>>()
 const inviteBetaRequest = vi.fn<(id: number, ws: string, role: string) => Promise<BetaRequestOut>>()
 const declineBetaRequest = vi.fn<(id: number) => Promise<BetaRequestOut>>()
 
-class FakeWorkspaceApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
 vi.mock('@/api/betaRequests', () => ({
   getBetaRequest, inviteBetaRequest, declineBetaRequest, listBetaRequests: vi.fn(),
 }))
-vi.mock('@/api/workspaces', () => ({ WorkspaceApiError: FakeWorkspaceApiError }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({
   useWorkspace: () => ({
     workspaces: [
@@ -78,7 +70,7 @@ describe('BetaRequestPage', () => {
   })
 
   it('tells a non-reviewer whose requests these are', async () => {
-    getBetaRequest.mockRejectedValue(new FakeWorkspaceApiError(404, 'not found'))
+    getBetaRequest.mockRejectedValue(new ApiError(404, 'not found'))
     renderPage()
     expect(await screen.findByText(/answered by the person they are emailed to/)).toBeTruthy()
   })

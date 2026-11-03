@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { copyText } from 'canopy-ui/lib'
 import { createSession, sendMessage } from '@/api/chat'
 import {
   addHelper,
@@ -366,7 +367,7 @@ function OwnClaude({ workspace, app, open }: { workspace: string; app: Installed
     `What I want: `,
   ].join('\n')
   async function copy(what: string, value: string) {
-    try { await navigator.clipboard.writeText(value); setCopied(what) } catch { setCopied('') }
+    setCopied((await copyText(value)) ? what : '')
   }
   return (
     <details className="mt-4 rounded-md border border-border p-3 text-sm" open={open}>

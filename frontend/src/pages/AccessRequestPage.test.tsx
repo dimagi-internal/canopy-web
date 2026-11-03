@@ -11,21 +11,12 @@ const denyAccessRequest = vi.fn<(slug: string, id: number, reason: string) => Pr
 const setMemberRole = vi.fn()
 const removeMember = vi.fn()
 
-class FakeWorkspaceApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
 vi.mock('@/api/workspaces', () => ({
   getAccessRequest,
   approveAccessRequest,
   denyAccessRequest,
   setMemberRole,
   removeMember,
-  WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
 let mockRole = 'owner'

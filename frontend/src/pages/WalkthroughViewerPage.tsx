@@ -127,7 +127,7 @@ export function WalkthroughViewerPage() {
             </p>
             <a
               href={loginHref(currentNext())}
-              className="inline-block w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary/90"
+              className="inline-block w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
             >
               Sign in with Google
             </a>

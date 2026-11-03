@@ -8,13 +8,13 @@ import {
   getAccessRequest,
   removeMember,
   setMemberRole,
-  WorkspaceApiError,
   type AccessRequestOut,
   type ApprovableRole,
   type MemberRole,
 } from '@/api/workspaces'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { approvableRoles, decisionText, emailDomain, notifyProblem, requesterLabel } from './accessRequests'
+import { ApiError } from '@/api/problem'
 
 /**
  * One access request — the page the admins' email links to
@@ -55,7 +55,7 @@ export function AccessRequestPage(): JSX.Element | null {
       .catch((e: unknown) => {
         if (cancelled) return
         setLoadError(
-          e instanceof WorkspaceApiError && e.status === 404
+          e instanceof ApiError && e.status === 404
             ? 'No such access request in this workspace.'
             : e instanceof Error ? e.message : 'Failed to load the request',
         )

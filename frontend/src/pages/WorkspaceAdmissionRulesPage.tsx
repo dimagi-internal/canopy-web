@@ -8,12 +8,12 @@ import {
   getAdmissionRules,
   setAdmissionSenderNotices,
   updateAdmissionRule,
-  WorkspaceApiError,
   type AdmissionRuleIn,
   type AdmissionRuleOut,
   type AdmissionRulesOut,
 } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
+import { ApiError } from '@/api/problem'
 
 // Which turns this workspace refuses before any session starts (apps/admission,
 // canopy-web#1400). Any member reads the rules; admins change them, and the
@@ -58,7 +58,7 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
     getAdmissionRules(slug)
       .then(setPolicy)
       .catch((e: unknown) => setError(
-        e instanceof WorkspaceApiError || e instanceof Error ? e.message : 'Could not load admission rules'))
+        e instanceof ApiError || e instanceof Error ? e.message : 'Could not load admission rules'))
   }, [slug])
 
   useEffect(() => {

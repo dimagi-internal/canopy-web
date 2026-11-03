@@ -27,10 +27,6 @@ export type SendResult = components["schemas"]["SendOut"];
 export type TurnPlacementResult = components["schemas"]["TurnOutMinimal"];
 export type SlashCommand = components["schemas"]["SlashCommandOut"];
 
-/** The shared `ApiError` (./problem) under its old name; callers branch on
- *  `.status` and `.code` (the problem type's tail, e.g. "not-found"). */
-export { ApiError as ChatApiError };
-
 /** A key pair for a chat this browser starts (`offerForNewChat`), or null — and the chat
  *  starts with no key — when the person has no vault key (404). Starting a chat never
  *  asks to unlock the vault key: the key is wrapped to its public half, pinned here, or
@@ -326,7 +322,7 @@ export type TransferResult = components["schemas"]["TransferOut"];
  * opened a TransferRequest instead and `approvers` lists who can say yes;
  * nothing has moved yet.
  *
- * Throws `ChatApiError` on refusal: 409 while a turn is executing on the
+ * Throws `ApiError` on refusal: 409 while a turn is executing on the
  * source (stop the session and retry) or while another request for it is
  * already waiting, 422 for a target the session can't move onto (already
  * there, or archived), 404 for an unknown runner or an unbound session.
@@ -343,7 +339,7 @@ export function transferSession(id: string, runner: string, brief = ""): Promise
  * Start a new session from this one's conversation up to the end of the turn
  * `turnIndex` belongs to, on the same runner and in the same worktree.
  *
- * Throws `ChatApiError`: 422 when the session cannot be forked (its runner is not
+ * Throws `ApiError`: 422 when the session cannot be forked (its runner is not
  * on the Claude CLI runtime, or the message predates a transfer), 409 when the cut
  * would fall inside a turn that is still running, 404 for an unknown message.
  */

@@ -23,9 +23,9 @@ import {
   type SiteNeeds,
   type AgentFit,
 } from '@/api/connectedApps'
-import { WorkspaceApiError } from '@/api/workspaces'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { toneClasses } from 'canopy-ui/lib'
+import { ApiError } from '@/api/problem'
 
 /**
  * Connect a site to canopy — the page that replaced the Django admin.
@@ -853,7 +853,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
       setLoadError(null)
     } catch (e) {
       setLoadError(
-        e instanceof WorkspaceApiError && e.status === 403
+        e instanceof ApiError && e.status === 403
           ? 'Only a workspace admin or owner can see connected sites.'
           : e instanceof Error
             ? e.message

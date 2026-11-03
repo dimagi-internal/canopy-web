@@ -20,6 +20,7 @@ import {
 import { listMembers, type MemberOut } from '@/api/workspaces'
 import { scopedPath } from '@/lib/scopedLinks'
 import { InboundMailLog } from '@/pages/InboundMailLog'
+import { errorText } from '../api/problem'
 
 // A workspace's own email domain run through canopy (apps/mail, SES). Any member
 // can read it; the server answers `can_manage` for the list and per domain, so this
@@ -46,10 +47,6 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Pending DNS', cls: 'text-warning' },
   verified: { label: 'Verified', cls: 'text-success' },
   suspended: { label: 'Suspended', cls: 'text-destructive' },
-}
-
-function message(e: unknown, fallback: string): string {
-  return e instanceof Error ? e.message : fallback
 }
 
 function manyFound(found: readonly string[]): boolean {
@@ -91,7 +88,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   async function run(fn: () => Promise<void>, fallback: string) {
     setBusy(true)
     setError(null)
-    try { await fn() } catch (e: unknown) { setError(message(e, fallback)) } finally { setBusy(false) }
+    try { await fn() } catch (e: unknown) { setError(errorText(e, fallback)) } finally { setBusy(false) }
   }
 
   const reload = async () => onChange((await listMailDomains(workspace)).items.find((d) => d.id === domain.id) ?? domain)
@@ -493,7 +490,7 @@ export function WorkspaceEmailPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    listMailDomains(slug).then(setList).catch((e: unknown) => setError(message(e, 'Could not load email')))
+    listMailDomains(slug).then(setList).catch((e: unknown) => setError(errorText(e, 'Could not load email')))
   }, [slug])
 
   // Agents and members fill the route pickers; a failure is said, not swallowed.
@@ -503,9 +500,9 @@ export function WorkspaceEmailPage(): JSX.Element {
     load()
     setLookupError(null)
     listAgents().then((p) => setAgents(p.items.filter((a) => a.workspace === slug)))
-      .catch((e: unknown) => addLookupError(`Could not load agents: ${message(e, 'unknown error')}`))
+      .catch((e: unknown) => addLookupError(`Could not load agents: ${errorText(e, 'unknown error')}`))
     listMembers(slug).then(setMembers)
-      .catch((e: unknown) => addLookupError(`Could not load members: ${message(e, 'unknown error')}`))
+      .catch((e: unknown) => addLookupError(`Could not load members: ${errorText(e, 'unknown error')}`))
   }, [slug, load])
 
   async function add() {
@@ -516,7 +513,7 @@ export function WorkspaceEmailPage(): JSX.Element {
       setName('')
       load()
     } catch (e: unknown) {
-      setError(message(e, 'Could not add the domain'))
+      setError(errorText(e, 'Could not add the domain'))
     } finally {
       setBusy(false)
     }

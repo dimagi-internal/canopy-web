@@ -13,7 +13,6 @@ import {
   removeMember,
   revokeInvite,
   setMemberRole,
-  WorkspaceApiError,
   type InviteOut,
   type InviteRole,
   type MemberOut,
@@ -25,6 +24,7 @@ import { WorkspaceAgentDefaults } from '@/components/agents/WorkspaceAgentDefaul
 import { scopedPath } from '@/lib/scopedLinks'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
+import { ApiError } from '@/api/problem'
 
 
 // The absolute, copy-pasteable accept link — the same one the email carries,
@@ -98,7 +98,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
       })
       .catch((e: unknown) => {
         if (cancelled) return
-        if (e instanceof WorkspaceApiError && e.status === 404) {
+        if (e instanceof ApiError && e.status === 404) {
           // Non-member — the API 404s rather than leaking existence. Bounce
           // to the workspace home instead of showing a broken members page.
           navigate('/', { replace: true })

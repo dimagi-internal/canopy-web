@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
+import { usePolled } from '@/hooks/usePolled'
 import { runnerHref } from '@/lib/scopedLinks'
 import {
   approveRunnerInvitation,
@@ -60,13 +61,13 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
   // Approved but not yet paired: the box asks every 15s, so keep re-reading
   // until it has (`consumed`) or the invitation runs out.
   const waitingForBox = inv?.status === 'approved'
-  useEffect(() => {
-    if (!invitationId || !waitingForBox) return
-    const timer = setInterval(() => {
-      getRunnerInvitation(invitationId).then(setInv).catch(() => {})
-    }, PAIR_POLL_MS)
-    return () => clearInterval(timer)
-  }, [invitationId, waitingForBox])
+  usePolled(
+    async (signal) => {
+      const next = await getRunnerInvitation(invitationId as string).catch(() => null)
+      if (next && !signal.aborted) setInv(next)
+    },
+    { ms: PAIR_POLL_MS, deps: [invitationId], enabled: Boolean(invitationId) && waitingForBox, immediate: false },
+  )
 
   if (!invitationId) return null
   if (loadError) {

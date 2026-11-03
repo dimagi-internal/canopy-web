@@ -4,6 +4,7 @@ import { Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, Tab
 
 import { RoleControl, RoleSelect, ROLE_TEXT_CLASS } from './RoleSelect'
 import type { RoleOption } from './roles'
+import { errorText } from '../../api/problem'
 
 // The shared "who has access" table: person · role · [extra columns] · remove.
 // Every surface that lists people with a role renders through this, so the role
@@ -40,10 +41,6 @@ export interface PersonRow {
   /** Cells for the table's `extraColumns`, in order. */
   extra?: ReactNode[]
   testId?: string
-}
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback
 }
 
 export function PeopleTable({

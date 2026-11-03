@@ -1,24 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listNarratives, type DddNarrativeListItem } from '@/api/ddd'
+import { fmtDate } from '@/lib/format'
 
 /** "nutrition-demo" -> "Nutrition Demo". The slug is the stable identity; this
  *  is just a friendlier headline than the raw kebab-case. */
 function humanize(slug: string): string {
   return slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
-
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return ''
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  } catch {
-    return iso
-  }
 }
 
 function NarrativeCard({ n }: { n: DddNarrativeListItem }) {

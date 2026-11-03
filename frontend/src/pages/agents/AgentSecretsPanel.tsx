@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
 import {
-  AgentApiError,
   deleteAgentCredential,
   getAgentCredentialStatus,
   setAgentCredentials,
@@ -27,6 +26,7 @@ import { GOG_TOKEN_REF } from '@/pages/agents/googleMint'
 import { revealZkValue, setZkValue, unlockVaultKey } from '@/vault/operations'
 import { isPasskeyRefusal, PASSKEY_NOT_COMPLETED, PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
+import { ApiError } from '@/api/problem'
 
 // The agent's vault, drawn by the shared `VaultView` (the same frame a workspace's
 // vault uses): a summary line, then Secrets (one table you change in place,
@@ -43,7 +43,7 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 /** The server's own reason (`detail`) when there is one, not the wrapper text. */
 function reason(e: unknown, fallback: string): string {
-  if (e instanceof AgentApiError && e.detail) return e.detail
+  if (e instanceof ApiError && e.detail) return e.detail
   if (e instanceof PrfUnsupportedError) return PRF_UNSUPPORTED
   if (isPasskeyRefusal(e)) return PASSKEY_NOT_COMPLETED
   return e instanceof Error ? e.message : fallback
