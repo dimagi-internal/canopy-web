@@ -84,7 +84,8 @@ def machine_write(world, conn, name, lease_id, *, to=None, rotated=False, expect
     rs = rcpt.recipients(conn) if to is None else to
     pubs = {(k, t): zk.public_key(j) for k, t, j in rs}
     plain = json.dumps({"v": 1, "access_token": "00D!fresh", "expires_at": 1793501800,
-                        "instance_url": conn.instance_url, "account_id": conn.account_id, "scope": "api"})
+                        "instance_url": conn.instance_url, "account_id": conn.account_id, "scope": "api",
+                        "owner_key": conn.owner_key})
     access = zk_seal.seal_to(plain, agent_id=conn.binding, name="access", kv=0, recipients=rs)
     body = {"lease_id": lease_id, "access_sealed": access,
             "access_sig": conn_ref.writer_sig(conn.binding, "access", vault_engine.value_digest(conn.access_sealed),

@@ -649,12 +649,13 @@ def refresh_plaintext(app: ConnectionApp, token: providers.TokenResponse, *, acc
                       owner_key: str, scopes: str, login_host: str, instance_url: str) -> str:
     """The `refresh` plaintext (contract §0.2), compact JSON. Never the client secret:
     a machine gets that from the app with the material. `login_host` and `instance_url`
-    are the provider's `sealed_hosts`."""
+    are the provider's `sealed_hosts`. `statement_floor` is 0: no statement exists yet,
+    and the owner's browser raises it to the statement's version at each share."""
     return json.dumps({
         "v": 1, "provider": app.provider, "refresh_token": token.refresh_token, "client_id": app.client_id,
         "login_host": login_host,
         "instance_url": instance_url, "account_id": account_id, "owner_key": owner_key,
-        "issued_at": int(time.time()), "scopes": scopes,
+        "issued_at": int(time.time()), "scopes": scopes, "statement_floor": 0,
     }, separators=(",", ":"))
 
 

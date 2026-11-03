@@ -85,8 +85,8 @@ Recipients that stop qualifying are pruned from the envelope without decrypting 
 
 **4.3 What a runner trusts: the owner's signed grant, never the server's list.**
 
-- **The grant statement.** The owner signs it in the browser with their vault key (ECDSA P-256, as endorsements are). It covers `{connection, account_id, agents: [agent ids], my_computers: [device ECDH thumbprints], version}`. For an agent-owned connection, the admin who connected it signs it. It is made on the confirmation screen and re-signed on every lend, withdrawal or "use on my computers" change, one passkey touch each. Its signer's key thumbprint is sealed inside the envelope (`owner_key`), so later runners check the signature against a key the server cannot change after connect time.
-- **Who a runner will seal to:** a device listed in `my_computers`, or one carrying a valid endorsement of its exact ECDH key, signed by a person the box trusts, naming an agent in the statement. Member keys: only the owner's. canopy-web's recipient list only narrows this set. A request to seal to anything else is refused as `zk_unendorsed_recipient`.
+- **The grant statement.** The owner signs it in the browser with their vault key (ECDSA P-256, as endorsements are). It covers `{connection, account_id, agents: [agent ids], endorsers: [person key thumbprints], my_computers: [device ECDH thumbprints], version}`. For an agent-owned connection, the admin who connected it signs it. It is made on the confirmation screen and re-signed on every lend, withdrawal or "use on my computers" change, one passkey touch each. Its signer's key thumbprint is sealed inside the envelope (`owner_key`), so later runners check the signature against a key the server cannot change after connect time.
+- **Who a runner will seal to:** a device listed in `my_computers`, or one carrying a valid endorsement of its exact ECDH key, signed by the owner or a person the statement lists in `endorsers`, naming an agent in the statement. Member keys: only the owner's. canopy-web's recipient list only narrows this set. A request to seal to anything else is refused as `zk_unendorsed_recipient`.
 - **Envelopes are authenticated.** Every envelope a runner or the owner's browser writes carries, for each recipient, a MAC keyed by ECDH between the writer's key and that recipient's key, together with `expect`. A reader checks that the writer is a device the statement allows, or the owner. Anyone can build a `zks1` from public keys, so an unauthenticated envelope is refused by every machine. The one exception is the owner's own browser, which accepts canopy-web's first seal while the connection is `unshared`. This is what stops a forged access token pointing an agent at a stranger's account.
 
 A write-back must also keep every current, still-eligible recipient, as `accounts.reseal` requires.
@@ -143,6 +143,14 @@ The `connections.*` vocabulary stays. The new verbs are `shared` (the statement 
 5. Docs: vault.md (replace "OAuth connections are server-held"), api-surface.md, deploy.md.
 
 Releases go together: the CLI first (cloud boxes pick it up), then canopy-web with the migration.
+
+## Accepted trust at the start
+
+The guarantee holds from a connection's first honest seal onward. These limits remain:
+
+- **At the moment of connecting.** A server compromised at that moment can substitute that one connection.
+- **A fresh box's first read.** A box with no pin for a connection can be handed a self-consistent forged set. That gives it a substitute token and never the real one.
+- **An old endorsement.** A device with an old endorsement by the owner or a listed endorser, for an agent still in the statement, can be re-listed by the server. Removing such a device from the statement or revoking its device key therefore does not retire it. Retiring a device whose key may be compromised means ending the grant at the provider by disconnecting and connecting again.
 
 ## Downsides accepted
 

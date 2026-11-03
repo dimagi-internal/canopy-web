@@ -252,8 +252,17 @@ def test_envelope_vector_opens_to_the_refresh_plaintext_for_every_recipient():
         assert opened == env["plaintext"]
     pt = json.loads(env["plaintext"])
     assert set(pt) == {"v", "provider", "refresh_token", "client_id", "login_host", "instance_url",
-                       "account_id", "owner_key", "issued_at", "scopes"}
+                       "account_id", "owner_key", "issued_at", "scopes", "statement_floor"}
     assert pt["account_id"] == GOOD["account_id"]
+    # The share that wrote this envelope wrote its own statement's version.
+    assert pt["statement_floor"] == GOOD["version"]
+
+
+def test_the_access_plaintext_names_the_same_owner_key_as_the_refresh_one():
+    access, refresh = json.loads(V["envelope"]["access_plaintext"]), json.loads(V["envelope"]["plaintext"])
+    assert set(access) == {"v", "access_token", "expires_at", "instance_url", "account_id", "scope", "owner_key"}
+    assert access["owner_key"] == refresh["owner_key"] == V["statement"]["signer_jkt"]
+    assert access["account_id"] == refresh["account_id"]
 
 
 @pytest.mark.parametrize("writer", ["device_writer", "member_writer"])

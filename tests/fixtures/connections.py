@@ -249,11 +249,12 @@ def in_force(conn, *agents, by=None) -> Connection:
 FAKE_REFRESH = "5Aep_refresh_shared"
 
 
-def _refresh_plain(conn) -> str:
+def _refresh_plain(conn, *, statement_floor=0) -> str:
     return json.dumps({"v": 1, "provider": conn.provider, "refresh_token": FAKE_REFRESH, "client_id": CLIENT_ID,
                        "login_host": "login.salesforce.com", "instance_url": conn.instance_url,
                        "account_id": conn.account_id, "owner_key": conn.owner_key, "issued_at": 1793500000,
-                       "scopes": "api refresh_token"}, separators=(",", ":"))
+                       "scopes": "api refresh_token", "statement_floor": statement_floor},
+                      separators=(",", ":"))
 
 
 def sealed_to_owner(owner_kw, signer, *, app=None, **fields) -> Connection:
@@ -295,7 +296,8 @@ def browser_share(conn, user, priv, *, agents=(), my_computers=(), endorsers=(),
         to = [r for r in rcpt.recipients(conn, st) if r[0] == "device"]
     owner = ("member", str(user.pk), zk_ref.jwk(priv.public_key()))
     everyone = [owner, *to]
-    sealed = zk_seal.seal_to(_refresh_plain(conn), agent_id=conn.binding, name="refresh", kv=0, recipients=everyone)
+    sealed = zk_seal.seal_to(_refresh_plain(conn, statement_floor=st["version"]), agent_id=conn.binding,
+                             name="refresh", kv=0, recipients=everyone)
     pubs = {(k, t): zk.public_key(j) for k, t, j in everyone}
     sig = conn_ref.writer_sig(conn.binding, "refresh", conn.sealed_digest, sealed, writer or priv, "member",
                               str(user.pk), pubs)

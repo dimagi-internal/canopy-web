@@ -74,15 +74,18 @@ Normative reference: `docs/vault/zk-v1/connections_v1_reference.py` with vectors
 ```json
 {"v":1,"provider":"salesforce","refresh_token":"…","client_id":"…","login_host":"login.salesforce.com",
  "instance_url":"https://acme.my.salesforce.com","account_id":"00D…/005…",
- "owner_key":"<RFC7638 jkt of the owner's member public key>","issued_at":1793500000,"scopes":"api refresh_token id"}
+ "owner_key":"<RFC7638 jkt of the owner's member public key>","issued_at":1793500000,"scopes":"api refresh_token id",
+ "statement_floor":3}
 ```
 Google: `login_host` and `instance_url` are `""`.
 
+`statement_floor` (integer ≥ 0): canopy-web's first seal writes 0; the owner's browser writes the new statement's `version` at every share; machines keep the value unchanged on every re-seal and write-back. A reader refuses a statement with `version` below `statement_floor`, so an old validly-signed statement replayed at a box with no pin cannot re-admit a device the owner removed. An old envelope replayed along with its old statement opens only on a box that held it, and that box has a pin, provided boxes save the pin after a validated read (B4, B5).
+
 `access`:
 ```json
-{"v":1,"access_token":"…","expires_at":1793501800,"instance_url":"https://acme.my.salesforce.com","account_id":"00D…/005…","scope":"…"}
+{"v":1,"access_token":"…","expires_at":1793501800,"instance_url":"https://acme.my.salesforce.com","account_id":"00D…/005…","scope":"…","owner_key":"<same jkt as refresh>"}
 ```
-A reader refuses an `access` whose `account_id` differs from the `refresh` plaintext's, or whose `instance_url` fails the host rule.
+A reader refuses an `access` whose `account_id` or `owner_key` differs from the `refresh` plaintext's, or whose `instance_url` fails the host rule. `account_id` alone is no cross-check, because the server knows it: on a fresh box a forged `refresh` with an attacker's owner key, paired with the real `access`, would pass, and a keeper re-seal would hand the real access token to the attacker.
 
 App block in material (plain JSON over the authenticated route, never sealed): `{"client_id","client_secret","options":{…ConnectionApp.options}}`. Only `access_token_seconds` (Salesforce, default 1800) is read from `options`; endpoints never are.
 
@@ -93,7 +96,7 @@ Object (ASCII values; `account_id` matches `^[\x21-\x7e]{1,255}$` without `"` or
 {"account_id":"00D…/005…","agents":["12","40"],"connection":"<uuid>","endorsers":["<person key jkt>"],"my_computers":["<ecdh jkt>"],"v":1,"version":3}
 ```
 - Keys are exactly these seven; `v` is 1.
-- `agents`: agent pks as decimal strings, sorted as strings, unique; agent-owned MUST contain the owner agent. `my_computers`: ECDH thumbprints, sorted, unique (empty for agent-owned). `endorsers`: RFC 7638 thumbprints of person public keys, sorted, unique, at most 64, same pattern as `my_computers`; may be empty, and then only the owner vouches. `version` ≥ 1, strictly greater than the stored one.
+- `agents`: agent pks as decimal strings, sorted as strings, unique; agent-owned MUST contain the owner agent. `my_computers`: ECDH thumbprints, sorted, unique (empty for agent-owned). `endorsers`: RFC 7638 thumbprints of person public keys, sorted, unique, at most 64, same pattern as `my_computers`; may be empty, and then only the owner vouches. `version` ≥ 1, strictly greater than the stored one, and the `statement_floor` of the `refresh` envelope sealed with it (0.2).
 - Message: `"canopy-connections/v1/grant|" + json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`, UTF-8. The browser writes keys in that sorted order.
 - Signature: ECDSA P-256/SHA-256 by the owner's person scalar (as `endorse` in `frontend/src/vault/zk.ts`), P1363 `r‖s` 64 bytes, b64u. Stored `{statement, sig, by_jkt}`; `by_jkt` must equal `owner_key`.
 
@@ -547,15 +550,14 @@ def test_shared_names_match_canopy_web(): ...
 - Test: `$CLI/tests/test_connection_trust.py`
 
 **Interfaces:**
-- Consumes: B1 `verify_statement`; `vault_keeper._trust_person`, `vault_keeper._endorsed`, `KeepResult`.
-- Produces: `PINS_FILE = ~/.canopy/connection-pins.json` (`{connection_id: {"owner_jkt", "version"}}`); `class TrustError(Exception)(code: str, detail: str)`; `verified_statement(material: dict, *, owner_jkt: str, pins: dict) -> dict` (owner key thumbprint == `owner_jkt`; signature verifies; version ≥ pinned else `TrustError("statement-rollback")`; pins it); `allowed(material: dict, statement: dict, *, owner_jkt: str, pins: dict, res: KeepResult) -> dict[tuple[str, str], dict]` (Part 0.5); `refuse_unallowed(rows: list[dict], allowed: dict) -> list[tuple[str, str, dict]]` (`TrustError("zk_unendorsed_recipient")`); `writer_allowed(by: dict, allowed: dict, owner_user_id: str) -> bool`.
+- Produces: `PINS_FILE = ~/.canopy/connection-pins.json` (`{connection_id: {"owner_jkt", "version"}}`); `class TrustError(Exception)(code: str, detail: str)`; `verified_statement(material: dict, *, owner_jkt: str, pins: dict) -> dict` (owner key thumbprint == `owner_jkt`; signature verifies; version ≥ pinned else `TrustError("statement-rollback")`; pins it); `allowed(material: dict, statement: dict, *, owner_jkt: str, res: KeepResult) -> dict[tuple[str, str], dict]` (Part 0.5); `refuse_unallowed(rows: list[dict], allowed: dict) -> list[tuple[str, str, dict]]` (`TrustError("zk_unendorsed_recipient")`); `writer_allowed(by: dict, material: dict, statement: dict, *, owner_jkt: str) -> bool`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 def test_a_device_not_in_the_statement_is_refused_even_when_canopy_web_lists_it(material):
     with pytest.raises(TrustError) as e:
-        trust.refuse_unallowed(material["recipients"] + [STRANGER_ROW], trust.allowed(material, st, owner_jkt=O, pins={}, res=R))
+        trust.refuse_unallowed(material["recipients"] + [STRANGER_ROW], trust.allowed(material, st, owner_jkt=O, res=R))
     assert e.value.code == "zk_unendorsed_recipient"
 def test_an_endorsement_for_an_agent_not_in_the_statement_admits_nothing(material): ...
 def test_an_endorsement_subject_is_checked_against_the_statement_not_the_payload(material): ...
@@ -578,7 +580,7 @@ def test_writer_must_be_allowed_or_the_owner(material): ...
 
 **Interfaces:**
 - Consumes: B1–B3; `device_key.load_ecdh`; `canopy_web.call` (adds device proof); `runner_session.token`.
-- Produces: `WAIT_SECONDS = 30`, `POLL_SECONDS = 2`; `@dataclass Paths(material: str, lease: str, sealed: str, reconnect: str)`; `access_token(paths: Paths, *, min_life: int, call, ecdh, pins: dict, refresh: bool = False, sleep=time.sleep, monotonic=time.monotonic, http=None) -> dict` → `{access_token, instance_url, expires_at, account_label}`. Algorithm (§4.2): GET material; `verified_statement` + `open_envelope` both envelopes with `writer_allowed` (B3); `check_plain`; fresh `access` with more than `min_life` left and not `refresh` → return; else POST lease → on `lease_held` poll material every `POLL_SECONDS` up to `WAIT_SECONDS` for a newer `access_sealed`, else `CredError("refresh in progress elsewhere")`; with the lease: `provider.refresh(plain, material.app)`; build the new `access` (and `refresh` if rotated); seal to the current allowed recipients (`refuse_unallowed` over `material.recipients`, keeping every still-allowed current target); PUT write-back with `expect = sealed_digest`; on failure retry the PUT from memory up to 3 times, renewing the lease on the monotonic clock from `ttl_seconds`; return only after it lands. `invalid_grant` → POST reconnect-required, `CredError(…, EXIT_REFUSED)`. 404 material → exit 3; 409 `not_connected`/`waiting`/`revoking` → exit 3 in runner mode.
+- Produces: `WAIT_SECONDS = 30`, `POLL_SECONDS = 2`; `@dataclass Paths(material: str, lease: str, sealed: str, reconnect: str)`; `access_token(paths: Paths, *, min_life: int, call, ecdh, pins: dict, refresh: bool = False, sleep=time.sleep, monotonic=time.monotonic, http=None) -> dict` → `{access_token, instance_url, expires_at, account_label}`. Pins are saved after a validated read (writer check and plaintext check passed, including `statement_floor` and the `access` `owner_key`), never before, and not only after a write. Algorithm (§4.2): GET material; `verified_statement` + `open_envelope` both envelopes with `writer_allowed` (B3); `check_plain`; save the pin; fresh `access` with more than `min_life` left and not `refresh` → return; else POST lease → on `lease_held` poll material every `POLL_SECONDS` up to `WAIT_SECONDS` for a newer `access_sealed`, else `CredError("refresh in progress elsewhere")`; with the lease: `provider.refresh(plain, material.app)`; build the new `access` (and `refresh` if rotated); seal to the current allowed recipients (`refuse_unallowed` over `material.recipients`, keeping every still-allowed current target); PUT write-back with `expect = sealed_digest`; on failure retry the PUT from memory up to 3 times, renewing the lease on the monotonic clock from `ttl_seconds`; return only after it lands. `invalid_grant` → POST reconnect-required, `CredError(…, EXIT_REFUSED)`. 404 material → exit 3; 409 `not_connected`/`waiting`/`revoking` → exit 3 in runner mode.
 - `stage_connection_token(provider, slug, runner_id, turn_id, *, token=None, min_life=None, refresh=False) -> Path` keeps its signature (runner routes 11–12); `connection_token(provider, *, refresh=False, workspace="") -> Path` uses PAT + device proof against routes 7–10 and prints the server's sentence plus `canopy vault device --enroll` where it applies.
 
 - [ ] **Step 1: Write the failing tests**
@@ -620,7 +622,7 @@ def test_staged_file_format_is_unchanged(fake_web, tmp_home):
 
 **Interfaces:**
 - Consumes: B1–B3; B2 `revoke`; `vault_keeper.KeepResult`.
-- Produces: `keep_connection(work: dict, *, pins: dict, call, ecdh, http=None) -> KeepResult`. `revoking`: open `sealed`, revoke at the provider when `revoke_at_provider` (B2 rules, `work.app`), POST `revoked_path {revoked, error}`. Else: verify statement + writer (B3); targets = current still-allowed ∪ waiting machines that are `allowed`; re-seal the same plaintexts (both envelopes) with this box as writer and `expect`; PUT `reseal_path`.
+- Produces: `keep_connection(work: dict, *, pins: dict, call, ecdh, http=None) -> KeepResult`. `revoking`: open `sealed`, revoke at the provider when `revoke_at_provider` (B2 rules, `work.app`), POST `revoked_path {revoked, error}`. Pins are saved after a validated read (writer check and plaintext check passed), never before, and not only after a write. Else: verify statement + writer (B3); targets = current still-allowed ∪ waiting machines that are `allowed`; re-seal the same plaintexts (both envelopes, `statement_floor` and `owner_key` unchanged) with this box as writer and `expect`; PUT `reseal_path`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -679,7 +681,7 @@ def test_heartbeat_restage_still_only_refreshes_held_files(fake_run): ...
 
 **Interfaces:**
 - Produces (`connections.ts`): `getShareState(id: string): Promise<ShareStateOut>`, `putShare(id: string, body: ShareIn): Promise<ConnectionOut>`, `disconnectMine(id: string)`, `disconnectAgentConnection(slug: string, id: string)`; remove `grantConnection`, `revokeConnectionGrant`.
-- Produces (`connectionShare.ts`): `statementMessage(st: Statement): string`; `openForOwner(state: ShareStateOut, me: Unlocked): Promise<{account: {account_id, provider, instance_url}; refresh: Bytes}>` (accepts `sealed_sig === null` only when `state.state === 'unshared'`, otherwise verifies the MAC; the plaintext stays inside this module); `chooseRecipients(state: ShareStateOut, choice: {agents: string[]; myComputers: string[]}, trusted: Trust): Recipient[]` (Part 0.5 with `vault/trust.ts`; a candidate without a trusted endorsement is left out and named); `buildShare(state: ShareStateOut, me: Unlocked, choice): Promise<ShareIn>` (next statement with `version + 1`, `endorsers` set to the people whose endorsements it trusts (`vault/trust.ts`) for the chosen machines, signs it as `endorse` does, re-seals `refresh` (and `access` when present) with `sealValue`, writes member-writer MACs, `expect = state.sealed_digest`).
+- Produces (`connectionShare.ts`): `statementMessage(st: Statement): string`; `openForOwner(state: ShareStateOut, me: Unlocked): Promise<{account: {account_id, provider, instance_url}; refresh: Bytes}>` (accepts `sealed_sig === null` only when `state.state === 'unshared'`, otherwise verifies the MAC; the plaintext stays inside this module); `chooseRecipients(state: ShareStateOut, choice: {agents: string[]; myComputers: string[]}, trusted: Trust): Recipient[]` (Part 0.5 with `vault/trust.ts`; a candidate without a trusted endorsement is left out and named); `buildShare(state: ShareStateOut, me: Unlocked, choice): Promise<ShareIn>` (next statement with `version + 1`, `endorsers` set to the people whose endorsements it trusts (`vault/trust.ts`) for the chosen machines, `statement_floor` in the re-sealed `refresh` set to that new version, `owner_key` kept in `access` when it re-seals one, signs it as `endorse` does, re-seals `refresh` (and `access` when present) with `sealValue`, writes member-writer MACs, `expect = state.sealed_digest`).
 
 - [ ] **Step 1: Write the failing tests** (vitest; vectors via `import raw from '../../../docs/vault/zk-v1/connections_v1_vectors.json?raw'`)
 

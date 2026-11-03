@@ -137,8 +137,10 @@ def test_the_owner_opens_it_and_finds_the_spec_plaintext(world, fake_provider):
     conn = connect(world)
     plain = _plain(conn, world.person_priv, world.person)
     assert set(plain) == {"v", "provider", "refresh_token", "client_id", "login_host", "instance_url",
-                          "account_id", "owner_key", "issued_at", "scopes"}
+                          "account_id", "owner_key", "issued_at", "scopes", "statement_floor"}
     assert "client_secret" not in plain
+    # Connecting comes before any statement; the owner's browser raises it at each share.
+    assert plain["statement_floor"] == 0 and type(plain["statement_floor"]) is int
     assert plain["v"] == 1 and plain["provider"] == "salesforce"
     assert plain["refresh_token"] == FAKE_REFRESH and plain["client_id"] == "3MVG-client"
     assert plain["login_host"] == "login.salesforce.com"
@@ -326,6 +328,7 @@ def test_connecting_the_same_account_again_replaces_the_envelope_and_unshares(wo
     assert again.sealed != old_sealed and again.sealed_digest == hashlib.sha256(again.sealed.encode()).hexdigest()
     assert _plain(again, world.ada_priv, world.ada)["refresh_token"] == "5Aep_r2"
     assert again.state == Connection.UNSHARED and again.sealed_sig is None
+    assert _plain(again, world.ada_priv, world.ada)["statement_floor"] == 0
     assert (again.access_sealed, again.access_sig, again.access_expires_at) == ("", None, None)
     assert again.refresh_failed_at is None
     # Its grants and statement stay: the share screen re-shares with version + 1.
