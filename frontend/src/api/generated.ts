@@ -17654,7 +17654,8 @@ export interface paths {
          * The agents you let review your sessions
          * @description Which agents may read your sessions to review them, which you could let
          *     in (the agents of workspaces you belong to), and the coach canopy offers
-         *     you, if any. Only you see this.
+         *     you, if any. Only you see this. An agent's turn, asked by you, sees only
+         *     whether it is itself among them.
          */
         readonly get: operations["list_my_session_reviewers"];
         readonly put?: never;
