@@ -11,6 +11,7 @@ export type MailRouteIn = components['schemas']['MailRouteIn']
 export type MailThreadOut = components['schemas']['MailThreadOut']
 export type MailThreadListOut = components['schemas']['MailThreadListOut']
 export type MailMessageOut = components['schemas']['MailMessageOut']
+export type MailInboxSendIn = components['schemas']['MailInboxSendIn']
 export type MailInboundLogOut = components['schemas']['MailInboundLogOut']
 export type MailInboundLogListOut = components['schemas']['MailInboundLogListOut']
 export type AgentMailboxOut = components['schemas']['AgentMailboxOut']
@@ -135,5 +136,36 @@ export async function setMailThreadState(workspace: string, threadId: string,
   const res = await apiV2.POST('/api/mail/threads/{workspace}/{uuid}/state', {
     params: { path: { workspace, uuid: threadId } }, body })
   ensureOk(res, 'Failed to update the thread')
+  return res.data as MailThreadOut
+}
+
+export type MailInbox = { items: MailThreadOut[]; unread_total: number; addresses: string[] }
+
+/** The caller's own inbox of kept forwarded mail: filter by archive state, search text or address. */
+export async function fetchInbox(workspace: string,
+  opts: { archived?: boolean; q?: string; address?: string } = {}): Promise<MailInbox> {
+  const query: Record<string, string | boolean> = { forwarded: true }
+  if (opts.archived) query.archived = true
+  if (opts.q?.trim()) query.q = opts.q.trim()
+  if (opts.address) query.address = opts.address
+  const res = await apiV2.GET('/api/mail/threads/{workspace}', { params: { path: { workspace }, query } })
+  ensureOk(res, 'Failed to load your inbox')
+  const d = res.data as MailThreadListOut
+  return { items: [...d.items], unread_total: d.unread_total ?? 0, addresses: [...(d.addresses ?? [])] }
+}
+
+/** Answer a thread from your own address; the reply joins the thread. */
+export async function replyToThread(workspace: string, threadId: string,
+  body: { text: string; to?: string[]; cc?: string[] }): Promise<MailMessageOut> {
+  const res = await apiV2.POST('/api/mail/threads/{workspace}/{uuid}/reply', {
+    params: { path: { workspace, uuid: threadId } }, body: { text: body.text, html: '', to: body.to ?? [], cc: body.cc ?? [] } })
+  ensureOk(res, 'Failed to send the reply')
+  return res.data as MailMessageOut
+}
+
+/** Start a new message from one of your own forwarding addresses. */
+export async function composeInboxMail(workspace: string, body: MailInboxSendIn): Promise<MailThreadOut> {
+  const res = await apiV2.POST('/api/mail/inbox/{workspace}/send', { params: { path: { workspace } }, body })
+  ensureOk(res, 'Failed to send the message')
   return res.data as MailThreadOut
 }

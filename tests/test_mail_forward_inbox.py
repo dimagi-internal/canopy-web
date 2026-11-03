@@ -7,7 +7,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.mail import agent_mail, inbound, ses
+from apps.mail import agent_mail, inbound, parse, ses
 from apps.mail.models import MailDomain, MailInboundLog, MailMessage, MailRoute, MailThread
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -133,3 +133,109 @@ def test_route_keep_copy_round_trips_and_survives_an_edit_that_omits_it(w):
     assert _c(w.owner).put(url, body, content_type="application/json").json()["keep_copy"] is True
     agent_body = {"local_part": "x", "kind": "drop", "keep_copy": True}
     assert _c(w.owner).put(url, agent_body, content_type="application/json").json()["keep_copy"] is False
+
+
+# --- the inbox as a mail client: search, archive, reply, compose ------------------------------
+
+def _post(u, url, body):
+    return _c(u).post(url, body, content_type="application/json")
+
+
+@pytest.fixture()
+def sent(w, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: calls.append(kw) or f"ses-out-{len(calls)}")
+    return calls
+
+
+def _kept(w, rcpt="jjackson@marshellis.com"):
+    inbound.handle(_note(rcpt))
+    return MailThread.objects.get()
+
+
+def test_list_reports_unread_total_and_my_sendable_addresses(w):
+    MailRoute.objects.create(domain=w.d, local_part="*", kind="forward", forward_to=w.owner)
+    _kept(w)
+    body = _c(w.owner).get("/api/mail/threads/marshellis", {"forwarded": True}).json()
+    assert body["unread_total"] == 1
+    assert body["addresses"] == ["jjackson@marshellis.com"]  # never the catch-all
+    assert _c(w.other).get("/api/mail/threads/marshellis", {"forwarded": True}).json()["addresses"] == []
+
+
+def test_search_archive_and_address_filter(w):
+    t = _kept(w)
+    get = lambda **q: _c(w.owner).get("/api/mail/threads/marshellis", {"forwarded": True, **q}).json()["items"]  # noqa: E731
+    assert len(get()) == 1
+    assert get(q="zzz-no-such-term") == []
+    assert len(get(address="jjackson@marshellis.com")) == 1 and get(address="other@marshellis.com") == []
+    _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/state", {"archived": True})
+    assert get() == [] and len(get(archived=True)) == 1
+    assert _c(w.owner).get("/api/mail/threads/marshellis", {"forwarded": True}).json()["unread_total"] == 0
+
+
+def test_owner_replies_from_their_own_address_in_the_same_thread(w, sent):
+    t = _kept(w)
+    r = _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "Sounds good"})
+    assert r.status_code == 200, r.content
+    out = sent[-1]  # sent[0] is the forward of the inbound message itself
+    assert out["from_addr"] == "jjackson@marshellis.com"
+    assert out["to"] == [parse.parse((FIX / "plain.eml").read_bytes()).from_addr]
+    t.refresh_from_db()
+    assert t.message_count == 2 and t.owner == w.owner
+    assert MailMessage.objects.filter(thread=t, direction="out").count() == 1
+
+
+def test_nobody_else_can_reply_on_my_thread(w, sent):
+    t = _kept(w)
+    assert _post(w.other, f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "hi"}).status_code == 404
+    assert len(sent) == 1  # just the forward
+
+
+def test_reply_on_a_catch_all_thread_is_refused_when_no_address_in_it_routes_to_that_catch_all(w, sent):
+    MailRoute.objects.filter(pk=w.r.pk).delete()
+    MailRoute.objects.create(domain=w.d, local_part="*", kind="forward", forward_to=w.owner, keep_copy=True)
+    inbound.handle(_note("apple@marshellis.com"))  # delivered to the catch-all, but the message says To: ada@
+    t = MailThread.objects.get()
+    # ada@ is someone else's now
+    MailRoute.objects.create(domain=w.d, local_part="ada", kind="forward", forward_to=w.other)
+    r = _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "yo", "to": ["a@x.org"]})
+    assert r.status_code == 409 and len(sent) == 1  # only the forward: never invents a From for a catch-all
+
+
+def test_reply_refused_once_the_route_no_longer_forwards_to_me(w, sent):
+    t = _kept(w)
+    MailRoute.objects.filter(pk=w.r.pk).update(enabled=False)
+    assert _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "hi"}).status_code == 409
+
+
+def test_compose_from_my_address_starts_a_private_thread(w, sent):
+    r = _post(w.owner, "/api/mail/inbox/marshellis/send",
+              {"from_address": "jjackson@marshellis.com", "to": ["friend@example.org"],
+               "subject": "Hello", "text": "Hi"})
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["subject"] == "Hello" and body["forwarded"] is True and len(body["messages"]) == 1
+    assert sent[-1]["from_addr"] == "jjackson@marshellis.com" and sent[-1]["to"] == ["friend@example.org"]
+    t = MailThread.objects.get()
+    assert t.owner == w.owner
+    assert _c(w.other).get(f"/api/mail/threads/marshellis/{t.uuid}").status_code == 404
+
+
+def test_compose_cannot_send_as_someone_elses_or_the_catch_all_address(w, sent):
+    MailRoute.objects.create(domain=w.d, local_part="support", kind="forward", forward_to=w.other)
+    MailRoute.objects.create(domain=w.d, local_part="*", kind="forward", forward_to=w.owner)
+    base = {"to": ["friend@example.org"], "subject": "s", "text": "t"}
+    for frm in ("support@marshellis.com", "anything@marshellis.com", "*@marshellis.com", "ceo@gmail.com"):
+        r = _post(w.owner, "/api/mail/inbox/marshellis/send", {**base, "from_address": frm})
+        assert r.status_code == 422, frm
+    assert sent == []
+
+
+def test_reply_on_a_catch_all_thread_is_from_the_address_the_mail_was_sent_to(w, sent):
+    MailRoute.objects.filter(pk=w.r.pk).delete()
+    MailRoute.objects.create(domain=w.d, local_part="*", kind="forward", forward_to=w.owner, keep_copy=True)
+    inbound.handle(_note("ada@marshellis.com"))  # the fixture message is addressed To: ada@marshellis.com
+    t = MailThread.objects.get()
+    r = _post(w.owner, f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "yo"})
+    assert r.status_code == 200, r.content
+    assert sent[-1]["from_addr"] == "ada@marshellis.com"

@@ -96,6 +96,8 @@ export const NAV: NavEntry[] = [
       // Network are its tabs.
       { path: 'health', label: 'Health', tenant: true, capability: 'logs.read' },
       { path: 'timeline', label: 'Timeline', tenant: true },
+      // Your own mail: what forwards to your addresses here, and what you send from them.
+      { path: 'mail', label: 'Mail', tenant: true },
       // Generated screens, each drawn in a sandbox: the workspace's own first,
       // then each project's (which also show on the project's page).
       { path: 'views', label: 'Views', tenant: true },

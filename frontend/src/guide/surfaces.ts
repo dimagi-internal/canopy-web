@@ -587,12 +587,11 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/mail',
-    home: '/w/:workspace/settings/email',
-    title: 'Forwarded mail',
+    title: 'Mail',
     audience: 'Anyone a forwarding address sends mail to',
-    what: "Your own inbox of mail canopy forwards to you, for addresses an admin set to keep a copy. Each message is stored as a thread only you can read (not admins, not other members), so one that goes missing between canopy and your mailbox can still be read here. It is a reader, not a mail client: reply from your normal mailbox. Only mail that arrives after the setting was turned on is kept.",
-    needsFirst: 'An address that forwards to you with “Keep a copy in their canopy inbox” ticked in Settings → Email.',
-    actions: ['Read a forwarded message', 'See what is unread'],
+    what: "Your own mail client for the addresses an admin set to keep a copy (Settings → Email): read, search, archive, reply, reply all and compose, all from your own forwarding addresses on the workspace's domain. Everything is private to you — not admins, not other members. Inbox and Archived folders, an unread count, a filter per address, and keyboard shortcuts (j/k move, Enter open, c compose, r reply, a reply all, e archive, u unread, / search). Plain text only, no attachments on send, and only mail that arrives after Keep a copy was turned on is kept.",
+    needsFirst: 'An address that forwards to you with “Keep a copy in canopy” ticked in Settings → Email.',
+    actions: ['Read and search your mail', 'Reply or reply all', 'Compose from one of your addresses', 'Archive or mark unread'],
   },
   {
     path: '/w/:workspace/tasks/:taskKey',

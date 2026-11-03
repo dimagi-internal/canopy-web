@@ -192,10 +192,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
     thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
     CSP, meta refreshes stripped; attachments are
     presigned download links. No address → points to Settings → Email.
-  - **Forwarded mail** (`/w/:ws/mail`) — the signed-in person's own inbox of mail
-    kept from forward routes with *Keep a copy* (`GET /api/mail/threads/{workspace}?forwarded=true`);
-    same message view as an agent's Mail; opening a thread marks it read. Readable by its
-    owner only. Settings → Email also shows each domain's inbound ledger (admins).
+  - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
+    forward routes with *Keep a copy*: Inbox / Archived, unread count, search
+    (`?forwarded=true&q=`), per-address filter, reply / reply all / compose from the person's own
+    forwarding addresses, keyboard shortcuts. Private to the person (`MailThread.owner`); plain
+    text out, no attachments on send. Settings → Email shows each domain's inbound ledger (admins).
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent
