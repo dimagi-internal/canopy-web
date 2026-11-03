@@ -328,7 +328,7 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
 
   it('turning off an unshared connection calls server-use', async () => {
     listMyConnections.mockResolvedValue({
-      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true })],
+      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
     })
     at('/settings')
     expect(await screen.findByText(WHY)).toBeTruthy()
@@ -341,7 +341,7 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
 
   it('turning off a shared one goes to Share, with the passkey sentence', async () => {
     listMyConnections.mockResolvedValue({
-      providers: [PROVIDER], connections: [conn({ state: 'active', provider_calls: true, server_use: true })],
+      providers: [PROVIDER], connections: [conn({ state: 'active', provider_calls: true, server_use: true, server_reachable: true })],
     })
     at('/settings/connections')
     expect(await screen.findByText(WHY)).toBeTruthy()
@@ -368,7 +368,7 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
   it('shows a failed turn-off and leaves the switch', async () => {
     turnOffServerUse.mockRejectedValue(new Error('Could not turn this off.'))
     listMyConnections.mockResolvedValue({
-      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true })],
+      providers: [PROVIDER], connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
     })
     at('/settings')
     await screen.findByText(WHY)
@@ -376,5 +376,36 @@ describe('ConnectionsPanel: Used by canopy-web', () => {
     expect(await screen.findByText('Could not turn this off.')).toBeTruthy()
     expect(sw()?.getAttribute('aria-checked')).toBe('true')
   })
-})
 
+  it('on but unreachable reads Off with the connect-again text, and turning off still works', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: false })],
+    })
+    at('/settings')
+    expect(await screen.findByText("canopy-web couldn't be reached when this was connected. Connect again to fix it.")).toBeTruthy()
+    expect(screen.getByText('Off')).toBeTruthy()
+    expect(screen.queryByText('On')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off Used by canopy-web' }))
+    await waitFor(() => expect(turnOffServerUse).toHaveBeenCalledWith(7))
+  })
+
+  it('an unshared row canopy-web can use says so, neutrally', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: true })],
+    })
+    at('/settings')
+    expect(await screen.findByText('Project screens and apps can use it. No agents or computers can yet.')).toBeTruthy()
+    expect(screen.queryByText(/Not shared yet/)).toBeNull()
+  })
+
+  it('other unshared rows keep the warning', async () => {
+    listMyConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared', provider_calls: true, server_use: true, server_reachable: false })],
+    })
+    at('/settings')
+    expect(await screen.findByText(/Not shared yet: no agent or computer can use it/)).toBeTruthy()
+  })
+})

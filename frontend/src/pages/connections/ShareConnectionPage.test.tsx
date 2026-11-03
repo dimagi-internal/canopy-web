@@ -449,6 +449,13 @@ describe('ShareConnectionPage: project screens and apps', () => {
     expect(screen.queryByTestId('canopy-web-key-changed')).toBeNull()
   })
 
+  it('does not call the key changed when canopy-web has no key to compare (unreachable)', async () => {
+    openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['12'], my_computers: [], canopy_web: T2 } })
+    withServer({ thumbprint: '' }, { state: 'active' })
+    await unlocked()
+    expect(screen.queryByTestId('canopy-web-key-changed')).toBeNull()
+  })
+
   it('still warns about a reconnect after canopy-web wrote while unshared', async () => {
     openForOwner.mockResolvedValue({ account: ACCOUNT, statement: { agents: ['40'], my_computers: [], version: 2 } })
     withServer({}, { sealed_sig: { by: { kind: 'device', target: T1 } } })

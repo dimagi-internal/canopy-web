@@ -252,11 +252,19 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
   if (c.state === 'unshared') {
     return (
       <>
-        <p className="text-[12px] text-warning">
-          Not shared yet: no agent or computer can use it.{' '}
-          {canChange && <Link to={href} className={shareLink}>Share</Link>}
-          {only}
-        </p>
+        {c.server_use && c.server_reachable ? (
+          <p className="text-[12px] text-muted-foreground">
+            Project screens and apps can use it. No agents or computers can yet.{' '}
+            {canChange && <Link to={href} className={shareLink}>Share</Link>}
+            {only}
+          </p>
+        ) : (
+          <p className="text-[12px] text-warning">
+            Not shared yet: no agent or computer can use it.{' '}
+            {canChange && <Link to={href} className={shareLink}>Share</Link>}
+            {only}
+          </p>
+        )}
         <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
       </>
     )
@@ -300,6 +308,7 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
 const USED_BY = 'Used by canopy-web'
 const USED_BY_WHY = 'With this on, project screens and apps can use this account with nobody present. '
   + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+const UNREACHED = "canopy-web couldn't be reached when this was connected. Connect again to fix it."
 const NEEDS_PASSKEY = 'Changing this needs your passkey.'
 
 /**
@@ -314,7 +323,9 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   if (!c.provider_calls) return null
-  const on = !!c.server_use
+  // Switched on but nothing sealed to canopy-web: it can't use it, so don't show it as on.
+  const stuck = !!c.server_use && !c.server_reachable
+  const on = !!c.server_use && !stuck
   async function turnOff() {
     setBusy(true)
     setError('')
@@ -331,7 +342,14 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
     <div className="space-y-0.5 text-[12px] text-muted-foreground">
       <p className="flex flex-wrap items-center gap-x-2">
         <span className="font-medium text-foreground">{USED_BY}</span>
-        {canChange && on && c.state === 'unshared' ? (
+        {canChange && stuck && c.state === 'unshared' ? (
+          <>
+            <span>Off</span>
+            <button type="button" aria-label={`Turn off ${USED_BY}`} disabled={busy} onClick={turnOff} className={shareLink}>
+              Turn off
+            </button>
+          </>
+        ) : canChange && on && c.state === 'unshared' ? (
           <button
             type="button" role="switch" aria-checked="true" aria-label={USED_BY} disabled={busy} onClick={turnOff}
             className="inline-flex h-4 w-7 items-center justify-end rounded-full bg-primary px-0.5 disabled:opacity-50"
@@ -342,15 +360,16 @@ function UsedByCanopyWeb({ c, href, canChange, onChanged }: {
           <>
             <span>{on ? 'On' : 'Off'}</span>
             {canChange && (
-              <Link to={href} aria-label={`${on ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
-                {on ? 'Turn off' : 'Turn on'}
+              <Link to={href} aria-label={`${on || stuck ? 'Turn off' : 'Turn on'} ${USED_BY}`} className={shareLink}>
+                {on || stuck ? 'Turn off' : 'Turn on'}
               </Link>
             )}
           </>
         )}
       </p>
+      {stuck && <p className="text-warning">{UNREACHED}</p>}
       <p>{USED_BY_WHY}</p>
-      {canChange && !(on && c.state === 'unshared') && <p>{NEEDS_PASSKEY}</p>}
+      {canChange && !((on || stuck) && c.state === 'unshared') && <p>{NEEDS_PASSKEY}</p>}
       {error && <p role="alert" className="text-destructive">{error}</p>}
     </div>
   )

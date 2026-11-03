@@ -48,8 +48,8 @@ interface Opened {
 }
 
 /**
- * "Connected as …" (`/w/:workspace/connections/:id/share`): where the owner lands after an
- * OAuth sign-in. Your passkey opens the envelope in this browser, which shows which
+ * "Share this connection" (`/w/:workspace/connections/:id/share`): where the Connected screen
+ * and Settings lead. Your passkey opens the envelope in this browser, which shows which
  * account was connected; the owner then chooses which agents and computers may use it
  * and shares (`vault/connectionShare.ts` signs and seals). canopy-web never sees the token.
  * Not now leaves it unshared. Settings links here to finish a share later.
@@ -242,7 +242,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   // the row is still unshared, which must not hide the warning.
   const writerKind = (state.sealed_sig as { by?: { kind?: string } } | null | undefined)?.by?.kind
   const reconnected = !!opened?.statement && state.state === 'unshared' && (state.sealed_sig == null || writerKind === 'device')
-  const keyChanged = !!opened?.statement?.canopy_web && choice.canopyWeb && state.server?.thumbprint !== opened.statement.canopy_web
+  const keyChanged = !!opened?.statement?.canopy_web && choice.canopyWeb && !!state.server?.thumbprint && state.server.thumbprint !== opened.statement.canopy_web
   const unreachableOn = !!server && !server.available && !!server.on
 
   return (
