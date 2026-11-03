@@ -134,7 +134,8 @@ def _target_role(slug: str, user_id: int) -> str | None:
 
 
 def _member_out(m: WorkspaceMembership) -> MemberOut:
-    return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at,
+    return MemberOut(user_id=m.user_id, email=m.user.email, display_name=m.user.get_full_name().strip(),
+                     role=m.role, joined_at=m.joined_at,
                      inherited=getattr(m, "inherited", False))
 
 

@@ -737,3 +737,37 @@ def test_a_confined_caller_on_a_thread_that_started_manual_is_not_raised(
     assert turn.turn_mode != "auto"
     rule.refresh_from_db()
     assert rule.fired_count == 0
+
+
+def _rejected_turn(chat_session_id=None):
+    from types import SimpleNamespace as NS
+
+    turn = NS(pk="t-1", origin="canopy_web_chat", origin_ref={}, initiator_contact_id=None,
+              initiator_user_id=None, chat_session_id=chat_session_id,
+              chat_session=NS(workspace_id="connect") if chat_session_id else None)
+    rule = NS(pk=58, reach=False, reason="paused", notify_sender=False)
+    agent = NS(name="Hal", slug="hal", workspace_id="connect")
+    return turn, rule, agent
+
+
+def test_a_rejected_chat_links_to_the_chat_that_holds_the_message():
+    """2026-11-03: the owner was asked to dismiss a rejected chat that neither they nor the
+    agent could read, because the card named the turn and not the conversation."""
+    from apps.admission import notices
+
+    links = notices.fix_links(*_rejected_turn("s-9"))
+    assert links[0]["label"] == "The chat this message came from"
+    assert links[0]["url"].endswith("/w/connect/sessions/s-9")
+    with mock.patch("apps.admission.rules.summary", return_value="any turn"):
+        _, body = notices._owner_body(*_rejected_turn("s-9"))
+    assert "still in its chat" in body
+    assert "open the thread yourself" not in body
+
+
+def test_a_rejected_email_keeps_its_thread_wording_and_no_chat_link():
+    from apps.admission import notices
+
+    assert all("chat" not in link["label"] for link in notices.fix_links(*_rejected_turn()))
+    with mock.patch("apps.admission.rules.summary", return_value="any turn"):
+        _, body = notices._owner_body(*_rejected_turn())
+    assert "open the thread yourself" in body

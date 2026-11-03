@@ -270,6 +270,17 @@ def test_the_members_list_shows_inherited_owners(tree):
     assert by_email["life-owner@dimagi.com"]["inherited"] is False
 
 
+def test_the_members_list_names_people_whose_address_does_not(tree):
+    """2026-11-03: `ltse@` is Lucina Tse. A search of the addresses reported that no such member
+    existed, and the owner was told an admin probably needed an invite."""
+    tree["boss"].first_name, tree["boss"].last_name = "Lucina", "Tse"
+    tree["boss"].save()
+    rows = _client(tree["owner"]).get(f"/api/workspaces/{WS}/members/").json()
+    by_email = {r["email"]: r for r in rows}
+    assert by_email["life-boss@dimagi.com"]["display_name"] == "Lucina Tse"
+    assert by_email["life-owner@dimagi.com"]["display_name"].strip() == by_email["life-owner@dimagi.com"]["display_name"]
+
+
 def test_an_inherited_owner_outranks_their_weaker_direct_row(tree):
     WorkspaceMembership.objects.create(workspace=tree["ws"], user=tree["boss"], role=M.VIEWER)
     rows = {m.user_id: m for m in wsvc.effective_memberships(tree["ws"])}

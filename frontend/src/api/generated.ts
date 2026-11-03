@@ -34636,6 +34636,11 @@ export interface components {
             readonly user_id: number;
             /** Email */
             readonly email: string;
+            /**
+             * Display Name
+             * @default
+             */
+            readonly display_name: string;
             /** Role */
             readonly role: string;
             /**
