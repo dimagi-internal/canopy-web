@@ -224,6 +224,9 @@ class SlackShareIn(Schema):
     #: Reply buttons under the post. Only on a post into a bound thread (`bind`,
     #: an update to a bound session, or `turn_id`), never a broadcast. At most 25.
     actions: list[SlackShareAction] = []
+    #: The post takes one choice: the first press removes all its buttons. By default
+    #: each button works on its own and the others stay pressable.
+    exclusive: bool = False
 
 
 class SlackShareOut(Schema):

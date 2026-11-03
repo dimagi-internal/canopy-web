@@ -46,9 +46,9 @@ def hal_session(ws, alice, hal):
     return session
 
 
-def _bind(alice, session, actions=ACTIONS):
+def _bind(alice, session, actions=ACTIONS, *, exclusive=False):
     result = share.share_session(alice, channel="C1", summary="Your day", mode=share.BIND,
-                                 session=session, actions=actions)
+                                 session=session, actions=actions, exclusive=exclusive)
     assert result.status == share.SHARED, result.message
     return result
 
@@ -191,25 +191,188 @@ def test_the_agents_owner_can_answer_a_session_someone_else_started(slack, linke
     assert slack.said("chat.update")
 
 
-def test_the_post_then_shows_who_chose_what_and_has_no_buttons(slack, linked, alice, repo_session):
+def _chose_lines(update: dict) -> list[str]:
+    return [b["elements"][0]["text"] for b in update["blocks"] if b["type"] == "context"]
+
+
+def _labels(update: dict) -> list[str]:
+    return [b["text"]["text"] for b in _buttons(update)]
+
+
+def test_a_press_replaces_only_its_own_button(slack, linked, alice, repo_session):
     _bind(alice, repo_session)
     _press(slack.said("chat.postMessage")[0], 1)
     (update,) = slack.said("chat.update")
-    assert update["ts"] == POSTED_TS and not _buttons(update)
+    assert update["ts"] == POSTED_TS
     assert "Your day" in update["blocks"][0]["text"]["text"]
+    assert _labels(update) == ["Book 1: November goals", "Skip today"]
+    assert _chose_lines(update) == [f":white_check_mark: <@{ALICE}> chose: *book all*"]
+    assert [b["type"] for b in update["blocks"]] == ["section", "actions", "context", "actions"]
+    assert f"<@{ALICE}> chose: *book all*" in update["text"]
+
+
+def test_a_post_keeps_taking_presses_until_its_buttons_are_gone(slack, linked, alice, repo_session):
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    for index in (2, 0, 1):
+        _press(post, index)
+    assert _prompts(repo_session) == ["skip today", "book 1", "book all"]
+    last = slack.said("chat.update")[-1]
+    assert not _buttons(last)
+    assert _chose_lines(last) == [f":white_check_mark: <@{ALICE}> chose: *{r}*"
+                                  for r in ("book 1", "book all", "skip today")]
+
+
+def test_a_button_left_keeps_its_style_and_what_it_sends(slack, linked, alice, repo_session):
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    _press(post, 0)
+    update = slack.said("chat.update")[0]
+    assert _buttons(update)[0]["style"] == "primary"
+    _press(update, 0)    # pressed from the post as redrawn: still "Book all"
+    assert _prompts(repo_session) == ["book 1", "book all"]
+
+
+def test_a_second_press_of_the_same_button_delivers_nothing_more(slack, linked, alice, repo_session):
+    """A double click, a Slack retry, or a stale client still showing the button."""
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    _press(post, 0)
+    _press(post, 0)
+    assert _prompts(repo_session) == ["book 1"]
+    assert len(slack.said("chat.update")) == 1
+    assert "already chose: *book 1*" in _told(slack) and "did nothing" in _told(slack)
+
+
+def test_two_presses_from_clients_that_saw_the_same_message_lose_neither(slack, linked, alice, repo_session):
+    """Each click carries the message as its client saw it: both here say nothing has
+    been chosen. The post that results must not bring the first button back."""
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    _press(post, 0)
+    _press(post, 2)
+    assert _prompts(repo_session) == ["book 1", "skip today"]
+    last = slack.said("chat.update")[-1]
+    assert _labels(last) == ["Book all"]
+    assert len(_chose_lines(last)) == 2
+
+
+def test_a_press_landing_while_another_is_delivered_is_drawn_by_whichever_is_last(
+        slack, linked, alice, repo_session, monkeypatch):
+    """The interleaving that loses an update when a post is drawn from what a click
+    knew: A claims, B runs start to finish, A then rewrites the post."""
+    from apps.slack import services
+
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    real = services.deliver_choice
+    pressed = []
+
+    def deliver(*args, **kwargs):
+        if not pressed:
+            pressed.append(True)
+            _press(post, 2)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(services, "deliver_choice", deliver)
+    _press(post, 0)
+    assert sorted(_prompts(repo_session)) == ["book 1", "skip today"]
+    (b_drew, a_drew) = slack.said("chat.update")
+    assert _labels(a_drew) == ["Book all"] and len(_chose_lines(a_drew)) == 2
+
+
+def test_a_refused_press_takes_back_only_itself(slack, linked, alice, repo_session, monkeypatch):
+    """B is refused at delivery after A's rewrite drew it as chosen: the post gets B's
+    button back, and keeps A's line."""
+    from apps.slack import services
+
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    real = services.deliver_choice
+    calls = []
+
+    def deliver(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            _press(post, 0)    # A lands in full while B is out being delivered
+            return services.Outcome(services.NOT_AN_ANSWER, "It is waiting on its question above.")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(services, "deliver_choice", deliver)
+    _press(post, 2)
+    assert _prompts(repo_session) == ["book 1"]
+    (drawn_with_both, drawn_after) = slack.said("chat.update")
+    assert len(_chose_lines(drawn_with_both)) == 2
+    assert _labels(drawn_after) == ["Book all", "Skip today"] and len(_chose_lines(drawn_after)) == 1
+    assert list(SlackChoicePost.objects.get().chosen) == ["0"]
+
+
+def test_a_failed_rewrite_still_delivers_and_the_next_press_repairs_the_post(slack, linked, alice, repo_session):
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    slack.fail["chat.update"] = "ratelimited"
+    _press(post, 0)
+    assert _prompts(repo_session) == ["book 1"]
+    del slack.fail["chat.update"]
+    _press(post, 1)
+    last = slack.said("chat.update")[-1]
+    assert _labels(last) == ["Skip today"] and len(_chose_lines(last)) == 2
+
+
+def test_someone_else_can_press_the_buttons_left(slack, linked, alice, repo_session):
+    from allauth.account.models import EmailAddress
+
+    from apps.workspaces import services as wsvc
+    from apps.workspaces.models import WorkspaceMembership
+    from apps.workspaces.testing import a_user
+
+    bob = a_user("bob@dimagi.com")
+    EmailAddress.objects.create(user=bob, email=bob.email, verified=True, primary=True)
+    wsvc.ensure_member(repo_session.workspace, bob, WorkspaceMembership.EDITOR)
+    _bind(alice, repo_session)
+    post = slack.said("chat.postMessage")[0]
+    _press(post, 0)
+    _press(post, 1, user=BOB)
+    assert _chose_lines(slack.said("chat.update")[-1]) == [
+        f":white_check_mark: <@{ALICE}> chose: *book 1*", f":white_check_mark: <@{BOB}> chose: *book all*"]
+
+
+# ---- an exclusive post takes one choice ------------------------------------------------
+
+def test_an_exclusive_posts_first_press_removes_every_button(slack, linked, alice, repo_session):
+    _bind(alice, repo_session, exclusive=True)
+    _press(slack.said("chat.postMessage")[0], 1)
+    (update,) = slack.said("chat.update")
+    assert not _buttons(update) and "Your day" in update["blocks"][0]["text"]["text"]
     assert f"<@{ALICE}> chose: *book all*" in update["blocks"][-1]["elements"][0]["text"]
 
 
 @pytest.mark.parametrize("second", [0, 1])
-def test_a_second_click_delivers_nothing_more(slack, linked, alice, repo_session, second):
-    """A double click, a Slack retry, or a stale client pressing the other button."""
-    _bind(alice, repo_session)
+def test_an_exclusive_post_refuses_any_second_press(slack, linked, alice, repo_session, second):
+    _bind(alice, repo_session, exclusive=True)
     post = slack.said("chat.postMessage")[0]
     _press(post, 0)
     _press(post, second)
     assert _prompts(repo_session) == ["book 1"]
     assert len(slack.said("chat.update")) == 1
     assert "already chose: *book 1*" in _told(slack) and "did nothing" in _told(slack)
+
+
+def test_the_route_takes_exclusive(slack, linked, alice, repo_session):
+    c = Client()
+    c.force_login(alice)
+    r = c.post("/api/canopy-sessions/slack/share",
+               {"channel": "C1", "summary": "s", "mode": "bind", "claude_session_id": "claude-abc",
+                "actions": ACTIONS, "exclusive": True}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert SlackChoicePost.objects.get().exclusive is True
+
+
+def test_an_update_to_a_bound_session_can_be_exclusive(slack, linked, alice, repo_session):
+    share.share_session(alice, channel="C1", summary="first", mode=share.BIND, session=repo_session)
+    share.share_session(alice, channel="", summary="second", session=repo_session,
+                        actions=ACTIONS, exclusive=True)
+    assert SlackChoicePost.objects.get().exclusive is True
 
 
 def test_a_chosen_word_cannot_address_another_agent_or_read_a_channel(slack, linked, alice, hal, ws, repo_session):
@@ -255,7 +418,7 @@ def test_a_person_a_typed_reply_would_confine_cannot_act_and_forks_nothing(slack
     _press(post, user=BOB)
     assert not Turn.objects.exists() and Session.objects.count() == before
     assert not slack.said("chat.update") and "did nothing" in _told(slack)
-    assert SlackChoicePost.objects.get().chosen_at is None
+    assert SlackChoicePost.objects.get().chosen == {}
 
 
 def test_a_click_on_a_detached_thread_says_it_did_nothing(slack, linked, alice, repo_session):
@@ -312,7 +475,7 @@ def test_a_refused_delivery_gives_the_click_back(slack, linked, alice, repo_sess
         services.NOT_AN_ANSWER, "It is waiting on its question above."))
     _press(post)
     assert "waiting on its question" in _told(slack)
-    assert not slack.said("chat.update") and SlackChoicePost.objects.get().chosen_at is None
+    assert not slack.said("chat.update") and SlackChoicePost.objects.get().chosen == {}
     monkeypatch.setattr(services, "deliver_choice", real)
     _press(post)
     assert _prompts(repo_session) == ["book 1"] and slack.said("chat.update")
@@ -330,6 +493,14 @@ def test_a_crash_in_delivery_is_said_to_the_person_and_gives_the_click_back(
 
     monkeypatch.setattr(services, "deliver_choice", boom)
     _press(post)
-    assert "went wrong" in _told(slack) and SlackChoicePost.objects.get().chosen_at is None
+    assert "went wrong" in _told(slack) and SlackChoicePost.objects.get().chosen == {}
 
 
+
+
+def test_an_agents_session_takes_several_presses_of_one_post(slack, linked, alice, hal_session):
+    _bind(alice, hal_session)
+    post = slack.said("chat.postMessage")[0]
+    _press(post, 0)
+    _press(post, 2)
+    assert _prompts(hal_session) == ["book 1", "skip today"]
