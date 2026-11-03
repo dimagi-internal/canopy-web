@@ -70,16 +70,19 @@ def _enforce_cap(msg) -> None:
         logger.exception("mail cap %s: eviction failed", msg.mailbox)
 
 
-def _store(route, parsed, raw_key: str, *, verdicts, raw_size: int, quiet: str | None):
+def _store(route, parsed, raw_key: str, *, verdicts, raw_size: int, quiet: str | None, spam: bool = False):
     """Store one inbound copy under `route`'s mailbox. Returns (msg, thread), or None when
-    this mailbox already holds the message."""
+    this mailbox already holds the message. Mail SES called spam keeps its words only (no
+    attachment or raw copy) and always starts its own thread: its In-Reply-To is the sender's
+    to write, and must not put it inside a real conversation."""
     ws = route.workspace
-    keep = storage.kept_attachments([len(a.data) for a in parsed.attachments])
+    keep = ([False] * len(parsed.attachments) if spam
+            else storage.kept_attachments([len(a.data) for a in parsed.attachments]))
     # The raw MIME holds every attachment, so a message that dropped one keeps no raw copy.
-    whole = all(keep)
+    whole = all(keep) and not spam
     try:
         with transaction.atomic():
-            thread = threads.place(route, parsed)
+            thread = (threads.start(route, parsed, spam=True) if spam else threads.place(route, parsed))
             msg = MailMessage.objects.create(
                 thread=thread, workspace=ws, direction=MailMessage.IN, mailbox=route.address,
                 message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
@@ -100,7 +103,9 @@ def _store(route, parsed, raw_key: str, *, verdicts, raw_size: int, quiet: str |
                                               size=len(att.data), s3_key=key, kept=kept)
             upd = {"message_count": F("message_count") + 1, "last_message_at": timezone.now()}
             if quiet is None:
-                upd["unread"] = True
+                # New mail on a conversation brings it back, as in any mail client. Someone's
+                # "this is spam" stands, though: it does not get to climb back out by replying.
+                upd.update(unread=True, archived=False, trashed_at=None)
             elif thread.message_count == 0:
                 upd["unread"] = False  # a brand-new thread of only quiet mail
             MailThread.objects.filter(pk=thread.pk).update(**upd)
@@ -118,6 +123,13 @@ def keep_forwarded(route, parsed, raw_key: str, *, verdicts: dict | None = None,
         return "duplicate"
     stored = _store(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size, quiet=None)
     return "duplicate" if stored is None else "kept"
+
+
+def keep_spam(route, parsed, *, verdicts: dict | None = None) -> str:
+    """Put mail SES marked as spam in the mailbox's Spam folder: seen by nobody until they look,
+    forwarded to no one, and it never wakes an agent."""
+    stored = _store(route, parsed, "", verdicts=verdicts, raw_size=0, quiet="stored:spam", spam=True)
+    return "duplicate" if stored is None else "stored:spam"
 
 
 def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:

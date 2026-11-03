@@ -183,7 +183,7 @@ export function MessageView({ m, initiallyOpen = true, inSpam = false }: {
               )}
               <span className="ml-1 text-muted-foreground">
                 {fileSize(a.size)}
-                {a.kept === false && ', too large, not kept'}
+                {a.kept === false && ', not kept'}
                 {inSpam && a.kept !== false && ', not offered in Spam'}
               </span>
             </li>

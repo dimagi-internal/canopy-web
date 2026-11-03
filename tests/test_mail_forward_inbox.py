@@ -107,6 +107,7 @@ def test_redelivery_does_not_duplicate_the_copy(w):
 
 def test_ledger_records_forwards_and_spam_and_unrouted(w):
     inbound.handle(_note("jjackson@marshellis.com"))
+    MailRoute.objects.filter(pk=w.r.pk).update(keep_copy=False)
     inbound.handle(_note("jjackson@marshellis.com", spam="FAIL"))
     inbound.handle(_note("nobody@marshellis.com"))
     rows = {(r.recipient, r.outcome): r for r in MailInboundLog.objects.all()}
@@ -123,6 +124,7 @@ def test_a_ledger_failure_never_changes_delivery(w, monkeypatch):
 
 
 def test_ledger_endpoint_is_for_admins_of_the_owning_workspace(w):
+    MailRoute.objects.filter(pk=w.r.pk).update(keep_copy=False)
     inbound.handle(_note("jjackson@marshellis.com", spam="FAIL"))
     url = f"/api/mail/domains/marshellis/{w.d.pk}/inbound"
     body = _c(w.owner).get(url).json()
@@ -437,3 +439,52 @@ def test_someone_elses_upload_cannot_be_sent(w, monkeypatch):
 def test_a_reply_names_the_address_it_goes_out_from(w):
     th = _stored(w)
     assert _c(w.owner).get(f"/api/mail/threads/marshellis/{th.uuid}").json()["reply_from"] == w.r.address
+
+
+def test_spam_lands_in_spam_is_never_forwarded_and_stays_out_of_the_inbox(w, monkeypatch):
+    sent = []
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: sent.append(kw) or "ses-1")
+    kept = []
+    monkeypatch.setattr(ses, "keep", lambda key: kept.append(key) or key)
+    out = inbound.handle(_note("jjackson@marshellis.com", spam="FAIL"))
+    assert out[0]["outcome"] == "stored:spam" and sent == [] and kept == []
+    assert _list(w, folder="inbox")["items"] == [] and _list(w)["unread_total"] == 0
+    row = _list(w, folder="spam")["items"][0]
+    assert row["spam"] is True and row["unread"] is False
+    assert MailMessage.objects.get().raw_key == ""
+
+
+def test_a_virus_is_still_dropped_outright(w):
+    note = _note("jjackson@marshellis.com")
+    note["receipt"]["virusVerdict"] = {"status": "FAIL"}
+    assert inbound.handle(note)[0]["outcome"] == "dropped:virus"
+    assert not MailMessage.objects.exists()
+
+
+def test_spam_never_joins_a_real_conversation(w):
+    inbound.handle(_note("jjackson@marshellis.com"))
+    real = MailThread.objects.get()
+    p = parse.parse(w.raw)
+    p.message_id, p.references = "<spam@x>", [real.messages.get().message_id]
+    agent_mail.keep_spam(w.r, p, verdicts={"spam": "FAIL"})
+    assert MailThread.objects.count() == 2 and real.messages.count() == 1
+
+
+def test_new_mail_brings_an_archived_or_trashed_thread_back_but_not_a_reported_one(w):
+    inbound.handle(_note("jjackson@marshellis.com"))
+    th = MailThread.objects.get()
+    first = th.messages.get().message_id
+
+    def reply(n):
+        p = parse.parse(w.raw)
+        p.message_id, p.in_reply_to, p.references = f"<r{n}@x>", first, [first]
+        agent_mail.keep_forwarded(w.r, p, "incoming/x")
+
+    MailThread.objects.filter(pk=th.pk).update(archived=True, trashed_at=timezone.now())
+    reply(1)
+    th.refresh_from_db()
+    assert th.archived is False and th.trashed_at is None and th.unread is True
+    MailThread.objects.filter(pk=th.pk).update(spam=True)
+    reply(2)
+    th.refresh_from_db()
+    assert th.spam is True
