@@ -16,11 +16,10 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.api.route_gates import gate
-from apps.huddles.models import CheckinRun
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import drills, routing, schedule_turns
+from . import drills, routing, schedule_hooks, schedule_turns
 from . import runners as harness_runners
 from .models import (
     AgentSchedule,
@@ -375,8 +374,7 @@ def fire_schedule_route(
         # A project check-in's schedule makes a run instead: with a channel it is
         # announced there and the turn comes once the lead confirms; without one
         # the check-in queued the turn itself (the run reads "running").
-
-        run = CheckinRun.objects.filter(checkin__schedule=schedule, slot=payload.slot).first()
+        run = schedule_hooks.announced_run(schedule, payload.slot)
         return Status(202, ScheduleAnnouncedOut(announced=True, run_id=getattr(run, "pk", None),
                                                 status=getattr(run, "status", "")))
     return Status(201, turn)

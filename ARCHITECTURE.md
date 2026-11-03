@@ -145,7 +145,8 @@ its `AppConfig.ready()`, rather than importing it: `workspaces.departure.registe
 workspace revokes; `tests/test_departure_revokers.py` lists the expected names),
 `workspaces.role_cap.register_turn_origin`, `workspaces.access_requests.register_push`,
 `events.audit.register_operation_id` (the API root) and `register_workspace_resolver` (agents, harness), and
-`events.after_record.register` (harness: a box's first event of the day; the log itself emits no signal). A report that reads core
+`events.after_record.register` (harness: a box's first event of the day; the log itself emits no signal) and
+`harness.schedule_hooks.register` (huddles: a check-in's schedule announces a run instead of enqueuing a turn). A report that reads core
 models lives with them (`harness/usage.py`, `mcp/audit_api.py`, the `backfill_activity` command in `mcp`).
 
 ## Structural guards
