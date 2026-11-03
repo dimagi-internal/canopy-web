@@ -123,7 +123,7 @@ describe('ShareConnectionPage', () => {
     expect(share.disabled).toBe(false)
     fireEvent.click(share)
     await waitFor(() => expect(putShare).toHaveBeenCalledWith('c1', { sig: 's' }))
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: [], myComputers: [], canopyWeb: false })
   })
 
   it('offers to trust a person vouching for a chosen machine, by name and fingerprint, and reads again', async () => {
@@ -148,7 +148,7 @@ describe('ShareConnectionPage', () => {
     fireEvent.click(screen.getByLabelText(/jj-laptop/))
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(putShare).toHaveBeenCalledWith('c1', { sig: 's' }))
-    expect(buildShare).toHaveBeenCalledWith(STATE, ME, { agents: ['12'], myComputers: [T1] }, TRUST)
+    expect(buildShare).toHaveBeenCalledWith(STATE, ME, { agents: ['12'], myComputers: [T1], canopyWeb: false }, TRUST)
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/settings/connections'))
   })
 
@@ -167,7 +167,7 @@ describe('ShareConnectionPage', () => {
     expect(box.disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(buildShare).toHaveBeenCalled())
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [], canopyWeb: false })
   })
 
   it('Not now leaves it unshared and says so', async () => {
@@ -197,7 +197,7 @@ describe('ShareConnectionPage', () => {
     expect((screen.getByLabelText('Eva') as HTMLInputElement).checked).toBe(false)
     expect((screen.getByLabelText(/jj-laptop/) as HTMLInputElement).checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
-    await waitFor(() => expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['40'], myComputers: [T1] }))
+    await waitFor(() => expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['40'], myComputers: [T1], canopyWeb: false }))
     expect(screen.queryByText(/was reconnected/)).toBeNull()
   })
 
@@ -277,7 +277,7 @@ describe('ShareConnectionPage: fixes', () => {
     expect(screen.getByTestId('dropped').textContent).toContain('BBBB')
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(buildShare).toHaveBeenCalled())
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [T1] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [T1], canopyWeb: false })
   })
 
   it('sends no computers for an agent-owned connection', async () => {
@@ -288,7 +288,7 @@ describe('ShareConnectionPage: fixes', () => {
     await unlocked()
     fireEvent.click(screen.getByRole('button', { name: 'Share' }))
     await waitFor(() => expect(buildShare).toHaveBeenCalled())
-    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [] })
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [], canopyWeb: false })
   })
 
   it.each(['no-scalar', 'bad-owner-key'])('%s asks to unlock again, not to Reconnect', async (code) => {

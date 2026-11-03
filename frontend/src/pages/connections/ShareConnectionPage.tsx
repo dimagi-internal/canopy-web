@@ -32,6 +32,10 @@ const RELOCK = 'Unlock your vault key and try again.'
 const NOT_YOURS = "This connection isn't yours to share."
 const KEY_MOVED = 'To share it, disconnect it in Settings, then connect it again.'
 const CANNOT_OPEN = "You can't open this connection's sharing right now."
+const CANOPY_WEB_WHY = 'canopy-web can use this account for you, with nobody present. '
+  + 'If canopy-web were ever hacked, this account could be taken until you disconnect it.'
+const CANOPY_WEB_TURNS_OFF = 'Sharing with agents or your computers turns off project screens and apps for now.'
+const CANOPY_WEB_NOT_YET = "This isn't available yet."
 const UNSAFE = "This connection can't be opened safely. Reconnect it."
 
 interface Opened {
@@ -72,6 +76,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [agents, setAgents] = useState<Set<string>>(new Set())
   const [computers, setComputers] = useState<Set<string>>(new Set())
+  const [canopyWebTicked, setCanopyWebTicked] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -92,10 +97,16 @@ export function ShareConnectionPage(): JSX.Element | null {
     () => (state?.candidates ?? []).filter((c) => c.kind === 'device' && !c.agent_id && c.mine),
     [state],
   )
+  // The box exists only when canopy-web has a key and makes calls for this provider; it can be
+  // ticked only while this deployment accepts a share that names it.
+  const server = state?.server
+  const canopyWebShown = !!server?.available && !!server.provider_calls
+  const canopyWebEnabled = canopyWebShown && !!server?.statements_enabled
   const choice: ShareChoice = useMemo(() => ({
     agents: [...new Set([...(ownerAgent ? [ownerAgent] : []), ...agents])].sort(),
     myComputers: ownerAgent ? [] : [...computers].sort(),
-  }), [agents, computers, ownerAgent])
+    canopyWeb: canopyWebEnabled && canopyWebTicked,
+  }), [agents, computers, ownerAgent, canopyWebEnabled, canopyWebTicked])
   const leftOut = useMemo(() => (state && opened ? leftOutOf(state, choice, opened.trust) : []), [state, opened, choice])
   const changed = useMemo(() => (opened ? changedEndorser(opened.trust, choice) : undefined), [opened, choice])
   const vouchers = useMemo(() => (opened ? vouchersToDecide(opened.trust, choice) : []), [opened, choice])
@@ -129,6 +140,8 @@ export function ShareConnectionPage(): JSX.Element | null {
     const trust = await trustFor(s, key, { accept: accepted.current })
     const listedAgents = new Set(s.agents.map((a) => a.id))
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
+    const sv = s.server
+    setCanopyWebTicked(keep ? !!keep.canopyWeb : !!sv?.on)
     const wantAgents = keep ? keep.agents : statement?.agents ?? []
     const wantComputers = s.owner_agent ? [] : keep ? keep.myComputers : statement?.my_computers ?? []
     const lost = [
@@ -187,7 +200,8 @@ export function ShareConnectionPage(): JSX.Element | null {
         me.current = null
         setOpened(null)
         setError(RELOCK)
-      } else if (e instanceof ShareRefused && e.code !== 'key-changed' && e.code !== 'too-many') setUnsafe(true)
+      } else if (e instanceof ShareRefused && e.code !== 'key-changed' && e.code !== 'too-many'
+                 && e.code !== 'server-key' && e.code !== 'server-unavailable') setUnsafe(true)
       else setError(e instanceof Error ? e.message : 'Could not share this connection.')
     } finally {
       setBusy(false)
@@ -220,6 +234,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   // A first share has to reach someone. Once shared, unticking everyone is how the last
   // grant is withdrawn: a statement naming nobody, signed like any other.
   const nothingToShare = !opened?.statement && choice.agents.length === 0 && choice.myComputers.length === 0
+    && !choice.canopyWeb
   const reconnected = !!opened?.statement && state.sealed_sig == null
 
   return (
@@ -307,6 +322,31 @@ export function ShareConnectionPage(): JSX.Element | null {
               {machines.length > 0 && (
                 <p className="text-[12px] text-muted-foreground">
                   Check the fingerprint against the one on that computer: it is the only way to tell it from one canopy invented.
+                </p>
+              )}
+            </fieldset>
+          )}
+
+          {canopyWebShown && (
+            <fieldset className="space-y-1">
+              <legend className="text-sm font-semibold text-foreground">Project screens and apps</legend>
+              <div className="flex items-start gap-2 text-sm">
+                <input
+                  id="canopy-web"
+                  type="checkbox"
+                  aria-label="Project screens and apps"
+                  aria-describedby="canopy-web-why"
+                  checked={canopyWebEnabled && canopyWebTicked}
+                  disabled={busy || !canopyWebEnabled}
+                  onChange={() => setCanopyWebTicked(!canopyWebTicked)}
+                />
+                <label htmlFor="canopy-web" id="canopy-web-why" className="space-y-0.5 text-[13px] text-muted-foreground">
+                  {CANOPY_WEB_WHY}
+                </label>
+              </div>
+              {!canopyWebEnabled && (
+                <p data-testid="canopy-web-unavailable" className="text-[13px] text-muted-foreground">
+                  {server?.on ? CANOPY_WEB_TURNS_OFF : CANOPY_WEB_NOT_YET}
                 </p>
               )}
             </fieldset>

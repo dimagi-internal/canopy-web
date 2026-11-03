@@ -72,6 +72,8 @@ const REFRESH_KEYS = ['account_id', 'client_id', 'instance_url', 'issued_at', 'l
 const ACCESS_KEYS = ['access_token', 'account_id', 'expires_at', 'instance_url', 'owner_key', 'scope',
   'statement_floor', 'v']
 const STATEMENT_KEYS = ['account_id', 'agents', 'connection', 'endorsers', 'my_computers', 'v', 'version']
+/** `canopy_web` is optional: present only when the owner named canopy-web, never null or empty. */
+const STATEMENT_KEYS_WITH_SERVER = [...STATEMENT_KEYS, 'canopy_web'].sort()
 
 /** This browser will not read or write what it was handed. `code` says why; never a secret. */
 export class ShareRefused extends Error {
@@ -92,10 +94,13 @@ export interface Statement {
   my_computers: string[]
   v: 1
   version: number
+  /** The thumbprint of the canopy-web key the owner lets use this connection. Absent when none. */
+  canopy_web?: string
 }
 
 export interface OpenedAccount { account_id: string; instance_url: string; provider: string }
-export interface ShareChoice { agents: string[]; myComputers: string[] }
+/** `canopyWeb`: the owner lets canopy-web use this connection itself, with nobody present. */
+export interface ShareChoice { agents: string[]; myComputers: string[]; canopyWeb?: boolean }
 export interface LeftOut { target: string; runner_name: string; agent_id: string; why: string }
 
 /** A writer, for `writerSig`: only the owner's member key in production. */
@@ -126,7 +131,11 @@ function sortedUnique(items: unknown, pattern: RegExp, what: string): string[] {
 
 function checkedStatement(st: unknown): Statement {
   const s = st as Json
-  if (!s || typeof s !== 'object' || Object.keys(s).sort().join() !== STATEMENT_KEYS.join()) throw badStatement('does not have exactly its seven fields')
+  const keys = s && typeof s === 'object' ? Object.keys(s).sort().join() : ''
+  if (keys !== STATEMENT_KEYS.join() && keys !== STATEMENT_KEYS_WITH_SERVER.join()) throw badStatement('does not have exactly its fields')
+  if ('canopy_web' in s && (typeof s.canopy_web !== 'string' || !THUMBPRINT.test(s.canopy_web))) {
+    throw badStatement('names a malformed canopy-web key')
+  }
   if (s.v !== 1) throw badStatement('is not v1')
   if (!Number.isSafeInteger(s.version) || (s.version as number) < 1) throw badStatement('has no valid version')
   if (typeof s.account_id !== 'string' || !ACCOUNT_ID.test(s.account_id)) throw badStatement('names a malformed account')
@@ -134,6 +143,8 @@ function checkedStatement(st: unknown): Statement {
   return {
     account_id: s.account_id,
     agents: sortedUnique(s.agents, DECIMAL_ID, 'agents'),
+    // Sorted between `agents` and `connection`, and only when named.
+    ...('canopy_web' in s ? { canopy_web: s.canopy_web as string } : {}),
     connection: s.connection,
     endorsers: sortedUnique(s.endorsers, THUMBPRINT, 'endorsers'),
     my_computers: sortedUnique(s.my_computers, THUMBPRINT, 'computers'),
@@ -279,6 +290,7 @@ async function checkedSig(sig: unknown, entries: SealedEntry[]): Promise<{ by: B
  *  `stored` has passed `storedStatement`, so it is the owner's own word. */
 async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statement | null, ownerJkt: string): Promise<boolean> {
   if (!stored) return false
+  if (stored.canopy_web === thumb) return true
   if (stored.my_computers.includes(thumb)) return true
   const vouchers = new Set([ownerJkt, ...stored.endorsers])
   for (const e of state.endorsements ?? []) {
@@ -288,6 +300,13 @@ async function deviceAllowed(thumb: string, state: ShareStateOut, stored: Statem
     if (vouchers.has(await jkt(signer)) && await verifyEndorsement(e, String(e.agent_id), signer)) return true
   }
   return false
+}
+
+/** canopy-web's own first seal, while the row is `unshared`: the one time the owner has signed
+ *  nothing yet, as with any first seal. Once shared, only a statement the owner signed that
+ *  names the writer's key admits it (`deviceAllowed`); `server.thumbprint` alone never does. */
+function firstServerSeal(state: ShareStateOut, thumb: string): boolean {
+  return state.state === 'unshared' && !!state.server?.available && state.server.thumbprint === thumb
 }
 
 /** Refuse unless `sig` proves who wrote this recipient's entry, and they may have. */
@@ -304,7 +323,7 @@ async function authenticate(state: ShareStateOut, stored: Statement | null, owne
   }
   const allowed = by.kind === 'member'
     ? by.target === owner.userId && thumb === owner.jkt
-    : await deviceAllowed(thumb, state, stored, owner.jkt)
+    : firstServerSeal(state, thumb) || await deviceAllowed(thumb, state, stored, owner.jkt)
   if (!allowed) throw new ShareRefused('bad-writer', 'This connection’s envelope was written by someone it does not allow.')
 }
 
@@ -574,6 +593,22 @@ function trustedEndorsers(choice: ShareChoice, trust: Trust, sealedTo: Set<strin
   return [...out].sort()
 }
 
+/** canopy-web as a recipient, when the owner ticked it. The key is canopy-web's claim, so its
+ *  thumbprint is computed here and must be the one it reported; a statement never names it
+ *  otherwise. Null when the owner did not tick the box. */
+async function serverRecipient(state: ShareStateOut, choice: ShareChoice): Promise<Recipient | null> {
+  if (!choice.canopyWeb) return null
+  const sv = state.server
+  if (!sv?.available || !sv.provider_calls || !sv.statements_enabled || !sv.public_jwk || !THUMBPRINT.test(sv.thumbprint)) {
+    throw new ShareRefused('server-unavailable', 'canopy-web cannot use this connection for you right now: nothing was sent.')
+  }
+  const key = sv.public_jwk as Jwk
+  if (!(await keyMatches(sv.thumbprint, key))) {
+    throw new ShareRefused('server-key', 'The key canopy-web gave does not match its fingerprint: nothing was sent.')
+  }
+  return { kind: 'device', target: sv.thumbprint, publicJwk: key as PublicJwk }
+}
+
 // ---- the share ---------------------------------------------------------------------------
 
 /** Everything `PUT /api/connections/{id}/share` needs, for `choice`, and the chosen machines
@@ -591,13 +626,16 @@ export async function buildShare(state: ShareStateOut, me: Unlocked, choice: Sha
       + 'trusted it. Confirm with them before sharing: nothing was sent.')
   }
   const { sealTo, computers, agentDevices, leftOut: dropped } = decide(state, choice, trust)
-  const recipients = [{ kind: 'member' as const, target: owner.userId, publicJwk: owner.publicJwk }, ...sealTo.values()]
+  const server = await serverRecipient(state, choice)
+  const recipients = [{ kind: 'member' as const, target: owner.userId, publicJwk: owner.publicJwk }, ...sealTo.values(),
+                      ...(server && !sealTo.has(server.target) ? [server] : [])]
   if (recipients.length > MAX_LISTED) throw new ShareRefused('too-many', `A connection can reach at most ${MAX_LISTED} recipients.`)
 
   const version = (stored?.version ?? 0) + 1
   const statement = checkedStatement({
     account_id: refresh.account_id,
     agents: [...new Set(choice.agents)].sort(),
+    ...(server ? { canopy_web: server.target } : {}),
     connection: state.id,
     endorsers: trustedEndorsers(choice, trust, agentDevices),
     my_computers: [...computers].sort(),
