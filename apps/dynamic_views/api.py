@@ -16,6 +16,7 @@ from apps.agents import services as agent_services
 from apps.agents.gates import listed_agent_workspaces, may_edit_project, visible_agent_workspaces
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.connections import declarations
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path_or_none
@@ -59,6 +60,18 @@ def _view_or_404(request: HttpRequest, view_id: int) -> DynamicView:
     if view is None or view.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(404, f"view {view_id} not found")
     return view
+
+
+def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
+    """The view a Salesforce call comes from, by the gate that reads a view. What it may ask is
+    what the revision the page drew declares, so a saved change never reaches a page still on the
+    one before, either way."""
+    view = _view_or_404(request, ref["id"])
+    revision = view.revisions.filter(version=ref["version"]).first()
+    if revision is None:
+        raise HttpError(404, f"view {view.pk} has no version {ref['version']}")
+    return declarations.Surface(kind="view", ref=str(view.pk), workspace=view.workspace_id,
+                                revision=revision.version, declared=revision.connections or [])
 
 
 def _project_or_422(workspace: str, handle: str):

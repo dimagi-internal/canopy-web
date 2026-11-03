@@ -29,6 +29,7 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_RATE_LIMIT, ProblemError
 from apps.api.route_gates import gate
+from apps.connections import declarations
 from apps.embedding.audit import client_ip
 from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
@@ -84,6 +85,17 @@ def _installation(request: HttpRequest, workspace: str, key: str, *, enabled: bo
     if inst is None or (enabled and not inst.enabled and not access.may_manage(request.user, workspace)):
         raise HttpError(404, f"no app '{key}' in '{workspace}'")
     return inst
+
+
+def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
+    """The app page a Salesforce call comes from: an enabled app, and a person with its `member`
+    door. Not `_installation`, which lets a manager reach a switched-off app to switch it back on.
+    What it may ask is the live manifest's `connections`; a draft's calls nothing."""
+    inst = AppInstallation.objects.filter(workspace_id=ref["workspace"], key=ref["key"], enabled=True).first()
+    if inst is None or "member" not in access.roles_for(request.user, inst):
+        raise HttpError(404, f"no app '{ref['key']}' in '{ref['workspace']}'")
+    return declarations.Surface(kind="app", ref=inst.key, workspace=inst.workspace_id, revision=inst.live_id,
+                                declared=inst.manifest.get("connections") or [])
 
 
 def _require_manage(request: HttpRequest, workspace: str) -> None:

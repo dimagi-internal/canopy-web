@@ -14,6 +14,15 @@ class WorkspaceAppsConfig(AppConfig):
         ticks.register("workspace_apps.retention", _retention, 12 * 60 * 60)
         # Emails an action held back (a rejection sent the next day), every ten minutes.
         ticks.register("workspace_apps.scheduled_email", _scheduled_email, 10 * 60)
+        from apps.connections import declarations  # noqa: PLC0415 — the registry of what a screen is
+
+        declarations.register_surface("app", _connection_surface)
+
+
+def _connection_surface(request, ref):
+    from .api import connection_surface  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    return connection_surface(request, ref)
 
 
 def _retention() -> None:

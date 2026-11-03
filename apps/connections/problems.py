@@ -6,7 +6,7 @@ token routes, the turn routes and the sharing routes cannot drift apart.
 """
 from __future__ import annotations
 
-from apps.api.errors import ProblemError
+from apps.api.errors import TYPE_PAYLOAD_TOO_LARGE, TYPE_RATE_LIMIT, ProblemError
 
 from . import services, wire
 
@@ -59,6 +59,34 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail
         "provider_error": f"{title} refused the request.",
     }.get(exc.code, str(exc))
     return ProblemError(status, heading, detail=detail, members={"error": exc.code or "provider_error", **members})
+
+
+# What a screen's call can hear besides the codes above, and where it differs from them: a provider
+# that didn't answer is 502 here, since the caller has a provider's answer to compare it with.
+_CALL_PROBLEMS: dict[str, tuple[int, str]] = {
+    "session_required": (403, "A person signed in here only"),
+    "request_too_large": (413, "Too much to send"),
+    "not_allowed": (403, "Not a call a screen may make"),
+    "not_declared": (403, "Not a call this screen declared"),
+    "provider_not_supported": (409, "Not available yet"),
+    "needs_approval": (409, "Needs an admin's approval"),
+    "needs_operation": (409, "Needs a click"),
+    "rate_limited": (429, "Too many calls"),
+    "session_ended": (409, "Connection needs connecting again"),
+    "response_too_large": (502, "Answer too large"),
+    "provider_unavailable": (502, "Provider unavailable"),
+}
+_CALL_TYPES = {"rate_limited": TYPE_RATE_LIMIT, "request_too_large": TYPE_PAYLOAD_TOO_LARGE}
+
+
+def problem_for_call(exc: services.ConnectionError) -> ProblemError:
+    """The response for a refused screen call (`call_service`). Its sentence is the exception's:
+    each one there is written for the person looking at the screen. `exc.members` adds to the body."""
+    status, heading = _CALL_PROBLEMS.get(exc.code) or _PROBLEMS.get(exc.code, (502, "Provider error"))
+    headers = {"Retry-After": "60"} if exc.code == "rate_limited" else None
+    return ProblemError(status, heading, type_=_CALL_TYPES.get(exc.code, "about:blank"), detail=str(exc),
+                        members={"error": exc.code or "provider_error", **getattr(exc, "members", {})},
+                        headers=headers)
 
 
 # Each refusal of a share, by its `error` code; the status comes with the refusal.

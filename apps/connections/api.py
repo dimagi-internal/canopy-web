@@ -32,14 +32,16 @@ from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 
-from . import proofs, providers, server_key, services, sharing, tokens
+from . import call_service, proofs, providers, server_key, services, sharing, tokens
 from . import recipients as rcpt
 from .models import Connection, ConnectionApp
-from .problems import problem_for, problem_for_wire
+from .problems import problem_for, problem_for_call, problem_for_wire
 from .schemas import (
     ConnectionAppIn,
     ConnectionAppOut,
     ConnectionAppsOut,
+    ConnectionCallIn,
+    ConnectionCallOut,
     ConnectionMaterialOut,
     ConnectionOut,
     ConnectionsOut,
@@ -233,6 +235,25 @@ def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
     if not sharing.visible(conn, request.user):
         raise HttpError(404, "Not Found")
     return conn
+
+
+@router.post("/{provider}/request", response=ConnectionCallOut, exclude_unset=True,
+             summary="A screen's call to a provider, through the signed-in person's session")
+# A session only; the surface's own read gate decides who may open it (`member` on an app).
+@gate("member", kind="action",
+      viewer_write="a member who may open a screen makes the calls it declared, with their own account")
+def request_connection_call(request: HttpRequest, provider: str, payload: ConnectionCallIn) -> dict:
+    """Make one call a dynamic view or an app page declared, and return the provider's status and JSON body.
+
+    Only a person signed in here: a personal access token or OAuth token is refused 403 `session_required`.
+    A provider's refusal is a 200 here with its own `status`. A refusal of the call itself is a problem
+    whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
+    `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
+    `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `provider_unavailable`."""
+    try:
+        return call_service.call(request, provider, payload)
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
 
 
 @router.get("/{connection_id}/share", response=ShareStateOut, summary="What sharing a connection needs")

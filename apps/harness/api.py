@@ -76,9 +76,9 @@ ALLOWED_EVENT_KINDS = {
 # explicitly to 2.5MB, config/settings/base.py — security review 2026-07-26,
 # F8) rather than close to it: a request whose JSON-encoded body crosses THAT
 # ceiling never reaches this view at all — request.body raises
-# RequestDataTooBig as an unhandled 500 before Ninja even parses the payload.
+# RequestDataTooBig, a 413, before Ninja even parses the payload.
 # Keeping this cap well below it means an oversized batch always surfaces as
-# our clean 422, not an occasional 500 depending on JSON escaping overhead.
+# our clean 422, not an occasional 413 depending on JSON escaping overhead.
 TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
 
 

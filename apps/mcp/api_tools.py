@@ -82,6 +82,8 @@ EXCLUDED_PREFIXES: dict[str, str] = {
 EXCLUDED: dict[str, str] = {
     "_auth_smoke": "internal smoke route",
     "health": "health check",
+    "request_connection_call": "a screen's call, on a person's session; a token is refused, and an agent "
+                               "uses its own connection in its turn",
     # HCP v1 Appendix B: the MCP tool set is the preference operations only;
     # grants, the audit log and export are the PERSON's, reached over REST and
     # the /people/me page. The full-HCPEntry POST is REST's; MCP adds through

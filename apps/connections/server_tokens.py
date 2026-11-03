@@ -132,6 +132,17 @@ def _forget(connection_id) -> None:
         _cache.pop(connection_id, None)
 
 
+def forget(conn: Connection) -> None:
+    """The provider refused the token `access_token` gave: its session ended before its stored expiry
+    said it would. Drop the cached copy and mark what is stored as spent, or the next `access_token`
+    would open the same dead token from the envelope. That one refreshes, under the lease, for
+    everyone: a machine reading this row sees the expiry too. A refresh that landed a moment ago is
+    spent as well, which costs one more refresh and loses nothing."""
+    _forget(conn.pk)
+    now = timezone.now()
+    Connection.objects.filter(pk=conn.pk, access_expires_at__gt=now).update(access_expires_at=now)
+
+
 def _remember(connection_id, digest: str, token: str, instance_url: str, expires_at: float) -> None:
     now = _now()
     with _cache_lock:

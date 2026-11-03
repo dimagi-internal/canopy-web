@@ -365,7 +365,7 @@ AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_re
                      "refreshed", "server_refreshed", "server_write_failed", "server_use_on", "server_use_off",
                      "lease_expired_unwritten",
                      "reconnect_required", "resealed", "revoked", "revoke_unconfirmed", "app_configured",
-                     "app_removed"})
+                     "app_removed", "connection_call"})
 
 
 @dataclass(frozen=True)

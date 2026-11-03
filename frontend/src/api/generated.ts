@@ -407,6 +407,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/connections/{provider}/request": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A screen's call to a provider, through the signed-in person's session
+         * @description Make one call a dynamic view or an app page declared, and return the provider's status and JSON body.
+         *
+         *     Only a person signed in here: a personal access token or OAuth token is refused 403 `session_required`.
+         *     A provider's refusal is a 200 here with its own `status`. A refusal of the call itself is a problem
+         *     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
+         *     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
+         *     `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `provider_unavailable`.
+         */
+        readonly post: operations["request_connection_call"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/connections/{connection_id}/share": {
         readonly parameters: {
             readonly query?: never;
@@ -18951,6 +18977,107 @@ export interface components {
              * @description The machine's runner name.
              */
             readonly runner: string;
+        };
+        /** ConnectionCallOut */
+        readonly ConnectionCallOut: {
+            /**
+             * Status
+             * @description The provider's own status, also when it refused the call.
+             */
+            readonly status: number;
+            /**
+             * Body
+             * @description The provider's JSON answer. Null when it sent none, or not JSON.
+             */
+            readonly body?: unknown;
+            /**
+             * Text
+             * @description The start of an answer that was not JSON. Absent otherwise.
+             */
+            readonly text?: string | null;
+        };
+        /** AppSurfaceIn */
+        readonly AppSurfaceIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "app";
+            /**
+             * Workspace
+             * @description The workspace the app is installed in.
+             */
+            readonly workspace: string;
+            /**
+             * Key
+             * @description The installed app's key.
+             */
+            readonly key: string;
+        };
+        /** ConnectionCallIn */
+        readonly ConnectionCallIn: {
+            /**
+             * Method
+             * @description `GET`, `POST`, `PATCH` or `DELETE`.
+             */
+            readonly method: string;
+            /**
+             * Path
+             * @description Relative to Salesforce's API root, for example `query` or `sobjects/Lead/00Q…`. Plain names and slashes only.
+             */
+            readonly path: string;
+            /**
+             * Query
+             * @description The query string, as names and text.
+             */
+            readonly query?: {
+                readonly [key: string]: string | readonly string[];
+            } | null;
+            /**
+             * Body
+             * @description The JSON body to send, on a `POST` or `PATCH`.
+             */
+            readonly body?: unknown;
+            /**
+             * Surface
+             * @description The screen making the call: its own workspace's connection is the one used.
+             */
+            readonly surface: components["schemas"]["ViewSurfaceIn"] | components["schemas"]["AppSurfaceIn"];
+            /**
+             * As
+             * @description Whose connection: the viewer's own, or one an agent shared.
+             * @default viewer
+             * @enum {string}
+             */
+            readonly as: "viewer" | "shared";
+            /**
+             * Agent
+             * @description With `as: shared`, the agent whose connection it is.
+             */
+            readonly agent?: string | null;
+            /**
+             * Operation Id
+             * @description The click a write belongs to.
+             */
+            readonly operation_id?: string | null;
+        };
+        /** ViewSurfaceIn */
+        readonly ViewSurfaceIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "view";
+            /**
+             * Id
+             * @description The dynamic view.
+             */
+            readonly id: number;
+            /**
+             * Version
+             * @description The revision the page drew. What that revision declares is what is checked, not the view's latest.
+             */
+            readonly version: number;
         };
         /** ShareAgentOut */
         readonly ShareAgentOut: {
@@ -47052,6 +47179,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ConnectionsOut"];
+                };
+            };
+        };
+    };
+    readonly request_connection_call: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectionCallIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectionCallOut"];
                 };
             };
         };

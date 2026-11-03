@@ -20,12 +20,16 @@ wrong, a run is where a token is used.
 connection `agent` shared. One entry per (provider, as, agent).
 
 This module imports only `calls`: the view and app code that saves a declaration
-may import it, and it knows no model.
+may import it, and it knows no model. So it also holds the registry of surfaces:
+what a screen is lives in a product app, which connections may not import, so each
+kind of surface registers how to find one and who may open it (`register_surface`,
+from its `AppConfig.ready()`).
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from . import calls
 
@@ -40,6 +44,31 @@ AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 # id and an object name both, so a read's `*` may be either.
 _PLACEHOLDER = "A00000000000000"
 _ENTRY_KEYS = {"provider", "as", "agent", "reads", "writes"}
+
+
+@dataclass(frozen=True)
+class Surface:
+    """The screen a call comes from, once the caller is known to be allowed to open it.
+    `declared` is what THAT screen declares: a view's named revision, an app's live manifest.
+    The connection comes from `workspace` and nowhere else."""
+    kind: str
+    ref: str  # what an audit line calls it, without the kind: a view's id, an app's key
+    workspace: str
+    revision: int | None
+    declared: list[dict]
+
+
+_surfaces: dict[str, Callable[..., Surface]] = {}
+
+
+def register_surface(kind: str, resolve: Callable[..., Surface]) -> None:
+    """`resolve(request, ref)` answers with a `Surface`, or raises what its own read route
+    would for someone who may not open it. `ref` is the request's `surface` object."""
+    _surfaces[kind] = resolve
+
+
+def resolve_surface(request, ref: dict) -> Surface:
+    return _surfaces[ref["kind"]](request, ref)
 
 
 def _line(where: str, raw, kind: str) -> dict:

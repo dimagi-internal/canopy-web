@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
@@ -457,3 +457,36 @@ class ResealOut(StrictModel):
 class RevokedIn(StrictModel):
     revoked: bool = Field(description="Revoked at the provider (or told not to); false when that failed.")
     error: str = Field(default="", max_length=100, description="The provider's error code, when it failed.")
+
+
+class ViewSurfaceIn(StrictModel):
+    kind: Literal["view"]
+    id: int = Field(description="The dynamic view.")
+    version: int = Field(description="The revision the page drew. What that revision declares is what is checked, "
+                                     "not the view's latest.")
+
+
+class AppSurfaceIn(StrictModel):
+    kind: Literal["app"]
+    workspace: str = Field(description="The workspace the app is installed in.")
+    key: str = Field(description="The installed app's key.")
+
+
+class ConnectionCallIn(StrictModel):
+    method: str = Field(description="`GET`, `POST`, `PATCH` or `DELETE`.")
+    path: str = Field(description="Relative to Salesforce's API root, for example `query` or `sobjects/Lead/00Q…`. "
+                                  "Plain names and slashes only.")
+    query: dict[str, str | list[str]] | None = Field(default=None, description="The query string, as names and text.")
+    body: Any = Field(default=None, description="The JSON body to send, on a `POST` or `PATCH`.")
+    surface: Annotated[ViewSurfaceIn | AppSurfaceIn, Field(discriminator="kind")] = Field(
+        description="The screen making the call: its own workspace's connection is the one used.")
+    as_: Literal["viewer", "shared"] = Field(
+        default="viewer", alias="as", description="Whose connection: the viewer's own, or one an agent shared.")
+    agent: str | None = Field(default=None, description="With `as: shared`, the agent whose connection it is.")
+    operation_id: str | None = Field(default=None, max_length=100, description="The click a write belongs to.")
+
+
+class ConnectionCallOut(StrictModel):
+    status: int = Field(description="The provider's own status, also when it refused the call.")
+    body: Any = Field(default=None, description="The provider's JSON answer. Null when it sent none, or not JSON.")
+    text: str | None = Field(default=None, description="The start of an answer that was not JSON. Absent otherwise.")
