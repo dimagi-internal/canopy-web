@@ -427,6 +427,49 @@ def test_a_subagent_error_is_not_this_turn(tmp_path):
         {"hook_event_name": "Notification", "transcript_path": path}) is False
 
 
+# `continue: false` from a PostToolUse hook, as Ada's debug turn 05590519 wrote it on 2026-11-03:
+# the call the model had already started is refused, then `turn_duration`, and no `Stop` hook.
+# Sixty seconds later the idle `Notification` raised a "Waiting on you" over nothing.
+STOPPED_BY_HOOK = [
+    USER_ROW, ASSISTANT_ROW,
+    {"type": "attachment", "attachment": {"type": "hook_stopped_continuation"}},
+    ASSISTANT_ROW, {"type": "user", "message": {"role": "user", "content": "refused"}},
+    TURN_DURATION_ROW,
+]
+
+
+def test_a_turn_a_hook_stopped_has_ended(tmp_path):
+    path = _transcript(tmp_path, STOPPED_BY_HOOK)
+    assert ct.turn_ended_without_stop({"transcript_path": path}) is True
+
+
+def test_bookkeeping_after_the_turn_end_does_not_hide_it(tmp_path):
+    path = _transcript(tmp_path, [*STOPPED_BY_HOOK, {"type": "last-prompt"}, {"type": "mode"}])
+    assert ct.turn_ended_without_stop({"transcript_path": path}) is True
+
+
+def test_an_api_error_with_no_turn_duration_row_has_ended(tmp_path):
+    path = _transcript(tmp_path, [USER_ROW, API_ERROR_ROW])
+    assert ct.turn_ended_without_stop({"transcript_path": path}) is True
+
+
+def test_a_turn_still_running_after_an_earlier_one_ended_has_not(tmp_path):
+    path = _transcript(tmp_path, [USER_ROW, TURN_DURATION_ROW, USER_ROW, ASSISTANT_ROW])
+    assert ct.turn_ended_without_stop({"transcript_path": path}) is False
+
+
+def test_a_request_for_the_next_prompt_means_a_turn_has_started(tmp_path):
+    path = _transcript(tmp_path, [*STOPPED_BY_HOOK, {"type": "api-request"}])
+    assert ct.turn_ended_without_stop({"transcript_path": path}) is False
+
+
+def test_turn_ended_without_stop_fails_closed(tmp_path):
+    assert ct.turn_ended_without_stop({}) is False
+    assert ct.turn_ended_without_stop({"transcript_path": "/nope/nothing.jsonl"}) is False
+    assert ct.turn_ended_without_stop({"transcript_path": _transcript(tmp_path, [])}) is False
+    assert ct.turn_ended_without_stop(None) is False
+
+
 def test_it_fails_closed(tmp_path):
     """No path, an unreadable path, and an empty file all answer False — which
     is the previous behaviour: a false block, never a missed one."""

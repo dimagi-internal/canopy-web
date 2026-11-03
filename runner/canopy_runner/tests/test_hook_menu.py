@@ -554,6 +554,27 @@ def test_the_api_error_clears_the_turn_rather_than_one_notification(tmp_path):
     assert hl.pending_menu(*KEY) is None
 
 
+def test_a_turn_a_hook_stopped_is_not_in_flight(tmp_path):
+    """A hook's `continue: false` ends a turn with no `Stop` too. credential_guard aborted Ada's
+    debug turn 05590519 this way (2026-11-03), and the idle notification a minute later put a
+    "Waiting on you" on a session with nothing on screen."""
+    import json
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "go"}}) + "\n"
+        + json.dumps({"type": "attachment",
+                      "attachment": {"type": "hook_stopped_continuation"}}) + "\n"
+        + json.dumps({"type": "system", "subtype": "turn_duration"}) + "\n")
+
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "transcript_path": str(transcript),
+                       "message": "Claude is waiting for your input"})
+    assert hl.pending_menu(*KEY) is None
+
+
 def test_a_live_turn_with_an_older_api_error_still_raises_a_marker(tmp_path):
     """The error only ends a turn while it is the last thing said. A session that
     retried and is working again must still be able to stop and ask."""

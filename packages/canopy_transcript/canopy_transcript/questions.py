@@ -376,6 +376,39 @@ def _is_interrupt_marker(record: dict) -> bool:
                for b in content)
 
 
+def turn_ended_without_stop(payload) -> bool:
+    """Whether this session's turn is already over, though no `Stop` hook said so.
+
+    An API error is one such ending (`turn_ended_in_api_error`); a hook answering
+    `continue: false` is another. credential_guard ended Ada's debug turn 05590519
+    that way on 2026-11-03, a call the model had already started landed after the
+    stop, and the idle `Notification` a minute later read as a mid-turn block. So
+    the last thing said proves nothing there. `turn_duration` does: Claude Code
+    writes it as a turn ends, and a turn in progress has none after its own prompt.
+
+    **Fails closed**, like `turn_ended_in_api_error`.
+    """
+    if turn_ended_in_api_error(payload):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    path = payload.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return False
+    for record in reversed(read_tail_records(path)):
+        kind = record.get("type")
+        # New work: the next prompt's request can be written before its own record.
+        if isinstance(kind, str) and kind.startswith("api-request"):
+            return False
+        if record.get("isSidechain"):
+            continue
+        if kind == "system" and record.get("subtype") == "turn_duration":
+            return True
+        if kind in ("user", "assistant"):
+            return False
+    return False
+
+
 def hook_retires_menu(payload) -> bool:
     """Whether this hook event means any dialog on that session is gone.
 
