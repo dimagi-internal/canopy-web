@@ -139,7 +139,7 @@ export function GoogleAccessDialog({ ask, onDone }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true"
       aria-labelledby="google-access-title" data-testid="google-access-dialog">
       <div className="w-full max-w-md space-y-3 rounded-xl border border-border bg-card p-5 text-sm text-foreground shadow-xl">
         <h2 id="google-access-title" className="text-base font-semibold">

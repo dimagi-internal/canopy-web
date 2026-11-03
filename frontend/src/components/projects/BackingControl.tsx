@@ -1,8 +1,9 @@
 import { useState, type JSX } from 'react'
 
-import { AgentApiError, type BackingStance, type ProjectBackingOut } from '@/api/agents'
+import { type BackingStance, type ProjectBackingOut } from '@/api/agents'
 
 import { STANCE_WORDS } from './stance'
+import { ApiError } from '@/api/problem'
 
 // SAY WHERE YOU STAND — any member, as themself, on a proposed project or a
 // proposed task (the caller wires `save` / `withdraw` to the right routes).
@@ -45,7 +46,7 @@ export function BackingControl({
         onChanged()
       })
       .catch((err: unknown) =>
-        setError(err instanceof AgentApiError && err.detail ? err.detail : 'Could not save that'),
+        setError(err instanceof ApiError && err.detail ? err.detail : 'Could not save that'),
       )
       .finally(() => setBusy(false))
   }

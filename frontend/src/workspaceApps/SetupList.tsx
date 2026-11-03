@@ -64,7 +64,7 @@ export function SetupList({ workspace, appKey }: { workspace: string; appKey: st
                   onChange={(e) => change({ step: s.id, done: e.target.checked })} />
               ) : (
                 <span aria-label={s.done ? 'done' : 'not done yet'}
-                  className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] ${s.done ? 'border-success bg-success text-white' : 'border-border'}`}>
+                  className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] ${s.done ? 'border-success bg-success text-success-foreground' : 'border-border'}`}>
                   {s.done ? '✓' : ''}
                 </span>
               )}

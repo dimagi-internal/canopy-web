@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
-import { WorkspaceApiError } from '@/api/workspaces'
 import {
   declineBetaRequest,
   getBetaRequest,
@@ -14,11 +13,12 @@ import {
 import { roleAllows } from '@/lib/workspaceRoles'
 import { approvableRoles } from './accessRequests'
 import { scopedPath } from '../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 const NOT_YOURS = 'Requests for access to Canopy are answered by the person they are emailed to.'
 
 function loadErrorText(e: unknown): string {
-  return e instanceof WorkspaceApiError && e.status === 404
+  return e instanceof ApiError && e.status === 404
     ? NOT_YOURS
     : e instanceof Error ? e.message : 'Failed to load'
 }

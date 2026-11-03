@@ -4,8 +4,9 @@ import { Button } from 'canopy-ui/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { loginHref } from '@/auth/loginHref'
 import { getCsrfToken } from '@/api/base'
-import { acceptInvite, previewInvite, WorkspaceApiError, type InvitePreviewOut } from '@/api/workspaces'
+import { acceptInvite, previewInvite, type InvitePreviewOut } from '@/api/workspaces'
 import { scopedPath } from '../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 type ViewState =
   | { kind: 'loading' }
@@ -60,7 +61,7 @@ export function InviteAcceptPage(): JSX.Element | null {
       const ws = await acceptInvite(token)
       navigate(scopedPath(ws.slug, ''), { replace: true })
     } catch (e) {
-      if (e instanceof WorkspaceApiError && e.status === 403) {
+      if (e instanceof ApiError && e.status === 403) {
         setState({ kind: 'mismatch' })
       } else {
         setState({

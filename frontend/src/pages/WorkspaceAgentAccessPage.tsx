@@ -5,7 +5,6 @@ import { clsx } from 'clsx'
 import { grantAgentAdmin, revokeAgentAdmin } from '@/api/agents'
 import {
   getAgentTopology,
-  WorkspaceApiError,
   type AgentEdgeOut,
   type AgentTopologyAgentOut,
   type AgentTopologyOut,
@@ -13,6 +12,7 @@ import {
 import { edgeKey, explainEdge, grantable, indexEdges } from './agentTopology'
 import { TopologyViews } from './topology/TopologyViews'
 import { scopedPath } from '../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 // THE AGENT TOPOLOGY: which agent can make which other agent do what.
 //
@@ -59,7 +59,7 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
       .then((t) => { if (!off) setTopo(t) })
       .catch((e: unknown) => {
         if (off) return
-        if (e instanceof WorkspaceApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
         else setError(e instanceof Error ? e.message : 'Could not load the agent topology')
       })
     return () => { off = true }

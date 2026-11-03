@@ -5,7 +5,6 @@ import { clsx } from 'clsx'
 import {
   getRunnerTopology,
   listWorkspacePrivateRunners,
-  WorkspaceApiError,
   type PrivateRunnerUseOut,
   type RunnerTopologyOut,
   type TopologyRouteOut,
@@ -16,6 +15,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
 import { scopedPath } from '../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 // THE RUNNER TOPOLOGY of this workspace and every workspace below it: which box
 // each agent's turns land on, and what stops if a box goes dark.
@@ -58,7 +58,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
       .then((t) => { if (!off) setTopo(t) })
       .catch((e: unknown) => {
         if (off) return
-        if (e instanceof WorkspaceApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
         else setError(e instanceof Error ? e.message : 'Could not load the runner topology')
       })
     return () => { off = true }

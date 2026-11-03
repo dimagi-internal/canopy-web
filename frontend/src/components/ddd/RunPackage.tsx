@@ -16,6 +16,7 @@ import {
   useRunSectionNav,
   type RunSection,
 } from './runSectionNav'
+import { fmtDateTime } from '@/lib/format'
 
 /**
  * Which sections a loaded run actually renders, in display order. Drives both
@@ -61,21 +62,6 @@ function roleLabel(role: string | null | undefined, kind: string): string {
 function displayUrl(url: string): string {
   const q = url.indexOf('?')
   return q === -1 ? url : url.slice(0, q)
-}
-
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return ''
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
 }
 
 function Section({
@@ -386,7 +372,7 @@ export function RunPackage({ runId }: { runId: string }) {
               {run.phase}
             </span>
           )}
-          <span>{fmtDate(run.latest_at)}</span>
+          <span>{fmtDateTime(run.latest_at)}</span>
           <button
             type="button"
             onClick={onDeleteRun}
@@ -497,7 +483,7 @@ export function RunPackage({ runId }: { runId: string }) {
                 {roleLabel(a.role, a.kind)}
               </span>
               <span className="flex-1 truncate text-foreground-secondary">{a.title}</span>
-              <span className="shrink-0 text-muted-foreground">{fmtDate(a.created_at)}</span>
+              <span className="shrink-0 text-muted-foreground">{fmtDateTime(a.created_at)}</span>
               <span
                 aria-hidden
                 className="shrink-0 truncate max-w-[16rem] font-mono text-[11px] text-muted-foreground transition-colors group-hover:text-primary"

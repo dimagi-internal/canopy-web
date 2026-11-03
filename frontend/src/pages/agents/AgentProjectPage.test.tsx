@@ -14,7 +14,7 @@ vi.mock('@/api/agents', async (orig) => ({
 
 const { AgentProjectPage } = await import('./AgentProjectPage')
 const { ProjectPageRedirect } = await import('@/router')
-const { AgentApiError } = await import('@/api/agents')
+const { ApiError: AgentApiError } = await import('@/api/problem')
 
 afterEach(() => {
   cleanup()

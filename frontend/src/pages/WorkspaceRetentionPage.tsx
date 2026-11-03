@@ -6,13 +6,13 @@ import {
   getRetention,
   previewRetention,
   saveRetentionRule,
-  WorkspaceApiError,
   type RetentionOut,
   type RetentionPreviewOut,
   type RetentionRuleIn,
   type RetentionRuleOut,
 } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
+import { ApiError } from '@/api/problem'
 
 // How long this workspace keeps the CONTENT of its chats and turns
 // (apps/retention). Any member can read the policy, since it decides when their
@@ -58,7 +58,7 @@ export function WorkspaceRetentionPage(): JSX.Element {
     getRetention(slug)
       .then(setPolicy)
       .catch((e: unknown) => setError(
-        e instanceof WorkspaceApiError || e instanceof Error ? e.message : 'Could not load retention'))
+        e instanceof ApiError || e instanceof Error ? e.message : 'Could not load retention'))
   }, [slug])
 
   useEffect(() => {

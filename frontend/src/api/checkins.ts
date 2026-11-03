@@ -2,7 +2,8 @@
 // agents that take part, optionally a Slack channel (apps/huddles/checkins.py).
 // Nothing here reads a channel — a run is read only when its lead presses
 // Confirm on the announcement in Slack; Run now only announces.
-import { apiV2, WORKSPACE_HEADER } from './client.v2'
+import { apiV2 } from './client.v2'
+import { pin } from './requestHelpers'
 import { ensureOk } from './problem'
 import type { components } from './generated'
 
@@ -19,7 +20,6 @@ export interface ProjectKey {
   workspace?: string
 }
 
-const pin = (workspace?: string) => (workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {})
 const path = (p: ProjectKey) => ({ slug: p.agent, ref: p.ref })
 
 export async function listProjectCheckins(p: ProjectKey): Promise<Checkin[]> {

@@ -1,7 +1,8 @@
 // The pieces of a project's overview: marking an idea shipped, the standing list, and adding an idea. The overview and its data are `ProjectOverview`.
 import { useState, type FormEvent, type JSX, } from 'react'
-import { actOnTask, addIdea, AgentApiError, type IdeaOut, } from '@/api/agents'
+import { actOnTask, addIdea, type IdeaOut } from '@/api/agents'
 import { StagePill } from '@/pages/agents/ideaParts'
+import { ApiError } from '@/api/problem'
 
 export function MarkShipped({ agent, idea, onDone }: { agent: string; idea: IdeaOut; onDone: () => void }): JSX.Element {
   const [busy, setBusy] = useState(false)
@@ -94,7 +95,7 @@ export function AddIdea({
       })
       .catch((err: unknown) =>
         setError(
-          err instanceof AgentApiError && err.detail
+          err instanceof ApiError && err.detail
             ? err.detail
             : err instanceof Error
               ? err.message

@@ -10,20 +10,11 @@ const addTreeMember = vi.fn()
 const setMemberRole = vi.fn()
 const removeMember = vi.fn()
 
-class FakeWorkspaceApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
 vi.mock('@/api/workspaces', () => ({
   getMemberTree,
   addTreeMember,
   setMemberRole,
   removeMember,
-  WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
 vi.mock('@/workspace/WorkspaceProvider', () => ({

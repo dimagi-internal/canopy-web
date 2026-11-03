@@ -129,7 +129,7 @@ function LoginPrompt() {
         </p>
         <a
           href={href}
-          className="inline-block w-full rounded-lg bg-primary text-white font-medium py-2.5 hover:bg-primary/90 transition-colors"
+          className="inline-block w-full rounded-lg bg-primary text-primary-foreground font-medium py-2.5 hover:bg-primary/90 transition-colors"
         >
           Sign in with Google
         </a>

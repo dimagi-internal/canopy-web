@@ -8,10 +8,11 @@ import {
   type UseSessionSocketResult,
 } from 'canopy-ui/chat'
 
-import { ChatApiError, forkSession, type ChatSession } from '@/api/chat'
+import { forkSession, type ChatSession } from '@/api/chat'
 import type { RunnerOut } from '@/api/harness'
 import { canFork, turnIndexAt } from '@/components/chat/MessageContextMenu'
 import { scopedPath } from '@/lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 type MessageMenu = { x: number; y: number; turnIndex: number; copyText: string; canFork: boolean }
 
@@ -78,7 +79,7 @@ export function useMessageFork(
           : scopedPath(fork.workspace, `/sessions/${encodeURIComponent(fork.id)}`),
       )
     } catch (err) {
-      setForkError(err instanceof ChatApiError ? err.message : 'Could not fork this session')
+      setForkError(err instanceof ApiError ? err.message : 'Could not fork this session')
     } finally {
       setForking(false)
     }
