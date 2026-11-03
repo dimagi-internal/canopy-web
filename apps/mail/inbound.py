@@ -176,6 +176,34 @@ def _unique(addrs) -> list[str]:
     return list(dict.fromkeys(a.strip().lower() for a in addrs if a and a.strip()))
 
 
+def _spam(notification: dict, recipients: list[str], verdicts: dict, meta: dict) -> list[dict]:
+    """Mail SES failed as spam reaches no person's inbox and wakes no agent. A mailbox that
+    stores mail (an agent's, or a forward that keeps a copy) holds it in its Spam folder, since
+    SES can be wrong; every other recipient has it dropped. Spam is never worth a redelivery:
+    any problem here is a drop."""
+    parsed = None
+    key = _object_key(notification)
+    try:
+        if valid_key(key):
+            parsed = parse.parse(ses.get_object(key))
+    except Exception:  # noqa: BLE001
+        logger.warning("mail spam %s could not be read; dropping it", key, exc_info=True)
+    out = []
+    for rcpt in recipients:
+        outcome = "dropped:spam"
+        if parsed is not None:
+            try:
+                kind, route = plan(rcpt)
+                if route is not None and (kind == MailRoute.AGENT or route.keep_copy):
+                    outcome = _agent_mail().keep_spam(route, parsed, verdicts=verdicts)
+            except Exception:  # noqa: BLE001
+                logger.exception("mail spam for %s could not be stored; dropping it", rcpt)
+        out.append({"recipient": rcpt, "outcome": outcome})
+        record(rcpt, outcome, verdicts=verdicts, **meta)
+    logger.info("mail spam: %s", out)
+    return out
+
+
 def handle(notification: dict) -> list[dict]:
     receipt = notification.get("receipt") or {}
     recipients = _unique(receipt.get("recipients") or [])
@@ -191,6 +219,8 @@ def handle(notification: dict) -> list[dict]:
             record(r, f"dropped:{why}", verdicts=verdicts, **meta)
         return [{"recipient": r, "outcome": f"dropped:{why}"} for r in recipients]
 
+    if reason == "spam":
+        return _spam(notification, recipients, verdicts, meta)
     if reason:
         logger.info("mail dropped (%s) for %s", reason, recipients)
         return dropped(reason)

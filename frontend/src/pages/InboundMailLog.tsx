@@ -13,6 +13,7 @@ const OUTCOME: Record<string, string> = {
   agent: 'Delivered to the agent',
   duplicate: 'Already handled',
   'dropped:spam': 'Dropped: SES marked it spam',
+  'stored:spam': 'In the Spam folder: SES marked it spam',
   'dropped:virus': 'Dropped: SES found a virus',
   'dropped:no-route': 'Dropped: no address or catch-all for it',
   'dropped:drop-route': 'Dropped: the address is set to drop',

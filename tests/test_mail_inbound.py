@@ -16,7 +16,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.mail import inbound, ses, sns
-from apps.mail.models import MailDomain, MailRoute
+from apps.mail.models import MailDomain, MailRoute, MailThread
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -66,9 +66,18 @@ def test_each_recipient_routes_once(world):
     assert [o["outcome"] for o in out] == ["agent", "forwarded", "dropped:unknown-domain"]
 
 
-def test_spam_is_dropped_for_everyone(world):
+def test_spam_wakes_no_agent_and_goes_to_its_spam_folder(world):
     out = inbound.handle(note(["ada@marshellis.com"], verdict="FAIL"))
-    assert out[0]["outcome"] == "dropped:spam" and world.calls == []
+    assert out[0]["outcome"] == "stored:spam" and world.calls == []
+    assert MailThread.objects.get().spam is True
+
+
+def test_spam_is_dropped_when_the_message_cannot_be_read(world, monkeypatch):
+    def boom(key):
+        raise RuntimeError("s3")
+    monkeypatch.setattr(ses, "get_object", boom)
+    out = inbound.handle(note(["ada@marshellis.com"], verdict="FAIL"))
+    assert out[0]["outcome"] == "dropped:spam" and not MailThread.objects.exists()
 
 
 def test_key_falls_back_to_prefix_plus_message_id(world, monkeypatch):
