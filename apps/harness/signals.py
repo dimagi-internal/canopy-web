@@ -13,9 +13,8 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import Signal, receiver
 
 from apps.canopy_sessions.models import Session
-from apps.events.signals import runner_event_first_today
 
-from . import credential_notify, provenance
+from . import provenance
 from .models import Turn
 
 # Sent with: sender=Turn, turn=<Turn>, rows=<list[TurnEvent]> (the newly appended
@@ -146,10 +145,3 @@ def _retire_mail_anchors(sender, session_ids=(), **kwargs) -> None:
     from . import mail_anchor  # noqa: PLC0415 — cycle: signals load in ready(), before session_sync
 
     mail_anchor.on_sessions_closed(session_ids)
-
-
-@receiver(runner_event_first_today, dispatch_uid="harness.credential_notify")
-def _notify_credential_problem(sender, runner, item, **kwargs) -> None:
-    """A box's first event of the day: if it is a credential problem, tell the
-    people who can fix it (`credential_notify.notify`, once a day per alert)."""
-    credential_notify.notify(runner, item)

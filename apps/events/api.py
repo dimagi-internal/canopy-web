@@ -19,10 +19,9 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.events import services
+from apps.events import after_record, services
 from apps.events.models import Event
 from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut, SettingChangeListOut
-from apps.events.signals import runner_event_first_today
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -86,9 +85,9 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     result = services.record(items, workspace=home, first_today=first_today)
     if rtok is not None:
         # Recording alone tells nobody: a box's credential alert also reaches
-        # the people who can fix it, once a day per alert — the harness listens.
+        # the people who can fix it, once a day per alert — the harness registered for it.
         for index in first_today:
-            runner_event_first_today.send(sender=None, runner=rtok.runner, item=items[index])
+            after_record.first_today(rtok.runner, items[index])
     return result
 
 

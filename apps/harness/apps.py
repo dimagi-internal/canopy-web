@@ -13,6 +13,9 @@ class HarnessConfig(AppConfig):
         from apps.events import audit  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
 
         audit.register_workspace_resolver("harness", _audit_workspace)
+        from apps.events import after_record  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        after_record.register("harness.credential_notify", _notify_credential_problem)
         from apps.workspaces import role_cap  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
 
         role_cap.register_turn_origin(_turn_origin_ref)
@@ -53,3 +56,10 @@ def _audit_workspace(request, path_args):
 
     runner = Runner.objects.filter(pk=path_args["runner_id"]).select_related("workspace").first()
     return runner.workspace if runner is not None and runner.workspace_id else None
+
+
+def _notify_credential_problem(runner, item) -> None:
+    """A box's first event of the day: a credential problem reaches the people who can fix it."""
+    from . import credential_notify  # noqa: PLC0415 — models load only after the app registry
+
+    credential_notify.notify(runner, item)
