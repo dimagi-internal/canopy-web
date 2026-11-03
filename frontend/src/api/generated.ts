@@ -9116,78 +9116,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/runner-topology": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Which runners serve which agents, across this workspace and every one below it
-         * @description This workspace and its descendants, each with its agents and their routing
-         *     (the default ordered list and every source rule), plus every runner those
-         *     agents route to or that lives in the tree. Admin and above.
-         */
-        readonly get: operations["runner_topology"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/health": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * What is not set up right, across this workspace and every one below it
-         * @description Every agent in the tree with its setup checklist (the same steps as its own
-         *     Settings page and `agent_setup`), its vault state (canopy-web, moving)
-         *     and properties; every workspace with its shared vault; the runners its agents
-         *     route to or that live in it (the runner topology's rows, plus whether each runs
-         *     current code and its own failing checks). Each step carries the link
-         *     that fixes it; `can_fix` says whether the viewer may follow it, else
-         *     `owner_email` is who to send it to. With `setup=false` each agent's checklist
-         *     and vault state, and the totals counted from them, are null: read them from
-         *     `/health/setup` a few agents at a time. Admin and above.
-         */
-        readonly get: operations["workspace_health"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/health/setup": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The setup checklist and vault state of some of the tree's agents
-         * @description The `steps`, `vault` and `left` of each named agent (comma-separated slugs,
-         *     at most 25) in this workspace's tree, as `/health` reports them. A slug outside
-         *     the tree is left out. Admin and above.
-         */
-        readonly get: operations["workspace_health_setup"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/workspaces/{slug}/analytics": {
         readonly parameters: {
             readonly query?: never;
@@ -9231,67 +9159,6 @@ export interface paths {
          *     fact log, which retention does not purge. Admin and above.
          */
         readonly get: operations["workspace_network"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/runner-order": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The workspace's default runner order: repo turns, and agents without their own
-         * @description Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
-         *     the turn while it is available, the next rank only once every better one is
-         *     not (or the turn has waited past the cascade grace), and a runner not listed
-         *     never takes one. Empty: any runner that declares the repo.
-         *
-         *     It is also the default order of every AGENT here that has none of its own,
-         *     and of every workspace below this one that has no order of its own. Such an
-         *     agent's source rules still come first. Member-readable, like an agent's own
-         *     order.
-         */
-        readonly get: operations["get_runner_order"];
-        /**
-         * Replace the workspace's default runner order
-         * @description Wholesale replace (index = rank). Workspace admins and owners
-         *     (`runners.route`): the order routes agents in every workspace below this one
-         *     too. Every runner must be able to SERVE this workspace — enrolled in it, its
-         *     owner an editor or above (`runner_tenant_slugs`) — or the order would name a box the
-         *     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
-         *     one.
-         */
-        readonly put: operations["set_runner_order"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/agent-topology": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Which agents can send which other agents work, across this workspace and every one below it
-         * @description Every agent in this workspace and its descendants, and for each ordered
-         *     pair what the first gets when it sends the second work with its own canopy
-         *     login: the whole agent, some of its capabilities, or nothing — and why.
-         *     Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
-         *     with the source agent's `login_user_id`.
-         */
-        readonly get: operations["agent_topology"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -9462,6 +9329,139 @@ export interface paths {
          * @description Only the fields sent change.
          */
         readonly patch: operations["update_admission_rule"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/runner-topology": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which runners serve which agents, across this workspace and every one below it
+         * @description This workspace and its descendants, each with its agents and their routing
+         *     (the default ordered list and every source rule), plus every runner those
+         *     agents route to or that lives in the tree. Admin and above.
+         */
+        readonly get: operations["runner_topology"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/runner-order": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The workspace's default runner order: repo turns, and agents without their own
+         * @description Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
+         *     the turn while it is available, the next rank only once every better one is
+         *     not (or the turn has waited past the cascade grace), and a runner not listed
+         *     never takes one. Empty: any runner that declares the repo.
+         *
+         *     It is also the default order of every AGENT here that has none of its own,
+         *     and of every workspace below this one that has no order of its own. Such an
+         *     agent's source rules still come first. Member-readable, like an agent's own
+         *     order.
+         */
+        readonly get: operations["get_runner_order"];
+        /**
+         * Replace the workspace's default runner order
+         * @description Wholesale replace (index = rank). Workspace admins and owners
+         *     (`runners.route`): the order routes agents in every workspace below this one
+         *     too. Every runner must be able to SERVE this workspace — enrolled in it, its
+         *     owner an editor or above (`runner_tenant_slugs`) — or the order would name a box the
+         *     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
+         *     one.
+         */
+        readonly put: operations["set_runner_order"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/health": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What is not set up right, across this workspace and every one below it
+         * @description Every agent in the tree with its setup checklist (the same steps as its own
+         *     Settings page and `agent_setup`), its vault state (canopy-web, moving)
+         *     and properties; every workspace with its shared vault; the runners its agents
+         *     route to or that live in it (the runner topology's rows, plus whether each runs
+         *     current code and its own failing checks). Each step carries the link
+         *     that fixes it; `can_fix` says whether the viewer may follow it, else
+         *     `owner_email` is who to send it to. With `setup=false` each agent's checklist
+         *     and vault state, and the totals counted from them, are null: read them from
+         *     `/health/setup` a few agents at a time. Admin and above.
+         */
+        readonly get: operations["workspace_health"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/health/setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The setup checklist and vault state of some of the tree's agents
+         * @description The `steps`, `vault` and `left` of each named agent (comma-separated slugs,
+         *     at most 25) in this workspace's tree, as `/health` reports them. A slug outside
+         *     the tree is left out. Admin and above.
+         */
+        readonly get: operations["workspace_health_setup"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/agent-topology": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which agents can send which other agents work, across this workspace and every one below it
+         * @description Every agent in this workspace and its descendants, and for each ordered
+         *     pair what the first gets when it sends the second work with its own canopy
+         *     login: the whole agent, some of its capabilities, or nothing — and why.
+         *     Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
+         *     with the source agent's `login_user_id`.
+         */
+        readonly get: operations["agent_topology"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/workspaces/{slug}/connected-apps": {
@@ -33520,484 +33520,6 @@ export interface components {
             /** Role */
             readonly role?: string | null;
         };
-        /** RunnerAgentOut */
-        readonly RunnerAgentOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-            /** Workspace */
-            readonly workspace: string;
-        };
-        /** RunnerProblemOut */
-        readonly RunnerProblemOut: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            readonly status: "warn" | "fail";
-            /**
-             * Detail
-             * @default
-             */
-            readonly detail: string;
-        };
-        /**
-         * RunnerTopologyOut
-         * @description Workspaces in tree order (depth-first, `depth` 0 = the root).
-         */
-        readonly RunnerTopologyOut: {
-            /** Root */
-            readonly root: string;
-            /** Workspaces */
-            readonly workspaces: readonly components["schemas"]["TopologyWorkspaceOut"][];
-            /** Runners */
-            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
-        };
-        /** TopologyAgentOut */
-        readonly TopologyAgentOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-            /** Turn Mode */
-            readonly turn_mode: string;
-            /** Routes */
-            readonly routes: readonly components["schemas"]["TopologyRouteOut"][];
-            readonly follows?: components["schemas"]["TopologyFollowsOut"] | null;
-            /**
-             * Repo Url
-             * @default
-             */
-            readonly repo_url: string;
-        };
-        /**
-         * TopologyFollowsOut
-         * @description An agent with no default order of its own follows `workspace`'s. Runners
-         *     in that order the agent cannot use are listed here, not routed: laptops
-         *     without the agent's repo, boxes whose owner cannot hold the agent, and
-         *     directed-only boxes, which take no routed work.
-         */
-        readonly TopologyFollowsOut: {
-            /** Workspace */
-            readonly workspace: string;
-            /** Missing Repo */
-            readonly missing_repo: readonly string[];
-            /** Cannot Hold */
-            readonly cannot_hold: readonly string[];
-            /**
-             * Directed
-             * @default []
-             */
-            readonly directed: readonly string[];
-        };
-        /** TopologyOrderRowOut */
-        readonly TopologyOrderRowOut: {
-            /**
-             * Runner Id
-             * Format: uuid
-             */
-            readonly runner_id: string;
-            /** Enabled */
-            readonly enabled: boolean;
-        };
-        /**
-         * TopologyRouteOut
-         * @description One `RunnerAssignment` row. `source` "" = the agent's default ordered list
-         *     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
-         *     `actor`). `can_claim` is False when the runner's OWNER is not in the agent's
-         *     workspace, or the runner is directed-only — the row routes on paper and the
-         *     turn is never claimed.
-         */
-        readonly TopologyRouteOut: {
-            /**
-             * Runner Id
-             * Format: uuid
-             */
-            readonly runner_id: string;
-            /** Rank */
-            readonly rank: number;
-            /** Enabled */
-            readonly enabled: boolean;
-            /** Source */
-            readonly source: string;
-            /** Actor */
-            readonly actor: string;
-            /** Strict */
-            readonly strict: boolean;
-            /** Turn Mode */
-            readonly turn_mode: string;
-            /** Can Claim */
-            readonly can_claim: boolean;
-            /**
-             * Inherited
-             * @default false
-             */
-            readonly inherited: boolean;
-        };
-        /**
-         * TopologyRunnerOut
-         * @description A runner that lives in the tree or that an agent in it routes to.
-         *     `in_tree` False = homed elsewhere (another workspace, or none).
-         */
-        readonly TopologyRunnerOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /** Name */
-            readonly name: string;
-            /** Kind */
-            readonly kind: string;
-            /** Location */
-            readonly location: string;
-            /** Status */
-            readonly status: string;
-            /** Ready */
-            readonly ready: boolean;
-            /** Ready Note */
-            readonly ready_note: string;
-            /** Paused */
-            readonly paused: boolean;
-            /** Host */
-            readonly host: string;
-            /** Last Heartbeat At */
-            readonly last_heartbeat_at: string | null;
-            /** Workspace */
-            readonly workspace: string | null;
-            /** In Tree */
-            readonly in_tree: boolean;
-            /** Owner Email */
-            readonly owner_email: string | null;
-            /** Flags */
-            readonly flags: readonly string[];
-            /** Agent Count */
-            readonly agent_count: number;
-            /**
-             * Directed
-             * @default false
-             */
-            readonly directed: boolean;
-            /** Code Current */
-            readonly code_current?: boolean | null;
-            /**
-             * Problems
-             * @default []
-             */
-            readonly problems: readonly components["schemas"]["RunnerProblemOut"][];
-            /**
-             * Status Note
-             * @default
-             */
-            readonly status_note: string;
-            /**
-             * Remedy
-             * @default
-             */
-            readonly remedy: string;
-            /**
-             * Code Sha
-             * @default
-             */
-            readonly code_sha: string;
-            /**
-             * Expected Code Sha
-             * @default
-             */
-            readonly expected_code_sha: string;
-            /**
-             * Agents
-             * @default []
-             */
-            readonly agents: readonly components["schemas"]["RunnerAgentOut"][];
-            /** Usage Reported At */
-            readonly usage_reported_at?: string | null;
-            /**
-             * Can Administer
-             * @default false
-             */
-            readonly can_administer: boolean;
-            /**
-             * Machine
-             * @default
-             */
-            readonly machine: string;
-            /**
-             * Serves
-             * @default
-             */
-            readonly serves: string;
-        };
-        /** TopologyWorkspaceOut */
-        readonly TopologyWorkspaceOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Display Name */
-            readonly display_name: string;
-            /** Parent */
-            readonly parent: string | null;
-            /** Depth */
-            readonly depth: number;
-            /** Agents */
-            readonly agents: readonly components["schemas"]["TopologyAgentOut"][];
-            /**
-             * Order
-             * @default []
-             */
-            readonly order: readonly components["schemas"]["TopologyOrderRowOut"][];
-            /** Order From */
-            readonly order_from?: string | null;
-        };
-        /** AgentHealthOut */
-        readonly AgentHealthOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Owner Email */
-            readonly owner_email: string;
-            /** Can Fix */
-            readonly can_fix: boolean;
-            /** Email */
-            readonly email: string;
-            /** Repo Url */
-            readonly repo_url: string;
-            /** Turn Mode */
-            readonly turn_mode: string;
-            /** Has Interface */
-            readonly has_interface: boolean;
-            /** Capabilities */
-            readonly capabilities: number;
-            /**
-             * Access Lines
-             * @default []
-             */
-            readonly access_lines: readonly string[];
-            /** Skills */
-            readonly skills: number;
-            /** Schedules */
-            readonly schedules: number;
-            /** Projects */
-            readonly projects: number;
-            /** Open Tasks */
-            readonly open_tasks: number;
-            /** Waiting Tasks */
-            readonly waiting_tasks: number;
-            /** Active Sessions */
-            readonly active_sessions: number;
-            /** Last Session At */
-            readonly last_session_at?: string | null;
-            /**
-             * Recent Sessions
-             * @default []
-             */
-            readonly recent_sessions: readonly components["schemas"]["HealthSessionOut"][];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /** Last Turn At */
-            readonly last_turn_at?: string | null;
-            /** Turns 30D */
-            readonly turns_30d: number;
-            /**
-             * Done 30D
-             * @default 0
-             */
-            readonly done_30d: number;
-            /**
-             * Failed 30D
-             * @default 0
-             */
-            readonly failed_30d: number;
-            /**
-             * People 30D
-             * @default 0
-             */
-            readonly people_30d: number;
-            /**
-             * Ran On
-             * @default []
-             */
-            readonly ran_on: readonly components["schemas"]["AgentRunnerUseOut"][];
-            readonly vault?: components["schemas"]["AgentVaultHealthOut"] | null;
-            /** Steps */
-            readonly steps?: readonly components["schemas"]["HealthStepOut"][] | null;
-            /** Left */
-            readonly left?: number | null;
-        };
-        /** AgentRunnerUseOut */
-        readonly AgentRunnerUseOut: {
-            /** Name */
-            readonly name: string;
-            /** Kind */
-            readonly kind: string;
-            /** Turns */
-            readonly turns: number;
-        };
-        /** AgentVaultHealthOut */
-        readonly AgentVaultHealthOut: {
-            /**
-             * State
-             * @enum {string}
-             */
-            readonly state: "complete" | "missing";
-            /** Declared */
-            readonly declared: number;
-            /** Refs */
-            readonly refs: readonly components["schemas"]["VaultRefOut"][];
-            /** Stored */
-            readonly stored: readonly string[];
-            /** Missing */
-            readonly missing: readonly string[];
-            /** Machines Waiting */
-            readonly machines_waiting: readonly string[];
-        };
-        /** HealthSessionOut */
-        readonly HealthSessionOut: {
-            /** Id */
-            readonly id: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Title */
-            readonly title: string;
-            /**
-             * At
-             * Format: date-time
-             */
-            readonly at: string;
-            /** Active */
-            readonly active: boolean;
-        };
-        /** HealthStepLinkOut */
-        readonly HealthStepLinkOut: {
-            /** Href */
-            readonly href: string;
-            /** Action */
-            readonly action: string;
-        };
-        /** HealthStepOut */
-        readonly HealthStepOut: {
-            /** Key */
-            readonly key: string;
-            /** Title */
-            readonly title: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            readonly status: "done" | "todo" | "waiting" | "optional";
-            /** Detail */
-            readonly detail: string;
-            /**
-             * Where
-             * @enum {string}
-             */
-            readonly where: "web" | "claude-code";
-            /**
-             * Href
-             * @default
-             */
-            readonly href: string;
-            /**
-             * Action
-             * @default
-             */
-            readonly action: string;
-            /**
-             * Command
-             * @default
-             */
-            readonly command: string;
-            /**
-             * Links
-             * @default []
-             */
-            readonly links: readonly components["schemas"]["HealthStepLinkOut"][];
-            /**
-             * Only To Run On Its Own
-             * @default false
-             */
-            readonly only_to_run_on_its_own: boolean;
-        };
-        /** HealthTotalsOut */
-        readonly HealthTotalsOut: {
-            /** Agents */
-            readonly agents: number;
-            /** Set Up */
-            readonly set_up?: number | null;
-            /** Needs Setup */
-            readonly needs_setup?: number | null;
-            /**
-             * Used 30D
-             * @default 0
-             */
-            readonly used_30d: number;
-            /** Vault Complete */
-            readonly vault_complete?: number | null;
-            /** Vault Missing */
-            readonly vault_missing?: number | null;
-            /** Runners */
-            readonly runners: number;
-            /** Runners Online */
-            readonly runners_online: number;
-        };
-        /** VaultRefOut */
-        readonly VaultRefOut: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            readonly status: "stored" | "literal" | "local" | "missing";
-        };
-        /** WorkspaceHealthNodeOut */
-        readonly WorkspaceHealthNodeOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-            /** Depth */
-            readonly depth: number;
-            /** Parent */
-            readonly parent: string;
-            /** Agents */
-            readonly agents: number;
-        };
-        /** WorkspaceHealthOut */
-        readonly WorkspaceHealthOut: {
-            /** Root */
-            readonly root: string;
-            /** Workspaces */
-            readonly workspaces: readonly components["schemas"]["WorkspaceHealthNodeOut"][];
-            /** Agents */
-            readonly agents: readonly components["schemas"]["AgentHealthOut"][];
-            /** Runners */
-            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
-            readonly totals: components["schemas"]["HealthTotalsOut"];
-        };
-        /** AgentSetupHealthOut */
-        readonly AgentSetupHealthOut: {
-            /** Slug */
-            readonly slug: string;
-            readonly vault: components["schemas"]["AgentVaultHealthOut"];
-            /** Steps */
-            readonly steps: readonly components["schemas"]["HealthStepOut"][];
-            /** Left */
-            readonly left: number;
-        };
-        /** WorkspaceHealthSetupOut */
-        readonly WorkspaceHealthSetupOut: {
-            /** Agents */
-            readonly agents: readonly components["schemas"]["AgentSetupHealthOut"][];
-        };
         /** AnalyticsAgentOut */
         readonly AnalyticsAgentOut: {
             /** Turns */
@@ -34264,133 +33786,6 @@ export interface components {
             readonly totals: components["schemas"]["NetworkTotalsOut"];
             /** Truncated */
             readonly truncated: boolean;
-        };
-        /**
-         * RunnerOrderRowOut
-         * @description One row of a workspace's ordered runner list — the order REPO turns (project
-         *     dispatches) in this workspace route by. `projects` is what the runner declares:
-         *     a runner only ever takes a repo turn for a repo it lists there.
-         */
-        readonly RunnerOrderRowOut: {
-            /**
-             * Runner Id
-             * Format: uuid
-             */
-            readonly runner_id: string;
-            /** Runner Name */
-            readonly runner_name: string;
-            /** Kind */
-            readonly kind: string;
-            /** Rank */
-            readonly rank: number;
-            /** Online */
-            readonly online: boolean;
-            /** Ready */
-            readonly ready: boolean;
-            /** Enabled */
-            readonly enabled: boolean;
-            /** Projects */
-            readonly projects: readonly string[];
-        };
-        /**
-         * RunnerOrderIn
-         * @description Wholesale replace — index = rank. An empty list removes the order, and the
-         *     workspace's repo turns go back to any runner that declares the repo.
-         */
-        readonly RunnerOrderIn: {
-            /** Runners */
-            readonly runners: readonly components["schemas"]["RunnerOrderRowIn"][];
-        };
-        /** RunnerOrderRowIn */
-        readonly RunnerOrderRowIn: {
-            /**
-             * Runner Id
-             * Format: uuid
-             */
-            readonly runner_id: string;
-            /**
-             * Enabled
-             * @default true
-             */
-            readonly enabled: boolean;
-        };
-        /**
-         * AgentEdgeOut
-         * @description What `source` gets when it sends `target` work with its own login.
-         *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-         *     workspace-owner | admin | editor (full; manual only when its line says so) |
-         *     no-interface (refused: nothing published) | capabilities | nothing-offered |
-         *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
-         *     THIS caller may make (or unmake) the source's login an admin of the target.
-         */
-        readonly AgentEdgeOut: {
-            /** Source */
-            readonly source: string;
-            /** Target */
-            readonly target: string;
-            /**
-             * Access
-             * @enum {string}
-             */
-            readonly access: "full" | "confined" | "none";
-            /** Basis */
-            readonly basis: string;
-            /** Capabilities */
-            readonly capabilities: readonly string[];
-            /** Explicit Admin */
-            readonly explicit_admin: boolean;
-            /** Can Grant */
-            readonly can_grant: boolean;
-            /** Can Revoke */
-            readonly can_revoke: boolean;
-        };
-        /**
-         * AgentTopologyAgentOut
-         * @description `login_email` is the canopy user the agent signs in as (`Agent.user`) —
-         *     the identity it sends other agents work with; None means it has none and can
-         *     send nothing directly. `full_people` reach this agent's whole profile, and so
-         *     reach anything this agent is an admin of.
-         */
-        readonly AgentTopologyAgentOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Owner Email */
-            readonly owner_email: string | null;
-            /** Login Email */
-            readonly login_email: string | null;
-            /** Login User Id */
-            readonly login_user_id: number | null;
-            /** Interface Published */
-            readonly interface_published: boolean;
-            /** Full People */
-            readonly full_people: readonly string[];
-        };
-        /**
-         * AgentTopologyOut
-         * @description Agents in tree order; one edge per ordered pair of distinct agents.
-         */
-        readonly AgentTopologyOut: {
-            /** Root */
-            readonly root: string;
-            /** Workspaces */
-            readonly workspaces: readonly components["schemas"]["TopologyWorkspaceRefOut"][];
-            /** Agents */
-            readonly agents: readonly components["schemas"]["AgentTopologyAgentOut"][];
-            /** Edges */
-            readonly edges: readonly components["schemas"]["AgentEdgeOut"][];
-        };
-        /** TopologyWorkspaceRefOut */
-        readonly TopologyWorkspaceRefOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Display Name */
-            readonly display_name: string;
-            /** Depth */
-            readonly depth: number;
         };
         /** RetentionChoice */
         readonly RetentionChoice: {
@@ -34753,6 +34148,611 @@ export interface components {
             readonly notify_owner?: boolean | null;
             /** Enabled */
             readonly enabled?: boolean | null;
+        };
+        /** RunnerAgentOut */
+        readonly RunnerAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /** RunnerProblemOut */
+        readonly RunnerProblemOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "warn" | "fail";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
+        /**
+         * RunnerTopologyOut
+         * @description Workspaces in tree order (depth-first, `depth` 0 = the root).
+         */
+        readonly RunnerTopologyOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["TopologyWorkspaceOut"][];
+            /** Runners */
+            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
+        };
+        /** TopologyAgentOut */
+        readonly TopologyAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Routes */
+            readonly routes: readonly components["schemas"]["TopologyRouteOut"][];
+            readonly follows?: components["schemas"]["TopologyFollowsOut"] | null;
+            /**
+             * Repo Url
+             * @default
+             */
+            readonly repo_url: string;
+        };
+        /**
+         * TopologyFollowsOut
+         * @description An agent with no default order of its own follows `workspace`'s. Runners
+         *     in that order the agent cannot use are listed here, not routed: laptops
+         *     without the agent's repo, boxes whose owner cannot hold the agent, and
+         *     directed-only boxes, which take no routed work.
+         */
+        readonly TopologyFollowsOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Missing Repo */
+            readonly missing_repo: readonly string[];
+            /** Cannot Hold */
+            readonly cannot_hold: readonly string[];
+            /**
+             * Directed
+             * @default []
+             */
+            readonly directed: readonly string[];
+        };
+        /** TopologyOrderRowOut */
+        readonly TopologyOrderRowOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /**
+         * TopologyRouteOut
+         * @description One `RunnerAssignment` row. `source` "" = the agent's default ordered list
+         *     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
+         *     `actor`). `can_claim` is False when the runner's OWNER is not in the agent's
+         *     workspace, or the runner is directed-only — the row routes on paper and the
+         *     turn is never claimed.
+         */
+        readonly TopologyRouteOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Rank */
+            readonly rank: number;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Source */
+            readonly source: string;
+            /** Actor */
+            readonly actor: string;
+            /** Strict */
+            readonly strict: boolean;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Can Claim */
+            readonly can_claim: boolean;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
+        };
+        /**
+         * TopologyRunnerOut
+         * @description A runner that lives in the tree or that an agent in it routes to.
+         *     `in_tree` False = homed elsewhere (another workspace, or none).
+         */
+        readonly TopologyRunnerOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Location */
+            readonly location: string;
+            /** Status */
+            readonly status: string;
+            /** Ready */
+            readonly ready: boolean;
+            /** Ready Note */
+            readonly ready_note: string;
+            /** Paused */
+            readonly paused: boolean;
+            /** Host */
+            readonly host: string;
+            /** Last Heartbeat At */
+            readonly last_heartbeat_at: string | null;
+            /** Workspace */
+            readonly workspace: string | null;
+            /** In Tree */
+            readonly in_tree: boolean;
+            /** Owner Email */
+            readonly owner_email: string | null;
+            /** Flags */
+            readonly flags: readonly string[];
+            /** Agent Count */
+            readonly agent_count: number;
+            /**
+             * Directed
+             * @default false
+             */
+            readonly directed: boolean;
+            /** Code Current */
+            readonly code_current?: boolean | null;
+            /**
+             * Problems
+             * @default []
+             */
+            readonly problems: readonly components["schemas"]["RunnerProblemOut"][];
+            /**
+             * Status Note
+             * @default
+             */
+            readonly status_note: string;
+            /**
+             * Remedy
+             * @default
+             */
+            readonly remedy: string;
+            /**
+             * Code Sha
+             * @default
+             */
+            readonly code_sha: string;
+            /**
+             * Expected Code Sha
+             * @default
+             */
+            readonly expected_code_sha: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly components["schemas"]["RunnerAgentOut"][];
+            /** Usage Reported At */
+            readonly usage_reported_at?: string | null;
+            /**
+             * Can Administer
+             * @default false
+             */
+            readonly can_administer: boolean;
+            /**
+             * Machine
+             * @default
+             */
+            readonly machine: string;
+            /**
+             * Serves
+             * @default
+             */
+            readonly serves: string;
+        };
+        /** TopologyWorkspaceOut */
+        readonly TopologyWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Parent */
+            readonly parent: string | null;
+            /** Depth */
+            readonly depth: number;
+            /** Agents */
+            readonly agents: readonly components["schemas"]["TopologyAgentOut"][];
+            /**
+             * Order
+             * @default []
+             */
+            readonly order: readonly components["schemas"]["TopologyOrderRowOut"][];
+            /** Order From */
+            readonly order_from?: string | null;
+        };
+        /**
+         * RunnerOrderRowOut
+         * @description One row of a workspace's ordered runner list — the order REPO turns (project
+         *     dispatches) in this workspace route by. `projects` is what the runner declares:
+         *     a runner only ever takes a repo turn for a repo it lists there.
+         */
+        readonly RunnerOrderRowOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Rank */
+            readonly rank: number;
+            /** Online */
+            readonly online: boolean;
+            /** Ready */
+            readonly ready: boolean;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Projects */
+            readonly projects: readonly string[];
+        };
+        /**
+         * RunnerOrderIn
+         * @description Wholesale replace — index = rank. An empty list removes the order, and the
+         *     workspace's repo turns go back to any runner that declares the repo.
+         */
+        readonly RunnerOrderIn: {
+            /** Runners */
+            readonly runners: readonly components["schemas"]["RunnerOrderRowIn"][];
+        };
+        /** RunnerOrderRowIn */
+        readonly RunnerOrderRowIn: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /** AgentHealthOut */
+        readonly AgentHealthOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Owner Email */
+            readonly owner_email: string;
+            /** Can Fix */
+            readonly can_fix: boolean;
+            /** Email */
+            readonly email: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Has Interface */
+            readonly has_interface: boolean;
+            /** Capabilities */
+            readonly capabilities: number;
+            /**
+             * Access Lines
+             * @default []
+             */
+            readonly access_lines: readonly string[];
+            /** Skills */
+            readonly skills: number;
+            /** Schedules */
+            readonly schedules: number;
+            /** Projects */
+            readonly projects: number;
+            /** Open Tasks */
+            readonly open_tasks: number;
+            /** Waiting Tasks */
+            readonly waiting_tasks: number;
+            /** Active Sessions */
+            readonly active_sessions: number;
+            /** Last Session At */
+            readonly last_session_at?: string | null;
+            /**
+             * Recent Sessions
+             * @default []
+             */
+            readonly recent_sessions: readonly components["schemas"]["HealthSessionOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Last Turn At */
+            readonly last_turn_at?: string | null;
+            /** Turns 30D */
+            readonly turns_30d: number;
+            /**
+             * Done 30D
+             * @default 0
+             */
+            readonly done_30d: number;
+            /**
+             * Failed 30D
+             * @default 0
+             */
+            readonly failed_30d: number;
+            /**
+             * People 30D
+             * @default 0
+             */
+            readonly people_30d: number;
+            /**
+             * Ran On
+             * @default []
+             */
+            readonly ran_on: readonly components["schemas"]["AgentRunnerUseOut"][];
+            readonly vault?: components["schemas"]["AgentVaultHealthOut"] | null;
+            /** Steps */
+            readonly steps?: readonly components["schemas"]["HealthStepOut"][] | null;
+            /** Left */
+            readonly left?: number | null;
+        };
+        /** AgentRunnerUseOut */
+        readonly AgentRunnerUseOut: {
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Turns */
+            readonly turns: number;
+        };
+        /** AgentVaultHealthOut */
+        readonly AgentVaultHealthOut: {
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "complete" | "missing";
+            /** Declared */
+            readonly declared: number;
+            /** Refs */
+            readonly refs: readonly components["schemas"]["VaultRefOut"][];
+            /** Stored */
+            readonly stored: readonly string[];
+            /** Missing */
+            readonly missing: readonly string[];
+            /** Machines Waiting */
+            readonly machines_waiting: readonly string[];
+        };
+        /** HealthSessionOut */
+        readonly HealthSessionOut: {
+            /** Id */
+            readonly id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /** Active */
+            readonly active: boolean;
+        };
+        /** HealthStepLinkOut */
+        readonly HealthStepLinkOut: {
+            /** Href */
+            readonly href: string;
+            /** Action */
+            readonly action: string;
+        };
+        /** HealthStepOut */
+        readonly HealthStepOut: {
+            /** Key */
+            readonly key: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "done" | "todo" | "waiting" | "optional";
+            /** Detail */
+            readonly detail: string;
+            /**
+             * Where
+             * @enum {string}
+             */
+            readonly where: "web" | "claude-code";
+            /**
+             * Href
+             * @default
+             */
+            readonly href: string;
+            /**
+             * Action
+             * @default
+             */
+            readonly action: string;
+            /**
+             * Command
+             * @default
+             */
+            readonly command: string;
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["HealthStepLinkOut"][];
+            /**
+             * Only To Run On Its Own
+             * @default false
+             */
+            readonly only_to_run_on_its_own: boolean;
+        };
+        /** HealthTotalsOut */
+        readonly HealthTotalsOut: {
+            /** Agents */
+            readonly agents: number;
+            /** Set Up */
+            readonly set_up?: number | null;
+            /** Needs Setup */
+            readonly needs_setup?: number | null;
+            /**
+             * Used 30D
+             * @default 0
+             */
+            readonly used_30d: number;
+            /** Vault Complete */
+            readonly vault_complete?: number | null;
+            /** Vault Missing */
+            readonly vault_missing?: number | null;
+            /** Runners */
+            readonly runners: number;
+            /** Runners Online */
+            readonly runners_online: number;
+        };
+        /** VaultRefOut */
+        readonly VaultRefOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "stored" | "literal" | "local" | "missing";
+        };
+        /** WorkspaceHealthNodeOut */
+        readonly WorkspaceHealthNodeOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Depth */
+            readonly depth: number;
+            /** Parent */
+            readonly parent: string;
+            /** Agents */
+            readonly agents: number;
+        };
+        /** WorkspaceHealthOut */
+        readonly WorkspaceHealthOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["WorkspaceHealthNodeOut"][];
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentHealthOut"][];
+            /** Runners */
+            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
+            readonly totals: components["schemas"]["HealthTotalsOut"];
+        };
+        /** AgentSetupHealthOut */
+        readonly AgentSetupHealthOut: {
+            /** Slug */
+            readonly slug: string;
+            readonly vault: components["schemas"]["AgentVaultHealthOut"];
+            /** Steps */
+            readonly steps: readonly components["schemas"]["HealthStepOut"][];
+            /** Left */
+            readonly left: number;
+        };
+        /** WorkspaceHealthSetupOut */
+        readonly WorkspaceHealthSetupOut: {
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentSetupHealthOut"][];
+        };
+        /**
+         * AgentEdgeOut
+         * @description What `source` gets when it sends `target` work with its own login.
+         *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
+         *     workspace-owner | admin | editor (full; manual only when its line says so) |
+         *     no-interface (refused: nothing published) | capabilities | nothing-offered |
+         *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
+         *     THIS caller may make (or unmake) the source's login an admin of the target.
+         */
+        readonly AgentEdgeOut: {
+            /** Source */
+            readonly source: string;
+            /** Target */
+            readonly target: string;
+            /**
+             * Access
+             * @enum {string}
+             */
+            readonly access: "full" | "confined" | "none";
+            /** Basis */
+            readonly basis: string;
+            /** Capabilities */
+            readonly capabilities: readonly string[];
+            /** Explicit Admin */
+            readonly explicit_admin: boolean;
+            /** Can Grant */
+            readonly can_grant: boolean;
+            /** Can Revoke */
+            readonly can_revoke: boolean;
+        };
+        /**
+         * AgentTopologyAgentOut
+         * @description `login_email` is the canopy user the agent signs in as (`Agent.user`) —
+         *     the identity it sends other agents work with; None means it has none and can
+         *     send nothing directly. `full_people` reach this agent's whole profile, and so
+         *     reach anything this agent is an admin of.
+         */
+        readonly AgentTopologyAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Owner Email */
+            readonly owner_email: string | null;
+            /** Login Email */
+            readonly login_email: string | null;
+            /** Login User Id */
+            readonly login_user_id: number | null;
+            /** Interface Published */
+            readonly interface_published: boolean;
+            /** Full People */
+            readonly full_people: readonly string[];
+        };
+        /**
+         * AgentTopologyOut
+         * @description Agents in tree order; one edge per ordered pair of distinct agents.
+         */
+        readonly AgentTopologyOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["TopologyWorkspaceRefOut"][];
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentTopologyAgentOut"][];
+            /** Edges */
+            readonly edges: readonly components["schemas"]["AgentEdgeOut"][];
+        };
+        /** TopologyWorkspaceRefOut */
+        readonly TopologyWorkspaceRefOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Depth */
+            readonly depth: number;
         };
         /** ConnectedAgentOut */
         readonly ConnectedAgentOut: {
@@ -57756,76 +57756,6 @@ export interface operations {
             };
         };
     };
-    readonly runner_topology: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["RunnerTopologyOut"];
-                };
-            };
-        };
-    };
-    readonly workspace_health: {
-        readonly parameters: {
-            readonly query?: {
-                readonly setup?: boolean;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["WorkspaceHealthOut"];
-                };
-            };
-        };
-    };
-    readonly workspace_health_setup: {
-        readonly parameters: {
-            readonly query: {
-                readonly agents: string;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["WorkspaceHealthSetupOut"];
-                };
-            };
-        };
-    };
     readonly workspace_analytics: {
         readonly parameters: {
             readonly query?: {
@@ -57872,76 +57802,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceNetworkOut"];
-                };
-            };
-        };
-    };
-    readonly get_runner_order: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["RunnerOrderRowOut"][];
-                };
-            };
-        };
-    };
-    readonly set_runner_order: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["RunnerOrderIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["RunnerOrderRowOut"][];
-                };
-            };
-        };
-    };
-    readonly agent_topology: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentTopologyOut"];
                 };
             };
         };
@@ -58182,6 +58042,146 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AdmissionRuleOut"];
+                };
+            };
+        };
+    };
+    readonly runner_topology: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerTopologyOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_order: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerOrderRowOut"][];
+                };
+            };
+        };
+    };
+    readonly set_runner_order: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerOrderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerOrderRowOut"][];
+                };
+            };
+        };
+    };
+    readonly workspace_health: {
+        readonly parameters: {
+            readonly query?: {
+                readonly setup?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHealthOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_health_setup: {
+        readonly parameters: {
+            readonly query: {
+                readonly agents: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHealthSetupOut"];
+                };
+            };
+        };
+    };
+    readonly agent_topology: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTopologyOut"];
                 };
             };
         };
