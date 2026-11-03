@@ -516,7 +516,7 @@ def test_a_missing_login_url_seals_the_default_login_host(world):
 def test_a_stored_login_url_that_bypassed_the_settings_check_is_refused(world):
     ConnectionApp.objects.filter(pk=world.app.pk).update(options={"login_url": "https://evil.example"})
     fake = FakeSF()
-    fake.post = lambda url, data=None, headers=None, timeout=None: (
+    fake.post = lambda url, data=None, headers=None, timeout=None, allow_redirects=True: (
         _resp(body=_token_body()) if url.endswith("/token") else _resp())
     with fake, pytest.raises(services.ConnectionError) as e:
         connect(world)

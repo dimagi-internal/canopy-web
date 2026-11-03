@@ -24,19 +24,25 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from django.core.cache import cache
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk_seal
 from apps.harness.models import Runner, RunnerDeviceKey
 
 from . import recipients as rcpt
-from . import server_tokens, services, tokens, wire
+from . import server_key, server_tokens, services, tokens, wire
 from .models import Connection, ConnectionApp
 from .wire import WireError
 
 #: How long a `revoking` row waits for a holder to confirm before the sweep deletes it.
 REVOKE_GRACE = timedelta(days=7)
+#: canopy-web's own revokes in one sweep, and how long a row waits before it is tried again: each
+#: can cost KMS and provider timeouts, and the tick is shared.
+SERVER_REVOKES_PER_TICK = 25
+SERVER_REVOKE_EVERY_S = 60 * 60
 
 
 def _keeps(runner: Runner) -> bool:
@@ -167,19 +173,18 @@ def confirm_revoked(conn: Connection, runner: Runner, device_key: RunnerDeviceKe
 
 
 def sweep(now: datetime | None = None) -> dict:
-    """Try canopy-web's own revoke of each `revoking` row sealed to its key, then delete what no
-    holder will ever finish: each `revoking` row unconfirmed for `REVOKE_GRACE`, or that neither
+    """Try canopy-web's own revoke of the `revoking` rows sealed to its key (`_server_revokes`), then
+    delete what no holder will ever finish: each `revoking` row unconfirmed for `REVOKE_GRACE`, or that neither
     canopy-web nor a cloud box still heard from holds (`recipients.revokers`), recorded
     `revoke_unconfirmed`; then each removed app with no connection left — after
     disconnecting any still live there (one that slipped past `remove_app`), so a
     removal always finishes. Returns the counts `{revoke_unconfirmed, apps_deleted}`."""
     now = now or timezone.now()
     gone = 0
+    _server_revokes()
     for conn in (Connection.objects.filter(state=Connection.REVOKING)
                  .select_related("app", "agent__workspace", "user").order_by("pk")):
         ours = server_tokens.may_revoke(conn)
-        if ours and server_tokens.revoke_if_able(conn):
-            continue
         stale = conn.revoking_since is None or conn.revoking_since <= now - REVOKE_GRACE
         if not stale and (ours or rcpt.revokers(conn)):
             continue
@@ -195,6 +200,27 @@ def sweep(now: datetime | None = None) -> dict:
     apps = sum(_finish_removal(app)
                for app in list(ConnectionApp.objects.filter(removed_at__isnull=False).order_by("pk")))
     return {"revoke_unconfirmed": gone, "apps_deleted": apps}
+
+
+def _server_revokes() -> None:
+    """At most `SERVER_REVOKES_PER_TICK` of canopy-web's own revokes, oldest first, each row at most
+    once in `SERVER_REVOKE_EVERY_S` so failing rows can't hold up the rest. KMS down stops them all
+    until the next tick, and costs that row no wait: it says nothing about the row."""
+    tried = 0
+    for conn in (Connection.objects.filter(state=Connection.REVOKING)
+                 .select_related("app", "agent__workspace", "user")
+                 .order_by(F("revoking_since").asc(nulls_first=True), "pk")):
+        if tried >= SERVER_REVOKES_PER_TICK:
+            return
+        key = f"connections:revoke-attempt:{conn.pk}"
+        if not server_tokens.may_revoke(conn) or not cache.add(key, 1, SERVER_REVOKE_EVERY_S):
+            continue
+        tried += 1
+        try:
+            server_tokens.revoke_if_able(conn, stop_on_kms=True)
+        except server_key.Unavailable:
+            cache.delete(key)
+            return
 
 
 def _finish_removal(app: ConnectionApp) -> bool:

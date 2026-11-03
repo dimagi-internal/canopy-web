@@ -65,6 +65,7 @@ Every record goes through one function, `apps/connections/services.record`, in o
 | `connections.shared` | info | yes | the owner's signed grant statement and the envelope sealed to it were stored (`sharing.share`); `version` |
 | `connections.refreshed` | info | yes | a machine refreshed it and wrote back; `machine`, `rotated` (yes/no; one a day per kind) |
 | `connections.server_refreshed` | info | yes | canopy-web refreshed it through its own key and wrote back (`server_tokens`); `machine` (`canopy-web`), `rotated` (yes/no; one a day per kind) |
+| `connections.server_write_failed` | warn | yes | canopy-web's refresh rotated the refresh token and it could not be stored in 90 s, so the owner may have to connect again; `machine`, `error`, `rotated` |
 | `connections.server_use_on` / `connections.server_use_off` | info | yes | the owner turned canopy-web's use of it on or off |
 | `connections.resealed` | info | yes | a keeper re-sealed it to machines that were waiting; `machine`, `added` |
 | `connections.revoked` | info | yes | a cloud box, or canopy-web through its own key, revoked it at the provider and confirmed; `machine`, `at_provider` |

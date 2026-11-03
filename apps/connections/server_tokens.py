@@ -10,10 +10,13 @@ The spec's "canopy-web using a token" and "Disconnecting". While the owner's swi
 3. a refresh, under the one lease machines take (`tokens`), written back under the same
    compare-and-swap. A lease someone else holds is waited for, up to 30 s, without a lock.
 
-ORDER, for every refresh: take the lease (it commits); open and refresh, holding nothing; seal and
-compute the MACs, holding nothing; write under the row lock with compare-and-swap. A KMS or
-provider call never runs in a transaction or under a row lock, and `zk_value_changed` re-reads the
-row and tries once more with the token already in hand.
+ORDER, for every refresh: take the lease (it commits); open, and check KMS can still seal to today's
+recipients, since a rotation can't be taken back; refresh, holding nothing; seal and compute the MACs,
+holding nothing; write under the row lock with compare-and-swap. A KMS or provider call never runs
+in a transaction or under a row lock. A conflict re-reads the row and seals again with the token already
+in hand. A rotated refresh token exists only here until it is stored, so its write keeps trying, as
+the CLI's does, for `ROTATED_WRITE_SECONDS` across KMS, database and conflict failures, and the
+provider is never asked twice.
 
 WHAT IS OPENED IS CHECKED, as a machine checks it (`orchestrator/connections/trust.py`): the writer's
 MAC verifies and the writer is the owner, canopy-web, or a device the statement vouches for; the
@@ -36,7 +39,10 @@ import threading
 import time
 from collections import OrderedDict
 from datetime import UTC, datetime
+from urllib.parse import quote, quote_plus
 
+from django.db import Error as DatabaseFailure
+from django.db import connection
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk_seal
@@ -54,6 +60,9 @@ CACHE_SECONDS, MIN_LIFE_SECONDS = 300, 60
 CACHE_SIZE = 512
 #: How long a caller waits for another holder's write, and how often it looks.
 WAIT_SECONDS, POLL_SECONDS = 30, 1
+#: How long a write keeps trying when it holds the only copy of a rotated token, and its pauses:
+#: the CLI's budget (`orchestrator/connections/access.py`).
+ROTATED_WRITE_SECONDS, RETRY_SECONDS, RETRY_MAX_SECONDS = 90, 2, 15
 _KV = 0
 _REFRESH_KEYS = frozenset({"v", "provider", "refresh_token", "client_id", "login_host", "instance_url", "account_id",
                            "owner_key", "issued_at", "scopes", "statement_floor"})
@@ -67,6 +76,7 @@ _DETAIL_MAX = 300
 
 _sleep = time.sleep
 _now = time.time
+_monotonic = time.monotonic
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +130,11 @@ def _forget(connection_id) -> None:
 
 
 def _remember(connection_id, digest: str, token: str, instance_url: str, expires_at: float) -> None:
+    now = _now()
     with _cache_lock:
-        _cache[connection_id] = (digest, token, instance_url, expires_at, _now())
+        for key in [k for k, hit in _cache.items() if hit[3] <= now or now - hit[4] >= CACHE_SECONDS]:
+            del _cache[key]
+        _cache[connection_id] = (digest, token, instance_url, expires_at, now)
         _cache.move_to_end(connection_id)
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
@@ -228,6 +241,8 @@ def _open_refresh(row: Connection, me: str) -> dict:
         raise _refused(row, "refresh has no refresh token")
     if not isinstance(plain["login_host"], str) or not isinstance(plain["instance_url"], str):
         raise _refused(row, "refresh names no host")
+    if not isinstance(plain["scopes"], str):
+        raise _refused(row, "refresh has no scopes")
     _checked_hosts(row, "refresh", login_host=plain["login_host"], instance_url=plain["instance_url"])
     return plain
 
@@ -294,13 +309,13 @@ def access_token(conn: Connection, *, sleep=None) -> tuple[str, str]:
         _sealed_to_me(row, me)
         answer = _live_access(row, me)
         if answer is None and not _lease_is_live(row):
-            answer = _refreshed(row, writer)
+            answer = _refreshed(row, writer, sleep)
         if answer is not None:
             return answer
     raise Waiting()
 
 
-def _refreshed(row: Connection, writer: tokens.Writer) -> tuple[str, str] | None:
+def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> tuple[str, str] | None:
     """Take the lease and refresh. None when another holder got there first, or took over since:
     wait for its write. A rotated refresh token exists only here until it is stored, so if that fails
     the lease stays held, and its expiry says what may be lost (`lease_expired_unwritten`)."""
@@ -322,6 +337,7 @@ def _refreshed(row: Connection, writer: tokens.Writer) -> tuple[str, str] | None
             return answer
         plain = _open_refresh(row, writer.jkt)
         p = services._configured(row.app)
+        _check_can_seal(row, writer.jkt)
         try:
             token = p.refresh(plain["refresh_token"])
         except providers.ProviderError as e:
@@ -329,7 +345,7 @@ def _refreshed(row: Connection, writer: tokens.Writer) -> tuple[str, str] | None
         rotated = bool(token.refresh_token) and token.refresh_token != plain["refresh_token"]
         keep_lease = rotated
         try:
-            answer = _written_back(row, plain, token, rotated, writer, lease_id)
+            answer = _written_back(row, plain, token, rotated, writer, lease_id, sleep)
         except WireError as e:
             raise _write_refused(row, e) from None
         except ZkError:
@@ -339,6 +355,15 @@ def _refreshed(row: Connection, writer: tokens.Writer) -> tuple[str, str] | None
     finally:
         if not keep_lease:
             _release(row, writer, lease_id)
+
+
+def _check_can_seal(row: Connection, me: str) -> None:
+    """Before the refresh: a rotating provider's refresh can't be taken back, so what is about to be
+    needed to store its answer is checked first. An outage then fails here, with nothing lost."""
+    rs = _write_recipients(row)
+    if not 1 <= len(rs) <= zk_seal.MAX_RECIPIENTS or ("device", me) not in rcpt.targets(rs):
+        raise _refused(row, "there is nobody the new token could be sealed to")
+    server_key.derive(server_key.public_jwk())
 
 
 def _release(row: Connection, writer: tokens.Writer, lease_id) -> None:
@@ -358,7 +383,8 @@ def _scrubbed(text: str, secrets: tuple[str, ...]) -> str:
     """A provider's own words, without what was sent to it, one printable line."""
     for s in secrets:
         if s:
-            text = text.replace(s, "[redacted]")
+            for spelled in (s, quote(s, safe=""), quote_plus(s)):
+                text = text.replace(spelled, "[redacted]")
     return re.sub(r"[^\x20-\x7e]", " ", text)[:_DETAIL_MAX]
 
 
@@ -438,31 +464,76 @@ def _write_once(row: Connection, plain: dict, token: providers.TokenResponse, ro
     return access_sealed, expires_at
 
 
+def _attempts(rotated: bool, sleep):
+    """One more try each time round. With no rotation, one retry at once: the stored refresh token
+    still works, so nothing is at stake. With one, the CLI's budget, backing off."""
+    yield
+    if not rotated:
+        yield
+        return
+    deadline = _monotonic() + ROTATED_WRITE_SECONDS
+    pause = RETRY_SECONDS
+    while (left := deadline - _monotonic()) > 0:
+        sleep(min(pause, left))
+        pause = min(pause * 2, RETRY_MAX_SECONDS)
+        yield
+
+
 def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, rotated: bool, writer: tokens.Writer,
-                  lease_id) -> tuple[str, str] | None:
-    """`(token, instance_url)` once stored. On a row that moved, read it again and try once more with
-    the token in hand: only the floor and recipients change. None when this write no longer applies:
-    the lease was lost, or a reconnect replaced the refresh token this one came from."""
-    used = plain["refresh_token"]
-    try:
-        tokens.take_lease(row, writer, lease_id)  # the provider took a while: renew before sealing
+                  lease_id, sleep) -> tuple[str, str] | None:
+    """`(token, instance_url)` once stored, keeping the lease renewed. A row that moved is read again
+    and sealed again: only the floor and recipients change. With a rotated token in hand, a KMS or
+    database failure or a lease someone else holds is tried again too. None when this write no longer
+    applies: without a rotation the lease went elsewhere; or a reconnect replaced the refresh token this
+    one came from. Out of tries, `server_write_failed` and `Refused`; the caller keeps a rotated lease."""
+    used, last = plain["refresh_token"], ""
+    reread = False
+    for _ in _attempts(rotated, sleep):
         try:
+            if not connection.in_atomic_block:  # a connection the last failure killed stays dead otherwise
+                connection.close_if_unusable_or_obsolete()
+            if reread:
+                row = _row(row.pk)
+                plain = _open_refresh(row, writer.jkt)
+                if rotated and plain["refresh_token"] == token.refresh_token:  # landed; its answer was lost
+                    return _stored(row, token, plain, vault_engine.value_digest(row.access_sealed),
+                                   int(token.expires_at.timestamp()))
+                if plain["refresh_token"] != used:
+                    return None
+                reread = False
+            lease_id = tokens.take_lease(row, writer, lease_id)["lease_id"]
             value, expires_at = _write_once(row, plain, token, rotated, writer, lease_id)
+            return _stored(row, token, plain, vault_engine.value_digest(value), expires_at)
         except WireError as e:
-            if e.code not in _STALE:
+            last = e.code
+            if e.code in _STALE:
+                reread = True
+            elif e.code in ("lease_lost", "lease_held"):
+                if not rotated:
+                    return None
+            else:
                 raise
-            row = _row(row.pk)
-            plain = _open_refresh(row, writer.jkt)
-            if plain["refresh_token"] != used:
-                return None
-            value, expires_at = _write_once(row, plain, token, rotated, writer, lease_id)
-    except WireError as e:
-        if e.code in ("lease_lost", "lease_held"):
-            return None
-        raise
-    except Connection.DoesNotExist:
-        raise services.NotConnected("This connection is no longer connected.") from None
-    _remember(row.pk, vault_engine.value_digest(value), token.access_token, plain["instance_url"], expires_at)
+        except (server_key.Unavailable, DatabaseFailure, ZkError) as e:
+            if not rotated:
+                raise
+            last = type(e).__name__.lower()
+            # A database error may be a commit whose answer was lost: only the row can say.
+            reread = reread or isinstance(e, DatabaseFailure)
+        except Connection.DoesNotExist:
+            raise services.NotConnected("This connection is no longer connected.") from None
+    if rotated:
+        services.record(services.Subject.of(row), "server_write_failed", warn=True, machine=NAME, rotated=True,
+                        error=last,
+                        summary=f"{row.owner_label}'s {tokens._title(row)} refresh token rotated on {NAME} and "
+                                "could not be stored; it may have to be connected again")
+        raise Refused("canopy-web could not store this connection's new token; if it does not work again soon, its "
+                      "owner should connect it again.")
+    raise _refused(row, f"the write-back was refused: {last}")
+
+
+def _stored(row: Connection, token: providers.TokenResponse, plain: dict, digest: str,
+            expires_at: int) -> tuple[str, str]:
+    _remember(row.pk, digest, token.access_token, plain["instance_url"], expires_at)
     return token.access_token, plain["instance_url"]
 
 
@@ -480,19 +551,29 @@ def may_revoke(conn: Connection) -> bool:
     return ("device", device_keys.thumbprint(jwk)) in zk_seal.sealed_targets(conn.sealed)
 
 
-def revoke_if_able(conn: Connection) -> bool:
+def revoke_if_able(conn: Connection, *, stop_on_kms: bool = False) -> bool:
     """Revoke `conn`, being disconnected, through canopy-web's own key, and delete it as a holder's
     confirmation does (`services.finish_revoking`). At the provider only when no other connection
     of that account through that app remains. True when the row is gone. False leaves it `revoking`
-    for its holders and the next sweep. Never raises, since a person's disconnect has already happened."""
+    for its holders and the next sweep. A failure that can never pass (what it holds fails a check, the
+    app has no client, the provider refused the client) with no machine able to revoke deletes it now,
+    recorded `revoke_unconfirmed`, or the account couldn't connect again for days. Never raises, since
+    a person's disconnect has already happened; `stop_on_kms`: `server_key.Unavailable` does, for
+    the sweep, which then spares the rest of its tick."""
     try:
         return _revoke(conn)
+    except server_key.Unavailable:
+        _revoke_failed(conn, "kms_unavailable")
+        if stop_on_kms:
+            raise
+        return False
     except Exception as e:  # noqa: BLE001 — a failure here must never reach the person disconnecting
-        _revoke_failed(conn, type(e).__name__)
+        _revoke_failed(conn, type(e).__name__.lower())
         return False
 
 
 def _revoke_failed(conn: Connection, error: str) -> None:
+    error = error if services._ERROR_CODE.fullmatch(error or "") else "unrecognised"
     try:
         services.record(services.Subject.of(conn), "revoke_failed", warn=True, during="server_revoke", machine=NAME,
                         error=error)
@@ -501,6 +582,7 @@ def _revoke_failed(conn: Connection, error: str) -> None:
 
 
 def _revoke(conn: Connection) -> bool:
+    _forget(conn.pk)
     row = Connection.objects.select_related("app__workspace", "agent__workspace", "user").filter(pk=conn.pk).first()
     if row is None:
         return True
@@ -510,14 +592,33 @@ def _revoke(conn: Connection) -> bool:
     if ("device", me) not in zk_seal.sealed_targets(row.sealed):
         return False
     if not services.other_live_connections(row).exists():
-        plain = _open_refresh(row, me)
-        p = services._configured(row.app)
+        try:
+            plain = _open_refresh(row, me)
+            p = services._configured(row.app)
+        except (services.NotConfigured, Refused) as e:
+            return _revoke_never_works(row, e.code)
         try:
             p.revoke(plain["refresh_token"])
+        except providers.ProviderUnavailable as e:
+            _revoke_failed(row, services._error_code(e))
+            return False
         except providers.ProviderError as e:
-            if isinstance(e, providers.ProviderUnavailable) or e.code not in _ALREADY_DEAD:
-                _revoke_failed(row, _scrubbed(services._error_code(e), (plain["refresh_token"], row.app.client_secret)))
-                return False
-    _forget(row.pk)
+            if e.code not in _ALREADY_DEAD:
+                return _revoke_never_works(row, services._error_code(e))
     services.finish_revoking(row, machine=NAME, revoked=True)
+    return True
+
+
+def _revoke_never_works(row: Connection, error: str) -> bool:
+    """Trying again won't help. A machine that can revoke still may, so it is left to one; with none,
+    delete now, as a disconnect does when nothing holds it. True when the row is gone."""
+    _revoke_failed(row, error)
+    if rcpt.revokers(row):
+        return False
+    subject = services.Subject.of(row)
+    deleted, _ = Connection.objects.filter(pk=row.pk, state=Connection.REVOKING).delete()
+    if deleted:
+        services.record(subject, "revoke_unconfirmed", warn=True, reason="refused",
+                        summary=f"{subject.owner}'s {subject.provider} ({subject.account_label}) deleted: canopy-web "
+                                "could not revoke it and no machine holds it")
     return True

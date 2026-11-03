@@ -332,7 +332,8 @@ def remove_app(app: ConnectionApp, *, by) -> None:
             locked.save(update_fields=["removed_at", "updated_at"])
     for conn in list(Connection.objects.filter(app_id=app.pk).exclude(state=Connection.REVOKING)
                      .select_related("app__workspace", "agent__workspace").order_by("pk")):
-        disconnect(conn, by=by)
+        # Not one provider call per connection in an admin's request: the sweep revokes them.
+        disconnect(conn, by=by, revoke_now=False)
     delete_removed_app(app)
     if newly:
         title = getattr(providers.CLASSES.get(app.provider), "title", app.provider)
@@ -357,7 +358,8 @@ def delete_removed_app(app: ConnectionApp) -> bool:
 # Verbs that are the owner's history: an Event for an agent's connection, a log
 # line for a person's. The rest are canopy's operational trouble: always a log line.
 AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_revoked", "token_issued",
-                     "refreshed", "server_refreshed", "server_use_on", "server_use_off", "lease_expired_unwritten",
+                     "refreshed", "server_refreshed", "server_write_failed", "server_use_on", "server_use_off",
+                     "lease_expired_unwritten",
                      "reconnect_required", "resealed", "revoked", "revoke_unconfirmed", "app_configured",
                      "app_removed"})
 
@@ -773,8 +775,9 @@ def disconnect(conn: Connection, *, by, revoke_now: bool = True) -> Literal["rev
     every holder stopped), nothing is there to revoke it, so it is deleted now and recorded
     `revoke_unconfirmed` (R7): the provider's own idle expiry finishes it.
 
-    `revoke_now` false: the caller is in a transaction, where a network call must not be, so
-    canopy-web's revoke waits for the sweep. A failed revoke never raises out of here.
+    `revoke_now` false: the caller is in a transaction, where a network call must not be, or is
+    disconnecting many at once, so canopy-web's revoke waits for the sweep. A failed revoke never raises
+    out of here.
 
     Records `disconnected` (in the app's workspace too, for a moved agent's) and
     `grant_revoked` for every agent it was lent to. Disconnecting a row already

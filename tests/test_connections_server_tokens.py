@@ -10,10 +10,13 @@ import logging
 import time
 from datetime import timedelta
 from unittest import mock
+from urllib.parse import quote, quote_plus
 
 import pytest
+import requests
 from cryptography.hazmat.primitives.asymmetric import ec
-from django.db import connection
+from django.core.cache import cache
+from django.db import InterfaceError, OperationalError, connection
 from django.utils import timezone
 
 from apps.agents.credentials import vault_engine, zk, zk_seal
@@ -265,8 +268,9 @@ def test_one_derive_per_recipient_when_both_envelopes_are_written(w):
     with FakeSF(token=[_resp(body=_token_body(refresh_token="5Aep_rotated"))]), \
             mock.patch.object(server_key, "derive", derive):
         server_tokens.access_token(w.conn, sleep=never_sleep)
-    # The refresh envelope: its own entry and its writer. Then each recipient once, for two envelopes.
-    assert len(seen) == 2 + n
+    # The refresh envelope: its own entry and its writer. The check that KMS can still seal. Then each
+    # recipient once, for two envelopes.
+    assert len(seen) == 3 + n
 
 
 def test_write_back_conflict_retries_from_new_row(w):
@@ -283,7 +287,7 @@ def test_write_back_conflict_retries_from_new_row(w):
 
     with FakeSF(token=[_resp(body=_token_body(access_token="00D!new", refresh_token="5Aep_rotated"))]) as sf, \
             mock.patch.object(SalesforceProvider, "refresh", refresh):
-        assert server_tokens.access_token(w.conn, sleep=never_sleep)[0] == "00D!new"
+        assert server_tokens.access_token(w.conn, sleep=lambda _: None)[0] == "00D!new"
     assert calls == [FAKE_REFRESH] and len(sf.token_calls()) == 1
     w.conn.refresh_from_db()
     assert w.conn.statement_version == 2
@@ -292,19 +296,212 @@ def test_write_back_conflict_retries_from_new_row(w):
     assert opened(w, w.conn, w.conn.access_sealed, "access")["statement_floor"] == 2
 
 
-def test_a_second_conflict_keeps_a_rotated_lease_and_stores_nothing(w):
+class Clock:
+    """Time passes only when someone sleeps: `monotonic` and `sleep` for the 90 s budget."""
+
+    def __init__(self):
+        self.t, self.slept = 0.0, []
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.t += seconds
+
+
+@pytest.fixture
+def clock():
+    c = Clock()
+    with mock.patch.object(server_tokens, "_monotonic", c.monotonic):
+        yield c
+
+
+ROTATES = {"token": [_resp(body=_token_body(access_token="00D!new", refresh_token="5Aep_rotated"))]}
+
+
+def rotated_is_stored(world) -> None:
+    world.conn.refresh_from_db()
+    assert opened(world, world.conn, world.conn.sealed, "refresh")["refresh_token"] == "5Aep_rotated"
+    assert opened(world, world.conn, world.conn.access_sealed, "access")["access_token"] == "00D!new"
+    assert world.conn.lease_id is None
+
+
+def test_kms_failing_during_the_seal_then_recovering_stores_the_rotated_token(w, clock):
+    real_derive, real_refresh = server_key.derive, SalesforceProvider.refresh
+    down = []
+
+    def derive(jwk):
+        if down and len(clock.slept) < 3:
+            raise server_key.Unavailable("down")
+        return real_derive(jwk)
+
+    def refresh(self, token):
+        out = real_refresh(self, token)
+        down.append(True)
+        return out
+
+    with FakeSF(**ROTATES) as sf, mock.patch.object(server_key, "derive", derive), \
+            mock.patch.object(SalesforceProvider, "refresh", refresh):
+        assert server_tokens.access_token(w.conn, sleep=clock.sleep)[0] == "00D!new"
+    assert clock.slept == [2, 4, 8] and len(sf.token_calls()) == 1
+    rotated_is_stored(w)
+
+
+def test_a_database_error_then_recovery_stores_the_rotated_token(w, clock):
+    real = tokens.write_back
+    fails = [OperationalError("server closed the connection"), InterfaceError("connection already closed")]
+
+    def write_back(*a, **kw):
+        if fails:
+            raise fails.pop(0)
+        return real(*a, **kw)
+
+    with FakeSF(**ROTATES) as sf, mock.patch.object(tokens, "write_back", write_back):
+        assert server_tokens.access_token(w.conn, sleep=clock.sleep)[0] == "00D!new"
+    assert len(clock.slept) == 2 and len(sf.token_calls()) == 1
+    rotated_is_stored(w)
+
+
+def test_a_database_error_while_renewing_the_lease_is_retried(w, clock):
+    real = tokens.take_lease
+    fails = [OperationalError("gone")]
+
+    def take(conn, who, lease_id=None):
+        if lease_id and fails:
+            raise fails.pop(0)
+        return real(conn, who, lease_id)
+
+    with FakeSF(**ROTATES), mock.patch.object(tokens, "take_lease", take):
+        assert server_tokens.access_token(w.conn, sleep=clock.sleep)[0] == "00D!new"
+    rotated_is_stored(w)
+
+
+def test_a_commit_whose_answer_was_lost_is_not_written_twice(w, clock):
+    """The write landed and the connection died before saying so: the row now holds the rotated
+    token, which must read as done, not as someone else having replaced it."""
+    real = tokens.write_back
+    writes = []
+
+    def write_back(*a, **kw):
+        writes.append(kw["expect"])
+        out = real(*a, **kw)
+        if len(writes) == 1:
+            raise OperationalError("lost at commit")
+        return out
+
+    with FakeSF(**ROTATES) as sf, mock.patch.object(tokens, "write_back", write_back):
+        assert server_tokens.access_token(w.conn, sleep=clock.sleep)[0] == "00D!new"
+    assert len(writes) == 1 and len(sf.token_calls()) == 1
+    rotated_is_stored(w)
+    with FakeSF() as sf, mock.patch.object(server_key, "derive", side_effect=AssertionError("KMS was asked")):
+        assert server_tokens.access_token(w.conn)[0] == "00D!new"  # and cached under what is stored
+
+
+def test_several_conflicts_then_success(w, clock):
+    real = tokens.write_back
     tries = []
 
-    def conflict(*a, **kw):
+    def write_back(*a, **kw):
         tries.append(kw["expect"])
-        raise wire.WireError(409, "zk_value_changed", "changed")
+        if len(tries) <= 4:
+            raise wire.WireError(409, "zk_value_changed", "changed")
+        return real(*a, **kw)
 
-    with FakeSF(token=[_resp(body=_token_body(refresh_token="5Aep_rotated"))]), \
-            mock.patch.object(tokens, "write_back", conflict), pytest.raises(server_tokens.Refused):
-        server_tokens.access_token(w.conn, sleep=never_sleep)
-    assert len(tries) == 2
+    reads = mock.Mock(wraps=server_tokens._open_refresh)
+    with FakeSF(**ROTATES) as sf, mock.patch.object(tokens, "write_back", write_back), \
+            mock.patch.object(server_tokens, "_open_refresh", reads):
+        assert server_tokens.access_token(w.conn, sleep=clock.sleep)[0] == "00D!new"
+    assert len(tries) == 5 and len(sf.token_calls()) == 1
+    assert reads.call_count == 5  # re-read and re-sealed each time, never refreshed again
+    rotated_is_stored(w)
+
+
+def test_a_held_lease_is_waited_out_while_a_rotated_token_is_in_hand(w, clock):
+    real = tokens.take_lease
+    held = [wire.WireError(409, "lease_held", "held"), wire.WireError(409, "lease_held", "held")]
+
+    def take(conn, who, lease_id=None):
+        if lease_id and held:
+            raise held.pop(0)
+        return real(conn, who, lease_id)
+
+    with FakeSF(**ROTATES), mock.patch.object(tokens, "take_lease", take):
+        assert server_tokens.access_token(w.conn, sleep=clock.sleep)[0] == "00D!new"
+    assert len(clock.slept) == 2
+    rotated_is_stored(w)
+
+
+def test_the_retries_back_off_up_to_ninety_seconds(w, clock):
+    with FakeSF(**ROTATES), mock.patch.object(tokens, "write_back", side_effect=OperationalError("gone")), \
+            pytest.raises(server_tokens.Refused):
+        server_tokens.access_token(w.conn, sleep=clock.sleep)
+    assert clock.slept[:5] == [2, 4, 8, 15, 15] and sum(clock.slept) == 90
+
+
+def test_exhausted_retries_raises_keeps_the_lease_and_never_refreshes_again(w, clock, caplog):
+    caplog.set_level(logging.DEBUG, logger="apps")
+    conflict = mock.Mock(side_effect=wire.WireError(409, "zk_value_changed", "changed"))
+    with FakeSF(**ROTATES) as sf, mock.patch.object(tokens, "write_back", conflict), \
+            pytest.raises(server_tokens.Refused) as e:
+        server_tokens.access_token(w.conn, sleep=clock.sleep)
+    assert conflict.call_count > 3 and len(sf.token_calls()) == 1
     w.conn.refresh_from_db()
     assert w.conn.access_sealed == "" and w.conn.lease_id is not None  # the expiry says what was lost
+    event = Event.objects.get(kind="connections.server_write_failed")
+    assert event.level == "warn" and event.payload["machine"] == "canopy-web"
+    assert event.payload["error"] == "zk_value_changed" and event.payload["rotated"] is True
+    blob = caplog.text + str(e.value) + json.dumps(event.payload) + event.summary
+    assert "5Aep_rotated" not in blob and "00D!new" not in blob
+
+
+def test_with_no_rotation_a_kms_failure_gives_up_at_once_and_frees_the_lease(w, clock):
+    real_derive, real_refresh = server_key.derive, SalesforceProvider.refresh
+    down = []
+
+    def derive(jwk):
+        if down:
+            raise server_key.Unavailable("down")
+        return real_derive(jwk)
+
+    def refresh(self, token):
+        out = real_refresh(self, token)
+        down.append(True)
+        return out
+
+    with FakeSF(**NO_ROTATION), mock.patch.object(server_key, "derive", derive), \
+            mock.patch.object(SalesforceProvider, "refresh", refresh), pytest.raises(server_key.Unavailable):
+        server_tokens.access_token(w.conn, sleep=clock.sleep)
+    assert clock.slept == []
+    w.conn.refresh_from_db()
+    assert w.conn.lease_id is None  # the stored refresh token still works: nobody need wait
+
+
+def test_kms_failing_before_the_refresh_never_reaches_the_provider(w):
+    """A rotation can't be taken back, so an outage must fail before it. The refresh envelope opened
+    (two derives); the check that it can still seal is the third."""
+    real = server_key.derive
+    calls = []
+
+    def derive(jwk):
+        calls.append(jwk)
+        if len(calls) > 2:
+            raise server_key.Unavailable("down")
+        return real(jwk)
+
+    with FakeSF() as sf, mock.patch.object(server_key, "derive", derive), pytest.raises(server_key.Unavailable):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    assert sf.calls == [] and len(calls) == 3
+    w.conn.refresh_from_db()
+    assert w.conn.lease_id is None
+
+
+@pytest.mark.parametrize("rs", [[], [("member", "1", {})]], ids=["nobody", "not-canopy-web"])
+def test_nobody_to_seal_to_never_reaches_the_provider(w, rs):
+    with FakeSF() as sf, mock.patch.object(server_tokens, "_write_recipients", return_value=rs), \
+            pytest.raises(server_tokens.Refused):
+        server_tokens.access_token(w.conn, sleep=never_sleep)
+    assert sf.calls == []
 
 
 def test_a_refresh_token_replaced_during_the_refresh_writes_nothing(w):
@@ -609,7 +806,8 @@ def test_an_access_that_fails_a_check_is_refused(w, over):
                                   {"login_host": "login.evil.example"}, {"login_host": "test.salesforce.com"},
                                   {"instance_url": "https://evil.example"}, {"client_id": "someone-elses"},
                                   {"provider": "google"}, {"statement_floor": 99}, {"v": 2},
-                                  {"refresh_token": ""}, {"login_host": None}, {"instance_url": None}])
+                                  {"refresh_token": ""}, {"login_host": None}, {"instance_url": None},
+                                  {"scopes": 1}])
 def test_a_refresh_that_fails_a_check_is_refused_and_no_host_is_called(w, over):
     reseal_refresh(w, w.conn, **over)
     with FakeSF() as sf, pytest.raises(server_tokens.Refused):
@@ -822,9 +1020,12 @@ def test_a_failed_revoke_stays_revoking_for_the_sweep_to_retry(w):
         assert services.disconnect(w.conn, by=w.person) == "revoking"
     w.conn.refresh_from_db()
     assert w.conn.state == Connection.REVOKING
-    with FakeSF(revoke=_resp(status=503)):
+    with FakeSF(revoke=_resp(status=503)) as sf:
         keeper.sweep()
+        keeper.sweep()  # tried once an hour
+    assert len([c for c in sf.calls if c[1] == REVOKE_URL]) == 1
     assert Connection.objects.filter(pk=w.conn.pk).exists()
+    cache.delete(f"connections:revoke-attempt:{w.conn.pk}")  # an hour later
     with FakeSF() as sf:
         out = keeper.sweep()
     assert [c[1] for c in sf.calls] == [REVOKE_URL] and out["revoke_unconfirmed"] == 0
@@ -881,6 +1082,178 @@ def test_removing_an_app_inside_a_transaction_defers_the_revoke_to_the_sweep(w):
     with FakeSF() as sf:
         keeper.sweep()
     assert [c[1] for c in sf.calls] == [REVOKE_URL]
+
+
+def test_remove_app_calls_no_provider_in_the_admins_request(w):
+    with FakeSF() as sf, mock.patch.object(server_key, "derive", side_effect=AssertionError("KMS was asked")):
+        services.remove_app(w.app, by=w.person)
+    assert sf.calls == []
+    w.conn.refresh_from_db()
+    assert w.conn.state == Connection.REVOKING
+    with FakeSF() as sf:
+        assert keeper.sweep()["apps_deleted"] == 1
+    assert [c[1] for c in sf.calls] == [REVOKE_URL]
+    assert not Connection.objects.filter(pk=w.conn.pk).exists()
+
+
+# ---- a revoke that can never work ------------------------------------------------------
+
+@pytest.fixture
+def no_box(key):
+    """A person's connection sealed to them and canopy-web: no machine could ever revoke it."""
+    world = TokensWorld()
+    world.conn = world.shared(sealed_to_owner({"user": world.person}, world.person, app=world.app, server_use=True),
+                              canopy_web=server_key.thumbprint())
+    assert rcpt.revokers(world.conn) == []
+    return world
+
+
+def gone_as_unconfirmed(world, caplog) -> None:
+    assert not Connection.objects.filter(pk=world.conn.pk).exists()
+    assert "connections.revoke_unconfirmed" in caplog.text and "reason=refused" in caplog.text
+
+
+def test_a_provider_rejection_with_no_machine_deletes_now(no_box, caplog):
+    caplog.set_level(logging.WARNING, logger="apps.connections.services")
+    with FakeSF(revoke=_resp(status=400, body={"error": "invalid_client"})):
+        assert services.disconnect(no_box.conn, by=no_box.person) == "deleted"
+    gone_as_unconfirmed(no_box, caplog)
+
+
+def test_refused_contents_with_no_machine_deletes_now(no_box, caplog):
+    caplog.set_level(logging.WARNING, logger="apps.connections.services")
+    Connection.objects.filter(pk=no_box.conn.pk).update(account_id="00Dother/005user")
+    with FakeSF() as sf:
+        assert services.disconnect(no_box.conn, by=no_box.person) == "deleted"
+    assert sf.calls == []
+    gone_as_unconfirmed(no_box, caplog)
+
+
+def test_an_app_with_no_client_and_no_machine_deletes_now(no_box, caplog):
+    caplog.set_level(logging.WARNING, logger="apps.connections.services")
+    sf_app(no_box.ws, secret="")
+    with FakeSF() as sf:
+        assert services.disconnect(no_box.conn, by=no_box.person) == "deleted"
+    assert sf.calls == []
+    gone_as_unconfirmed(no_box, caplog)
+
+
+def test_a_permanent_failure_is_left_to_a_machine_that_can_revoke(w):
+    assert rcpt.revokers(w.conn)
+    with FakeSF(revoke=_resp(status=400, body={"error": "invalid_client"})):
+        assert services.disconnect(w.conn, by=w.person) == "revoking"
+    assert Connection.objects.filter(pk=w.conn.pk, state=Connection.REVOKING).exists()
+
+
+@pytest.mark.parametrize("failure", [{"revoke": _resp(status=503)}, {"revoke": requests.ConnectionError("down")}],
+                         ids=["5xx", "network"])
+def test_a_network_failure_with_no_machine_stays_revoking(no_box, failure):
+    with FakeSF(**failure):
+        assert services.disconnect(no_box.conn, by=no_box.person) == "revoking"
+    assert Connection.objects.filter(pk=no_box.conn.pk, state=Connection.REVOKING).exists()
+
+
+def test_kms_down_with_no_machine_stays_revoking(no_box):
+    with mock.patch.object(server_key, "derive", side_effect=server_key.Unavailable("down")):
+        assert services.disconnect(no_box.conn, by=no_box.person) == "revoking"
+    assert Connection.objects.filter(pk=no_box.conn.pk, state=Connection.REVOKING).exists()
+
+
+def test_a_revoke_failure_logs_only_a_code_shaped_error(w, caplog):
+    caplog.set_level(logging.WARNING, logger="apps.connections.services")
+    bad = "5Aep rotated=secret"
+    with FakeSF(revoke=_resp(status=400, body={"error": bad})):
+        assert services.disconnect(w.conn, by=w.person) == "revoking"
+    assert "error=unrecognised" in caplog.text and bad not in caplog.text
+
+
+# ---- the sweep's bound -------------------------------------------------------------------
+
+def revoking_rows(world, n):
+    """`n` rows being disconnected and sealed to canopy-web, oldest first."""
+    value = zk_seal.seal_to("{}", agent_id="x", name="refresh", kv=0, recipients=[
+        ("device", server_key.thumbprint(), server_key.public_jwk())])
+    start = timezone.now() - timedelta(hours=n)
+    return [_stored({"user": world.person}, world.person, app=world.app, sealed=value, server_use=True,
+                    account_id=f"00Dorg/{i}", state=Connection.REVOKING, revoking_since=start + timedelta(hours=i)).pk
+            for i in range(n)]
+
+
+def test_the_sweep_tries_twenty_five_rows_a_tick_oldest_first(key):
+    world = TokensWorld()
+    pks = revoking_rows(world, 27)
+    tried = []
+
+    def attempt(conn, **kw):
+        tried.append(conn.pk)
+        return False
+
+    with mock.patch.object(server_tokens, "revoke_if_able", attempt):
+        keeper.sweep()
+        assert tried == pks[:25]
+        keeper.sweep()  # the rest; what was tried waits its hour without holding them up
+        assert tried == pks
+        keeper.sweep()
+        assert tried == pks
+    assert Connection.objects.filter(pk__in=pks).count() == 27
+
+
+def test_the_sweep_stops_its_revokes_at_the_first_kms_failure(key):
+    world = TokensWorld()
+    pks = revoking_rows(world, 3)
+    tried = []
+
+    def attempt(conn, **kw):
+        tried.append(conn.pk)
+        raise server_key.Unavailable("down")
+
+    with mock.patch.object(server_tokens, "revoke_if_able", attempt):
+        keeper.sweep()
+        assert tried == pks[:1]
+        keeper.sweep()  # an outage costs a row no hour
+        assert tried == [pks[0], pks[0]]
+    assert Connection.objects.filter(pk__in=pks).count() == 3
+
+
+# ---- small things -------------------------------------------------------------------------
+
+def test_scrubbing_catches_a_url_encoded_echo():
+    secret = "5Aep/r+t=="
+    said = f"no {secret} or {quote(secret, safe='')} or {quote_plus(secret)}"
+    out = server_tokens._scrubbed(said, (secret,))
+    assert out == "no [redacted] or [redacted] or [redacted]"
+
+
+def test_a_code_exchange_follows_no_redirect(w):
+    seen = {}
+
+    def post(url, **kw):
+        seen.update(kw)
+        return _resp(status=307, body={})
+
+    with mock.patch("apps.connections.providers.base.requests.post", post), \
+            pytest.raises(providers.ProviderUnavailable):
+        providers.for_app(w.app).exchange_code("c0de", "https://x/cb", "verifier")
+    assert seen["allow_redirects"] is False
+
+
+def test_a_revoke_drops_the_cached_token(w):
+    machine_writes_access(w, w.conn)
+    server_tokens.access_token(w.conn)
+    assert w.conn.pk in server_tokens._cache
+    Connection.objects.filter(pk=w.conn.pk).update(state=Connection.REVOKING)
+    with FakeSF(revoke=_resp(status=503)):
+        assert server_tokens.revoke_if_able(w.conn) is False
+    assert w.conn.pk not in server_tokens._cache  # even when the provider has yet to agree
+
+
+def test_each_put_purges_what_has_expired(w):
+    now = time.time()
+    server_tokens._remember("dead", "d", "t", "", now - 1)
+    server_tokens._remember("live", "d", "t", "", now + 900)
+    with mock.patch.object(server_tokens, "_now", return_value=now + 301):  # past the 5 minutes too
+        server_tokens._remember("new", "d", "t", "", now + 1200)
+    assert list(server_tokens._cache) == ["new"]
 
 
 def _google_on_row(world, **owner_kw):

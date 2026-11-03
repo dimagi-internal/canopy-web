@@ -301,7 +301,8 @@ class Provider:
         data = {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri}
         if self.pkce:
             data["code_verifier"] = code_verifier
-        return self._token_response(self._token(data, "code exchange"))
+        # A redirect is no answer: a 307 would send the code and the client secret on to wherever it says.
+        return self._token_response(self._token(data, "code exchange", allow_redirects=False))
 
     def refresh(self, refresh_token: str) -> TokenResponse:
         """A new access token, with the app's client. `refresh_token` on the answer is "" unless the
