@@ -148,7 +148,10 @@ def _sensitive_capability(agent, iface: dict, capability: str | None, turn) -> s
 
     caps = iface.get("capabilities") or {}
     if capability:
-        return capability if (caps.get(capability) or {}).get("data") == sensitive_data.SENSITIVE else None
+        # `read` and `ask` are one thing: naming either finds the agent's published read-mode
+        # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
+        published, cap = iface_mod.published_capability(iface, capability)
+        return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
     if turn is None:
         return None
     site = iface_mod._conversation_site(turn)

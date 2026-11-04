@@ -974,7 +974,7 @@ def test_read_mode_on_an_agent_with_no_ask_is_stamped_read_and_holds_only_read(c
     assert env["profile"] == "confined" and env["permissions"] == ["read"]
     assert env["capability"]["name"] == "read"
     assert env["capability"]["write_paths"] == [f"{{cwd}}/.{agent.slug}-read/*"]
-    assert env["capability"]["default_profile_version"] == 1
+    assert env["capability"]["default_profile_version"] == 2
     assert env["granted_by"] == "capability:read"
 
 

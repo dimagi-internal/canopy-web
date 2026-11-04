@@ -49,10 +49,10 @@ def test_mailbox_adds_exactly_the_email_reply_rules():
 def test_repo_adds_exactly_unauthenticated_curl_reads_of_its_own_repo():
     got = default_read_profile(_agent(repo_url="https://github.com/dimagi-internal/ada.git"), skills=[])
     assert got["bash"] == [
-        'curl -sS -H "Accept: application/vnd.github.raw" https://api.github.com/repos/dimagi-internal/ada/contents/*',
-        "curl -sS https://api.github.com/repos/dimagi-internal/ada/contents/*",
-        "curl -sS https://api.github.com/repos/dimagi-internal/ada/git/trees/main?recursive=1",
-        "curl -sS https://raw.githubusercontent.com/dimagi-internal/ada/main/*",
+        'curl -sS -g --path-as-is -H "Accept: application/vnd.github.raw" https://api.github.com/repos/dimagi-internal/ada/contents/*',
+        "curl -sS -g --path-as-is https://api.github.com/repos/dimagi-internal/ada/contents/*",
+        "curl -sS -g --path-as-is https://api.github.com/repos/dimagi-internal/ada/git/trees/main?recursive=1",
+        "curl -sS -g --path-as-is https://raw.githubusercontent.com/dimagi-internal/ada/main/*",
     ]
 
 
@@ -60,7 +60,7 @@ def test_no_gh_and_no_other_host_ever():
     got = default_read_profile(_agent(email="a@b.c", repo_url="git@github.com:o/r.git", repo_ref="x y"),
                                skills=[])
     assert not any(b.startswith("gh ") for b in got["bash"])
-    assert all(b.startswith(("canopy email ", "bin/ada-email ", "curl -sS ")) for b in got["bash"])
+    assert all(b.startswith(("canopy email ", "bin/ada-email ", "curl -sS -g --path-as-is ")) for b in got["bash"])
     assert "git/trees/main?recursive=1" in " ".join(got["bash"])   # an unsafe ref falls back to main
 
 
@@ -80,7 +80,7 @@ def test_it_is_a_valid_capability_and_pinned_version():
     parsed = interface.parse({"capabilities": {"ask": got}})["capabilities"]["ask"]
     assert parsed["tools"] == got["tools"] and parsed["bash"] == got["bash"]
     assert parsed["write_paths"] == got["write_paths"]
-    assert READ_PROFILE_VERSION == 1
+    assert READ_PROFILE_VERSION == 2
 
 
 def test_a_fresh_dict_each_call():
