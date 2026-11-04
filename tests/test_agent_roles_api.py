@@ -299,3 +299,42 @@ def test_a_session_writers_envelope_stops_at_write():
                         may_pin_runner=False, manual_only=False, basis="session:writer")
     held = interface._held_permissions(access._stamp(d), None)
     assert "write" in held and "agent_edit" not in held
+
+
+def _move(user, slug, parent):
+    return _json(_c(user), "put", f"/api/workspaces/{slug}/parent", {"parent": parent})
+
+
+def test_a_workspace_detached_from_its_tree_takes_only_roles_that_mean_the_same(w):
+    """After detaching, a line must not hold a row the old tree's owners go on editing."""
+    M.objects.create(user=w["boss"], workspace=w["connect"], role=M.OWNER)
+    line = AgentGrant.objects.create(agent=w["agent"], kind=G.PERSON, user=w["ed"], role="read_write")
+    old = line.role_def
+    assert old.workspace_id == "dimagi"
+    assert _move(w["boss"], "connect", None).status_code == 200
+    line.refresh_from_db()
+    assert line.role_def_id != old.pk and line.role_def.workspace_id == "connect"
+    assert line.role_def.key == "read_write"
+
+
+def test_a_move_is_refused_while_a_line_holds_a_role_with_no_equal_there(w):
+    M.objects.create(user=w["boss"], workspace=w["connect"], role=M.OWNER)
+    make_role(w["root"], "connector", {"read", "use:connect"})
+    line = AgentGrant.objects.create(agent=w["agent"], kind=G.PERSON, user=w["ed"], role="connector")
+    r = _move(w["boss"], "connect", None)
+    assert r.status_code == 422 and "connector" in r.json()["detail"]
+    w["connect"].refresh_from_db()
+    assert w["connect"].parent_id == "dimagi"
+    line.delete()
+    assert _move(w["boss"], "connect", None).status_code == 200
+
+
+def test_nesting_a_root_repoints_its_lines_at_the_roles_above(w):
+    other = Workspace.objects.create(slug="other", display_name="Other", created_by=w["boss"])
+    M.objects.create(user=w["boss"], workspace=other, role=M.OWNER)
+    agent = Agent.objects.create(slug="ott", name="Ott", workspace=other, owner=w["boss"])
+    line = AgentGrant.objects.create(agent=agent, kind=G.PERSON, user=w["ed"], role="read_only")
+    assert line.role_def.workspace_id == "other"
+    assert _move(w["boss"], "other", "dimagi").status_code == 200
+    line.refresh_from_db()
+    assert line.role_def.workspace_id == "dimagi"

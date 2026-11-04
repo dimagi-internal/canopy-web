@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import re
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 
 from apps.workspaces import services as wsvc
 
@@ -154,6 +156,7 @@ def update(row: AgentRole, *, label=None, description=None, permissions=None) ->
             held = roles.validate_permissions(permissions)
         except roles.InvalidRole as exc:
             raise RoleError(str(exc)) from exc
+        AgentRole.objects.select_for_update().filter(pk=row.pk).first()  # against `grants.lock_role_for`
         _refuse_if_address_lines_would_drive(row, held)
         row.permissions = sorted(held)
     row.save()
@@ -192,3 +195,30 @@ def delete(row: AgentRole, *, reassign_to: AgentRole | None = None) -> int:
             ln.save(update_fields=["role", "role_def"])
     row.delete()
     return len(lines)
+
+
+# --- a workspace moving in the tree --------------------------------------------------------
+
+def carry_lines_after_move(ws) -> None:
+    """A line holds its role's ROW, so once `ws` has moved, a line in it or below may hold a row its new
+    chain does not show: one another tree's owners still edit, or one hidden by a root it was nested
+    under. Each such line is re-pointed to the role of that key it can see when that role allows exactly
+    the same; otherwise the move is refused, naming the lines. Runs inside the save, so a refusal undoes it."""
+    slugs = {ws.pk, *wsvc.descendant_slugs({ws.pk})}
+    lines = (AgentGrant.objects.filter(Q(workspace_id__in=slugs) | Q(agent__workspace_id__in=slugs))
+             .exclude(role_def__isnull=True).select_related("agent", "role_def", "user"))
+    stranded = []
+    for line in lines:
+        there = rolecatalog.role_for(home_of(line), line.role)
+        if there is not None and there.pk == line.role_def_id:
+            continue
+        if there is None or closed(there) != closed(line.role_def):
+            stranded.append(line)
+            continue
+        line.role_def = there
+        line.save(update_fields=["role_def"])
+    if stranded:
+        raise ValidationError(f"{len(stranded)} access-list line(s) hold the role(s) "
+                              f"{', '.join(sorted({ln.role for ln in stranded}))}, which mean something else or do "
+                              f"not exist where {ws.pk} would be ({_named(stranded)}); give them a role that "
+                              "exists there first")

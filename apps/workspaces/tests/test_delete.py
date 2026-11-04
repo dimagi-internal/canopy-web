@@ -6,8 +6,8 @@ un-rehearsable: you could not walk a new operator's steps end to end without
 leaving a fake tenant and a fake agent behind forever.
 
 RBAC differs between the two on purpose, and these tests pin that:
-workspace delete is owner-only (it removes a tenant); agent delete needs
-editor or owner — one step above the "any member" bar for creating one.
+workspace delete is owner-only (it removes a tenant); agent delete is its
+owner's or a workspace owner's, while any workspace editor may create one.
 """
 from __future__ import annotations
 
@@ -122,16 +122,34 @@ def test_workspace_delete_succeeds_once_its_agents_are_gone():
 
 # -------------------------------------------------------------------- agents
 
-def test_editor_can_delete_an_agent():
-    owner = _user("a@dimagi.com")
-    ws = _ws(owner)
-    editor = _user("b@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=ws, user=editor, role=WorkspaceMembership.EDITOR)
-    _agent(ws, owner)
+def test_only_the_agents_owner_or_a_workspace_owner_can_delete_it():
+    boss = _user("a@dimagi.com")
+    ws = _ws(boss)
+    maker, editor = _user("b@dimagi.com"), _user("c@dimagi.com")
+    for u in (maker, editor):
+        WorkspaceMembership.objects.create(workspace=ws, user=u, role=WorkspaceMembership.EDITOR)
+    _agent(ws, maker)
+    _agent(ws, maker, slug="other")
 
     r = _client(editor).delete("/api/agents/scout/")
-    assert r.status_code == 204
-    assert not Agent.objects.filter(slug="scout").exists()
+    assert r.status_code == 403 and "owner" in r.json()["detail"]
+    assert _client(maker).delete("/api/agents/scout/").status_code == 204
+    assert _client(boss).delete("/api/agents/other/").status_code == 204
+    assert not Agent.objects.filter(slug__in=["scout", "other"]).exists()
+
+
+def test_a_workspace_with_default_access_lines_says_how_to_delete_it():
+    from apps.agents.models import AgentGrant
+
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    line = AgentGrant.objects.create(workspace=ws, kind=AgentGrant.WORKSPACE, subject_workspace=ws, role="read_only")
+    c = _client(owner)
+
+    r = c.delete("/api/workspaces/acme/")
+    assert r.status_code == 409 and "default access" in r.json()["detail"]
+    line.delete()
+    assert c.delete("/api/workspaces/acme/").status_code == 204
 
 
 def test_viewer_cannot_delete_an_agent():

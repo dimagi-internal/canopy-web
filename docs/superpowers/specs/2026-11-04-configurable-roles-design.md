@@ -379,11 +379,12 @@ The rule: a view judging many (person, agent) pairs reads the facts once (`docs/
   whose `role_def` is not visible from the destination's chain would grant something the destination's
   owners never agreed to. The move preview (`p.breaks`) lists those lines; the move re-points a line to the
   destination's same-key role only when its permissions are identical, else refuses.
-* **Nesting or detaching a workspace** (`set_workspace_parent`, an owner action) changes chains. It
-  is refused while a line in the moved subtree names a role no longer visible, or while it would make two
-  keys collide, and names them (same shape as the move preview). Open question 5 (merge vs. refuse).
-* **Workspace deletion** removes its roles with it; its lines go with it, and a child that used them is
-  already protected by the `PROTECT`/nesting rules.
+* **Nesting or detaching a workspace** (`set_workspace_parent`, an owner action) changes chains. As
+  built (`roleadmin.carry_lines_after_move`): a line in the moved subtree whose row its new chain does not
+  show is re-pointed to the role of that key it can see when the permissions are identical, and otherwise
+  the move is refused, naming the lines. Open question 5 (merge vs. refuse).
+* **Workspace deletion** removes its roles with it. It is refused (409, saying what to remove) while the
+  workspace has default lines or anything still holds one of its roles: `role_def` is `PROTECT`.
 
 ## 11. The workspace roles: not now
 

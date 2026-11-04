@@ -278,7 +278,7 @@ and the two fixed roles, strongest first:
   | Published interface: `PUT`/`DELETE …/interface`, read-mode override, the `sensitive` switch | **admin** | decides who may reach what, and how sensitive data is handled |
   | Machine capabilities (`PUT …/capabilities`, refresh, slot data) | **admin** | leases money-spending machines |
   | Access list, workspace defaults, licenses, canopy login and token, vaults and credentials, GitHub identity, mailbox, runner pins, routing rules, Slack switch | **admin** | configuring the agent in canopy-web; its keys |
-  | Transfer, delete the agent, name its admins | **own** | `Agent.owner` (deleting is gated by `agent.work` today) |
+  | Transfer, delete the agent, name its admins | **own** | `Agent.owner` or a workspace owner |
   | Schedules and triggers, tasks and the board, turns and chats, hold and release, turn mode, syncs | **work** (`agent.work` or `write`) | they change what the agent DOES, never what it IS |
 
 * **Where each role comes from.** The owner (`Agent.owner`, while still a member of the agent's

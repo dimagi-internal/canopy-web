@@ -193,7 +193,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   identity, and lands on Settings `?created=<repo>#setup` with a confirmation.
   Persona and first skill are Claude Code work, handed over as a command by the
   checklist. Viewers see a note instead of the form.
-  An agent's Settings ends with **Delete** (editors and above, `DELETE /api/agents/{slug}/`):
+  An agent's Settings ends with **Delete** (the agent's owner or a workspace owner, `DELETE /api/agents/{slug}/`):
   type the slug to confirm; it removes the agent from canopy and leaves its repo alone.
 - **`/agents/:slug`** — the agent workspace: full-bleed rail + scrolling main
   on `canopy-ui`. Above every section, the open alerts about this agent

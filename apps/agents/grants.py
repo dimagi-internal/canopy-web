@@ -29,7 +29,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, ancestor_chains
 
 from . import rolecatalog, roles
-from .models import AgentGrant
+from .models import AgentGrant, AgentRole
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +216,17 @@ def check_role(kind, role: str | None, home: str):
                         f"or opens a named capability, not {role} (it lets them drive the whole agent, "
                         "or change it): name the person, or everyone in a workspace")
     return row
+
+
+def lock_role_for(line) -> None:
+    """Call inside the transaction that saves `line`. Holds its role's row and asks the rail again, so a
+    role edit (`roleadmin.update`, which takes the same lock) cannot slip between the check and the save."""
+    if line.role_def_id is None:
+        return
+    row = AgentRole.objects.select_for_update().get(pk=line.role_def_id)
+    if line.kind in ADDRESS_ONLY and grants_write(row):
+        raise LineError(f"the role {row.key!r} just changed: it now lets people drive the agent, so a line "
+                        "that names people only by their address cannot hold it")
 
 
 def check_line(actor, *, home, kind, role=None, capability=None, user_id=None, email=None, workspace="",
