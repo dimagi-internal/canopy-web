@@ -62,6 +62,19 @@ def test_a_remembered_canopy_needs_auth_is_forgotten_before_a_turn(cloud_runner,
     assert json.loads(cache.read_text()) == {"plugin:other:thing": {"timestamp": 2}}
 
 
+def test_a_remembered_projects_needs_auth_is_forgotten_too(cloud_runner, monkeypatch, tmp_path):
+    """The project gateway authenticates like canopy-web; a stale 401 on it cost a Trellis turn its
+    `open_project` (cloud-ec2-live, 2026-11-04), so it is cleared with canopy-web, nothing else."""
+    import json
+
+    monkeypatch.setattr(cloud_runner, "_login_dir", lambda key="default": tmp_path)
+    cache = tmp_path / "mcp-needs-auth-cache.json"
+    cache.write_text(json.dumps({"plugin:canopy:projects": {"timestamp": 1},
+                                 "plugin:other:thing": {"timestamp": 2}}))
+    cloud_runner._clear_canopy_needs_auth()
+    assert json.loads(cache.read_text()) == {"plugin:other:thing": {"timestamp": 2}}
+
+
 def test_a_symlinked_cache_is_rewritten_in_place(cloud_runner, monkeypatch, tmp_path):
     """Every login's cache is a symlink to the one in ~/.claude; the link must survive."""
     import json

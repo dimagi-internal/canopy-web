@@ -6414,12 +6414,14 @@ def _remove_scoped_token(turn_id: str) -> None:
         _log(f"warn: could not remove turn {turn_id[:8]}'s canopy token: {exc}")
 
 
-#: The canopy plugin's MCP server, as Claude Code names it in its needs-auth cache.
-_CANOPY_MCP_SERVER = "plugin:canopy:canopy-web"
+#: The canopy plugin's MCP servers, as Claude Code names them in its needs-auth cache: canopy-web
+#: itself and the project gateway (`/api/mcp/projects/`), which authenticates the same way, so a
+#: session with no credential marks BOTH "needs auth" for every session that shares the file.
+_CANOPY_MCP_SERVERS = ("plugin:canopy:canopy-web", "plugin:canopy:projects")
 
 
 def _clear_canopy_needs_auth() -> None:
-    """Forget a remembered "canopy-web needs auth" before a turn starts.
+    """Forget a remembered "canopy-web (or projects) needs auth" before a turn starts.
 
     Claude Code remembers a server that answered 401 in
     `<config>/mcp-needs-auth-cache.json` and, for ~15 minutes, skips connecting
@@ -6435,15 +6437,16 @@ def _clear_canopy_needs_auth() -> None:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return
-    if not isinstance(data, dict) or _CANOPY_MCP_SERVER not in data:
+    if not isinstance(data, dict) or not any(name in data for name in _CANOPY_MCP_SERVERS):
         return
-    data.pop(_CANOPY_MCP_SERVER, None)
+    for name in _CANOPY_MCP_SERVERS:
+        data.pop(name, None)
     try:
         tmp = path.resolve().with_name(f".{path.name}.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(data))
         os.replace(tmp, path.resolve())
     except OSError as exc:
-        _log(f"warn: could not clear canopy-web from the MCP needs-auth cache: {exc}")
+        _log(f"warn: could not clear canopy-web and projects from the MCP needs-auth cache: {exc}")
 
 
 def _write_private_text(path: pathlib.Path, text: str) -> None:
