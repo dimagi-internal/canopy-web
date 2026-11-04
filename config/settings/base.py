@@ -859,6 +859,10 @@ REVIEW_SUGGESTION_NOTIFY_TO = env.list("REVIEW_SUGGESTION_NOTIFY_TO", default=["
 # Who reads access requests from the public site's request-access form
 # (apps/beta_requests). Empty = record them without mailing anyone.
 CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")
+# Off while the local apps framework is being practised on: a submission from a workspace
+# offering local apps is released at once and shown as unreviewed. On, it needs the
+# `local_app.release` approval. docs/architecture/local-apps.md
+LOCAL_APPS_REQUIRE_APPROVAL = env.bool("LOCAL_APPS_REQUIRE_APPROVAL", default=False)
 # Who may SET the fleet hold (apps/harness/models/fleet.py::FleetHold) without being a
 # superuser. Holding only stops new work and loses nothing, so the agent that conducts
 # the fleet (Ada) can pull the brake the moment something looks wrong; RELEASING stays

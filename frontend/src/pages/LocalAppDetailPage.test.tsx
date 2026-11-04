@@ -38,7 +38,7 @@ const SETTINGS = {
 const APP = {
   key: 'meeting-assistant', name: 'Meeting assistant', description: 'Live feedback from an agent.', version: '0.2.0', publisher: 'canopy',
   notice: "What's said in this meeting leaves your Mac.", disclosure: { reads: ['the transcript'], sends: ['transcript text to a session'] },
-  settings: SETTINGS, digest: 'digest-1', installs_with: ['Superwhisper transcript'],
+  settings: SETTINGS, reviewed: true, digest: 'digest-1', installs_with: ['Superwhisper transcript'],
   agents: [{ slug: 'hal', name: 'Hal' }, { slug: 'ada', name: 'Ada' }],
   computers: [{ id: 'r1', name: 'Jon laptop' }],
   versions: [{ version: '0.2.0', released_at: '2026-11-03T10:00:00Z', changelog: 'Better batches.', revoked: false }], enabled: true,

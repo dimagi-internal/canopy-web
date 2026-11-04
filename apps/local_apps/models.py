@@ -62,6 +62,11 @@ class LocalAppSubmission(models.Model):
         constraints = [models.UniqueConstraint(fields=["key", "version"], name="local_app_version_once")]
 
     @property
+    def reviewed(self) -> bool:
+        """Whether a person approved these bytes. Shown wherever the app says who vouched for it."""
+        return bool(self.approval_id and self.approval.status == "done")
+
+    @property
     def status(self) -> str:
         if self.revoked_at:
             return "revoked"

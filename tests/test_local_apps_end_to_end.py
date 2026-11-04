@@ -32,6 +32,11 @@ from canopy_runner.local_apps import server as runner_server
 ROOT = Path(__file__).resolve().parent.parent
 APPS = ROOT / "local_apps"
 J = "application/json"
+
+
+@pytest.fixture(autouse=True)
+def _approval_is_on(settings):
+    settings.LOCAL_APPS_REQUIRE_APPROVAL = True
 SPOKEN = "the confidential budget figure is ninety thousand dollars for next year"
 
 FAKE_CLI = """#!{python}

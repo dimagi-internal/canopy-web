@@ -84,7 +84,10 @@ export default function LocalAppDetailPage(): JSX.Element {
           )
         })}
         <p className="mt-3 text-[13px] text-muted-foreground">
-          Canopy reviewed this code before listing it. It runs as you, and can read what you can read.
+          {app.reviewed
+            ? 'Canopy reviewed this code before listing it.'
+            : "Nobody at Canopy reviewed this code: it's published directly while this is experimental."}{' '}
+          It runs as you, and can read what you can read.
         </p>
       </section>
 
