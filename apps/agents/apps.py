@@ -19,13 +19,11 @@ class AgentsConfig(AppConfig):
         from django.db.models.signals import post_save  # noqa: PLC0415 — ready(): kept beside the connect it serves
 
         from apps.common import ticks
-
-        from .credentials import pat_rotation
         from apps.workspaces.models import Workspace  # noqa: PLC0415 — ready(): models load only after the app registry
 
-        from .models import Agent  # noqa: PLC0415 — ready(): models load only after the app registry
-
         from . import signals  # noqa: F401,PLC0415 — ready(): connects the task-collection page invalidation
+        from .credentials import pat_rotation
+        from .models import Agent  # noqa: PLC0415 — ready(): models load only after the app registry
 
         # Every agent has its own vault from the moment it exists, linked to the
         # agent (credentials.vault_members) — made here so no read path writes.
@@ -37,6 +35,7 @@ class AgentsConfig(AppConfig):
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
+        ticks.register("agents.skill_catalog", _skill_catalog, 5 * 60)
 
 
 def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
@@ -88,3 +87,9 @@ def _audit_workspace(request, path_args):
         qs = qs.filter(workspace__slug=pinned)
     agent = qs.select_related("workspace").first()
     return agent.workspace if agent is not None else None
+
+
+def _skill_catalog() -> None:
+    from . import skill_catalog  # noqa: PLC0415 — a tick job: imported when it runs, once the app registry is ready
+
+    skill_catalog.refresh_all()

@@ -613,6 +613,11 @@ class AgentSkill(models.Model):
         max_length=120, blank=True, default="",
         help_text='What the command takes, e.g. "topic (optional)". Renders as the input placeholder.',
     )
+    # Who wrote the row: the agent itself (`PUT …/skills/`, authoritative) or
+    # canopy-web from what a runner reports it can run (`skill_catalog`, a
+    # fallback that never overwrites a published catalog).
+    PUBLISHED, FROM_RUNNER = "published", "runner"
+    source = models.CharField(max_length=16, default="published")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
