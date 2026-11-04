@@ -266,11 +266,14 @@ def promote_project(project: AgentProject, handle: str, workspace: str = "") -> 
     if project.agent_id is not None and not may_hold_workspace_project(project.agent, workspace):
         raise ProjectScopeError(f"'{project.agent.slug}' can only lead a project of "
                                 f"'{project.agent.workspace_id}' or a workspace below it")
+    if project.workspace_id != workspace:
+        # The new workspace's admins never let its lead agent publish.
+        project.lead_agent_may_publish = False
     project.workspace_id = workspace
     project.handle = handle
     try:
         with transaction.atomic():
-            project.save(update_fields=["workspace", "handle", "updated_at"])
+            project.save(update_fields=["workspace", "handle", "lead_agent_may_publish", "updated_at"])
     except IntegrityError:
         raise ProjectScopeError(f"'{workspace}/{handle}' is already taken", 409) from None
     # A task lives where its project does.
@@ -312,18 +315,20 @@ def _settle_shares(project: AgentProject) -> None:
 def set_steward(project: AgentProject, steward: Agent | None) -> AgentProject:
     """Make `steward` the project's lead agent (None: no agent leads it). It
     must belong to the project's workspace or one above it. The address is the
-    identity, so callers notice nothing; the alias stays its maker's."""
-    if steward is None:
-        project.agent = None
-        project.save(update_fields=["agent", "updated_at"])
-        return project
-    if not may_hold_workspace_project(steward, project.workspace_id):
+    identity, so callers notice nothing; the alias stays its maker's.
+
+    A NEW lead never inherits `lead_agent_may_publish`: an admin let one agent
+    publish, so handing the seat on turns it off until an admin decides again."""
+    if steward is not None and not may_hold_workspace_project(steward, project.workspace_id):
         raise ProjectScopeError(f"the lead agent must be an agent of '{project.workspace_id}' "
                                 "or of a workspace above it")
-    if steward.pk != project.agent_id:
+    new_id = steward.pk if steward is not None else None
+    if new_id != project.agent_id:
         project.agent = steward
-        project.save(update_fields=["agent", "updated_at"])
-    project.member_agents.add(steward)
+        project.lead_agent_may_publish = False
+        project.save(update_fields=["agent", "lead_agent_may_publish", "updated_at"])
+    if steward is not None:
+        project.member_agents.add(steward)
     return project
 
 

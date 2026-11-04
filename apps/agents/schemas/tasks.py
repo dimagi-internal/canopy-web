@@ -362,10 +362,9 @@ class AgentProjectOut(StrictModel):
     shared_in: bool = False
     #: How to name it anywhere: `<workspace>/<handle>`.
     address: str = ""
-    #: Its one page.
+    #: Its one page. (An agent's alias link, `/w/<ws>/agents/<slug>/projects/<P5>`,
+    #: only forwards here, so it is not returned as a second address.)
     url: str = ""
-    #: Its page on its lead agent's board (`url` when no agent leads it).
-    board_url: str = ""
     #: What it serves as its own MCP server ("" nothing, "kb" a knowledge base),
     #: and where (relative to canopy's origin; empty until something is published).
     mcp_kind: str = ""
@@ -392,6 +391,9 @@ class AgentProjectOut(StrictModel):
     health: str | None = None
     #: Active, and no update within the workspace's cadence.
     update_missing: bool = False
+    #: Its lead agent may publish its own drafted updates (off: a person
+    #: publishes them). A workspace admin turns it on (`.../update-settings`).
+    lead_agent_may_publish: bool = False
     #: Tasks done / in scope (canceled ones out), by category.
     done_task_count: int = 0
     drive_folder_id: str
@@ -930,6 +932,9 @@ class AgentProjectDetailOut(AgentProjectOut):
     draft_updates: list[ProjectUpdateOut] = Field(default_factory=list)
     #: The reader may change it (an editor, its lead, or one of its agents).
     may_edit: bool = False
+    #: The reader may change its update settings (`lead_agent_may_publish`):
+    #: an admin of its workspace (`projects.decide`).
+    may_decide: bool = False
     #: What it serves to the workspace.
     services: list[ProjectServiceOut] = Field(default_factory=list)
     #: The workspace vaults attached to it, only those in a workspace the reader belongs to.
@@ -1160,6 +1165,10 @@ class ProjectUpdateOut(StrictModel):
     author_email: str | None = None
     author_agent: str | None = Field(default=None, validation_alias=AliasChoices("author_agent_slug", "author_agent"))
     published_by_email: str | None = None
+    #: The lead agent that published it itself (its project allows that,
+    #: `lead_agent_may_publish`); None when a person published it.
+    published_by_agent: str | None = Field(
+        default=None, validation_alias=AliasChoices("published_by_agent_slug", "published_by_agent"))
     checkin_run: int | None = Field(default=None, validation_alias=AliasChoices("checkin_run_id", "checkin_run"))
     diff: dict = Field(default_factory=dict)
     published_at: dt.datetime | None = None
@@ -1170,16 +1179,22 @@ class ProjectUpdateIn(StrictModel):
     health: Literal["on_track", "at_risk", "off_track"]
     body: str = Field(default="", max_length=10000)
     #: A person's update is published at once unless `draft`; an agent's (its
-    #: own login) is always a draft a person publishes.
+    #: own login) is always a draft — a person publishes it, or the lead agent
+    #: its own where an admin turned `lead_agent_may_publish` on.
     draft: bool = False
     #: The check-in run it reports on, if any.
     checkin_run: int | None = None
 
 
 class ProjectUpdatePublishIn(StrictModel):
-    #: The health as the person publishing it judges it (default: the draft's).
+    #: The health as whoever publishes it judges it (default: the draft's).
     health: Literal["on_track", "at_risk", "off_track"] | None = None
     body: str | None = Field(default=None, max_length=10000)
+
+
+class ProjectUpdateSettingsIn(StrictModel):
+    #: Let the project's lead agent publish its own drafted updates.
+    lead_agent_may_publish: bool
 
 
 class ProjectServiceOut(StrictModel):

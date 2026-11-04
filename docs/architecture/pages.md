@@ -127,7 +127,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/projects/:handle`** — a project's ONE page, for teammates and editors alike
   (`pages/work/ProjectPage.tsx`): properties (status, health, lead, lead agent,
   agents, dates, priority), its latest update with Post update and drafts to
-  publish, milestones with progress, the scope-versus-done graph, its tasks, its
+  publish (and, for an admin, whether its lead agent publishes its own),
+  milestones with progress, the scope-versus-done graph, its tasks (the Tasks
+  page's own list, `TasksView`, pinned to the project — and to a milestone when
+  one is picked — so its rows, peek and New task are the same code), its
   dynamic views drawn in their sandboxes (the first three; hidden while there are
   none and the viewer cannot make one), its toolbox, and **Shared with** (`ProjectShares.tsx`: the other
   workspaces of its tree it is open to and the agents that joined through each; an

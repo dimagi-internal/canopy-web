@@ -225,12 +225,37 @@ def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
     member it is); else 404 — the same for "no such project"."""
     project = services.get_workspace_project(workspace, handle)
     if project is None or (workspace not in set(listed_agent_workspaces(request))
-                           and workspace not in visible_agent_workspaces(request)
-                           and (project.agent_id is None
-                                or project.agent.workspace_id not in visible_agent_workspaces(request))
-                           and not shared_with_caller(request, project)):
+                           and not project_in_reach(request, project)):
         raise HttpError(404, f"project {workspace}/{handle} not found")
     return project
+
+
+def project_in_reach(request: HttpRequest, project) -> bool:
+    """May the caller read `project`: a member of its workspace or of its lead
+    agent's, or of a workspace it is shared with? (A MEMBER agent's workspace
+    is not enough — reaching an agent does not open every project it works on.)"""
+    visible = visible_agent_workspaces(request)
+    if project.workspace_id in visible:
+        return True
+    if project.agent_id is not None and project.agent.workspace_id in visible:
+        return True
+    return shared_with_caller(request, project)
+
+
+def may_decide_publishing(request: HttpRequest, project) -> bool:
+    """May the caller let `project`'s lead agent publish its own updates? An
+    admin of the project's workspace — and a PERSON: an agent's login never
+    grants itself (or another agent) that."""
+    user = request.user
+    if not perms.can(user, project.workspace_id, perms.PROJECTS_DECIDE):
+        return False
+    return not Agent.objects.filter(user=user).exists()
+
+
+def project_agent_login(request: HttpRequest, project):
+    """The project's lead or member agent whose own login is the caller, or None."""
+    agents = [a for a in [project.agent, *project.member_agents.all()] if a is not None]
+    return next((a for a in agents if a.is_own_login(request.user)), None)
 
 
 def may_edit_project(request: HttpRequest, project) -> bool:

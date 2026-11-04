@@ -31,7 +31,7 @@ export type GroupBy = '' | 'status' | 'project' | 'assignee' | 'priority'
 
 export type Column = 'project' | 'assignee' | 'labels' | 'due' | 'updated'
 
-const ALL_COLUMNS: Column[] = ['project', 'labels', 'assignee', 'due', 'updated']
+export const ALL_COLUMNS: Column[] = ['project', 'labels', 'assignee', 'due', 'updated']
 
 /** May the signed-in person change a task's fields? An editor of its workspace,
  *  or its assignee. A display hint: the server decides. */
@@ -213,6 +213,7 @@ function TaskRow({
   const page = scopedPath(task.workspace, `/tasks/${task.key}`)
   const done = STATUS_CATEGORY[task.status] === 'completed' || STATUS_CATEGORY[task.status] === 'canceled'
   const asking = asksSomething(task)
+  const waitingOn = !done && task.waiting_on_email ? { email: task.waiting_on_email, name: displayPerson(task.waiting_on_email) } : null
   return (
     <Tr
       rule="bottom-last"
@@ -271,8 +272,23 @@ function TaskRow({
               {task.ask_kind === 'question' ? 'Question' : 'Decide'}
             </span>
           )}
+          {waitingOn && (
+            <span
+              className="shrink-0 rounded border border-warning/30 bg-warning/10 px-1 text-[10.5px] text-warning"
+              title={`Waiting on ${waitingOn.email}`}
+              data-testid={`waiting-${task.key}`}
+            >
+              Waiting on {waitingOn.name}
+            </span>
+          )}
           {task.kind === 'idea' && (
             <span className="shrink-0 rounded border border-special/30 bg-special/10 px-1 text-[10.5px] text-special">Idea</span>
+          )}
+          {/* Its one-line brief — what happens next — so a reader need not open it. */}
+          {task.next_action && (
+            <span className="min-w-0 flex-1 basis-0 truncate text-[12px] text-muted-foreground" title={task.next_action} data-testid={`brief-${task.key}`}>
+              {task.next_action}
+            </span>
           )}
         </div>
       </Td>

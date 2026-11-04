@@ -1,7 +1,8 @@
 // A task list's whole body — tabs, the filter bar, saved views, the table /
 // board / calendar, selection with its bulk bar, the keyboard, New task and
 // the peek. The workspace Tasks page is this with tabs; an agent's Tasks tab
-// is this pinned to the agent (`fixed`), so the two can never drift apart.
+// is this pinned to the agent (`fixed`), and a project page's Tasks section is
+// this pinned to the project, so the three can never drift apart.
 // Everything the list shows lives in the URL (viewState.ts), which is what
 // makes a filtered list a link and a saved view a stored set of parameters.
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
@@ -32,7 +33,7 @@ import { SavedViews } from './SavedViews'
 import { TaskBoard, movePatch } from './TaskBoard'
 import { TaskCalendar } from './TaskCalendar'
 import { TaskPeek } from './TaskPeek'
-import { TaskTable, groupTasks, type GroupBy } from './TaskTable'
+import { ALL_COLUMNS as TABLE_COLUMNS, TaskTable, groupTasks, type GroupBy } from './TaskTable'
 import { useDirectory } from './useDirectory'
 import { usePeek } from './usePeek'
 import { useTaskKeys } from './useTaskKeys'
@@ -74,6 +75,10 @@ export interface TasksViewProps {
   storageKey?: string
   /** After any change this list makes to a task (a rail badge re-reads). */
   onChanged?: () => void
+  /** Indent subtasks under their parent in the table (a project's list). */
+  nest?: boolean
+  /** Offer New task (the button and the C key). A project page passes its `may_edit`. */
+  canCreate?: boolean
 }
 
 function readStored(key: string | undefined): string | null {
@@ -94,7 +99,15 @@ function writeStored(key: string | undefined, value: string): void {
   }
 }
 
-export function TasksView({ workspace, fixed, tabs = false, storageKey, onChanged }: TasksViewProps): JSX.Element {
+export function TasksView({
+  workspace,
+  fixed,
+  tabs = false,
+  storageKey,
+  onChanged,
+  nest = false,
+  canCreate = true,
+}: TasksViewProps): JSX.Element {
   const [params, setParams] = useSearchParams()
   const tabList = useMemo<TabId[]>(() => (tabs === true ? ALL_TABS : Array.isArray(tabs) ? [...tabs] : []), [tabs])
   const tabKey = tabList.join(',')
@@ -294,9 +307,10 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
   const [creating, setCreating] = useState(false)
   const [createSeq, setCreateSeq] = useState(0)
   const startCreate = useCallback(() => {
+    if (!canCreate) return
     setCreateSeq((n) => n + 1)
     setCreating(true)
-  }, [])
+  }, [canCreate])
   // `?new=1` (the command palette's "New task") opens the dialog once, then leaves the URL.
   useEffect(() => {
     if (params.get('new') !== '1') return
@@ -314,6 +328,7 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
     () => ({
       project: pinned.project && pinned.project.includes('/') ? pinned.project : state.project.includes('/') ? state.project : undefined,
       assignee: pinned.agent ? `agent:${pinned.agent}` : undefined,
+      milestone: pinned.milestone || undefined,
     }),
     [pinned, state.project],
   )
@@ -522,17 +537,22 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
           options={LAYOUTS}
           onChange={(v) => setParam('layout', v === 'table' ? '' : v)}
         />
-        <SavedViews
-          workspace={workspace}
-          activeId={state.saved}
-          current={{ filters: viewFilters(state), group_by: state.group, sort: state.sort, layout: state.layout }}
-          onApply={applyView}
-          onError={setError}
-        />
-        <Button size="xs" className="ml-auto" onClick={startCreate} title="New task (C)">
-          <Plus aria-hidden="true" />
-          New task
-        </Button>
+        {/* A saved view is the workspace's; one saved from a pinned project list would lose the pin. */}
+        {!pinned.project && (
+          <SavedViews
+            workspace={workspace}
+            activeId={state.saved}
+            current={{ filters: viewFilters(state), group_by: state.group, sort: state.sort, layout: state.layout }}
+            onApply={applyView}
+            onError={setError}
+          />
+        )}
+        {canCreate && (
+          <Button size="xs" className="ml-auto" onClick={startCreate} title="New task (C)">
+            <Plus aria-hidden="true" />
+            New task
+          </Button>
+        )}
       </div>
 
       {(error || list.error) && (
@@ -572,6 +592,9 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
           directory={directory}
           onPatch={patch}
           onOpen={onOpenTask}
+          // A list pinned to one project needs no project column.
+          columns={pinned.project ? TABLE_COLUMNS.filter((c) => c !== 'project') : TABLE_COLUMNS}
+          nest={nest}
           groupBy={state.group}
           selected={selected}
           onToggle={toggle}

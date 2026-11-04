@@ -21,6 +21,48 @@ def c():
     return client, agent, u
 
 
+def test_an_agents_project_list_holds_every_task_in_the_project(c):
+    """`?project=` on an agent's board is the project's whole list — a person's
+    task and an unassigned one too, not only the agent's own."""
+    client, agent, _u = c
+    AgentProject.objects.create(agent=agent, ext_id="P1", name="IDM talk", handle="idm-talk")
+    other = AgentProject.objects.create(workspace=agent.workspace, name="Elsewhere", handle="elsewhere")
+    assert client.post("/api/agents/eva/tasks/", [{"title": "Eva's", "project": "P1"}],
+                       content_type="application/json").status_code == 201
+    for body in ({"title": "Jj's", "assignee": "jj@dimagi.com"}, {"title": "Nobody's"}):
+        r = client.post("/api/tasks/", {**body, "workspace": "connect", "project": "connect/idm-talk"},
+                        content_type="application/json")
+        assert r.status_code == 201, r.content
+    client.post("/api/tasks/", {"title": "Not this project", "workspace": "connect", "project": "connect/elsewhere"},
+                content_type="application/json")
+
+    by_alias = sorted(t["title"] for t in client.get("/api/agents/eva/tasks/?project=P1").json())
+    assert by_alias == ["Eva's", "Jj's", "Nobody's"]
+    assert sorted(t["title"] for t in client.get("/api/agents/eva/tasks/?project=connect/idm-talk").json()) == by_alias
+    # Unfiltered, the board is still the agent's own work.
+    assert [t["title"] for t in client.get("/api/agents/eva/tasks/").json()] == ["Eva's"]
+    # A project the agent neither leads nor works on adds nothing.
+    assert client.get("/api/agents/eva/tasks/?project=connect/elsewhere").json() == []
+    assert [t.title for t in other.tasks.all()] == ["Not this project"]
+
+
+def test_an_agents_project_filter_names_one_project_even_when_aliases_collide(c):
+    """Aliases are per maker: eva leads her own P1 and works on another agent's
+    P1. `?project=P1` is HER P1 (her own alias first), never both merged."""
+    client, agent, _u = c
+    AgentProject.objects.create(agent=agent, created_by_agent=agent, ext_id="P1", name="Mine", handle="mine")
+    hal = Agent.objects.create(slug="hal", name="Hal", workspace=agent.workspace)
+    theirs = AgentProject.objects.create(agent=hal, created_by_agent=hal, ext_id="P1", name="Theirs", handle="theirs")
+    theirs.member_agents.add(agent)
+    for addr, title in (("connect/mine", "In mine"), ("connect/theirs", "In theirs")):
+        r = client.post("/api/tasks/", {"title": title, "workspace": "connect", "project": addr},
+                        content_type="application/json")
+        assert r.status_code == 201, r.content
+
+    assert [t["title"] for t in client.get("/api/agents/eva/tasks/?project=P1").json()] == ["In mine"]
+    assert [t["title"] for t in client.get("/api/agents/eva/tasks/?project=connect/theirs").json()] == ["In theirs"]
+
+
 def _viewer(agent, username="vi"):
     v = User.objects.create_user(username, f"{username}@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=v, workspace=agent.workspace,

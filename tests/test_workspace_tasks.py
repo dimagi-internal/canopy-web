@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.agents import work
 from apps.agents.models import Agent, AgentProject, AgentTask, TaskEvent, TaskSettings
+from apps.events.models import SettingChange
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -422,6 +423,85 @@ def test_an_agent_drafts_an_update_and_a_person_publishes_it(w, project):
     assert (pub["status"], pub["health"], pub["published_by_email"]) == ("published", "at_risk", "jj@dimagi.com")
     row = w["c"].get("/api/projects/?status=active").json()[0]
     assert (row["health"], row["update_missing"]) == ("at_risk", False)
+
+
+def _agent_login(w, agent, username):
+    bot = User.objects.create_user(username, f"{username}@agents.test", "pw")
+    WorkspaceMembership.objects.create(user=bot, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
+    agent.user = bot
+    agent.save()
+    client = Client()
+    client.force_login(bot)
+    return client
+
+
+def test_an_admin_can_let_the_lead_agent_publish_its_own_updates(w, project):
+    bc = _agent_login(w, w["eva"], "eva-bot")
+    project.member_agents.add(w["hal"])
+    hc = _agent_login(w, w["hal"], "hal-bot")
+    url = "/api/workspace-projects/dimagi/unga"
+    draft = bc.post(f"{url}/updates/", {"health": "on_track", "body": "Agenda set"}, content_type=J).json()
+    assert draft["status"] == "draft"
+
+    # Off by default: the lead agent drafts, a person publishes.
+    assert w["c"].get(f"{url}/").json()["lead_agent_may_publish"] is False
+    assert bc.post(f"{url}/updates/{draft['id']}/publish", {}, content_type=J).status_code == 403
+
+    # Only an admin of the project's workspace may turn it on; it is audited.
+    assert w["sc"].patch(f"{url}/update-settings", {"lead_agent_may_publish": True},
+                         content_type=J).status_code == 403
+    assert bc.patch(f"{url}/update-settings", {"lead_agent_may_publish": True}, content_type=J).status_code == 403
+    assert w["c"].get(f"{url}/").json()["may_decide"] is True
+    assert w["sc"].get(f"{url}/").json()["may_decide"] is False
+    r = w["c"].patch(f"{url}/update-settings", {"lead_agent_may_publish": True}, content_type=J)
+    assert r.status_code == 200 and r.json()["lead_agent_may_publish"] is True
+    change = SettingChange.objects.filter(operation="set_project_update_settings").latest("id")
+    assert change.actor_email == "jj@dimagi.com" and "lead_agent_may_publish" in str(change.changes)
+
+    # A working agent that does not lead it still may not; nor may the lead publish another's draft.
+    hal_draft = hc.post(f"{url}/updates/", {"health": "at_risk"}, content_type=J).json()
+    assert hc.post(f"{url}/updates/{draft['id']}/publish", {}, content_type=J).status_code == 403
+    assert bc.post(f"{url}/updates/{hal_draft['id']}/publish", {}, content_type=J).status_code == 403
+
+    pub = bc.post(f"{url}/updates/{draft['id']}/publish", {"health": "at_risk"}, content_type=J)
+    assert pub.status_code == 200, pub.content
+    body = pub.json()
+    assert (body["status"], body["health"], body["published_by_agent"], body["published_by_email"]) == (
+        "published", "at_risk", "eva", None)
+    assert w["sc"].get(f"{url}/updates/").json()[0]["published_by_agent"] == "eva"
+
+    # Turned off again, the lead agent is back to drafting.
+    w["c"].patch(f"{url}/update-settings", {"lead_agent_may_publish": False}, content_type=J)
+    again = bc.post(f"{url}/updates/", {"health": "on_track"}, content_type=J).json()
+    assert bc.post(f"{url}/updates/{again['id']}/publish", {}, content_type=J).status_code == 403
+
+
+def test_the_publish_grant_is_a_persons_and_covers_only_the_lead_it_was_given_to(w, project):
+    url = "/api/workspace-projects/dimagi/unga"
+    bc = _agent_login(w, w["eva"], "eva-bot")
+    project.member_agents.add(w["hal"])
+    hc = _agent_login(w, w["hal"], "hal-bot")
+
+    # An agent's login that holds the admin role still may not grant it — to itself or anyone.
+    WorkspaceMembership.objects.filter(user=w["eva"].user).update(role=WorkspaceMembership.ADMIN)
+    assert bc.patch(f"{url}/update-settings", {"lead_agent_may_publish": True}, content_type=J).status_code == 403
+    assert bc.get(f"{url}/").json()["may_decide"] is False
+
+    r = w["c"].patch(f"{url}/update-settings", {"lead_agent_may_publish": True}, content_type=J)
+    assert r.status_code == 200
+    change = SettingChange.objects.filter(operation="set_project_update_settings").latest("id")
+    assert "eva" in change.summary
+
+    # A member agent that makes itself the lead does not inherit the admin's grant.
+    assert hc.patch(f"{url}/", {"steward": "hal"}, content_type=J).status_code == 200
+    assert w["c"].get(f"{url}/").json()["lead_agent_may_publish"] is False
+    hal_draft = hc.post(f"{url}/updates/", {"health": "at_risk"}, content_type=J).json()
+    assert hc.post(f"{url}/updates/{hal_draft['id']}/publish", {}, content_type=J).status_code == 403
+
+    # With no lead agent there is nobody to let publish.
+    w["c"].patch(f"{url}/", {"steward": ""}, content_type=J)
+    assert w["c"].patch(f"{url}/update-settings", {"lead_agent_may_publish": True},
+                        content_type=J).status_code == 422
 
 
 def test_an_active_project_with_no_recent_update_shows_it_missing(w, project):

@@ -86,6 +86,10 @@ class AgentProject(models.Model):
         related_name="agent_projects",
     )
     owner_note = models.CharField(max_length=200, blank=True, default="")
+    #: Its lead agent may publish its own drafted updates (`ProjectUpdate`)
+    #: instead of waiting for a person. Off by default; a workspace admin turns
+    #: it on (`projects.decide`, audited as a setting).
+    lead_agent_may_publish = models.BooleanField(default=False)
 
     #: The agent's own `Projects/<name>` folder. The id is what `gog drive` needs;
     #: the url is what a human clicks. Blank until the agent files something.
@@ -227,15 +231,6 @@ class AgentProject(models.Model):
     def url(self) -> str:
         """Its one page."""
         return f"/w/{self.workspace_id}/projects/{self.handle}"
-
-    @property
-    def board_url(self) -> str:
-        """Its page on its lead agent's board, in the AGENT's workspace (which for
-        a division's project led from the parent is not the project's); `url`
-        when no agent leads it."""
-        if not self.agent_id:
-            return self.url
-        return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id or self.handle}"
 
     # ---- what it serves (`ProjectService`) --------------------------------
     # A knowledge base is the one kind served from canopy itself; these read it
@@ -1136,8 +1131,10 @@ class ProjectUpdate(models.Model):
     what changed since the last one (`diff`, filled in when it is published).
 
     An agent may DRAFT one (a check-in run ends with one); a person PUBLISHES it,
-    choosing the health — the agent proposes, the person decides. A project's
-    health is its latest published update's."""
+    choosing the health — the agent proposes, the person decides. A workspace
+    admin may let the project's lead agent publish its own drafts
+    (`AgentProject.lead_agent_may_publish`); such an update names the agent in
+    `published_by_agent`. A project's health is its latest published update's."""
 
     ON_TRACK, AT_RISK, OFF_TRACK = "on_track", "at_risk", "off_track"
     HEALTHS = (ON_TRACK, AT_RISK, OFF_TRACK)
@@ -1151,6 +1148,10 @@ class ProjectUpdate(models.Model):
     author_agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     published_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                      on_delete=models.SET_NULL, related_name="+")
+    #: The lead agent that published it itself, where its project allows that
+    #: (`AgentProject.lead_agent_may_publish`); null when a person published it.
+    published_by_agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL,
+                                           related_name="+")
     checkin_run = models.ForeignKey("huddles.CheckinRun", null=True, blank=True, on_delete=models.SET_NULL,
                                     related_name="updates")
     #: What changed since the previous published update: `{tasks_done, tasks_added,
@@ -1182,6 +1183,10 @@ class ProjectUpdate(models.Model):
     @property
     def published_by_email(self) -> str | None:
         return self.published_by.email if self.published_by_id else None
+
+    @property
+    def published_by_agent_slug(self) -> str | None:
+        return self.published_by_agent.slug if self.published_by_agent_id else None
 
 
 class SavedView(models.Model):

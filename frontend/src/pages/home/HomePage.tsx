@@ -614,7 +614,7 @@ function YourProjects(): JSX.Element | null {
       <ul className="flex flex-col divide-y divide-border rounded border border-border">
         {mine.map((p) => (
           <li key={p.id} className="px-2.5 py-1.5">
-            <Link to={p.board_url || p.url} className="block truncate text-[13px] text-foreground hover:text-primary">{p.name}</Link>
+            <Link to={p.url} className="block truncate text-[13px] text-foreground hover:text-primary">{p.name}</Link>
             <div className="text-[11px] text-muted-foreground">
               {p.agent_slug} · {p.open_task_count} open
               {p.waiting_task_count > 0 && <span className="text-warning"> · {p.waiting_task_count} asking someone</span>}

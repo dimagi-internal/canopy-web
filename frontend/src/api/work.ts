@@ -262,6 +262,19 @@ export async function publishUpdate(
   return typed(unwrap(res, 'publishUpdate'))
 }
 
+/** An admin's switch: may the project's lead agent publish its own drafted updates? */
+export async function setUpdateSettings(
+  workspace: string,
+  handle: string,
+  body: { lead_agent_may_publish: boolean },
+): Promise<Project> {
+  const res = await apiV2.PATCH('/api/workspace-projects/{workspace}/{handle}/update-settings', {
+    params: { path: { workspace, handle } },
+    body,
+  })
+  return typed(unwrap(res, 'setUpdateSettings'))
+}
+
 // ---- what a project serves to its workspace ------------------------------------
 
 export type ProjectService = Schemas['ProjectServiceOut']

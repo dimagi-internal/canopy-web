@@ -30,13 +30,15 @@ from .gates import (
     agent_for_work,
     agent_in_project_tree,
     check_task_visible,
+    may_decide_publishing,
     may_edit_project,
+    project_in_reach,
     project_or_404,
     require_project_edit,
     require_task_edit,
     visible_agent_workspaces,
 )
-from .models import AgentTask
+from .models import AgentProject, AgentTask
 from .api_proposals import resolve_task_ref
 from .schemas import (
     ActionAppliedIn,
@@ -174,6 +176,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
         draft_updates=([ProjectUpdateOut.model_validate(u) for u in project.updates.filter(status="draft")
                         .select_related("author_user", "author_agent")] if editable else []),
         may_edit=editable,
+        may_decide=may_decide_publishing(request, project),
         services=[ProjectServiceOut(**row) for row in work.services_of(project, origin=base_url())],
         vaults=[ProjectVaultOut(**row) for row in workspace_vaults.project_vaults(project, request.user)],
     )
@@ -259,12 +262,25 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
     """Filters: `project` (an ext_id, or `none` for one-offs), `status`
     (comma-separated), `waiting=me` (open asks nobody owns plus tasks parked on
     you), `ask=open|closed`, `batch` (a batch_key), `parent` (an ext_id for
-    that task's direct subtasks, or `none` for top-level tasks only)."""
+    that task's direct subtasks, or `none` for top-level tasks only).
+
+    Filtered to a project the agent leads or works on and the caller may read,
+    the list is EVERY task in that project — a person's, an unassigned one,
+    another agent's — the same tasks `get_project` lists. The ref resolves to
+    ONE project the way the agent's other routes do (its own alias first)."""
     agent = agent_for_read(request, slug)
+    board = services.agent_tasks_q(agent)
+    target = services.get_project(agent, project) if project and project != "none" else None
+    if target is not None:
+        # A project's list is the project's, not just this agent's share of it.
+        if (AgentProject.objects.filter(services.agent_projects_q(agent), pk=target.pk).exists()
+                and project_in_reach(request, target)):
+            board |= Q(project=target)
+        board &= Q(project=target)
     qs = services.filter_tasks(
-        work.task_rows(AgentTask.objects.filter(services.agent_tasks_q(agent))),
-        user=request.user, project=project, status=status, waiting=waiting, ask=ask, batch=batch,
-        parent=parent)
+        work.task_rows(AgentTask.objects.filter(board)),
+        user=request.user, project="" if target is not None else project, status=status,
+        waiting=waiting, ask=ask, batch=batch, parent=parent)
     return [AgentTaskOut.model_validate(t) for t in qs]
 
 

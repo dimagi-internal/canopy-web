@@ -534,8 +534,36 @@ def post_update(project: AgentProject, *, health: str, body: str = "", draft: bo
     return update
 
 
-def publish_update(update: ProjectUpdate, *, by_user, health: str | None = None, body: str | None = None) -> ProjectUpdate:
-    """A person publishes a draft, choosing its health (and editing its words)."""
+def agent_publish_refusal(update: ProjectUpdate, agent) -> str | None:
+    """Why `agent` may not publish `update`, or None if it may: an agent drafts
+    and a person decides, unless an admin turned `lead_agent_may_publish` on —
+    then the project's LEAD agent may publish its OWN drafts."""
+    project = update.project
+    if not project.lead_agent_may_publish:
+        return ("an agent drafts its project's update; a person publishes it "
+                "(a workspace admin can let the lead agent publish: …/update-settings)")
+    if agent.pk != project.agent_id:
+        return "only the project's lead agent may publish its updates"
+    if update.author_agent_id != agent.pk:
+        return "the lead agent publishes only its own drafts"
+    return None
+
+
+class PublishRefused(Exception):
+    """An agent may not publish this update (`agent_publish_refusal`)."""
+
+
+def publish_update(update: ProjectUpdate, *, by_user=None, by_agent=None, health: str | None = None,
+                   body: str | None = None) -> ProjectUpdate:
+    """A person publishes a draft, choosing its health (and editing its words) —
+    or, where its project allows it (`agent_publish_refusal`), the lead agent
+    publishes its own (`by_agent`; refused with `PublishRefused` otherwise)."""
+    if (by_user is None) == (by_agent is None):
+        raise TypeError("publish_update takes exactly one of by_user and by_agent")
+    if by_agent is not None:
+        refusal = agent_publish_refusal(update, by_agent)
+        if refusal:
+            raise PublishRefused(refusal)
     if update.status == ProjectUpdate.PUBLISHED:
         raise ValueError("already published")
     if health is not None:
@@ -548,6 +576,7 @@ def publish_update(update: ProjectUpdate, *, by_user, health: str | None = None,
     update.status = ProjectUpdate.PUBLISHED
     update.published_at = timezone.now()
     update.published_by = by_user
+    update.published_by_agent = by_agent
     update.save()
     return update
 

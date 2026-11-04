@@ -1,7 +1,7 @@
 import { errorText } from '@/api/problem'
 import { useState, type FormEvent, type JSX } from 'react'
 import { Button, StatusBadge } from 'canopy-ui/ui'
-import { postUpdate, publishUpdate, type Health, type ProjectDetail, type ProjectUpdate } from '@/api/work'
+import { postUpdate, publishUpdate, setUpdateSettings, type Health, type ProjectDetail, type ProjectUpdate } from '@/api/work'
 import { Markdown } from '@/components/Markdown'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { HEALTHS, displayAgent, displayPerson, healthMeta } from '@/components/work/meta'
@@ -11,6 +11,14 @@ function authorOf(u: ProjectUpdate): string {
   if (u.author_agent) return displayAgent(u.author_agent)
   if (u.author_email) return displayPerson(u.author_email)
   return 'someone'
+}
+
+/** ", published by …" for an agent's update — the person, or the lead agent itself. */
+function publishedBy(u: ProjectUpdate): string {
+  if (!u.author_agent) return ''
+  if (u.published_by_agent) return `, published by ${displayAgent(u.published_by_agent)}`
+  if (u.published_by_email) return `, published by ${displayPerson(u.published_by_email)}`
+  return ''
 }
 
 /** "3 tasks done · 2 added · target Nov 1 → Nov 15 · Beta 4/6" from an update's `diff`. */
@@ -65,7 +73,7 @@ export function UpdatesSection({
             <HealthChip health={latest.health} />
             <span>
               {authorOf(latest)}
-              {latest.author_agent && latest.published_by_email ? `, published by ${displayPerson(latest.published_by_email)}` : ''}
+              {publishedBy(latest)}
             </span>
             <span title={latest.published_at ?? latest.created_at}>
               {relativeAge(latest.published_at ?? latest.created_at, new Date(), { seconds: false })}
@@ -94,7 +102,57 @@ export function UpdatesSection({
       )}
 
       {detail.may_edit && <PostUpdate workspace={workspace} handle={handle} onPosted={onChanged} />}
+      <LeadAgentPublishes detail={detail} workspace={workspace} handle={handle} onChanged={onChanged} />
     </Section>
+  )
+}
+
+/** Whether the lead agent publishes its own updates: an admin's switch, everyone else sees the state. */
+function LeadAgentPublishes({
+  detail,
+  workspace,
+  handle,
+  onChanged,
+}: {
+  detail: ProjectDetail
+  workspace: string
+  handle: string
+  onChanged: () => void
+}): JSX.Element | null {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const lead = detail.agent_slug
+  if (!lead) return null
+  const on = Boolean(detail.lead_agent_may_publish)
+  const name = displayAgent(lead)
+  if (!detail.may_decide) {
+    return on ? (
+      <p className="mt-3 text-[12px] text-muted-foreground" data-testid="lead-agent-publishes">
+        {name} publishes its own updates on this project.
+      </p>
+    ) : null
+  }
+  return (
+    <div className="mt-3 text-[12px]" data-testid="lead-agent-publishes">
+      <label className="inline-flex items-center gap-1.5 text-foreground-secondary">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={busy}
+          className="accent-primary"
+          onChange={(e) => {
+            setBusy(true)
+            setError(null)
+            setUpdateSettings(workspace, handle, { lead_agent_may_publish: e.target.checked })
+              .then(onChanged)
+              .catch((err: unknown) => setError(errorText(err, 'Could not change it')))
+              .finally(() => setBusy(false))
+          }}
+        />
+        Let {name} publish its own updates (otherwise a person publishes its drafts)
+      </label>
+      {error && <p className="mt-1 text-destructive">{error}</p>}
+    </div>
   )
 }
 

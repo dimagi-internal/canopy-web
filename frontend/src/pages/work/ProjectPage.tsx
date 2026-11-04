@@ -8,27 +8,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { X } from 'lucide-react'
-import { Button } from 'canopy-ui/ui'
 import { WorkbenchSkeleton } from 'canopy-ui'
-import {
-  createTask,
-  getProjectByAddress,
-  listTasks,
-  updateProject,
-  type ProjectDetail,
-  type ProjectPatch,
-} from '@/api/work'
+import { getProjectByAddress, updateProject, type ProjectDetail, type ProjectPatch } from '@/api/work'
 import { ProjectViewsSection } from '@/dynamicViews/ProjectViewsSection'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
 import { ProgressBar } from '@/components/work/projectBits'
 import { ScopeChart, scopePoints } from '@/components/work/ScopeChart'
-import { TaskPeek } from '@/components/work/TaskPeek'
-import { TaskTable } from '@/components/work/TaskTable'
-import { useDirectory } from '@/components/work/useDirectory'
-import { usePeek } from '@/components/work/usePeek'
-import { useTaskList } from '@/components/work/useTaskList'
+import { TasksView } from '@/components/work/TasksView'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import { CheckinTimeline } from '@/pages/agents/CheckinParts'
@@ -42,8 +30,6 @@ import { UpdatesSection } from '@/pages/work/ProjectUpdates'
 import { ProjectShares } from '@/pages/work/ProjectShares'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
-/** Open work only, unless "Show done and canceled" is on. */
-const OPEN_CATEGORIES = 'triage,backlog,unstarted,started'
 /** How long a burst of task changes waits before the page's counts re-read. */
 const REFRESH_DEBOUNCE_MS = 600
 
@@ -226,8 +212,6 @@ export function ProjectPage(): JSX.Element {
           </ul>
         )}
       </Section>
-
-      <TaskPeek />
     </div>
   )
 }
@@ -249,18 +233,8 @@ function ProjectWork({
   onChanged: () => void
 }): JSX.Element {
   const [milestone, setMilestone] = useState<string | null>(null)
-  const [showClosed, setShowClosed] = useState(false)
-  const directory = useDirectory(workspace)
-  const { open } = usePeek()
-  const list = useTaskList(
-    () => listTasks({ project: address, ...(showClosed ? {} : { category: OPEN_CATEGORIES }), limit: 500 }, workspace),
-    [address, showClosed],
-  )
-  const [taskError, setTaskError] = useState<string | null>(null)
-  const tasks = useMemo(
-    () => (list.tasks ?? []).filter((t) => !milestone || t.milestone === milestone),
-    [list.tasks, milestone],
-  )
+  // The project (and a chosen milestone) pinned; every other filter is the list's own.
+  const fixed = useMemo(() => ({ project: address, ...(milestone ? { milestone } : {}) }), [address, milestone])
   const progress = detail.progress
   const points = scopePoints(progress?.scope_history)
 
@@ -288,82 +262,23 @@ function ProjectWork({
         <ScopeChart points={points} />
       </Section>
 
-      <Section id="project-tasks" title="Tasks" description="Every task in this project, its subtasks under it. Open one to see it beside the list.">
-        <div className="mb-2 flex flex-wrap items-center gap-3 text-[12px]">
-          {milestone && (
+      <Section
+        id="project-tasks"
+        title="Tasks"
+        description="Every task in this project, its subtasks under it — the workspace's Tasks list, pinned to this project. Open one to see it beside the list; New task files it here."
+      >
+        {milestone && (
+          <div className="mb-2 text-[12px]">
             <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-primary" data-testid="milestone-filter">
               Milestone: {milestone}
               <button type="button" aria-label="Show every milestone" onClick={() => setMilestone(null)} className="hover:text-foreground">
                 <X aria-hidden="true" className="size-3" />
               </button>
             </span>
-          )}
-          <label className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} className="accent-primary" />
-            Show done and canceled
-          </label>
-        </div>
-        {(list.error || taskError) && <p className="mb-2 text-[12px] text-destructive">{taskError || list.error}</p>}
-        {list.tasks === null ? (
-          <WorkbenchSkeleton />
-        ) : (
-          <TaskTable
-            tasks={tasks}
-            directory={directory}
-            nest
-            groupBy="status"
-            columns={['labels', 'assignee', 'due', 'updated']}
-            onOpen={(t) => open(t.key)}
-            onPatch={(key, body, optimistic) => {
-              setTaskError(null)
-              list.patch(key, body, optimistic).catch((err: unknown) => setTaskError(errorText(err, 'Could not save')))
-            }}
-            empty={milestone ? `No ${showClosed ? '' : 'open '}tasks in ${milestone}.` : showClosed ? 'No tasks in this project yet.' : 'No open tasks.'}
-          />
+          </div>
         )}
-        {detail.may_edit && (
-          <AddTask
-            onAdd={async (title) => {
-              await createTask({ title, project: address, workspace, status: 'todo', ...(milestone ? { milestone } : {}) }, workspace)
-              list.reload()
-              onChanged()
-            }}
-          />
-        )}
+        <TasksView workspace={workspace} fixed={fixed} nest canCreate={detail.may_edit} onChanged={onChanged} />
       </Section>
     </>
-  )
-}
-
-function AddTask({ onAdd }: { onAdd: (title: string) => Promise<void> }): JSX.Element {
-  const [title, setTitle] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  return (
-    <form
-      className="mt-2 flex gap-2"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (!title.trim() || busy) return
-        setBusy(true)
-        setError(null)
-        onAdd(title.trim())
-          .then(() => setTitle(''))
-          .catch((err: unknown) => setError(errorText(err, 'Could not add the task')))
-          .finally(() => setBusy(false))
-      }}
-    >
-      <input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Add a task…"
-        aria-label="New task"
-        className="min-w-0 flex-1 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground placeholder:text-placeholder"
-      />
-      <Button size="sm" variant="outline" type="submit" disabled={busy || !title.trim()}>
-        Add
-      </Button>
-      {error && <span className="self-center text-[12px] text-destructive">{error}</span>}
-    </form>
   )
 }
