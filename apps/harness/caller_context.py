@@ -701,7 +701,7 @@ def _profile(agent, capability: str, turn=None):
     got = profile(agent, capability)
     if "default_profile_version" in got and turn is not None and sensitivity.is_sensitive(turn):
         # A sensitive turn stamped with a read-mode name whose capability has since gone: canopy's
-        # default read profile (curl, Write, mail) is not what it was admitted to. Deny everything,
+        # default read profile (Write, mail) is not what it was admitted to. Deny everything,
         # as an unpublished capability always did.
         return {"name": capability, "description": "", "entry": None, "tools": [], "bash": [],
                 "read_paths": [], "write_paths": []}

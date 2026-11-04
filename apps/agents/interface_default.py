@@ -6,8 +6,6 @@ changes it. See `apps/agents/interface.py` and `docs/architecture/access.md`.
 """
 from __future__ import annotations
 
-import re
-
 def default_interface() -> dict:
     """No door and no read-mode override. A fresh dict every call."""
     return {"capabilities": {}}
@@ -36,65 +34,35 @@ def is_read_mode(name: str | None) -> bool:
 
 
 #: Bump on ANY change to what `default_read_profile` returns; the envelope records it.
-READ_PROFILE_VERSION = 2
+READ_PROFILE_VERSION = 3
 
 #: The skill whose presence in the agent's published catalog gives the default its entry.
 ANSWER_CALLER_SKILL = "answer-caller"
 
-# github.com/<owner>/<repo>[.git] (https or ssh); anything else means "no readable repo".
-_GITHUB = re.compile(r"github\.com[:/](?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$")
-_REF = re.compile(r"^[A-Za-z0-9._-]+$")
-
-
-def _github_repo(agent) -> tuple[str, str] | None:
-    m = _GITHUB.search((getattr(agent, "repo_url", "") or "").strip())
-    return (m["owner"], m["repo"]) if m else None
-
-
-def _repo_reads(agent) -> list[str]:
-    """Unauthenticated `curl` reads of the agent's own repo, and nothing else. `gh` is not logged
-    in inside a confined session, so these are plain GET patterns against the public API."""
-    found = _github_repo(agent)
-    if found is None:
-        return []
-    owner, repo = found
-    ref = (getattr(agent, "repo_ref", "") or "main").strip()
-    ref = ref if _REF.match(ref) else "main"
-    api = f"https://api.github.com/repos/{owner}/{repo}"
-    # `-g` and `--path-as-is` are part of every pattern, not a courtesy: the guard judges the URL as
-    # text, but curl removes `..` segments before it connects (`.../{repo}/contents/../../../../user`
-    # is `https://api.github.com/user`; `raw.../{repo}/{ref}/../../../x/y/main/z` is another repo)
-    # and expands a quoted `[1-100000]` or `{a,b}` into that many requests from the box's one address.
-    curl = "curl -sS -g --path-as-is"
-    return [
-        f'{curl} -H "Accept: application/vnd.github.raw" {api}/contents/*',
-        f"{curl} {api}/contents/*",
-        f"{curl} {api}/git/trees/{ref}?recursive=1",
-        f"{curl} https://raw.githubusercontent.com/{owner}/{repo}/{ref}/*",
-    ]
+#: The scratch folders a read-mode turn may write its draft into. `-read` is the name canopy gives it;
+#: `-ask` is the legacy fleet name: the fleet template's `answer-caller` skill (ace, echo, eva, hal,
+#: trellis) already drafts under `.<slug>-ask/`, so listing both lets those skills work unchanged.
+#: Nothing else is writable.
+SCRATCH_SUFFIXES = ("read", "ask")
 
 
 def default_read_profile(agent, *, skills=None) -> dict:
     """The confined profile read mode runs in when the agent publishes no `ask` override.
 
-    A pure function of the agent: its slug (the scratch folder and its mail script), whether it has
-    a mailbox (`email`), its GitHub repo (`repo_url`/`repo_ref`) and whether its published skill
-    catalog has `answer-caller` (`skills`: the bare skill names; read from `agent.skills` when not
+    A pure function of the agent: its slug (the scratch folders and its mail script), whether it has
+    a mailbox (`email`) and whether its published skill catalog has `answer-caller` (`skills`: the bare skill names; read from `agent.skills` when not
     given). Same fields as a published capability, so the runner, the guard and the caller token
     read it unchanged.
     """
     slug = agent.slug
-    scratch = f"{{cwd}}/.{slug}-read/*"
+    scratch = [f"{{cwd}}/.{slug}-{suffix}/*" for suffix in SCRATCH_SUFFIXES]
     names = set(skills) if skills is not None else set(agent.skills.values_list("name", flat=True))
     bash: list[str] = []
     if (getattr(agent, "email", "") or "").strip():
-        bash += [
-            "canopy email read --repo . {thread_id}",
-            f"canopy email review-receipt --repo . --body-file {scratch}",
-            f"bin/{slug}-email --reply-all --thread-id {{thread_id}} "
-            f"--subject-file {scratch} --body-file {scratch}",
-        ]
-    bash += _repo_reads(agent)
+        bash.append("canopy email read --repo . {thread_id}")
+        bash += [f"canopy email review-receipt --repo . --body-file {d}" for d in scratch]
+        bash += [f"bin/{slug}-email --reply-all --thread-id {{thread_id}} --subject-file {d} --body-file {d}"
+                 for d in scratch]
     return {
         "description": f"Ask {slug} a question. It answers from its own repo and docs; "
                        "it cannot change anything but draft its reply.",
@@ -102,12 +70,15 @@ def default_read_profile(agent, *, skills=None) -> dict:
                   if ANSWER_CALLER_SKILL in names else None),
         # No Grep or Glob: the cloud runner's Claude Code build has neither ("No such tool
         # available"), so listing them only sends the model reaching for a tool that is not
-        # there. It reads with `Read` and the exact bash patterns below; an agent that wants file
-        # search overrides with an explicit bash pattern.
-        "tools": ["Read", "Write", "mcp__*canopy-web__who_is_asking"],
+        # there. It reads its own worktree with `Read` (the session's cwd is a worktree of the
+        # agent's repo, so no network read is needed); an agent that wants file search overrides
+        # with an explicit bash pattern. `ToolSearch` only loads the schema of a deferred MCP tool
+        # (canopy-web exposes hundreds, so `who_is_asking` is deferred); the guard still checks
+        # every real tool call against this list.
+        "tools": ["Read", "Write", "ToolSearch", "mcp__*canopy-web__who_is_asking"],
         "bash": bash,
         "read_paths": ["{cwd}/**"],
-        "write_paths": [scratch],
+        "write_paths": scratch,
         "pages": [],
         "sites": [],
         "ceiling": [],

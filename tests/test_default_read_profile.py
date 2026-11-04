@@ -20,10 +20,10 @@ def test_bare_agent_exact():
         "description": "Ask ada a question. It answers from its own repo and docs; "
                        "it cannot change anything but draft its reply.",
         "entry": None,
-        "tools": ["Read", "Write", "mcp__*canopy-web__who_is_asking"],
+        "tools": ["Read", "Write", "ToolSearch", "mcp__*canopy-web__who_is_asking"],
         "bash": [],
         "read_paths": ["{cwd}/**"],
-        "write_paths": ["{cwd}/.ada-read/*"],
+        "write_paths": ["{cwd}/.ada-read/*", "{cwd}/.ada-ask/*"],
         "pages": [],
         "sites": [],
         "ceiling": [],
@@ -36,36 +36,45 @@ def test_no_tool_the_cloud_runner_build_lacks():
     assert "Grep" not in tools and "Glob" not in tools
 
 
-def test_mailbox_adds_exactly_the_email_reply_rules():
+def test_mailbox_adds_exactly_the_email_reply_rules_for_both_scratch_folders():
     got = default_read_profile(_agent(email="ada@example.org"), skills=[])
     assert got["bash"] == [
         "canopy email read --repo . {thread_id}",
         "canopy email review-receipt --repo . --body-file {cwd}/.ada-read/*",
+        "canopy email review-receipt --repo . --body-file {cwd}/.ada-ask/*",
         "bin/ada-email --reply-all --thread-id {thread_id} "
         "--subject-file {cwd}/.ada-read/* --body-file {cwd}/.ada-read/*",
+        "bin/ada-email --reply-all --thread-id {thread_id} "
+        "--subject-file {cwd}/.ada-ask/* --body-file {cwd}/.ada-ask/*",
     ]
 
 
-def test_repo_adds_exactly_unauthenticated_curl_reads_of_its_own_repo():
-    got = default_read_profile(_agent(repo_url="https://github.com/dimagi-internal/ada.git"), skills=[])
-    assert got["bash"] == [
-        'curl -sS -g --path-as-is -H "Accept: application/vnd.github.raw" https://api.github.com/repos/dimagi-internal/ada/contents/*',
-        "curl -sS -g --path-as-is https://api.github.com/repos/dimagi-internal/ada/contents/*",
-        "curl -sS -g --path-as-is https://api.github.com/repos/dimagi-internal/ada/git/trees/main?recursive=1",
-        "curl -sS -g --path-as-is https://raw.githubusercontent.com/dimagi-internal/ada/main/*",
-    ]
+def test_a_repo_adds_nothing_the_worktree_already_gives():
+    # Most agent repos are private (unauthenticated GitHub reads 404) and the session's cwd is a
+    # worktree of the repo, so `Read {cwd}/**` is the whole repo read: no curl, whatever repo_url is.
+    for url in ("https://github.com/dimagi-internal/ada.git", "git@github.com:o/r.git", ""):
+        assert default_read_profile(_agent(repo_url=url), skills=[])["bash"] == []
 
 
-def test_no_gh_and_no_other_host_ever():
-    got = default_read_profile(_agent(email="a@b.c", repo_url="git@github.com:o/r.git", repo_ref="x y"),
-                               skills=[])
-    assert not any(b.startswith("gh ") for b in got["bash"])
-    assert all(b.startswith(("canopy email ", "bin/ada-email ", "curl -sS -g --path-as-is ")) for b in got["bash"])
-    assert "git/trees/main?recursive=1" in " ".join(got["bash"])   # an unsafe ref falls back to main
+def test_no_network_tool_and_no_gh_ever():
+    got = default_read_profile(_agent(email="a@b.c", repo_url="git@github.com:o/r.git"), skills=[])
+    assert all(b.startswith(("canopy email ", "bin/ada-email ")) for b in got["bash"])
+    assert not any("curl" in b or "http" in b or b.startswith("gh ") for b in got["bash"])
 
 
-def test_a_repo_that_is_not_on_github_gets_no_reads():
-    assert default_read_profile(_agent(repo_url="https://example.org/x/y.git"), skills=[])["bash"] == []
+def test_tool_search_is_the_only_tool_added_since_v2():
+    tools = default_read_profile(_agent(), skills=[])["tools"]
+    assert set(tools) - {"Read", "Write", "mcp__*canopy-web__who_is_asking"} == {"ToolSearch"}
+
+
+def test_writes_reach_only_the_two_scratch_folders():
+    # `-ask` is the legacy fleet name (the fleet's answer-caller skills draft there), `-read` the new one.
+    got = default_read_profile(_agent(email="a@b.c"), skills=[])
+    assert got["write_paths"] == ["{cwd}/.ada-read/*", "{cwd}/.ada-ask/*"]
+    for rule in got["bash"]:
+        for token in rule.split():
+            if "{cwd}" in token:
+                assert token.startswith(("{cwd}/.ada-read/", "{cwd}/.ada-ask/")), rule
 
 
 def test_entry_only_when_the_catalog_has_answer_caller():
@@ -80,7 +89,7 @@ def test_it_is_a_valid_capability_and_pinned_version():
     parsed = interface.parse({"capabilities": {"ask": got}})["capabilities"]["ask"]
     assert parsed["tools"] == got["tools"] and parsed["bash"] == got["bash"]
     assert parsed["write_paths"] == got["write_paths"]
-    assert READ_PROFILE_VERSION == 2
+    assert READ_PROFILE_VERSION == 3
 
 
 def test_a_fresh_dict_each_call():

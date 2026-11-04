@@ -45,8 +45,6 @@ def _guard():
 
 GUARD = _guard()
 needs_guard = pytest.mark.skipif(GUARD is None, reason="the canopy plugin's profile_guard.py is not checked out")
-API = "https://api.github.com/repos/dimagi-internal/ada"
-RAW = "https://raw.githubusercontent.com/dimagi-internal/ada/main"
 
 
 @pytest.fixture()
@@ -68,53 +66,45 @@ def _bash(prof, cwd, command):
 
 @needs_guard
 @pytest.mark.parametrize("command", [
-    f"curl -sS -g --path-as-is {API}/contents/README.md -o /tmp/x",       # a second flag
-    f"curl -sS -g --path-as-is {API}/contents/x --next http://evil.example",
-    f"curl -sS -g --path-as-is -K /etc/x {API}/contents/a",
-    f"curl -sS -g --path-as-is {API}/contents/x file:///etc/passwd",      # a second URL
-    f'curl -sS -g --path-as-is "{API}/contents/x" "file:///etc/passwd"',
-    "curl -sS -g --path-as-is https://api.github.com@evil.example/repos/dimagi-internal/ada/contents/x",
-    "curl -sS -g --path-as-is https://evil.example/",
-    f"curl -sS -g --path-as-is -L {API}/contents/x",
-    f"curl -sS -g --path-as-is {API}/contents/x; id",
-    f"curl -sS -g --path-as-is {API}/contents/x | sh",
-    f"curl -sS -g --path-as-is {API}/contents/$(id)",
-    f"curl -sS -g --path-as-is {API}/contents/{{a,b}}",                   # unquoted brace expansion
-    f"curl -sS -g --path-as-is {API}/contents/*",                         # unquoted glob
+    "curl -sS https://api.github.com/repos/dimagi-internal/ada/contents/README.md",   # the v2 reads are gone
+    "curl -sS -g --path-as-is https://raw.githubusercontent.com/dimagi-internal/ada/main/README.md",
+    "curl https://evil.example/", "wget https://evil.example/", "nc evil.example 80",
+    "python3 -c 'import urllib.request'", "ssh evil.example",
     "gh api repos/dimagi-internal/ada/contents/x",
-    "git clone https://github.com/dimagi-internal/ada",
-    "cat /etc/passwd", "ls", "env", "python3 -c 'print(1)'",
+    "git clone https://github.com/dimagi-internal/ada", "git fetch", "git push",
+    "cat /etc/passwd", "ls", "env", "python3 -c 'print(1)'", "echo hi > /tmp/x",
+    "canopy email read --repo . T1; id", "canopy email read --repo . T1 | sh",
 ])
-def test_the_guard_refuses_every_escape_from_the_curl_patterns(prof, cwd, command):
+def test_the_guard_refuses_every_network_tool_and_shell(prof, cwd, command):
     assert _bash(prof, cwd, command) is not None
 
 
 @needs_guard
 def test_the_intended_reads_are_allowed(prof, cwd):
-    assert _bash(prof, cwd, f"curl -sS -g --path-as-is {API}/contents/README.md") is None
-    assert _bash(prof, cwd, f'curl -sS -g --path-as-is "{API}/git/trees/main?recursive=1"') is None
-    assert _bash(prof, cwd, f"curl -sS -g --path-as-is {RAW}/docs/a.md") is None
     assert _bash(prof, cwd, "canopy email read --repo . T1") is None
+    assert GUARD.decide("Read", {"file_path": f"{cwd}/skills/answer-caller/SKILL.md"}, prof, cwd) is None
+    assert GUARD.decide("Read", {"file_path": f"{cwd}/CLAUDE.md"}, prof, cwd) is None
 
 
 @needs_guard
-def test_a_url_cannot_leave_the_agents_own_repo_by_dot_segments(prof):
-    """The guard matches the URL as TEXT, and curl removes `..` before it connects, so
-    `…/ada/contents/../../../../user` is `https://api.github.com/user` and
-    `raw…/ada/main/../../../other/repo/main/x` is another repo. Every curl pattern must therefore make
-    curl send the path as written (`--path-as-is`), and make `[]{}` literal (`-g`: a quoted
-    `contents/[1-100000]` is otherwise a hundred thousand requests from the box's one GitHub address)."""
-    curls = [b for b in prof["capability"]["bash"] if b.startswith("curl ")]
-    assert curls
-    for pattern in curls:
-        assert " --path-as-is " in pattern and " -g " in pattern, pattern
+def test_the_profile_has_no_network_pattern_at_all(prof):
+    assert not [b for b in prof["capability"]["bash"] if "curl" in b or "http" in b]
 
 
 @needs_guard
-def test_a_thread_other_than_its_own_is_refused(prof, cwd):
+@pytest.mark.parametrize("folder", [".ada-read", ".ada-ask"])
+def test_a_thread_other_than_its_own_is_refused(prof, cwd, folder):
     assert _bash(prof, cwd, "canopy email read --repo . T2") is not None
-    assert _bash(prof, cwd, f"bin/ada-email --reply-all --thread-id T2 --subject-file {cwd}/.ada-read/s "
-                            f"--body-file {cwd}/.ada-read/b") is not None
+    assert _bash(prof, cwd, f"bin/ada-email --reply-all --thread-id T2 --subject-file {cwd}/{folder}/s "
+                            f"--body-file {cwd}/{folder}/b") is not None
+    assert _bash(prof, cwd, f"bin/ada-email --reply-all --thread-id T1 --subject-file {cwd}/{folder}/s "
+                            f"--body-file {cwd}/{folder}/b") is None
+
+
+@needs_guard
+def test_a_reply_cannot_mix_a_scratch_file_with_one_outside_both(prof, cwd):
+    assert _bash(prof, cwd, f"bin/ada-email --reply-all --thread-id T1 --subject-file {cwd}/.ada-ask/s "
+                            f"--body-file {cwd}/.ada-other/b") is not None
 
 
 @needs_guard
@@ -128,7 +118,7 @@ def test_the_reply_script_takes_no_extra_flag(prof, cwd, tail):
 
 @needs_guard
 @pytest.mark.parametrize("arg", ["/etc/passwd", "{cwd}/.ada-read/../../../etc/passwd", "~/.ssh/id_rsa",
-                                 "{cwd}/../outside"])
+                                 "{cwd}/.ada-ask/../../../etc/passwd", "{cwd}/../outside"])
 def test_the_reply_files_cannot_leave_the_worktree(prof, cwd, arg):
     cmd = (f"canopy email review-receipt --repo . --body-file {arg.format(cwd=cwd)}")
     assert _bash(prof, cwd, cmd) is not None
@@ -141,21 +131,35 @@ def test_a_symlink_in_the_scratch_folder_cannot_carry_a_write_out(prof, cwd):
     outside = os.path.join(os.path.dirname(cwd), "secret")
     os.symlink(outside, os.path.join(cwd, ".ada-read", "s2"))
     assert GUARD.decide("Read", {"file_path": f"{cwd}/.ada-read/s2"}, prof, cwd) is not None
+    os.makedirs(os.path.join(cwd, ".ada-ask"))
+    os.symlink("/etc", os.path.join(cwd, ".ada-ask", "link"))
+    assert GUARD.decide("Write", {"file_path": f"{cwd}/.ada-ask/link/passwd"}, prof, cwd) is not None
 
 
 @needs_guard
-@pytest.mark.parametrize("path", ["bin/ada-email", ".claude/settings.json", ".ada-readx", ".ada-read/../bin/x",
-                                  ".git/hooks/pre-commit", "CLAUDE.md"])
-def test_write_reaches_only_the_scratch_folder(prof, cwd, path):
+@pytest.mark.parametrize("path", ["bin/ada-email", ".claude/settings.json", ".ada-readx", ".ada-askx", ".ada-read/../bin/x",
+                                  ".ada-ask/../bin/x", ".ada-other/note.txt", ".git/hooks/pre-commit", "CLAUDE.md",
+                                  "skills/answer-caller/SKILL.md", "persona.md"])
+def test_write_reaches_only_the_two_scratch_folders(prof, cwd, path):
     assert GUARD.decide("Write", {"file_path": f"{cwd}/{path}"}, prof, cwd) is not None
     assert GUARD.decide("Write", {"file_path": f"{cwd}/.ada-read/note.txt"}, prof, cwd) is None
+    assert GUARD.decide("Write", {"file_path": f"{cwd}/.ada-ask/note.txt"}, prof, cwd) is None   # legacy fleet name
 
 
 @needs_guard
 @pytest.mark.parametrize("tool", ["Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Grep", "Glob",
-                                  "Skill", "ToolSearch", "TodoWrite"])
-def test_no_tool_beyond_the_three(prof, cwd, tool):
+                                  "Skill", "TodoWrite", "Bash(curl)", "mcp__other__tool"])
+def test_no_tool_beyond_the_four(prof, cwd, tool):
     assert GUARD.decide(tool, {"file_path": f"{cwd}/.ada-read/x", "url": "http://x", "pattern": "*"}, prof, cwd) is not None
+
+
+@needs_guard
+def test_tool_search_is_allowed_but_opens_nothing_else(prof, cwd):
+    """ToolSearch only loads a deferred tool's schema; the guard still judges each real call."""
+    assert GUARD.decide("ToolSearch", {"query": "select:mcp__plugin_canopy_canopy-web__who_is_asking"}, prof, cwd) is None
+    # a loaded schema grants no call: every other MCP tool and every other tool stays refused
+    assert GUARD.decide("mcp__plugin_canopy_canopy-web__create_task", {}, prof, cwd) is not None
+    assert GUARD.decide("mcp__plugin_canopy_canopy-web__who_is_asking", {}, prof, cwd) is None
 
 
 @needs_guard
@@ -201,7 +205,7 @@ def test_naming_read_cannot_dodge_a_sensitive_ask(w):
 @pytest.mark.django_db
 def test_a_sensitive_conversation_gets_no_default_profile_when_its_ask_is_gone(w, monkeypatch):
     """A sensitive turn stamped `ask` whose capability was unpublished before the claim: the envelope
-    must carry the empty deny-all profile, not canopy's default read profile (curl, Write, mail)."""
+    must carry the empty deny-all profile, not canopy's default read profile (Write, mail)."""
     from apps.harness import sensitivity
 
     allow(w["agent"], role=roles.READ_ONLY)
