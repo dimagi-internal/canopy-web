@@ -1,6 +1,6 @@
 # Read mode and doors: simplifying what an agent's "interface" is for
 
-**Status:** Phase 1 is built and merged (the six PRs below); nothing in it is deployed yet. Phase 2 is
+**Status:** The default profile (version 3) no longer includes repo `curl` reads (private repos 404, the worktree already holds the repo, and the patterns were a bug class), adds `ToolSearch`, and allows both `.<slug>-read/` and the legacy `.<slug>-ask/` scratch folders. Phase 1 is built and merged (the six PRs below); nothing in it is deployed yet. Phase 2 is
 direction only. Builds on `2026-11-02-agent-permissions-and-roles-design.md` and
 `docs/architecture/access.md` (the access list, roles and `decide` stay exactly as they are). Written
 from an audit of the decision path (`apps/agents/access.py`, `roles.py`, `interface.py`), the
@@ -70,18 +70,25 @@ the screens (it has five meanings in the code; `interface.py`'s docstring lists 
 * **The default profile is defined in canopy-web code** (`apps/agents/interface_default.py`,
   `default_read_profile(agent)`), a pure function of the agent, pinned exactly by
   `tests/test_default_read_profile.py`, and shown on the agent's Settings → Channels tab:
-  * tools: `Read`, `who_is_asking`, and `Write` to one scratch folder `{cwd}/.<slug>-read/*` (it
-    drafts the reply there). **No `Grep` or `Glob`**: the cloud runner's Claude Code build has neither
+  * tools: `Read`, `who_is_asking`, `ToolSearch` and `Write` to two scratch folders,
+    `{cwd}/.<slug>-read/*` (the name canopy gives it) and `{cwd}/.<slug>-ask/*` (the legacy fleet name:
+    the fleet template's `answer-caller` skills already draft there, so they work unchanged); it
+    drafts the reply there. `ToolSearch` only loads the schema of a deferred MCP tool (canopy-web
+    exposes hundreds, so Claude Code defers `who_is_asking`); the profile guard still checks every real
+    call against `tools`, so it opens nothing else. **No `Grep` or `Glob`**: the cloud runner's Claude Code build has neither
     (a live probe answered "No such tool available"), and a listed tool that does not exist only sends
     the model reaching for it. File search in a confined session needs an explicit bash pattern, which
     the default does not grant; an override may;
-  * paths: read `{cwd}/**`; write only the scratch folder;
+  * paths: read `{cwd}/**`; write only the two scratch folders;
   * bash: when the agent has a mailbox, the email-reply rules (read the thread, the review receipt,
-    and the agent's own `bin/<slug>-email --reply-all --thread-id {thread_id}`); when its
-    `repo_url` is on GitHub, four **unauthenticated `curl`** read patterns against its own repo
-    (`api.github.com/repos/<o>/<r>/contents/*` with and without the raw `Accept` header,
-    `…/git/trees/<ref>?recursive=1`, and `raw.githubusercontent.com/<o>/<r>/<ref>/*`). Never `gh`:
-    `gh` is not logged in inside a confined session, and no other host is ever listed;
+    and the agent's own `bin/<slug>-email --reply-all --thread-id {thread_id}`, the last two once per
+    scratch folder); nothing else. **No network tool of any kind.** Version 2 also listed four
+    unauthenticated `curl` reads of the agent's own GitHub repo; version 3 dropped them: most agent
+    repos are private (unauthenticated `api.github.com` and `raw.githubusercontent.com` answer 404, 7
+    of the 8 checked), the confined session's cwd is already a worktree of the agent's own repo (so
+    `Read {cwd}/**` gives all of it), and those patterns were the source of the dot-segment and
+    request-flood bug class fixed in #2478. Never `gh` either: it is not logged in inside a confined
+    session;
   * entry: `/<slug>:answer-caller --thread {thread_id}` exactly when the agent's published catalog
     (`AgentSkill`, `agents.services.list_skills`; names stored bare) has a skill named
     `answer-caller`; otherwise **no entry**: the session starts with the caller's message and no

@@ -44,7 +44,7 @@ def test_read_resolves_with_no_published_capability(w):
     allow(w["agent"], role=roles.READ_ONLY)
     d = access.decide(w["agent"], w["vw"], verified=True)
     assert (d.access, d.capability, d.basis) == (access.CONFINED, "read", "capability:read")
-    assert interface.profile(w["agent"], "read")["write_paths"] == ["{cwd}/.hal-read/*"]
+    assert interface.profile(w["agent"], "read")["write_paths"] == ["{cwd}/.hal-read/*", "{cwd}/.hal-ask/*"]
 
 
 def test_a_use_ask_or_use_read_line_is_a_read_mode_line(w):
@@ -175,8 +175,8 @@ def test_the_interface_route_says_which_read_mode_the_agent_has(w):
     c.force_login(w["owner"])
     got = c.get("/api/agents/hal/interface").json()
     assert got["read_mode"]["source"] == "default" and got["read_mode"]["override"] is None
-    assert got["read_mode"]["default_profile"]["write_paths"] == ["{cwd}/.hal-read/*"]
-    assert got["read_mode"]["default_profile_version"] == 2
+    assert got["read_mode"]["default_profile"]["write_paths"] == ["{cwd}/.hal-read/*", "{cwd}/.hal-ask/*"]
+    assert got["read_mode"]["default_profile_version"] == 3
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}}})
     w["agent"].save(update_fields=["interface"])
     got = c.get("/api/agents/hal/interface").json()

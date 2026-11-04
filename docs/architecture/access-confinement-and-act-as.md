@@ -42,7 +42,12 @@ tool; and beside every delivered prompt — the runner leaves
   `bootstrap_agents.sh`), and that build answers "No such tool available" to both. A profile that
   lists them grants nothing there and sends the model reaching for a tool that does not exist, so
   canopy's default read profile (`interface.default_read_profile`) does not list them. File search
-  in a confined session needs an explicit bash pattern in the profile. Laptop runners run whatever
+  in a confined session needs an explicit bash pattern in the profile. The default
+  carries no network tool (no `curl`: the session's cwd is a worktree of the agent's own repo, and
+  `Read` covers it). It does carry `ToolSearch`, which only loads a deferred MCP tool's schema (the
+  guard still judges each real call), so `who_is_asking` can be reached among canopy-web's hundreds
+  of tools. It may write to two scratch folders, `.<slug>-read/` and the legacy fleet name
+  `.<slug>-ask/` (the fleet's `answer-caller` skills draft there); nothing else is writable. Laptop runners run whatever
   Claude Code the person installed, and the runner reports no per-tool inventory; the runner's
   native rules still scope `Grep`/`Glob` by `read_paths` when a published profile lists them
   (`native_permissions.py`).
