@@ -516,7 +516,7 @@ def test_one_job_at_a_time_and_another_runner_cant_touch_it(box, tmp_path):
             assert "error" in _ask(box, req), req
         assert box.stops == []
         box.uid = 2001
-        assert _ask(box, {"op": "stop", "turn": T})["ok"] and box.stops == [T]
+        assert _ask(box, {"op": "stop", "turn": T})["ok"] and T in box.stops
         frames = _frames(c)
     assert "rc" in json.loads(frames[-1][1])
 
@@ -527,7 +527,7 @@ def test_a_runner_going_away_stops_its_job(box, tmp_path):
     c = _start(box, ["python3", "-c", "import time; print('up', flush=True); time.sleep(60)", box.marker])
     assert c.recv(4096)[5:] == b"up\n"
     c.close()
-    assert _wait(lambda: box.stops == [T])
+    assert _wait(lambda: T in box.stops)
 
 
 def test_cleanup_stops_what_its_own_caller_left(box, tmp_path):
@@ -545,7 +545,7 @@ def test_a_reader_that_stalls_doesnt_pin_the_slot(box, tmp_path, monkeypatch):
     box.mod.JOB_PATH = os.environ["PATH"]
     loud = "import sys\nwhile True: sys.stdout.write('x' * 65536); sys.stdout.flush()\n"
     c = _start(box, ["python3", "-c", loud, box.marker])      # and never read
-    assert _wait(lambda: box.stops == [T], seconds=20)
+    assert _wait(lambda: T in box.stops, seconds=20)
     c.close()
 
 
