@@ -87,7 +87,7 @@ def test_full_person_flow_connects_and_lands_on_the_share_screen(client, user):
         resp = _callback(client, state)
     conn = Connection.objects.get()
     assert conn.user_id == user.pk and conn.agent_id is None
-    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/settings?tab=x"})
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/settings?tab=x", "just_connected": "1"})
 
 
 def test_a_refused_person_flow_lands_back_and_stores_nothing(client, user):
@@ -142,7 +142,7 @@ def test_return_to_rejects_offsite(client, bad):
     state = _state(_start(client, return_to=bad))
     with FakeSF():                                                # connected: carried to the share screen
         resp = _callback(client, state)
-    assert _landing(resp)[1] == {"return_to": "/settings"}
+    assert _landing(resp)[1] == {"return_to": "/settings", "just_connected": "1"}
     assert "evil" not in resp["Location"]
 
 
@@ -302,7 +302,7 @@ def test_a_connect_with_nothing_asked_lands_on_the_connected_screen(client):
     with FakeSF():
         resp = _callback(client, _state(_start(client, return_to="/w/w/views/2")))
     conn = Connection.objects.get()
-    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/w/w/views/2"})
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/w/w/views/2", "just_connected": "1"})
 
 
 def test_a_connect_naming_an_agent_lands_on_share_with_it_ticked(client, eva):
