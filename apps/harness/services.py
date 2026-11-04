@@ -249,8 +249,11 @@ def enqueue_turn(
     from . import turn_asker  # noqa: PLC0415 — cycle: turn_asker -> turn_agent_tokens -> services
 
     on_behalf = turn_asker.of(getattr(initiator, "user", None))
+    origin_ref = {k: v for k, v in (origin_ref or {}).items() if k != turn_asker.UNATTENDED_DISPATCH}
     if on_behalf is not None:
-        origin_ref = {**(origin_ref or {}), "on_behalf_of": on_behalf.record()}
+        origin_ref = {**origin_ref, "on_behalf_of": on_behalf.record()}
+    elif initiator.kind == "user":  # initiator.USER: an agent's login dispatching (stamp or nothing)
+        origin_ref = {**origin_ref, **turn_asker.dispatch_stamp(getattr(initiator, "user", None))}
     from apps.threads import guard as thread_guard
 
     from . import provenance
