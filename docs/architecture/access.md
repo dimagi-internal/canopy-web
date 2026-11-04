@@ -239,7 +239,7 @@ What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** i
 |---|---|---|
 | **read_only** | `read` | Is answered in read mode, and nothing else. **On for every agent**: the confined session can only read and draft a reply (and send it on the thread it was asked on); the access-list form pre-selects no role. |
 | **read_write** | `read`, `write` | Drives the **whole agent**, in its own authority: every skill and every capability it has (the `full` access level). The ordinary way to give someone an agent. |
-| **editor** | + `agent_edit` | Everything read_write may, and changes the agent itself (its skills and capabilities). |
+| **editor** | + `agent_edit` | Everything read_write may, and changes the agent itself: its skills, its persona and the code in its own repo (table below). |
 | **admin** | + `admin` | Configures the agent in canopy-web: its access list, capabilities, credentials, routing, runners, integrations. May ask for `auto` and pin any runner that can hold it. |
 | **owner** | + `own` | Everything an agent admin may, plus transfer or delete the agent and name its admins. |
 
@@ -257,9 +257,28 @@ What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** i
 * **What `decide` reads.** `decide` unions the permissions of every matching line
   (`Resolution.permissions`) and asks one question: do they hold `write` (`roles.holds(…, WRITE)`)?
   Then they get the whole agent. Otherwise they get a capability, chosen by what their lines open
-  (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens `<name>`; `use:ask` and `use:read` are read-mode lines). The routes
-  that change an agent still gate on the workspace role (`agent.work`, an editor or above in the
-  agent's workspace) or on `Agent.is_admin`; they do not read the agent role.
+  (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens `<name>`; `use:ask` and `use:read` are read-mode lines). What each change to
+  an agent needs is the table below.
+* **What changes the agent itself (`agent_edit`).** `access.may_edit_agent(user, agent)` is the
+  one predicate: the owner, an admin and the agent's own login always may; anyone else only through
+  an access-list line whose role holds `agent_edit` (an `editor` line or workspace default). Being an
+  editor of the agent's workspace gives nothing by itself; the default editor line every workspace
+  editor was given keeps today's editors able. An agent acting for its asker is judged as the asker
+  (`turn_asker`), so a read_write asker cannot have the agent edit itself. Every change to an
+  agent is one of three classes:
+
+  | Change | Class | Why |
+  |---|---|---|
+  | Publish skills (`PUT /agents/{slug}/skills`), re-read skill history (`POST …/skill-history/sync`) | **agent_edit** | the agent's own definition of how it works |
+  | Edit display name, description, persona (`POST /agents/` on an existing agent) | **agent_edit** | what the agent says about itself |
+  | The code in the agent's own repo (commits, merges to its default branch) | **agent_edit** | the agent's `permissions` in the caller envelope are its cue; the runner-side rail (canopy plugin) refuses a push or merge from a turn whose asker lacks it |
+  | Where the repo points and what boxes install (`repo_url`, `repo_ref`, `runtime_secrets`, `runtime_sources`, `clis`, `cli_models`; `PATCH …/repository`, `PATCH …/clis`) | **admin** | whoever names the repo writes code that runs with the agent's credentials |
+  | Published interface: `PUT`/`DELETE …/interface`, read-mode override, the `sensitive` switch | **admin** | decides who may reach what, and how sensitive data is handled |
+  | Machine capabilities (`PUT …/capabilities`, refresh, slot data) | **admin** | leases money-spending machines |
+  | Access list, workspace defaults, licenses, canopy login and token, vaults and credentials, GitHub identity, mailbox, runner pins, routing rules, Slack switch | **admin** | configuring the agent in canopy-web; its keys |
+  | Transfer, delete the agent, name its admins | **own** | `Agent.owner` (deleting is gated by `agent.work` today) |
+  | Schedules and triggers, tasks and the board, turns and chats, hold and release, turn mode, syncs | **work** (`agent.work` or `write`) | they change what the agent DOES, never what it IS |
+
 * **Where each role comes from.** The owner (`Agent.owner`, while still a member of the agent's
   workspace), agent admins (a workspace owner, or an `AgentAdmin` grant) and canopy itself hold
   their role with **no line**: `Agent.owner` and `AgentAdmin` remain the stores of owner and admin,

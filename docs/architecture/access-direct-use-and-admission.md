@@ -256,6 +256,10 @@ profile), `turn_mode` (`{mode, basis}`), and:
   gives them `write` says every turn they start runs `manual` (write, but an admin approves what
   goes out); `false` otherwise. Both added without a version bump, computed beside `role`/`source`
   from the one decision (`apps/agents/interface.py::grant_facts`).
+  **`agent_edit` in `permissions` is the agent's cue that THIS asker may change the agent itself:
+  its skills, its persona and the code in its own repo (`access.may_edit_agent` says the same on
+  canopy-web).** An agent whose asker lacks it does the work asked and does not push or merge to its
+  own repo; the canopy plugin's runner-side rail enforces that, canopy-web only reports it here.
 * **`granted_by`** — a legacy one-word summary of the same decision, kept for older readers;
   new readers should use `permissions` and `profile`, never match its strings: `owner` | `admin` |
   `system` | `session:<role>` | `grant:<line>` (a line that gives `write`) | `capability:<name>` (a

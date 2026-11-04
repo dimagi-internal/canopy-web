@@ -317,6 +317,42 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
                     reason=_list_refusal(agent, verified_contact=rel == CONTACT and bool(verified)))
 
 
+def may_edit_agent(user, agent, *, standing: Standing | None = None, lines=None) -> bool:
+    """May `user` change THE AGENT ITSELF (its skills, its persona, and the work in its repo)?
+
+    The ONE predicate for the `agent_edit` permission: never write a second. It is `decide`'s
+    answer, so it cannot say something the rest of access would not: the owner, an admin
+    (`Agent.is_admin`) and the agent's own login (system) always may; anyone else only if a line
+    on the agent's access list gives them `agent_edit` (an `editor` line, or a workspace default
+    that is one). Being an editor of the agent's WORKSPACE gives nothing here: the workspace
+    default lines (migration 0112) are what keep today's editors able to.
+
+    A request an agent made on behalf of the person in its turn (`harness.turn_asker`) is judged
+    as that person, like `may_pin_runner`: the agent's own authority never edits itself for an
+    asker who could not.
+
+    For a list of (person, agent) pairs pass `standing` (`Standings.of`) and `lines`
+    (`Standings.lines_of`) read once, as `roster` does.
+    """
+    ob = turn_asker.of(user)
+    if ob is not None:
+        user = ob.user
+        standing = lines = None
+    d = decide(agent, user, verified=True, origin="canopy_web", standing=standing, lines=lines)
+    allowed = d.access == FULL and (d.agent_role in (roles.OWNER, roles.ADMIN, roles.SYSTEM)
+                                    or roles.holds(d.permissions, roles.AGENT_EDIT))
+    if ob is not None and allowed:
+        turn_asker.note(ob, f"edit {agent.slug}")
+    return allowed
+
+
+def edit_refusal(agent) -> str:
+    """Why `may_edit_agent` said no, naming who can fix it (the 403's detail)."""
+    owner = agent.owner.email if agent.owner_id and agent.owner else "its owner or an admin"
+    return (f"changing {agent.slug} itself needs the editor role on it; ask {owner} to give you "
+            f"the editor role on {agent.slug}")
+
+
 def decide_for_turn(turn, agent, requested: str | None = None) -> Decision:
     """`decide` for a turn already written, from its own initiator."""
 

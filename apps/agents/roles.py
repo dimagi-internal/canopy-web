@@ -27,7 +27,8 @@ SYSTEM = "system"
 READ = "read"
 #: Drive the whole agent, in its own authority: every skill it has, every capability.
 WRITE = "write"
-#: Change the agent itself: its skills and capabilities.
+#: Change the agent itself: its skills, its persona and the code in its own repo (never where the
+#: repo points, the machine capabilities it leases or its keys: those are `admin`).
 AGENT_EDIT = "agent_edit"
 #: Configure the agent in canopy-web: access list, capabilities, credentials, routing.
 ADMINISTER = "admin"
