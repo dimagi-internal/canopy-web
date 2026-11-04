@@ -52,6 +52,8 @@ a wrong keypress.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 
 from .noise import INTERRUPT_MARKER
@@ -246,6 +248,68 @@ def menu_from_hook(payload) -> dict | None:
     if menu is not None:
         menu["source"] = "hook"
     return stamp_observed(menu)
+
+
+# The hook Claude Code runs where a permission card is about to be drawn. It names
+# the call and nothing else: no options, and not the reason a hook gave for asking.
+PERMISSION_EVENT = "PermissionRequest"
+# Every permission dialog draws this as option 1. It is the only one offered.
+PERMISSION_YES = "Yes"
+_PERMISSION_BODY_MAX = 2_000
+
+
+def _permission_call(payload) -> str:
+    """Which call a hook payload is about, as a stable fingerprint.
+
+    `PermissionRequest` carries no tool_use_id, so the call is told apart by what
+    it is: the tool and its input. Hashed, because this travels with the menu and
+    only ever needs comparing.
+    """
+    raw = json.dumps([payload.get("tool_name"), payload.get("tool_input")],
+                     sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def menu_from_permission_request(payload) -> dict | None:
+    """A `PermissionRequest` hook -> a menu offering Yes, or None.
+
+    **Why Yes alone.** Which options a dialog draws is not in the payload, and
+    they differ: `1 Yes / 2 No` on one, `1 Yes / 2 Yes, and don't ask again / 3 No`
+    on another. A web button reading "No" that presses 2 would make a standing
+    grant out of a refusal. Option 1 is Yes on all of them, and refusing is the
+    client's Cancel, which is Esc on all of them. The runner still checks the
+    drawn label before pressing (`hooks.answer_menu_with`).
+
+    Needs no CDP, so unlike reading the screen it steals no focus.
+    """
+    if not isinstance(payload, dict) or payload.get("hook_event_name") != PERMISSION_EVENT:
+        return None
+    tool = payload.get("tool_name")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool, str) or not tool or not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command")
+    body = command if isinstance(command, str) and command else json.dumps(
+        tool_input, ensure_ascii=False, default=str)
+    if len(body) > _PERMISSION_BODY_MAX:
+        body = body[:_PERMISSION_BODY_MAX] + "\n… (cut; the full call is in the session)"
+    return stamp_observed({
+        "question": f"Allow this {tool} call?",
+        "title": "Permission",
+        "body": body,
+        "selected": None,
+        "options": [{"number": 1, "label": PERMISSION_YES, "description": ""}],
+        "source": "hook",
+        "permission_call": _permission_call(payload),
+    })
+
+
+def hook_settles_permission(menu, payload) -> bool:
+    """Whether this hook says the call `menu` asked about has finished."""
+    held = menu.get("permission_call") if isinstance(menu, dict) else None
+    return bool(held) and isinstance(payload, dict) \
+        and payload.get("hook_event_name") in ("PostToolUse", "PostToolUseFailure") \
+        and held == _permission_call(payload)
 
 
 # What Claude Code calls the hook that means "I want a human". It carries a

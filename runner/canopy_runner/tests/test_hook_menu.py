@@ -700,3 +700,192 @@ def test_an_unmodelled_tabbed_ask_keeps_its_declared_questions():
     now = hl.pending_menu(*KEY)
     assert now["question"] == "Which size?"
     assert now["questions"] == held
+
+
+# ---- A permission dialog, from `PermissionRequest` ------------------------------
+#
+# Claude Code 2.1.317 added a built-in check (cc-plugin-privacy) whose `ask` is
+# drawn even under bypassPermissions, so a scheduled turn can stop on a permission
+# dialog. `Notification` says only that somebody is wanted; `PermissionRequest`
+# names the call, with no CDP. Payload shape captured live on 2.1.318.
+PERMISSION = {
+    "hook_event_name": "PermissionRequest",
+    "cwd": CWD,
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {"command": "python3 tools/make_block.py --subject hello", "description": "Make a block"},
+}
+PERMISSION_DONE = {**PERMISSION, "hook_event_name": "PostToolUse"}
+
+PERMISSION_DIALOG = """
+ Bash command
+ Make a block
+
+ python3 tools/make_block.py --subject hello
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+"""
+
+ALWAYS_DIALOG = """
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for python3 commands
+   3. No
+
+ Esc to cancel · Tab to amend
+"""
+
+SWAPPED_DIALOG = """
+ Which one should I use?
+ ❯ 1. Delete the block
+   2. Keep the block
+
+ Esc to cancel
+"""
+
+
+def test_a_permission_request_offers_yes_and_shows_the_call():
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload(PERMISSION)
+    menu = hl.pending_menu(*KEY)
+    assert [(o["number"], o["label"]) for o in menu["options"]] == [(1, "Yes")]
+    assert "tools/make_block.py" in menu["body"]
+    assert "Bash" in menu["question"]
+
+
+def test_only_yes_is_offered_because_no_is_not_always_option_two():
+    """On a dialog that draws "Yes, and don't ask again", option 2 is a standing
+    grant. A web button reading "No" pressing 2 would grant what it says it
+    refuses, so refusing stays Cancel, which is Esc on every dialog."""
+    hl = listener()
+    hl.handle_payload(PERMISSION)
+    assert all(o["label"] != "No" for o in hl.pending_menu(*KEY)["options"])
+
+
+def test_a_notification_does_not_downgrade_a_permission_menu():
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload(PERMISSION)
+    hl.handle_payload(NOTIFY)
+    assert hl.pending_menu(*KEY)["options"], "the buttons must survive the notification"
+
+
+def test_a_permission_request_replaces_an_earlier_marker():
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload(NOTIFY)
+    hl.handle_payload(PERMISSION)
+    assert hl.pending_menu(*KEY)["options"]
+
+
+def test_the_call_finishing_retires_its_permission_menu():
+    hl = listener()
+    hl.handle_payload(PERMISSION)
+    hl.handle_payload(PERMISSION_DONE)
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_failed_call_retires_its_permission_menu_too():
+    hl = listener()
+    hl.handle_payload(PERMISSION)
+    hl.handle_payload({**PERMISSION, "hook_event_name": "PostToolUseFailure"})
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_different_call_finishing_leaves_the_menu_up():
+    """A sibling read in the same batch can finish while the dialog is still up."""
+    hl = listener()
+    hl.handle_payload(PERMISSION)
+    hl.handle_payload({**PERMISSION_DONE, "tool_input": {"command": "ls"}})
+    assert hl.pending_menu(*KEY) is not None
+
+
+def test_another_tool_finishing_does_not_retire_an_ask():
+    hl = listener()
+    hl.handle_payload(ASK)
+    hl.handle_payload(PERMISSION_DONE)
+    assert hl.pending_menu(*KEY) is not None
+
+
+def test_the_turn_ending_retires_a_permission_menu():
+    hl = listener()
+    hl.handle_payload(PERMISSION)
+    hl.handle_payload({"hook_event_name": "Stop", "cwd": CWD})
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_long_command_is_cut_for_the_menu():
+    hl = listener()
+    hl.handle_payload({**PERMISSION, "tool_input": {"command": "x" * 50_000}})
+    assert len(hl.pending_menu(*KEY)["body"]) < 3_000
+
+
+def test_a_tool_with_no_command_still_shows_its_input():
+    hl = listener()
+    hl.handle_payload({**PERMISSION, "tool_name": "WebFetch",
+                       "tool_input": {"url": "https://example.invalid/page"}})
+    menu = hl.pending_menu(*KEY)
+    assert "example.invalid" in menu["body"]
+    assert "WebFetch" in menu["question"]
+
+
+def test_a_malformed_permission_request_is_ignored():
+    hl = listener()
+    hl.handle_payload({"hook_event_name": "PermissionRequest", "cwd": CWD})
+    assert hl.pending_menu(*KEY) is None
+
+
+class _Screen:
+    def __init__(self, frame):
+        self.frame, self.sent = frame, None
+
+    def read_terminal(self, *a, **k):
+        return self.frame
+
+    def send_keys(self, task, keys, **k):
+        self.sent = keys
+
+
+def _holding_permission(monkeypatch):
+    from canopy_runner import hooks
+    hl = listener()
+    hl.handle_payload(PERMISSION)
+    monkeypatch.setattr(hooks, "_hook_listener", hl)
+    return hooks
+
+
+def test_yes_from_the_web_presses_yes(monkeypatch):
+    hooks = _holding_permission(monkeypatch)
+    cdp = _Screen(PERMISSION_DIALOG)
+    assert hooks.answer_menu_with(cdp, KEY[1], 1, project=KEY[0]) == (hooks.ANSWERED, None)
+    assert cdp.sent == ["1", "\r"]
+
+
+def test_yes_works_where_the_dialog_also_offers_a_standing_grant(monkeypatch):
+    hooks = _holding_permission(monkeypatch)
+    cdp = _Screen(ALWAYS_DIALOG)
+    assert hooks.answer_menu_with(cdp, KEY[1], 1, project=KEY[0]) == (hooks.ANSWERED, None)
+    assert cdp.sent == ["1", "\r"]
+
+
+def test_yes_is_refused_when_option_one_is_not_yes(monkeypatch):
+    """The dialog moved on: pressing 1 here would answer a question nobody read."""
+    hooks = _holding_permission(monkeypatch)
+    cdp = _Screen(SWAPPED_DIALOG)
+    outcome, screen = hooks.answer_menu_with(cdp, KEY[1], 1, project=KEY[0])
+    assert outcome == hooks.NOT_ON_MENU
+    assert cdp.sent is None
+    assert screen["options"][0]["label"] == "Delete the block"
+
+
+def test_cancel_is_still_esc_on_a_permission_menu(monkeypatch):
+    hooks = _holding_permission(monkeypatch)
+    cdp = _Screen(PERMISSION_DIALOG)
+    outcome, _ = hooks.answer_menu_with(cdp, KEY[1], None, project=KEY[0])
+    assert outcome == hooks.ANSWERED
+    assert cdp.sent is not None and "1" not in cdp.sent
