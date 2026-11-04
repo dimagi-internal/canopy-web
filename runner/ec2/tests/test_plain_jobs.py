@@ -321,7 +321,8 @@ def test_archive_check_accepts_an_ordinary_tree(runner):
 
 # ── the capability ───────────────────────────────────────────────────────────
 
-STATUS = {"ok": True, "systemd": 255, "supported": True, "job_user": True, "locked": False, "running": ""}
+STATUS = {"ok": True, "systemd": 255, "supported": True, "job_user": True, "locked": False, "running": "",
+          "wedged": False}
 
 
 @pytest.fixture
@@ -347,7 +348,8 @@ def _broker_says(can, monkeypatch, **fields):
     monkeypatch.setattr(can, "_job_broker", lambda op, *a, **k: {**STATUS, **fields})
 
 
-@pytest.mark.parametrize("fields", [{"locked": True}, {"supported": False, "systemd": 249}, {"job_user": False}], ids=str)
+@pytest.mark.parametrize("fields", [{"locked": True}, {"supported": False, "systemd": 249}, {"job_user": False},
+                                    {"wedged": True}], ids=str)
 def test_the_broker_saying_no_stops_the_report(can, monkeypatch, fields):
     """Any locked runner on the box, not just this one: so a job never fails on its first call."""
     _broker_says(can, monkeypatch, **fields)
@@ -863,6 +865,39 @@ def test_the_slot_is_held_for_the_whole_job(jobs, monkeypatch):
     assert seen == [T1, T1] and jobs._box.server._job is None
 
 
+def test_a_process_that_wont_die_stops_this_box_reporting_jobs(jobs, monkeypatch):
+    """It is the only moment a runner learns: the capability is otherwise read at its start."""
+    _define(jobs, ["env"])
+    posted = []
+    monkeypatch.setattr(jobs, "_api", lambda m, p, b=None, **k: posted.append((m, p, b)) or (200, {}))
+    monkeypatch.setattr(jobs, "_RUNNER_ID", "r1")
+    monkeypatch.setitem(jobs.RUNNER_CAPS, "jobs", True)
+    jobs._box.survivors = True
+    ok, text, _ = _go(jobs)
+    assert ok is False and "couldn't be stopped" in text
+    assert jobs.RUNNER_CAPS["jobs"] is False
+    assert [b["capabilities"]["jobs"] for m, p, b in posted if m == "PATCH"] == [False]
+
+
+def test_a_process_surviving_the_end_of_a_job_says_so_too(jobs, monkeypatch):
+    """Clean at the start, a survivor at the end: the job's own verdict stands, the box stops."""
+    _define(jobs, ["env"])
+    posted = []
+    monkeypatch.setattr(jobs, "_api", lambda m, p, b=None, **k: posted.append((m, p, b)) or (200, {}))
+    monkeypatch.setattr(jobs, "_RUNNER_ID", "r1")
+    monkeypatch.setitem(jobs.RUNNER_CAPS, "jobs", True)
+    real = jobs._job_supervise
+
+    def then_a_survivor(*a):
+        got = real(*a)
+        jobs._box.survivors = True
+        return got
+    monkeypatch.setattr(jobs, "_job_supervise", then_a_survivor)
+    ok, _, _ = _go(jobs)
+    assert ok is True and jobs.RUNNER_CAPS["jobs"] is False
+    assert jobs._box.server._job is not None
+
+
 def test_a_broker_that_goes_away_mid_job_is_a_plain_failure(jobs, monkeypatch):
     _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": IGNORES_TERM})
 
@@ -1063,7 +1098,10 @@ def test_setup_makes_a_system_user_the_root_and_the_lock(cloud_runner, fake):
     add = next(c for c in fake.calls if c[0] == "useradd")
     assert "--system" in add and add[-1] == "canopy-job" and "/usr/sbin/nologin" in add
     assert "--create-home" not in add
-    assert stat.S_IMODE(fake.root.stat().st_mode) == 0o700 and fake.owners[str(fake.root)] == 999
+    # no home: the jobs root as its home is how a planted user-site once ran in a helper
+    assert add[add.index("--home-dir") + 1] == "/nonexistent"
+    # root's: only a unit's own bound folder is ever canopy-job's to write
+    assert stat.S_IMODE(fake.root.stat().st_mode) == 0o700 and fake.owners[str(fake.root)] == 0
     # readable by every runner, so each can take the flock; root's, so none can replace it
     assert stat.S_IMODE(fake.lock.stat().st_mode) == 0o644 and fake.owners[str(fake.lock)] == 0
 
@@ -1075,6 +1113,15 @@ def test_setup_keeps_an_existing_lock_file_in_place(cloud_runner, fake):
     _setup_jobs(cloud_runner, fake)
     assert fake.lock.stat().st_ino == inode
     assert sum(1 for c in fake.calls if c[0] == "useradd") == 1
+
+
+def test_setup_moves_an_existing_users_home_off_the_jobs_root(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda tool: f"/usr/sbin/{tool}")
+    monkeypatch.setattr(cloud_runner, "_log", lambda m, *a, **k: None)
+    box = FakeBox(tmp_path, exists=True)
+    assert cloud_runner.setup_jobs({}, locked=False, run=box.run, chown=box.chown, root=box.root, lock=box.lock,
+                                   uid_of=lambda u: SimpleNamespace(pw_uid=999, pw_gid=999, pw_dir=str(box.root)))
+    assert ["usermod", "--home", "/nonexistent", "canopy-job"] in box.calls
 
 
 def test_iptables_failing_says_no(cloud_runner, tmp_path, monkeypatch):
@@ -1157,7 +1204,7 @@ def test_template_creates_user_rule_and_metadata_block():
     assert setup.index("setup_jobs(") < setup.index("install_job_broker()")
     assert '"disable", "--now", "canopy-job-broker.service"' in setup
     body = source[source.index("def setup_jobs("):source.index("def _sync_job_rules(")]
-    assert '"useradd", "--system"' in body and "job_rules(" in body
+    assert '"useradd", "--system"' in body and "job_rules(" in body and '"/nonexistent"' in body
     assert 'IMDS_V4, IMDS_V6 = "169.254.169.254", "fd00:ec2::254"' in source
     # iptables doesn't survive a reboot: the unit that makes these runs on every boot
     unit = source[source.index('"canopy-runners.service": f"""'):source.index('"canopy-kms-broker.service"')]
@@ -1218,7 +1265,8 @@ def test_self_check_covers_each_thing_and_is_clean_shell():
                    "/run/canopy-jobs/sock", "runner-token.json", ".canopy-cloud-runner.json", ".gog-secret",
                    "box.env", ".canopy", "/.env", "/home", "/dev/shm", "memory.max", "pids.max", "TasksMax",
                    "NoNewPrivileges", "not a runner", "127.0.0.1", "::1", "getaddrinfo", "/run/canopy/",
-                   '"start"', '"export"', '"cleanup"', "PASS", "FAIL", "sibling", "48731", "expected"):
+                   '"start"', '"export"', '"cleanup"', "PASS", "FAIL", "sibling", "48731", "expected", "/proc/", "/root", "missing",
+                   "by the next job's start"):
         assert needle in text, needle
     if shutil.which("shellcheck"):
         res = subprocess.run(["shellcheck", str(path)], capture_output=True, text=True)
@@ -1262,8 +1310,20 @@ def test_self_check_counts_what_it_says_it_counts(tmp_path, monkeypatch):
     assert len(verdicts) == fixed + probe + 2 + 3 + 2, res.stdout
 
 
+def test_self_check_only_probes_a_path_root_has_seen_there():
+    """Not there, it reads ENOENT inside the unit, which proves nothing. The script's filter runs
+    here on real paths: what's missing is printed as a SKIP by name and counted."""
+    text = (EC2 / "job_self_check.sh").read_text()
+    body = re.search(r"^filter_existing\(\) \{.*?^\}$", text, re.M | re.S).group(0)
+    script = ("set -uo pipefail\nskip() { printf 'SKIP  %s\\n' \"$1\"; SKIPPED=$((SKIPPED + 1)); }\nSKIPPED=0\n"
+              + body + '\nfilter_existing < <(printf "%s\\n" /bin /no/such/path)\necho "n=$SKIPPED"\n')
+    res = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    assert res.stdout.split() == ["/bin", "n=1"]
+    assert "/no/such/path" in res.stderr
+
+
 @pytest.mark.parametrize("needle", [
-    'rc=$?', 'expected', "can't establish", "listen_py",
+    'rc=$?', 'expected', "can't establish", "listen_py", "SKIPPED",
 ])
 def test_self_check_fails_on_what_it_cant_establish(needle):
     assert needle in (EC2 / "job_self_check.sh").read_text()
@@ -1276,5 +1336,6 @@ def test_runner_starts_after_the_job_broker(cloud_runner):
 def test_readme_says_what_a_job_cannot_be_kept_from():
     readme = (EC2 / "README.md").read_text()
     section = readme[readme.index("## Plain jobs"):readme.index("## Several runners on one machine")]
-    for needle in ("job_self_check.sh", "Base64", "NoNewPrivileges", "Manual check", "job_broker.py"):
+    for needle in ("job_self_check.sh", "Base64", "NoNewPrivileges", "Manual check", "job_broker.py",
+                   "isn't a boundary", "their own runner", "/nonexistent"):
         assert needle in section, needle

@@ -761,6 +761,15 @@ another runner's `export` is refused, "Another job is running on this machine." 
 broker stops the job, clears its files and frees the slot. A slot ends at 121 minutes whatever
 happens. Files that can't be removed refuse the next `export` until they can.
 
+**No slot is freed while a process of that uid remains.** Before any slot ends, and at the broker's
+start, it stops the unit, runs `pkill -KILL -U canopy-job` and confirms with `pgrep`. If one remains,
+the slot stays held, the box stops reporting `jobs`, the log says why, and each later request tries
+again. Nothing runs as `canopy-job` outside a unit: the tar, each token write and each clear get
+the job's own confinement, because a job can open `/proc/<pid>/root` of any process of its uid and
+`ProtectProc` doesn't hide those. A helper that can't start fails closed. Python helpers run with
+`-I -S`. `canopy-job` has no home (`/nonexistent`); a job's `HOME` is its own folder. The jobs root
+is root's.
+
 `start` is one `systemd-run --wait --pipe --collect`, built by `systemd_run_argv`: its properties
 are the isolation (Ubuntu 24.04's systemd 255 has them all; the broker reports an older one as
 unsupported, and the box reports no jobs):
@@ -776,7 +785,8 @@ unsupported, and the box reports no jobs):
 | Environment | `env -i` and exactly `PATH`, `HOME`, `LANG`, `CANOPY_AGENT_SLUG`, `CANOPY_TURN_ID`, `CANOPY_JOB_TOKENS` |
 
 `MemoryDenyWriteExecute` is left out on purpose: it breaks some runtimes. `RemoveIPC` acts at uid
-scope when a job's last process ends; with one slot at a time, it can't take another job's IPC.
+scope whenever a unit of this user stops, a token helper's ending among them; `PrivateIPC` and the
+closed `/dev/shm` and `/dev/mqueue` leave nothing of a running job's for it to take.
 
 Each run gets `/var/lib/canopy-jobs/<turn>/` (`repo/`, `home/`, `tokens/`) and its own 0600 copy
 of each of the agent's staged tokens, refreshed every minute by an atomic rename. A job has the
@@ -794,7 +804,7 @@ finishes FAILED, "Another job is running on this machine.", and touches nothing.
 
 **What sets the box up.** `--setup-runners`, which `canopy-runners.service` runs every boot and
 the updater re-runs on a tick that finds the box idle. It makes the system user,
-`/var/lib/canopy-jobs` (0700, its own), the lock, the `CANOPY-JOB` iptables chain and the broker's
+`/var/lib/canopy-jobs` (0700, root's), the lock, the `CANOPY-JOB` iptables chain and the broker's
 service. The broker goes in only if the rest held. A sensitive-data box gets none of this.
 
 **The owner rule stays beside `IPAddressDeny`**, because that list can't say what it says:
@@ -836,6 +846,9 @@ ever not apply):
 - `LimitFSIZE` is per file. A job is stopped when the disk has 2 GB left, not before.
 - No Unix sockets and `ProcSubset=pid` are real limits on what a job can do: anything needing a
   local socket, or `/proc/meminfo`, won't work.
+- **The same runner uid isn't a boundary.** Turns on one runner can already read every agent's
+  staged files on that runner, a running job's tokens among them. Agents that need isolation from
+  each other need their own runner.
 - Any process of a runner's user can call the broker, so a model turn could start code as
   `canopy-job`, which has less than the turn has already. It could also take the box's slot and
   sit on it, holding off jobs for up to 121 minutes: a nuisance, not a way in.
@@ -849,12 +862,13 @@ sudo bash /opt/canopy-web/runner/ec2/job_self_check.sh
 
 It starts real units through the broker, as a runner's uid, and prints PASS or FAIL per line for
 what the job inside them is refused: `/home/*`, each token and secret path, a sibling's token file,
-the metadata address, localhost, the box's own address, each proxy port, `/dev/shm`, each broker's
+a helper's `/proc/<pid>/root`, leaving a daemon behind, the metadata address, localhost, the box's own address, each proxy port, `/dev/shm`, each broker's
 socket, and the memory and task limits. It also checks the environment, a background process not
 outliving a job, the slot holding after a job exits, the broker refusing other uids, DNS and the
 rules. A refusal counts only once root has reached the same thing itself (a real listener, for
-loopback); one it can't establish is a FAIL. So is a client that crashes, or fewer verdicts than it
-expects. It stops at once if a job is running.
+loopback); one it can't establish is a FAIL. A path missing from the box is a SKIP with its name, and
+the summary counts them. A client that crashes, or fewer verdicts than expected, is a FAIL. It stops
+at once if a job is running.
 
 ## Several runners on one machine (`Runners`)
 

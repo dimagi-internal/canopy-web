@@ -21,8 +21,12 @@ kms_broker.py and aws_broker.py do theirs:
 No request names a path, a user, a property or an environment: unknown keys are refused, and
 each folder, the unit's sandbox and the environment are built here from a validated turn id.
 So a caller with a runner's uid gains nothing beyond running code as `canopy-job`, which has
-less than that runner has. Everything run here runs as that user; the only commands root
-itself runs are `systemd-run` and `systemctl` on a unit named from that turn id.
+less than that runner has. **Everything that runs as that user runs in a unit with the job's own
+confinement, helpers too** (`helper_argv`: the export's tar, a token write, a clear). A same-uid
+process can open `/proc/<pid>/root` of any other, and `ProtectProc` doesn't hide those, so one
+helper in the host's mount namespace would be a way out of the sandbox. A helper that can't start
+fails closed; there is no other way to run it. Root itself only makes and empties folders nobody
+can be in, and runs `systemd-run`, `systemctl`, `pkill` and `pgrep`.
 
 `start` answers in frames, a type byte and a 4-byte length: `O` the job's output, `X` a JSON
 exit, always last. Framing is what keeps a job from printing its own exit. If the caller goes
@@ -36,13 +40,19 @@ runner dies, which stops the job, clears its files and frees the slot. A slot al
 SLOT_MAX_SECONDS. Files that can't be cleared refuse the next `export` until they can. (The
 runners' own box-wide flock, `cloud_runner.JOB_LOCK_FILE`, is what orders them politely.)
 
+**No slot is freed while a process of the uid remains.** Nothing is trusted to have ended: `_free`
+stops the unit, runs `pkill -KILL -U`, and confirms with `pgrep`. If one remains, the slot stays
+held, `status` says `wedged` so the box stops reporting jobs, and each later request tries again.
+
 `job_broker.py --install` (root): write and start `canopy-job-broker.service` from this file's
 own location. `cloud_runner.py --setup-runners` copies this file to
 /opt/canopy-runner/job-broker/ and runs that on every start of canopy-runners.service.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
+import itertools
 import json
 import os
 import pathlib
@@ -77,6 +87,13 @@ MAX_ARGV_BYTES = 128 * 1024
 MAX_TIMEOUT_SECONDS = 120 * 60
 #: The longest a slot lasts: the job's maximum, and a minute to set up and clear.
 SLOT_MAX_SECONDS = MAX_TIMEOUT_SECONDS + 60
+#: How long a stopped unit gets to go, past its own TimeoutStopSec, before the slot counts as stuck.
+STOP_WAIT_SECONDS = 30.0
+HELPER_TIMEOUT_SECONDS = 300
+#: A folder name this broker will put in a unit's properties.
+_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+#: Why a held slot can't be freed: `Wedged`'s sentence.
+WEDGED_NOTE = "A process from an earlier job couldn't be stopped, so this job didn't run."
 #: A runner that stops reading doesn't pin a job, or the slot, for hours.
 SEND_TIMEOUT_SECONDS = 60.0
 #: How much of an export root holds at once: it goes straight to tar.
@@ -96,6 +113,10 @@ def _log(msg: str) -> None:
 
 class Refused(Exception):
     """A request this broker won't do, with the sentence the caller reads."""
+
+
+class Wedged(Refused):
+    """A process of the job user survived: the box runs no job until it's gone."""
 
 
 # ── what may be asked: pure ─────────────────────────────────────────────────
@@ -169,7 +190,8 @@ IP_DENY = ("169.254.169.254", "fd00:ec2::254", "localhost", "10.0.0.0/8", "172.1
            "100.64.0.0/10", "fe80::/10", "fc00::/7")
 
 
-def job_properties(turn: str, slug: str, timeout_seconds: int, root: str) -> list:
+def job_properties(turn: str, slug: str, timeout_seconds: int, root: str, *, workdir: str | None = None) -> list:
+    """The confinement of everything that ever runs as the job user. `turn` is the folder it sees."""
     job = f"{root}/{turn}"
     env = job_env(turn, slug, root)
     return [
@@ -179,8 +201,9 @@ def job_properties(turn: str, slug: str, timeout_seconds: int, root: str) -> lis
         "PrivateTmp=yes", "PrivateDevices=yes", "PrivateIPC=yes", "ProtectProc=invisible", "ProcSubset=pid",
         "CapabilityBoundingSet=", "RestrictAddressFamilies=AF_INET AF_INET6", "RestrictNamespaces=yes",
         "RestrictSUIDSGID=yes", "RestrictRealtime=yes", "LockPersonality=yes", "SystemCallArchitectures=native",
-        # At uid scope, when the job's last process ends. One slot at a time, so no other job's
-        # IPC can be lost to it, and a next job starts with none.
+        # At uid scope, whenever any unit of this user stops: a token helper's ending included,
+        # with its job still running. PrivateIPC keeps that job's SysV IPC in its own namespace and
+        # /dev/shm and /dev/mqueue are closed to it, so there is nothing of a job's for that to take.
         "RemoveIPC=yes",
         "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes",
         "ProtectControlGroups=yes", "ProtectClock=yes", "ProtectHostname=yes",
@@ -191,22 +214,35 @@ def job_properties(turn: str, slug: str, timeout_seconds: int, root: str) -> lis
         "KillMode=control-group", f"RuntimeMaxSec={timeout_seconds}", "TimeoutStopSec=10s",
         # MemorySwapMax: the box has swap, which would otherwise take a job past MemoryMax.
         "MemoryMax=2G", "MemorySwapMax=0", "CPUQuota=100%", "TasksMax=256", "LimitFSIZE=5G",
-        f"WorkingDirectory={job}/repo",
+        f"WorkingDirectory={workdir or f'{job}/repo'}",
         *[f"InaccessiblePaths=-{path}" for path in INACCESSIBLE],
         *[f"Environment={k}={v}" for k, v in env.items()],
     ]
 
 
-def systemd_run_argv(turn: str, slug: str, run: list, timeout_seconds: int, *, root: str = JOBS_ROOT) -> list:
-    """The one command that runs a job. `run`'s words stay separate arguments all the way:
+def confined_argv(unit: str, turn: str, slug: str, command: list, timeout_seconds: int, *, root: str,
+                  workdir: str | None = None) -> list:
+    """The one way anything runs as the job user. The words stay separate arguments all the way:
     no shell, and `--expand-environment=no` keeps systemd from reading `$X` in them. `env -i`
-    because systemd adds USER, SHELL, INVOCATION_ID and more of its own, and a job's
-    environment is the six."""
+    because systemd adds USER, SHELL, INVOCATION_ID and more of its own, and the environment is
+    the six."""
     env = job_env(turn, slug, root)
     return ["systemd-run", "--wait", "--pipe", "--collect", "--quiet", "--expand-environment=no",
-            "--service-type=exec", f"--unit=canopy-job-{turn}", f"--uid={JOB_USER}", f"--gid={JOB_USER}",
-            *[f"--property={p}" for p in job_properties(turn, slug, timeout_seconds, root)],
-            "--", "/usr/bin/env", "-i", *[f"{k}={v}" for k, v in env.items()], *run]
+            "--service-type=exec", f"--unit={unit}", f"--uid={JOB_USER}", f"--gid={JOB_USER}",
+            *[f"--property={p}" for p in job_properties(turn, slug, timeout_seconds, root, workdir=workdir)],
+            "--", "/usr/bin/env", "-i", *[f"{k}={v}" for k, v in env.items()], *command]
+
+
+def systemd_run_argv(turn: str, slug: str, run: list, timeout_seconds: int, *, root: str = JOBS_ROOT) -> list:
+    """The job itself."""
+    return confined_argv(f"canopy-job-{turn}", turn, slug, run, timeout_seconds, root=root)
+
+
+def helper_argv(name: str, command: list, *, root: str = JOBS_ROOT, seq: int) -> list:
+    """A tar, a token write or a clear, for one folder: `job_properties` as a job gets them, starting
+    in the folder itself, since a job may have removed anything inside it."""
+    return confined_argv(f"canopy-job-helper-{seq}-{name}", name, "", command, HELPER_TIMEOUT_SECONDS, root=root,
+                         workdir=f"{root}/{name}")
 
 
 def unit_name(turn: str) -> str:
@@ -217,9 +253,9 @@ def unpack_argv(dest: str) -> list:
     return ["tar", "-x", "--no-same-owner", "--no-same-permissions", "-C", dest]
 
 
-def cleanup_argvs(root: str) -> list:
+def cleanup_argvs(folder: str) -> list:
     """`chmod` first: a folder a job made read-only would stay otherwise."""
-    return [["chmod", "-R", "u+rwx", root], ["find", root, "-mindepth", "1", "-delete"]]
+    return [["chmod", "-R", "u+rwx", folder], ["find", folder, "-mindepth", "1", "-delete"]]
 
 
 #: Run as the job user, on a folder a job has had the run of: each step down refuses a link, and
@@ -247,8 +283,9 @@ if data:
 """
 
 
-def token_argv(root: str, turn: str, provider: str) -> list:
-    return ["python3", "-c", TOKEN_SCRIPT, root, turn, f"{provider}.json"]
+def token_argv(root: str, turn: str, filename: str) -> list:
+    """`-I -S`: no user site and no `.pth`, whatever a job managed to plant."""
+    return ["python3", "-I", "-S", "-c", TOKEN_SCRIPT, root, turn, filename]
 
 
 def exit_info(rc: int, elapsed: float, timeout_seconds: int) -> dict:
@@ -276,16 +313,15 @@ def frame(kind: bytes, data: bytes) -> bytes:
 
 # ── the box's doors: each stubbed in tests ──────────────────────────────────
 
-def as_job_user(args, input=None):
-    """`args` as the job user, with nothing of root's: no groups, no environment."""
-    return subprocess.run(args, input=input, capture_output=True, timeout=300, cwd="/", user=JOB_USER,
-                          group=JOB_USER, extra_groups=[], env={"PATH": JOB_PATH})
+def run_unit(argv, input=None):
+    """A helper's `systemd-run`, to its end."""
+    return subprocess.run(argv, input=input, capture_output=True, timeout=HELPER_TIMEOUT_SECONDS + 30, cwd="/")
 
 
-def as_job_user_pipe(args):
-    """`as_job_user`, for what is fed as it arrives: an export never sits in root's memory."""
-    return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            cwd="/", user=JOB_USER, group=JOB_USER, extra_groups=[], env={"PATH": JOB_PATH})
+def run_unit_pipe(argv):
+    """A helper's `systemd-run`, fed as it arrives: an export never sits in root's memory."""
+    return subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            cwd="/")
 
 
 def spawn_job(argv):
@@ -293,8 +329,44 @@ def spawn_job(argv):
                             cwd="/", start_new_session=True)
 
 
-def stop_unit(turn: str) -> None:
-    subprocess.run(["systemctl", "stop", "--no-block", unit_name(turn)], capture_output=True, timeout=30)
+def stop_unit(turn: str) -> bool:
+    """Ask the unit to stop. True if systemd took that, or the unit has already gone (5, `--collect`)."""
+    try:
+        return subprocess.run(["systemctl", "stop", "--no-block", unit_name(turn)], capture_output=True,
+                              timeout=30).returncode in (0, 5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def stop_all_units() -> None:
+    subprocess.run(["systemctl", "stop", "canopy-job-*.service"], capture_output=True, timeout=60)
+
+
+def unit_state_of(unit: str) -> str:
+    try:
+        return subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True,
+                              timeout=30).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def no_processes_left() -> bool:
+    """Kill every process of the job user and confirm none remains, with a short retry: a fork
+    between `pkill`'s listing and its signal survives one pass. `pgrep` says 1 for "none"."""
+    try:
+        for _ in range(10):
+            subprocess.run(["pkill", "-KILL", "-U", JOB_USER], capture_output=True, timeout=30)
+            if subprocess.run(["pgrep", "-U", JOB_USER], capture_output=True, timeout=30).returncode == 1:
+                return True
+            time.sleep(0.2)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log(f"could not check for {JOB_USER}'s processes: {exc}")
+    return False
+
+
+def chown_to_job_user(fd: int) -> None:
+    pw = pwd.getpwnam(JOB_USER)
+    os.fchown(fd, pw.pw_uid, pw.pw_gid)
 
 
 def load_runner_uids(path: str | None = None) -> set:
@@ -340,18 +412,23 @@ def peer_uid(sock: socket.socket) -> int:
 class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path: str, *, root: pathlib.Path = pathlib.Path(JOBS_ROOT), as_job=as_job_user,
-                 as_job_pipe=as_job_user_pipe, spawn=spawn_job, stop=stop_unit, uid_of=peer_uid,
-                 runner_uids=load_runner_uids, box_state=read_box_state):
+    def __init__(self, path: str, *, root: pathlib.Path = pathlib.Path(JOBS_ROOT), run_unit=run_unit,
+                 run_unit_pipe=run_unit_pipe, spawn=spawn_job, stop=stop_unit, stop_all=stop_all_units,
+                 no_processes=no_processes_left, unit_state=unit_state_of, chown_fd=chown_to_job_user,
+                 uid_of=peer_uid, runner_uids=load_runner_uids, box_state=read_box_state):
         self.root = pathlib.Path(root)
-        self.as_job, self.as_job_pipe, self.spawn, self.stop = as_job, as_job_pipe, spawn, stop
-        self.uid_of, self.runner_uids, self.box_state = uid_of, runner_uids, box_state
-        #: The slot: {turn, uid, proc, until}. From export through cleanup, one, whoever asks.
+        self.run_unit, self.run_unit_pipe, self.spawn, self.stop = run_unit, run_unit_pipe, spawn, stop
+        self.stop_all, self.no_processes, self.unit_state = stop_all, no_processes, unit_state
+        self.chown_fd, self.uid_of, self.runner_uids, self.box_state = chown_fd, uid_of, runner_uids, box_state
+        #: The slot: {turn, uid, proc, started, until, gone}. From export through cleanup, one, whoever asks.
         self._job: dict | None = None
         #: Whether the jobs root may hold anything. Cleared only by a clear that worked.
         self._dirty = True
+        #: Why a process of the job user survived, while one has.
+        self._wedged: str | None = None
         #: Every change to the slot or the files under it.
         self._lock = threading.RLock()
+        self._helper_seq = itertools.count(1)
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         super().__init__(path, _Handler)
 
@@ -375,9 +452,12 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         finally:
             self._slots.release()
 
-    @staticmethod
-    def _live(job: dict | None) -> bool:
-        return bool(job and job.get("proc") is not None and job["proc"].poll() is None)
+    def _live(self, job: dict | None) -> bool:
+        """The job's `systemd-run`, and its unit, which may outlive that. Fails closed: any state
+        but gone counts as there."""
+        if not job or job.get("proc") is None:
+            return False
+        return job["proc"].poll() is None or self.unit_state(unit_name(job["turn"])) not in ("inactive", "failed")
 
     def _held_by(self, req: dict, uid: int) -> dict:
         job = self._job
@@ -394,44 +474,144 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         state = self.box_state()
         job = self._job
         return {"ok": True, "systemd": state["systemd"], "supported": state["systemd"] >= MIN_SYSTEMD,
-                "job_user": state["job_user"], "locked": state["locked"], "running": job["turn"] if job else ""}
+                "job_user": state["job_user"], "locked": state["locked"], "running": job["turn"] if job else "",
+                "wedged": bool(self._wedged)}
 
-    def _make(self, args, input=None, sentence="Couldn't set up the job's folder.") -> None:
-        if self.as_job(args, input=input).returncode != 0:
-            raise Refused(sentence)
+    def _helper(self, name: str, command: list, input=None, sentence="Couldn't finish that for the job.") -> None:
+        """One confined helper, or `Refused`. There's no other way to run it."""
+        argv = helper_argv(name, command, root=str(self.root), seq=next(self._helper_seq))
+        try:
+            if self.run_unit(argv, input=input).returncode != 0:
+                raise Refused(sentence)
+        except (OSError, subprocess.SubprocessError):
+            raise Refused(sentence) from None
+
+    def _make_job_folder(self, turn: str) -> None:
+        """Root makes these, since a unit needs its folder to exist. Safe only because `_free` has just
+        confirmed that no process of the job user exists to race it."""
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            root = os.open(self.root, flags)
+            try:
+                os.mkdir(turn, 0o700, dir_fd=root)
+                job = os.open(turn, flags, dir_fd=root)
+                try:
+                    self.chown_fd(job)
+                    for sub in ("repo", "home", "tokens"):
+                        os.mkdir(sub, 0o700, dir_fd=job)
+                        fd = os.open(sub, flags, dir_fd=job)
+                        try:
+                            self.chown_fd(fd)
+                        finally:
+                            os.close(fd)
+                finally:
+                    os.close(job)
+            finally:
+                os.close(root)
+        except OSError:
+            raise Refused("Couldn't set up the job's folder.") from None
 
     def clear_files(self) -> None:
-        """Empty the jobs root, or `Refused`: the next export refuses until this has worked."""
-        for args in cleanup_argvs(str(self.root)):
-            if self.as_job(args).returncode != 0:
-                self._dirty = True
-                raise Refused("Couldn't remove an earlier job's files.")
+        """Empty the jobs root, or `Refused`: the next export refuses until this has worked. Root sees
+        to links and files, and to each folder's top; a confined helper empties each folder. Called
+        only once no process of the job user remains."""
+        self._dirty = True
+        sentence = "Couldn't remove an earlier job's files."
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            root = os.open(self.root, flags)
+        except OSError:
+            raise Refused(sentence) from None
+        try:
+            for name in os.listdir(root):
+                try:
+                    fd = os.open(name, flags, dir_fd=root)
+                except OSError as exc:
+                    if exc.errno not in (errno.ENOTDIR, errno.ELOOP):
+                        raise
+                    os.unlink(name, dir_fd=root)   # a file or a link: never followed
+                    continue
+                try:
+                    if not _SAFE_NAME.fullmatch(name):
+                        raise Refused(sentence)
+                    os.fchmod(fd, 0o700)   # a job may have closed its own folder, which a unit starts in
+                    self.chown_fd(fd)
+                finally:
+                    os.close(fd)
+                for command in cleanup_argvs(f"{self.root}/{name}"):
+                    self._helper(name, command, sentence=sentence)
+                os.rmdir(name, dir_fd=root)
+        except OSError:
+            raise Refused(sentence) from None
+        finally:
+            os.close(root)
         self._dirty = False
 
-    def _stop_and_wait(self, job: dict) -> None:
-        if self._live(job):
-            self.stop(job["turn"])
-            deadline = time.monotonic() + 30
-            while self._live(job) and time.monotonic() < deadline:
-                time.sleep(0.05)
+    def _free(self, job: dict | None) -> bool:
+        """The ONE way a slot ends, and a box is known clean. Under the lock. Stop the unit, kill the
+        uid, confirm nothing remains; only then clear. If something does remain the slot stays held
+        and the box wedged, and False. A clear that fails leaves `_dirty`, which refuses the next
+        export. Nothing here raises."""
+        with self._lock:
+            try:
+                if job and self._live(job):
+                    self.stop(job["turn"])
+                    deadline = time.monotonic() + STOP_WAIT_SECONDS
+                    while self._live(job) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                clean = self.no_processes()
+                if clean and job:
+                    deadline = time.monotonic() + min(2.0, STOP_WAIT_SECONDS)
+                    while self._live(job) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    clean = not self._live(job)
+            except Exception as exc:  # noqa: BLE001 - not knowing counts as not clean
+                _log(f"could not confirm the job user's processes are gone: {exc}")
+                clean = False
+            if not clean:
+                self._wedged = f"a process of {JOB_USER} survived"
+                _log(f"WEDGED: {self._wedged}; this box runs no job until it's gone"
+                     + (f" (the slot of {job['turn']} stays held)" if job else ""))
+                return False
+            self._wedged = None
+            self._job = None
+            if self._dirty:
+                try:
+                    self.clear_files()
+                except Refused as exc:
+                    _log(str(exc))
+                except Exception as exc:  # noqa: BLE001
+                    self._dirty = True
+                    _log(f"could not clear the jobs root: {exc}")
+            return True
 
     def _release(self, job: dict, why: str) -> None:
-        """Free the slot of a holder that's gone: its job stopped, its files cleared. A clear that
-        fails leaves the box dirty, and the next export tries again before it starts anything."""
+        """A holder gone, or out of time: free its slot, the checked way."""
         with self._lock:
             if self._job is not job:
                 return
+            job["gone"] = True
             _log(f"uid {job['uid']}: {why}; freeing the slot of {job['turn']}")
-            self._stop_and_wait(job)
-            self._job = None
+            self._free(job)
+
+    def boot_sweep(self) -> None:
+        """Start: this process holds every job's stream, so anything from before it is nobody's."""
+        with self._lock:
             try:
-                self.clear_files()
-            except Refused as exc:
-                _log(str(exc))
+                self.stop_all()
+            except (OSError, subprocess.SubprocessError) as exc:
+                _log(f"could not stop earlier units: {exc}")
+            self._dirty = True
+            self._free(None)
 
     def _feed_export(self, job: dict, rest: bytes, conn, size: int) -> None:
-        """Stream the tar straight to the job user's `tar`, a chunk at a time."""
-        tar = self.as_job_pipe(unpack_argv(str(self.root / job["turn"] / "repo")))
+        """Stream the tar to a confined `tar`, a chunk at a time. Its start failing is the export failing."""
+        folder = f"{self.root}/{job['turn']}"
+        try:
+            tar = self.run_unit_pipe(helper_argv(job["turn"], unpack_argv(f"{folder}/repo"), root=str(self.root),
+                                                 seq=next(self._helper_seq)))
+        except OSError:
+            raise Refused("Couldn't unpack the repo's files.") from None
         deadline = time.monotonic() + BODY_DEADLINE_SECONDS
         try:
             data, sent = rest[:size], 0
@@ -449,7 +629,7 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
                 if not data:
                     raise Refused("The repo's files were cut short.")
             tar.stdin.close()
-            if tar.wait(timeout=300) != 0:
+            if tar.wait(timeout=HELPER_TIMEOUT_SECONDS) != 0:
                 raise Refused("Couldn't unpack the repo's files.")
         except (OSError, subprocess.TimeoutExpired):
             raise Refused("Couldn't unpack the repo's files.") from None
@@ -461,75 +641,79 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     def _op_export(self, req, rest, conn, uid) -> None:
         """Take the slot, unpack, answer, and stay on this connection: it is the hold."""
         turn = req["turn"]
-        job = {"turn": turn, "uid": uid, "proc": None, "started": False, "until": time.monotonic() + SLOT_MAX_SECONDS}
+        job = {"turn": turn, "uid": uid, "proc": None, "started": False, "gone": False,
+               "until": time.monotonic() + SLOT_MAX_SECONDS}
         with self._lock:
-            if self._job:
-                raise Refused("Another job is running on this machine.")
+            held = self._job
+            if held and not held["gone"]:
+                raise Wedged(WEDGED_NOTE) if self._wedged else Refused("Another job is running on this machine.")
+            # Nobody may be left to race the folders below, or to read what goes in them.
+            if not self._free(held):
+                raise Wedged(WEDGED_NOTE)
             if self._dirty:
-                self.clear_files()
+                raise Refused("Couldn't remove an earlier job's files, so this job didn't run.")
             self._job = job
             self._dirty = True
             try:
-                folder = self.root / turn
-                for path in (folder, folder / "repo", folder / "home", folder / "tokens"):
-                    self._make(["mkdir", "-m", "700", str(path)])
+                self._make_job_folder(turn)
             except Refused:
                 self._release(job, "its folder couldn't be made")
                 raise
         try:
             self._feed_export(job, rest, conn, req["size"])
-        except Refused:
+            conn.settimeout(SEND_TIMEOUT_SECONDS)
+            try:
+                conn.sendall(b'{"ok": true}\n')
+            except OSError:
+                self._release(job, "its runner went away during the export")
+                return
+            conn.settimeout(None)
+            while self._job is job and not job["gone"]:
+                if time.monotonic() >= job["until"]:
+                    self._release(job, f"it passed the {SLOT_MAX_SECONDS:g}-second limit")
+                    return
+                if select.select([conn], [], [], min(0.2, SLOT_MAX_SECONDS))[0]:
+                    try:
+                        gone = conn.recv(1, socket.MSG_DONTWAIT) == b""
+                    except (BlockingIOError, InterruptedError):
+                        gone = False
+                    except OSError:
+                        gone = True
+                    if gone:
+                        self._release(job, "its runner went away")
+                        return
+        except Exception:  # Refused or not: no exception strands a slot
             self._release(job, "its export failed")
             raise
-        try:
-            conn.settimeout(SEND_TIMEOUT_SECONDS)
-            conn.sendall(b'{"ok": true}\n')
-            conn.settimeout(None)
-        except OSError:
-            self._release(job, "its runner went away during the export")
-            return
-        while self._job is job:
-            if time.monotonic() >= job["until"]:
-                self._release(job, f"it passed the {SLOT_MAX_SECONDS:g}-second limit")
-                return
-            if select.select([conn], [], [], min(0.2, SLOT_MAX_SECONDS))[0]:
-                try:
-                    gone = conn.recv(1, socket.MSG_DONTWAIT) == b""
-                except (BlockingIOError, InterruptedError):
-                    gone = False
-                except OSError:
-                    gone = True
-                if gone:
-                    self._release(job, "its runner went away")
-                    return
 
     def _op_write_token(self, req, rest, conn, uid) -> dict:
         self._held_by(req, uid)
         body = _read_body(conn, rest, req["size"], time.monotonic() + BODY_DEADLINE_SECONDS) if req["size"] else b""
         with self._lock:
             self._held_by(req, uid)
-            self._make(token_argv(str(self.root), req["turn"], req["provider"]), input=body,
-                       sentence="Couldn't update the job's copy of that token.")
+            self._helper(req["turn"], token_argv(str(self.root), req["turn"], f"{req['provider']}.json"), input=body,
+                         sentence="Couldn't update the job's copy of that token.")
         return {"ok": True}
 
     def _op_stop(self, req, rest, conn, uid) -> dict:
         with self._lock:
             self._held_by(req, uid)
-            self.stop(req["turn"])
+            if not self.stop(req["turn"]):
+                raise Refused("Couldn't stop the job.")
         return {"ok": True}
 
     def _op_cleanup(self, req, rest, conn, uid) -> dict:
-        """Only the slot's holder cleans while a slot is held."""
+        """Only the slot's holder cleans while a slot is held, unless that holder has gone. A wedged
+        box stays wedged however the holder then goes."""
         with self._lock:
             job = self._job
-            if job and job["uid"] != uid:
+            if job and not job["gone"] and job["uid"] != uid:
                 raise Refused("Another job is running on this machine.")
-            if job:
-                self._stop_and_wait(job)
-                if self._live(job):
-                    raise Refused("The job didn't stop.")
-            self._job = None
-            self.clear_files()
+            self._dirty = True
+            if not self._free(job):
+                raise Wedged(WEDGED_NOTE)
+            if self._dirty:
+                raise Refused("Couldn't remove an earlier job's files.")
         return {"ok": True}
 
     def _op_start(self, req, rest, conn, uid) -> None:
@@ -597,13 +781,16 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             if not stopped and (gone or stalled.is_set()):
                 _log(f"uid {uid}: its runner {'went away' if gone else 'stopped reading'}; "
                      f"stopping {unit_name(turn)}")
-                self.stop(turn)
-                stopped = True
+                stopped = self.stop(turn)
+                if not stopped:
+                    _log(f"could not stop {unit_name(turn)}; trying again")
+                    time.sleep(1)
             elif stopped:
                 time.sleep(0.2)
         # The unit has ended (`--wait`), and control-group kill took what it left, which is what
         # closes the pipe. The stop is for anything else: nothing here should keep the pipe open.
-        self.stop(turn)
+        if not self.stop(turn):
+            _log(f"could not stop {unit_name(turn)} at its end; the slot's end checks again")
         pumping.join(timeout=10)
         send(b"X", json.dumps(exit_info(proc.returncode, time.monotonic() - started, timeout)).encode())
         return None
@@ -667,6 +854,8 @@ class _Handler(socketserver.BaseRequestHandler):
                 reply = server.dispatch(validate_request(json.loads(line.decode())), rest, conn, uid)
             except (ValueError, UnicodeDecodeError):
                 reply = {"error": "That isn't a request."}
+            except Wedged as exc:
+                reply = {"error": str(exc), "wedged": True}
             except Refused as exc:
                 reply = {"error": str(exc)}
             except Exception as exc:  # noqa: BLE001 - one request never takes the broker down
@@ -689,13 +878,8 @@ def serve(path: str = SOCKET_PATH) -> None:
         os.unlink(path)
     except FileNotFoundError:
         pass
-    # This process holds every running job's stream, so a job from before it is nobody's.
-    subprocess.run(["systemctl", "stop", "canopy-job-*.service"], capture_output=True, timeout=60)
     server = JobBroker(path)
-    try:
-        server.clear_files()
-    except (Refused, OSError, KeyError, subprocess.SubprocessError) as exc:
-        _log(f"could not clear {JOBS_ROOT} at start: {exc}")
+    server.boot_sweep()
     os.chmod(path, 0o666)   # any local process may CONNECT; only a runner uid is answered
     _log(f"listening on {path}")
     server.serve_forever()

@@ -20,15 +20,28 @@ ETC=/etc/canopy-runner
 WORK=""
 LISTENER_PID=""
 FAILS=0
+SKIPPED=0
 #: What the client and the probe each report whatever the box, on top of one line per entry in
 #: refused.txt, sockets.txt and closed-targets.txt. Fewer verdicts than that means something
 #: crashed part-way, however many PASSes came before it. (A test runs both against these.)
-CLIENT_CHECKS=17
-PROBE_CHECKS=19
+CLIENT_CHECKS=18
+PROBE_CHECKS=22
 
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; FAILS=$((FAILS + 1)); }
-skip() { printf 'SKIP  %s\n' "$1"; }
+skip() { printf 'SKIP  %s\n' "$1"; SKIPPED=$((SKIPPED + 1)); }
+# Lines naming a path root can see go on; a missing one proves nothing by being refused (ENOENT
+# inside the unit reads just like a refusal), so it's a SKIP by name. Not in a pipeline: it counts.
+filter_existing() {
+  local path
+  while read -r path; do
+    if [ -e "$path" ]; then
+      printf '%s\n' "$path"
+    else
+      skip "$path is missing from this box, so it wasn't checked" >&2
+    fi
+  done
+}
 
 cleanup() {
   [ -n "$LISTENER_PID" ] && kill "$LISTENER_PID" 2>/dev/null
@@ -79,10 +92,21 @@ if [ "$(id -Gn "$JOB_USER" | wc -w)" = 1 ]; then
 else
   fail "$JOB_USER is in other groups: $(id -Gn "$JOB_USER")"
 fi
-if [ "$(stat -c '%U %a' "$JOBS_ROOT" 2>/dev/null)" = "$JOB_USER 700" ]; then
-  pass "$JOBS_ROOT is $JOB_USER's, 0700"
+home_of="$(getent passwd "$JOB_USER" | cut -d: -f6)"
+if [ "$home_of" = /nonexistent ]; then
+  pass "$JOB_USER has no home"
 else
-  fail "$JOBS_ROOT should be $JOB_USER's and 0700: $(stat -c '%U %a' "$JOBS_ROOT" 2>&1)"
+  fail "$JOB_USER has a home, $home_of: a planted user-site there would run in a helper"
+fi
+if [ "$(stat -c '%U %a' "$JOBS_ROOT" 2>/dev/null)" = "root 700" ]; then
+  pass "$JOBS_ROOT is root's, 0700"
+else
+  fail "$JOBS_ROOT should be root's and 0700: $(stat -c '%U %a' "$JOBS_ROOT" 2>&1)"
+fi
+if pgrep -U "$JOB_USER" >/dev/null; then
+  fail "$JOB_USER has processes with no job running: $(pgrep -U "$JOB_USER" | tr '\n' ' ')"
+else
+  pass "$JOB_USER has no process with no job running"
 fi
 if [ "$(stat -c '%U %a' "$LOCK" 2>/dev/null)" = "root 644" ]; then
   pass "$LOCK is root's, 0644"
@@ -143,8 +167,10 @@ fi
       [ -e "$envfile" ] && printf '%s\n' "$envfile"
     done
   done <<<"$rows"
-} | sort -u > "$WORK/refused.txt"
-printf '%s\n' /run/canopy-kms/sock /run/canopy-aws/sock "$BROKER" > "$WORK/sockets.txt"
+} | sort -u > "$WORK/refused-wanted.txt"
+filter_existing < "$WORK/refused-wanted.txt" > "$WORK/refused.txt"
+printf '%s\n' /run/canopy-kms/sock /run/canopy-aws/sock "$BROKER" > "$WORK/sockets-wanted.txt"
+filter_existing < "$WORK/sockets-wanted.txt" > "$WORK/sockets.txt"
 
 echo "== what a job should be refused has to be there first"
 # A refused connection only proves anything if something was listening. So: a real listener, as
@@ -223,7 +249,8 @@ sudo -n -u "$first_user" python3 -c '
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.settimeout(60); s.connect(sys.argv[1])
 s.sendall(b"{\"op\": \"cleanup\"}\n"); print(s.recv(4096).decode())' "$BROKER" >/dev/null
-sudo -n -u "$JOB_USER" sh -c "mkdir -p $JOBS_ROOT/sibling-check && echo a-sibling-token > $JOBS_ROOT/sibling-check/secret"
+mkdir -p "$JOBS_ROOT/sibling-check" && echo a-sibling-token > "$JOBS_ROOT/sibling-check/secret"
+chown -R "$JOB_USER:$JOB_USER" "$JOBS_ROOT/sibling-check"
 if [ "$(cat "$JOBS_ROOT/sibling-check/secret" 2>/dev/null)" = a-sibling-token ]; then
   pass "root sees a sibling's token file, so a job's not seeing it means something"
 else
@@ -280,6 +307,47 @@ for path in lines("refused.txt"):
             fail(f"a job can read {path}")
     except OSError as exc:
         pass_(f"a job can't read {path} ({errno.errorcode.get(exc.errno, exc.errno)})")
+
+# A helper's root: a job can see same-uid processes, and open /proc/<pid>/root of one. It must lead
+# nowhere more than its own. The client is writing tokens while this runs, so helpers come and go.
+import time as _time
+helper_root, refused_root, deadline = None, False, _time.monotonic() + 8
+while helper_root is None and not refused_root and _time.monotonic() < deadline:
+    try:
+        pids = [n for n in os.listdir("/proc") if n.isdigit() and int(n) not in (os.getpid(), os.getppid())]
+    except OSError:
+        break
+    for pid in pids:
+        try:
+            if os.stat(f"/proc/{pid}").st_uid != os.geteuid():
+                continue
+            helper_root = os.open(f"/proc/{pid}/root", os.O_RDONLY | os.O_DIRECTORY)
+            break
+        except PermissionError:
+            refused_root = True
+        except OSError:
+            pass
+    _time.sleep(0.002)
+if refused_root:
+    for what in ("opening a helper's /proc/<pid>/root", "listing the jobs root from it", "planting in it"):
+        pass_(f"{what}: refused at the open")
+elif helper_root is None:
+    for what in ("opening a helper's /proc/<pid>/root", "listing the jobs root from it", "planting in it"):
+        fail(f"{what}: no helper was seen in 8 s, so this wasn't checked")
+else:
+    pass_("a helper's /proc/<pid>/root opened, so what's behind it is checked")
+    jobs_view = None
+    try:
+        jobs_view = os.open(os.path.relpath(root, "/"), os.O_RDONLY | os.O_DIRECTORY, dir_fd=helper_root)
+        names = os.listdir(jobs_view)
+        (pass_ if names == [os.environ["CANOPY_TURN_ID"]] else fail)(f"from a helper's root, the jobs root holds only this job ({len(names)})")
+    except OSError as exc:
+        pass_(f"from a helper's root, the jobs root can't be read ({errno.errorcode.get(exc.errno, exc.errno)})")
+    try:
+        os.mkdir(".local", dir_fd=jobs_view if jobs_view is not None else helper_root)
+        fail("a job planted .local through a helper's root")
+    except OSError as exc:
+        pass_(f"a job can't plant .local through a helper's root ({errno.errorcode.get(exc.errno, exc.errno)})")
 
 for path in ("/dev/shm/x", "/var/lib/x", "/etc/x", "/usr/x"):
     try:
@@ -387,7 +455,7 @@ for _ in range(3 * 1024):
 print("ALLOCATED", flush=True)
 PY
 cat > "$WORK/client.py" <<'PY'
-import io, json, os, socket, struct, subprocess, sys, tarfile, uuid
+import io, json, os, socket, struct, subprocess, sys, tarfile, threading, time, uuid
 
 BROKER, work, job_user = sys.argv[1:4]
 EXTRA = os.environ.get("SELF_CHECK_EXTRA", "").split()   # words on each run, which a test finds them by
@@ -472,7 +540,20 @@ for req in ({"op": "exec", "command": "id"}, {"op": "start", "turn": "../x", "sl
     say("error" in ask(req), f"the broker refuses {json.dumps(req)[:70]}")
 
 job = Job()
+churning = threading.Event()
+
+def churn():
+    """Helpers for the probe to try to climb out through, while it looks for them."""
+    while not churning.is_set():
+        try:
+            ask({"op": "write_token", "turn": job.turn, "provider": "churn", "size": 2}, b"{}")
+        except OSError:
+            pass
+        time.sleep(0.02)
+
+threading.Thread(target=churn, daemon=True).start()
 output, exit_ = job.run(["python3", "probe.py"])
+churning.set()
 say("PROBE-DONE" in output, "the probe ran to its end")
 say(exit_ == {"rc": 0, "timed_out": False}, f"a good job exits 0 ({exit_})")
 left = subprocess.run(["pgrep", "-u", job_user], capture_output=True).stdout.split()
@@ -483,6 +564,8 @@ say("Another job" in str(got.get("error")), f"the job has exited but its slot ho
 job.done()
 
 job = Job()
+left = subprocess.run(["pgrep", "-U", job_user], capture_output=True).stdout.split()
+say(not left, f"the daemon that job tried to leave, and any helper, are dead by the next job's start ({len(left)})")
 output, exit_ = job.run(["python3", "memory.py"])
 say("ALLOCATED" not in output and exit_.get("rc") not in (0, None), f"MemoryMax ended a 3 GiB allocation ({exit_})")
 job.done()
@@ -552,7 +635,7 @@ esac
 
 echo
 if [ "$FAILS" -gt 0 ]; then
-  echo "$FAILS check(s) FAILED."
+  echo "$FAILS check(s) FAILED, $SKIPPED skipped."
   exit 1
 fi
-echo "All checks passed."
+echo "All checks passed, $SKIPPED skipped."

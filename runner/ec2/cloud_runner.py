@@ -3116,13 +3116,19 @@ def setup_jobs(box: dict, *, locked: bool, run=subprocess.run, chown=os.chown, u
         return False
     try:
         if run(["id", "-u", JOB_USER], capture_output=True).returncode != 0:
-            res = run(["useradd", "--system", "--no-create-home", "--home-dir", str(root),
+            # No home. It used to be the jobs root, where a planted user-site ran in the next helper.
+            res = run(["useradd", "--system", "--no-create-home", "--home-dir", "/nonexistent",
                        "--shell", "/usr/sbin/nologin", "--comment", "canopy plain jobs", JOB_USER],
                       capture_output=True)
             if res.returncode != 0:
                 raise RuntimeError(f"useradd {JOB_USER} failed: {res.stderr!r}")
         pw = (uid_of or pwd.getpwnam)(JOB_USER)
-        _mkdir_owned(root, uid=pw.pw_uid, gid=pw.pw_gid, mode=0o700, chown=chown)
+        if getattr(pw, "pw_dir", "/nonexistent") != "/nonexistent":
+            res = run(["usermod", "--home", "/nonexistent", JOB_USER], capture_output=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"usermod {JOB_USER} failed: {res.stderr!r}")
+        # Root's, not the job user's: a unit is only ever given its own folder inside it.
+        _mkdir_owned(root, uid=0, gid=0, mode=0o700, chown=chown)
         if not lock.exists():   # never replaced: a held flock is on the inode
             _write_owned(lock, b"", uid=0, gid=0, mode=0o644, chown=chown)
         job_rules(pw.pw_uid, locked=locked, run=run)
@@ -7041,6 +7047,10 @@ class JobRefused(Exception):
     """A job that cannot run, with the plain sentence a person reads on the failed turn."""
 
 
+class JobWedged(JobRefused):
+    """The broker couldn't confirm a job's processes are gone: this box runs no more jobs."""
+
+
 class JobSpec(typing.NamedTuple):
     run: list
     timeout_minutes: int
@@ -7129,6 +7139,8 @@ def _job_broker_reply(conn: socket.socket) -> dict:
         reply = json.loads(buf)
     except (OSError, ValueError):
         raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    if isinstance(reply, dict) and reply.get("wedged"):
+        raise JobWedged(str(reply.get("error")))
     if not isinstance(reply, dict) or reply.get("error") or not reply.get("ok"):
         raise JobRefused(str((reply or {}).get("error") or "This machine's job service refused that."))
     return reply
@@ -7197,7 +7209,8 @@ def _job_can_run() -> bool:
             time.sleep(wait)
     for key, want, why in (("job_user", True, f"the broker doesn't see {JOB_USER}"),
                            ("supported", True, f"systemd {status.get('systemd')} can't run the unit"),
-                           ("locked", False, "a runner on this box is egress-locked")):
+                           ("locked", False, "a runner on this box is egress-locked"),
+                           ("wedged", False, f"a process of {JOB_USER} couldn't be stopped")):
         if status.get(key) is not want:
             _log(f"jobs: this box can't run them: {why}")
             return False
@@ -7334,6 +7347,19 @@ def _job_unlock(fd: int) -> None:
     _JOB_LOCK.release()
 
 
+def _job_drop_capability(why: str) -> None:
+    """A process of the job user survived: say so now. The capability is otherwise read only at this
+    runner's start, and canopy-web would go on handing it jobs that can only fail."""
+    if RUNNER_CAPS.get("jobs") is False:
+        return
+    _log(f"jobs: this box stops reporting them: {why}")
+    RUNNER_CAPS["jobs"] = False
+    if _RUNNER_ID:
+        with contextlib.suppress(Exception):
+            _api("PATCH", f"/runners/{_RUNNER_ID}",
+                 {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
+
+
 def _job_restart_sweep() -> None:
     """Daemon start: whatever a previous daemon's job left is nobody's, so it goes, before
     any held job turn is reported (`_adopt_one`). If another runner's job holds the lock,
@@ -7349,6 +7375,8 @@ def _job_restart_sweep() -> None:
         return
     try:
         _job_broker("cleanup")
+    except JobWedged as exc:
+        _job_drop_capability(str(exc))
     except JobRefused as exc:
         _log(f"jobs: could not clear what the last daemon left: {exc}")
     finally:
@@ -7618,11 +7646,18 @@ def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
             holder = _job_broker_hold(data, turn_id)
             del data
             return _job_supervise(turn_id, slug, spec, _JobOutput(emit))
+        except JobWedged as exc:
+            _job_drop_capability(str(exc))
+            return False, str(exc)
         except JobRefused as exc:
             return False, str(exc)
         finally:
-            with contextlib.suppress(JobRefused):
+            try:
                 _job_broker("cleanup")
+            except JobWedged as exc:   # the job's own verdict stands; closing the hold can't free this
+                _job_drop_capability(str(exc))
+            except JobRefused as exc:
+                _log(f"warn: job {turn_id[:8]}'s cleanup was refused: {exc}")
             if holder is not None:
                 holder.close()
     finally:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import pathlib
 import socket
 import struct
 import subprocess
@@ -175,16 +176,37 @@ def test_unpack_runs_with_no_owner_or_mode_from_the_archive(jb):
                                                  "-C", f"{JOB_DIR}/repo"]
 
 
-def test_as_job_drops_to_the_job_user_and_nothing_else(jb, monkeypatch):
-    seen = {}
+def _props(argv):
+    return [a for a in argv[:argv.index("--")] if a.startswith("--property=")]
 
-    def run(argv, **kw):
-        seen.update(kw, argv=argv)
-        return subprocess.CompletedProcess(argv, 0, b"", b"")
-    monkeypatch.setattr(jb.subprocess, "run", run)
-    jb.as_job_user(["true"])
-    assert seen["user"] == "canopy-job" and seen["group"] == "canopy-job" and seen["extra_groups"] == []
-    assert "CANOPY_TOKEN" not in seen["env"] and set(seen["env"]) == {"PATH"} and "shell" not in seen
+
+#: What a helper may differ from its job in: how long, where it starts, and which six values.
+_UNIT_SPECIFIC = ("--property=RuntimeMaxSec=", "--property=WorkingDirectory=", "--property=Environment=",
+                  "--property=BindPaths=")
+
+
+def test_a_helper_gets_every_property_a_job_gets(jb):
+    shared = [p for p in _props(_argv(jb)) if not p.startswith(_UNIT_SPECIFIC)]
+    assert len(shared) > 30
+    helper = jb.helper_argv(T, ["true"], root="/var/lib/canopy-jobs", seq=1)
+    assert set(shared) <= set(_props(helper))
+    assert f"--property=BindPaths={JOB_DIR}" in helper and f"--property=WorkingDirectory={JOB_DIR}" in helper
+    assert "--uid=canopy-job" in helper and "--gid=canopy-job" in helper
+
+
+def test_helper_units_have_their_own_names(jb):
+    one = jb.helper_argv(T, ["true"], root="/var/lib/canopy-jobs", seq=1)
+    two = jb.helper_argv(T, ["true"], root="/var/lib/canopy-jobs", seq=2)
+    assert f"--unit=canopy-job-helper-1-{T}" in one and f"--unit=canopy-job-helper-2-{T}" in two
+
+
+def test_nothing_runs_as_the_job_user_outside_a_unit(jb):
+    source = pathlib.Path(jb.__file__).read_text()
+    assert "user=JOB_USER" not in source and "extra_groups" not in source and "as_job_user" not in source
+
+
+def test_python_helpers_load_nothing_from_the_users_site(jb):
+    assert jb.token_argv("/r", T, "sf.json")[:4] == ["python3", "-I", "-S", "-c"]
 
 
 @pytest.mark.parametrize("rc,elapsed,want", [(0, 100, False), (0, 900, False), (3, 100, False), (1, 900, True),
@@ -281,7 +303,7 @@ def test_a_peer_with_another_uid_is_refused_before_anything(box):
     box.uid = 999
     for req in ({"op": "status"}, {"op": "cleanup"}, GOOD_START, {"op": "not-even-an-op"}):
         assert "not a runner" in _ask(box, req)["error"]
-    assert box.requests == [] and box.as_job_calls == [] and box.spawned == []
+    assert box.requests == [] and box.helper_units == [] and box.spawned == []
 
 
 def test_root_is_not_a_runner_either(box):
@@ -304,7 +326,8 @@ def test_a_request_that_is_not_json_is_refused(box):
 
 def test_status_answers(box):
     got = _ask(box, {"op": "status"})
-    assert got == {"ok": True, "systemd": 255, "supported": True, "job_user": True, "locked": False, "running": ""}
+    assert got == {"ok": True, "systemd": 255, "supported": True, "job_user": True, "locked": False, "running": "",
+                   "wedged": False}
 
 
 def _hold(h, turn, data):
@@ -442,16 +465,16 @@ def test_a_holder_going_away_stops_its_running_job_too(box, tmp_path):
 def test_files_that_couldnt_be_cleared_refuse_the_next_export(box, tmp_path, monkeypatch):
     data = _tar(tmp_path, a="1")
     c, _ = _hold(box, T, data)
-    real = box.as_job
-    monkeypatch.setattr(box.server, "as_job",
-                        lambda args, input=None: subprocess.CompletedProcess(args, 1, b"", b"") if args[0] == "find"
-                        else real(args, input=input))
+    real = box.run_unit
+    monkeypatch.setattr(box.server, "run_unit",
+                        lambda argv, input=None: subprocess.CompletedProcess(argv, 1, b"", b"") if "find" in argv
+                        else real(argv, input=input))
     c.close()
     time.sleep(0.5)
     _as_b(box)
     got = _hold(box, T2, data)[1]
     assert "error" in got and not (tmp_path / T2).exists()
-    monkeypatch.setattr(box.server, "as_job", real)
+    monkeypatch.setattr(box.server, "run_unit", real)
     assert _hold(box, T2, data)[1]["ok"] and not (tmp_path / T).exists()
 
 
@@ -475,7 +498,7 @@ def test_another_runners_cleanup_cant_wipe_a_prepared_job(box, tmp_path):
 
 def test_cleanup_failing_says_so(box, tmp_path, monkeypatch):
     _hold(box, T, _tar(tmp_path, a="1"))
-    monkeypatch.setattr(box.server, "as_job", lambda args, input=None: subprocess.CompletedProcess(args, 1, b"", b""))
+    monkeypatch.setattr(box.server, "run_unit", lambda argv, input=None: subprocess.CompletedProcess(argv, 1, b"", b""))
     assert "error" in _ask(box, {"op": "cleanup"})
 
 
@@ -592,7 +615,7 @@ def test_a_refresh_replaces_the_token_atomically(box, tmp_path):
 
 def test_an_export_is_streamed_never_held_in_root(box, tmp_path, monkeypatch):
     writes = []
-    real = box.as_job_pipe
+    real = box.run_unit_pipe
 
     def pipe(args):
         proc = real(args)
@@ -607,7 +630,7 @@ def test_an_export_is_streamed_never_held_in_root(box, tmp_path, monkeypatch):
                 return getattr(stdin, name)
         proc.stdin = Counting()
         return proc
-    monkeypatch.setattr(box.server, "as_job_pipe", pipe)
+    monkeypatch.setattr(box.server, "run_unit_pipe", pipe)
     data = _tar(tmp_path, big="x" * (5 * 1024 * 1024))
     assert _hold(box, T, data)[1]["ok"]
     assert (tmp_path / T / "repo" / "big").stat().st_size == 5 * 1024 * 1024
@@ -639,6 +662,208 @@ def test_an_export_cut_short_releases_its_slot(box, tmp_path):
     assert _wait(lambda: not (tmp_path / T).exists() and box.server._job is None)
 
 
+# ── no process of the uid, before any slot is freed (the second critical) ──
+# A helper or a daemon outside its unit could read the next job's tokens, so nothing is trusted
+# to have ended: it is killed and confirmed gone, or the slot stays held.
+
+def test_every_helper_of_a_slot_is_a_confined_unit(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 3}, b"abc")["ok"]
+    assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 0})["ok"]
+    assert _ask(box, {"op": "cleanup"})["ok"]
+    words = [a for c in box.as_job_calls for a in c]
+    assert "tar" in words and "find" in words and any("os.rename" in w for w in words)
+    assert len(box.helper_units) >= 5
+    for argv in box.helper_units:
+        assert "--uid=canopy-job" in argv and f"--property=BindPaths={tmp_path}/{T}" in argv
+        assert "--property=ProtectHome=yes" in argv and f"--property=TemporaryFileSystem={tmp_path}" in argv
+
+
+def test_a_helper_that_cant_start_fails_closed(box, tmp_path, monkeypatch):
+    def nope(argv, input=None):
+        raise OSError("no systemd-run")
+    _hold(box, T, _tar(tmp_path, a="1"))
+    monkeypatch.setattr(box.server, "run_unit", nope)
+    assert "error" in _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 3}, b"abc")
+    assert not (tmp_path / T / "tokens" / "sf.json").exists()
+
+
+def test_an_export_whose_helper_cant_start_fails_closed_and_frees_the_slot(box, tmp_path, monkeypatch):
+    def nope(argv):
+        raise OSError("no systemd-run")
+    monkeypatch.setattr(box.server, "run_unit_pipe", nope)
+    assert "error" in _hold(box, T, _tar(tmp_path, a="1"))[1]
+    assert _wait(lambda: box.server._job is None) and not (tmp_path / T).exists()
+
+
+def test_job_folders_are_made_by_root_and_given_to_the_job_user(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    assert len(box.chowned) == 4
+    assert not [c for c in box.as_job_calls if c[0] == "mkdir"]
+
+
+def test_a_slot_isnt_freed_until_no_process_of_the_uid_remains(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    box.pgrep_calls = 0
+    assert _ask(box, {"op": "cleanup"})["ok"]
+    assert box.pgrep_calls >= 1 and box.server._job is None
+
+
+WEDGED = "couldn't be stopped"
+
+
+def test_a_survivor_keeps_the_slot_and_says_so(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    c, _ = _hold(box, T, data)
+    box.survivors = True
+    got = _ask(box, {"op": "cleanup"})
+    assert WEDGED in got["error"] and got["wedged"] is True
+    assert box.server._job is not None and (tmp_path / T).exists()
+    status = _ask(box, {"op": "status"})
+    assert status["wedged"] is True
+
+
+def test_closing_the_hold_doesnt_undo_a_refused_cleanup(box, tmp_path):
+    """The runner closes its hold straight after cleanup, refused or not."""
+    data = _tar(tmp_path, a="1")
+    c, _ = _hold(box, T, data)
+    box.survivors = True
+    assert WEDGED in _ask(box, {"op": "cleanup"})["error"]
+    c.close()
+    time.sleep(0.5)
+    assert box.server._job is not None and (tmp_path / T).exists()
+    _as_b(box)
+    got = _hold(box, T2, data)[1]
+    assert WEDGED in got["error"] and got["wedged"] is True and not (tmp_path / T2).exists()
+
+
+def test_a_slot_wedged_by_a_gone_holder_is_retried_by_the_next_export(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    c, _ = _hold(box, T, data)
+    box.survivors = True
+    c.close()
+    assert _wait(lambda: box.server._job is not None and box.server._job.get("gone"))
+    box.survivors = False
+    _as_b(box)
+    assert _hold(box, T2, data)[1]["ok"]
+    assert not (tmp_path / T).exists() and _ask(box, {"op": "status"})["wedged"] is False
+
+
+def test_a_slot_wedged_past_its_limit_stays_held(box, tmp_path, monkeypatch):
+    monkeypatch.setattr(box.mod, "SLOT_MAX_SECONDS", 0.5)
+    assert _hold(box, T, _tar(tmp_path, a="1"))[1]["ok"]
+    box.survivors = True
+    time.sleep(1.0)
+    assert box.server._job is not None and (tmp_path / T).exists()
+
+
+def test_a_process_left_over_refuses_the_next_export(box, tmp_path):
+    box.survivors = True
+    got = _hold(box, T, _tar(tmp_path, a="1"))[1]
+    assert WEDGED in got["error"] and box.server._job is None and not (tmp_path / T).exists()
+
+
+def test_a_unit_that_outlives_systemd_run_is_still_live(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    with _start(box, ["true"]) as c:
+        assert json.loads(_frames(c)[-1][1])["rc"] == 0
+    job = box.server._job
+    assert box.server._live(job) is False
+    box.unit_alive = True
+    assert box.server._live(job) is True
+
+
+def test_a_unit_that_wont_stop_keeps_the_slot(box, tmp_path, monkeypatch):
+    monkeypatch.setattr(box.mod, "STOP_WAIT_SECONDS", 0.1)
+    _hold(box, T, _tar(tmp_path, a="1"))
+    with _start(box, ["true"]) as c:
+        _frames(c)
+    box.unit_alive = True
+    assert WEDGED in _ask(box, {"op": "cleanup"})["error"]
+    assert box.server._job is not None
+
+
+def test_a_stop_that_fails_says_so(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    box.stop_ok = False
+    assert "error" in _ask(box, {"op": "stop", "turn": T})
+
+
+def test_stop_unit_reads_systemctls_answer(jb, monkeypatch):
+    for code, want in ((0, True), (5, True), (1, False)):      # 5: already gone, with --collect
+        monkeypatch.setattr(jb.subprocess, "run",
+                            lambda argv, code=code, **kw: subprocess.CompletedProcess(argv, code, "", ""))
+        assert jb.stop_unit(T) is want
+
+
+def test_an_unexpected_error_frees_the_slot_the_checked_way(box, tmp_path, monkeypatch):
+    def boom(argv):
+        raise ValueError("not a Refused")
+    monkeypatch.setattr(box.server, "run_unit_pipe", boom)
+    box.pgrep_calls = 0
+    assert "error" in _hold(box, T, _tar(tmp_path, a="1"))[1]
+    assert _wait(lambda: box.server._job is None) and box.pgrep_calls >= 1
+
+
+def test_an_unexpected_error_with_a_survivor_keeps_the_slot(box, tmp_path, monkeypatch):
+    def boom(argv):
+        raise ValueError("not a Refused")
+    real = box.no_processes
+    calls = {"n": 0}
+
+    def after_start():
+        calls["n"] += 1
+        return calls["n"] == 1 and real()       # clean for the export's own check, then a survivor
+    monkeypatch.setattr(box.server, "no_processes", after_start)
+    monkeypatch.setattr(box.server, "run_unit_pipe", boom)
+    assert "error" in _hold(box, T, _tar(tmp_path, a="1"))[1]
+    time.sleep(0.3)
+    assert box.server._job is not None
+
+
+def test_boot_sweep_stops_kills_and_clears(box, tmp_path):
+    (tmp_path / T).mkdir()
+    box.server.boot_sweep()
+    assert box.sweeps == ["stop_all"] and box.pgrep_calls >= 1 and not (tmp_path / T).exists()
+    assert box.server._wedged is None and box.server._dirty is False
+
+
+def test_boot_sweep_with_a_survivor_wedges_the_box(box, tmp_path):
+    (tmp_path / T).mkdir()
+    box.survivors = True
+    box.server.boot_sweep()
+    assert box.server._wedged and (tmp_path / T).exists()
+    assert _ask(box, {"op": "status"})["wedged"] is True
+    assert WEDGED in _hold(box, T2, _tar(tmp_path, a="1"))[1]["error"]
+
+
+def test_clear_copes_with_whatever_is_in_the_root(box, tmp_path):
+    (tmp_path / T / "deep").mkdir(parents=True)
+    (tmp_path / T / "deep" / "x").write_text("x")
+    os.chmod(tmp_path / T / "deep", 0o500)
+    (tmp_path / "a-file").write_text("x")
+    (tmp_path / "a-link").symlink_to("/etc")
+    (tmp_path / "sibling-check").mkdir()
+    box.server.clear_files()
+    assert list(tmp_path.iterdir()) == [] and box.server._dirty is False
+
+
+def test_clear_never_follows_a_link(box, tmp_path):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "keep").write_text("x")
+    (tmp_path / "a-link").symlink_to(outside)
+    box.server.clear_files()
+    assert (outside / "keep").exists() and list(tmp_path.iterdir()) == []
+
+
+def test_clear_refuses_a_name_it_wont_put_in_a_property(box, tmp_path):
+    (tmp_path / "a b").mkdir()
+    with pytest.raises(box.mod.Refused):
+        box.server.clear_files()
+    assert box.server._dirty is True
+
+
 def test_install_restarts_only_when_its_code_changed(jb, tmp_path):
     calls = []
     run = lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")  # noqa: E731
@@ -664,7 +889,6 @@ def test_install_never_waits_for_itself_at_boot(jb, tmp_path):
 
 def test_the_broker_stays_stdlib_only():
     import ast
-    import pathlib
     import sys
     tree = ast.parse((pathlib.Path(__file__).resolve().parent.parent / "job_broker.py").read_text())
     names = {n.names[0].name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)}
