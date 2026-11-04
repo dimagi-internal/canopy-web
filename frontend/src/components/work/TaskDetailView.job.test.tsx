@@ -20,6 +20,10 @@ vi.mock('@/api/work', async (orig) => ({
   listMilestones: vi.fn(async () => []),
 }))
 vi.mock('@/api/triggers', () => ({ runTriggerNow: vi.fn() }))
+vi.mock('@/api/agents', async (orig) => ({
+  ...(await orig<typeof import('@/api/agents')>()),
+  getAgent: vi.fn(async () => ({ is_admin: true })),
+}))
 vi.mock('./useDirectory', () => ({
   useDirectory: () => ({ people: [], agents: [], labels: [], projects: [] }),
   invalidateDirectory: () => {},

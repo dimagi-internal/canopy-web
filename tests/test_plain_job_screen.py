@@ -142,3 +142,68 @@ def test_the_other_decisions_on_a_failed_jobs_review_still_work(w):
                        actor_workspace_ids={"connect"}, may_start_turns=True)
     nag.refresh_from_db()
     assert nag.ask_closed_at is not None
+
+
+# --- no path starts a model turn from a job's review ------------------------------------------
+
+
+def _turns_after(w, nag, fn):
+    before = Turn.objects.count()
+    fn()
+    return Turn.objects.count() - before
+
+
+def _post(c, url, body):
+    return c.post(url, body, content_type="application/json")
+
+
+@pytest.mark.parametrize("action", ["approve", "reply", "nudge"])
+def test_no_api_path_starts_a_turn_from_a_job_review(w, action):
+    _, nag = _failed_job_nag(w)
+    body = {"action": action, "comment": "go on"}
+    before = Turn.objects.count()
+    c = _c(w["boss"])
+    r1 = _post(c, f"/api/agents/hal/tasks/{nag.key}/actions", body)
+    r2 = _post(c, f"/api/tasks/{nag.key}/actions", body)
+    r3 = _post(c, "/api/tasks/bulk", {"keys": [nag.key], "action": body})
+    assert Turn.objects.count() == before, (r1.content, r2.content, r3.content)
+    if action == "reply":     # a note is recorded; nothing starts
+        assert r1.status_code == 200 and r2.status_code == 200
+        from apps.agents.models import AgentTaskAction  # noqa: PLC0415 — test-local
+        assert AgentTaskAction.objects.filter(task=nag, action="reply").count() == 3
+    else:
+        assert r1.status_code in (409, 422) and r2.status_code in (409, 422)
+        assert r3.json()[0]["ok"] is False
+
+
+def test_the_service_starts_no_turn_from_a_job_review_by_any_action(w):
+    _, nag = _failed_job_nag(w)
+    before = Turn.objects.count()
+    for action in ("reply", "nudge", "approve"):
+        try:
+            agent_services.act(nag, action=action, comment="x", by="boss@dimagi.com", by_user=w["boss"],
+                               actor_workspace_ids={"connect"}, may_start_turns=True)
+        except ValueError:
+            pass
+    assert Turn.objects.count() == before
+
+
+# --- Run now on a job is an admin's ------------------------------------------------------------
+
+
+def test_an_editor_pressing_run_now_on_a_job_is_refused_with_the_sentence(w):
+    sched, _ = _failed_job_nag(w)
+    before = Turn.objects.count()
+    r = _c(w["ed"]).post(f"/api/agents/hal/triggers/{sched.pk}/run-now")
+    assert r.status_code == 403 and r.json()["detail"] == "Only an admin of hal can change a job."
+    r = _c(w["ed"]).post(f"/api/agents/hal/schedules/{sched.pk}/run-now")
+    assert r.status_code == 403 and r.json()["detail"] == "Only an admin of hal can change a job."
+    assert Turn.objects.count() == before
+
+
+def test_an_admin_can_run_a_job_now_and_an_editor_an_ordinary_schedule(w):
+    sched, _ = _failed_job_nag(w)
+    assert _c(w["boss"]).post(f"/api/agents/hal/triggers/{sched.pk}/run-now").status_code in (200, 202)
+    plain = AgentSchedule.objects.create(agent=w["agent"], name="plain", prompt="/hal:turn",
+                                         cron="0 9 * * 5", created_by=w["ed"])
+    assert _c(w["ed"]).post(f"/api/agents/hal/triggers/{plain.pk}/run-now").status_code in (200, 202)

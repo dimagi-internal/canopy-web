@@ -79,9 +79,13 @@ deploy or fleet change.
    broker and prints one PASS or FAIL per thing a job must not reach (the home directories, every
    token path, a sibling job's token, the metadata address, localhost and the box's own addresses,
    each proxy port, the brokers' sockets, the memory and task limits, the environment, a background
-   process outliving the job). **Every line must print PASS.** A FAIL means jobs are not safe on
-   that box: leave them off and fix it first. A SKIP is only for a thing the box doesn't have
-   (for example IPv6); read each one before accepting it.
+   process outliving the job). **Every line must print PASS, or SKIP for a path or feature that
+   doesn't exist on that box.** A SKIP names what is absent (a missing path such as a broker's
+   socket, "IPv6 localhost: this box has none", "IMDSv6: not answering even for root here", or a locked
+   runner that already stops jobs); read each one and confirm it really is absent. **Any FAIL means
+   don't rely on jobs on that box**: leave them off and fix it first. The script ends with
+   "All checks passed, N skipped." (exit 0) or "N check(s) FAILED" (exit 1); fewer verdicts than it
+   expects, or a client that crashed, is a FAIL.
 4. **Only then rely on jobs.** A box reports `jobs` after its next restart or heartbeat once
    `status` from the broker says it can; the schedule screen's "Waiting for a cloud machine that
    can run jobs." clears when a job is claimed.

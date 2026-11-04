@@ -132,7 +132,7 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     # A proposed project's decision card: who may start or decline it is narrower
     # than who may act on a card (decision 4(b)) — `proposals.before_act`.
     proposals.before_act(task, action, by_user)
-    if action == AgentTaskAction.APPROVE and task.job_schedule_id is not None:
+    if action in (AgentTaskAction.APPROVE, AgentTaskAction.NUDGE) and task.job_schedule_id is not None:
         # A failed job's review has nothing to approve: with no `on_approve` an approve
         # starts a model turn on the agent, and a job runs no model. Refused before
         # anything is written, so the ask stays open for the other decisions.
@@ -164,7 +164,10 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     # Answering a question runs `on_approve` when the card has one; without one,
     # the card's own turn carries the answer (below) — the agent asked for it.
     runs_on_approve = action == AgentTaskAction.APPROVE or (action == AgentTaskAction.REPLY and closes)
-    starts_card_turn = task.agent_id is not None and (
+    # A failed job's review never starts a turn, whatever the action: a reply is a note on it,
+    # recorded with no turn (the job runs no model, so a card turn would be an AI doing nothing useful).
+    job_review = task.job_schedule_id is not None
+    starts_card_turn = task.agent_id is not None and not job_review and (
         action in (AgentTaskAction.APPROVE, AgentTaskAction.NUDGE)
         or (action == AgentTaskAction.REPLY and closes and not by_agent_itself)
         or (action == AgentTaskAction.REPLY and not closes and may_start_turns))

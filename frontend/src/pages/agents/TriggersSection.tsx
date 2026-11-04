@@ -164,7 +164,7 @@ export function TriggersSection(): JSX.Element {
                     <StatusChip status={row.last_status} />
                   </Td>
                   <Td density="roomy" nowrap align="right">
-                    {row.kind === 'cron' && (
+                    {row.kind === 'cron' && (agent.is_admin || !row.job) && (
                       <button
                         type="button"
                         disabled={busy === row.id}

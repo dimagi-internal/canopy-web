@@ -79,4 +79,15 @@ describe('TriggersSection plain jobs', () => {
     expect(screen.queryByText('Only an admin of hal can change a job.')).toBeNull()
     expect(screen.queryByText('Run a job (no AI)')).toBeNull()
   })
+
+  it('hides Run now on a job row from someone who is not an admin, and keeps it on an ordinary one', async () => {
+    isAdmin = false
+    listTriggers.mockResolvedValueOnce([
+      row({ id: 1, job: 'sync-leads', job_repo: 'hal-jobs' }),
+      row({ id: 2, name: 'Weekly', prompt: '/hal:turn' }),
+    ])
+    render(<TriggersSection />)
+    await screen.findByText('Weekly')
+    expect(screen.getAllByText('Run now')).toHaveLength(1)
+  })
 })

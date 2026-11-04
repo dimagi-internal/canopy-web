@@ -1,5 +1,6 @@
-import { useState, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { Button } from 'canopy-ui/ui'
+import { getAgent } from '@/api/agents'
 import { runTriggerNow } from '@/api/triggers'
 import { Markdown } from '@/components/Markdown'
 import type { TaskActionName } from '@/api/work'
@@ -24,6 +25,17 @@ export function JobReviewDecision({
   const [busy, setBusy] = useState(false)
   const [started, setStarted] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Running a job needs agent admin, as setting one does: offered only to one.
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
+  useEffect(() => {
+    let alive = true
+    getAgent(agentSlug)
+      .then((a) => alive && setIsAdmin(Boolean(a.is_admin)))
+      .catch(() => alive && setIsAdmin(false))
+    return () => {
+      alive = false
+    }
+  }, [agentSlug])
   const runAgain = async () => {
     setBusy(true)
     setError(null)
@@ -51,9 +63,11 @@ export function JobReviewDecision({
       <p className="mb-1 text-[12px] font-semibold text-warning">A job needs your attention</p>
       {askBody && <Markdown className="mb-2 text-[13px]">{askBody}</Markdown>}
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={busy || started} onClick={() => void runAgain()}>
-          Run now
-        </Button>
+        {isAdmin && (
+          <Button size="sm" disabled={busy || started} onClick={() => void runAgain()}>
+            Run now
+          </Button>
+        )}
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void setAside('snooze')}
                 title="Out of Triage for a week, or until something happens on it">
           Snooze
@@ -62,6 +76,9 @@ export function JobReviewDecision({
           Decline
         </Button>
       </div>
+      {isAdmin === false && (
+        <p className="mt-1.5 text-[11.5px] text-muted-foreground">Only an admin of {agentSlug} can change a job.</p>
+      )}
       {started && (
         <p className="mt-1.5 text-[11.5px] text-muted-foreground">
           The job is queued to run again. A good run closes this on its own.

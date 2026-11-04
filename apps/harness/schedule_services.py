@@ -478,7 +478,9 @@ def run_schedule_now(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=AgentSchedule.CRON
     )
-    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode)
+    # Running a job is changing what runs with the agent's connections: an agent admin's, as setting it is.
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode,
+                      job=bool(schedule.job))
     try:
         schedule_turns.run_schedule_now(schedule, clicked_by=user)
     except triggers.TriggerRefused as exc:
