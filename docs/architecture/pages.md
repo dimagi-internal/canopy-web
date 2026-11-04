@@ -762,7 +762,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     sent from and confirmed with your passkey — `/api/me/host-grants/`). Stop ends
     either.
   - **Runners** — runners you administer (each linking to its page, where a
-    box's Claude login and admins live), opted-in repos (`#canopy-projects`,
+    box's Claude login and admins live), opted-in repos and the workspaces each may be worked in from (`#canopy-projects`,
     `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens
     on; it loads `/runner-app/`, which redirects to the choice,
     `RunnerAppPreference`).

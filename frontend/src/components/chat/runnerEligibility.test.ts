@@ -7,6 +7,7 @@ import {
   parkedReason,
   parkedSummary,
   partitionByRunnerReachability,
+  repoChoices,
   runnerOptionLabel,
   satisfiesRequirements,
 } from "./runnerEligibility";
@@ -42,6 +43,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     owner_email: null,
     can_manage: true,
     can_administer: true,
+    repo_workspaces: {},
     open_sessions: 0,
     flags: [],
     known_flags: ['sensitive_data'],
@@ -239,3 +241,22 @@ describe("directed-only boxes", () => {
     expect(runnerOptionLabel(runner({ name: "cloud-ec2-2", capabilities: { sessions: true } }))).toBe("cloud-ec2-2");
   });
 });
+
+describe('repoChoices', () => {
+  const box = (over: Partial<RunnerOut>) => runner({ capabilities: { sessions: true }, status: 'online', ...over })
+
+  it('offers each repo in the workspaces the server says you can start it in, not everything a box holds', () => {
+    const choices = repoChoices([
+      box({ capabilities: { sessions: true, projects: ['bailey', 'commcare-hq'] }, repo_workspaces: { bailey: ['marshellis'] } }),
+    ])
+    expect(choices).toEqual([{ slug: 'bailey', workspace: 'marshellis' }])
+  })
+
+  it('offers a repo once per workspace, and nothing from an offline box', () => {
+    expect(repoChoices([
+      box({ repo_workspaces: { acme: ['a', 'b'] } }),
+      box({ repo_workspaces: { acme: ['a'] } }),
+      box({ status: 'offline', repo_workspaces: { other: ['a'] } }),
+    ])).toEqual([{ slug: 'acme', workspace: 'a' }, { slug: 'acme', workspace: 'b' }])
+  })
+})

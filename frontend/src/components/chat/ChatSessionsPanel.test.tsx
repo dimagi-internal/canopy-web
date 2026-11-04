@@ -75,6 +75,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     owner_email: null,
     can_manage: true,
     can_administer: true,
+    repo_workspaces: {},
     open_sessions: 0,
     flags: [],
     known_flags: ['sensitive_data'],
@@ -274,17 +275,17 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
   it('filters project "Run on" options to online + sessions-capable fleet runners', async () => {
     listSessions.mockResolvedValue([])
-    // The repos offered are the ones online, session-capable runners report;
-    // "Run on" then narrows to the runners holding the picked repo.
+    // The repos offered are the ones online, session-capable runners offer you;
+    // "Run on" then narrows to the runners offering the picked repo there.
     listRunners.mockResolvedValue([
-      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true, projects: ['acme'] } }),
-      fleetRunner('b', { name: 'Beta', status: 'offline', capabilities: { sessions: true, projects: ['acme'] } }),
-      fleetRunner('c', { name: 'Gamma', status: 'online', capabilities: { projects: ['acme'] } }),
-      fleetRunner('d', { name: 'Delta', status: 'online', capabilities: { sessions: true, projects: ['other'] } }),
+      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true, projects: ['acme'] }, repo_workspaces: { acme: ['w1'] } }),
+      fleetRunner('b', { name: 'Beta', status: 'offline', capabilities: { sessions: true, projects: ['acme'] }, repo_workspaces: { acme: ['w1'] } }),
+      fleetRunner('c', { name: 'Gamma', status: 'online', capabilities: { projects: ['acme'] }, repo_workspaces: { acme: ['w1'] } }),
+      fleetRunner('d', { name: 'Delta', status: 'online', capabilities: { sessions: true, projects: ['other'] }, repo_workspaces: { other: ['w1'] } }),
       // Choosing a box for a project chat needs you to administer it (the server
       // 403s otherwise), and a directed-only box is offered, labelled.
-      fleetRunner('e', { name: 'Epsilon', status: 'online', can_administer: false, capabilities: { sessions: true, projects: ['acme'] } }),
-      fleetRunner('f', { name: 'Test', status: 'online', directed: true, capabilities: { sessions: true, projects: ['acme'] } }),
+      fleetRunner('e', { name: 'Epsilon', status: 'online', can_administer: false, capabilities: { sessions: true, projects: ['acme'] }, repo_workspaces: { acme: ['w1'] } }),
+      fleetRunner('f', { name: 'Test', status: 'online', directed: true, capabilities: { sessions: true, projects: ['acme'] }, repo_workspaces: { acme: ['w1'] } }),
     ])
 
     renderPanel([])
@@ -580,7 +581,7 @@ describe('ChatSessionsPanel — empty states', () => {
 
   it('says "Pick one from New chat with… above" when there are repos but zero agents and zero sessions', async () => {
     listRunners.mockResolvedValue([
-      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true, projects: ['acme'] } }),
+      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true, projects: ['acme'] }, repo_workspaces: { acme: ['w1'] } }),
     ])
     listSessions.mockResolvedValue([])
 

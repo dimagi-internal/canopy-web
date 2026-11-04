@@ -11,6 +11,8 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from apps.workspaces.models import Workspace
+
 from .. import canopy_release, clis
 
 # Owned here (not services.py) so Runner.live_status can use it without a
@@ -448,11 +450,48 @@ class Runner(models.Model):
     def opts_in(self, project: str) -> bool:
         """Whether this runner's owner uses canopy in `project` (`ProjectOptIn`),
         held or not — the question for a session the box reports."""
+        return self._opt_in().covers(project)
+
+    def _opt_in(self) -> ProjectOptIn:
         opt_in = getattr(self, self.OPT_IN_CACHE, None)
         if opt_in is None:
             opt_in = ProjectOptIn.for_user_id(self.owner_id)
             setattr(self, self.OPT_IN_CACHE, opt_in)
-        return opt_in.covers(project)
+        return opt_in
+
+    def project_workspaces(self, project: str) -> set[str]:
+        """The workspaces this box's owner assigned `project` to
+        (`ProjectOptIn.workspaces`). A repo they never assigned belongs to where
+        the box lives: its home workspace, or with no home the workspaces it is
+        enrolled in. Enrollment alone never carries a repo into a workspace, so a
+        box can serve a second tree without offering that tree its repos."""
+        assigned = (self._opt_in().workspaces or {}).get(project)
+        if assigned is not None:
+            return set(assigned)
+        if self.workspace_id:
+            return {self.workspace_id}
+        return set(self.enrollments.values_list("workspace_id", flat=True))
+
+    def project_assigned_to(self, project: str, workspace_id) -> bool:
+        """Whether `project` on this box may be worked in from `workspace_id`:
+        assigned there, or to a workspace above it."""
+        assigned = self.project_workspaces(project)
+        if not assigned or not workspace_id:
+            return False
+        return workspace_id in assigned or bool(assigned & self._ancestors_of(workspace_id))
+
+    def _ancestors_of(self, workspace_id: str) -> set[str]:
+        """Cached on this instance: routing asks per candidate turn, per claim."""
+        cache = self.__dict__.setdefault("_workspace_ancestors", {})
+        if workspace_id not in cache:
+            row = Workspace.objects.filter(pk=workspace_id).only("slug", "parent_id").first()
+            cache[workspace_id] = set(row.ancestor_slugs()) if row is not None else set()
+        return cache[workspace_id]
+
+    def offers_project_in(self, project: str, workspace_id) -> bool:
+        """THE question for repo work in a workspace: this box holds the repo, its
+        owner opted it in, and assigned it to that workspace or one above it."""
+        return project in self.project_names() and self.project_assigned_to(project, workspace_id)
 
     def refresh_pending(self) -> bool:
         """Asked to refresh, and has not bootstrapped since — by an operator, or by
@@ -998,6 +1037,10 @@ class ProjectOptIn(models.Model):
                                 related_name="project_opt_in")
     everything = models.BooleanField(default=False)
     projects = models.JSONField(default=list, blank=True)
+    # {repo: [workspace slug, …]}: where each repo may be worked in. Covers the
+    # workspaces below each one. A repo absent here belongs to the home workspace
+    # of the box holding it (`Runner.project_workspaces`); `[]` is no workspace.
+    workspaces = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1020,3 +1063,8 @@ class ProjectOptIn(models.Model):
     @staticmethod
     def clean_names(names) -> list[str]:
         return sorted({str(n).strip() for n in (names or []) if str(n).strip()})
+
+    @classmethod
+    def clean_workspaces(cls, assigned) -> dict[str, list[str]]:
+        return {str(repo).strip(): cls.clean_names(slugs)
+                for repo, slugs in (assigned or {}).items() if str(repo).strip()}

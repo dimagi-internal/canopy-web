@@ -72,6 +72,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     owner_email: null,
     can_manage: true,
     can_administer: true,
+    repo_workspaces: {},
     open_sessions: 0,
     flags: [],
     known_flags: ['sensitive_data'],

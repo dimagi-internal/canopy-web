@@ -385,6 +385,10 @@ class RunnerOut(Schema):
     # because they gate different routes: reporting one for the other is how a
     # UI ends up rendering a control that 404s.
     can_administer: bool = True
+    # {repo: the workspaces YOU can start a repo chat in on this box}: its owner
+    # assigned the repo there, and the workspace's runner order lists the box or you
+    # administer it. Stamped by the fleet list; what the New chat menu offers.
+    repo_workspaces: dict[str, list[str]] = {}
     # How many sessions are open on this box right now (active, and still being
     # reported — the same rule as the session list's `state=active`). Stamped by
     # the fleet list only; 0 elsewhere. Supervisor → Runners shows it beside a

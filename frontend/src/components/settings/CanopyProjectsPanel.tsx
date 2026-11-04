@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from 'canopy-ui/ui'
+import {
   getCanopyProjects,
   getSessionSharing,
   setCanopyProjects,
@@ -12,12 +18,14 @@ import {
  * "Use canopy in…" — every repo, or only the ones you tick
  * (apps/harness/models/runner.py::ProjectOptIn). Everything else on your boxes is plain
  * Claude Code: canopy routes nothing to it and mirrors nothing from it. Lists the
- * repos your own runners report, plus any you type in.
+ * repos your own runners report, plus any you type in, each with the workspaces it
+ * may be worked in from.
  */
 export function CanopyProjectsPanel() {
   const [saved, setSaved] = useState<CanopyProjects | null>(null)
   const [everything, setEverything] = useState(false)
   const [chosen, setChosen] = useState<Set<string>>(new Set())
+  const [assigned, setAssigned] = useState<Record<string, string[]>>({})
   const [extra, setExtra] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +34,7 @@ export function CanopyProjectsPanel() {
     setSaved(p)
     setEverything(p.everything)
     setChosen(new Set(p.projects))
+    setAssigned(p.repo_workspaces)
   }
 
   useEffect(() => {
@@ -44,7 +53,8 @@ export function CanopyProjectsPanel() {
   const dirty =
     everything !== saved.everything ||
     chosen.size !== saved.projects.length ||
-    saved.projects.some((p) => !chosen.has(p))
+    saved.projects.some((p) => !chosen.has(p)) ||
+    JSON.stringify(sortedEntries(assigned)) !== JSON.stringify(sortedEntries(saved.repo_workspaces))
 
   const toggle = (repo: string) => {
     const next = new Set(chosen)
@@ -64,7 +74,7 @@ export function CanopyProjectsPanel() {
     setSaving(true)
     setError(null)
     try {
-      load(await setCanopyProjects(everything, [...chosen]))
+      load(await setCanopyProjects(everything, [...chosen], assigned))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not save')
     } finally {
@@ -82,6 +92,11 @@ export function CanopyProjectsPanel() {
           The repos you use canopy in. Every other repo on your machines stays plain Claude Code:
           canopy sends no work there and mirrors no sessions, transcripts or usage from it. An
           agent&apos;s own repo always counts.
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          A repo chat runs only in the workspaces you pick for its repo, and the ones below them.
+          People in a workspace can run chats in a repo assigned there on your machine if the
+          workspace&apos;s runner order lists it.
         </p>
       </div>
       <fieldset className="space-y-1 text-[13px] text-foreground" disabled={saving}>
@@ -106,17 +121,17 @@ export function CanopyProjectsPanel() {
           Only the repos I choose
         </label>
       </fieldset>
-      {!everything && (
-        <div className="space-y-2">
-          {repos.length === 0 ? (
-            <p className="text-[12px] text-muted-foreground">
-              None of your runners has reported a repo yet. Type a repo name to add it.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border rounded-md border border-border">
-              {repos.map((repo) => (
-                <li key={repo}>
-                  <label className="flex items-center gap-2 px-2 py-1 text-[13px] text-foreground">
+      <div className="space-y-2">
+        {repos.length === 0 ? (
+          <p className="text-[12px] text-muted-foreground">
+            None of your runners has reported a repo yet. Type a repo name to add it.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {repos.map((repo) => (
+              <li key={repo} className="flex items-center gap-2 px-2 py-1 text-[13px] text-foreground">
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  {!everything && (
                     <input
                       type="checkbox"
                       checked={chosen.has(repo)}
@@ -124,15 +139,24 @@ export function CanopyProjectsPanel() {
                       onChange={() => toggle(repo)}
                       data-testid={`canopy-project-${repo}`}
                     />
-                    <span className="font-mono">{repo}</span>
-                    {!saved.available.includes(repo) && (
-                      <span className="text-[11px] text-muted-foreground">not on your runners yet</span>
-                    )}
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
+                  )}
+                  <span className="truncate font-mono">{repo}</span>
+                  {!saved.available.includes(repo) && (
+                    <span className="text-[11px] text-muted-foreground">not on your runners yet</span>
+                  )}
+                </label>
+                <RepoWorkspaces
+                  repo={repo}
+                  options={saved.workspaces}
+                  value={assigned[repo] ?? saved.default_workspaces[repo] ?? []}
+                  disabled={saving || (!everything && !chosen.has(repo))}
+                  onChange={(next) => setAssigned({ ...assigned, [repo]: next })}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+        {!everything && (
           <div className="flex gap-2">
             <input
               value={extra}
@@ -152,8 +176,8 @@ export function CanopyProjectsPanel() {
               Add
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -173,6 +197,49 @@ export function CanopyProjectsPanel() {
       {error && <p className="text-[12px] text-destructive">{error}</p>}
       <SessionSharingSection />
     </div>
+  )
+}
+
+function sortedEntries(m: Record<string, string[]>): [string, string[]][] {
+  return Object.entries(m)
+    .map(([k, v]): [string, string[]] => [k, [...v].sort()])
+    .sort(([a], [b]) => a.localeCompare(b))
+}
+
+/** The workspaces one repo may be worked in from. Showing a repo's default does not
+ *  save it: only a repo you change here gets an assignment of its own. */
+function RepoWorkspaces({ repo, options, value, disabled, onChange }: {
+  repo: string
+  options: { slug: string; display_name: string }[]
+  value: string[]
+  disabled: boolean
+  onChange: (next: string[]) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        data-testid={`canopy-project-workspaces-${repo}`}
+        className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[12px] text-foreground hover:bg-muted disabled:opacity-50"
+      >
+        {value.length ? value.join(', ') : 'No workspace'}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+        {options.map((w) => (
+          <DropdownMenuCheckboxItem
+            key={w.slug}
+            closeOnClick={false}
+            checked={value.includes(w.slug)}
+            onCheckedChange={(on: boolean) =>
+              onChange(on ? [...value, w.slug].sort() : value.filter((s) => s !== w.slug))
+            }
+            data-testid={`canopy-project-workspace-${repo}-${w.slug}`}
+          >
+            {w.display_name}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

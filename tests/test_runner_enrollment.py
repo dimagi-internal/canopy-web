@@ -17,7 +17,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
 from apps.harness import runners, routing, claim
-from apps.harness.models import Runner, RunnerAdmin, RunnerEnrollment, Turn
+from apps.harness.models import ProjectOptIn, Runner, RunnerAdmin, RunnerEnrollment, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -115,6 +115,8 @@ def test_enrolled_but_owner_demoted_below_editor_is_not_claimable(family):
     m = _member(team, jj, EDITOR)
     box = _box(jj, family["dimagi"])
     runners.enroll_runner(box, "team")
+    # Enrolling carries no repo there: its owner assigns it (`ProjectOptIn.workspaces`).
+    ProjectOptIn.objects.filter(user=jj).update(workspaces={"canopy-web": ["team"]})
     _repo_turn(team, "team-repo")
 
     m.role = VIEWER

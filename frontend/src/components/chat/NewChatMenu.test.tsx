@@ -127,6 +127,7 @@ describe('NewChatMenu keeps the "Run on" list still while it is open', () => {
   const box = (id: string, name: string) => ({
     id, name, status: 'online', can_administer: true,
     capabilities: { sessions: true, projects: ['canopy-web'] },
+    repo_workspaces: { 'canopy-web': ['dimagi'] },
   }) as unknown as RunnerOut
 
   it('a re-polled fleet in another order neither reorders the options nor moves the pick', async () => {

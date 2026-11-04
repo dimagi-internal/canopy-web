@@ -442,9 +442,11 @@ def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset,
               sessions: bool = False) -> list | None:
     """THE ordered runner list a workspace's runner order gives one piece of
     repo work — a repo turn or an unbound project chat — or None when that
-    workspace has no order. Pure: no queries, no clock.
+    workspace has no order. No clock, and no queries of its own beyond what each
+    runner caches about its repos.
 
-    Only runners that DECLARE the repo (when there is one) and meet the work's
+    Only runners that OFFER the repo in this workspace (`Runner.offers_project_in`,
+    when there is one) and meet the work's
     requirements are kept, and ranks are renumbered over what is left — a
     better-ranked runner that could never take this work must not count as a
     blocker for one that can. A directed-only box takes no routed work, so it is
@@ -457,7 +459,7 @@ def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset,
     return [r for r in listed
             if not r.directed_only()
             and (not sessions or r.session_capable())
-            and (not project or project in r.project_names())
+            and (not project or r.offers_project_in(project, workspace_id))
             and rr.runner_satisfies(r, requires)]
 
 
@@ -484,7 +486,7 @@ def repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
     over the workspace order instead of an agent's list, with the same grace."""
     rows = repo_order_for(turn, orders)
     if rows is None:
-        return True
+        return runner.offers_project_in(turn.project, turn.workspace_id)
     return _cascade_allows(runner, rows, turn, now)
 
 

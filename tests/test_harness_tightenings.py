@@ -104,7 +104,7 @@ def test_a_pinned_project_turn_needs_a_runner_that_declares_the_repo(world):
               {"project": "canopy-web", "origin": "manual", "idempotency_key": "p1",
                "runner_id": str(box.id)})
     assert r.status_code == 403, r.content
-    assert "does not declare" in r.json()["detail"]
+    assert "does not offer" in r.json()["detail"]
     assert not Turn.objects.exists()
 
 

@@ -47,6 +47,10 @@ def _placeable_runner(session: Session, runner_id, *, cli: str = ""):
 
         if not runner_may_hold_agent(runner, session.agent):
             return None
+    # A repo goes only where its box's owner assigned it, for a chosen box as for
+    # a routed one: administering the box does not carry a repo to another workspace.
+    elif session.project and not runner.project_assigned_to(session.project, session.workspace_id):
+        return None
     return runner
 
 
@@ -67,6 +71,10 @@ def _placement_refused(session: Session, runner_id, default: str, *, cli: str = 
                     "from a fresh session" if other and not cli else "")
             return ValueError(f"this conversation {'would run' if cli else 'runs'} on "
                               f"{clis.label(held)}, and {runner.name} does not have it{hint}")
+        if (not session.agent_id and session.project
+                and not runner.project_assigned_to(session.project, session.workspace_id)):
+            return ValueError(f"{session.project} on {runner.name} is not assigned to "
+                              f"{session.workspace_id}; its owner sets that in Settings → Runners")
         reqs = rr.requirements_of_session(session)
         return ValueError(f"this conversation requires a {rr.describe(reqs)} runner")
     return ValueError(default)

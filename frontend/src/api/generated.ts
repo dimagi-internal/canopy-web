@@ -14824,9 +14824,10 @@ export interface paths {
         readonly get: operations["get_project_opt_in"];
         /**
          * Set the repos canopy works in for you
-         * @description Replace your choice: `everything`, or exactly `projects`. Takes effect on
-         *     every runner you own at once. Sessions already mirrored from a repo you
-         *     remove stay in canopy, but nothing more of them is sent.
+         * @description Replace your choice: `everything`, or exactly `projects`, and when given,
+         *     every repo's workspaces. Takes effect on every runner you own at once. Sessions
+         *     already mirrored from a repo you remove stay in canopy, but nothing more of them
+         *     is sent. A chat already running on a box stays there.
          */
         readonly put: operations["set_project_opt_in"];
         readonly post?: never;
@@ -40254,6 +40255,13 @@ export interface components {
              */
             readonly can_administer: boolean;
             /**
+             * Repo Workspaces
+             * @default {}
+             */
+            readonly repo_workspaces: {
+                readonly [key: string]: readonly string[];
+            };
+            /**
              * Open Sessions
              * @default 0
              */
@@ -42900,6 +42908,32 @@ export interface components {
              * @description Repos your own runners report holding, plus any you named — what to choose from.
              */
             readonly available: readonly string[];
+            /**
+             * Repo Workspaces
+             * @description The workspaces you assigned each repo to. A repo chat or repo turn runs in those workspaces and the ones below them, and nowhere else.
+             */
+            readonly repo_workspaces: {
+                readonly [key: string]: readonly string[];
+            };
+            /**
+             * Default Workspaces
+             * @description Where a repo you have not assigned belongs: the home workspace of each of your runners holding it.
+             */
+            readonly default_workspaces: {
+                readonly [key: string]: readonly string[];
+            };
+            /**
+             * Workspaces
+             * @description The workspaces you may assign a repo to: those where you may run work.
+             */
+            readonly workspaces: readonly components["schemas"]["ProjectOptInWorkspaceOut"][];
+        };
+        /** ProjectOptInWorkspaceOut */
+        readonly ProjectOptInWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
         };
         /**
          * ProjectOptInIn
@@ -42916,6 +42950,10 @@ export interface components {
              * @default []
              */
             readonly projects: readonly string[];
+            /** Repo Workspaces */
+            readonly repo_workspaces?: {
+                readonly [key: string]: readonly string[];
+            } | null;
         };
         /**
          * FailureInvestigationOut

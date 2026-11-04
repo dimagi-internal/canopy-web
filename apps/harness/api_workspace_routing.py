@@ -58,7 +58,8 @@ def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]
             runner_id=row.runner_id, runner_name=row.runner.name, kind=row.runner.kind,
             rank=row.rank, online=row.runner.live_status == row.runner.ONLINE,
             ready=row.runner.ready, enabled=row.enabled,
-            projects=row.runner.project_names(),
+            projects=[p for p in row.runner.project_names()
+                      if row.runner.project_assigned_to(p, row.workspace_id)],
         )
         for row in rows
     ]

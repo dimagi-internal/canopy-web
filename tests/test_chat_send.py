@@ -14,6 +14,7 @@ from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import ledger
 from apps.harness.models import Runner, Turn
+from apps.harness.testing import enrolled
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -143,7 +144,7 @@ def test_directed_new_chat_pins_first_turn():
     user = User.objects.create_user("o", "o@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-directed", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
-    r2 = _runner("r2", owner=user)
+    r2 = enrolled(_runner("r2", owner=user), ws)
     session = Session.objects.create(
         workspace=ws, project="canopy-web", metadata={"requested_runner_id": str(r2.id)},
     )
@@ -173,7 +174,7 @@ def test_place_repins_queued_turn():
     ws = Workspace.objects.create(slug="w-place", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     r1 = _runner("r1", owner=user)
-    r2 = _runner("r2", owner=user)
+    r2 = enrolled(_runner("r2", owner=user), ws)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
     _msg, turn = session_send.send_message(session=session, text="hi", user=user, client_id="c3")
