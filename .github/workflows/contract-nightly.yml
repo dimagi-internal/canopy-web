@@ -109,7 +109,7 @@ jobs:
           printf '[pytest]\npython_files = test_*.py\n' > /tmp/contract-pytest.ini
 
       - name: Run schemathesis (exhaustive)
-        run: /tmp/contract-env/bin/pytest -c /tmp/contract-pytest.ini tests/contract/ -v
+        run: /tmp/contract-env/bin/pytest -c /tmp/contract-pytest.ini --confcutdir=tests/contract tests/contract/ -v
         env:
           SCHEMATHESIS_SCHEMA_URL: http://localhost:8000/api/openapi.json
           SCHEMATHESIS_AUTH_BEARER: ${{ steps.pat.outputs.raw }}
