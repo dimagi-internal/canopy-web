@@ -198,7 +198,7 @@ class Turn(models.Model):
     # WHICH PROFILE this turn runs in: "" is the agent's full profile; anything
     # else names a capability from its declared interface, and the runner and
     # the agent's guard confine the session to it. Decided once, at enqueue,
-    # from the initiator — see `apps/agents/interface.py::capability_for`.
+    # from the initiator — see `apps/agents/access.py::decide`.
     capability = models.CharField(max_length=48, blank=True, default="")
     # The agent CLI its starter or schedule asked for (`clis.refusal` checked it);
     # "" = the agent's default decides. Never written by the claim.

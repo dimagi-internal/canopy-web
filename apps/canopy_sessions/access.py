@@ -126,7 +126,7 @@ def visible_session_q(user) -> Q:
     5. you are an agent's own login (`Agent.user`) and the session's person let
        THAT agent review their sessions (a live `SessionReviewGrant`, the
        person's own act), and only inside a running turn of that agent whose asker is that
-       same person, nobody, or the agent's admin (`_review_grantors`). Their sessions are the ones they created and the
+       same person, nobody, or the agent's admin (`review_grantors`). Their sessions are the ones they created and the
        runner-discovered sessions on a box they own that are not an agent's own
        work (`sessions_of_q`). Never a sensitive one: a session carrying any
        runner requirement is left out (`_not_sensitive_q`, the SQL form of
@@ -315,7 +315,7 @@ def _not_sensitive_q() -> Q:
     return ~Q(metadata__has_key=rr.METADATA_KEY)
 
 
-def _review_grantors(user):
+def review_grantors(user):
     """THE rule for leg 5, in one place: whose review grants `user`'s request may use.
 
     `user` must be an agent's own login, and the request must be made INSIDE a running
@@ -325,14 +325,18 @@ def _review_grantors(user):
     * a turn a person asked for (verified, or the person an agent was started for)
       reads the sessions of THAT person alone — "coach me" is me only — so only their
       own grant counts;
-    * a turn nobody asked for (a schedule, a trigger, canopy or another agent started
-      it, no person behind it) reads every grantor's, which is the coaching sweep; so
-      does one asked by an administrator of the agent itself, who runs it for all it
-      serves (`Agent.is_admin`);
+    * a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up)
+      answers to that person, as if they had asked: whoever may create it chose its prompt;
+    * a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from
+      such a turn: the server stamps `unattended_dispatch`) reads every grantor's, which
+      is the coaching sweep; so does one asked by an administrator of the agent itself,
+      who runs it for all it serves (`Agent.is_admin`);
     * no turn at all — a stored token, a session, a socket, a finished, confined or
-      unverified-asker turn — reads nobody's: it cannot show whom it is answering to.
+      unverified-asker turn, or a dispatch from a turn like those — reads nobody's: it
+      cannot show whom it is answering to.
 
-    Returns a `SessionReviewGrant` queryset (user ids via `.values("user_id")`)."""
+    Returns a `SessionReviewGrant` queryset (user ids via `.values("user_id")`). The
+    agent's roster of who enrolled (`granted-to-me`) is this same queryset."""
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
 
     grants = SessionReviewGrant.objects.filter(agent__user=user, revoked_at__isnull=True)
@@ -345,11 +349,11 @@ def _review_grantors(user):
 
 
 def _review_grant_q(user) -> Q:
-    """Leg 5: the sessions of the people `_review_grantors` allows this request to read.
+    """Leg 5: the sessions of the people `review_grantors` allows this request to read.
     Empty for anyone else."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
-    return (sessions_of_q(_review_grantors(user).values("user_id"))
+    return (sessions_of_q(review_grantors(user).values("user_id"))
             & Q(contact__isnull=True) & _not_sensitive_q())
 
 

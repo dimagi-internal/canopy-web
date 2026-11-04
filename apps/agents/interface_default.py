@@ -8,13 +8,9 @@ from __future__ import annotations
 
 import re
 
-VERSION = 1
-
-
 def default_interface() -> dict:
-    """No capability — the owner, the admins and
-    the workspace's editors reach the agent, and nobody else. A fresh dict every call."""
-    return {"version": VERSION, "capabilities": {}}
+    """No door and no read-mode override. A fresh dict every call."""
+    return {"capabilities": {}}
 
 
 # --- the default read profile ---------------------------------------------------------------
@@ -99,11 +95,14 @@ def default_read_profile(agent, *, skills=None) -> dict:
                        "it cannot change anything but draft its reply.",
         "entry": (f"/{slug}:{ANSWER_CALLER_SKILL} --thread {{thread_id}}"
                   if ANSWER_CALLER_SKILL in names else None),
-        "tools": ["Read", "Grep", "Glob", "Write", "mcp__*canopy-web__who_is_asking"],
+        # No Grep or Glob: the cloud runner's Claude Code build has neither ("No such tool
+        # available"), so listing them only sends the model reaching for a tool that is not
+        # there. It reads with `Read` and the exact bash patterns below; an agent that wants file
+        # search overrides with an explicit bash pattern.
+        "tools": ["Read", "Write", "mcp__*canopy-web__who_is_asking"],
         "bash": bash,
         "read_paths": ["{cwd}/**"],
         "write_paths": [scratch],
-        "input": {},
         "pages": [],
         "sites": [],
         "ceiling": [],

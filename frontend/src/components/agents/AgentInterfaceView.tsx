@@ -3,12 +3,21 @@ import {
   getAgentInterface,
   getAgentInterfaceHistory,
   resetAgentInterface,
+  saveAgentInterfaceModel,
   setCapabilitySensitive,
   type AgentInterfaceOut,
   type SettingChangeOut,
 } from '@/api/agents'
 import { InterfaceEditor } from './InterfaceEditor'
-import type { Capability } from './interfaceModel'
+import {
+  clone,
+  isReadMode,
+  overrideFromDefault,
+  withCapability,
+  withoutCapability,
+  type Capability,
+  type InterfaceModel,
+} from './interfaceModel'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 // The capabilities an interface marks as handling sensitive data.
@@ -42,8 +51,33 @@ function changeLabel(c: SettingChangeOut): string {
   return 'Saved'
 }
 
-// The agent's declared interface: the capabilities it offers beyond using the whole agent. Who may
-// open which is a line on the Access setting, not this. LIVE STATE held
+type Profile = {
+  entry?: string | null
+  tools?: string[]
+  bash?: string[]
+  read_paths?: string[]
+  write_paths?: string[]
+}
+
+// canopy's default read profile, in plain words (the pinned list lives in
+// tests/test_default_read_profile.py; this only says it).
+export function describeProfile(p: Profile): string[] {
+  const out: string[] = []
+  out.push(`Can read: ${(p.read_paths ?? []).join(', ') || 'nothing'}`)
+  const tools = (p.tools ?? []).filter((t) => !t.includes('who_is_asking'))
+  out.push(`Tools: ${tools.join(', ') || 'none'}, and who_is_asking (to see who is asking)`)
+  const writes = p.write_paths ?? []
+  out.push(writes.length ? `Can write only to: ${writes.join(', ')} (it drafts its reply there)` : 'Can write nothing')
+  const bash = p.bash ?? []
+  out.push(bash.length ? `Can run only these commands: ${bash.join(' | ')}` : 'Can run no commands')
+  out.push(p.entry ? `Starts with: ${p.entry}` : "Starts with the caller's message and no command (it answers from its persona and CLAUDE.md)")
+  return out
+}
+
+// The agent's read mode and doors. Read mode is how it answers someone who may read but not drive
+// it; it exists on every agent, and an agent may override it whole with its own `ask`. A door is a
+// further confined profile for a place or a list of people, and rare. Who may open which is a
+// line on the Access setting, not this. LIVE STATE held
 // by canopy-web — not a file in the agent's repo — so agent admins edit it here (a form, with the
 // YAML one click away), and anyone who can see the agent can read it.
 export function AgentInterfaceView({
@@ -58,6 +92,8 @@ export function AgentInterfaceView({
   const [data, setData] = useState<AgentInterfaceOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  // The draft the editor starts from when overriding read mode (a copy of the default profile).
+  const [seed, setSeed] = useState<InterfaceModel | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState<SettingChangeOut[] | null>(null)
 
@@ -106,11 +142,16 @@ export function AgentInterfaceView({
       <InterfaceEditor
         agentSlug={agentSlug}
         saved={data}
+        seed={seed}
         onSaved={(out) => {
           setData(out)
           setEditing(false)
+          setSeed(undefined)
         }}
-        onCancel={() => setEditing(false)}
+        onCancel={() => {
+          setEditing(false)
+          setSeed(undefined)
+        }}
       />
     )
   }
@@ -119,25 +160,74 @@ export function AgentInterfaceView({
   const caps = iface.capabilities ?? {}
   const names = Object.keys(caps)
   const isDefault = data.is_default
+  const readMode = data.read_mode
+  const overriding = readMode.source === 'override'
+  const name = agentName ?? agentSlug
+  const startOverride = () => {
+    setSeed(withCapability(clone(data.interface as InterfaceModel), 'ask', overrideFromDefault(readMode.default_profile)))
+    setEditing(true)
+  }
 
   return (
     <div className="flex flex-col gap-2">
+      <div data-testid="read-mode" className="flex flex-col gap-1 rounded-md border border-border p-2">
+        <div className="text-[12px] font-medium text-foreground">Read mode</div>
+        {overriding ? (
+          <p data-testid="read-mode-override" className="m-0 text-[12px] text-foreground">
+            {name} has its own <span className="font-mono">{readMode.override}</span> capability, which replaces canopy&apos;s default
+            read mode whole. Edit it below.
+          </p>
+        ) : (
+          <>
+            <p data-testid="read-mode-default" className="m-0 text-[12px] text-foreground">
+              People who may read {name} but not drive it are answered in read mode: a confined session that can only read and
+              draft a reply, on every agent from the start. This is canopy&apos;s default for {name} (version {readMode.default_profile_version}):
+            </p>
+            <ul data-testid="read-mode-profile" className="m-0 list-disc pl-5 text-[12px] text-foreground-secondary">
+              {describeProfile(readMode.default_profile).map((l) => <li key={l} className="break-words">{l}</li>)}
+            </ul>
+          </>
+        )}
+        {canEdit && !overriding && (
+          <div>
+            <button
+              type="button"
+              onClick={startOverride}
+              className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-primary"
+            >
+              Override
+            </button>
+            <span className="ml-2 text-[11px] text-muted-foreground">starts from a copy of the default; it replaces it whole</span>
+          </div>
+        )}
+        {canEdit && overriding && (
+          <div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(() => saveAgentInterfaceModel(agentSlug, withoutCapability(data.interface as InterfaceModel, readMode.override ?? 'ask')))}
+              className="text-[12px] text-muted-foreground underline hover:text-destructive disabled:opacity-50"
+            >
+              Go back to the default read mode
+            </button>
+          </div>
+        )}
+      </div>
       {isDefault && (
         <p data-testid="interface-default" className="m-0 text-[13px] text-foreground">
-          {agentName ?? agentSlug} offers no capabilities (default), so a read-only line opens nothing; ask is off until it is published. Who
-          may use it is set on the Access setting.
+          {name} has no doors (default), only read mode. Who may use it is set on the Access setting.
         </p>
       )}
       {names.length > 0 && (
         <p className="m-0 text-[12px] text-muted-foreground">
-          Who may open a capability is set on the Access setting: read-only opens ask, a line can name any other.
+          Who may open a door is set on the Access setting: read only gets read mode, a line can name any door.
         </p>
       )}
       {names.length > 0 && (
         <table className="w-full text-[13px]">
           <thead>
             <Tr head="small">
-              <Th>Capability</Th>
+              <Th>Door</Th>
               <Th>Allows</Th>
               <Th>Sensitive data</Th>
             </Tr>
@@ -149,12 +239,8 @@ export function AgentInterfaceView({
                 <tr key={n} data-testid="interface-capability">
                   <Td density="cozy" tone="foreground" className="align-top">
                     <span className="font-mono">{n}</span>
+                    {isReadMode(n) && <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">read mode override</span>}
                     {c.description && <div className="text-[12px] text-muted-foreground">{c.description}</div>}
-                    {Object.keys(c.input ?? {}).length > 0 && (
-                      <div className="text-[11px] text-muted-foreground">
-                        Inputs: {Object.entries(c.input ?? {}).map(([k, t]) => `${k}: ${t}`).join(', ')}
-                      </div>
-                    )}
                   </Td>
                   <Td density="cozy" tone="secondary" mono className="align-top text-[11px]">
                     {[...(c.sites ?? []).map((s) => `site: ${s}`), ...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (
@@ -205,7 +291,7 @@ export function AgentInterfaceView({
             onClick={() => setEditing(true)}
             className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-primary"
           >
-            {isDefault ? 'Add capabilities' : 'Edit'}
+            {isDefault ? 'Add a door' : 'Edit'}
           </button>
           {!isDefault && (
             <button

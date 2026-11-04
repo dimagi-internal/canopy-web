@@ -26,7 +26,7 @@ def declare(agent, capabilities: dict | None = None, **top_level):
     """Publish `capabilities` as `agent`'s interface (none: an interface that offers nothing).
     Says only what the agent offers, never who may use it. Other top-level keys of the
     interface document (`pages=...`) ride along."""
-    agent.interface = parse({**top_level, "capabilities": capabilities}) if capabilities else {"version": 1, "capabilities": {}}
+    agent.interface = parse({**top_level, "capabilities": capabilities}) if capabilities else {"capabilities": {}}
     agent.interface_source = ""
     agent.save(update_fields=["interface", "interface_source"])
     return agent

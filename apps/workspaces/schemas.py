@@ -137,6 +137,9 @@ class AccessSettingsIn(StrictModel):
 class MemberOut(StrictModel):
     user_id: int
     email: str
+    # Their account name, "" if the account has none. An address often doesn't
+    # contain a first name, so without this a caller can't tell who is a member.
+    display_name: str = ""
     role: str
     joined_at: dt.datetime
     # An owner of a PARENT workspace, listed because they own this one too.

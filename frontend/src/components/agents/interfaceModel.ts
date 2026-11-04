@@ -11,7 +11,6 @@ export type Capability = {
   bash?: string[]
   read_paths?: string[]
   write_paths?: string[]
-  input?: Record<string, string>
   pages?: string[]
   sites?: string[]
   ceiling?: string[]
@@ -52,18 +51,35 @@ export function renamedCapability(model: InterfaceModel, from: string, to: strin
   return { ...model, capabilities: caps }
 }
 
-const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob', 'mcp__*canopy-web__who_is_asking']
-
-// The two capabilities most owners want, ready to adjust.
-export function askCapability(slug: string): Capability {
+// A new door with nothing allowed yet (everything not listed is refused).
+export function blankCapability(): Capability {
   return {
-    description: `Ask ${slug} a question.`,
-    entry: `/${slug}:ask --thread {thread_id}`,
-    tools: [...READ_ONLY_TOOLS],
+    description: '',
+    entry: null,
+    tools: ['Read', 'mcp__*canopy-web__who_is_asking'],
     bash: [],
     read_paths: ['{cwd}/**'],
     write_paths: [],
-    input: {},
+    pages: [],
+    sites: [],
+    ceiling: [],
+  }
+}
+
+// The names of read mode: `ask` is an agent's own override of it, `read` canopy's default.
+export const isReadMode = (name: string): boolean => name === 'ask' || name === 'read'
+
+// An override starts as a copy of the default profile, so it is edited from what is already there.
+// An override REPLACES the default whole: nothing is merged.
+export function overrideFromDefault(profile: Record<string, unknown>): Capability {
+  const list = (k: string): string[] => (Array.isArray(profile[k]) ? (profile[k] as string[]) : [])
+  return {
+    description: typeof profile.description === 'string' ? profile.description : '',
+    entry: typeof profile.entry === 'string' ? profile.entry : null,
+    tools: list('tools'),
+    bash: list('bash'),
+    read_paths: list('read_paths'),
+    write_paths: list('write_paths'),
     pages: [],
     sites: [],
     ceiling: [],
@@ -78,7 +94,6 @@ export function siteCapability(site: string): Capability {
     bash: [],
     read_paths: ['{cwd}/**'],
     write_paths: [],
-    input: {},
     pages: [],
     sites: [site],
     ceiling: [],

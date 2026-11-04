@@ -20,15 +20,20 @@ def test_bare_agent_exact():
         "description": "Ask ada a question. It answers from its own repo and docs; "
                        "it cannot change anything but draft its reply.",
         "entry": None,
-        "tools": ["Read", "Grep", "Glob", "Write", "mcp__*canopy-web__who_is_asking"],
+        "tools": ["Read", "Write", "mcp__*canopy-web__who_is_asking"],
         "bash": [],
         "read_paths": ["{cwd}/**"],
         "write_paths": ["{cwd}/.ada-read/*"],
-        "input": {},
         "pages": [],
         "sites": [],
         "ceiling": [],
     }
+
+
+def test_no_tool_the_cloud_runner_build_lacks():
+    # The cloud Claude Code build has no Grep or Glob tool (live probe: "No such tool available").
+    tools = default_read_profile(_agent(), skills=[])["tools"]
+    assert "Grep" not in tools and "Glob" not in tools
 
 
 def test_mailbox_adds_exactly_the_email_reply_rules():

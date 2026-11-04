@@ -2,7 +2,7 @@
 
 Trellis's login may read the sessions of people who let it review them, but only inside
 a running turn of Trellis, and only as far as that turn's asker goes
-(`access._review_grantors`, the asker taken from the server's `Turn.initiator_*`):
+(`access.review_grantors`, the asker taken from the server's `Turn.initiator_*`):
 
 * a person asked  -> that person's sessions alone ("coach me" is me only);
 * nobody asked (schedule, trigger, canopy or another agent started it) -> every grantor's;
@@ -130,9 +130,17 @@ def test_a_turn_nobody_asked_reads_every_grantor(w):
     assert not _reads(bearer, w["sealed"])               # sensitive: never
 
 
-def test_an_agent_dispatch_with_no_person_behind_it_reads_every_grantor(w):
-    bearer = _login(w, _turn(w, kind="user", by=_another_agent(w), assurance="pat"))
+def test_an_agent_dispatch_from_a_turn_nobody_asked_reads_every_grantor(w):
+    """The server stamps `unattended_dispatch` only when the dispatching turn was itself
+    nobody-asked (`turn_asker.dispatch_stamp`); tests/test_adversarial_agent_reads.py."""
+    bearer = _login(w, _turn(w, kind="user", by=_another_agent(w), assurance="pat",
+                             origin_ref={"unattended_dispatch": True}))
     assert _reads(bearer, w["chat"]["lili"]) and _reads(bearer, w["chat"]["bo"])
+
+
+def test_an_agent_dispatch_the_server_did_not_stamp_reads_nothing(w):
+    bearer = _login(w, _turn(w, kind="user", by=_another_agent(w), assurance="pat"))
+    assert not _reads(bearer, w["chat"]["lili"]) and not _reads(bearer, w["chat"]["bo"])
 
 
 def test_a_dispatch_for_a_person_keeps_that_person(w):

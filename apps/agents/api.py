@@ -58,7 +58,16 @@ from .gates import (
     agent_for_work,
     listed_agent_workspaces,
 )
-from .interface import InterfaceError, default_interface, is_default, parse, validate
+from .interface import (
+    READ_PROFILE_VERSION,
+    InterfaceError,
+    default_interface,
+    default_read_profile,
+    is_default,
+    parse,
+    read_mode_override,
+    validate,
+)
 from .models import (
     AgentAdmin,
     AgentCredentialRead,
@@ -650,7 +659,11 @@ def _interface_out(agent) -> dict:
     """An agent always has an interface; a row that somehow holds none (`{}`) reads as the default."""
     by = agent.interface_published_by
     iface = agent.interface or default_interface()
+    override = read_mode_override(iface)
     return {"interface": iface, "source": agent.interface_source or "",
+            "read_mode": {"source": "override" if override else "default", "override": override,
+                          "default_profile": default_read_profile(agent),
+                          "default_profile_version": READ_PROFILE_VERSION},
             # The same model as YAML, for the Advanced view and the CLI, when no
             # hand-written source was kept.
             "yaml": agent.interface_source or yaml.safe_dump(iface, sort_keys=False),
