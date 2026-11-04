@@ -5,11 +5,27 @@ Nothing here runs a job. `_as_job_user` is the one seam that stands for
 """
 from __future__ import annotations
 
+import importlib.util
 import io
+import json
+import os
+import pathlib
+import shutil
+import stat
 import subprocess
+import sys
 import tarfile
+import threading
+import time
+from types import SimpleNamespace
 
 import pytest
+import yaml
+
+EC2 = pathlib.Path(__file__).resolve().parent.parent
+
+
+T1, T2 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
 
 
 def _git(*args, cwd):
@@ -41,14 +57,28 @@ def runner(cloud_runner, monkeypatch, tmp_path, origins):
     monkeypatch.setattr(cloud_runner, "REPO_URL_TEMPLATE", str(origins / "{repo}"))
     monkeypatch.setattr(cloud_runner, "JOBS_ROOT", tmp_path / "jobs")
     (tmp_path / "jobs").mkdir()
+    monkeypatch.setattr(cloud_runner, "JOB_LOCK_FILE", tmp_path / "job.lock")
+    (tmp_path / "job.lock").write_text("")
+    monkeypatch.setattr(cloud_runner, "JOB_WORLD_DIRS", (str(tmp_path / "shm"),))
+    (tmp_path / "shm").mkdir()
     calls = []
+    marker = f"MARK{tmp_path.name}"
 
-    def as_job_user(args, input=None):
+    def job_user_cmd(args):
+        """Stands for `sudo -n -u canopy-job`: runs it as this user, and aims "everything
+        of that user" at the processes carrying this test's marker."""
         calls.append(list(args))
-        return subprocess.run(list(args), input=input, capture_output=True)
+        if args[0] == "pkill":
+            return ["pkill", args[1], "-f", marker]
+        if args[0] == "pgrep":
+            return ["pgrep", "-f", marker]
+        if args[0] == "find" and "-user" in args:
+            return ["find", args[1], "-mindepth", "1", "-delete"]
+        return list(args)
 
-    monkeypatch.setattr(cloud_runner, "_as_job_user", as_job_user)
+    monkeypatch.setattr(cloud_runner, "_job_user_cmd", job_user_cmd)
     cloud_runner._seam_calls = calls
+    cloud_runner._marker = marker
     return cloud_runner
 
 
@@ -124,13 +154,26 @@ def test_spec_aliases_are_bounded_by_the_size_cap(runner):
     assert len(bomb.encode()) < runner.JOBS_YAML_MAX_BYTES
 
 
-def test_spec_bad_job_name_refused(runner):
+@pytest.mark.parametrize("name", ["Sync; rm", "sync\n"])
+def test_spec_bad_job_name_refused(runner, name):
     with pytest.raises(runner.JobRefused):
-        runner._job_spec(GOOD, "Sync; rm")
+        runner._job_spec(GOOD, name)
+
+
+@pytest.mark.parametrize("version", ["1.0", "true", "'1'"])
+def test_spec_version_is_exactly_the_integer_one(runner, version):
+    with pytest.raises(runner.JobRefused):
+        runner._job_spec(f"version: {version}\njobs:\n  sync: {{run: [make]}}\n", "sync")
+
+
+def test_spec_first_word_cannot_set_a_variable(runner):
+    """`env` would read `LD_PRELOAD=x` as an assignment, past the six-variable rule."""
+    with pytest.raises(runner.JobRefused):
+        runner._job_spec("version: 1\njobs:\n  sync: {run: ['LD_PRELOAD=x', make]}\n", "sync")
 
 
 def test_spec_read_from_export(runner):
-    export = runner._job_export("tools", "turn-1", None)
+    export = runner._job_export("tools", T1, None)
     assert runner._job_spec_for(export, "sync").run == ["./sync.sh"]
     with pytest.raises(runner.JobRefused):
         runner._job_spec_for(export, "absent")
@@ -140,7 +183,7 @@ def test_spec_missing_file_sentence(runner, origins):
     repo = origins / "tools"
     _git("rm", "-rq", ".canopy", cwd=repo)
     _commit(repo, "no jobs")
-    export = runner._job_export("tools", "turn-2", None)
+    export = runner._job_export("tools", T2, None)
     with pytest.raises(runner.JobRefused) as exc:
         runner._job_spec_for(export, "sync")
     assert ".canopy/jobs.yaml" in str(exc.value)
@@ -153,18 +196,18 @@ def test_export_uses_main_not_a_branch(runner, origins):
     _git("checkout", "-q", "-b", "feature", cwd=repo)       # origin's HEAD is now feature
     (repo / "README.md").write_text("feature\n")
     _commit(repo, "feature")
-    export = runner._job_export("tools", "turn-1", None)
+    export = runner._job_export("tools", T1, None)
     assert (export / "README.md").read_text() == "main v1\n"
     # and a stale clone is brought forward: main moves on, a new job sees it
     _git("checkout", "-q", "main", cwd=repo)
     (repo / "README.md").write_text("main v2\n")
     _commit(repo, "v2")
-    assert (runner._job_export("tools", "turn-2", None) / "README.md").read_text() == "main v2\n"
+    assert (runner._job_export("tools", T2, None) / "README.md").read_text() == "main v2\n"
 
 
 def test_export_has_no_git_dir(runner):
-    export = runner._job_export("tools", "turn-1", None)
-    assert export == runner.JOBS_ROOT / "turn-1" / "repo"
+    export = runner._job_export("tools", T1, None)
+    assert export == runner.JOBS_ROOT / T1 / "repo"
     assert not list(export.rglob(".git*"))
     assert (export / ".canopy" / "jobs.yaml").is_file()
     # unpacked by the job user, without owner or permission bits from the archive
@@ -174,36 +217,36 @@ def test_export_has_no_git_dir(runner):
 
 
 def test_export_leaves_no_ref_behind(runner):
-    runner._job_export("tools", "turn-1", None)
+    runner._job_export("tools", T1, None)
     clone = runner._repos_root() / ".clones" / "tools.git"
     refs = _git("for-each-ref", "refs/jobs", cwd=clone)
     assert refs == ""
 
 
 def test_failed_fetch_refuses_never_stale(runner, origins):
-    runner._job_export("tools", "turn-1", None)               # clone exists now
+    runner._job_export("tools", T1, None)               # clone exists now
     (origins / "tools").rename(origins / "gone")              # origin unreachable
     with pytest.raises(runner.JobRefused) as exc:
-        runner._job_export("tools", "turn-2", None)
+        runner._job_export("tools", T2, None)
     assert "latest" in str(exc.value)
-    assert not (runner.JOBS_ROOT / "turn-2").exists()
+    assert not (runner.JOBS_ROOT / T2).exists()
 
 
 def test_failed_first_clone_refuses(runner):
     with pytest.raises(runner.JobRefused):
-        runner._job_export("missing-repo", "turn-1", None)
-    assert not (runner.JOBS_ROOT / "turn-1").exists()
+        runner._job_export("missing-repo", T1, None)
+    assert not (runner.JOBS_ROOT / T1).exists()
 
 
 def test_missing_main_refuses(runner, origins):
     repo = origins / "tools"
     _git("branch", "-m", "main", "trunk", cwd=repo)
     with pytest.raises(runner.JobRefused):
-        runner._job_export("tools", "turn-1", None)
+        runner._job_export("tools", T1, None)
 
 
 @pytest.mark.parametrize("repo", ["a/b", "..", ".", "", "x" * 101, "-rf", "a b", "../x", "x.git",
-                                  "https://evil/x", "a;b"])
+                                  "https://evil/x", "a;b", "repo\n"])
 def test_bad_repo_name_never_reaches_git(runner, monkeypatch, repo):
     def boom(*a, **k):
         raise AssertionError("git or a path was touched")
@@ -213,10 +256,11 @@ def test_bad_repo_name_never_reaches_git(runner, monkeypatch, repo):
     monkeypatch.setattr(runner.subprocess, "Popen", boom)
     monkeypatch.setattr(runner, "_as_job_user", boom)
     with pytest.raises(runner.JobRefused):
-        runner._job_export(repo, "turn-1", None)
+        runner._job_export(repo, T1, None)
 
 
-@pytest.mark.parametrize("turn_id", ["", "../x", "a/b", ".", "..", "x" * 65, "a b"])
+@pytest.mark.parametrize("turn_id", ["", "../x", "a/b", ".", "..", "x" * 65, "a b", "x" * 64, "turn-1",
+                                     T1 + "\n", "AAAAAAAA-1111-4111-8111-111111111111", T1.replace("-", "")])
 def test_bad_turn_id_never_becomes_a_path(runner, monkeypatch, turn_id):
     monkeypatch.setattr(runner, "_as_job_user", lambda *a, **k: (_ for _ in ()).throw(AssertionError()))
     with pytest.raises(runner.JobRefused):
@@ -229,9 +273,9 @@ def test_export_refuses_a_symlink_pointing_out(runner, origins):
     _git("add", "-A", cwd=repo)
     _commit(repo, "link")
     with pytest.raises(runner.JobRefused) as exc:
-        runner._job_export("tools", "turn-1", None)
+        runner._job_export("tools", T1, None)
     assert "link" in str(exc.value)
-    assert not (runner.JOBS_ROOT / "turn-1").exists()
+    assert not (runner.JOBS_ROOT / T1).exists()
 
 
 def test_export_keeps_a_symlink_within_the_checkout(runner, origins):
@@ -239,7 +283,7 @@ def test_export_keeps_a_symlink_within_the_checkout(runner, origins):
     (repo / "latest.md").symlink_to("README.md")
     _git("add", "-A", cwd=repo)
     _commit(repo, "inner link")
-    export = runner._job_export("tools", "turn-1", None)
+    export = runner._job_export("tools", T1, None)
     assert (export / "latest.md").is_symlink()
     assert (export / "latest.md").read_text() == "main v1\n"
 
@@ -291,8 +335,8 @@ def test_export_cleans_up_when_unpack_fails(runner, monkeypatch):
 
     monkeypatch.setattr(runner, "_as_job_user", flaky)
     with pytest.raises(runner.JobRefused):
-        runner._job_export("tools", "turn-1", None)
-    assert not (runner.JOBS_ROOT / "turn-1").exists()
+        runner._job_export("tools", T1, None)
+    assert not (runner.JOBS_ROOT / T1).exists()
 
 
 # ── the capability ───────────────────────────────────────────────────────────
@@ -345,6 +389,828 @@ def test_caps_off_while_the_switch_is_off(can, monkeypatch):
     assert "jobs" not in can.RUNNER_CAPS
 
 
-def test_switch_ships_off(cloud_runner):
-    assert cloud_runner.JOBS_ENABLED is False
+def test_switch_is_on_and_nothing_is_reported_until_checked(cloud_runner):
+    assert cloud_runner.JOBS_ENABLED is True
     assert "jobs" not in cloud_runner.RUNNER_CAPS
+
+
+def test_repo_clone_refuses_a_trailing_newline(cloud_runner):
+    with pytest.raises(ValueError):
+        cloud_runner._repo_clone("repo\n")
+
+
+def test_a_box_without_pyyaml_never_reports_jobs(can, monkeypatch):
+    monkeypatch.setitem(sys.modules, "yaml", None)     # `import yaml` raises ImportError
+    assert can._job_can_run() is False
+
+
+def test_a_locked_runner_never_reports_jobs(can, monkeypatch):
+    """A job can't use its runner's proxy, and rules out a job leaving the lock."""
+    assert can._job_can_run() is True
+    monkeypatch.setattr(can, "EGRESS_LOCKED", True)
+    assert can._job_can_run() is False
+
+
+def test_a_box_not_provisioned_never_reports_jobs(can, monkeypatch, tmp_path):
+    (tmp_path / "job.lock").unlink()
+    assert can._job_can_run() is False
+
+
+def test_jobs_root_or_a_reachable_metadata_address_stops_the_report(can, monkeypatch):
+    seen = []
+
+    def fail(what):
+        def as_user(args, input=None):
+            seen.append(list(args))
+            return subprocess.CompletedProcess(args, 1 if what in " ".join(args) else 0, b"", b"")
+        return as_user
+
+    monkeypatch.setattr(can, "_as_job_user", fail(str(can.JOBS_ROOT)))
+    assert can._job_can_run() is False
+    monkeypatch.setattr(can, "_as_job_user", fail(can.IMDS_V4))
+    assert can._job_can_run() is False
+
+
+def test_no_new_privileges_is_named_as_the_reason(can, monkeypatch):
+    """The runner's unit has NoNewPrivileges=yes, under which sudo cannot work: the box
+    does not report jobs, and its log says why."""
+    logs = []
+    monkeypatch.setattr(can, "_log", lambda m, *a, **k: logs.append(m))
+    monkeypatch.setattr(can, "_no_new_privs", lambda: True)
+    monkeypatch.setattr(can, "_as_job_user",
+                        lambda args, input=None: subprocess.CompletedProcess(args, 1, b"", b"sudo: nope"))
+    assert can._job_can_run() is False
+    assert any("NoNewPrivileges" in m for m in logs)
+
+
+# ── running a job (Task 3) ───────────────────────────────────────────────────
+# A real `canopy-job` isn't here: `_job_user_cmd` (the fixture above) stands for sudo, so
+# what is proved is the runner's half. `job_self_check.sh` proves the box's half on a box.
+
+SIX = {"PATH", "HOME", "LANG", "CANOPY_AGENT_SLUG", "CANOPY_TURN_ID", "CANOPY_JOB_TOKENS"}
+
+
+@pytest.fixture
+def jobs(runner, monkeypatch, tmp_path, origins):
+    monkeypatch.setattr(runner, "JOB_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(runner, "JOB_BATCH_SECONDS", 0.05)
+    monkeypatch.setattr(runner, "JOB_TOKEN_TICK_SECONDS", 0.05)
+    monkeypatch.setattr(runner, "JOB_KILL_GRACE_SECONDS", 0.5)
+    monkeypatch.setattr(runner, "JOB_PATH", f"{pathlib.Path(sys.executable).parent}:/usr/bin:/bin")
+    monkeypatch.setattr(runner, "_agent_env", lambda slug: None)
+    monkeypatch.setattr(runner, "_CONN_HOLDS", {})
+    monkeypatch.setattr(runner, "_JOB_LOCK", threading.Lock())
+    monkeypatch.setattr(runner.pathlib.Path, "home", lambda: tmp_path / "runner-home")
+    monkeypatch.setattr(runner, "_log", lambda m, *a, **k: None)
+    monkeypatch.setattr(runner, "_job_user_exists", lambda: True)
+    runner._origin = origins / "tools"
+    return runner
+
+
+def _define(mod, run, *, files=None, timeout=None):
+    repo = mod._origin
+    for name, text in (files or {}).items():
+        (repo / name).write_text(text)
+    (repo / ".canopy" / "jobs.yaml").write_text(yaml.safe_dump({
+        "version": 1,
+        "jobs": {"sync": {"run": run, **({"timeout_minutes": timeout} if timeout else {})}}}))
+    _git("add", "-A", cwd=repo)
+    _commit(repo, "job")
+
+
+def _go(mod, turn_id=T1):
+    out = []
+    ok, text = mod._run_job("r1", {"id": turn_id, "agent_slug": "eva", "job": "sync", "job_repo": "tools"},
+                            lambda events: out.extend(events))
+    return ok, text, out
+
+
+def _text(events):
+    return "".join(e["payload"]["text"] for e in events)
+
+
+def _alive(mod):
+    return subprocess.run(["pgrep", "-f", mod._marker], capture_output=True).returncode == 0
+
+
+def _stage(mod, tmp_path, token, *, provider="salesforce"):
+    path = tmp_path / "runner-home" / ".canopy" / "connections" / "eva" / f"{provider}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"access_token": token, "expires_at": 9e12, "instance_url": "https://x"}))
+    mod._CONN_HOLDS[T1] = ("eva", "r1", frozenset({provider}))
+    return path
+
+
+def test_job_env_is_exactly_the_six(jobs):
+    _define(jobs, ["env"])
+    ok, _, out = _go(jobs)
+    assert ok
+    seen = dict(line.split("=", 1) for line in _text(out).splitlines())
+    assert set(seen) == SIX
+    assert seen["CANOPY_AGENT_SLUG"] == "eva" and seen["CANOPY_TURN_ID"] == T1
+    assert seen["CANOPY_JOB_TOKENS"] == str(jobs.JOBS_ROOT / T1 / "tokens")
+    assert seen["HOME"] == str(jobs.JOBS_ROOT / T1 / "home")
+
+
+def test_no_runner_token_or_model_key_in_env(jobs, monkeypatch):
+    for name in ("CANOPY_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CANOPY_WEB_PAT", "GH_TOKEN"):
+        monkeypatch.setenv(name, f"leak-{name}")
+    _define(jobs, ["env"])
+    _, _, out = _go(jobs)
+    assert "leak-" not in _text(out)
+    # and the command names nothing else: `env -i` first, then the six, then the job
+    argv = next(c for c in jobs._seam_calls if c[0] == "env")
+    assert argv[:4] == ["env", "-i", "-C", str(jobs.JOBS_ROOT / T1 / "repo")]
+    assert [a.split("=")[0] for a in argv[4:10]] == sorted(SIX, key=[a.split("=")[0] for a in argv[4:10]].index)
+    assert {a.split("=")[0] for a in argv[4:10]} == SIX and argv[10:] == ["env"]
+
+
+def test_argv_passed_with_no_shell(jobs, tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_text("still here")
+    evil = f"; rm -rf {victim}"
+    _define(jobs, ["python3", "argv.py", evil, "$(touch pwned)"],
+            files={"argv.py": "import sys\nprint(repr(sys.argv[1:]))\n"})
+    ok, _, out = _go(jobs)
+    assert ok and victim.exists()
+    assert repr([evil, "$(touch pwned)"]) in _text(out)
+    assert not any("sh" == c[0] and evil in c for c in jobs._seam_calls)
+
+
+def test_job_runs_in_its_export(jobs):
+    _define(jobs, ["pwd"])
+    ok, _, out = _go(jobs)
+    assert ok
+    assert pathlib.Path(_text(out).strip()).resolve() == (jobs.JOBS_ROOT / T1 / "repo").resolve()
+
+
+def test_exit_zero_done(jobs):
+    _define(jobs, ["python3", "x.py"], files={"x.py": "print('all good')\n"})
+    ok, text, _ = _go(jobs)
+    assert ok is True and "exit code 0" in text and "all good" in text
+
+
+def test_non_zero_failed_with_last_lines(jobs):
+    body = "import sys\nfor i in range(100): print('line', i)\nsys.exit(3)\n"
+    _define(jobs, ["python3", "x.py"], files={"x.py": body})
+    ok, text, out = _go(jobs)
+    assert ok is False and "exit code 3" in text
+    assert "line 99" in text and "line 10\n" not in text       # the last lines only
+    assert "line 0\n" in _text(out)                             # the stream has them all
+
+
+IGNORES_TERM = """
+import signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+print('running', flush=True)
+time.sleep(300)
+"""
+
+
+def test_timeout_kills_and_fails(jobs, monkeypatch):
+    monkeypatch.setattr(jobs, "JOB_SECONDS_PER_MINUTE", 0.2)
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": IGNORES_TERM}, timeout=1)
+    ok, text, out = _go(jobs)
+    assert ok is False and "1-minute" in text
+    assert "running" in _text(out)
+    assert not _alive(jobs)
+    kills = [c[1] for c in jobs._seam_calls if c[0] == "pkill"]
+    assert kills[kills.index("-TERM") + 1:].count("-KILL") >= 1     # TERM first, then KILL
+
+
+BACKGROUND = """
+import subprocess, sys
+subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', sys.argv[1]],
+                 start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+print('left one behind')
+"""
+
+
+def test_background_process_doesnt_outlive_job(jobs):
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": BACKGROUND})
+    ok, _, _ = _go(jobs)
+    assert ok is True and not _alive(jobs)
+
+
+def test_background_process_holding_the_pipe_doesnt_hang_the_end(jobs):
+    body = BACKGROUND.replace("stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, ", "")
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": body})
+    started = time.monotonic()
+    ok, _, _ = _go(jobs)
+    assert ok is True and not _alive(jobs) and time.monotonic() - started < 30
+
+
+def test_output_capped_at_1mb_with_a_line(jobs):
+    body = "for i in range(40000): print('x' * 99)\nprint('the very end')\n"
+    _define(jobs, ["python3", "x.py"], files={"x.py": body})
+    ok, text, out = _go(jobs)
+    shown = _text(out)
+    assert ok is True
+    assert len(shown.encode()) <= jobs.JOB_OUTPUT_CAP_BYTES + 200
+    assert shown.count("output was cut") == 1
+    assert "the very end" in text          # the note still has the real last lines
+
+
+def test_token_value_scrubbed_from_output(jobs, tmp_path):
+    token = "tok_" + "s3cret" * 8
+    _stage(jobs, tmp_path, token)
+    body = ("import json, os, sys\n"
+            "t = json.load(open(os.environ['CANOPY_JOB_TOKENS'] + '/salesforce.json'))['access_token']\n"
+            "print('here', t, flush=True)\n"
+            "sys.stdout.write(t[:9]); sys.stdout.flush()\n"
+            "import time; time.sleep(0.3)\n"
+            "print(t[9:], flush=True)\n"
+            "sys.stderr.write(t + '\\n'); sys.exit(2)\n")
+    _define(jobs, ["python3", "x.py"], files={"x.py": body})
+    ok, text, out = _go(jobs)
+    assert ok is False
+    assert token not in _text(out) and token not in text
+    assert token[:9] not in _text(out)            # the half split across two reads
+    assert _text(out).count("[token]") == 3 and "[token]" in text
+
+
+def test_scrubber_holds_a_tail_across_chunks(jobs):
+    o = jobs._JobOutput(lambda ev: None)
+    o.add_tokens([b"ABCDEFGHIJ"])
+    o.feed(b"before ABCDE")
+    assert "ABCDE" not in o.take()
+    o.feed(b"FGHIJ after")
+    o.close()
+    assert o.take() == "[token] after" or "ABCDEFGHIJ" not in o.tail
+
+
+def test_scrubber_keeps_a_character_split_across_chunks(jobs):
+    o = jobs._JobOutput(lambda ev: None)
+    data = "café".encode()
+    o.feed(data[:-1])
+    o.feed(data[-1:])
+    o.close()
+    assert o.take() == "café"
+
+
+def test_a_refreshed_token_is_scrubbed_too(jobs, tmp_path):
+    copied = {}
+    o = jobs._JobOutput(lambda ev: None)
+    path = _stage(jobs, tmp_path, "first-token-value")
+    (jobs.JOBS_ROOT / T1 / "tokens").mkdir(parents=True)
+    jobs._job_copy_tokens(T1, "eva", jobs.JOBS_ROOT / T1 / "tokens", copied, o)
+    path.write_text(json.dumps({"access_token": "second-token-value", "expires_at": 9e12}))
+    jobs._job_copy_tokens(T1, "eva", jobs.JOBS_ROOT / T1 / "tokens", copied, o)
+    o.feed(b"first-token-value second-token-value\n")
+    o.close()
+    assert o.take() == "[token] [token]\n"
+
+
+def test_token_copy_refreshed_on_tick(jobs, tmp_path):
+    path = _stage(jobs, tmp_path, "old-token-value")
+    body = ("import json, os, stat, time\n"
+            "p = os.environ['CANOPY_JOB_TOKENS'] + '/salesforce.json'\n"
+            "print(oct(stat.S_IMODE(os.stat(p).st_mode)), flush=True)\n"
+            "for _ in range(500):\n"
+            "    if json.load(open(p))['access_token'] != 'old-token-value':\n"
+            "        print('saw the new one'); raise SystemExit(0)\n"
+            "    time.sleep(0.02)\n"
+            "raise SystemExit(9)\n")
+    _define(jobs, ["python3", "x.py"], files={"x.py": body})
+
+    def refresh_once_the_job_has_its_copy():
+        copy = jobs.JOBS_ROOT / T1 / "tokens" / "salesforce.json"
+        for _ in range(1000):
+            if copy.exists():
+                break
+            time.sleep(0.01)
+        path.write_text(json.dumps({"access_token": "new-token-value", "expires_at": 9e12}))
+
+    threading.Thread(target=refresh_once_the_job_has_its_copy, daemon=True).start()
+    ok, _, out = _go(jobs)
+    assert ok is True and "saw the new one" in _text(out) and "0o600" in _text(out)
+    # always through a temp name and `mv`, written by the job user with umask 077
+    copies = [c for c in jobs._seam_calls if c[0] == "sh" and "umask 077" in c[2]]
+    assert len(copies) == 2 and 'mv -f' in copies[0][2]
+
+
+def test_a_withdrawn_token_is_removed_from_the_job(jobs, tmp_path):
+    path = _stage(jobs, tmp_path, "soon-revoked-value")
+    copied = {}
+    o = jobs._JobOutput(lambda ev: None)
+    tokens = jobs.JOBS_ROOT / T1 / "tokens"
+    tokens.mkdir(parents=True)
+    jobs._job_copy_tokens(T1, "eva", tokens, copied, o)
+    assert (tokens / "salesforce.json").exists()
+    path.unlink()
+    jobs._job_copy_tokens(T1, "eva", tokens, copied, o)
+    assert not (tokens / "salesforce.json").exists() and copied == {}
+
+
+def _left_behind(mod):
+    return list(mod.JOBS_ROOT.iterdir())
+
+
+@pytest.mark.parametrize("how", ["done", "failed", "refused", "raised", "refused_export"])
+def test_cleanup_on_every_path(jobs, monkeypatch, tmp_path, how):
+    _stage(jobs, tmp_path, "a-token-value")
+    (tmp_path / "shm" / "left-by-a-job").write_text("x")
+    _define(jobs, ["python3", "x.py", jobs._marker],
+            files={"x.py": BACKGROUND + ("raise SystemExit(4)\n" if how == "failed" else "")
+                   + ("import time; time.sleep(300)\n" if how == "raised" else "")})
+    if how == "refused":
+        (jobs._origin / ".canopy" / "jobs.yaml").write_text("version: 1\njobs: {other: {run: [make]}}\n")
+        _commit(jobs._origin, "no such job")
+    if how == "refused_export":
+        monkeypatch.setattr(jobs, "REPO_URL_TEMPLATE", str(tmp_path / "nowhere" / "{repo}"))
+        monkeypatch.setattr(jobs, "WORK_DIR", str(tmp_path / "other-work"))
+    if how == "raised":
+        real = jobs._job_low_disk
+        count = {"n": 0}
+
+        def boom():
+            count["n"] += 1
+            if count["n"] > 5:
+                raise RuntimeError("boom in the middle")
+            return real()
+        monkeypatch.setattr(jobs, "_job_low_disk", boom)
+        with pytest.raises(RuntimeError):
+            _go(jobs)
+    else:
+        ok, text, _ = _go(jobs)
+        assert ok is (how == "done") and text.endswith(".") or "exit code" in text
+    assert not _alive(jobs)
+    assert _left_behind(jobs) == []
+    assert list((tmp_path / "shm").iterdir()) == []
+    assert jobs._JOB_LOCK.locked() is False
+
+
+def test_the_lock_is_free_after_a_job_so_the_next_runs(jobs):
+    _define(jobs, ["env"])
+    assert _go(jobs)[0] and _go(jobs, T2)[0]
+
+
+def test_a_second_job_finishes_failed_and_doesnt_touch_the_first(jobs):
+    _define(jobs, ["env"])
+    assert jobs._JOB_LOCK.acquire(blocking=False)
+    try:
+        before = list(jobs._seam_calls)
+        ok, text, _ = _go(jobs, T2)
+    finally:
+        jobs._JOB_LOCK.release()
+    assert ok is False and text == "Another job is running on this machine."
+    assert jobs._seam_calls == before              # no pkill, no export, nothing
+
+
+def test_another_runner_on_the_box_holding_a_job_stops_this_one(jobs, tmp_path):
+    """Several runners share one box and one canopy-job, each its own process: the guard
+    has to be between processes, or one runner's end would kill another's job."""
+    holder = subprocess.Popen(
+        [sys.executable, "-c", "import fcntl,sys,time\nf=open(sys.argv[1])\nfcntl.flock(f,fcntl.LOCK_EX)\n"
+                               "print('held',flush=True)\ntime.sleep(60)\n", str(jobs.JOB_LOCK_FILE)],
+        stdout=subprocess.PIPE)
+    try:
+        assert holder.stdout.readline().strip() == b"held"
+        before = list(jobs._seam_calls)
+        ok, text, _ = _go(jobs, T2)
+        assert ok is False and text == "Another job is running on this machine."
+        assert jobs._seam_calls == before
+        jobs._job_restart_sweep()                  # nor does a runner restarting beside it
+        assert jobs._seam_calls == before
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_job_does_not_inherit_the_lock(jobs):
+    """A background process left holding the lock would refuse every later job."""
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": BACKGROUND})
+    assert _go(jobs)[0] and _go(jobs, T2)[0]
+
+
+def test_stop_request_kills_the_job(jobs, monkeypatch):
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": IGNORES_TERM})
+    threading.Timer(0.5, lambda: jobs._STOP_REQUESTED.setdefault(T1, time.time())).start()
+    try:
+        ok, text, _ = _go(jobs)
+    finally:
+        jobs._STOP_REQUESTED.pop(T1, None)
+    assert ok is False and "stopped" in text and not _alive(jobs)
+
+
+def test_runner_stopping_kills_the_job_and_says_so(jobs, monkeypatch):
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": IGNORES_TERM})
+    threading.Timer(0.5, lambda: setattr(jobs, "_stop", True)).start()
+    try:
+        ok, text, _ = _go(jobs)
+    finally:
+        jobs._stop = False
+    assert ok is False and text.startswith("This machine restarted during the job.")
+    assert not _alive(jobs)
+
+
+def test_a_filling_disk_stops_the_job(jobs, monkeypatch):
+    monkeypatch.setattr(jobs, "_job_low_disk", lambda: True)
+    _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": IGNORES_TERM})
+    ok, text, _ = _go(jobs)
+    assert ok is False and "disk" in text and not _alive(jobs)
+
+
+def test_a_failing_emit_never_costs_the_job(jobs):
+    _define(jobs, ["env"])
+
+    def down(events):
+        raise OSError("canopy-web is away")
+    ok, _ = jobs._run_job("r1", {"id": T1, "agent_slug": "eva", "job": "sync", "job_repo": "tools"}, down)
+    assert ok is True
+
+
+def test_a_run_naming_something_absent_is_a_failed_job(jobs):
+    _define(jobs, ["./no-such-program"])
+    ok, text, _ = _go(jobs)
+    assert ok is False and "exit code" in text
+
+
+# ── restart ──────────────────────────────────────────────────────────────────
+
+def test_restart_sweep_kills_and_removes_whatever_is_left(jobs):
+    (jobs.JOBS_ROOT / T1 / "tokens").mkdir(parents=True)
+    left = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)", jobs._marker])
+    try:
+        jobs._job_restart_sweep()
+        assert left.wait(timeout=10) != 0
+    finally:
+        left.kill()
+    assert _left_behind(jobs) == []
+
+
+def test_restart_sweep_does_nothing_on_a_box_without_the_user(jobs, monkeypatch):
+    monkeypatch.setattr(jobs, "_job_user_exists", lambda: False)
+    jobs._job_restart_sweep()
+    assert jobs._seam_calls == []
+
+
+def _state(mod, tmp_path, monkeypatch, **fields):
+    monkeypatch.setattr(mod, "TURN_STATE_ROOT", tmp_path / "state")
+    mod._update_turn_state(T1, turn={"id": T1, "agent_slug": "eva", "job": "sync", "job_repo": "tools"},
+                           runner_id="r1", phase="setup", adoptable=False, **fields)
+
+
+@pytest.mark.parametrize("phase", ["setup", "running"])
+def test_a_held_job_finishes_failed_on_restart_never_retried(jobs, monkeypatch, tmp_path, phase):
+    _state(jobs, tmp_path, monkeypatch)
+    jobs._update_turn_state(T1, phase=phase, attempt="a1", slug="eva")
+    posted = []
+    monkeypatch.setattr(jobs, "_api", lambda m, p, b=None, **k: posted.append((m, p, b)) or (200, {}))
+    monkeypatch.setattr(jobs, "execute_prompt",
+                        lambda *a, **k: pytest.fail("a job went to a model"))
+    monkeypatch.setattr(jobs, "_run_job", lambda *a, **k: pytest.fail("a job ran again"))
+    summary = jobs.adopt_turns("r1")
+    finish = [b for m, p, b in posted if p == f"/turns/{T1}/finish"]
+    assert finish == [{"status": "failed", "result_note": "This machine restarted during the job."}]
+    assert summary["adopted"] == [] and not (tmp_path / "state" / T1).exists()
+
+
+def test_a_job_turn_is_never_adoptable_and_pins_the_updater(jobs, monkeypatch, tmp_path):
+    monkeypatch.setattr(jobs, "ADOPT_TURNS", True)
+    monkeypatch.setenv("CANOPY_RUNNER_SUPERVISED", "1")
+    assert jobs.adoptable_turn({"id": T1, "job": ""}) is True
+    assert jobs.adoptable_turn({"id": T1, "job": "sync"}) is False
+    monkeypatch.setattr(jobs, "TURN_STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(jobs, "_IN_FLIGHT", {})
+    monkeypatch.setattr(jobs, "_run_turn", lambda *a, **k: None)
+    monkeypatch.setattr(jobs, "_lifecycle", lambda *a, **k: None)
+    assert jobs._start_turn("r1", {"id": T1, "agent_slug": "eva", "job": "sync", "job_repo": "tools"})
+    state = jobs._read_json(tmp_path / "state" / T1 / "turn.json")
+    assert state["adoptable"] is False and state["turn"]["job"] == "sync"
+    jobs._IN_FLIGHT.update({T1: None})
+    assert jobs._adoptable_in_flight() == (1, 1)
+
+
+# ── the seam in _run_turn ────────────────────────────────────────────────────
+
+from test_confined_turns import cr as turn_cr  # noqa: E402,F401
+
+
+@pytest.fixture
+def seam(turn_cr, monkeypatch, tmp_path):  # noqa: F811
+    mod, calls = turn_cr
+    monkeypatch.setattr(mod, "_CONN_HOLDS", {})
+    monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: pytest.fail("a job went to a model"))
+    monkeypatch.setattr(mod, "_turn_cwd", lambda *a, **k: pytest.fail("a job needs no agent checkout"))
+    order = calls["order"] = []
+    real_stage, real_unstage = mod._stage_connections, mod._unstage_connections
+    monkeypatch.setattr(mod, "_stage_connections",
+                        lambda *a: order.append("stage") or real_stage(*a))
+    monkeypatch.setattr(mod, "_unstage_connections",
+                        lambda t: order.append("unstage") or real_unstage(t))
+    return mod, calls
+
+
+JOB_TURN = {"id": T1, "agent_slug": "eva", "job": "sync", "job_repo": "tools", "prompt": "",
+            "caller_context": {"profile": "full", "capability": None}}
+
+
+def _finish(calls):
+    return [b for m, p, b in calls["api"] if p == f"/turns/{T1}/finish"]
+
+
+def test_transcript_ship_skipped(seam, monkeypatch):
+    mod, calls = seam
+    order = calls["order"]
+    monkeypatch.setattr(mod, "_run_job",
+                        lambda rid, turn, emit: order.append("job") or (True, "The job finished (exit code 0)."))
+    mod._run_turn("r-1", dict(JOB_TURN))
+    assert order[:3] == ["stage", "job", "unstage"]
+    assert calls["shipped"] == [] and calls["recorded"] == []
+    body = _finish(calls)
+    assert body[0]["status"] == "done" and "session_key" not in body[0]
+
+
+def test_a_raise_in_the_job_is_a_failed_turn_and_unstages(seam, monkeypatch):
+    mod, calls = seam
+
+    def boom(*a):
+        raise RuntimeError("no")
+    monkeypatch.setattr(mod, "_run_job", boom)
+    mod._run_turn("r-1", dict(JOB_TURN))
+    assert _finish(calls)[0]["status"] == "failed" and "unstage" in calls["order"]
+
+
+def test_a_stopped_job_finishes_cancelled(seam, monkeypatch):
+    mod, calls = seam
+    monkeypatch.setattr(mod, "_IN_FLIGHT", {T1: None})
+    mod._STOP_REQUESTED[T1] = time.time()
+    monkeypatch.setattr(mod, "_run_job", lambda *a: (False, "The job was stopped."))
+    mod._run_turn("r-1", dict(JOB_TURN))
+    assert _finish(calls)[0]["status"] == "cancelled"
+
+
+def test_a_job_is_not_left_for_requeue_when_the_box_shuts_down(seam, monkeypatch):
+    """`_killed_by_shutdown` leaves an ordinary turn running to run again elsewhere."""
+    mod, calls = seam
+    monkeypatch.setattr(mod, "_stop", True)
+    monkeypatch.setattr(mod, "_system_shutting_down", lambda: True)
+    monkeypatch.setattr(mod, "_run_job", lambda *a: (False, "This machine restarted during the job."))
+    mod._run_turn("r-1", dict(JOB_TURN))
+    assert _finish(calls)[0]["status"] == "failed"
+
+
+def test_a_job_needs_no_cli_on_the_box(seam, monkeypatch):
+    mod, calls = seam
+    monkeypatch.setattr(mod, "_run_job", lambda *a: (True, "ok"))
+    monkeypatch.setattr(mod, "_cli_refusal", lambda turn: pytest.fail("a job has no CLI to refuse"))
+    mod._run_turn("r-1", {**JOB_TURN, "cli": ""})
+    assert _finish(calls)[0]["status"] == "done"
+
+
+def test_a_confined_turn_carrying_a_job_never_runs_it(seam, monkeypatch):
+    mod, calls = seam
+    monkeypatch.setattr(mod, "_run_job", lambda *a: pytest.fail("a confined turn ran a job"))
+    mod._run_turn("r-1", {**JOB_TURN, "caller_context": {"profile": "confined", "capability": {"name": "ask"}}})
+    assert _finish(calls)[0]["status"] == "failed"
+
+
+def test_events_are_plain_lines_of_an_allowed_kind(jobs):
+    _define(jobs, ["env"])
+    _, _, out = _go(jobs)
+    assert out and {e["kind"] for e in out} == {"status"}
+    assert all(e["payload"]["source"] == "job" for e in out)
+
+
+# ── the box: user, sudoers, network ──────────────────────────────────────────
+
+class FakeBox:
+    def __init__(self, tmp_path, *, visudo=0, iptables=0, exists=False):
+        self.calls, self.visudo, self.iptables, self.exists = [], visudo, iptables, exists
+        self.rules = {"iptables": [], "ip6tables": []}
+        self.owners = {}
+        self.sudoers = tmp_path / "sudoers.d" / "canopy-jobs"
+        self.sudoers.parent.mkdir()
+        self.root = tmp_path / "var-lib-canopy-jobs"
+        self.lock = tmp_path / "run" / "job.lock"
+        self.deny = (tmp_path / "cron.deny", tmp_path / "at.deny")
+
+    def run(self, argv, **kw):
+        self.calls.append(list(argv))
+        tool = argv[0]
+        if tool == "id":
+            return subprocess.CompletedProcess(argv, 0 if self.exists else 1, "", "")
+        if tool == "useradd":
+            self.exists = True
+        if tool == "visudo":
+            return subprocess.CompletedProcess(argv, self.visudo, "", "bad")
+        if tool in self.rules:
+            if self.iptables:
+                return subprocess.CompletedProcess(argv, self.iptables, "", "no")
+            rest = argv[1:]
+            if rest[0] == "-N":
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if rest[0] == "-C":
+                return subprocess.CompletedProcess(argv, 0 if rest[1:] in self.rules[tool] else 1, "", "")
+            if rest[0] == "-A":
+                self.rules[tool].append(rest[1:])
+            if rest[0] == "-I":
+                self.rules[tool].insert(0, [rest[1], *rest[3:]])
+            if rest[0] == "-D":
+                self.rules[tool].remove(rest[1:])
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def chown(self, path, uid, gid):
+        self.owners[str(path).removesuffix(".tmp")] = uid
+
+
+RUNNERS = [{"id": "dimagi", "user": "cu-dimagi", "uid": 2001}, {"id": "agent-eva", "user": "cu-agent-eva", "uid": 2002}]
+
+
+def _setup_jobs(mod, fake, box=None, *, locked=False):
+    return mod.setup_jobs(box or {}, RUNNERS, locked=locked, run=fake.run, chown=fake.chown,
+                          uid_of=lambda user: SimpleNamespace(pw_uid=999, pw_gid=999),
+                          sudoers=fake.sudoers, root=fake.root, lock=fake.lock, deny=fake.deny)
+
+
+@pytest.fixture
+def fake(tmp_path, cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda tool: f"/usr/sbin/{tool}")
+    monkeypatch.setattr(cloud_runner, "_log", lambda m, *a, **k: None)
+    return FakeBox(tmp_path)
+
+
+def test_setup_makes_a_system_user_the_root_and_the_lock(cloud_runner, fake):
+    assert _setup_jobs(cloud_runner, fake) is True
+    add = next(c for c in fake.calls if c[0] == "useradd")
+    assert "--system" in add and add[-1] == "canopy-job" and "/usr/sbin/nologin" in add
+    assert "--create-home" not in add
+    assert stat.S_IMODE(fake.root.stat().st_mode) == 0o700 and fake.owners[str(fake.root)] == 999
+    # readable by every runner, so each can take the flock; root's, so none can replace it
+    assert stat.S_IMODE(fake.lock.stat().st_mode) == 0o644 and fake.owners[str(fake.lock)] == 0
+    assert all("canopy-job" in d.read_text().splitlines() for d in fake.deny)
+
+
+def test_setup_keeps_an_existing_lock_file_in_place(cloud_runner, fake):
+    """A held flock is on the inode: replacing the file would let two jobs in."""
+    _setup_jobs(cloud_runner, fake)
+    inode = fake.lock.stat().st_ino
+    _setup_jobs(cloud_runner, fake)
+    assert fake.lock.stat().st_ino == inode
+    assert sum(1 for c in fake.calls if c[0] == "useradd") == 1
+    assert all(d.read_text().count("canopy-job") == 1 for d in fake.deny)
+
+
+def test_sudoers_rule_is_each_runner_as_canopy_job_only(cloud_runner, fake):
+    _setup_jobs(cloud_runner, fake)
+    lines = [ln for ln in fake.sudoers.read_text().splitlines() if ln and not ln.startswith("#")]
+    assert lines == ["cu-dimagi ALL=(canopy-job) NOPASSWD: ALL", "cu-agent-eva ALL=(canopy-job) NOPASSWD: ALL"]
+    assert stat.S_IMODE(fake.sudoers.stat().st_mode) == 0o440 and fake.owners[str(fake.sudoers) + ".tmp"] == 0
+    assert not list(fake.sudoers.parent.glob("*.tmp"))
+
+
+def test_a_sudoers_file_visudo_refuses_is_never_installed(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_log", lambda m, *a, **k: None)
+    fake = FakeBox(tmp_path, visudo=1)
+    fake.sudoers.write_text("an old good rule\n")
+    assert _setup_jobs(cloud_runner, fake) is False
+    assert not fake.sudoers.exists() and not list(fake.sudoers.parent.iterdir())
+
+
+def test_iptables_failing_leaves_no_sudo_rule(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_log", lambda m, *a, **k: None)
+    fake = FakeBox(tmp_path, iptables=1)
+    fake.sudoers.write_text("an old rule\n")
+    assert _setup_jobs(cloud_runner, fake) is False
+    assert not fake.sudoers.exists()
+
+
+def test_sensitive_box_gets_no_user_and_no_rule(cloud_runner, fake):
+    fake.sudoers.write_text("an old rule\n")
+    assert _setup_jobs(cloud_runner, fake, {"RUNNER_DATA_MODE": "sensitive_data"}) is False
+    assert not fake.sudoers.exists()
+    assert not any(c[0] == "useradd" for c in fake.calls)
+
+
+def _flat(rule):
+    return " ".join(rule)
+
+
+def test_rules_refuse_metadata_and_loopback_but_dns(cloud_runner, fake):
+    cloud_runner.job_rules(999, locked=False, run=fake.run)
+    v4 = [_flat(r) for r in fake.rules["iptables"]]
+    own = "-m owner --uid-owner 999"
+    assert ["OUTPUT -j CANOPY-JOB"] == [x for x in v4 if x.startswith("OUTPUT")]
+    chain = [x.removeprefix("CANOPY-JOB ") for x in v4 if not x.startswith("OUTPUT")]
+    assert f"{own} -d 169.254.169.254 -j REJECT" in chain
+    dns = [f"{own} -o lo -d 127.0.0.53 -p udp --dport 53 -j RETURN",
+           f"{own} -o lo -d 127.0.0.53 -p tcp --dport 53 -j RETURN"]
+    closed = f"{own} -o lo -j REJECT"
+    assert chain.index(dns[0]) < chain.index(closed) and chain.index(dns[1]) < chain.index(closed)
+    v6 = [_flat(r) for r in fake.rules["ip6tables"]]
+    assert f"CANOPY-JOB {own} -d fd00:ec2::254 -j REJECT" in v6 and f"CANOPY-JOB {closed}" in v6
+    assert not any("--dport 53" in x for x in v6)
+
+
+def test_rules_are_idempotent_and_never_flushed(cloud_runner, fake):
+    """Flushing would open a gap every minute with a job running."""
+    cloud_runner.job_rules(999, locked=False, run=fake.run)
+    before = {k: list(v) for k, v in fake.rules.items()}
+    cloud_runner.job_rules(999, locked=False, run=fake.run)
+    assert fake.rules == before
+    assert not any(c[0] in fake.rules and c[1] == "-F" for c in fake.calls)
+
+
+def test_a_lock_closes_the_job_user_entirely_and_reopens(cloud_runner, fake):
+    cloud_runner.job_rules(999, locked=True, run=fake.run)
+    own = "-m owner --uid-owner 999"
+    for tool in ("iptables", "ip6tables"):
+        chain = [_flat(r) for r in fake.rules[tool] if r[0] == "CANOPY-JOB"]
+        assert chain[0] == f"CANOPY-JOB {own} -j REJECT"              # first, ahead of the DNS allow
+    cloud_runner.job_rules(999, locked=False, run=fake.run)
+    assert not any(_flat(r) == f"CANOPY-JOB {own} -j REJECT" for r in fake.rules["iptables"])
+
+
+def test_a_lock_set_in_canopy_web_reaches_the_job_user(cloud_runner, monkeypatch, tmp_path):
+    """`egress_rules` names each runner's uid, and canopy-job is not a runner, so the
+    every-minute sync has to carry a lock to it as well."""
+    seen = []
+    monkeypatch.setattr(cloud_runner, "_sync_job_rules", lambda locked, run: seen.append(locked))
+    monkeypatch.setattr(cloud_runner, "egress_rules", lambda *a, **k: [])
+    monkeypatch.setattr(cloud_runner, "_install_unit_file", lambda *a, **k: False)
+    runners = [{"id": "dimagi", "uid": os.getuid(), "gid": os.getgid(), "name": "b", "user": "u", "home": str(tmp_path),
+                "kind": "tree", "workspace": "w", "slug": ""}]
+    run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")  # noqa: E731
+    box = {"CANOPY_BASE_URL": "https://x", "RUNNER_NAME": "b"}
+    for locked in (True, False):
+        cloud_runner.apply_egress(box, runners, boot=True, run=run, etc=tmp_path / "etc",
+                                  chown=lambda *a: None,
+                                  fetch=lambda on=locked: {"b": {"locked": on, "allow": []}})
+    assert seen == [True, False]
+
+
+def test_template_creates_user_rule_and_metadata_block():
+    """The box's half, read from the text: it reaches a box through `--install-runners`
+    (cloud-init) and `--setup-runners` (every boot and every idle update)."""
+    source = (EC2 / "cloud_runner.py").read_text()
+    template = (EC2 / "runner.cfn.yaml").read_text()
+    assert "/opt/canopy-runner/cloud_runner.py, --install-runners" in template
+    assert "python3-yaml" in template
+    assert "--setup-runners" in source
+    setup = source[source.index('if argv[0] == "--setup-runners":'):source.index("return pair_runners_main()")]
+    assert "setup_jobs(" in setup and setup.index("imds_rules()") < setup.index("setup_jobs(")
+    body = source[source.index("def setup_jobs("):source.index("def _sync_job_rules(")]
+    assert '"useradd", "--system"' in body and "visudo" in body and "job_rules(" in body
+    # the sudo rule's shape, whatever the runner is called
+    assert '{user} ALL=({JOB_USER}) NOPASSWD: ALL' in source
+    assert "requiretty" not in body
+    assert 'IMDS_V4, IMDS_V6 = "169.254.169.254", "fd00:ec2::254"' in source
+    # iptables doesn't survive a reboot: the unit that makes these runs on every boot
+    unit = source[source.index('"canopy-runners.service": f"""'):source.index('"canopy-kms-broker.service"')]
+    assert "--setup-runners" in unit and "WantedBy=multi-user.target" in unit
+
+
+def test_runner_units_keep_no_new_privileges_until_someone_decides(cloud_runner):
+    """Kept as found: sudo cannot work under it, so jobs stay unreported on such a box.
+    This test exists so that removing it is a visible, deliberate change."""
+    assert "NoNewPrivileges=yes" in cloud_runner.SYSTEMD_UNITS["canopy-runner@.service"]
+
+
+def test_broker_refuses_other_users(tmp_path):
+    """canopy-job's uid isn't in runners.json, so each broker answers with an error and
+    makes no KMS or STS call. Both sockets are 0666 and rely on this check alone."""
+    for name in ("kms_broker", "aws_broker"):
+        spec = importlib.util.spec_from_file_location(name, EC2 / f"{name}.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault(name, mod)
+        spec.loader.exec_module(mod)
+        doc = {"runners": [{"uid": 2001, "id": "dimagi", "kms_key": "alias/x"}]}
+        path = tmp_path / "runners.json"
+        path.write_text(json.dumps(doc))
+        job_uid = 999
+        if name == "kms_broker":
+            keys = mod.load_keys(str(path))
+            assert job_uid not in keys and 2001 in keys
+            boom = SimpleNamespace(public_key=lambda *a: pytest.fail("KMS was called"),
+                                   derive=lambda *a: pytest.fail("KMS was called"))
+            reply = mod.answer(b'{"op":"public_key"}', job_uid, keys, boom)
+        else:
+            runners = mod.load_runners(str(path))
+            assert job_uid not in runners and 2001 in runners
+            boom = SimpleNamespace(role_arn=lambda *a: pytest.fail("STS was called"),
+                                   assume=lambda *a, **k: pytest.fail("STS was called"))
+            reply = mod.answer(b'{"role":"labs-observe","agent":"eva"}', job_uid, runners, boom, mod.Cache())
+        assert "not a runner" in reply["error"], name
+
+
+def test_self_check_covers_each_thing_and_is_clean_shell():
+    path = EC2 / "job_self_check.sh"
+    text = path.read_text()
+    assert os.access(path, os.X_OK)
+    subprocess.run(["bash", "-n", str(path)], check=True)
+    for needle in ("169.254.169.254", "fd00:ec2::254", "/run/canopy-kms/sock", "/run/canopy-aws/sock",
+                   "runner-token.json", ".canopy-cloud-runner.json", ".gog-secret", "box.env", ".canopy",
+                   "/.env", "work", "NoNewPrivileges", "visudo -c", "crontab", "pkill -KILL -u",
+                   "not a runner", "127.0.0.1", "::1", "getent", "/run/canopy/", "PASS", "FAIL"):
+        assert needle in text, needle
+    if shutil.which("shellcheck"):
+        res = subprocess.run(["shellcheck", str(path)], capture_output=True, text=True)
+        assert res.returncode == 0, res.stdout
+
+
+def test_readme_says_what_a_job_cannot_be_kept_from():
+    readme = (EC2 / "README.md").read_text()
+    section = readme[readme.index("## Plain jobs"):readme.index("## Several runners on one machine")]
+    for needle in ("job_self_check.sh", "Base64", "NoNewPrivileges", "Manual check", "/etc/sudoers.d/canopy-jobs"):
+        assert needle in section, needle

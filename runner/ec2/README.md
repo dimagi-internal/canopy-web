@@ -739,6 +739,94 @@ all at boot, and the auto-updater re-runs it after an update. The runner page's 
 check says whether a locked runner's lock holds: its proxy answers, and a direct
 connection out is refused.
 
+## Plain jobs: a command from a repo's `main`, with no model
+
+A job is a command named in a repo's own `.canopy/jobs.yaml`. canopy-web says only the job's
+name, the agent and a repo name; the box exports that repo's `main` and runs it
+(`_run_job` in `cloud_runner.py`).
+
+**A job runs as `canopy-job`, a separate Unix user**, because a runner's user can read its
+own login and every agent's token files. Each run gets `/var/lib/canopy-jobs/<turn>/`
+(`repo/`, `home/`, `tokens/`), an environment of exactly `PATH`, `HOME`, `LANG`,
+`CANOPY_AGENT_SLUG`, `CANOPY_TURN_ID` and `CANOPY_JOB_TOKENS`, and its own 0600 copy of each
+of the agent's staged tokens, refreshed every minute. When it ends, however it ends, every
+process of that user is killed and everything it wrote under that root, `/tmp`, `/var/tmp`
+and `/dev/shm` is removed. A non-zero exit, a timeout or a stop is never run again, and nor
+is a job a restart cut short: it finishes FAILED, "This machine restarted during the job."
+
+**One job at a time per box**, by a flock on `/run/canopy/job.lock`. canopy-web checks per
+runner and not atomically, and a box of several runners has several runner processes sharing
+one `canopy-job`, so the lock is what makes the end-of-job kill safe. A second job finishes
+FAILED, "Another job is running on this machine.", and touches nothing.
+
+**What sets the box up.** `--setup-runners`, which `canopy-runners.service` runs every boot
+and the updater re-runs on a tick that finds the box idle, so the rules come back after a
+reboot as the IMDS and egress rules do. It makes the system user, `/var/lib/canopy-jobs`
+(0700, its own), `/etc/sudoers.d/canopy-jobs` (`<runner user> ALL=(canopy-job) NOPASSWD: ALL`,
+checked by `visudo -c` first; no `requiretty` line, Ubuntu doesn't set it), a `cron.deny` and
+`at.deny` entry, and the `CANOPY-JOB` iptables chain. The sudo rule goes in last, so a box
+whose network rules failed can't run a job. A sensitive-data box gets none of this.
+
+**The network.** `CANOPY-JOB` refuses that user the metadata address (the box-wide IMDS rule
+does too, and a hop limit of 1 doesn't help: a local user is zero hops away) and all of
+loopback, which covers the egress proxy, anything a turn listens on and the box's own
+addresses. The one exception is DNS to systemd-resolved's stub, `127.0.0.53:53`. Everything
+else out is open, unless the egress lock is on. **The egress lock's own chain names runners'
+uids, so it does not cover `canopy-job`.** Instead: a locked runner doesn't report `jobs`, and
+while any runner on the box is locked, `CANOPY-JOB` refuses that user everything, DNS too
+(`--egress-sync` carries that within a minute). So on a box where only some runners are
+locked, an unlocked runner's job runs with no network and fails on its first call.
+
+**What keeps a job from what it mustn't read** (modes per the code that makes them):
+
+| What | Mode and owner | Why a job can't have it |
+|---|---|---|
+| A runner's home, `/home/cu-<id>` | 0700, the runner's (`setup_runners`) | Shields all of the next four |
+| `~/.canopy-runner/runner-token.json` | 0600, the runner's | Inside the home; and written 0600 |
+| `~/.canopy/**` (connections, device key) | 0700 / 0600, the runner's | Inside the home |
+| `~/.<slug>/.env` | the runner's | Inside the home |
+| `WORK_DIR`, `~/work` | 0700, the runner's | Inside the home and 0700 itself |
+| `/etc/canopy-runner/<id>.env`, `.gog-secret`, `box.env`, `egress.state.json` | 0600 / 0400 / 0600 / 0600 | `runners.json`, `egress.json` and `*.egress.allow` are 0644 and hold no secret |
+| `/run/canopy/<uid>/` (per-turn secrets) | 0700, the runner's | |
+| `/run/canopy-kms/sock`, `/run/canopy-aws/sock` | 0666, root's | Any process may connect. Each broker answers only a uid in `runners.json`, by `SO_PEERCRED`; this one never is |
+| The instance role | root's | The metadata rules above |
+
+**What this doesn't do:**
+
+- **Scrubbing is exact values only.** A token's exact value becomes `[token]` in the output
+  before it leaves the box, across chunk boundaries. Base64 or any other encoding can't be
+  recognised, and a job author can print anything the job can read. It's a guard against
+  accidents, not against the author.
+- A job can use the agent's connection for its whole run, as the agent can.
+- Any process of a runner's user can use the sudo rule, so a model turn on that runner can
+  run commands as `canopy-job`, and read a running job's token copies. That gives it nothing
+  new: it can already read the runner's own staged files.
+- A job can write until the disk has 2 GB left, when it is stopped; a job filling `/dev/shm`
+  uses memory instead, and nothing bounds that. There is no CPU limit.
+- `/tmp` and `/var/tmp` are the runner's own private ones, which sudo inherits, so a job can
+  read what's there if its mode allows. Command lines of other users' processes are visible
+  in `/proc`, as `hidepid` isn't set.
+
+**Manual check on a real box** (none of this can be proved from `_job_can_run`, or from a
+test without a real `canopy-job`). Run this once as root on a new box, and after any change
+to its setup:
+
+```bash
+sudo bash /opt/canopy-web/runner/ec2/job_self_check.sh
+```
+
+It prints PASS or FAIL per line for the user, the sudo rule, each runner's secrets (`~/.canopy`,
+`runner-token.json`, each `.env`, `WORK_DIR`, `/run/canopy/<uid>`), the metadata address, loopback,
+the egress proxy's ports, DNS, both brokers, `/proc`, crontabs, and a run started the way the
+runner starts one. It refuses to start while a job is running. At start, `_job_can_run` itself
+checks PyYAML, the user, the lock, sudo, the jobs root and the metadata refusal.
+
+**`NoNewPrivileges` stops all of this as it stands.** `canopy-runner@.service` sets
+`NoNewPrivileges=yes`, under which the kernel ignores sudo's setuid bit, so `sudo -n -u
+canopy-job` fails on every box: `_job_can_run` says no, the log says why, the box doesn't report
+`jobs`, and no job can reach it. The self-check prints this as a FAIL. Whether to lift that for
+a runner, or start jobs some other way, is an open decision.
+
 ## Several runners on one machine (`Runners`)
 
 The canopy-web half is `docs/architecture/runners.md` § "Several runners on one machine".
