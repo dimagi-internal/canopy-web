@@ -12,6 +12,8 @@ describe('navigate-fallback ownership', () => {
     const spaPaths = [
       '/',
       '/app',
+      '/apps', // the menu bar's door into the Personal apps tab
+      '/w/connect/apps/personal/meeting-assistant',
       '/supervisor',
       '/insights',
       '/system',

@@ -87,7 +87,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   Settings → Secrets lists the workspace's vaults and links here.
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
-  **Apps** (installed apps and the store, `/w/:workspace/apps`) are links;
+  **Apps** (workspace and personal apps and the store, `/w/:workspace/apps`) are links;
   **Agents** (All agents, Sessions, New agent, Huddles, Schedules, Turn log,
   Runners), **Projects** (All projects, Tasks, Triage, and a **Demos**
   sub-menu: Storyboards, Walkthroughs, DDD runs, Shareouts) and **Workspace**
@@ -138,11 +138,26 @@ Every browser-facing address canopy-web serves. The SPA route table is
   [`dynamic-views.md`](dynamic-views.md)). The list (`?project=<handle>` narrows,
   `?new=1` opens New view); one view, with History (restore) and, for editors, the
   code and sources beside a live preview of the draft (`?edit=1`).
-- **`/apps`** (+ `/store?app=<key>`, `/:appKey/:page?`, `/:appKey/customize`) — workspace apps
+- **`/apps`** — every app, on one page with two tabs drawn by the same lists
+  (`components/apps/AppLists.tsx`): **Workspace apps**, and **Personal apps** (`?tab=personal`).
+  Root `/apps` redirects to the active workspace's Personal apps tab: it's what the runner's menu bar
+  opens.
+- **`/apps`** on the Workspace apps tab (+ `/store?app=<key>`, `/:appKey/:page?`, `/:appKey/customize`) — workspace apps
   (`apps/workspace_apps`; [`workspace-apps.md`](workspace-apps.md)): the installed list, one app of
   canopy's catalog before it is installed (screenshots, roles, records, public pages), an installed
   app's pages drawn in the dynamic-view sandbox, and its draft-based customize page. Anyone in the
   workspace reads; admins install, switch on/off, make public pages live, remove.
+- **`/apps?tab=personal`** — apps a person installs for themselves, not for a workspace
+  ([`local-apps.md`](local-apps.md)), each badged **Unreleased**: all your copies (computer, version,
+  last run, Stop, needs-acceptance) and the store. No switch: there is nothing for a workspace to turn on.
+- **`/apps/personal/:key`** — one personal app, in the same layout as a store app
+  (`components/apps/AppDetailLayout.tsx`): what it does, where it runs, what it reads and sends, whether
+  anyone reviewed it, versions; Install, with a computer and settings drawn from its manifest; then
+  Configure, Remove, Stop and accepting a changed promise. The agent picked decides which workspace its
+  sessions land in. It never starts an app: that is the menu bar on that computer.
+- **`/apps/personal/review/:id`** — a submitted version, for its reviewer and its author: what it says
+  it does, what reading the code found, what changed in its promises, per-file diffs and, for a superuser,
+  Revoke. Approving is on its approval page only. Anyone else gets "Not found, or not yours."
 - **`/mcp`** — the MCP servers a person can add: every published workspace project serving
   its own tools, here and below, each with the line that adds it to Claude Code
   (`McpServersPage.tsx`; served through the one project gateway,

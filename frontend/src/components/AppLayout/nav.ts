@@ -14,7 +14,7 @@
  *                 (the Demos ▸ sub-menu: storyboards, walkthroughs, shareouts).
  *                 What a project makes — its views, its MCP server — is on
  *                 the project's own page
- *   Apps        — the apps the workspace runs, and the store to install more
+ *   Apps        — the workspace's apps and your own, and the store to install more
  *   Workspace ▾ — who is in it, how it is set up, and its own views
  *
  * Help (Guide, Get started, System) is not workspace business and has its own
@@ -84,8 +84,8 @@ export const NAV: NavEntry[] = [
       { path: 'shareouts', label: 'Shareouts', tenant: true, group: 'Demos' },
     ],
   },
-  // Self-contained apps the workspace runs (an applicant tracker, …): what is
-  // installed, and the store of templates to install from, on one page.
+  // Every app, on one page: a tab of the ones the workspace runs (an applicant
+  // tracker, …), a tab of your own, each with its store.
   { kind: 'link', item: { path: 'apps', label: 'Apps', tenant: true } },
   {
     kind: 'menu',

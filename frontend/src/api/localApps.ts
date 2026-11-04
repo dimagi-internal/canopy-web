@@ -55,37 +55,28 @@ export function diffOf(review: LocalAppReview): LocalAppFileDiff[] {
   return review.diff as unknown as LocalAppFileDiff[];
 }
 
-export async function getLocalAppStore(workspace: string): Promise<LocalAppStore> {
-  const res = await apiV2.GET("/api/local-apps/store/{workspace}/", { params: { path: { workspace } } });
-  return unwrap(res, "Failed to load apps that run on your computer") as unknown as LocalAppStore;
+export async function getLocalAppStore(): Promise<LocalAppStore> {
+  const res = await apiV2.GET("/api/local-apps/store/");
+  return unwrap(res, "Failed to load the apps") as unknown as LocalAppStore;
 }
 
-export async function setLocalAppsSwitch(workspace: string, enabled: boolean): Promise<void> {
-  const res = await apiV2.PUT("/api/local-apps/store/{workspace}/switch", {
-    params: { path: { workspace } },
-    body: { enabled },
-  });
-  ensureOk(res, "Failed to change the setting");
-}
-
-export async function getLocalApp(workspace: string, key: string): Promise<LocalAppDetail> {
-  const res = await apiV2.GET("/api/local-apps/store/{workspace}/apps/{key}", { params: { path: { workspace, key } } });
+export async function getLocalApp(key: string): Promise<LocalAppDetail> {
+  const res = await apiV2.GET("/api/local-apps/store/apps/{key}", { params: { path: { key } } });
   return unwrap(res, "Failed to load the app") as unknown as LocalAppDetail;
 }
 
 export async function installLocalApp(
-  workspace: string,
   key: string,
   install: { runner_id: string; settings: Record<string, LocalAppSettingValue>; accept_digest: string },
 ): Promise<LocalAppInstallation> {
-  const res = await apiV2.POST("/api/local-apps/store/{workspace}/apps/{key}/install", {
-    params: { path: { workspace, key } },
+  const res = await apiV2.POST("/api/local-apps/store/apps/{key}/install", {
+    params: { path: { key } },
     body: install,
   });
   return unwrap(res, "Failed to install the app") as unknown as LocalAppInstallation;
 }
 
-/** This person's installations, on all their computers and across workspaces. */
+/** This person's installations, on all their computers. */
 export async function listMyLocalApps(): Promise<LocalAppInstallation[]> {
   const res = await apiV2.GET("/api/local-apps/installations/");
   return Array.from(unwrap(res, "Failed to load your installed apps")) as LocalAppInstallation[];

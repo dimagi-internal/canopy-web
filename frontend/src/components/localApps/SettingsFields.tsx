@@ -122,16 +122,28 @@ function AgentSelect({
   // A saved agent can drop off the list when the person loses access to it. Show it rather than
   // appear to have nothing chosen; the installation's refusal says why it won't start.
   const gone = value && !agents.some((a) => a.slug === value)
+  const workspaces = [...new Set(agents.map((a) => a.workspace))]
+  const option = (a: AgentOption) => <option key={a.slug} value={a.slug}>{a.name}</option>
+  // The agent decides which workspace the sessions land in, and a closed select doesn't show its
+  // group, so with more than one workspace the line below names where this choice lands.
+  const chosen = agents.find((a) => a.slug === value)?.workspace
   return (
     <>
       <select id={id} aria-describedby={helpId} required={required} className={SELECT_CLASS} value={value}
         onChange={(e) => onChange(e.target.value)}>
         <option value="">Choose an agent</option>
         {gone && <option value={value}>{value} (you can't use this one now)</option>}
-        {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
+        {workspaces.length > 1
+          ? workspaces.map((w) => <optgroup key={w} label={w}>{agents.filter((a) => a.workspace === w).map(option)}</optgroup>)
+          : agents.map(option)}
       </select>
+      {workspaces.length > 1 && (
+        <p className="mt-0.5 text-xs text-muted-foreground" data-testid="local-app-agent-workspace">
+          {chosen ? `Its sessions land in ${chosen}.` : "Its sessions land in the agent's workspace."}
+        </p>
+      )}
       {agents.length === 0 && (
-        <p className="mt-0.5 text-xs text-muted-foreground">You have no agent you can use in this workspace.</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">You have no agent you can use.</p>
       )}
     </>
   )
