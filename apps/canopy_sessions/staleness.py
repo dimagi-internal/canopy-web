@@ -50,8 +50,9 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 # archived or its runner is retired, with three exceptions that retire it once
 # nothing on it is in flight and no dialog is up:
 #   * it ran on its own (`ran_on_its_own`): nobody is waiting on it;
-#   * it is a person's conversation (a web chat, or a Slack thread) started in auto
-#     mode, and no turn on it was created or finished within CLOUD_CHAT_IDLE.
+#   * it is a person's conversation (a web chat, a Slack thread, or mail a member
+#     sent: `person_mail_q`) started in auto mode, and no turn on it was created or
+#     finished within CLOUD_CHAT_IDLE.
 # A manual-mode session waits for a person and keeps the open-until-closed rule.
 CLOUD_CHAT_IDLE = dt.timedelta(hours=24)
 
@@ -161,6 +162,24 @@ def ran_on_its_own_q() -> Q:
     return Q(Exact(mode, "auto")) & (~conversation | Q(Exact(by_agent, True)))
 
 
+def person_mail_q() -> Q:
+    """Under a Session queryset: its first claimed turn is mail from a canopy member
+    (`initiator_kind="user"`, proven by the message's DMARC alignment). Not a trigger's
+    turn (canopy itself), not an agent's mail. Not a contact's either: an outside
+    sender has no session list to find it in, and every sender gets a contact row, so
+    that kind says nothing about whether anyone here is following the thread.
+
+    Deliberately NOT part of `ran_on_its_own`, which also decides what the feed and
+    pushes hold back: such a session is listed like a conversation (`_predicates`),
+    but the reply already reaches the person by mail, so it earns no "done" push."""
+    Turn = apps.get_model("harness", "Turn")
+    first = first_driving_turn()
+    origin = Coalesce(Subquery(first.values("origin")[:1]), Value(""))
+    kind = Coalesce(Subquery(first.values("initiator_kind")[:1]), Value(""))
+    by_agent = Coalesce(Subquery(first.values("_by_agent")[:1]), Value(False))
+    return Q(Exact(origin, Turn.ORIGIN_EMAIL)) & Q(Exact(kind, "user")) & ~Q(Exact(by_agent, True))
+
+
 def stale_cutoff(now=None):
     """The live_seen_at floor for `state=active`. A binding last seen before this is
     treated as archived — derived, never written, so it un-archives itself the moment
@@ -233,10 +252,12 @@ def _predicates() -> _Predicates:
         return Coalesce(Subquery(driving.values(field)[:1]), Value(""))
 
     auto = Q(Exact(first("turn_mode"), "auto"))
-    # A conversation: a person's web chat, or a session bound to a Slack thread.
+    # A conversation: a person's web chat, a session bound to a Slack thread, or the
+    # work session of mail a member sent.
     slack_thread = Q(metadata__has_key="slack_thread")
-    conversation = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)) | slack_thread
-    ran_on_its_own = ran_on_its_own_q()
+    person_mail = person_mail_q()
+    conversation = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)) | slack_thread | person_mail
+    ran_on_its_own = ran_on_its_own_q() & ~person_mail
     # Idle: no driving turn created or finished within CLOUD_CHAT_IDLE. Turn times,
     # not the binding's: a cloud binding's `live_seen_at` is stamped per turn and
     # its `last_interacted_at` is never reported.
@@ -271,7 +292,7 @@ def _predicates() -> _Predicates:
     # A session mid-transfer is unseen by design (see TRANSFER_WINDOW), not gone.
     p.quiet, p.unobserved, p.cloud_gone = quiet, unobserved, cloud_gone
     p.first_mode, p.first_origin = first("turn_mode"), first("origin")
-    p.slack_thread = slack_thread
+    p.slack_thread, p.person_mail = slack_thread, person_mail
     p.in_flight, p.no_dialog = in_flight, no_dialog
     p.runner_unseen, p.web_unseen = runner_unseen, web_unseen
     p.transferring = transferring_q()
@@ -287,7 +308,7 @@ OPEN_REASONS = (
     "turn_running",       # cloud: a turn that drives it is queued, claimed or running
     "dialog_up",          # cloud: a question is waiting for an answer
     "manual_turn",        # cloud: its first claimed turn ran in manual mode
-    "person_started",     # cloud: a person's web chat or Slack thread with a turn within CLOUD_CHAT_IDLE
+    "person_started",     # cloud: a person's web chat, Slack thread or member's mail with a turn within CLOUD_CHAT_IDLE
     "no_turn_found",      # cloud: no claimed turn drives it, so nothing can finish it
     "unbound",            # a web chat no runner has picked up yet
     "unobservable",       # held by a box that has never sent a session report
@@ -315,7 +336,7 @@ def open_reason():
         When(cloud & Q(p.in_flight), then=Value("turn_running")),
         When(cloud & ~p.no_dialog, then=Value("dialog_up")),
         When(cloud & Q(Exact(p.first_mode, "manual")), then=Value("manual_turn")),
-        When(cloud & (Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)) | p.slack_thread),
+        When(cloud & (Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)) | p.slack_thread | p.person_mail),
              then=Value("person_started")),
         When(cloud & Q(Exact(p.first_mode, "")), then=Value("no_turn_found")),
         When(~runner & ~bound, then=Value("unbound")),

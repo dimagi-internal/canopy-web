@@ -15,11 +15,10 @@ PYTHON = "{python}"
 PLATFORMS = {"macos"}
 SETTING_TYPES = {"agent", "text", "longtext", "bool"}
 CANOPY_OPS = {"sessions.create", "sessions.send", "turns.status"}
-SHORT = 40
 MAX_MINUTES = 480
 
 REQUIRED = ("key", "name", "version", "entry", "platforms", "max_minutes")
-KNOWN = {*REQUIRED, "description", "changelog", "consumes", "provides", "notice",
+KNOWN = {*REQUIRED, "description", "changelog", "source", "notice",
          "disclosure", "settings", "checks", "canopy"}
 
 
@@ -34,13 +33,6 @@ def _strings(value, name: str) -> list:
     if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
         raise ValueError(f"{name} must be a list of non-empty strings")
     return list(value)
-
-
-def _short_strings(raw: dict, name: str) -> list:
-    values = _strings(raw.get(name, []), name)
-    if any(len(v) > SHORT for v in values):
-        raise ValueError(f"{name} entries must be at most {SHORT} characters")
-    return values
 
 
 def _argv(value, name: str) -> list:
@@ -140,8 +132,7 @@ def validate(raw: dict) -> dict:
         "changelog": _text(raw, "changelog"),
         "entry": _argv(raw["entry"], "entry"),
         "platforms": platforms,
-        "consumes": _short_strings(raw, "consumes"),
-        "provides": _short_strings(raw, "provides"),
+        "source": _argv(raw["source"], "source") if raw.get("source") else [],
         "max_minutes": max_minutes,
         "notice": _text(raw, "notice"),
         "disclosure": _disclosure(raw),

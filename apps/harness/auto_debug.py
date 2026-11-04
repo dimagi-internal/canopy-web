@@ -65,7 +65,8 @@ canopy-web, silent. Then exactly one of:
   drains the hold: a held item moves only when a later failure is let through,
   so the hold can never generate work on its own.
 * SKIPPED OUTRIGHT: readiness drills (their own report is the answer), a human's
-  stop or a delivery collision the human resolved (not a fault), turns outside
+  stop or a delivery collision the human resolved (not a fault), a message held
+  back because the session is on a dialog the sender can answer, turns outside
   the debugger's workspace tree (the evidence would cross a tenant), the kill
   switch, and a fleet with no debugger agent.
 
@@ -121,9 +122,16 @@ ASK_MAX = 300
 # collision dialog's "cancelled by human; will retry", the chat pump's "cancelled
 # by user". Debugging those would page the conductor every time someone changes
 # their mind.
+#
+# Also a session sitting on a dialog: `execute.py::_blocking_dialog_note` found a
+# menu where the input line should be, typed nothing, and showed the dialog to the
+# sender, who can answer it from there. The next step is theirs, so there is nothing
+# to debug. The note quotes the dialog's question, so each new question would also
+# have opened its own investigation (investigation 28, turn 0e300b8c, 2026-11-04).
 _HUMAN_NOTES = re.compile(
     r"cancelled by (?:human|user)|you stopped the delivery"
-    r"|has unsent text sitting in its prompt",
+    r"|has unsent text sitting in its prompt"
+    r"|not delivered — the agent is waiting on ",
     re.IGNORECASE,
 )
 

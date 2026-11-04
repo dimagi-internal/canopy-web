@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-_FIELDS = ("notice", "disclosure", "canopy", "consumes", "provides", "entry", "platforms")
+_FIELDS = ("notice", "disclosure", "canopy", "source", "entry", "platforms")
 _OPS = {
     "sessions.create": "open a new Canopy session with your agent",
     "sessions.send": "send text to that session",
@@ -50,9 +50,9 @@ def changes(old: dict | None, new: dict) -> list[str]:
         "Canopy will now",
         "Canopy will no longer",
     )
-    out += _list_changes(old.get("consumes") or [], new.get("consumes") or [], "Now listens to", "No longer listens to")
-    out += _list_changes(old.get("provides") or [], new.get("provides") or [], "Now provides", "No longer provides")
     if old.get("entry") != new.get("entry"):
         out.append(f"Runs a different program: {' '.join(new.get('entry') or [])}")
+    if old.get("source") != new.get("source"):
+        out.append(f"Listens through a different program: {' '.join(new.get('source') or []) or '(none)'}")
     out += _list_changes(old.get("platforms") or [], new.get("platforms") or [], "Now runs on", "No longer runs on")
     return out

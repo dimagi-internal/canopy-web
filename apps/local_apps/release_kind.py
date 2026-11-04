@@ -60,7 +60,7 @@ class LocalAppRelease(Kind):
         plan = [f"Exact package: sha256 {sub.sha256}", *_facts_lines(sub.facts)]
         plan += [f"Says it reads: {r}" for r in m["disclosure"]["reads"]]
         plan += [f"Says it sends: {s}" for s in m["disclosure"]["sends"]]
-        plan.append(f"Read the code and the changes: {scoped_url(sub.workspace, f'/apps/local/review/{sub.pk}')}")
+        plan.append(f"Read the code and the changes: {scoped_url(sub.workspace, f'/apps/personal/review/{sub.pk}')}")
         return Described(
             workspace=sub.workspace_id,
             title=f"Release {m['name']} {sub.version} to Canopy's app store",

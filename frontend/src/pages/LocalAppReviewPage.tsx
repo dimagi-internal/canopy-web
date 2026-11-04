@@ -9,6 +9,7 @@ import {
   type LocalAppReview,
 } from '@/api/localApps'
 import { ApiError, errorText } from '@/api/problem'
+import { getApproval } from '@/api/approvals'
 import { Td, Th, Tr } from '@/components/DataTable'
 import { LocalAppDiff } from '@/components/localApps/LocalAppDiff'
 import { useScopedPath } from '@/lib/scopedLinks'
@@ -53,6 +54,33 @@ function FactLine({ label, found }: { label: string; found: Record<string, strin
 }
 
 /**
+ * A link to the approval. Its page is under the workspace the version was submitted from, which may
+ * not be the one this page was opened in, so it asks the approval for its own address.
+ */
+function ApprovalLink({ id, pending }: { id: number; pending: boolean }): JSX.Element | null {
+  const [url, setUrl] = useState<string | null>(null)
+  const [refused, setRefused] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    getApproval(id)
+      .then((card) => !cancelled && setUrl(card.url))
+      .catch(() => !cancelled && setRefused(true))
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+  if (refused) return <p className="mt-3 text-sm text-muted-foreground" data-testid="local-app-review-approval">Its approval request isn't open to you.</p>
+  if (!url) return null
+  return (
+    <p className="mt-3 text-sm" data-testid="local-app-review-approval">
+      <Link to={url} className="font-medium text-primary hover:underline">
+        {pending ? 'Approve or decline on the approval page' : 'See the approval'}
+      </Link>
+    </p>
+  )
+}
+
+/**
  * A submitted version, for its reviewer and its author: what it says it does, what reading its code
  * found, and every changed line. Approving happens on the approval's own page and nowhere else, so
  * there's one audited decision and no second button for it. Design: docs/architecture/local-apps.md.
@@ -79,7 +107,7 @@ export default function LocalAppReviewPage(): JSX.Element {
     })
   }, [load, submissionId])
 
-  const back = <Link to={scoped('/apps')} className="text-sm text-primary hover:underline">← Apps</Link>
+  const back = <Link to={scoped('/apps?tab=personal')} className="text-sm text-primary hover:underline">← Apps</Link>
   if (missing) return <div className="mx-auto max-w-5xl p-6">{back}<p className="mt-4 text-sm text-muted-foreground" data-testid="local-app-review-missing">Not found, or not yours.</p></div>
   if (error && !sub) return <div className="mx-auto max-w-5xl p-6">{back}<p className="mt-4 text-sm text-destructive">{error}</p></div>
   if (!sub) return <div className="mx-auto max-w-5xl p-6">{back}<p className="mt-4 text-sm text-muted-foreground">Loading…</p></div>
@@ -109,11 +137,7 @@ export default function LocalAppReviewPage(): JSX.Element {
       </table>
 
       {sub.approval_id !== null && sub.approval_id !== undefined && (
-        <p className="mt-3 text-sm" data-testid="local-app-review-approval">
-          <Link to={scoped(`/approvals/${sub.approval_id}`)} className="font-medium text-primary hover:underline">
-            {sub.status === 'pending' ? 'Approve or decline on the approval page' : 'See the approval'}
-          </Link>
-        </p>
+        <ApprovalLink id={sub.approval_id} pending={sub.status === 'pending'} />
       )}
 
       {sub.revoked_reason && (

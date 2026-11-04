@@ -33,7 +33,7 @@ def write_app(folder: Path, **changes):
 
 def test_a_minimal_manifest_gets_every_optional_field_filled():
     out = manifest_mod.validate(good())
-    assert out["consumes"] == [] and out["canopy"] == [] and out["notice"] == ""
+    assert out["source"] == [] and out["canopy"] == [] and out["notice"] == ""
     assert out["disclosure"] == {"reads": [], "sends": []}
 
 
@@ -42,7 +42,7 @@ def test_a_minimal_manifest_gets_every_optional_field_filled():
     {"version": "1.x"}, {"version": "1.0.0-beta"}, {"version": 1},
     {"entry": []}, {"entry": "app.py"}, {"entry": ["app.py", "{python}"]}, {"entry": [""]},
     {"platforms": ["windows"]}, {"platforms": "macos"},
-    {"consumes": "transcript"}, {"provides": ["x" * 41]},
+    {"source": "source.py"}, {"source": ["a.py", "{python}"]}, {"consumes": ["transcript"]},
     {"max_minutes": 0}, {"max_minutes": 481}, {"max_minutes": True}, {"max_minutes": 1.5},
     {"notice": 3}, {"disclosure": {"reads": "a thing"}}, {"disclosure": {"other": []}},
     {"settings": {"a": {"type": "number"}}}, {"settings": {"Bad Name": {"type": "text"}}},
@@ -198,8 +198,8 @@ def test_unpack_is_read_only_and_can_still_be_replaced_and_removed(tmp_path):
     assert not target.exists()
 
 
-@pytest.mark.parametrize("name", ["meeting-assistant", "superwhisper-transcript"])
-def test_the_first_apps_validate_and_pack_without_their_tests(name):
+def test_the_first_app_validates_and_packs_without_its_tests():
+    name = "meeting-assistant"
     folder = LOCAL_APPS / name
     manifest, first = package.pack(folder)
     assert manifest["key"] == name

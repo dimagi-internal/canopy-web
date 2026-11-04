@@ -10,9 +10,9 @@ const configure = vi.fn()
 const accept = vi.fn()
 const remove = vi.fn()
 vi.mock('@/api/localApps', () => ({
-  getLocalApp: (w: string, k: string) => getApp(w, k),
+  getLocalApp: (k: string) => getApp(k),
   listMyLocalApps: () => listMine(),
-  installLocalApp: (w: string, k: string, body: unknown) => install(w, k, body),
+  installLocalApp: (k: string, body: unknown) => install(k, body),
   configureLocalApp: (id: number, s: unknown) => configure(id, s),
   acceptLocalAppChanges: (id: number, d: string) => accept(id, d),
   removeLocalApp: (id: number) => remove(id),
@@ -38,7 +38,7 @@ const SETTINGS = {
 const APP = {
   key: 'meeting-assistant', name: 'Meeting assistant', description: 'Live feedback from an agent.', version: '0.2.0', publisher: 'canopy',
   notice: "What's said in this meeting leaves your Mac.", disclosure: { reads: ['the transcript'], sends: ['transcript text to a session'] },
-  settings: SETTINGS, reviewed: true, digest: 'digest-1', installs_with: ['Superwhisper transcript'],
+  settings: SETTINGS, reviewed: true, digest: 'digest-1',
   agents: [{ slug: 'hal', name: 'Hal' }, { slug: 'ada', name: 'Ada' }],
   computers: [{ id: 'r1', name: 'Jon laptop' }],
   versions: [{ version: '0.2.0', released_at: '2026-11-03T10:00:00Z', changelog: 'Better batches.', revoked: false }], enabled: true,
@@ -51,8 +51,8 @@ const INSTALL = {
 
 function open() {
   return render(
-    <MemoryRouter initialEntries={['/w/dimagi/apps/local/meeting-assistant']}>
-      <Routes><Route path="/w/:workspace/apps/local/:key" element={<LocalAppDetailPage />} /></Routes>
+    <MemoryRouter initialEntries={['/w/dimagi/apps/personal/meeting-assistant']}>
+      <Routes><Route path="/w/:workspace/apps/personal/:key" element={<LocalAppDetailPage />} /></Routes>
     </MemoryRouter>,
   )
 }
@@ -68,9 +68,19 @@ describe('LocalAppDetailPage', () => {
     expect(block.textContent).toContain('transcript text to a session')
     expect(block.textContent).toContain('Canopy reviewed this code')
     expect(block.textContent).toContain('can read what you can read')
-    expect(screen.getByTestId('local-app-installs-with').textContent).toContain('Superwhisper transcript')
+    expect(block.textContent).toContain('Runs on your computer.')
     expect(screen.getByText(/start it from the menu bar/)).toBeTruthy()
     expect(screen.getByText('Better batches.')).toBeTruthy()
+  })
+
+  it('is drawn by the same layout as a store app, with its way back to the Personal tab', async () => {
+    getApp.mockResolvedValue(APP)
+    listMine.mockResolvedValue([])
+    open()
+    const page = await screen.findByTestId('app-detail')
+    expect(page.textContent).toContain('What it does')
+    expect(screen.getByRole('link', { name: '← Apps' }).getAttribute('href')).toBe('/w/dimagi/apps?tab=personal')
+    expect(screen.getByRole('link', { name: 'Install' }).getAttribute('href')).toBe('#install')
   })
 
   it('sends the digest it showed and the settings by type, and shows the install once it lands', async () => {
@@ -84,7 +94,7 @@ describe('LocalAppDetailPage', () => {
     expect((screen.getByLabelText(/Session title/) as HTMLInputElement).value).toBe('Meeting')
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() => expect(install).toHaveBeenCalled())
-    expect(install).toHaveBeenCalledWith('dimagi', 'meeting-assistant', {
+    expect(install).toHaveBeenCalledWith('meeting-assistant', {
       runner_id: 'r1',
       accept_digest: 'digest-1',
       settings: { agent: 'ada', brief: 'be kind', title: 'Meeting', quiet: true },
@@ -106,7 +116,7 @@ describe('LocalAppDetailPage', () => {
     await screen.findByLabelText(/^Agent/)
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() => expect(install).toHaveBeenCalled())
-    expect(install.mock.calls[0][2].settings).toEqual({})
+    expect(install.mock.calls[0][1].settings).toEqual({})
   })
 
   it('says how to get the runner when you have no computer, and offers no form', async () => {
@@ -132,7 +142,7 @@ describe('LocalAppDetailPage', () => {
     expect((screen.getByLabelText(/Which agent gives feedback/) as HTMLSelectElement).value).toBe('ada')
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() => expect(install).toHaveBeenCalledTimes(2))
-    expect(install.mock.calls[1][2].accept_digest).toBe('digest-2')
+    expect(install.mock.calls[1][1].accept_digest).toBe('digest-2')
   })
 
   it('offers another computer once one has it, and never the one that has it', async () => {
@@ -144,13 +154,54 @@ describe('LocalAppDetailPage', () => {
     expect(screen.getByText('Install on another computer')).toBeTruthy()
   })
 
-  it('says so when installing here would move a copy from another workspace', async () => {
+  it('shows a copy whichever workspace its sessions land in, and offers no second install on that computer', async () => {
     getApp.mockResolvedValue(APP)
     listMine.mockResolvedValue([{ ...INSTALL, workspace: 'elsewhere' }])
     open()
-    const picker = (await screen.findByLabelText('Computer')) as HTMLSelectElement
-    expect(picker.options[0].text).toBe('Jon laptop (moves it here from elsewhere)')
-    expect(screen.queryByTestId('local-app-installed')).toBeNull()
+    expect(await screen.findByTestId('local-app-installed')).toBeTruthy()
+    expect(screen.queryByLabelText('Computer')).toBeNull()
+  })
+
+  it('says it is unreleased, and that nobody reviewed it when nobody did', async () => {
+    getApp.mockResolvedValue({ ...APP, reviewed: false })
+    listMine.mockResolvedValue([])
+    const { container } = open()
+    const block = await screen.findByTestId('local-app-disclosure')
+    expect(block.textContent).toContain('Nobody at Canopy has reviewed this code.')
+    expect(block.textContent).not.toContain('Canopy reviewed this code')
+    expect(screen.getByText('Unreleased')).toBeTruthy()
+    expect(container.textContent?.toLowerCase()).not.toContain('experimental')
+  })
+
+  it('with agents in two workspaces, groups them by workspace and names where the choice lands', async () => {
+    getApp.mockResolvedValue({
+      ...APP,
+      agents: [{ slug: 'hal', name: 'Hal', workspace: 'dimagi' }, { slug: 'ace', name: 'ACE', workspace: 'connect' }],
+    })
+    listMine.mockResolvedValue([])
+    install.mockResolvedValue(INSTALL)
+    open()
+    const picker = (await screen.findByLabelText(/Which agent gives feedback/)) as HTMLSelectElement
+    const groups = Array.from(picker.querySelectorAll('optgroup'))
+    expect(groups.map((g) => [g.label, g.textContent])).toEqual([['dimagi', 'Hal'], ['connect', 'ACE']])
+    expect(screen.getByTestId('local-app-agent-workspace').textContent).toBe("Its sessions land in the agent's workspace.")
+    fireEvent.change(picker, { target: { value: 'ace' } })
+    expect(screen.getByTestId('local-app-agent-workspace').textContent).toBe('Its sessions land in connect.')
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await waitFor(() => expect(install).toHaveBeenCalled())
+    expect(install.mock.calls[0][1].settings.agent).toBe('ace')
+  })
+
+  it('with agents in one workspace, keeps the picker plain', async () => {
+    getApp.mockResolvedValue({
+      ...APP,
+      agents: [{ slug: 'hal', name: 'Hal', workspace: 'dimagi' }, { slug: 'ada', name: 'Ada', workspace: 'dimagi' }],
+    })
+    listMine.mockResolvedValue([])
+    open()
+    const picker = await screen.findByLabelText(/Which agent gives feedback/)
+    expect(picker.querySelectorAll('optgroup').length).toBe(0)
+    expect(screen.queryByTestId('local-app-agent-workspace')).toBeNull()
   })
 
   it('accepting a new version sends the digest it was shown, after showing what changed', async () => {

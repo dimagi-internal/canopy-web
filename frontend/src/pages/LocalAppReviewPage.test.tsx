@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, matchRoutes } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getSubmission = vi.fn()
 const revoke = vi.fn()
+const getCard = vi.fn()
+vi.mock('@/api/approvals', () => ({ getApproval: (id: number) => getCard(id) }))
 vi.mock('@/api/localApps', async (original) => ({
   ...(await original<typeof import('@/api/localApps')>()),
   getLocalAppSubmission: (id: number) => getSubmission(id),
@@ -13,8 +15,11 @@ vi.mock('@/api/localApps', async (original) => ({
 
 import { ApiError } from '@/api/problem'
 import { diffLineKind, LocalAppDiff } from '@/components/localApps/LocalAppDiff'
-import { routeTable } from '@/router'
 import LocalAppReviewPage from './LocalAppReviewPage'
+
+beforeEach(() => {
+  getCard.mockResolvedValue({ url: '/w/dimagi/approvals/41' })
+})
 
 afterEach(() => {
   cleanup()
@@ -24,7 +29,7 @@ afterEach(() => {
 
 const SUB = {
   id: 9, key: 'meeting-assistant', version: '0.2.0', sha256: 'a'.repeat(64), status: 'pending', approval_id: 41,
-  review_url: 'https://x/w/dimagi/apps/local/review/9', name: 'Meeting assistant', size: 2048, note: 'Fixes the batching.',
+  review_url: 'https://x/w/dimagi/apps/personal/review/9', name: 'Meeting assistant', size: 2048, note: 'Fixes the batching.',
   submitted_by: 'ace@dimagi-ai.com', submitted_at: '2026-11-03T10:00:00Z',
   manifest: { notice: 'It leaves your Mac.', disclosure: { reads: ['the transcript'], sends: ['text to a session'] } },
   facts: { files: [{ path: 'app.py', size: 2048 }], network: {}, process: { 'os.system': ['app.py'] }, risky: {}, unparsed: [] },
@@ -33,10 +38,10 @@ const SUB = {
   revoked_reason: '', can_revoke: false,
 }
 
-function open(path = '/w/dimagi/apps/local/review/9') {
+function open(path = '/w/dimagi/apps/personal/review/9') {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <Routes><Route path="/w/:workspace/apps/local/review/:id" element={<LocalAppReviewPage />} /></Routes>
+      <Routes><Route path="/w/:workspace/apps/personal/review/:id" element={<LocalAppReviewPage />} /></Routes>
     </MemoryRouter>,
   )
 }
@@ -105,12 +110,30 @@ describe('LocalAppReviewPage', () => {
     expect(screen.getByText('-old')).toBeTruthy()
   })
 
-  it('approves on the approval page: a link to it, and no button here', async () => {
+  it('approves on the approval page, at the address the approval gives: a link to it, and no button here', async () => {
     getSubmission.mockResolvedValue(SUB)
+    getCard.mockResolvedValue({ url: '/w/dimagi/approvals/41' })
     open()
     const link = await screen.findByRole('link', { name: 'Approve or decline on the approval page' })
+    expect(getCard).toHaveBeenCalledWith(41)
     expect(link.getAttribute('href')).toBe('/w/dimagi/approvals/41')
     expect(screen.queryByRole('button', { name: /approve/i })).toBeNull()
+  })
+
+  it('still shows the review when the approval is not open to this person', async () => {
+    getSubmission.mockResolvedValue(SUB)
+    getCard.mockRejectedValue(new ApiError(404, 'no such request'))
+    open()
+    expect((await screen.findByTestId('local-app-review-approval')).textContent).toContain("isn't open to you")
+    expect(screen.getByText('Meeting assistant 0.2.0')).toBeTruthy()
+  })
+
+  it('offers no approval link for a version published without one', async () => {
+    getSubmission.mockResolvedValue({ ...SUB, approval_id: null, status: 'released' })
+    open()
+    await screen.findByText('Meeting assistant 0.2.0')
+    expect(screen.queryByTestId('local-app-review-approval')).toBeNull()
+    expect(getCard).not.toHaveBeenCalled()
   })
 
   it('says plainly when part of the change is not shown', async () => {
@@ -120,8 +143,8 @@ describe('LocalAppReviewPage', () => {
   })
 
   it.each([
-    ['a submission the API says is not there', '/w/dimagi/apps/local/review/9'],
-    ['an id that is not a number', '/w/dimagi/apps/local/review/nope'],
+    ['a submission the API says is not there', '/w/dimagi/apps/personal/review/9'],
+    ['an id that is not a number', '/w/dimagi/apps/personal/review/nope'],
   ])('shows not found, or not yours, for %s', async (_, path) => {
     getSubmission.mockRejectedValue(new ApiError(404, 'no such submission'))
     open(path)
@@ -151,12 +174,3 @@ describe('LocalAppReviewPage', () => {
   })
 })
 
-describe('the routes', () => {
-  const leaf = (path: string) => matchRoutes(routeTable, path)?.at(-1)?.route.path
-
-  it('reach the local app pages, not a web app called "local"', () => {
-    expect(leaf('/w/dimagi/apps/local/meeting-assistant')).toBe('/w/:workspace/apps/local/:key')
-    expect(leaf('/w/dimagi/apps/local/review/9')).toBe('/w/:workspace/apps/local/review/:id')
-    expect(leaf('/w/dimagi/apps/hiring')).toBe('/w/:workspace/apps/:appKey/:page?')
-  })
-})

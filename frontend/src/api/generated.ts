@@ -4325,18 +4325,14 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/local-apps/store/{workspace}/": {
+    readonly "/api/local-apps/store/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * Apps that run on your computer
-         * @description Empty until a workspace admin switches local apps on. These apps can record
-         *     conversations, so a workspace chooses to offer them.
-         */
+        /** User apps: apps you install for yourself */
         readonly get: operations["list_local_app_store"];
         readonly put?: never;
         readonly post?: never;
@@ -4346,27 +4342,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/local-apps/store/{workspace}/switch": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Offer local apps in this workspace, or stop
-         * @description Turning this off also stops running copies at their next heartbeat.
-         */
-        readonly put: operations["set_local_apps_switch"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/local-apps/store/{workspace}/apps/{key}": {
+    readonly "/api/local-apps/store/apps/{key}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -4383,7 +4359,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/local-apps/store/{workspace}/apps/{key}/install": {
+    readonly "/api/local-apps/store/apps/{key}/install": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -25663,16 +25639,6 @@ export interface components {
              */
             readonly tagline: string;
             /**
-             * Consumes
-             * @default []
-             */
-            readonly consumes: readonly string[];
-            /**
-             * Provides
-             * @default []
-             */
-            readonly provides: readonly string[];
-            /**
              * Installed
              * @default false
              */
@@ -25680,22 +25646,8 @@ export interface components {
         };
         /** LocalAppStoreOut */
         readonly LocalAppStoreOut: {
-            /** Enabled */
-            readonly enabled: boolean;
-            /** Can Switch */
-            readonly can_switch: boolean;
             /** Apps */
             readonly apps: readonly components["schemas"]["LocalAppListingOut"][];
-        };
-        /** LocalAppSwitchOut */
-        readonly LocalAppSwitchOut: {
-            /** Enabled */
-            readonly enabled: boolean;
-        };
-        /** LocalAppSwitchIn */
-        readonly LocalAppSwitchIn: {
-            /** Enabled */
-            readonly enabled: boolean;
         };
         /** LocalAppComputerOut */
         readonly LocalAppComputerOut: {
@@ -25734,18 +25686,6 @@ export interface components {
             /** Digest */
             readonly digest: string;
             /**
-             * Installs With
-             * @default []
-             */
-            readonly installs_with: readonly string[];
-            /**
-             * Source Disclosures
-             * @default []
-             */
-            readonly source_disclosures: readonly {
-                readonly [key: string]: unknown;
-            }[];
-            /**
              * Agents
              * @default []
              */
@@ -25762,11 +25702,6 @@ export interface components {
              * @default []
              */
             readonly versions: readonly components["schemas"]["LocalAppVersionOut"][];
-            /**
-             * Enabled
-             * @default false
-             */
-            readonly enabled: boolean;
         };
         /** LocalAppVersionOut */
         readonly LocalAppVersionOut: {
@@ -25794,7 +25729,7 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Workspace */
-            readonly workspace: string;
+            readonly workspace?: string | null;
             readonly computer: components["schemas"]["LocalAppComputerOut"];
             /** Settings */
             readonly settings: {
@@ -26053,20 +25988,8 @@ export interface components {
              * @default false
              */
             readonly running: boolean;
-            /** Source Key */
-            readonly source_key?: string | null;
             /** Agent */
             readonly agent?: string | null;
-            /**
-             * Consumes
-             * @default []
-             */
-            readonly consumes: readonly string[];
-            /**
-             * Provides
-             * @default []
-             */
-            readonly provides: readonly string[];
             /**
              * Checks
              * @default []
@@ -26089,11 +26012,6 @@ export interface components {
         readonly LocalAppStartRunIn: {
             /** Version */
             readonly version: string;
-            /**
-             * Source Version
-             * @default
-             */
-            readonly source_version: string;
         };
         /** LocalAppBeatOut */
         readonly LocalAppBeatOut: {
@@ -53774,9 +53692,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
-            readonly path: {
-                readonly workspace: string;
-            };
+            readonly path?: never;
             readonly cookie?: never;
         };
         readonly requestBody?: never;
@@ -53792,38 +53708,11 @@ export interface operations {
             };
         };
     };
-    readonly set_local_apps_switch: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly workspace: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["LocalAppSwitchIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["LocalAppSwitchOut"];
-                };
-            };
-        };
-    };
     readonly get_local_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly workspace: string;
                 readonly key: string;
             };
             readonly cookie?: never;
@@ -53846,7 +53735,6 @@ export interface operations {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
-                readonly workspace: string;
                 readonly key: string;
             };
             readonly cookie?: never;

@@ -25,7 +25,6 @@ from .manifest import PYTHON
 CHECK_SECONDS = 10
 STOP_WAIT_SECONDS = 8
 HOST_START_WAIT_SECONDS = 5
-SENSITIVE_STREAMS = {"transcript"}
 HOST_MODULE = "canopy_runner.local_apps.host"
 KILLED_BY_STOP = "killed_by_stop_command"
 
@@ -46,7 +45,6 @@ class Plan:
     cwd: Path
     settings: dict
     unpublished: bool
-    source: Optional["Plan"] = None
     needs_acceptance: bool = False
     changes: list = dataclasses.field(default_factory=list)
     agent: str = ""
@@ -94,7 +92,7 @@ def _ensure_unpacked(entry: dict, srv: server.RunnerServer) -> Path:
     return target
 
 
-def _published_plan(entry: dict, by_key: dict, srv: server.RunnerServer) -> Plan:
+def _published_plan(entry: dict, srv: server.RunnerServer) -> Plan:
     cwd = _ensure_unpacked(entry, srv)
     manifest = package.read_manifest(cwd)
     if manifest["key"] != entry.get("key") or manifest["version"] != entry.get("version"):
@@ -104,17 +102,6 @@ def _published_plan(entry: dict, by_key: dict, srv: server.RunnerServer) -> Plan
                 settings=entry.get("settings") or {}, unpublished=False, agent=entry.get("agent") or "",
                 needs_acceptance=bool(entry.get("needs_acceptance")),
                 changes=list(entry.get("changes") or []))
-    source_key = entry.get("source_key")
-    if source_key:
-        source = by_key.get(source_key)
-        if source is None:
-            raise Refusal(f"{entry.get('key')} needs {source_key}, which isn't installed on this computer")
-        if source.get("refusal"):
-            raise Refusal(f"{source_key}: {source['refusal']}")
-        plan.source = _published_plan(source, by_key, srv)
-    elif manifest["consumes"]:
-        raise Refusal(f"{manifest['key']} needs a source of {', '.join(manifest['consumes'])}, "
-                      "and none is installed on this computer")
     return plan
 
 
@@ -127,7 +114,7 @@ def _dev_entries() -> dict:
     return out
 
 
-def _dev_plan(key: str, record: dict, *, with_source: bool = True) -> Plan:
+def _dev_plan(key: str, record: dict) -> Plan:
     folder = Path(record["path"])
     manifest = package.read_manifest(folder)
     if manifest["key"] != key:
@@ -140,17 +127,6 @@ def _dev_plan(key: str, record: dict, *, with_source: bool = True) -> Plan:
         raise Refusal(f"{key} needs settings: {', '.join(missing)}. Run dev-install again with --set.")
     plan = Plan(key=key, version=manifest["version"], manifest=manifest, cwd=folder,
                 settings=settings, unpublished=True)
-    if with_source and manifest["consumes"]:
-        for other, other_record in sorted(_dev_entries().items()):
-            if other == key:
-                continue
-            candidate = _dev_plan(other, other_record, with_source=False)
-            if set(candidate.manifest["provides"]) & set(manifest["consumes"]):
-                plan.source = candidate
-                break
-        else:
-            raise Refusal(f"{key} needs a source of {', '.join(manifest['consumes'])}. "
-                          "dev-install one first: a dev run uses no server, so it can't use a published one.")
     return plan
 
 
@@ -165,15 +141,12 @@ def _plan(key: str, args) -> tuple[Plan, Optional[server.RunnerServer]]:
         raise Refusal(f"{key} isn't installed on this computer. Install it from the app store.")
     if entry.get("refusal"):
         raise Refusal(str(entry["refusal"]))
-    return _published_plan(entry, by_key, srv), srv
+    return _published_plan(entry, srv), srv
 
 
 def _refuse_wrong_platform(plan: Plan) -> None:
-    for each in filter(None, (plan, plan.source)):
-        if current_platform() not in each.manifest["platforms"]:
-            raise Refusal(f"{each.key} doesn't run on {current_platform()}")
-    if plan.manifest["provides"]:
-        raise Refusal(f"{plan.key} is a source: it starts with an app that uses it, not by itself")
+    if current_platform() not in plan.manifest["platforms"]:
+        raise Refusal(f"{plan.key} doesn't run on {current_platform()}")
 
 
 # --- checks ------------------------------------------------------------------------
@@ -192,10 +165,9 @@ def _run_check(check: dict, cwd: Path) -> bool:
 
 def _run_checks(plan: Plan) -> list:
     results = []
-    for each in filter(None, (plan.source, plan)):
-        for check in each.manifest["checks"]:
-            results.append({"app": each.key, "label": check["label"], "fix": check["fix"],
-                            "ok": _run_check(check, each.cwd)})
+    for check in plan.manifest["checks"]:
+        results.append({"app": plan.key, "label": check["label"], "fix": check["fix"],
+                        "ok": _run_check(check, plan.cwd)})
     return results
 
 
@@ -209,12 +181,11 @@ def _print_failed(failed: list) -> None:
 
 def _notice_text(plan: Plan) -> str:
     lines = [f"Goes to: {plan.agent}"] if plan.agent else []
-    for each in filter(None, (plan, plan.source)):
-        manifest = each.manifest
-        if manifest["notice"]:
-            lines.append(manifest["notice"])
-        lines.extend(f"Reads: {text}" for text in manifest["disclosure"]["reads"])
-        lines.extend(f"Sends: {text}" for text in manifest["disclosure"]["sends"])
+    manifest = plan.manifest
+    if manifest["notice"]:
+        lines.append(manifest["notice"])
+    lines.extend(f"Reads: {text}" for text in manifest["disclosure"]["reads"])
+    lines.extend(f"Sends: {text}" for text in manifest["disclosure"]["sends"])
     return "\n".join(lines)
 
 
@@ -229,16 +200,14 @@ def _confirm_notice(plan: Plan, accepted: bool) -> None:
         raise Refusal("not started")
 
 
-def _child_spec(plan: Plan) -> ChildSpec:
-    return ChildSpec(key=plan.key, version=plan.version, entry=list(plan.manifest["entry"]),
+def _child_spec(plan: Plan, entry: list) -> ChildSpec:
+    return ChildSpec(key=plan.key, version=plan.version, entry=list(entry),
                      cwd=str(plan.cwd), settings=dict(plan.settings))
 
 
 def _is_sensitive(plan: Plan) -> bool:
-    streams = set(plan.manifest["consumes"]) | set(plan.manifest["provides"])
-    if plan.source:
-        streams |= set(plan.source.manifest["provides"])
-    return bool(streams & SENSITIVE_STREAMS)
+    """An app with a stream may be handling someone's words, so its logs are held tighter."""
+    return bool(plan.manifest["source"])
 
 
 def spawn_host(spec: RunSpec) -> subprocess.Popen:
@@ -292,11 +261,11 @@ def _cmd_start(args) -> int:
         # one starts: a second Start in that gap would stop a live meeting and then itself.
         if state.host_alive(key):
             raise Refusal(f"{key} is already running")
-        run_id = srv.start_run(key, plan.version, plan.source.version if plan.source else "")
+        run_id = srv.start_run(key, plan.version)
     spec = RunSpec(key=key, version=plan.version, run_id=run_id,
                    max_minutes=plan.manifest["max_minutes"], canopy=list(plan.manifest["canopy"]),
-                   sensitive=_is_sensitive(plan), unpublished=plan.unpublished, app=_child_spec(plan),
-                   source=_child_spec(plan.source) if plan.source else None,
+                   sensitive=_is_sensitive(plan), unpublished=plan.unpublished, app=_child_spec(plan, plan.manifest["entry"]),
+                   source=_child_spec(plan, plan.manifest["source"]) if plan.manifest["source"] else None,
                    config=str(Path(args.config).expanduser().resolve()))
     proc = spawn_host(spec)
     if not _wait_for_host(key, proc, run_id):
@@ -319,25 +288,23 @@ def _list_entry_from_dev(key: str, record: dict) -> dict:
         manifest = package.read_manifest(Path(record["path"]))
     except package.PackageError as exc:
         return {"key": key, "name": key, "version": "", "unpublished": True, "refusal": str(exc),
-                "notice": "", "disclosure": {}, "provides": [], "consumes": [], "checks": []}
+                "notice": "", "disclosure": {}, "checks": []}
     return {"key": key, "name": manifest["name"], "version": manifest["version"], "unpublished": True,
             "notice": manifest["notice"], "disclosure": manifest["disclosure"],
-            "provides": manifest["provides"], "consumes": manifest["consumes"],
             "checks": manifest["checks"], "entry": manifest["entry"],
             "max_minutes": manifest["max_minutes"], "settings": record.get("settings") or {},
-            "needs_acceptance": False, "changes": [], "refusal": None, "source_key": None}
+            "needs_acceptance": False, "changes": [], "refusal": None}
 
 
-def _entry_notice(entry: dict, by_key: dict) -> str:
+def _entry_notice(entry: dict) -> str:
     """What a person agrees to at Start, from the list alone: the menu shows this before it
-    has downloaded anything, and it has to cover the source as well."""
+    has downloaded anything."""
     lines = [f"Goes to: {entry['agent']}"] if entry.get("agent") else []
-    for each in filter(None, (entry, by_key.get(entry.get("source_key")))):
-        if each.get("notice"):
-            lines.append(each["notice"])
-        disclosure = each.get("disclosure") or {}
-        lines.extend(f"Reads: {text}" for text in disclosure.get("reads") or [])
-        lines.extend(f"Sends: {text}" for text in disclosure.get("sends") or [])
+    if entry.get("notice"):
+        lines.append(entry["notice"])
+    disclosure = entry.get("disclosure") or {}
+    lines.extend(f"Reads: {text}" for text in disclosure.get("reads") or [])
+    lines.extend(f"Sends: {text}" for text in disclosure.get("sends") or [])
     return "\n".join(lines)
 
 
@@ -368,9 +335,8 @@ def _cmd_list(args) -> int:
         _prune(apps, dev)
     apps = [a for a in apps if a.get("key") not in dev]
     apps += [_list_entry_from_dev(key, record) for key, record in sorted(dev.items())]
-    by_key = {a.get("key"): a for a in apps}
     for app in apps:
-        app["full_notice"] = _entry_notice(app, by_key)
+        app["full_notice"] = _entry_notice(app)
     for app in apps:
         app.setdefault("unpublished", False)
         try:

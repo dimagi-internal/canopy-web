@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type JSX } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { Button, StatusBadge } from 'canopy-ui/ui'
 import {
   acceptLocalAppChanges,
@@ -14,31 +14,40 @@ import {
   type LocalAppInstallation,
 } from '@/api/localApps'
 import { ApiError, errorText } from '@/api/problem'
+import {
+  AppAsideSection,
+  AppDetailLayout,
+  AppDetailPending,
+  AppDetailSection,
+  AppOverview,
+  AppVersions,
+} from '@/components/apps/AppDetailLayout'
 import { initialSettings, SettingsFields, settingsToSend, type SettingValues } from '@/components/localApps/SettingsFields'
 import { describeRun } from '@/components/localApps/runState'
 import { useScopedPath } from '@/lib/scopedLinks'
 
-const START_HERE = 'You start it from the menu bar on that computer. This page can’t start it.'
+const START_HERE = 'You start it from the menu bar on that computer. This page can\u2019t start it.'
 const SELECT_CLASS = 'w-full rounded-md border border-input bg-input px-2 py-1.5 text-[13px] text-foreground'
 
 /**
- * One app that runs on a person's own computer, as someone deciding to install it reads it, and
- * their copies of it once they have. What it says it reads and sends sits above the form, because
- * clicking Install is consenting to it. `digest` names what was on screen, so a version released
- * while they read is refused, not accepted unseen. Design: docs/architecture/local-apps.md.
+ * One personal app, as someone deciding to install it reads it, and their copies of it once they
+ * have. What it says it reads and sends sits above the form, because clicking Install is consenting
+ * to it. `digest` names what was on screen, so a version released while they read is refused, not
+ * accepted unseen. Design: docs/architecture/local-apps.md.
  */
 export default function LocalAppDetailPage(): JSX.Element {
-  const { workspace = '', key = '' } = useParams()
+  const { key = '' } = useParams()
   const scoped = useScopedPath()
+  const { hash } = useLocation()
   const [app, setApp] = useState<LocalAppDetail | null>(null)
   const [mine, setMine] = useState<LocalAppInstallation[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const [detail, installs] = await Promise.all([getLocalApp(workspace, key), listMyLocalApps()])
+    const [detail, installs] = await Promise.all([getLocalApp(key), listMyLocalApps()])
     setApp(detail)
     setMine(installs.filter((i) => i.key === key))
-  }, [workspace, key])
+  }, [key])
 
   useEffect(() => {
     setApp(null)
@@ -46,91 +55,73 @@ export default function LocalAppDetailPage(): JSX.Element {
     load().catch((e: unknown) => setLoadError(errorText(e, 'Failed to load the app')))
   }, [load])
 
-  const back = <Link to={scoped('/apps')} className="text-sm text-primary hover:underline">← Apps</Link>
-  if (loadError) return <div className="mx-auto max-w-3xl p-6">{back}<p className="mt-4 text-sm text-destructive">{loadError}</p></div>
-  if (!app) return <div className="mx-auto max-w-3xl p-6">{back}<p className="mt-4 text-sm text-muted-foreground">Loading…</p></div>
+  // React Router does not scroll to a fragment, and the form isn't there until the app has loaded.
+  const loaded = app !== null
+  useEffect(() => {
+    if (loaded && hash === '#install') document.getElementById('install')?.scrollIntoView?.({ block: 'start' })
+  }, [loaded, hash])
 
-  const here = mine.filter((i) => i.workspace === workspace)
-  const hereComputers = new Set(here.map((i) => i.computer.id))
-  const free = app.computers.filter((c) => !hereComputers.has(c.id))
+  const back = scoped('/apps?tab=personal')
+  if (!app) return <AppDetailPending back={back} error={loadError} />
+
+  const taken = new Set(mine.map((i) => i.computer.id))
+  const free = app.computers.filter((c) => !taken.has(c.id))
 
   return (
-    <div className="mx-auto max-w-3xl p-6">
-      {back}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <h1 className="text-2xl font-semibold">{app.name}</h1>
-        <StatusBadge tone="warning">Experimental</StatusBadge>
-      </div>
-      <div className="mt-0.5 text-xs text-muted-foreground">by {app.publisher} · version {app.version}</div>
-      <p className="mt-3 max-w-prose whitespace-pre-line text-sm">{app.description}</p>
+    <AppDetailLayout
+      back={back}
+      name={app.name}
+      badge={<StatusBadge tone="warning">Unreleased</StatusBadge>}
+      byline={`by ${app.publisher} · version ${app.version}`}
+      action={mine.length > 0
+        ? <span className="rounded-md bg-muted px-3 py-1.5 text-muted-foreground">Installed</span>
+        : free.length > 0 && <a href="#install" className="rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground hover:opacity-75">Install</a>}
+      aside={
+        <>
+          <AppAsideSection title="Personal">
+            <p className="mt-1 text-muted-foreground">You install it for yourself, not for a workspace. It's unreleased, so it may change or stop working.</p>
+          </AppAsideSection>
+          <AppVersions current={app.version} versions={app.versions} />
+        </>
+      }
+    >
+      <AppOverview text={app.description} />
 
-      <section className="mt-6 rounded-lg border border-border bg-card p-4" data-testid="local-app-disclosure">
-        <h2 className="text-sm font-semibold">What it does on your computer</h2>
+      <AppDetailSection title="What it reads and sends" data-testid="local-app-disclosure">
+        <p className="mt-2 text-sm">Runs on your computer.</p>
         {app.notice && <p className="mt-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-[13px] text-foreground">{app.notice}</p>}
         <Promises title="Reads" items={app.disclosure.reads} />
         <Promises title="Sends" items={app.disclosure.sends} />
-        {app.installs_with.length > 0 && (
-          <p className="mt-3 text-[13px]" data-testid="local-app-installs-with">
-            Installing this also installs {app.installs_with.join(', ')}, which it needs in order to work.
-          </p>
-        )}
-        {app.source_disclosures?.map((source) => {
-          const promise = source as unknown as { name: string; disclosure?: { reads?: string[]; sends?: string[] } }
-          return (
-            <div key={promise.name} data-testid="local-app-source-disclosure">
-              <Promises title={`${promise.name} reads`} items={promise.disclosure?.reads} />
-              <Promises title={`${promise.name} sends`} items={promise.disclosure?.sends} />
-            </div>
-          )
-        })}
         <p className="mt-3 text-[13px] text-muted-foreground">
           {app.reviewed
             ? 'Canopy reviewed this code before listing it.'
-            : "Nobody at Canopy reviewed this code: it's published directly while this is experimental."}{' '}
+            : 'Nobody at Canopy has reviewed this code.'}{' '}
           It runs as you, and can read what you can read.
         </p>
-      </section>
+      </AppDetailSection>
 
-      {here.length > 0 && (
-        <section className="mt-6" aria-label="Your copies">
-          <h2 className="text-sm font-semibold">Installed</h2>
+      {mine.length > 0 && (
+        <AppDetailSection title="Your copies">
           <p className="mt-1 text-[13px] text-muted-foreground">{START_HERE}</p>
           <div className="mt-2 space-y-2">
-            {here.map((i) => <InstalledCopy key={i.id} install={i} reload={load} />)}
+            {mine.map((i) => <InstalledCopy key={i.id} install={i} reload={load} />)}
           </div>
-        </section>
+        </AppDetailSection>
       )}
 
       {app.computers.length === 0 ? (
-        <section className="mt-6 rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="local-app-no-computer">
-          <h2 className="text-sm font-semibold">Install</h2>
-          <p className="mt-1">
-            You have no computer connected to Canopy. These apps run on your own laptop, through Canopy Runner.{' '}
+        <AppDetailSection title="Install" data-testid="local-app-no-computer">
+          <p className="mt-1 text-[13px]">
+            You have no computer connected to Canopy. This app runs on your own laptop, through Canopy Runner.{' '}
             <Link to="/get-started#runner" className="text-primary hover:underline">How to get the runner</Link>
           </p>
-        </section>
+        </AppDetailSection>
       ) : free.length > 0 && (
         // Keyed on the free computers, so one just installed on can't stay selected. Not on the digest:
         // a refusal for a changed app redraws the page and must keep its message and what was typed.
-        <InstallForm key={free.map((c) => c.id).join()} workspace={workspace} app={app} free={free} mine={mine} again={here.length > 0} reload={load} />
+        <InstallForm key={free.map((c) => c.id).join()} app={app} free={free} again={mine.length > 0} reload={load} />
       )}
-
-      <section className="mt-6">
-        <h2 className="text-sm font-semibold">Versions</h2>
-        <div className="mt-1 space-y-2 text-[13px]">
-          {app.versions.map((v) => (
-            <div key={v.version}>
-              <div>
-                {v.version}
-                {v.released_at && <span className="ml-2 text-xs text-muted-foreground">{v.released_at.slice(0, 10)}</span>}
-                {v.revoked && <StatusBadge tone="destructive" className="ml-2">Withdrawn</StatusBadge>}
-              </div>
-              {v.changelog && <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">{v.changelog}</p>}
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
+    </AppDetailLayout>
   )
 }
 
@@ -145,17 +136,13 @@ function Promises({ title, items }: { title: string; items?: readonly string[] }
 }
 
 function InstallForm({
-  workspace,
   app,
   free,
-  mine,
   again,
   reload,
 }: {
-  workspace: string
   app: LocalAppDetail
   free: LocalAppDetail['computers']
-  mine: LocalAppInstallation[]
   again: boolean
   reload: () => Promise<void>
 }): JSX.Element {
@@ -164,15 +151,13 @@ function InstallForm({
   const [values, setValues] = useState<SettingValues>(() => initialSettings(spec))
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  // An installation belongs to one workspace, and installing again on that computer moves it here.
-  const elsewhere = (id: string) => mine.find((i) => i.computer.id === id)?.workspace
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
     setError(null)
     try {
-      await installLocalApp(workspace, app.key, { runner_id: computer, settings: settingsToSend(spec, values), accept_digest: app.digest })
+      await installLocalApp(app.key, { runner_id: computer, settings: settingsToSend(spec, values), accept_digest: app.digest })
       await reload()
     } catch (err) {
       setError(errorText(err, 'Failed to install the app'))
@@ -184,18 +169,15 @@ function InstallForm({
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-border bg-card p-4">
-      <h2 className="text-sm font-semibold">{again ? 'Install on another computer' : 'Install'}</h2>
+    <section id="install" className="scroll-mt-4 rounded-lg border border-border bg-card p-4">
+      <h2 className="text-lg font-semibold">{again ? 'Install on another computer' : 'Install'}</h2>
       <p className="mt-1 text-[13px] text-muted-foreground">Installing starts nothing. {START_HERE}</p>
       <form className="mt-3 space-y-3" onSubmit={(e) => void submit(e)} aria-label="Install">
         <div>
           <label htmlFor="local-app-computer" className="mb-1 block text-[13px] font-medium">Computer</label>
           <select id="local-app-computer" required className={SELECT_CLASS} value={computer} onChange={(e) => setComputer(e.target.value)}>
             {free.length > 1 && <option value="">Choose a computer</option>}
-            {free.map((c) => {
-              const other = elsewhere(c.id)
-              return <option key={c.id} value={c.id}>{c.name}{other ? ` (moves it here from ${other})` : ''}</option>
-            })}
+            {free.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <SettingsFields spec={spec} agents={app.agents} values={values} onChange={setValues} />

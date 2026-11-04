@@ -5,14 +5,6 @@ from typing import Any
 from ninja import Schema
 
 
-class LocalAppSwitchIn(Schema):
-    enabled: bool
-
-
-class LocalAppSwitchOut(Schema):
-    enabled: bool
-
-
 class LocalAppComputerOut(Schema):
     id: str
     name: str
@@ -31,14 +23,10 @@ class LocalAppListingOut(Schema):
     description: str
     version: str
     tagline: str = ""
-    consumes: list[str] = []
-    provides: list[str] = []
     installed: bool = False
 
 
 class LocalAppStoreOut(Schema):
-    enabled: bool
-    can_switch: bool
     apps: list[LocalAppListingOut]
 
 
@@ -53,17 +41,12 @@ class LocalAppDetailOut(Schema):
     notice: str
     disclosure: dict[str, list[str]]
     settings: dict[str, Any]
-    #: What the person accepts by installing, this app and any source: send it back with the install.
+    #: What the person accepts by installing, send it back with the install.
     digest: str
-    #: The source app that would be installed with it, if it listens to a stream.
-    installs_with: list[str] = []
-    #: Each of those apps' own promise, because installing accepts it too.
-    source_disclosures: list[dict[str, Any]] = []
-    #: Agents in this workspace the person may use, for a setting that picks one.
+    #: Agents the person may use, across their workspaces, for a setting that picks one.
     agents: list[dict[str, str]] = []
     computers: list[LocalAppComputerOut] = []
     versions: list[LocalAppVersionOut] = []
-    enabled: bool = False
 
 
 class LocalAppInstallIn(Schema):
@@ -88,7 +71,8 @@ class LocalAppInstallationOut(Schema):
     id: int
     key: str
     name: str
-    workspace: str
+    #: Where its sessions land: the chosen agent's workspace.
+    workspace: str | None = None
     computer: LocalAppComputerOut
     settings: dict[str, Any]
     settings_spec: dict[str, Any]
@@ -160,11 +144,8 @@ class RunnerLocalAppOut(Schema):
     changes: list[str] = []
     refusal: str | None = None
     running: bool = False
-    source_key: str | None = None
     #: The agent it sends to, by name, so Start can say so.
     agent: str | None = None
-    consumes: list[str] = []
-    provides: list[str] = []
     checks: list[dict[str, Any]] = []
 
 
@@ -174,7 +155,6 @@ class RunnerLocalAppsOut(Schema):
 
 class LocalAppStartRunIn(Schema):
     version: str
-    source_version: str = ""
 
 
 class LocalAppStartRunOut(Schema):

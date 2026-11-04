@@ -56,7 +56,11 @@ Existing web store queries filter to `runtime="web"`, so a local app can't reach
 
 ## Publish, approve, release
 
-**For now, no approval.** Jonathan, 2026-11-03: "anyone should be able to publish without approval for now while we practice and get the framework, solid, we'll enforce approval later." `LOCAL_APPS_REQUIRE_APPROVAL` is off, so a submission from anyone who can write content in a workspace with local apps switched on is released at once and shown as unreviewed. The steps below are what switching it on restores.
+**One app, and one page.** Jonathan, 2026-11-04: "where are there two apps, that's going to be too complicated for normal users don't we just want one app ... the personal apps might not always run on your computer ... we should be DRY with two tabs, one for workspace apps and one for personal apps". So a person installs one app. A transcript source is a second program inside that app's package (manifest `source`), not something installed or listed. Where this spec describes `provides`, `consumes` or a source as its own app, this replaces it. The apps page has two tabs sharing one layout, and where an app runs is a line of information on it.
+
+**A user app, not a workspace app.** Jonathan, 2026-11-04: "get rid of the checkbox for now ... just label it clear as unreleased apps, not expiremental. also, the hiring is a workspace app, this is a user app (you install it for yourself, not the workspace)". So there's no workspace switch, and the agent a person chooses decides which workspace its sessions land in. Where this spec says "workspace switch" or "Experimental", this replaces it.
+
+**For now, no approval.** Jonathan, 2026-11-03: "anyone should be able to publish without approval for now while we practice and get the framework, solid, we'll enforce approval later." `LOCAL_APPS_REQUIRE_APPROVAL` is off, so a submission from anyone who can write content in any workspace is released at once and shown as unreviewed. An app's key stays with the workspace that first released it. The steps below are what switching it on restores.
 
 ```
 author                 canopy-web                     reviewer                 people

@@ -47,6 +47,7 @@
 export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?$/, // root → workspace redirect
   /^\/(canopy\/)?app\/?$/, // /app → workspace redirect (the public site owns a page load of /)
+  /^\/(canopy\/)?apps\/?(\?|$)/, // /apps → the workspace's Personal apps tab (the menu bar opens this)
   /^\/(canopy\/)?w\//, // tenant-scoped surfaces (/w/:workspace/…)
   /^\/(canopy\/)?supervisor/,
   /^\/(canopy\/)?insights/, // retired feed → redirect home (old bookmarks)
