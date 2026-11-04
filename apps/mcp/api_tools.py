@@ -200,6 +200,13 @@ EXCLUDED: dict[str, str] = {
     "get_site_sign_off": _HOST,
     "ses_inbound": "Amazon SNS push webhook",
     "ses_events": "Amazon SNS push webhook",
+    # A box proving its own key or instance role: refused for any tool call, the same false
+    # abort as above. Left over from investigation 29, and removed before one happened.
+    "create_runner_session": _RUNNER,
+    "create_runner_pairing": _RUNNER,
+    "claim_runner_pairing": _RUNNER,
+    "pair_runner_by_role": _RUNNER,
+    "box_egress": _RUNNER,
     # A turn's connections (apps/connections): the runner's own question.
     "turn_connections": _RUNNER,
     # A connection's material, lease and write-back (routes 7-12): sealed credentials
