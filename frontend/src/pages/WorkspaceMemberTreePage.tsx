@@ -9,7 +9,6 @@ import {
   getMemberTree,
   removeMember,
   setMemberRole,
-  WorkspaceApiError,
   type MemberRole,
   type MemberTreeCellOut,
   type MemberTreeOut,
@@ -19,6 +18,7 @@ import {
 import { ROLE_SELECT_CLASS } from '@/components/people/RoleSelect'
 import { scopedPath } from '@/lib/scopedLinks'
 import { grantableRoles, mayManageMember } from '@/lib/workspaceRoles'
+import { ApiError } from '@/api/problem'
 
 // Everyone across this workspace and the ones below it, one row per person,
 // one column per workspace. Owners and admins of a workspace are in every
@@ -58,7 +58,7 @@ export function WorkspaceMemberTreePage(): JSX.Element | null {
       setTree(await getMemberTree(slug))
       setLoadError(null)
     } catch (e: unknown) {
-      if (e instanceof WorkspaceApiError && e.status === 404) {
+      if (e instanceof ApiError && e.status === 404) {
         navigate('/', { replace: true })
         return
       }

@@ -26,7 +26,11 @@ from __future__ import annotations
 import ast
 from collections import Counter
 
+import pytest
+
 from tests._source import ROOT, iter_app_sources
+
+pytestmark = pytest.mark.guard
 
 
 def _product_tier() -> set[str]:
@@ -49,9 +53,9 @@ LAYERS: list[tuple[str, set[str]]] = [
     ("kit", {"common", "events", "workspaces", "api"}),
     # L1 core — the agent/turn/session substrate and who may reach it.
     ("core", {"agents", "harness", "canopy_sessions", "tokens", "contacts", "admission", "retention",
-              "realtime", "push", "passkeys", "embedding", "mcp_apps_host", "attention", "agent_tasks"}),
+              "realtime", "push", "passkeys", "embedding", "host_grants", "mcp_apps_host", "attention", "agent_tasks"}),
     # L2 features — framework surfaces built on the core; nothing below names them.
-    ("features", {"agent_runs", "capabilities", "connections", "feedback", "github_connect", "host_grants", "huddles",
+    ("features", {"agent_runs", "capabilities", "connections", "feedback", "github_connect", "huddles",
                   "inbound", "issues", "mcp", "oauth_server", "plugins", "session_sharing", "slack",
                   "system", "timeline", "threads", "approvals"}),
     # L3 product — canopy's own features (the tiers in test_architecture_boundary).
@@ -67,47 +71,24 @@ FROZEN: dict[tuple[str, str], int] = {
     ("admission", "inbound"): 1,
     ("agents", "capabilities"): 1,
     ("agents", "github_connect"): 2,
-    ("agents", "huddles"): 5,
     ("agents", "issues"): 1,
     ("agents", "oauth_server"): 1,
     ("agents", "plugins"): 1,
-    ("agents", "slack"): 3,
     ("agents", "timeline"): 1,
-    ("common", "canopy_sessions"): 2,
-    ("common", "contacts"): 2,
-    ("common", "harness"): 3,
-    ("common", "realtime"): 1,
-    ("common", "tokens"): 1,
-    ("contacts", "host_grants"): 1,
-    ("embedding", "host_grants"): 8,
-    ("events", "agents"): 4,
-    ("events", "api.api"): 1,
-    ("events", "canopy_sessions"): 5,
+    ("events", "agents"): 2,
+    ("events", "canopy_sessions"): 2,
     ("events", "contacts"): 2,
-    ("events", "harness"): 6,
     ("events", "inbound"): 1,
-    ("events", "mcp"): 2,
     ("harness", "agent_runs"): 1,
     ("harness", "capabilities"): 1,
-    ("harness", "huddles"): 4,
     ("harness", "session_sharing"): 2,
     ("harness", "slack"): 1,
     ("harness", "threads"): 1,
     ("mail", "api.api"): 1,
     ("mcp", "api.api"): 1,
-    ("mcp_apps_host", "host_grants"): 2,
     ("mcp_apps_host", "mcp"): 1,
-    ("push", "host_grants"): 1,
     ("retention", "session_sharing"): 1,
     ("retention", "slack"): 1,
-    ("workspaces", "admission"): 6,
-    ("workspaces", "agents"): 3,
-    ("workspaces", "attention"): 1,
-    ("workspaces", "canopy_sessions"): 1,
-    ("workspaces", "harness"): 8,
-    ("workspaces", "push"): 1,
-    ("workspaces", "realtime"): 1,
-    ("workspaces", "retention"): 7,
     # END FROZEN
 }
 

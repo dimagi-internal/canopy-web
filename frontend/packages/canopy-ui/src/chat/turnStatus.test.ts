@@ -80,6 +80,12 @@ describe("pendingLabel", () => {
     expect(pendingLabel({ status: status({ state: "working" }) })).toBe("Thinking on jj-mbp…");
   });
 
+  it("says the runner is restarting rather than that it is picking this up", () => {
+    expect(pendingLabel({ status: status({ state: "picking_up", setting_up: true }) })).toBe(
+      "jj-mbp is restarting; this starts when it's back…",
+    );
+  });
+
   it("says a follow-up is queued behind the turn ahead, not being picked up (#1147)", () => {
     const s = status({ state: "queued_behind", behind: "session", claimed_by: null });
     expect(agentHasFloor({ status: s })).toBe(true);
@@ -226,6 +232,17 @@ describe("turnNotice", () => {
     expect(turnNotice(failed, { latestMessageAt: "2026-09-26T22:06:01Z" })?.tone).toBe("error");
     expect(turnNotice(failed, { latestMessageAt: null })?.tone).toBe("error");
     expect(turnNotice(failed)?.tone).toBe("error");
+  });
+
+  it("still shows a failure when its own transcript arrives just after it", () => {
+    // A mirrored session's rows take their time when they are ingested, so the
+    // turn's own last rows can be seconds newer than the turn's end (3s on Ada's
+    // debug turn 05590519).
+    const failed = status({
+      state: "failed", settled: true, finished_at: "2026-11-03T14:11:37Z",
+    });
+    expect(turnNotice(failed, { latestMessageAt: "2026-11-03T14:11:40Z" })?.tone).toBe("error");
+    expect(turnNotice(failed, { latestMessageAt: "2026-11-03T14:13:00Z" })).toBeNull();
   });
 
   it("never lets a newer message hide a turn that is not settled", () => {

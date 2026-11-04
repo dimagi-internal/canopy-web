@@ -84,15 +84,22 @@ def delegated_devices(agent, person, facts=None) -> list:
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
             .exclude(ecdh_jkt="").exclude(runner__kind=Runner.COMPUTER)
             .select_related("runner__owner"))
-    return [k for k in keys if may_hold_for(k.runner, person) and runner_may_hold_agent(k.runner, agent)]
+    may_hold = facts.may_hold if facts else runner_may_hold_agent
+    return [k for k in keys if may_hold_for(k.runner, person) and may_hold(k.runner, agent)]
 
 
-def may_hold_for(runner, person) -> bool:
+def may_hold_for(runner, person, *, own_use: bool = False) -> bool:
     """May `runner` hold a credential `person` delegated? A cloud box, or a machine of
     their own. A laptop's device key sits in its owner's home directory, so its owner
     can open anything sealed to it: another admin's laptop would hand them `person`'s
     token. Being an admin of the agent is trust to run it, not to read its people's
-    credentials."""
+    credentials.
+
+    A `computer` (plain Claude Code, no runner app) runs no turn, so it holds nothing
+    for an agent; with `own_use` — the person's own CLI using their own connection —
+    their own computer may."""
+    if runner.kind == Runner.COMPUTER:
+        return own_use and person is not None and runner.owner_id == person.pk
     return runner.kind == Runner.CLOUD or (person is not None and runner.owner_id == person.pk)
 
 

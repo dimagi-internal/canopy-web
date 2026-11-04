@@ -324,8 +324,9 @@ def traffic_health(app) -> TrafficHealth:
     refusals seen in the last 24h — refused redemptions (coalesced Events, one
     per site+reason seen in the window) plus refused `site_call`s. The probe
     records none of these, so it cannot flatter them."""
+    from django.apps import apps as django_apps
+
     from apps.events.models import Event
-    from apps.mcp.models import MCPAuditLog
 
     since = timezone.now() - timedelta(hours=24)
     grants = Event.objects.filter(workspace_id=app.workspace_id, source="tokens.host_grants",
@@ -334,7 +335,9 @@ def traffic_health(app) -> TrafficHealth:
                      .values_list("last_seen_at", flat=True).first())
     refused_grants = grants.filter(kind="host_grant.refused", last_seen_at__gte=since).count()
     marker = f" app={app.pk} "
-    calls = MCPAuditLog.objects.filter(tool="site_call", args_summary__contains=marker)
+    # By label, not import: the audit table is `mcp`'s, a layer above.
+    audit_log = django_apps.get_model("mcp", "MCPAuditLog")
+    calls = audit_log.objects.filter(tool="site_call", args_summary__contains=marker)
     last_call = (calls.filter(ok=True, args_summary__contains="is_error=False").order_by("-created_at")
                  .values_list("created_at", flat=True).first())
     refused_calls = calls.filter(ok=False, created_at__gte=since).count()

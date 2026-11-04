@@ -13,6 +13,7 @@ import { getAgentMailbox, type AgentMailboxOut } from '@/api/mail'
 import type { CredStatus } from '@/pages/agents/agentCredentials'
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { declaresMailbox, followMint, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/googleMint'
+import { Td } from '@/components/DataTable'
 
 // The agent's External accounts tab: the outside accounts it acts as —
 // GitHub and its Google mailbox.
@@ -150,7 +151,7 @@ export function AgentAccountsPanel({
         <tbody className="divide-y divide-border">
           {statusRows.map((r) => (
             <tr key={r.key} data-testid={`credential-status-${r.key}`}>
-              <td className="w-48 py-1.5 text-foreground">
+              <Td density="cozy" tone="foreground" className="w-48">
                 {r.href ? (
                   <a href={r.href} className="hover:text-primary">
                     {r.name}
@@ -158,8 +159,8 @@ export function AgentAccountsPanel({
                 ) : (
                   r.name
                 )}
-              </td>
-              <td className="py-1.5">
+              </Td>
+              <Td density="cozy">
                 {r.s ? (
                   <span className={`rounded border px-1.5 py-0.5 text-[11px] ${TONE[r.s.tone]}`}>
                     {MARK[r.s.tone]} {r.s.label}
@@ -167,8 +168,8 @@ export function AgentAccountsPanel({
                 ) : (
                   <span className="text-[11px] text-muted-foreground">…</span>
                 )}
-              </td>
-              <td className="py-1.5 text-right">
+              </Td>
+              <Td density="cozy" align="right">
                 {r.key === 'mailbox' && (
                   // Signing in is the only way a mailbox token is minted, so the
                   // action sits on its own status line.
@@ -185,7 +186,7 @@ export function AgentAccountsPanel({
                     Connect Google mailbox
                   </button>
                 )}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>

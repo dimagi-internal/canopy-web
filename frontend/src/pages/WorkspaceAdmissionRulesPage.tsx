@@ -8,12 +8,13 @@ import {
   getAdmissionRules,
   setAdmissionSenderNotices,
   updateAdmissionRule,
-  WorkspaceApiError,
   type AdmissionRuleIn,
   type AdmissionRuleOut,
   type AdmissionRulesOut,
 } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
+import { ApiError } from '@/api/problem'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // Which turns this workspace refuses before any session starts (apps/admission,
 // canopy-web#1400). Any member reads the rules; admins change them, and the
@@ -58,7 +59,7 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
     getAdmissionRules(slug)
       .then(setPolicy)
       .catch((e: unknown) => setError(
-        e instanceof WorkspaceApiError || e instanceof Error ? e.message : 'Could not load admission rules'))
+        e instanceof ApiError || e instanceof Error ? e.message : 'Could not load admission rules'))
   }, [slug])
 
   useEffect(() => {
@@ -197,27 +198,29 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
         ) : (
           <table className="w-full text-[12px]" data-testid="admission-rules">
             <thead className="text-left text-muted-foreground">
-              <tr className="border-b border-border">
-                <th className="py-1 pr-3 font-medium">On</th>
-                <th className="py-1 pr-3 font-medium">Rule</th>
-                <th className="py-1 pr-3 font-medium">Why</th>
-                <th className="py-1 pr-3 font-medium">Notices</th>
-                <th className="py-1 pr-3 font-medium">Fired</th>
-                {manage && <th className="py-1" />}
-              </tr>
+              <Tr rule="bottom">
+                <Th density="compact-gap">On</Th>
+                <Th density="compact-gap">Rule</Th>
+                <Th density="compact-gap">Why</Th>
+                <Th density="compact-gap">Notices</Th>
+                <Th density="compact-gap">Fired</Th>
+                {manage && <Th weight="inherit" />}
+              </Tr>
             </thead>
             <tbody>
               {policy.rules.map((r) => (
-                <tr
+                <Tr
+                  rule="bottom"
+                  top
                   key={r.id}
                   ref={r.id === highlighted ? highlightRef : undefined}
-                  className={clsx('border-b border-border align-top',
+                  className={clsx(
                     r.id === highlighted && 'bg-primary/10 outline outline-1 outline-primary',
                     !r.enabled && 'opacity-60')}
                   data-testid={`admission-rule-${r.id}`}
                   data-highlighted={r.id === highlighted ? 'true' : undefined}
                 >
-                  <td className="py-1.5 pr-3">
+                  <Td density="cozy-gap">
                     <input
                       type="checkbox"
                       aria-label={`Rule ${r.id} enabled`}
@@ -226,8 +229,8 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                       onChange={() => void toggle(r)}
                       data-testid={`admission-toggle-${r.id}`}
                     />
-                  </td>
-                  <td className="py-1.5 pr-3 text-foreground">
+                  </Td>
+                  <Td density="cozy-gap" tone="foreground">
                     <span className={clsx('mr-1 rounded border px-1 text-[11px]',
                       r.action === 'reject'
                         ? 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -243,14 +246,14 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                         · always refused; this sets the notices
                       </span>
                     )}
-                  </td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary">{r.reason}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">{notices(r, policy.sender_notices_enabled)}</td>
-                  <td className="whitespace-nowrap py-1.5 pr-3 text-muted-foreground" data-testid={`admission-fired-${r.id}`}>
+                  </Td>
+                  <Td density="cozy-gap" tone="secondary">{r.reason}</Td>
+                  <Td density="cozy-gap" tone="muted">{notices(r, policy.sender_notices_enabled)}</Td>
+                  <Td density="cozy-gap" tone="muted" nowrap data-testid={`admission-fired-${r.id}`}>
                     {fired(r)}
-                  </td>
+                  </Td>
                   {manage && (
-                    <td className="whitespace-nowrap py-1.5 text-right">
+                    <Td density="cozy" nowrap align="right">
                       <button type="button" className="px-2 text-primary hover:underline" onClick={() => startEdit(r)}>
                         Edit
                       </button>
@@ -262,9 +265,9 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                       >
                         Remove
                       </button>
-                    </td>
+                    </Td>
                   )}
-                </tr>
+                </Tr>
               ))}
             </tbody>
           </table>
@@ -312,10 +315,13 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
             <input
               aria-label="Capability"
               placeholder="Any capability"
+              list="admission-capabilities"
               value={draft.capability}
               onChange={(e) => set({ capability: e.target.value })}
               className="min-h-11 w-36 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0"
             />
+            {/* `read` is read mode (the older name `ask` is the same thing and is still accepted). */}
+            <datalist id="admission-capabilities"><option value="read">Read mode (also matches ask)</option></datalist>
             <select aria-label="Turn mode" className={select} value={draft.turn_mode}
               onChange={(e) => set({ turn_mode: e.target.value as AdmissionRuleIn['turn_mode'] })}>
               <option value="">Any mode</option>

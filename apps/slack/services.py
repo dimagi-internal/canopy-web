@@ -133,6 +133,9 @@ class Inbound:
     #: The channel's name when the payload carries it (a slash command does; an
     #: event does not). "directmessage"/"privategroup" are Slack's placeholders, not names.
     channel_name: str = ""
+    #: What tells this message from others with the same `ts`. A post's reply buttons
+    #: all carry the post's `ts`, and each press is a message of its own.
+    delivery_key: str = ""
 
     @property
     def anchor(self) -> str:
@@ -164,7 +167,7 @@ RESTART_LABEL = "Start a new session with this thread's context"
 RESTART_NOTICE, RESTART_ASK = "slack_restart_notice", "slack_restart_ask"
 #: A message into a thread whose conversation is private (sensitive): never sent.
 PRIVATE = "private"
-#: The agent's interface offers this caller nothing; the turn was written cancelled.
+#: The agent's access list gives this caller nothing; the turn was written cancelled.
 REFUSED = "refused"
 #: A `--history N` ask canopy would not, or could not, read the channel for.
 WINDOW_REFUSED = "window_refused"
@@ -1065,6 +1068,48 @@ def _continue_shared(session: Session, principal: Principal, text: str, inbound:
     return _send(session, False, None, principal, text, inbound)
 
 
+def choice_refusal(session: Session, principal: Principal) -> Outcome | None:
+    """Why a reply button (`choices.py`) pressed by `principal` must not act, or None.
+
+    The rule a typed reply lives under, asked before anything is claimed. A typed
+    reply from someone who may not steer the session goes somewhere harmless (a
+    confined fork of their own, or a refusal); a button has no such place to go,
+    because it stands for a choice in THIS conversation. So it does not act, and
+    stays for someone it can act for.
+    """
+    refused = private_refusal(session)
+    if refused is not None:
+        return refused
+    agent = session.agent
+    if agent is None:
+        if principal.user is None:
+            return Outcome(MEMBERS_ONLY, "Only members of this canopy workspace can answer this session. "
+                           "Your click did nothing.", session=session)
+        return None
+    if not agent.slack_enabled:
+        return Outcome(NO_AGENT, f"`{agent.slug}` isn't turned on for Slack. Your click did nothing.",
+                       session=session, agent=agent)
+    if not _owns(session, principal) and _access_in(session, agent, principal, session_team(session)) != access.FULL:
+        return Outcome(MEMBERS_ONLY, f"You aren't a member of this conversation in canopy, so `{agent.slug}` "
+                       "can't take this choice from you. Your click did nothing.", session=session, agent=agent)
+    return None
+
+
+def session_team(session: Session) -> str:
+    return str((session.metadata or {}).get("slack_team") or "")
+
+
+def deliver_choice(session: Session, principal: Principal, text: str, inbound: Inbound) -> Outcome:
+    """A reply button's words, into its session: what a typed reply does once it
+    has found the session it belongs to. It starts past the parsing of a typed
+    message on purpose. Agent-written words must not name another agent, read a
+    channel or set a CLI with the authority of the person who pressed the button."""
+    if session.agent is None:
+        return _continue_shared(session, principal, text, inbound)
+    _sync_audience(session, inbound, principal)
+    return _send(session, False, session.agent, principal, text, inbound, named=False)
+
+
 def _adoption_ref(inbound: Inbound) -> dict | None:
     """The slash command's anchor, in the shape `status.adoption` reads."""
     from . import status
@@ -1138,7 +1183,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         user=principal.user or AnonymousUser(),
         # Slack redelivers an event it thinks we missed; the same message must
         # collapse onto the same turn rather than asking the agent twice.
-        client_id=f"slack:{inbound.channel_id}:{inbound.ts}",
+        client_id=f"slack:{inbound.channel_id}:{inbound.delivery_key or inbound.ts}",
         origin=Turn.ORIGIN_SLACK,
         initiator=principal.initiator(inbound.team_id),
         # What the status line needs from THIS request, written onto the turn so
@@ -1147,7 +1192,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         origin_ref=origin_ref,
     )
     if turn is not None and turn.status == Turn.CANCELLED and agent is not None:
-        # Written already-cancelled: the agent's interface offers this caller
+        # Written already-cancelled: the agent's access list gives this caller
         # nothing (harness `_apply_capability`). The public line says "not run";
         # the sender is owed the why, privately.
         return Outcome(REFUSED, refusal_message(agent, turn, named=named,
@@ -1260,7 +1305,7 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
     that is still there is left alone, and the move then refuses as before.
     """
     from apps.harness import routing
-    from apps.harness.closing import close_turn
+    from apps.harness.turn_close import close_turn
 
     from . import status
 
@@ -1320,7 +1365,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
     """`/canopy cloud` — "anything of mine stuck behind an offline runner, run
     it on the cloud". Only the caller's own queued conversation turns, only the
     ones no live runner is about to take, and only onto a box they administer."""
-    from apps.harness import claim
+    from apps.harness import claim_reach
 
     user, _assurance, _info = slack_user(installation, slack_user_id)
     mine = [ws for ws in installation.workspace_ids() if user is not None and wsvc.is_member(user, ws)]
@@ -1332,7 +1377,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
               .select_related("chat_session").order_by("created_at"))
     stuck: dict = {}
     for turn in queued:
-        if turn.chat_session_id not in stuck and claim.turn_reach(turn).kind != claim.LIVE:
+        if turn.chat_session_id not in stuck and claim_reach.turn_reach(turn).kind != claim_reach.LIVE:
             stuck[turn.chat_session_id] = turn.chat_session
     if not stuck:
         return Outcome(NOTHING_QUEUED, "Nothing of yours is waiting on an offline runner.")

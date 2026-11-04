@@ -333,6 +333,8 @@ function Lightbox({
     }
   }, [onClose])
 
+  // shared-dialog-exception: a media lightbox: full-screen black scrim, the image or video fills the
+  // viewport, own arrow-key paging. Not a card on a scrim, so the shared Dialog does not fit.
   return (
     <div
       role="dialog"

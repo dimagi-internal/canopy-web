@@ -10,7 +10,8 @@ from apps.agents.models import Agent
 from apps.harness import claim, drills, ledger, services
 from apps.harness import initiator as _initiator
 from apps.harness.models import Runner, RunnerAssignment, Turn
-from apps.workspaces.testing import a_member, a_workspace, enrolled
+from apps.workspaces.testing import a_member, a_workspace
+from apps.harness.testing import enrolled
 
 # Queued by canopy itself: these tests are about the queue, not about who asked.
 _BY_CANOPY = _initiator.system(via="test")

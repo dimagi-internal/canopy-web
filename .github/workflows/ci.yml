@@ -229,9 +229,16 @@ jobs:
         working-directory: packages/canopy_cron
         run: uv run --with pytest pytest -q
 
-      # canopy_kb's own suite is not here: it runs by hand, while working on the
-      # KB (.github/workflows/canopy-kb.yml). canopy-web's serving of it (tests/
-      # test_kb_*.py, test_project_mcp.py) still runs in the backend job.
+      # The KB engine's own suite. It was taken out of CI once for a flake: the refused-
+      # card test wrote card.results.json in place, the engine's 10 ms poll read it
+      # half-written, moved it to .bad and waited out its 10 s timeout. The test now
+      # writes temp-then-rename as the session protocol requires (#2134); with the old
+      # write it failed ~1 in 120 runs under load, with the fix 0 in 120 and 0 in 18
+      # full-suite runs. [prep] brings the curator toolkit's format readers, so their
+      # tests run too.
+      - name: Run canopy_kb tests
+        working-directory: packages/canopy_kb
+        run: uv run --extra prep --with pytest pytest -q
 
       # The runner decides WHICH slot is due and fires it, so its suite is the only
       # thing standing between a scheduling bug and a fleet that silently never
@@ -408,7 +415,7 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
         run: >-
           uv run pytest --ds=config.settings.pgtest --reuse-db tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
-          tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py -q --durations=10
+          tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py tests/test_slack_choices_pg.py -q --durations=10
 
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the
@@ -783,6 +790,7 @@ jobs:
   # what unit tests cannot see: the reply arriving once and in order, the view
   # at the newest row, a finished turn that stops saying it is working, history
   # that survives a dropped connection. Not yet behind a required gate.
+  # Also runs vault-new-key: real passkey ceremonies, with a virtual authenticator.
   test-e2e-chat:
     name: Browser suite (chat)
     if: github.event_name != 'pull_request'
@@ -836,7 +844,7 @@ jobs:
         env:
           E2E_DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
           E2E_SERVER_TIMEOUT: "300000"
-        run: npx playwright test e2e/chat-runner.spec.ts --project=desktop
+        run: npx playwright test e2e/chat-runner.spec.ts e2e/vault-new-key.spec.ts --project=desktop
 
       - name: Keep the traces of a failure
         if: failure()

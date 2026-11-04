@@ -8,6 +8,7 @@ import {
 } from '@/api/agents'
 import { relativeAge } from '@/lib/relativeAge'
 import { toneText } from 'canopy-ui/lib'
+import { Td, Th } from '@/components/DataTable'
 
 // WHO USES THIS AGENT DIRECTLY (canopy-web#1704).
 //
@@ -87,34 +88,34 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
         <table className="w-full text-[12px]">
           <thead className="text-left text-muted-foreground">
             <tr>
-              <th className="py-1 pr-3 font-medium">Person</th>
-              <th className="py-1 pr-3 font-medium">License</th>
-              <th className="py-1 pr-3 font-medium">Why</th>
-              <th className="py-1 pr-3 font-medium">Computers</th>
-              <th className="py-1 pr-3 font-medium">Last used</th>
-              <th className="py-1 pr-3 text-right font-medium">Turns</th>
-              <th className="py-1 pr-3 text-right font-medium">Reads</th>
-              {canEdit && <th className="py-1" />}
+              <Th density="compact-gap">Person</Th>
+              <Th density="compact-gap">License</Th>
+              <Th density="compact-gap">Why</Th>
+              <Th density="compact-gap">Computers</Th>
+              <Th density="compact-gap">Last used</Th>
+              <Th density="compact-gap" className="text-right">Turns</Th>
+              <Th density="compact-gap" className="text-right">Reads</Th>
+              {canEdit && <Th weight="inherit" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.map((r) => (
               <tr key={r.user_id}>
-                <td className="py-1.5 pr-3" title={r.email}>
+                <Td density="cozy-gap" title={r.email}>
                   {r.name}
-                </td>
-                <td className={`py-1.5 pr-3 ${STATUS_CLASS[r.status]}`} title={r.note || undefined}>
+                </Td>
+                <Td density="cozy-gap" className={STATUS_CLASS[r.status]} title={r.note || undefined}>
                   {STATUS_LABEL[r.status]}
-                </td>
-                <td className="py-1.5 pr-3 text-muted-foreground">{r.basis || r.note || '—'}</td>
-                <td className="py-1.5 pr-3">{r.private_runners?.join(', ') || '—'}</td>
-                <td className="py-1.5 pr-3 text-muted-foreground">
+                </Td>
+                <Td density="cozy-gap" tone="muted">{r.basis || r.note || '—'}</Td>
+                <Td density="cozy-gap">{r.private_runners?.join(', ') || '—'}</Td>
+                <Td density="cozy-gap" tone="muted">
                   {r.last_used_at ? relativeAge(r.last_used_at) : '—'}
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">{r.local_turns ?? 0}</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">{r.credential_reads ?? 0}</td>
+                </Td>
+                <Td density="cozy-gap" numeric align="right">{r.local_turns ?? 0}</Td>
+                <Td density="cozy-gap" numeric align="right">{r.credential_reads ?? 0}</Td>
                 {canEdit && (
-                  <td className="py-1.5 text-right">
+                  <Td density="cozy" align="right">
                     {r.status === 'active' ? (
                       <button
                         type="button"
@@ -134,7 +135,7 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
                         Approve
                       </button>
                     )}
-                  </td>
+                  </Td>
                 )}
               </tr>
             ))}

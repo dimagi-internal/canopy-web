@@ -21,9 +21,10 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
+from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.site_tenant import host_workspace
+from tests.token_helpers import delegated_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -44,11 +45,6 @@ def _app(name, ws=None):
                                             workspace=ws or host_workspace())
 
 
-def _bearer(app, user):
-    raw, _tok = DelegatedToken.issue(app=app, user=user, ttl_seconds=3600)
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 def test_returns_only_agents_the_app_is_allowed_to_target():
     user = User.objects.create_user("u", "u@dimagi.com", "pw")
     ws = _ws("w1", user)
@@ -56,7 +52,7 @@ def test_returns_only_agents_the_app_is_allowed_to_target():
     app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=allowed)
 
-    body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
+    body = Client().get("/api/embed/agents", **delegated_headers(app, user)).json()
     assert [a["slug"] for a in body] == ["labs-helper"]
     assert not_allowed.slug not in {a["slug"] for a in body}
 
@@ -72,7 +68,7 @@ def test_excludes_an_allowlisted_agent_the_user_cannot_reach():
     app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=stranger)
 
-    body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
+    body = Client().get("/api/embed/agents", **delegated_headers(app, user)).json()
     assert body == []
 
 
@@ -87,7 +83,7 @@ def test_one_apps_allowlist_is_invisible_to_another_app():
     AppCredentialAgent.objects.create(app=app_a, agent=a_agent)
     AppCredentialAgent.objects.create(app=app_b, agent=b_agent)
 
-    body = Client().get("/api/embed/agents", **_bearer(app_b, user)).json()
+    body = Client().get("/api/embed/agents", **delegated_headers(app_b, user)).json()
     assert [a["slug"] for a in body] == ["b-only"]
 
 
@@ -111,7 +107,7 @@ def test_an_app_with_no_allowlist_offers_nothing():
     _agent("labs-helper", ws)
     app = _app("connect-labs")
 
-    body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
+    body = Client().get("/api/embed/agents", **delegated_headers(app, user)).json()
     assert body == []
 
 
@@ -121,7 +117,7 @@ def test_revoked_app_credential_offers_nothing():
     agent = _agent("labs-helper", ws)
     app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=agent)
-    headers = _bearer(app, user)
+    headers = delegated_headers(app, user)
     from django.utils import timezone
     AppCredential.objects.filter(pk=app.pk).update(revoked_at=timezone.now())
 
@@ -146,7 +142,7 @@ def test_the_same_agent_may_be_offered_by_two_apps():
     AppCredentialAgent.objects.create(app=app_b, agent=shared)
 
     for app in (app_a, app_b):
-        body = Client().get("/api/embed/agents", **_bearer(app, user)).json()
+        body = Client().get("/api/embed/agents", **delegated_headers(app, user)).json()
         assert [a["slug"] for a in body] == ["shared"]
 
 
@@ -170,7 +166,7 @@ def test_payload_carries_what_a_picker_needs():
     app = _app("connect-labs")
     AppCredentialAgent.objects.create(app=app, agent=Agent.objects.get(slug="labs-helper"))
 
-    row = Client().get("/api/embed/agents", **_bearer(app, user)).json()[0]
+    row = Client().get("/api/embed/agents", **delegated_headers(app, user)).json()[0]
     assert row["slug"] == "labs-helper"
     assert row["name"] == "Labs Helper"
     assert row["description"] == "Knows connect-labs"

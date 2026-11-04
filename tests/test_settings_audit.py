@@ -18,8 +18,8 @@ from apps.agents.models import Agent
 from apps.events import audit
 from apps.events.models import SettingChange
 from apps.passkeys.testing import give_vault_key, grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 
@@ -40,11 +40,6 @@ def _session(user) -> Client:
     c = Client()
     c.force_login(user)
     return c
-
-
-def _pat(user, **headers) -> Client:
-    raw, _ = PersonalToken.create_for_user(user=user, label="laptop")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}", **headers)
 
 
 def _patch(c, path, body):
@@ -71,7 +66,7 @@ def test_a_setting_changed_in_the_ui_is_recorded(fleet):
     ({}, "api"),
 ])
 def test_a_token_caller_is_named_with_its_credential(fleet, headers, via):
-    res = _patch(_pat(fleet["jj"], **headers), "/api/agents/ace/turn-mode", {"turn_mode": "auto"})
+    res = _patch(pat_client(fleet["jj"], "laptop", **headers), "/api/agents/ace/turn-mode", {"turn_mode": "auto"})
     assert res.status_code == 200, res.content
     [row] = SettingChange.objects.all()
     assert row.via == via

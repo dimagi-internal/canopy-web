@@ -35,7 +35,7 @@ vi.mock('@/workspace/WorkspaceProvider', () => ({
 const { AgentAccessList } = await import('./AgentAccessList')
 
 const line = (o: Partial<AccessLineOut>): AccessLineOut => ({
-  id: 1, scope: 'agent', scope_workspace: null, kind: 'person', who: 'ann@dimagi.com', role: 'user', user_id: 9,
+  id: 1, scope: 'agent', scope_workspace: null, kind: 'person', who: 'ann@dimagi.com', role: 'read_write', capability: '', include_below: false, user_id: 9,
   subject_workspace: null, at_least: '', domain: '', verified: true, manual_only: false, note: '',
   granted_by_email: null, granted_at: null, can_edit: true, warning: '', ...o,
 })
@@ -43,21 +43,23 @@ const line = (o: Partial<AccessLineOut>): AccessLineOut => ({
 const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
   inherit_workspace_defaults: true,
   can_edit: true,
+  doors: [],
   lines: [
-    line({ id: 1, who: 'ann@dimagi.com', role: 'user' }),
-    line({ id: 2, kind: 'domain', who: 'Anyone at @partner.org (verified)', role: 'viewer', domain: 'partner.org' }),
-    line({ id: 3, scope: 'workspace', scope_workspace: 'dimagi', kind: 'workspace', who: 'Everyone in dimagi', role: 'viewer', can_edit: false }),
+    line({ id: 1, who: 'ann@dimagi.com', role: 'read_write' }),
+    line({ id: 2, kind: 'domain', who: 'Anyone at @partner.org (verified)', role: 'read_only', domain: 'partner.org' }),
+    line({ id: 4, kind: 'person', who: 'cy@dimagi.com', role: '', capability: 'connect' }),
+    line({ id: 3, scope: 'workspace', scope_workspace: 'dimagi', kind: 'workspace', who: 'Everyone in dimagi or any workspace below it', role: 'read_only', include_below: true, can_edit: false }),
   ],
   implicit: [
     { who: 'op@dimagi.com', role: 'owner', why: 'Owns this agent' },
     { who: 'boss@dimagi.com', role: 'admin', why: 'Owns the workspace' },
   ],
   roles: [
-    { role: 'owner', can: ['ask', 'run the whole agent', 'transfer or delete it'] },
-    { role: 'admin', can: ['ask', 'run the whole agent', 'configure it'] },
-    { role: 'editor', can: ['ask', 'run the whole agent'] },
-    { role: 'user', can: ['ask', 'use what it publishes'] },
-    { role: 'viewer', can: ['ask'] },
+    { role: 'owner', can: ['ask', 'drive the whole agent', 'transfer or delete it'], permissions: [] },
+    { role: 'admin', can: ['ask', 'drive the whole agent', 'configure it'], permissions: [] },
+    { role: 'editor', can: ['ask', 'drive the whole agent', 'change its skills'], permissions: [] },
+    { role: 'read_write', can: ['ask', 'drive the whole agent'], permissions: [] },
+    { role: 'read_only', can: ['ask'], permissions: [] },
   ],
   ...o,
 })
@@ -93,8 +95,12 @@ describe('AgentAccessList', () => {
     show()
     const legend = await screen.findByTestId('access-legend')
     expect(legend.textContent).toBe(
-      'Viewercan ask' + 'Usercan ask, use what it publishes' + 'Editorcan ask, run the whole agent' +
-        'Agent admincan ask, run the whole agent, configure it' + 'Ownercan ask, run the whole agent, transfer or delete it',
+      'Read onlycan ask' + 'Read & writecan ask, drive the whole agent' +
+        'Editorcan ask, drive the whole agent, change its skills' +
+        'Agent admincan ask, drive the whole agent, configure it' +
+        'Ownercan ask, drive the whole agent, transfer or delete it',
+    )
+    expect(legend.textContent).not.toMatch(/viewer|user/i
     )
   })
 
@@ -106,10 +112,13 @@ describe('AgentAccessList', () => {
       'boss@dimagi.comAgent adminOwns the workspace · not a line, cannot be removed here',
     ])
     const own = screen.getAllByTestId('access-line')
-    expect(own).toHaveLength(2)
-    expect((within(own[0]).getByLabelText('Role for ann@dimagi.com') as HTMLSelectElement).value).toBe('user')
+    expect(own).toHaveLength(3)
+    expect((within(own[0]).getByLabelText('Role for ann@dimagi.com') as HTMLSelectElement).value).toBe('read_write')
+    // a line that opens one capability says so, and has no role to change or approval gate to flip
+    expect(own[2].textContent).toContain('Uses “connect” only')
+    expect(within(own[2]).queryByRole('combobox')).toBeNull()
     const inherited = screen.getByTestId('access-line-inherited')
-    expect(inherited.textContent).toContain('Everyone in dimagi')
+    expect(inherited.textContent).toContain('Everyone in dimagi or any workspace below it')
     expect(inherited.textContent).toContain('set on dimagi')
     expect(within(inherited).queryByRole('button')).toBeNull()
     expect(within(inherited).queryByRole('combobox')).toBeNull()
@@ -132,11 +141,13 @@ describe('AgentAccessList', () => {
     await waitFor(() => expect(getAccessList.mock.calls.length).toBeGreaterThan(3))
   })
 
-  it('does not let an address-only line be raised to editor', async () => {
+  it('does not let an address-only line be raised to a role that drives the whole agent', async () => {
     show()
     const row = (await screen.findAllByTestId('access-line'))[1]
-    const opt = within(row).getByRole('option', { name: 'Editor' }) as HTMLOptionElement
-    expect(opt.disabled).toBe(true)
+    for (const name of ['Editor', 'Read & write']) {
+      expect((within(row).getByRole('option', { name }) as HTMLOptionElement).disabled).toBe(true)
+    }
+    expect((within(row).getByRole('option', { name: 'Read only' }) as HTMLOptionElement).disabled).toBe(false)
   })
 
   it('adds a person by email', async () => {
@@ -144,11 +155,15 @@ describe('AgentAccessList', () => {
     show()
     await screen.findByTestId('access-line-form')
     fireEvent.change(screen.getByLabelText('Their email'), { target: { value: 'new@dimagi.com' } })
+    // Nothing is pre-selected (read only turns on asking): Add waits for a choice.
+    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false)
+    fireEvent.click(screen.getByRole('radio', { name: /Read & write/ }))
     fireEvent.click(within(screen.getByTestId('access-line-form')).getByLabelText('Needs approval before anything goes out'))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() =>
       expect(addAccessLine).toHaveBeenCalledWith('ace', expect.objectContaining({
-        kind: 'person', role: 'user', email: 'new@dimagi.com', manual_only: true,
+        kind: 'person', role: 'read_write', email: 'new@dimagi.com', manual_only: true,
       })),
     )
     await waitFor(() => expect((screen.getByLabelText('Their email') as HTMLInputElement).value).toBe(''))
@@ -159,6 +174,7 @@ describe('AgentAccessList', () => {
     show()
     fireEvent.change(await screen.findByLabelText('Who'), { target: { value: 'domain' } })
     fireEvent.change(screen.getByLabelText('Email domain'), { target: { value: 'no-dmarc.example' } })
+    fireEvent.click(screen.getByRole('radio', { name: /Read only/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect((await screen.findByTestId('access-line-warning')).textContent).toContain('can never prove who sent it')
   })
@@ -170,16 +186,38 @@ describe('AgentAccessList', () => {
     fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'dimagi' } })
     fireEvent.change(screen.getByLabelText('Which people'), { target: { value: 'editor' } })
     fireEvent.change(screen.getByLabelText('Only addresses at this domain'), { target: { value: 'dimagi.com' } })
+    fireEvent.click(screen.getByLabelText('or any workspace below it'))
     fireEvent.click(screen.getByRole('radio', { name: /editor/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() =>
       expect(addAccessLine).toHaveBeenCalledWith('ace', expect.objectContaining({
         kind: 'workspace', workspace: 'dimagi', at_least: 'editor', domain: 'dimagi.com', role: 'editor',
+        include_below: true,
       })),
     )
   })
 
-  it('disables editor for a domain or a known visitor, and steps down from it', async () => {
+  it('adds one door, picked from the agent\'s published doors, instead of a role', async () => {
+    addAccessLine.mockResolvedValue(line({}))
+    getAccessList.mockResolvedValue(LIST({ doors: ['canopy', 'connect'] }))
+    show()
+    fireEvent.change(await screen.findByLabelText('Their email'), { target: { value: 'cy@dimagi.com' } })
+    fireEvent.click(screen.getByRole('radio', { name: /One door/ }))
+    expect(screen.queryByLabelText('Capability name')).toBeNull()          // no free-text name
+    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true)   // needs a pick
+    const pick = screen.getByLabelText('Door') as HTMLSelectElement
+    expect([...pick.options].map((o) => o.value)).toEqual(['', 'canopy', 'connect'])
+    fireEvent.change(pick, { target: { value: 'connect' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() =>
+      expect(addAccessLine).toHaveBeenCalledWith('ace', expect.objectContaining({
+        kind: 'person', capability: 'connect', email: 'cy@dimagi.com', manual_only: false,
+      })),
+    )
+    expect(addAccessLine.mock.calls[0][1].role).toBeUndefined()
+  })
+
+  it('disables roles that drive the whole agent for a domain or a known visitor, and clears them', async () => {
     show()
     fireEvent.change(await screen.findByLabelText('Who'), { target: { value: 'workspace' } })
     fireEvent.click(screen.getByRole('radio', { name: /editor/i }))
@@ -187,7 +225,9 @@ describe('AgentAccessList', () => {
     for (const kind of ['domain', 'contact']) {
       fireEvent.change(screen.getByLabelText('Who'), { target: { value: kind } })
       expect((screen.getByRole('radio', { name: /editor/i }) as HTMLInputElement).disabled).toBe(true)
-      expect((screen.getByRole('radio', { name: /user/i }) as HTMLInputElement).checked).toBe(true)
+      expect((screen.getByRole('radio', { name: /Read & write/ }) as HTMLInputElement).disabled).toBe(true)
+      expect((screen.getByRole('radio', { name: /Read only/ }) as HTMLInputElement).disabled).toBe(false)
+      expect((screen.getByRole('radio', { name: /editor/i }) as HTMLInputElement).checked).toBe(false)
     }
   })
 
@@ -196,6 +236,7 @@ describe('AgentAccessList', () => {
     addAccessLine.mockRejectedValue(new ApiError(422, 'no such person among the workspaces you can see', undefined))
     show()
     fireEvent.change(await screen.findByLabelText('Their email'), { target: { value: 'nobody@x.org' } })
+    fireEvent.click(screen.getByRole('radio', { name: /Read only/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     const form = screen.getByTestId('access-line-form')
     expect((await within(form).findByRole('alert')).textContent).toBe('no such person among the workspaces you can see')

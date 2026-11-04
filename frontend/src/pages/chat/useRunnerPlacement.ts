@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { PlacementRunner, TurnStatus } from 'canopy-ui/chat'
 
-import { ChatApiError, getSession, placeTurn, transferSession, type ChatSessionDetail } from '@/api/chat'
+import { getSession, placeTurn, transferSession, type ChatSessionDetail } from '@/api/chat'
 import { listRunners, recentRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import { findBoundRunner, onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
 import { withFreshLiveness } from '../chatPageLogic'
+import { ApiError } from '@/api/problem'
 
 export const RECOVERY_POLL_MS = 30_000
 /** How old a fleet read another page made may be and still open a chat (`recentRunners`). */
@@ -143,11 +144,11 @@ export function useRunnerPlacement(
   }, [boundOffline])
 
   const placementFail = useCallback((err: unknown) => {
-    if (err instanceof ChatApiError && err.status === 404) {
+    if (err instanceof ApiError && err.status === 404) {
       setPlaceInfo('No pending message to place.')
       return
     }
-    if (err instanceof ChatApiError && err.status === 422) {
+    if (err instanceof ApiError && err.status === 422) {
       setPlaceError(err.message)
       return
     }
@@ -217,7 +218,7 @@ export function useRunnerPlacement(
           refreshFleet()
         })
         .catch((err) => {
-          if (err instanceof ChatApiError && err.status === 404) return transferTo(runnerId)
+          if (err instanceof ApiError && err.status === 404) return transferTo(runnerId)
           throw err
         })
         .catch(placementFail)

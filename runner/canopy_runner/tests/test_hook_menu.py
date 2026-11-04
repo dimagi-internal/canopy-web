@@ -119,10 +119,35 @@ def test_a_malformed_payload_never_raises():
     assert hl.pending_menu(*KEY) is None
 
 
-def test_the_report_prefers_the_transcript_and_falls_back_to_the_hook():
-    """Both are consulted, in that order — the durable file wins on a session
-    whose hooks were never installed, and the hook covers the live dialog the
-    file cannot contain."""
+def _report_with(monkeypatch, *, in_transcript, held):
+    from canopy_runner import transcript
+
+    monkeypatch.setattr(transcript, "pending_question_for", lambda *a, **k: in_transcript)
+    sessions = [{"project": "p", "emdash_task": "t"}]
+    transcript.attach_pending_questions(sessions, hook_menu_for=lambda p, t: held)
+    return sessions[0]["question"]
+
+
+def test_a_refused_answer_reaches_the_report_when_the_transcript_also_has_the_ask(monkeypatch):
+    """Only the hook's copy carries the refusal; the transcript's would bring the
+    dialog back with no reason given."""
+    held = {"question": "q", "options": [{"number": 1}], "answer_note": "answer it in emdash"}
+    assert _report_with(monkeypatch, in_transcript={"question": "q", "options": [{"number": 1}]},
+                        held=held) == held
+
+
+def test_a_marker_does_not_beat_the_transcripts_real_menu(monkeypatch):
+    real = {"question": "q", "options": [{"number": 1}]}
+    assert _report_with(monkeypatch, in_transcript=real,
+                        held={"question": "waiting", "options": []}) == real
+
+
+def test_the_transcript_covers_a_session_with_no_hooks(monkeypatch):
+    real = {"question": "q", "options": [{"number": 1}]}
+    assert _report_with(monkeypatch, in_transcript=real, held=None) == real
+
+
+def test_the_hook_covers_a_dialog_the_transcript_does_not_have():
     from canopy_runner import transcript
 
     sessions = [{"project": "canopy-web", "emdash_task": "canopy-web-chat-1706"}]
@@ -525,6 +550,27 @@ def test_the_api_error_clears_the_turn_rather_than_one_notification(tmp_path):
     # A second one, this time with no transcript to consult at all: the turn is
     # already known to be over, so it stays quiet on turn state alone.
     hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "message": "Claude is waiting for your input"})
+    assert hl.pending_menu(*KEY) is None
+
+
+def test_a_turn_a_hook_stopped_is_not_in_flight(tmp_path):
+    """A hook's `continue: false` ends a turn with no `Stop` too. credential_guard aborted Ada's
+    debug turn 05590519 this way (2026-11-03), and the idle notification a minute later put a
+    "Waiting on you" on a session with nothing on screen."""
+    import json
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "go"}}) + "\n"
+        + json.dumps({"type": "attachment",
+                      "attachment": {"type": "hook_stopped_continuation"}}) + "\n"
+        + json.dumps({"type": "system", "subtype": "turn_duration"}) + "\n")
+
+    hl = listener()
+    hl.handle_payload(PROMPT)
+    hl.handle_payload({"hook_event_name": "Notification", "cwd": CWD,
+                       "transcript_path": str(transcript),
                        "message": "Claude is waiting for your input"})
     assert hl.pending_menu(*KEY) is None
 

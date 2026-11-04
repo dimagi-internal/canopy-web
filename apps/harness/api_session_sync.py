@@ -18,8 +18,10 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
+from apps.agents.holding import runner_may_hold_agent
 from apps.api.route_gates import gate
 from apps.canopy_sessions import control, handoff
+from apps.canopy_sessions import services as chat_services
 from apps.canopy_sessions.coaching import full_upload_session_ids
 from apps.canopy_sessions.models import HandoffArchive, RunnerBinding, Session, SessionHandoff
 from apps.workspaces import services as wsvc
@@ -68,9 +70,9 @@ from .schemas import (
     SessionInterruptSyncOut,
     SessionMenuIn,
     SessionMenuOut,
-    SessionSubagentsIn,
     SessionReportOut,
     SessionStreamIn,
+    SessionSubagentsIn,
     StreamPostOut,
     StreamSyncOut,
 )
@@ -393,8 +395,6 @@ def _turn_end_session(runner, session_id, transcript_id: str = ""):
         if not ours:
             continue
         session = turn.chat_session
-        from apps.agents.services import runner_may_hold_agent  # noqa: PLC0415 — agents imports harness
-
         if session.agent_id is None or not runner_may_hold_agent(runner, session.agent):
             return None
         return session
@@ -768,4 +768,6 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if payload.final and binding.backfill_requested:
         binding.backfill_requested = False
         binding.save(update_fields=["backfill_requested", "updated_at"])
+    if payload.final:
+        chat_services.finish_rebuild(session)
     return {"written": written}

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { copyText as writeClipboard } from 'canopy-ui/lib'
 import type { RunnerOut } from '@/api/harness'
 
 /**
@@ -102,7 +103,7 @@ export function MessageContextMenu({
           role="menuitem"
           data-testid="message-menu-copy"
           onClick={() => {
-            void navigator.clipboard?.writeText(copyText).catch(() => undefined)
+            void writeClipboard(copyText)
             onDismiss()
           }}
           className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] text-foreground hover:bg-muted"

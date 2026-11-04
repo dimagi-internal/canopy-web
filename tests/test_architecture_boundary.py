@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 from tests._source import ROOT, iter_app_sources
+
+pytestmark = pytest.mark.guard
 
 APPS = ROOT / "apps"
 
@@ -29,7 +33,7 @@ FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", 
              "agent_tasks", "approvals"}
 PRODUCT = {"projects",
            "walkthroughs", "reviews", "shareouts", "runs", "storyboards", "beta_requests", "mail", "dynamic_views",
-           "workspace_apps"}
+           "workspace_apps", "local_apps"}
 
 # The ONE composition root allowed to import every app — it wires each app's
 # router into the single NinjaAPI (analogous to a Django URLconf). A framework

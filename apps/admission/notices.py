@@ -183,7 +183,7 @@ def fix_links(turn, rule, agent) -> list[dict]:
          "url": wslinks.scoped_url(ws, f"/settings/admission-rules?rule={rule.pk}")},
         {"label": f"{agent.name}'s turn mode and runners",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#running")},
-        {"label": f"Who can reach {agent.name} (interface callers)",
+        {"label": f"Who can reach {agent.name} (channels and capabilities)",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#reach")},
         {"label": f"The rejected turn ({turn.pk})",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/turns")},
@@ -191,6 +191,12 @@ def fix_links(turn, rule, agent) -> list[dict]:
     if rule.reach:
         links.insert(1, {"label": "The runners (resume one, or check why it is down)",
                          "url": wslinks.public_url("/supervisor?tab=runners")})
+    if turn.chat_session_id:
+        # The agent can't read a hidden turn, so the card can't quote the message.
+        # The chat can show it, under that chat's own access rules.
+        links.insert(0, {"label": "The chat this message came from",
+                         "url": wslinks.scoped_url(turn.chat_session.workspace_id,
+                                                   f"/sessions/{turn.chat_session_id}")})
     ref = turn.origin_ref or {}
     thread_id = str(ref.get("thread_id") or "")
     if thread_id and ref.get("backend") == "ses":
@@ -244,8 +250,12 @@ def _owner_body(turn, rule, agent, detail: str = "") -> tuple[str, str]:
         *([f"Runners: {detail}"] if detail else []),
         f"Reply:   {_reply_line(turn, rule)}",
         "",
-        "Nothing ran. To handle this one, open the thread yourself. To stop rejecting turns "
-        "like it, change the rule, the agent's turn mode, or who may reach it:",
+        ("Nothing ran. The message is still in its chat, linked below; only people who can "
+         "read that chat can open it. To stop rejecting turns like it, change the rule, the "
+         "agent's turn mode, or who may reach it:"
+         if turn.chat_session_id else
+         "Nothing ran. To handle this one, open the thread yourself. To stop rejecting turns "
+         "like it, change the rule, the agent's turn mode, or who may reach it:"),
         "",
         *[f"- {link['label']}: {link['url']}" for link in fix_links(turn, rule, agent)],
     ]

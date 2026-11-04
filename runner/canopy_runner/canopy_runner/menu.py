@@ -239,6 +239,19 @@ def _unwrap_question(lines: list[str], question: str, question_line: int):
     return " ".join(_GUTTER.sub("", l).strip() for l in lines[start:question_line + 1]), start
 
 
+def _find_question(lines: list[str], top: int, bottom: int) -> tuple[str, int | None]:
+    """The question in `lines[top:bottom]`: its last line ending in '?', else its
+    nearest prose line, because a trust gate states rather than asks."""
+    for i in range(bottom - 1, top - 1, -1):
+        m = _QUESTION.match(lines[i])
+        if m and m.group(1).strip():
+            return m.group(1).strip(), i
+    for i in range(bottom - 1, top - 1, -1):
+        if lines[i].strip() and not _RULE.match(lines[i].strip()):
+            return lines[i].strip(), i
+    return "", None
+
+
 def find_menu(text: str) -> Menu | None:
     """The dialog on this screen, or None.
 
@@ -309,21 +322,16 @@ def find_menu(text: str) -> Menu | None:
             and not _dialog_runs_to_the_bottom(lines, selected):
         return None
 
-    # The question is the last line ending in '?' ABOVE the options.
-    question = ""
-    question_line = None
-    for i in range(first_option_line - 1, -1, -1):
-        m = _QUESTION.match(lines[i])
-        if m and m.group(1).strip():
-            question, question_line = m.group(1).strip(), i
-            break
+    tabs, tab_line = _parse_tabs(lines, first_option_line)
+
+    # A tab strip is the top of the dialog, so its question is below it. Looking
+    # further up reaches scrollback: a question ending in a statement ("... Use
+    # Other to add your own.") came back as the person's own earlier prompt.
+    question, question_line = "", None
+    if tab_line is not None:
+        question, question_line = _find_question(lines, tab_line + 1, first_option_line)
     if not question:
-        # The trust gate states rather than asks on its final line, so fall back
-        # to the nearest prose line above the options.
-        for i in range(first_option_line - 1, -1, -1):
-            if lines[i].strip() and not _RULE.match(lines[i].strip()):
-                question, question_line = lines[i].strip(), i
-                break
+        question, question_line = _find_question(lines, 0, first_option_line)
     if not question:
         return None
     question, question_line = _unwrap_question(lines, question, question_line)
@@ -335,8 +343,6 @@ def find_menu(text: str) -> Menu | None:
         if _RULE.match(lines[i].strip()):
             start = i + 1
             break
-    tabs, tab_line = _parse_tabs(lines, first_option_line)
-
     # The tab strip sits inside the subject block and is NOT subject: rendered as
     # a title it reaches a phone as "← ☒ Close July ☒ Aug goals ✔ Submit →",
     # which is chrome from a terminal nobody is looking at. It has its own field

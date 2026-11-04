@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import { useNavigate } from 'react-router-dom'
 
 import {
-  ChatApiError,
   closeSession,
   detachSessionFromSlack,
   getSession,
@@ -22,6 +21,7 @@ import {
 } from '@/components/chat/closeAction'
 import type { MoveTarget } from '@/components/chat/MoveWorkspaceForm'
 import { scopedPath } from '@/lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 export interface SessionActionsOptions {
   sessionId: string
@@ -84,7 +84,7 @@ export function useSessionActions({
             : 'Nothing to rebuild from: this session has no runner transcript',
       )
     } catch (err) {
-      setResetNote(err instanceof ChatApiError ? err.message : 'Reset failed')
+      setResetNote(err instanceof ApiError ? err.message : 'Reset failed')
     } finally {
       setResetting(false)
     }

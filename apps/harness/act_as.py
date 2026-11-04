@@ -14,10 +14,15 @@ by `tests/test_act_as_you_on_canopy.py`:
   assertion made for THIS request (`api_act_as`: begin/finish, slot `act-as:<id>`), in the
   person's own browser; a session cookie, a step-up window or any token is not enough.
   The person picks the scope: `read` (GET routes and read-only tools) or `write`.
-* **Never write for an unreviewed turn.** A turn in `auto` mode may ask only to read
-  (`unreviewed_write_refusal`): an unreviewed turn holding the person's write authority is
-  the one combination with no human anywhere in it. A reviewed (`manual`) turn is
-  unaffected, since each action is already the person's call.
+* **Never write for an unattended, unreviewed turn.** A turn in `auto` mode may ask only to
+  read (`unreviewed_write_refusal`): an unreviewed turn holding the person's write authority
+  is the one combination with no human anywhere in it. A reviewed (`manual`) turn is
+  unaffected, since each action is already the person's call. So is an `auto` turn the
+  person is attending (`attended_by`): their message typed in the canopy-web chat, verified,
+  unconfined, with them present in that chat when it asks. They are in the conversation and
+  their passkey approval of the exact reason and scope is the review. A schedule, an inbound
+  email, Slack, a dispatch, another agent, a chain on their behalf, a confined turn or an
+  absent person stays read-only.
 * **30 minutes from the touch, never extended** (`LIFETIME`; `expires_at` is written
   once). A new approval needs a new request and a new touch.
 * **Dies with its turn, or its conversation.** Every use re-checks `held`: the turn it was
@@ -59,8 +64,10 @@ from apps.common.token_hash import hash_token
 from apps.events import services as events
 from apps.tokens import kinds
 
+from . import initiator as who
 from . import turn_asker
-from .models import ActAsGrant
+from .caller_context import is_verified
+from .models import ActAsGrant, Turn
 from .routing import EXECUTING
 from .turn_mode import AUTO
 
@@ -296,9 +303,36 @@ class Refused(Exception):
         self.status = status
 
 
-def unreviewed_write_refusal(turn, scope: str) -> str | None:
-    """Why `turn` may not hold `scope` as the person, or None: an `auto` turn is read-only."""
+def attended_by(turn, person, *, live: bool) -> bool:
+    """True when `person` is sitting in the canopy-web chat this turn answers, so their
+    passkey approval of a write IS the review an `auto` turn lacks.
+
+    All of: the turn is a message the person typed in the canopy-web chat
+    (`origin=canopy_web_chat`, asker kind `user` and that very person — not a chain on their
+    behalf, a schedule, an inbound email, Slack, a dispatch or another agent), it is not
+    confined to a caller capability, the asker is verified, and it belongs to a chat
+    session. `live` (asking) also needs the person present in that session right now
+    (`presence.is_present`); approving does not, since the approval page is where they
+    go — the permission still dies with the conversation (`held`)."""
+    if person is None or turn is None:
+        return False
+    if (turn.origin != Turn.ORIGIN_CANOPY_WEB_CHAT or turn.initiator_kind != who.USER
+            or turn.initiator_user_id != person.pk or turn.capability
+            or not is_verified(turn) or not turn.chat_session_id):
+        return False
+    if live:
+        from apps.canopy_sessions import presence  # noqa: PLC0415 — only an ask pays
+
+        return presence.is_present(turn.chat_session_id, person.pk)
+    return True
+
+
+def unreviewed_write_refusal(turn, scope: str, *, person=None, live: bool = False) -> str | None:
+    """Why `turn` may not hold `scope` as the person, or None: an `auto` turn is read-only
+    unless the person who started it is attending it (`attended_by`)."""
     if scope in (ActAsGrant.WRITE, ActAsGrant.EITHER) and getattr(turn, "turn_mode", "") == AUTO:
+        if attended_by(turn, person, live=live):
+            return None
         return ("this turn runs unreviewed (auto), so it may act as you to read only; ask for read, "
                 "or have the person run it manual")
     return None
@@ -319,7 +353,7 @@ def ask(user, credential: dict | None, *, reason: str, scope: str) -> ActAsGrant
         ob = turn_asker.check(user, credential, session_login_live=True)
     except turn_asker.Refused as exc:
         raise Refused(f"no one to act as: {exc}") from exc
-    if (why := unreviewed_write_refusal(ob.turn, scope)):
+    if (why := unreviewed_write_refusal(ob.turn, scope, person=ob.user, live=True)):
         raise Refused(why)
     if not Passkey.objects.filter(user=ob.user).exists():
         raise Refused(f"{ob.user.email} has no passkey, so they cannot approve an act-as-you "
@@ -361,7 +395,7 @@ def approve(grant: ActAsGrant, person, scope: str) -> ActAsGrant:
         if status_of(row, now=now) != ActAsGrant.PENDING:
             raise Refused(f"this request is {status_of(row, now=now)}; the agent has to ask again",
                           status=409)
-        if (why := unreviewed_write_refusal(row.turn, scope)):
+        if (why := unreviewed_write_refusal(row.turn, scope, person=row.person)):
             raise Refused(why, status=422)
         row.status, row.scope = ActAsGrant.APPROVED, scope
         row.approved_at = row.decided_at = now

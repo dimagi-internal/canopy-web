@@ -49,6 +49,23 @@ E2E_API_PORT=8011 npx playwright test e2e/chat-runner.spec.ts   # when :8000 is 
 
 CI runs it in the merge queue as `Browser suite (chat)`, on Postgres.
 
+## Passkeys and the vault key (`vault-new-key.spec.ts`)
+
+"Create a new vault key" through real passkey ceremonies and the browser's real crypto,
+against a Chromium virtual authenticator (`WebAuthn.addVirtualAuthenticator`). `hasPrf: true`
+is a passkey that can hold a vault key; `hasPrf: false` signs but gives no PRF output. A
+credential can move between the two (`passkeyStopsGivingPrf`), but its PRF output does not
+survive the move, so nothing can reopen a PRF seal in another authenticator.
+
+Each scenario has its own person from `seed.py`, because each replaces their key. They start
+with a key sealed by a passphrase nobody knows (random ciphertext of the real shape), so the
+old key genuinely cannot be opened, and also cannot be used to test carrying conversations
+over. Registering a passkey counts as a step-up for that session, so each person has a second
+session (`<name>-later`) for coming back without one. `backend.sh` pins `PASSKEY_RP_ID` and
+`PASSKEY_ORIGINS` because the dev proxy rewrites Host.
+
+CI runs it in the merge queue in the same `Browser suite (chat)` job.
+
 ## Checking a deployment (`prod-check.cjs`)
 
 Not a Playwright test: a script that drives a deployed canopy-web (production by

@@ -13,7 +13,7 @@ from apps.api.route_gates import gate
 from apps.harness import clis, routing, routing_audit, turn_asker
 from apps.harness import runners as harness_runners
 from apps.harness.actors import actor_of, normalize_actor
-from apps.harness.api import runner_read_q
+from apps.harness.runner_queries import runner_read_q
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import (
     agents_with_own_order,

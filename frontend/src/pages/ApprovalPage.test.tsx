@@ -54,6 +54,19 @@ describe('ApprovalPage', () => {
     expect(screen.getByTestId('approval-plan').textContent).not.toContain('He asked in')
   })
 
+  it("links this Canopy's own address in a plan, and never one a submitter wrote", async () => {
+    const review = `${window.location.origin}/w/connect/apps/local/review/9`
+    get.mockResolvedValue({
+      ...CARD,
+      plan: ['Says it sends: text to https://evil.example/page', `Read the code and the changes: ${review}`],
+    })
+    open()
+    const plan = await screen.findByTestId('approval-plan')
+    expect(plan.textContent).toContain('https://evil.example/page')
+    expect(screen.queryByRole('link', { name: 'https://evil.example/page' })).toBeNull()
+    expect(screen.getByRole('link', { name: review }).getAttribute('href')).toBe(review)
+  })
+
   it('approves with a note, then shows the outcome and the history', async () => {
     get.mockResolvedValue(CARD)
     decide.mockResolvedValue({ ...CARD, status: 'done', can_decide: false, outcome: 'Approved by Ada via the web and done.',

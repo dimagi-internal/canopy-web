@@ -25,5 +25,10 @@ def place(route: MailRoute, parsed) -> MailThread:
                .select_related("thread").order_by("-created_at").first())
         if hit is not None:
             return hit.thread
-    return MailThread.objects.create(workspace=route.workspace, route=route,
+    return start(route, parsed)
+
+
+def start(route: MailRoute, parsed, *, spam: bool = False) -> MailThread:
+    return MailThread.objects.create(workspace=route.workspace, route=route, spam=spam,
+                                     owner=route.forward_to if route.kind == MailRoute.FORWARD else None,
                                      subject=parsed.subject[:998])

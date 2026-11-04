@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type JSX } from 'react'
 import { Link, Navigate, Outlet, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { getRunner, type RunnerOut } from '@/api/harness'
+import { usePolled } from '@/hooks/usePolled'
 import { ObjectPage } from '@/components/objectPage/ObjectPage'
 import { RunnerRefreshButton } from '@/components/supervisor/RunnerRefresh'
 import type { ObjectTab } from '@/components/objectPage/ObjectTabs'
@@ -11,8 +12,8 @@ import { RunnerAccessTab, RunnerCredentialsTab, RunnerRoutingTab, RunnerSettings
 
 // A RUNNER'S ONE PAGE, `/w/:workspace/runners/:runnerId` — every control for one
 // box, behind tabs, at one address that alerts, mail, the supervisor, the runner
-// tables and the fleet map all link to (docs/architecture/pages.md § One editor
-// per object). It was a single column in the supervisor: facts, health, eight
+// tables and the fleet map all link to (docs/architecture/pages.md, "One editor
+// per object"). It was a single column in the supervisor: facts, health, eight
 // settings, credentials, admins, workspaces, readiness checks, retire and the
 // routing matrix, one under the other.
 //
@@ -74,11 +75,13 @@ export function RunnerPage(): JSX.Element {
   // While a Refresh is pending, keep reading the box so its finish shows up here
   // without a reload. A failed read keeps the last answer.
   const pending = runner?.refresh?.state === 'pending'
-  useEffect(() => {
-    if (!pending) return
-    const id = setInterval(() => { getRunner(runnerId).then(setRunner).catch(() => undefined) }, 15_000)
-    return () => clearInterval(id)
-  }, [pending, runnerId])
+  usePolled(
+    async (signal) => {
+      const next = await getRunner(runnerId).catch(() => null)
+      if (next && !signal.aborted) setRunner(next)
+    },
+    { ms: 15_000, deps: [runnerId], enabled: pending, immediate: false },
+  )
 
   if (error) {
     return (

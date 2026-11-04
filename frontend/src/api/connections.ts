@@ -1,4 +1,4 @@
-// Server-held OAuth connections: `apps/connections/api.py`. Which providers exist
+// OAuth connections, whose tokens canopy-web can read only with the owner's switch on: `apps/connections/api.py`. Which providers exist
 // (and what to call them) comes from the API's `providers`, never from here.
 //
 // CONNECT is not here. Like GitHub it is a full-page navigation to
@@ -16,6 +16,8 @@ import type { components } from './generated'
 
 export type ConnectionOut = components['schemas']['ConnectionOut']
 export type ProviderOut = components['schemas']['ProviderOut']
+export type ShareStateOut = components['schemas']['ShareStateOut']
+export type ShareIn = components['schemas']['ShareIn']
 
 export interface ConnectionsView {
   providers: ProviderOut[]
@@ -34,11 +36,42 @@ export async function listMyConnections(): Promise<ConnectionsView> {
   return view(unwrap(res, 'Could not read your connections.'))
 }
 
-export async function disconnectMine(id: number): Promise<void> {
+export type DisconnectOut = components['schemas']['DisconnectOut']
+
+export async function disconnectMine(id: string): Promise<DisconnectOut> {
   const res = await apiV2.DELETE('/api/connections/{connection_id}', {
     params: { path: { connection_id: id } },
   })
-  ensureOk(res, 'Could not disconnect.')
+  return unwrap(res, 'Could not disconnect.')
+}
+
+// ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----
+// canopy-web opens these envelopes only if the owner's statement names it. Sharing needs a fresh passkey; the step-up
+// middleware answers that, and refusals carry their `code` on the `ApiError`.
+
+export async function getShareState(id: string): Promise<ShareStateOut> {
+  const res = await apiV2.GET('/api/connections/{connection_id}/share', {
+    params: { path: { connection_id: id } },
+  })
+  return unwrap(res, 'Could not read this connection.') as unknown as ShareStateOut
+}
+
+export async function putShare(id: string, body: ShareIn): Promise<ConnectionOut> {
+  const res = await apiV2.PUT('/api/connections/{connection_id}/share', {
+    params: { path: { connection_id: id } },
+    body,
+  })
+  return unwrap(res, 'Could not share this connection.') as unknown as ConnectionOut
+}
+
+/** Stop canopy-web using a connection (no passkey: giving up access is always easy). Turning it on is
+ *  part of the signed share, so only `false` is sent. A shared connection answers 409 `needs_share`. */
+export async function turnOffServerUse(id: string): Promise<ConnectionOut> {
+  const res = await apiV2.POST('/api/connections/{connection_id}/server-use', {
+    params: { path: { connection_id: id } },
+    body: { on: false },
+  })
+  return unwrap(res, 'Could not turn this off.') as unknown as ConnectionOut
 }
 
 export async function listAgentConnections(slug: string): Promise<ConnectionsView> {
@@ -46,25 +79,11 @@ export async function listAgentConnections(slug: string): Promise<ConnectionsVie
   return view(unwrap(res, 'Could not read the agent’s connections.'))
 }
 
-export async function disconnectAgentConnection(slug: string, id: number): Promise<void> {
+export async function disconnectAgentConnection(slug: string, id: string): Promise<DisconnectOut> {
   const res = await apiV2.DELETE('/api/agents/{slug}/connections/{connection_id}', {
     params: { path: { slug, connection_id: id } },
   })
-  ensureOk(res, 'Could not disconnect.')
-}
-
-export async function grantConnection(slug: string, id: number, other: string): Promise<void> {
-  const res = await apiV2.PUT('/api/agents/{slug}/connections/{connection_id}/grants/{other_slug}', {
-    params: { path: { slug, connection_id: id, other_slug: other } },
-  })
-  ensureOk(res, 'Could not share the connection.')
-}
-
-export async function revokeConnectionGrant(slug: string, id: number, other: string): Promise<void> {
-  const res = await apiV2.DELETE('/api/agents/{slug}/connections/{connection_id}/grants/{other_slug}', {
-    params: { path: { slug, connection_id: id, other_slug: other } },
-  })
-  ensureOk(res, 'Could not stop sharing the connection.')
+  return unwrap(res, 'Could not disconnect.')
 }
 
 /** Where a connect starts. A person's is a GET link (`connectionStartPath`); an
@@ -112,4 +131,42 @@ export async function removeConnectionApp(workspace: string, provider: string): 
     params: { path: { workspace, provider } },
   })
   ensureOk(res, 'Could not remove the app.')
+}
+
+// ---- Screens that may use an agent's connection (project and app shares) ----
+export type SurfaceShare = components['schemas']['SurfaceShareOut']
+export type SurfaceSharePreview = components['schemas']['SurfaceSharePreviewOut']
+export type SurfaceKind = 'project' | 'app'
+export type SurfaceLine = { method: string; path: string }
+
+export async function listSurfaceShares(id: string): Promise<SurfaceShare[]> {
+  const res = await apiV2.GET('/api/connections/{connection_id}/surface-shares', {
+    params: { path: { connection_id: id } },
+  })
+  return Array.from(unwrap(res, 'Could not read which screens use this.').shares) as SurfaceShare[]
+}
+
+export async function previewSurfaceShare(id: string, kind: SurfaceKind, ref: string): Promise<SurfaceSharePreview> {
+  const res = await apiV2.GET('/api/connections/{connection_id}/surface-shares/preview', {
+    params: { path: { connection_id: id }, query: { kind, ref } },
+  })
+  return unwrap(res, 'Could not read what that screen asks for.') as unknown as SurfaceSharePreview
+}
+
+/** Needs a fresh passkey; the step-up middleware asks for it. 409 `declaration_changed` if the screen changed. */
+export async function approveSurfaceShare(
+  id: string, kind: SurfaceKind, ref: string, expected: { reads: readonly SurfaceLine[]; writes: readonly SurfaceLine[] },
+): Promise<SurfaceShare> {
+  const res = await apiV2.POST('/api/connections/{connection_id}/surface-shares', {
+    params: { path: { connection_id: id } },
+    body: { kind, ref, expected_reads: [...expected.reads], expected_writes: [...expected.writes] },
+  })
+  return unwrap(res, 'Could not approve that.') as unknown as SurfaceShare
+}
+
+export async function stopSurfaceShare(id: string, shareId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/connections/{connection_id}/surface-shares/{share_id}', {
+    params: { path: { connection_id: id, share_id: shareId } },
+  })
+  ensureOk(res, 'Could not stop that.')
 }

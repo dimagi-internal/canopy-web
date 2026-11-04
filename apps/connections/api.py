@@ -1,48 +1,75 @@
-"""The JSON half of connections: a workspace's apps, status, disconnect, sharing,
-and my CLI token.
+"""The JSON half of connections: a workspace's apps, status and disconnect.
 
 Errors from the service layer become responses in one place, `problem_for`.
 
 Four routers, because the URLs live under four prefixes (see `apps/api/api.py`):
 `router` at `/connections` (a person's own), `agents_router` at `/agents`
-(an agent's, admin-only), `me_router` at `/me/connections` (the CLI token) and
+(an agent's, admin-only), `me_router` at `/me/connections` (a person's CLI on
+their own enrolled computer: material, lease, write-back) and
 `workspaces_router` at `/workspaces` (a workspace's apps, its admins').
+A runner's material and write-back are `api_turns.py` and `api_runner.py`.
 The browser legs of connecting are bare views (`views.py`).
 """
 from __future__ import annotations
 
-from django.core.exceptions import PermissionDenied
-from django.db.models import Count
+import uuid
+from typing import Literal
+
+from django.db.models import Count, Q
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.agents.gates import agent_for_admin, agent_for_read
+from apps.agents.gates import agent_for_admin
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
+from apps.harness.models import RunnerDeviceKey
 from apps.passkeys import stepup
 from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 
-from . import providers, services
-from .models import Connection, ConnectionApp, ConnectionGrant
-from .problems import problem_for
+from . import call_service, proofs, providers, server_key, services, sharing, tokens
+from . import recipients as rcpt
+from .models import Connection, ConnectionApp, ConnectionSurfaceShare
+from .problems import problem_for, problem_for_call, problem_for_wire
 from .schemas import (
-    AccessTokenOut,
     ConnectionAppIn,
     ConnectionAppOut,
     ConnectionAppsOut,
+    ConnectionCallIn,
+    ConnectionCallOut,
+    ConnectionMaterialOut,
+    ConnectionOperationIn,
+    ConnectionOperationOut,
     ConnectionOut,
     ConnectionsOut,
+    ConnectionStatementOut,
+    DisconnectOut,
+    LeaseIn,
+    LeaseOut,
+    MyMachineOut,
     OptionFieldOut,
     ProviderOut,
+    ReconnectRequiredIn,
     ScopeChoiceOut,
+    ServerUseIn,
+    ShareIn,
+    ShareStateOut,
+    SurfaceShareIn,
+    SurfaceShareOut,
+    SurfaceSharePreviewOut,
+    SurfaceSharesOut,
+    UnreachableOut,
+    WaitingOut,
+    WriteBackIn,
+    WriteBackOut,
 )
+from .wire import WireError
 
 router = Router(auth=session_auth, tags=["connections"])
 agents_router = Router(auth=session_auth, tags=["connections"])
@@ -87,12 +114,72 @@ def _missing_scopes(conn: Connection) -> list[ScopeChoiceOut]:
             for sc in providers.for_app(conn.app).missing_scopes(tuple(conn.scopes.split()))]
 
 
-def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> ConnectionOut:
+def _statement(conn: Connection, *, lent: bool = False) -> ConnectionStatementOut:
+    # The statement names agents by pk (what endorsements sign); shown by slug. Which
+    # computers its owner uses it on is not the business of a grantee's admins (`lent`).
+    st = conn.statement or {}
+    pks = [int(a) for a in st.get("agents", []) if str(a).isdigit()]
+    slugs = dict(Agent.objects.filter(pk__in=pks).values_list("pk", "slug")) if pks else {}
+    return ConnectionStatementOut(version=conn.statement_version, agents=sorted(slugs[p] for p in pks if p in slugs),
+                                  my_computers=[] if lent else sorted(st.get("my_computers", [])),
+                                  endorsers=sorted(st.get("endorsers", [])))
+
+
+def _holders(conn: Connection, *, lent: bool = False) -> list[str]:
+    # The runners whose device keys the refresh envelope is sealed to now. Which computers
+    # its owner uses it on is not the business of a grantee's admins.
+    hidden = set((conn.statement or {}).get("my_computers") or []) if lent else set()
+    return sorted({k.runner.name for k in rcpt.holders(conn) if k.ecdh_jkt not in hidden})
+
+
+def _fingerprint(jkt: str) -> str:
+    # As the browser shows a key (`vault/zk.ts` `fingerprint`): eight groups of four.
+    s = "".join(c for c in jkt if c.isalnum()).upper()[:32]
+    return " ".join(s[i:i + 4] for i in range(0, len(s), 4))
+
+
+def _my_machines(conn: Connection) -> list[MyMachineOut]:
+    jkts = (conn.statement or {}).get("my_computers") or []
+    if conn.user_id is None or not jkts:
+        return []
+    return [MyMachineOut(jkt=k.ecdh_jkt, name=k.runner.name, fingerprint=_fingerprint(k.ecdh_jkt))
+            for k in rcpt.my_machines(conn.user, jkts)]
+
+
+def _lent_by(conn: Connection) -> str:
+    # What an agent's list calls whoever lent it this: the agent's slug, or the person's name.
+    if conn.agent_id is not None:
+        return conn.agent.slug
+    return conn.user.get_full_name() or conn.user.email or conn.user.get_username()
+
+
+def _switch_shown(conn: Connection) -> bool:
+    # Only when canopy-web can actually be used for it: with no key, Turn on would lead to a Share
+    # screen with no box. A row already on keeps its switch, so that it can be turned off. A lend
+    # with limits has none: it is never canopy-web's.
+    calls = getattr(providers.CLASSES.get(conn.provider), "server_calls", False)
+    return bool(calls and not conn.limited and (server_key.available() or conn.server_use))
+
+
+def _out(conn: Connection, *, usable: bool, granted_from: str | None = None, facts=None,
+         replaced=None) -> ConnectionOut:
+    lent = granted_from is not None
+    pairs = rcpt.device_reasons(conn, facts=facts)
     return ConnectionOut(
         id=conn.pk, provider=conn.provider, title=_title(conn.provider),
         workspace=conn.app.workspace_id, workspace_name=conn.app.workspace.display_name,
         account_label=conn.account_label, instance_url=conn.instance_url, scopes=conn.scopes.split(),
         needs_reconnect=conn.needs_reconnect, usable=usable, missing_scopes=_missing_scopes(conn),
+        state=conn.state, statement=_statement(conn, lent=lent), holders=_holders(conn, lent=lent),
+        waiting=[WaitingOut(agent=w["agent"], runner=w["runner"]) for w in rcpt.waiting(conn, pairs=pairs)
+                 if w["agent"] or not lent],
+        owner_key_replaced=not lent and conn.pk in (replaced or ()),
+        server_use=conn.server_use, server_reachable=rcpt.server_reachable(conn),
+        provider_calls=_switch_shown(conn),
+        unreachable=[UnreachableOut(**u) for u in rcpt.unreachable(conn, pairs=pairs, facts=facts)],
+        my_machines=[] if lent else _my_machines(conn),
+        expires_at=conn.expires_at,
+        owner_turns_only=conn.owner_turns_only,
         connected_at=conn.created_at,
         last_used_at=conn.last_used_at,
         connected_by_email=((conn.connected_by.email or conn.connected_by.get_username())
@@ -100,8 +187,13 @@ def _out(conn: Connection, *, usable: bool, granted_from: str | None = None) -> 
         granted_from=granted_from,
         # Agent-owned, not itself a shared row. Callers prefetch `grants__agent`.
         shared_with=(sorted(g.agent.slug for g in conn.grants.all())
-                     if conn.agent_id and granted_from is None else []),
+                     if conn.agent_id and not lent else []),
     )
+
+
+def _disconnected(conn: Connection, by) -> DisconnectOut:
+    outcome = services.disconnect(conn, by=by)
+    return DisconnectOut(outcome=outcome, machine_revokes=outcome == "revoking" and bool(rcpt.revokers(conn)))
 
 
 def _start_url(request: HttpRequest, provider: str, workspace: str) -> str:
@@ -136,19 +228,250 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     rows = (services.connections_for(("user", request.user.pk))
             .select_related("connected_by", "app__workspace"))
     readable = services.readable_workspaces(request.user)
+    facts = rcpt.facts_for(rows)
+    replaced = rcpt.owner_keys_replaced(rows)
     return ConnectionsOut(providers=_person_provider_rows(request.user),
-                          connections=[_out(c, usable=c.app.workspace_id in readable) for c in rows])
+                          connections=[_out(c, usable=c.app.workspace_id in readable and not c.expired, facts=facts,
+                                            replaced=replaced)
+                                       for c in rows])
 
 
-@router.delete("/{connection_id}", response={204: None}, summary="Disconnect one of my connections")
+def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
+    # Mine, or an agent's I administer; anyone else's id is a 404 (never probed).
+    conn = get_object_or_404(Connection.objects.select_related("app__workspace", "agent", "user"), pk=connection_id)
+    if not sharing.visible(conn, request.user):
+        raise HttpError(404, "Not Found")
+    return conn
+
+
+@router.post("/{provider}/request", response=ConnectionCallOut, exclude_unset=True,
+             summary="A screen's call to a provider, through the signed-in person's session")
+# A session only; the surface's own read gate decides who may open it (`member` on an app).
+@gate("member", kind="action",
+      viewer_write="a member who may open a screen makes the calls it declared, with their own account or the "
+                   "agent's its admin approved for that screen")
+def request_connection_call(request: HttpRequest, provider: str, payload: ConnectionCallIn) -> dict:
+    """Make one call a dynamic view or an app page declared, and return the provider's status and JSON body.
+
+    Only a person signed in here: a personal access token or OAuth token is refused 403 `session_required`.
+    A provider's refusal is a 200 here with its own `status`. A refusal of the call itself is a problem
+    whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
+    `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
+    `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
+    `provider_unavailable`."""
+    try:
+        return call_service.call(request, provider, payload)
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
+
+
+@router.post("/operations", response=ConnectionOperationOut,
+             summary="A lease on writing from one screen, through the signed-in person's session")
+# A session only; the surface's own read gate decides who may open it (`member` on an app).
+@gate("member", kind="ephemeral-credential",
+      viewer_write="a member who may open a screen may write what it declared; this lease only limits how much")
+def open_connection_operation(request: HttpRequest, payload: ConnectionOperationIn) -> dict:
+    """Open the lease every write from this screen must name as `operation_id`.
+
+    canopy-web can't verify a click. The page around the screen checks for one before it asks; a script
+    that reaches this route with the person's session gets a lease too. What the lease does is limit how
+    far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
+    this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
+    any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
+    behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
+
+    Only a person signed in here: a personal access token or OAuth token is refused 403
+    `session_required`. `writes` lists only what can be written now: an `as: shared` line appears only while
+    its agent's admin has approved all that entry asks and the account can be used. 403 `not_declared` when
+    the screen declares no writes; when none can be made yet, the refusal saying why (`needs_approval`,
+    `server_use_off`, `ambiguous`, `not_connected`); 429 `rate_limited` past 60 in a minute. Whoever can't
+    open the screen gets its own 404."""
+    try:
+        return call_service.open_operation(request, payload.surface.model_dump())
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
+
+
+def _shareable(request: HttpRequest, connection_id: uuid.UUID) -> Connection:
+    # An agent's that I administer. Someone else's id is a 404, so ids cannot be probed; my own
+    # person's connection gets told why it can't be.
+    conn = _visible(request, connection_id)
+    if conn.agent_id is None:
+        raise _not_shareable("A person's own connection can't serve other people's screens; only an agent's can.")
+    return conn
+
+
+def _not_shareable(why: str) -> ProblemError:
+    return ProblemError(422, "This can't be shared", detail=why, members={"error": "not_shareable"})
+
+
+@router.get("/{connection_id}/surface-shares", response=SurfaceSharesOut,
+            summary="The projects and apps whose screens may use an agent's connection")
+@gate("agent-admin")
+def list_surface_shares(request: HttpRequest, connection_id: uuid.UUID) -> SurfaceSharesOut:
+    """Each project or app sharing this agent's connection: what was approved of it, what its screens
+    declare now beyond that (`pending_reads`, `pending_writes`), and whether that has stopped them
+    (`needs_approval`). `title` is null for one that no longer exists. Only the agent's admins: anyone
+    else's id is a 404; a person's own connection, which is never shared, is a 422."""
+    conn = _shareable(request, connection_id)
+    return SurfaceSharesOut(shares=[SurfaceShareOut(**services.surface_share_state(s))
+                                    for s in conn.surface_shares.select_related("connection__agent").order_by("pk")])
+
+
+@router.get("/{connection_id}/surface-shares/preview", response=SurfaceSharePreviewOut,
+            summary="What approving a project's or app's screens would approve")
+@gate("agent-admin")
+def preview_surface_share(request: HttpRequest, connection_id: uuid.UUID, kind: Literal["project", "app"],
+                          ref: str) -> SurfaceSharePreviewOut:
+    """The project's or app's name, and every line its screens declare of this agent now: what to show the
+    person, and what they send back to approve. `ref` is a project's id or an app's `<workspace>/<key>`. A
+    project covers all its views. 422 `not_shareable` as for approving. Only the agent's admins: anyone
+    else's id is a 404."""
+    conn = _shareable(request, connection_id)
+    try:
+        return SurfaceSharePreviewOut(**services.surface_share_preview(conn, kind, ref))
+    except ValueError as exc:
+        raise _not_shareable(str(exc)) from None
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
+
+
+@router.post("/{connection_id}/surface-shares", response=SurfaceShareOut,
+             summary="Let a project's or app's screens use an agent's connection")
+@gate("agent-admin", setting=True, step_up=True)
+def approve_surface_share(request: HttpRequest, connection_id: uuid.UUID, payload: SurfaceShareIn) -> SurfaceShareOut:
+    """Approve what this project or app declares of the agent, and let its screens use this connection: anyone
+    who can open one of them then acts as the agent's account, within what was approved. Send back the
+    lines the preview showed as `expected_reads` and `expected_writes`. canopy-web reads the declaration
+    here and stores that; if it is not what was seen, 409 `declaration_changed` and nothing changes.
+    Approving again replaces what was approved. A screen that later declares more stops until someone
+    does; one that declares less goes on working.
+
+    `ref` is a project's id (each of its views is covered) or an app's `<workspace>/<key>`. A view in no
+    project can't be covered. The share does nothing until the connection's own switch for canopy-web is
+    on. 422 `not_shareable` for a person's connection, a lend with limits, or a project or app outside
+    the agent's workspace; 409 `revoking` while it is being disconnected.
+
+    Always needs a fresh passkey check at a browser: a token is refused 403 `browser_session_required`,
+    since whoever wrote a screen must not be able to approve it with a token alone. Only the agent's
+    admins: anyone else's id is a 404."""
+    conn = _shareable(request, connection_id)
+    # After the admin check: a non-admin gets 404, never a step-up prompt.
+    stepup.require_recent_step_up(request)
+    try:
+        share = services.share_with_surface(conn, payload.kind, payload.ref,
+                                            expected_reads=[line.model_dump() for line in payload.expected_reads],
+                                            expected_writes=[line.model_dump() for line in payload.expected_writes],
+                                            by=request.user)
+    except ValueError as exc:
+        raise _not_shareable(str(exc)) from None
+    except services.ConnectionError as exc:
+        raise problem_for_call(exc) from None
+    return SurfaceShareOut(**services.surface_share_state(share))
+
+
+@router.delete("/{connection_id}/surface-shares/{share_id}", response={204: None},
+               summary="Stop a project's or app's screens using an agent's connection")
+@gate("agent-admin", setting=True)
+def stop_surface_share(request: HttpRequest, connection_id: uuid.UUID, share_id: int) -> Status:
+    """Those screens stop using this connection at once. No passkey: giving up access is always easy. Only
+    the agent's admins: anyone else's id is a 404."""
+    conn = _shareable(request, connection_id)
+    share = get_object_or_404(ConnectionSurfaceShare.objects.select_related("connection__agent"), pk=share_id,
+                              connection=conn)
+    services.stop_surface_share(share, by=request.user)
+    return Status(204, None)
+
+
+@router.get("/{connection_id}/share", response=ShareStateOut, summary="What sharing a connection needs")
+@gate("self")
+def get_share_state(request: HttpRequest, connection_id: uuid.UUID) -> ShareStateOut:
+    """Everything the owner's browser needs to share a connection: its sealed
+    envelopes (only their recipients can open them), the signed statement in
+    force, the owner's key, every machine the owner could seal it to (each with
+    the agent that admits it, or marked `mine`) and the endorsements to check
+    them by. Only the person whose vault key it is sealed to: anyone else who can
+    see it gets 403 `not_the_owner_key`; 409 `revoking` while it is being
+    disconnected."""
+    conn = _visible(request, connection_id)
+    try:
+        return ShareStateOut(**sharing.share_state(conn, request.user))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+@router.put("/{connection_id}/share", response=ConnectionOut, summary="Share a connection")
+@gate("self", setting=True, step_up=True)
+def share_connection(request: HttpRequest, connection_id: uuid.UUID, payload: ShareIn) -> ConnectionOut:
+    """Store the owner's signed grant statement (which agents it is lent to, and
+    whether it is used on their own computers) and the envelope their browser
+    re-sealed to the machines it allows; the connection becomes `active`.
+    canopy-web opens nothing to do this, and can open the envelope afterwards only
+    if the statement names it (`canopy_web`, the "Project screens and apps" box).
+    It checks the signer is the owner
+    (403 `not_the_owner_key`), the signature (422 `bad_signature`), that the
+    version moves forward (409 `statement_stale`), that every agent added is one
+    the owner administers (403 `not_an_admin`) in the app's workspace (422
+    `agent_outside_workspace`), that listed computers are the owner's own (422
+    `not_your_machine`), that an agent's statement lists the agent (422
+    `statement_missing_owner_agent`), that `expect` is what is stored (409
+    `zk_value_changed`), that it is sealed only to the owner and allowed machines
+    (422 `foreign_reader`) and that its writer MACs are the owner's (422
+    `bad_writer_sig`). From a browser this needs a fresh passkey check."""
+    conn = _visible(request, connection_id)
+    # After the visibility check: someone who cannot see it gets 404, never a step-up prompt.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        conn = sharing.share(conn, user=request.user, **payload.model_dump())
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")
+            .prefetch_related("grants__agent").get(pk=conn.pk))
+    usable = (conn.app.workspace_id in services.readable_workspaces(request.user) if conn.user_id
+              else services.agent_connection_usable(conn))
+    return _out(conn, usable=usable)
+
+
+@router.post("/{connection_id}/server-use", response=ConnectionOut, summary="Stop canopy-web using a connection")
 @gate("self", setting=True)
-def disconnect_mine(request: HttpRequest, connection_id: int) -> Status:
-    """Stop canopy holding this connection, and ask the provider to revoke it.
+def set_server_use(request: HttpRequest, connection_id: uuid.UUID, payload: ServerUseIn) -> ConnectionOut:
+    """Turn off canopy-web's use of a connection, so screens and apps can no longer act as this account:
+    canopy-web removes itself from the stored sign-in. Mine, or an agent's I administer (anyone else's
+    id is a 404). No passkey: giving up access is always easy. Already off changes nothing. 422 when
+    `on` is true (turning it on goes through Share, where it is part of the signed statement); 409
+    `needs_share` when the connection is shared, since removing canopy-web then needs a new signed
+    statement (share it again without canopy-web); 409 `revoking` while it is being disconnected."""
+    conn = _visible(request, connection_id)
+    if payload.on:
+        raise ProblemError(422, "Turning it on goes through Share",
+                           detail="Choose \"Project screens and apps\" when you share the connection.",
+                           members={"error": "use_share"})
+    try:
+        conn = sharing.turn_off_server_use(conn, user=request.user)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    conn = (Connection.objects.select_related("connected_by", "app__workspace", "agent")
+            .prefetch_related("grants__agent").get(pk=conn.pk))
+    usable = (conn.app.workspace_id in services.readable_workspaces(request.user) if conn.user_id
+              else services.agent_connection_usable(conn))
+    return _out(conn, usable=usable)
+
+
+@router.delete("/{connection_id}", response=DisconnectOut, summary="Disconnect one of my connections")
+@gate("self", setting=True)
+def disconnect_mine(request: HttpRequest, connection_id: uuid.UUID) -> DisconnectOut:
+    """Disconnect it: it leaves every list at once and is handed to no machine.
+    canopy-web's own key, where it is sealed to it, ends it at the provider now
+    (`outcome` `revoked`). Otherwise a cloud box that holds it (`machine_revokes`) or
+    canopy-web's retries revoke it and it is then deleted (`revoking`). With nothing to
+    revoke it, or another connection of the account needing the sign-in, it is deleted
+    at once (`deleted`).
 
     Only my own: someone else's id is a 404, not a 403, so ids cannot be probed."""
-    conn = get_object_or_404(Connection, pk=connection_id, user=request.user)
-    services.disconnect(conn, by=request.user)
-    return Status(204, None)
+    conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
+                             user=request.user)
+    return _disconnected(conn, request.user)
 
 
 # ---- an agent's ------------------------------------------------------------------
@@ -157,205 +480,188 @@ def disconnect_mine(request: HttpRequest, connection_id: int) -> Status:
                    summary="An agent's connections, its own and shared with it")
 @gate("agent-admin")
 def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
-    """What this agent can act as: connections it owns, and ones another agent
-    shares with it (`granted_from` names the owner), and the providers its own
-    workspace has set up, which are what it connects with. A connection works
-    only while its owning agent is in the workspace whose app made it: one made
-    before the agent moved (or shared by an agent that has since moved) is listed
-    with `usable` false. Only the agent's admins can see them."""
+    """What this agent can act as: connections it owns, and ones lent to it by
+    another agent or a person (`granted_from` names the owner), and the providers
+    its own workspace has set up, which are what it connects with. Its own works
+    only while it is in the workspace whose app made it: one made before the agent
+    moved is listed with `usable` false. A lent one works only while its grant is in
+    force (`usable` false otherwise). Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
     own = (services.connections_for(("agent", agent.pk))
            .select_related("connected_by", "agent", "app__workspace")
            .prefetch_related("grants__agent"))
-    granted = (Connection.objects.filter(grants__agent=agent)
-               .select_related("connected_by", "agent", "app__workspace")
+    granted = (Connection.objects.filter(grants__agent=agent).exclude(state=Connection.REVOKING)
+               .select_related("connected_by", "agent", "user", "app__workspace")
                .order_by("provider", "account_label", "pk").distinct())
+    facts = rcpt.facts_for([*own, *granted])
+    in_force = rcpt.lent_in_force(agent, granted)
+    replaced = rcpt.owner_keys_replaced(own)
     return ConnectionsOut(
         providers=_agent_provider_rows(agent),
-        connections=([_out(c, usable=services.agent_connection_usable(c)) for c in own]
-                     + [_out(c, usable=services.agent_connection_usable(c), granted_from=c.agent.slug)
-                        for c in granted]),
+        connections=([_out(c, usable=services.agent_connection_usable(c), facts=facts, replaced=replaced)
+                       for c in own]
+                     + [_out(c, usable=c.pk in in_force, granted_from=_lent_by(c), facts=facts) for c in granted]),
     )
 
 
-@agents_router.delete("/{slug}/connections/{connection_id}", response={204: None},
+@agents_router.delete("/{slug}/connections/{connection_id}", response=DisconnectOut,
                       summary="Disconnect an agent's connection")
 @gate("agent-admin", setting=True, step_up=True)
-def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: int) -> Status:
-    """Stop canopy holding this agent's connection and ask the provider to
-    revoke it. From a browser this needs a fresh passkey check; agents sharing
-    it lose access too."""
+def disconnect_agent_connection(request: HttpRequest, slug: str, connection_id: uuid.UUID) -> DisconnectOut:
+    """Stop this agent using this connection; agents it is lent to lose it too. `outcome`
+    says whether it was revoked, will be, or its copy was deleted at once, as for a
+    person's. From a browser this needs a fresh passkey check."""
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
-    services.disconnect(conn, by=request.user)
-    return Status(204, None)
+    conn = get_object_or_404(Connection.objects.exclude(state=Connection.REVOKING), pk=connection_id,
+                             agent=agent)
+    return _disconnected(conn, request.user)
 
 
-def _admin_of_either(request: HttpRequest, slug: str, other_slug: str) -> tuple[Agent, bool]:
-    """The owner agent `slug`, for a caller who administers it or `other_slug`,
-    and whether the caller came in ONLY as the grantee's admin.
-
-    The grantee's admin is confirmed first, then the owner is looked up without
-    the read-scope pin: an agent shared across workspaces has a grantee admin
-    who cannot read the owner, and must still be able to stop using it."""
-    other = Agent.objects.filter(slug=other_slug).first()
-    if other is not None and other.is_admin(request.user):
-        owner = Agent.objects.filter(slug=slug).first()
-        if owner is None:
-            raise HttpError(404, "unknown agent")
-        return owner, not owner.is_admin(request.user)
-    agent = agent_for_read(request, slug)
-    if agent.is_admin(request.user):
-        return agent, False
-    raise HttpError(403, "this action requires an admin of either agent")
-
-
-def _grant_target(request: HttpRequest, slug: str, connection_id: int, other_slug: str, *, either: bool = False):
-    grantee_only = False
-    if either:
-        agent, grantee_only = _admin_of_either(request, slug, other_slug)
-    else:
-        agent = agent_for_admin(request, slug)
-    conn = get_object_or_404(Connection, pk=connection_id, agent=agent)
-    other = Agent.objects.filter(slug=other_slug).first()
-    if other is None:
-        raise HttpError(404, "unknown agent")
-    # The grantee's admin sees only what is shared with their agent: an owner's
-    # connection that is not is "not found" to them, never "nothing to revoke".
-    if grantee_only and not ConnectionGrant.objects.filter(connection=conn, agent=other).exists():
-        raise HttpError(404, "not shared with that agent")
-    return conn, other
-
-
-@agents_router.put("/{slug}/connections/{connection_id}/grants/{other_slug}", response={204: None},
-                   summary="Share an agent's connection with another agent")
-@gate("agent-admin", setting=True, step_up=True)
-def grant_connection(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
-    """Let another agent act through this agent's connection. You must
-    administer both agents. Sharing again is harmless."""
-    conn, other = _grant_target(request, slug, connection_id, other_slug)
-    # After the admin check: a non-admin gets 404/403, never a step-up prompt.
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    try:
-        services.grant(conn, other, by=request.user)
-    except PermissionDenied as exc:
-        raise HttpError(403, str(exc)) from None
-    except services.ConnectionError as exc:
-        raise problem_for(exc, title=_title(conn.provider), owner=f"{slug}'s") from None
-    return Status(204, None)
-
-
-@agents_router.delete("/{slug}/connections/{connection_id}/grants/{other_slug}", response={204: None},
-                      summary="Stop sharing an agent's connection with another agent")
-@gate("agent-admin", setting=True, step_up=True)
-def revoke_connection_grant(request: HttpRequest, slug: str, connection_id: int, other_slug: str) -> Status:
-    """Take the other agent's access away. An admin of either the owning agent or
-    the agent it was shared with may do this."""
-    conn, other = _grant_target(request, slug, connection_id, other_slug, either=True)
-    # After the admin check: a non-admin gets 404/403, never a step-up prompt.
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    g = (ConnectionGrant.objects.filter(connection=conn, agent=other)
-         .select_related("connection__agent", "agent").first())
-    if g is not None:
-        try:
-            services.revoke_grant(g, by=request.user)
-        except PermissionDenied as exc:
-            raise HttpError(403, str(exc)) from None
-    return Status(204, None)
-
-
-# ---- my CLI token ----------------------------------------------------------------
+# ---- my CLI, on my own enrolled computer -------------------------------------------
 
 def _plain_pat(request: HttpRequest) -> bool:
     """A personal access token authenticated this request, over REST.
 
-    An allowlist, not "not a browser": a token route must not answer whatever
-    else is not a browser. An MCP tool call runs as the caller's PAT but puts the
-    answer in a model's context; an OAuth-grant PAT is a connector's (Claude's)
-    token, also a model's; a caller token speaks for a turn. All refused."""
+    An allowlist, not "not a browser": a route handing out sealed credentials and
+    an app secret must not answer whatever else is not a browser. An MCP tool call
+    runs as the caller's PAT but puts the answer in a model's context; an
+    OAuth-grant PAT is a connector's (Claude's) token, also a model's; a caller
+    token speaks for a turn. All refused."""
     if getattr(request, "via_mcp", False) or getattr(request, "auth_method", None) != kinds.PAT:
         return False
     kind = kinds.kind_of(getattr(request, "auth_credential", None))
     return kind is not None and kind.name == kinds.PAT
 
 
-def _token_problem(request: HttpRequest, exc: services.ConnectionError, p: type[providers.Provider],
-                   workspace: str | None, conn: Connection | None) -> dict:
-    """The extra members (and, where the case needs its own words, `detail`) of
-    a 409 a person fixes themselves. `connect_url` is where to fix it: the start
-    URL of the one workspace in question (the connection's, the one asked for,
-    or the only one set up), else Settings, where they choose a workspace or
-    disconnect a spare account. Several workspaces in play are listed in
-    `workspaces`, and the detail says to pick one."""
-    user, provider = request.user, p.name
-    settings_url = request.build_absolute_uri("/settings/connections")
-    out: dict = {}
-    if exc.code not in ("not_connected", "reconnect_required", "ambiguous"):
-        return out
-    if conn is not None:                       # reconnect: the connection's own workspace
-        out["connect_url"] = _start_url(request, provider, conn.app.workspace_id)
-        return out
-    pick = "pick one with `?workspace=<slug>` (`--workspace <slug>` in the CLI)"
-    if exc.code == "ambiguous":
-        rows = services.person_connections(user, provider, workspace=workspace)
-        where = sorted({c.app.workspace_id for c in rows})
-        out["accounts"] = [c.account_label for c in rows]
-        out["workspaces"] = where
-        out["connect_url"] = settings_url
-        if len(where) > 1:
-            out["detail"] = (f"Your {p.title} is connected in more than one workspace "
-                             f"({', '.join(where)}); {pick}.")
-        return out
-    where = [a.workspace_id for a in services.apps_for_person(user, provider)
-             if workspace is None or a.workspace_id == workspace]
-    if len(where) == 1:
-        out["connect_url"] = _start_url(request, provider, where[0])
-        return out
-    out["connect_url"] = settings_url
+def _my_machine(request: HttpRequest) -> RunnerDeviceKey:
+    # A plain PAT, then a device proof by one of my own enrolled machines.
+    if not _plain_pat(request):
+        raise ProblemError(403, "A personal access token is required",
+                           detail="Use the CLI (`canopy login`) on your enrolled computer.",
+                           members={"error": "token_route_needs_pat"})
+    try:
+        return proofs.proving_machine(request, request.user)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+def _ambiguous_members(request: HttpRequest, p: type[providers.Provider], workspace: str | None) -> dict:
+    where = sorted({c.app.workspace_id for c in services.person_connections(request.user, p.name,
+                                                                             workspace=workspace)})
+    out: dict = {"workspaces": where}
     if len(where) > 1:
-        out["workspaces"] = where
-        out["detail"] = (f"Your {p.title} is not connected. It is set up in more than one workspace "
-                         f"({', '.join(where)}): connect in one, then {pick}.")
+        out["detail"] = (f"Your {p.title} is connected in more than one workspace ({', '.join(where)}); pick "
+                         "one with `?workspace=<slug>` (`--workspace <slug>` in the CLI).")
     return out
 
 
-@me_router.post("/{provider}/token", response=AccessTokenOut,
-                summary="A fresh access token for my own connection (CLI)")
-@gate("self", kind="ephemeral-credential", step_up="a person's own token for their own CLI; PAT only")
-def my_connection_token(request: HttpRequest, provider: str, refresh: bool = False,
-                        workspace: str | None = None) -> AccessTokenOut:
-    """Mint a short-lived access token for the account I connected, for my own
-    command line. Needs a personal access token sent as a bearer: a browser
-    session, an MCP call, an OAuth connector's token and a conversation's caller
-    token are all refused (403 `token_route_needs_pat`), so neither a stolen
-    cookie nor a model holding my token can pull a provider token. Only a
-    connection made in a workspace I am still a member of counts; `?workspace=`
-    picks one when I connected in several (409 `ambiguous` lists them in
-    `workspaces`). 409 when I have not connected, or must reconnect
-    (`connect_url`, an absolute URL, says where: a workspace's connect page, or
-    Settings when I must first choose a workspace or disconnect a spare account). `?refresh=true` forces a new
-    token even when the cached one looks fresh (for a CLI whose token the
-    provider already rejected)."""
-    if not _plain_pat(request):
-        raise ProblemError(403, "A personal access token is required",
-                           detail="Use the CLI (`canopy login`) to fetch your own token.",
-                           members={"error": "token_route_needs_pat"})
+@me_router.get("/{provider}/material", response=ConnectionMaterialOut,
+               summary="My connection's sealed envelopes and app client, for my own computer (CLI)")
+# a read: no write kind (the route-gate lint refuses one on a GET)
+@gate("self", step_up="a person's own machine; PAT and device proof only")
+def my_connection_material(request: HttpRequest, provider: str, workspace: str | None = None) -> ConnectionMaterialOut:
+    """What my enrolled computer needs to use the account I connected: the sealed
+    envelopes (only machines they are sealed to can open them), my signed grant
+    statement, and the app's client id and secret to refresh with. Never a token.
+    Each envelope's writer MAC is bound to the digest it replaces: for the refresh
+    envelope that is `sealed_digest`, for the access envelope the SHA-256 (hex) of the
+    stored `access_sealed` (empty string when there is none yet).
+
+    Needs a personal access token over REST (403 `token_route_needs_pat` for a
+    browser session, an MCP call, an OAuth connector's token or a caller token)
+    and a device proof (`DPoP`) by one of my own enrolled computers (401
+    `device_proof_required` without one; 403 `machine_not_enrolled` for any other
+    key: enroll it with `canopy vault device --enroll`). The computer must be one
+    the connection's `Use on my computers` lists (403 `not_on_my_computers`).
+    `?workspace=` picks one when I connected in several (409 `ambiguous` lists them
+    in `workspaces`). 409 `not_connected` when there is none (or it is not shared
+    yet, or being disconnected), `needs_reconnect` when its refresh token is dead,
+    and `waiting` when this computer may use it but holds no copy yet."""
     p = _provider_or_404(provider)
-    # No outer transaction: a refresh rejection stamps the row, and that stamp
-    # must survive the exception turned into a 409 below.
-    conn = None
+    key = _my_machine(request)
     try:
-        conn = services.connection_for_person(request.user, provider, workspace=workspace or None)
-        token = services.issue_token(conn, to="cli", by=request.user, refresh=refresh)
+        conn = services.connection_for_person(request.user, p.name, workspace=workspace or None)
     except services.ConnectionError as exc:
-        members = _token_problem(request, exc, p, workspace or None, conn)
-        raise problem_for(exc, title=p.title, owner="Your", **members) from None
-    return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
-                          expires_at=token.expires_at, account_label=token.account_label)
+        members = _ambiguous_members(request, p, workspace or None) if exc.code == "ambiguous" else {}
+        detail = members.pop("detail", None)
+        raise problem_for(exc, title=p.title, owner="Your", detail=detail, **members) from None
+    try:
+        return ConnectionMaterialOut(**tokens.material(conn, key))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+def _my_connection(request: HttpRequest, connection_id: uuid.UUID) -> tuple[Connection, RunnerDeviceKey]:
+    # My own connection (anyone else's id is a 404), on one of my listed computers.
+    key = _my_machine(request)
+    conn = get_object_or_404(Connection.objects.select_related("app", "user"), pk=connection_id,
+                             user=request.user)
+    try:
+        tokens.admits_my_computer(conn, key)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    return conn, key
+
+
+@me_router.post("/{connection_id}/refresh-lease", response=LeaseOut,
+                summary="Take the refresh lease on my connection (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def take_my_refresh_lease(request: HttpRequest, connection_id: uuid.UUID, payload: LeaseIn) -> LeaseOut:
+    """Take the one refresh lease (60 s; send `lease_id` to renew the one I hold)
+    before refreshing my connection at the provider on my own computer. 409
+    `lease_held` with `retry_after` while another machine holds it: wait for its new
+    access token instead of refreshing too. Renew on `ttl_seconds`, not
+    `expires_at`. PAT and device proof as for the material."""
+    conn, key = _my_connection(request, connection_id)
+    try:
+        return LeaseOut(**tokens.take_lease(conn, key, payload.lease_id))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+
+
+@me_router.delete("/{connection_id}/refresh-lease/{lease_id}", response={204: None},
+                  summary="Give up the refresh lease on my connection (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def release_my_refresh_lease(request: HttpRequest, connection_id: uuid.UUID, lease_id: uuid.UUID) -> Status:
+    """Release the refresh lease this computer holds; harmless when it holds none."""
+    conn, key = _my_connection(request, connection_id)
+    tokens.release_lease(conn, key, lease_id)
+    return Status(204, None)
+
+
+@me_router.put("/{connection_id}/sealed", response=WriteBackOut,
+               summary="Write back my connection's refreshed envelopes (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def write_back_my_connection(request: HttpRequest, connection_id: uuid.UUID, payload: WriteBackIn) -> WriteBackOut:
+    """Store the access token my computer just minted, sealed to exactly who may open
+    the connection now (and the refresh token, when it rotated), against the
+    `sealed_digest` read. 409 `lease_lost`, `zk_value_changed`, `revoking`; 422
+    `foreign_reader`, `zk_rewrap_required`, `bad_writer_sig`. Only after this
+    succeeds is the token used."""
+    conn, key = _my_connection(request, connection_id)
+    try:
+        digest = tokens.write_back(conn, device_key=key, **payload.model_dump())
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    return WriteBackOut(sealed_digest=digest)
+
+
+@me_router.post("/{connection_id}/reconnect-required", response={204: None},
+                summary="Report my connection's refresh refused (CLI)")
+@gate("self", kind="ephemeral-credential", step_up="a person's own machine; PAT and device proof only")
+def my_connection_reconnect_required(request: HttpRequest, connection_id: uuid.UUID,
+                                     payload: ReconnectRequiredIn) -> Status:
+    """The provider refused the refresh made under `lease_id`. `invalid_grant` marks
+    the connection `needs_reconnect` (connect it again) and ends the lease; any other error is
+    only noted. `detail` is recorded with it. 409 `lease_lost` unless this computer holds the lease."""
+    conn, key = _my_connection(request, connection_id)
+    try:
+        tokens.mark_reconnect_required(conn, key, payload.lease_id, payload.error, payload.detail)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    return Status(204, None)
 
 
 # ---- a workspace's apps ----------------------------------------------------------
@@ -365,7 +671,7 @@ def _connection_count(app: ConnectionApp | None) -> int:
         return 0
     # Annotated by the list (one query for every provider); a saved row counts its own.
     n = getattr(app, "n_connections", None)
-    return app.connections.count() if n is None else n
+    return app.connections.exclude(state=Connection.REVOKING).count() if n is None else n
 
 
 def _app_out(request: HttpRequest, slug: str, cls: type[providers.Provider],
@@ -406,8 +712,11 @@ def list_connection_apps(request: HttpRequest, workspace: str) -> ConnectionApps
     to register at the provider, and how many connections it holds. Workspace
     admins only."""
     ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
-    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by").filter(workspace=ws)
-            .annotate(n_connections=Count("connections"))}
+    # A removed app is hidden at once; it lingers only for its revoking rows' holders.
+    live = ~Q(connections__state=Connection.REVOKING)
+    rows = {a.provider: a for a in ConnectionApp.objects.select_related("configured_by")
+            .filter(workspace=ws, removed_at__isnull=True)
+            .annotate(n_connections=Count("connections", filter=live))}
     return ConnectionAppsOut(apps=[_app_out(request, ws.slug, c, rows.get(c.name))
                                    for c in providers.CLASSES.values()])
 
@@ -444,9 +753,10 @@ def configure_connection_app(request: HttpRequest, workspace: str, provider: str
                           summary="Remove a workspace's connection app")
 @gate("integrations", setting=True, step_up=True)
 def remove_connection_app(request: HttpRequest, workspace: str, provider: str) -> Status:
-    """Remove this workspace's OAuth client for `provider`. Every account
-    connected with it is disconnected (each revoked at the provider) — people's
-    and agents' — and agents it was shared with lose it. Removing an app that is
+    """Remove this workspace's OAuth client for `provider`: hidden at once. Every
+    account connected with it is disconnected — people's and agents' — and agents
+    it was shared with lose it; the app is deleted once the machines holding them
+    have revoked them (or seven days pass). Removing an app that is
     not set up is harmless. A workspace cannot be deleted while it has apps.
     From a browser this needs a fresh passkey check. Workspace admins only; not
     an MCP tool."""

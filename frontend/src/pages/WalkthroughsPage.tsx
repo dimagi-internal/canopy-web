@@ -6,6 +6,7 @@ import {
   type WalkthroughKind,
 } from '../api/walkthroughs'
 import { useScopedPath } from '../lib/scopedLinks'
+import { Td, Th } from '@/components/DataTable'
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -124,24 +125,24 @@ export function WalkthroughsPage() {
         <table className="w-full min-w-[680px] text-sm">
           <thead className="text-left text-xs text-muted-foreground border-b">
             <tr>
-              <th className="py-2 pr-3">Title</th>
-              <th className="py-2 pr-3">Project</th>
-              <th className="py-2 pr-3">Kind</th>
-              <th className="py-2 pr-3">Owner</th>
-              <th className="py-2 pr-3">Visibility</th>
-              <th className="py-2 pr-3">Size</th>
-              <th className="py-2 pr-3">Created</th>
+              <Th density="roomy-gap" weight="inherit">Title</Th>
+              <Th density="roomy-gap" weight="inherit">Project</Th>
+              <Th density="roomy-gap" weight="inherit">Kind</Th>
+              <Th density="roomy-gap" weight="inherit">Owner</Th>
+              <Th density="roomy-gap" weight="inherit">Visibility</Th>
+              <Th density="roomy-gap" weight="inherit">Size</Th>
+              <Th density="roomy-gap" weight="inherit">Created</Th>
             </tr>
           </thead>
           <tbody>
             {items.map((w) => (
               <tr key={w.id} className="border-b hover:bg-muted/50">
-                <td className="py-2 pr-3">
+                <Td density="roomy-gap">
                   <Link to={scope(`/walkthrough/${encodeURIComponent(w.id)}`)} className="text-primary hover:underline">
                     {w.title}
                   </Link>
-                </td>
-                <td className="py-2 pr-3">
+                </Td>
+                <Td density="roomy-gap">
                   {w.project_slug ? (
                     <Link to={`/?project=${w.project_slug}`} className="text-foreground-secondary hover:underline">
                       {w.project_slug}
@@ -149,16 +150,16 @@ export function WalkthroughsPage() {
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
-                </td>
-                <td className="py-2 pr-3 capitalize">{w.kind}</td>
-                <td className="py-2 pr-3">{w.owner_email}</td>
-                <td className="py-2 pr-3">
+                </Td>
+                <Td density="roomy-gap" className="capitalize">{w.kind}</Td>
+                <Td density="roomy-gap">{w.owner_email}</Td>
+                <Td density="roomy-gap">
                   <VisibilityChip v={w.visibility} />
-                </td>
-                <td className="py-2 pr-3">{formatBytes(w.size_bytes)}</td>
-                <td className="py-2 pr-3 text-muted-foreground">
+                </Td>
+                <Td density="roomy-gap">{formatBytes(w.size_bytes)}</Td>
+                <Td density="roomy-gap" tone="muted">
                   {new Date(w.created_at).toLocaleDateString()}
-                </td>
+                </Td>
               </tr>
             ))}
           </tbody>

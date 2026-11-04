@@ -1,46 +1,33 @@
-"""The runner's side of a turn's connections, under `/api/harness/runners/{rid}/turns/{tid}/`.
+"""The runner's side of a turn's connections, under `/api/harness/runners/{rid}/turns/{tid}/`:
+which providers to stage, and each one's material (route 11).
 
 Mounted at `/harness` (`apps/api/api.py`) so the URLs sit beside the turn's other
 credentials, while the code stays here: harness and agents are core and may not
 import connections. The turn lookup and the runner-holds-agent re-check mirror
-`turn_github_token`, and are shared by both routes (`_turn_agent`).
+`turn_github_token` (`_turn_agent`).
 """
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
 
 from django.http import HttpRequest
-from ninja import Router, Schema
+from ninja import Router
 from ninja.errors import HttpError
-from pydantic import Field
 
 from apps.agents.credentials import delegations
 from apps.agents.services import runner_may_hold_agent
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.harness import routing
-from apps.harness.api import runner_or_404
 from apps.harness.models import Turn
+from apps.harness.runner_queries import runner_or_404
 
-from . import providers, services
-from .problems import problem_for
-from .schemas import AccessTokenOut, TurnConnectionsOut
+from . import proofs, providers, services, tokens
+from .problems import problem_for, problem_for_wire
+from .schemas import ConnectionMaterialOut, TurnConnectionsOut
+from .wire import WireError
 
 router = Router(tags=["connections"])
-
-
-class TurnConnectionTokenIn(Schema):
-    provider: str
-    min_life_seconds: int = Field(
-        default=300, ge=0, le=3600,
-        description="Hand out the cached token only if it lives at least this much longer; "
-                    "else refresh first.",
-    )
-    refresh: bool = Field(
-        default=False,
-        description="Refresh even if the cached token looks fresh (the provider already rejected it).",
-    )
 
 
 def _turn_agent(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
@@ -73,42 +60,51 @@ def _turn_agent(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
 @gate("runner", "runner-holds-agent")
 def turn_connections(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID) -> TurnConnectionsOut:
     """The providers the turn's AGENT has a connection for — its own, or one
-    granted to it — so the runner fetches a token for each of those and calls
-    nothing for an agent with none. No token here. 404 unless this runner holds
+    granted to it — so the runner stages each of those and calls nothing for an
+    agent with none. No token here. 404 unless this runner holds
     the turn (always for a caller's turn); 409 `no_agent` for a turn that runs
     as no agent."""
-    _, _, agent = _turn_agent(request, runner_id, turn_id)
-    return TurnConnectionsOut(providers=services.providers_for_agent(agent))
+    _, turn, agent = _turn_agent(request, runner_id, turn_id)
+    return TurnConnectionsOut(providers=services.providers_for_agent(agent, turn=turn))
 
 
-@router.post("/runners/{runner_id}/turns/{turn_id}/connection-token", response=AccessTokenOut,
-             summary="One claimed turn's agent connection token")
-# turn must be claimed by this box
-@gate("runner", "runner-holds-agent", kind="runner-protocol", step_up="runner protocol")
-def turn_connection_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID,
-                          payload: TurnConnectionTokenIn) -> AccessTokenOut:
-    """A short-lived access token for the connection the turn's AGENT uses for
-    `provider`: its own, else one granted to it — never the person who started
-    the turn. 404 for an unknown provider, unless this runner holds the turn, and
-    always for a caller's turn (one confined to a capability). 409 with `error`
-    set to `no_agent`, `not_connected`, `ambiguous`, `reconnect_required` or
-    `not_configured`; 502 `provider_error`, 503 `provider_unavailable`.
-    `min_life_seconds` (default 300) is how long the token must still live;
-    `refresh` forces a new one."""
+@router.get("/runners/{runner_id}/turns/{turn_id}/connections/{provider}", response=ConnectionMaterialOut,
+            summary="A claimed turn's agent connection: sealed envelopes and the app client")
+# turn must be claimed by this box, and the box must prove its device key
+# a read: no write kind (the route-gate lint refuses one on a GET)
+@gate("runner", "runner-holds-agent", step_up="runner protocol: ciphertext and an app client for a box")
+def turn_connection_material(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID,
+                             provider: str) -> ConnectionMaterialOut:
+    """What this box needs to stage the turn's AGENT connection for `provider` (its
+    own, else one lent to it — never the person who started the turn): the sealed
+    envelopes, which only machines they are sealed to can open, the owner's signed
+    grant statement and endorsements to check them by, and the app's client id and
+    secret to refresh with. Never a token. Each envelope's writer MAC is bound to the
+    digest it replaces: for the refresh envelope that is `sealed_digest`, for the
+    access envelope the SHA-256 (hex) of the stored `access_sealed` (empty string when
+    there is none yet). Requires a device proof (`DPoP`) by this runner's own
+    approved key (401 `device_proof_required`). 404 unless this runner holds the turn
+    (always for a caller's turn), or for an unknown provider. 409
+    `not_connected` when the agent has none, it is not shared yet, it is being
+    disconnected, or this box no longer serves an agent it is lent to;
+    `needs_reconnect` when its refresh token is dead; `waiting` when this box may
+    use it but holds no copy yet; `ambiguous`, `no_agent`. Each turn's reads are
+    recorded once (`token_issued`, naming the runner). `agent_id` and `agent_slug` say
+    which agent the answer is for."""
     try:
-        provider = providers.get_class(payload.provider)
+        cls = providers.get_class(provider)
     except providers.UnknownProvider:
         raise HttpError(404, "unknown provider") from None
     runner, turn, agent = _turn_agent(request, runner_id, turn_id)
-    # No outer transaction: a refresh rejection stamps the row, and that stamp
-    # must survive the exception turned into a 409 below.
     try:
-        conn = services.connection_for_agent(agent, provider.name)
-        token = services.issue_token(conn, to="turn", agent=agent.slug, turn=str(turn.pk),
-                                     runner=str(runner.pk), runner_name=runner.name,
-                                     min_life=timedelta(seconds=payload.min_life_seconds),
-                                     refresh=payload.refresh)
+        key = proofs.proving_device(request, runner)
+    except WireError as exc:
+        raise problem_for_wire(exc) from None
+    try:
+        conn = services.connection_for_agent(agent, cls.name, turn=turn)
     except services.ConnectionError as exc:
-        raise problem_for(exc, title=provider.title, owner=f"{agent.slug}'s") from None
-    return AccessTokenOut(access_token=token.token, instance_url=token.instance_url,
-                          expires_at=token.expires_at, account_label=token.account_label)
+        raise problem_for(exc, title=cls.title, owner=f"{agent.slug}'s") from None
+    try:
+        return ConnectionMaterialOut(**tokens.material(conn, key, turn=turn, runner=runner))
+    except WireError as exc:
+        raise problem_for_wire(exc) from None

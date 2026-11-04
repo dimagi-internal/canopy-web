@@ -25,7 +25,7 @@ the host-grant chain is in [`sdk/python/README.md` § Host grant contract v1](..
 - Rows carrying a tenant FK: `agents`, `agent_runs`, and the product roots `walkthroughs`,
   `reviews`, `shareouts` (plus storyboards, issues, sessions, events …). Authenticated lists
   filter by `wsvc.request_workspace_slugs(request)` (the read scope).
-- **`ConnectionApp` (`apps/connections`) belongs to a workspace**: the OAuth client a workspace admin sets up for a provider (one per workspace and provider; its secret is encrypted in the DB). A `Connection` goes through one app, and a person's connection is usable only while they are a member (read) of that app's workspace — leaving the workspace ends its use (`not_connected`), it is not deleted. An agent uses its own workspace's apps. → [`vault.md`](vault.md) § OAuth connections are server-held.
+- **`ConnectionApp` (`apps/connections`) belongs to a workspace**: the OAuth client a workspace admin sets up for a provider (one per workspace and provider; its secret is encrypted in the DB). A `Connection` goes through one app, and a person's connection is usable only while they are a member (read) of that app's workspace — leaving the workspace ends its use (`not_connected`), it is not deleted. An agent uses its own workspace's apps. → [`vault.md`](vault.md) § OAuth connections are sealed to their owner.
 - **`Agent.workspace` is NOT NULL** (`agents/0013`). This is a security invariant: a nullable
   tenant FK invites `if row.workspace_id and <membership check>`, which reads a NULL tenant as
   *allow*. Don't re-nullable it, and never write a NULL-means-allow leg in any tenancy
@@ -163,7 +163,7 @@ failure again.
   signed in is linked only when its person accepts, in
   their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
   reads as its asker and never writes (`access.md` → "Whose authority an agent acts with").
-- `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a
+- `POST /api/debug/mint-session/` (`apps/tokens/mint_session.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token
   cannot sign an MCP client in on its own.
@@ -225,7 +225,7 @@ failure again.
   the latest grade kept beside it so a drop stays visible.
 - Recorded best-effort from the email door (`apps/harness/channels/email.py`) — mail
   is answered even when the bookkeeping fails.
-- What agents learn about a person (`PersonFact`, HCP): `access.md` → "What agents know about
+- What agents learn about a person (`PersonFact`, HCP): `access-sessions-and-people.md` → "What agents know about
   a person".
 
 ## The chat-session ACL (CI-enforced)
@@ -244,7 +244,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   session; editor, may pull). Per person × project, opt-in, revocable, each change an
   audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
   `/api/me/session-sharing/`, the Settings → Opted-in repos panel). Who sees what per
-  channel: `access.md` § Who can see a session.
+  channel: `access-sessions-and-people.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
   (`POST /{id}/backfill`) is for the box owner and anyone the rule lets write in it.
@@ -259,11 +259,24 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   own that are not an agent's own work (`access.sessions_of_q`). Read-only (`role_for`
   gives the agent a viewer), never a sensitive conversation (any runner requirement keeps
   it out, failing closed), and never anyone but that agent's login — its admins, other
-  agents and co-tenants gain nothing. The agent lists who let it in
+  agents and co-tenants gain nothing. **The read answers to the turn's asker**
+  (`access.review_grantors`, the one rule; the asker is `harness.turn_asker.standing`,
+  worked out from the server's `Turn.initiator_*` and its stamped `on_behalf_of`, never
+  from anything the agent sends): the agent's login reads only inside a running turn of
+  that agent (its per-turn or session login, over REST, MCP alike). A turn a verified
+  person asked reads that person's grant alone ("coach me" is me only); a turn nobody
+  asked (a schedule or trigger no person owns, or a dispatch from such a turn, which the
+  server stamps `unattended_dispatch`) or one an administrator of the agent asked reads
+  every grantor's, the coaching sweep; a turn canopy started on a person's account (a
+  schedule an editor made, an agent task's follow-up) answers to that person; a contact's
+  or unverified user's turn and anything dispatched from one, a stored token, a browser
+  session, a socket, a finished or confined turn reads nothing by grant. `of_user` only
+  narrows what this allows, and the roster below is cut by the same rule. The agent lists who let it in
   (`GET /api/people/session-reviewers/granted-to-me/`) and one person's sessions with
   `GET /api/canopy-sessions/?of_user=<id>`. Which agent canopy offers as the coach (the
   first-run checkbox, the Settings switch) is `settings.COACHING_AGENT_SLUG`, offered only
   where that agent is in a workspace the person is in or may ask to join.
+  The one other reader of the list is the agent's own turn: the caller token of a verified user who asked that turn may `GET /api/people/me/session-reviewers/` for their own record and sees only whether THAT agent is among their reviewers (no pickable agents, no coach offer); POST and DELETE stay the person's own (browser session or PAT), and a contact's, unverified, or another user's token reads nothing.
 - Acting needs participant role owner/editor; a `viewer` reads; sharing is the owner's
   (`/participants`, the chat header's People control).
 - Every entry point calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
@@ -392,7 +405,7 @@ THE predicate; every surface below asks it, one test each in
 - **Metadata in every readable column:** every stored event and every `Message`'s
   `plaintext`/`content` (the person's, the agent's, a tool call's) keeps kind, tool name,
   argument names, ids, error flags, size and hash only (`sensitivity.redact_payload`). The
-  prompt is wiped at the turn's end (`closing.close_turn`), the result note withheld, and
+  prompt is wiped at the turn's end (`turn_close.close_turn`), the result note withheld, and
   there is no owner-ask line, live tail (`RunnerBinding.tail`) or autotitle.
 - **The conversation, sealed to its own people** (spec
   `2026-10-23-sensitive-conversations-sealed-to-their-people` §2,
@@ -509,12 +522,17 @@ THE predicate; every surface below asks it, one test each in
     which they are `needs_key` again. A re-add or role change keeps a current copy. Until they hold a copy the
     live socket, whose frames carry the words, turns them away (`sensitivity.hears_live`,
     asked at connect and on every re-check; `session.error` `needs_key`).
-  - *A new vault key.* Replacing one (Settings → Vault key → Start over) names the private
-    conversations at stake, unlocks the OLD key, opens every copy the person holds
-    (`GET /my-keys`), sets the new key, and stores each copy re-wrapped to it
-    (`PUT /my-keys`; `vault/conversationCopies.ts`). A copy the old key no longer opened, or
-    a starter who replaced their key elsewhere, is refreshed by an editor in it
-    (`POST …/key-copies` takes the starter too, since their copy is provably stale).
+  - *A new vault key.* Settings → Vault key → Create a new vault key needs no passphrase,
+    Secret Key or passkey that opens the current key, and deletes nothing stored in any vault. One screen lists
+    every vault the person holds a copy of, who can let them back in, and any only they can
+    open (`vault/newKeyImpact.ts`). If they are in private conversations it asks whether they
+    can unlock the current key. If so, it opens every copy they hold (`GET /my-keys`), sets
+    the new key, and stores each copy re-wrapped to it (`PUT /my-keys`;
+    `vault/conversationCopies.ts`). If not, the new key is set without them. A passkey with no
+    PRF output seals nothing, so the new key is sealed by a new passphrase and Secret Key
+    instead. A copy that was not carried, or a starter who replaced their key elsewhere, is
+    refreshed by an editor in it (`POST …/key-copies` takes the starter too, since their copy
+    is provably stale).
   - *Rows from before it became sensitive.* Sealed in the transaction that makes it
     sensitive (`services.add_runner_requirements` → `conversation_keys.seal_existing`): the
     server holds the conversation's PUBLIC key, so it seals what it can no longer read back,
@@ -665,7 +683,7 @@ THE predicate; every surface below asks it, one test each in
   sensitive one out (the turn in it still reads and acts on its own, by its caller token
   or chat key, asked again at the call), an action's arguments and answer are not kept on
   its row (`page_actions._forget`), and the page is forgotten when its
-  last live turn ends (`closing._forget_the_page`), or after
+  last live turn ends (`turn_close._forget_the_page`), or after
   `CANOPY_SENSITIVE_PAGE_TTL_SECONDS` (15 min) with no live turn
   (`page_state.forget_idle_sensitive_pages`, a tick); the unbound stream door
   (`api_session_sync._turn_end_session`) takes only the confined turn's own transcript

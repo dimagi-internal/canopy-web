@@ -6,7 +6,6 @@ import json
 from django.test import Client
 
 from apps.events.models import Event
-from apps.tokens.models import PersonalToken
 
 MANIFEST = {
     "version": 1, "name": "android-emulator", "kind": "ec2-ephemeral",
@@ -22,11 +21,6 @@ def _as(user) -> Client:
     c = Client()
     c.force_login(user)
     return c
-
-
-def _pat(user) -> Client:
-    raw, _ = PersonalToken.create_for_user(user=user, label="deploy")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
 def _json(c, method, path, body=None):

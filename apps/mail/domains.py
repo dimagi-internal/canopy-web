@@ -348,7 +348,7 @@ def route_is_live(route: MailRoute) -> bool:
 
 def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: str = "",
                forward_to_user_id: int | None = None, enabled: bool = True,
-               workspace=None) -> MailRoute:
+               workspace=None, keep_copy: bool | None = None) -> MailRoute:
     """Create or replace one address's route, held by `workspace` (default: the domain's).
 
     On a shared domain the local part is first come, first served across every workspace
@@ -380,12 +380,17 @@ def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: st
             raise DomainError(422, "mail can only be forwarded to a member of this workspace")
     elif kind != MailRoute.DROP:
         raise DomainError(422, "kind must be agent, forward or drop")
+    defaults = {"kind": kind, "agent": agent, "forward_to": forward_to, "enabled": enabled, "auto": False}
+    if kind != MailRoute.FORWARD:
+        defaults["keep_copy"] = False
+    elif keep_copy is not None:
+        defaults["keep_copy"] = keep_copy
+    elif held is None or held.kind != MailRoute.FORWARD:
+        defaults["keep_copy"] = True  # a new forward keeps a copy unless someone says not to
     try:
         with transaction.atomic():
             route, _ = MailRoute.objects.update_or_create(
-                domain=domain, local_part=local, workspace=workspace,
-                defaults={"kind": kind, "agent": agent, "forward_to": forward_to, "enabled": enabled,
-                          "auto": False})
+                domain=domain, local_part=local, workspace=workspace, defaults=defaults)
     except IntegrityError:  # another workspace took it between the check and the write
         raise DomainError(409, "that address is already taken") from None
     return route

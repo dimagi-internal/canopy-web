@@ -5,7 +5,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionMenu, TurnStatus } from 'canopy-ui/chat'
 
-import { ChatApiError, type ChatSessionDetail } from '@/api/chat'
+import { type ChatSessionDetail } from '@/api/chat'
+import { ApiError } from '@/api/problem'
 import type { RunnerOut } from '@/api/harness'
 import { useAttachments } from './useAttachments'
 import { useMenuAnswer } from './useMenuAnswer'
@@ -274,8 +275,7 @@ describe('useRunnerPlacement', () => {
   })
 
   it('moves the whole session when there is no queued message to place', async () => {
-    const { ChatApiError } = await import('@/api/chat')
-    chat.placeTurn.mockRejectedValue(new ChatApiError(404, 'no queued turn to place'))
+    chat.placeTurn.mockRejectedValue(new ApiError(404, 'no queued turn to place'))
     chat.transferSession.mockResolvedValue({ status: 'moved', runner: 'other' })
     chat.getSession.mockResolvedValue(meta({ runner_name: 'other', runner_online: true }))
     const setMeta = vi.fn()
@@ -288,8 +288,7 @@ describe('useRunnerPlacement', () => {
   })
 
   it('says who must approve a move onto someone else\'s runner', async () => {
-    const { ChatApiError } = await import('@/api/chat')
-    chat.placeTurn.mockRejectedValue(new ChatApiError(404, 'no queued turn to place'))
+    chat.placeTurn.mockRejectedValue(new ApiError(404, 'no queued turn to place'))
     chat.transferSession.mockResolvedValue({ status: 'pending', approvers: ['a@x.org'] })
     const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn()))
     act(() => result.current.continueOn('r2'))
@@ -297,17 +296,15 @@ describe('useRunnerPlacement', () => {
   })
 
   it('shows a refused move as an error', async () => {
-    const { ChatApiError } = await import('@/api/chat')
-    chat.placeTurn.mockRejectedValue(new ChatApiError(404, 'no queued turn to place'))
-    chat.transferSession.mockRejectedValue(new ChatApiError(409, 'a turn is running'))
+    chat.placeTurn.mockRejectedValue(new ApiError(404, 'no queued turn to place'))
+    chat.transferSession.mockRejectedValue(new ApiError(409, 'a turn is running'))
     const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn()))
     act(() => result.current.continueOn('r2'))
     await waitFor(() => expect(result.current.placeError).toBe('a turn is running'))
   })
 
   it('shows the server refusal on a 422', async () => {
-    const { ChatApiError } = await import('@/api/chat')
-    chat.placeTurn.mockRejectedValue(new ChatApiError(422, 'not allowed here'))
+    chat.placeTurn.mockRejectedValue(new ApiError(422, 'not allowed here'))
     const { result } = renderHook(() => useRunnerPlacement('s1', meta(), vi.fn()))
     act(() => result.current.waitForIt())
     await waitFor(() => expect(result.current.placeError).toBe('not allowed here'))
@@ -425,7 +422,7 @@ describe('useMessageFork', () => {
   })
 
   it('forks at once from the hover bar, and shows a refusal beside it', async () => {
-    chat.forkSession.mockRejectedValue(new ChatApiError(403, 'only its owner can fork it'))
+    chat.forkSession.mockRejectedValue(new ApiError(403, 'only its owner can fork it'))
     const fleet = [runner({ kind: 'cloud' } as Partial<RunnerOut>)]
     const { result } = renderHook(() => useMessageFork('s1', 'box', fleet, []))
     const row = { id: 'm1', turn_index: 4, status: 'complete' } as never

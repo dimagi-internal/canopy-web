@@ -30,7 +30,7 @@ from apps.harness import claim, routing, session_sync
 from apps.harness import turn_status as ts
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 
@@ -121,9 +121,11 @@ def test_work_no_turn_owns_is_read_from_the_engine(ctx):
     assert session_state.activity(s) == session_state.WORKING
 
 
-def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_capture_on_commit_callbacks):
+@pytest.mark.parametrize("stopped", ["completed", "interrupted"])
+def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_capture_on_commit_callbacks, stopped):
     """The agent kept working after its turn settled, so the turn's end could not
-    say idle; the laptop's next report, with the engine stopped, does."""
+    say idle; the laptop's next report, with the engine stopped, does. `interrupted`
+    is the runner's word for a turn Escape ended, where emdash's flag never moves."""
     from apps.canopy_sessions import status_feed
 
     _session(ctx, ctx.laptop, agent_status="working")
@@ -135,7 +137,7 @@ def test_an_open_chat_hears_idle_when_the_engine_stops(ctx, monkeypatch, django_
         session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
     assert frames == []  # still working: nothing to say
 
-    task.agent_status = "completed"
+    task.agent_status = stopped
     with django_capture_on_commit_callbacks(execute=True):
         session_sync.replace_reported_sessions(ctx.laptop, ctx.ws, [task], complete=True)
     assert [f["event"]["kind"] for f in frames] == ["activity:idle"]
@@ -286,6 +288,31 @@ def test_a_done_send_whose_row_never_landed_is_listed_after_the_grace(ctx):
     Turn.objects.filter(pk=t.pk).update(
         finished_at=timezone.now() - session_send.DONE_LANDING_GRACE - dt.timedelta(seconds=1))
     assert [e["state"] for e in session_send.ended_sends(s)] == [Turn.DONE]
+
+
+def test_a_finished_send_is_still_on_its_way_until_its_line_lands(ctx):
+    """Between its turn's end and its line landing, a send is in one list or the
+    other — never in neither, which a reconnecting page read as "gone"."""
+    s = _transcript_sourced(_session(ctx, ctx.cloud, key="uuid-8"))
+    Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext="earlier")
+    _m, t = session_send.send_message(session=s, text="are we done?", user=ctx.user, client_id="c8")
+    Turn.objects.filter(pk=t.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    [entry] = session_send.queued_messages(s)
+    assert (entry["client_id"], entry["state"]) == ("c8", "delivering")
+
+    Message.objects.create(session=s, turn_index=64, role=Message.USER, plaintext="are we done?",
+                           source_turn_id=t.pk)
+    assert session_send.queued_messages(s) == []
+
+
+def test_a_rebuilt_history_does_not_hold_finished_sends_on_their_way(ctx):
+    """A reset's rows carry no turn ids, so a finished send's missing one is no
+    sign it is still coming."""
+    s = _transcript_sourced(_session(ctx, ctx.cloud, key="uuid-9"))
+    _m, t = session_send.send_message(session=s, text="before the reset", user=ctx.user, client_id="c9")
+    Turn.objects.filter(pk=t.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    Message.objects.create(session=s, turn_index=64, role=Message.USER, plaintext="before the reset")
+    assert session_send.queued_messages(s) == []
 
 
 # --- 5. archive ---------------------------------------------------------------

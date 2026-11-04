@@ -190,11 +190,15 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # reach work a live Turn still owns; an agent/board/scheduled turn is
         # fire-and-continue and terminal seconds after delivery, so this is the only
         # route that reaches it. The runner presses Escape in that session's
-        # terminal, keyed on session_key exactly as menu_answer is.
+        # terminal, keyed on (project, session_key) because task names are unique per
+        # project only. interrupt_id is how the runner retires the server's record of
+        # this stop; without it the next sweep would press Escape a second time.
         await self.send_json({
             "type": "session_interrupt",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
+            "project": message.get("project") or "",
+            "interrupt_id": message.get("interrupt_id") or "",
         })
 
     async def runner_stream(self, message):
@@ -349,8 +353,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # THE claim payload — the one the REST route returns, credentials and
         # caller envelope included. This socket used to build its own subset,
         # and a confined turn arrived without the envelope the runner confines
-        # by (apps/harness/claiming.py).
-        from apps.harness.claiming import claim_payload
+        # by (apps/harness/claim_payload.py).
+        from apps.harness.claim_payload import claim_payload
 
         return claim_payload(turn)
 

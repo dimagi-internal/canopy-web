@@ -192,12 +192,14 @@ def test_session_interrupt_frame_rings_without_touching_cdp():
     real = cdp_control.interrupt
     cdp_control.interrupt = _must_not_run
     try:
-        on_control({"type": "session_interrupt", "session_id": "s1", "session_key": "hal-1"})
+        on_control({"type": "session_interrupt", "session_id": "s1", "session_key": "hal-1",
+                    "project": "hal", "interrupt_id": "i1"})
     finally:
         cdp_control.interrupt = real
 
-    assert "hal-1" in session_interrupt._pending
-    assert session_interrupt._pending["hal-1"]["session_id"] == "s1"
+    entry = session_interrupt._pending[("hal", "hal-1")]
+    assert entry["session_id"] == "s1"
+    assert entry["interrupt_ids"] == {"i1"}
     assert waker.event.is_set(), "the poll thread has work — don't wait out the tick"
     session_interrupt._pending.clear()
 

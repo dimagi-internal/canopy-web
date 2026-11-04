@@ -10,6 +10,7 @@ import uuid
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.harness import sensitivity
@@ -407,16 +408,23 @@ def queued_messages(session: Session) -> list[dict]:
     harness.turn_status: it is a function of rows that change on their own clock.
     A send leaves the list when the transcript row carrying its turn id lands
     (Message.source_turn_id, parsed from the author marker), or when its turn
-    ends without one (cancelled, failed).
+    ends without one (cancelled, failed; a DONE turn after `DONE_LANDING_GRACE`).
 
     Bounded by the NON-TERMINAL turns, never by the session's whole history:
     this runs on every status transition and every streamed transcript batch,
     so a long-lived session must not make it scan every Message it has ever
     landed. `select_related` on the initiator FKs is load-bearing too — dropped,
     `authorship.author_of` (called once per turn below) turns back into an N+1."""
+    # And a DONE send whose line has not landed yet, for `DONE_LANDING_GRACE`:
+    # the runner ships the line with the turn's transcript, which can trail the
+    # turn's end, and until it lands (or the grace passes and `ended_sends` takes
+    # it) the send is still on its way, and a client reconnecting in that window
+    # must find it in one list or the other.
+    in_flight = Q(status__in=list(Turn.NON_TERMINAL)) | Q(
+        status=Turn.DONE, finished_at__gte=timezone.now() - DONE_LANDING_GRACE)
     turns = list(
         Turn.objects.select_related("initiator_user", "initiator_contact")
-        .filter(chat_session=session, status__in=list(Turn.NON_TERMINAL))
+        .filter(in_flight, chat_session=session)
         .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
         .order_by("created_at")
     )
@@ -430,6 +438,15 @@ def queued_messages(session: Session) -> list[dict]:
         return []
     landed = set(Message.objects.filter(session=session, source_turn_id__in=[t.pk for t in turns])
                  .values_list("source_turn_id", flat=True))
+    if any(t.status == Turn.DONE and t.pk not in landed for t in turns):
+        # A finished send is on its way only while no person's line has been
+        # stored since it was sent. A row without its turn id (a rebuilt history
+        # carries none) says nothing either way; one stored after the send means
+        # the conversation has moved past it.
+        newest = (Message.objects.filter(session=session, role=Message.USER)
+                  .order_by("-created_at").values_list("created_at", flat=True).first())
+        turns = [t for t in turns
+                 if t.status != Turn.DONE or newest is None or newest < t.created_at]
     out = []
     for t in turns:
         if t.pk in landed:

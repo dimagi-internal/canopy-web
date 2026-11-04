@@ -28,8 +28,9 @@ from apps.canopy_sessions import close_review
 from apps.mcp.audit import current_user_id, write_audit
 from apps.mcp.rate_limit import RateLimitError, check_write_limit
 from apps.mcp.server import mcp
+from apps.mcp_apps_host.mcp_apps import CLOSE_REVIEW_VIEW_URI, VIEW_TOOL_META
 
-VIEW_URI = "ui://canopy/ide/close-review"
+VIEW_URI = CLOSE_REVIEW_VIEW_URI
 VIEW_MIME = "text/html;profile=mcp-app"
 _VIEW_HTML = Path(__file__).with_name("close_review_view.html")
 
@@ -37,13 +38,6 @@ _VIEW_HTML = Path(__file__).with_name("close_review_view.html")
 #: tool that shows it: the token may read the View only while that tool is
 #: within its grant (`apps.mcp.delegation`).
 VIEW_TOOLS: dict[str, str] = {VIEW_URI: "propose_session_closes"}
-
-#: Each tool's `_meta`, declared once: the decorators below use it, and
-#: `self_host._index_views` records it in the canopy-web site's UI index.
-VIEW_TOOL_META: dict[str, dict] = {
-    "propose_session_closes": {"ui": {"resourceUri": VIEW_URI, "visibility": ["model", "app"]}},
-    "close_proposed_sessions": {"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}},
-}
 
 
 async def _user():

@@ -15,7 +15,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.events import usage
+from apps.harness import usage
 from apps.events.models import SettingChange
 from apps.harness.models import ProjectOptIn, Runner
 from apps.harness.session_sync import replace_reported_sessions

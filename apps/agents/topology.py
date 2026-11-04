@@ -35,8 +35,9 @@ from . import interface as iface_mod
 from .models import Agent
 from .tree import agents_in_tree
 
-#: Why an edge has the access it has. `editor`: full, but manual only.
-#: `no-interface`: a viewer, refused because the target published no interface.
+#: Why an edge has the access it has. `editor`: full through a line that gives `write`
+#: (manual when that line is `manual_only`). `no-interface`: refused, and the target
+#: published no capability either.
 OWNER, WS_OWNER, ADMIN, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
     "owner", "workspace-owner", "admin", "editor", "no-interface", "capabilities",
     "nothing-offered", "not-member", "no-login",
@@ -71,8 +72,7 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
         if d.access == access.FULL:
             out.update(access="full", basis=EDITOR)
         elif d.access == access.CONFINED:
-            caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
-                          if iface_mod.role_opens(d.agent_role, c))
+            caps = iface_mod.reachable(d.permissions, iface)
             out.update(access="confined", basis=CAPABILITIES, capabilities=caps)
         else:
             out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE

@@ -6,8 +6,8 @@ canopy's own data. It is how someone gets a screen canopy does not have — "thi
 work by assignee", "which agents failed this week and on what" — without a deploy.
 
 The model is connect-labs' workflow and page engine (`connect_labs/workflow/page_mode.py`,
-`components/workflow/sandbox/`, spec `docs/superpowers/specs/2026-10-12-page-sandbox-design.md`
-in that repo): code as data, a sandboxed frame with no session, and data only through reads the
+`components/workflow/sandbox/`, and its page-sandbox design spec, all in the
+connect-labs repo): code as data, a sandboxed frame with no session, and data only through reads the
 page makes for it as the viewer.
 
 ## The pieces
@@ -98,6 +98,10 @@ restoring or deleting one needs `agent.work` (editor) in its workspace, or edit 
 project (`agents.gates.may_edit_project`). Moving a view needs those rights where it lands as
 well, so a project lead cannot put a view on the workspace. Every save is a new version; a restore is a new
 version too, so history only grows.
+
+## Declared connections (Salesforce calls)
+
+A view may call Salesforce through canopy-web, only as it declared. `connections` on the view (snapshotted on every revision, restored with the code): `[{provider: "salesforce", as: "viewer"|"shared", agent?: slug, reads: [{method, path}], writes: [{method, path}]}]`, at most 5 entries and 50 lines each, validated on save by `apps/connections/declarations.py` against the allowlist (write lines name exact object types, no wildcards; `as: "shared"` needs `agent`). Code calls `canopy.connection.request(...)`; the page refuses anything undeclared and the server checks again against the revision the page drew. Writes need a click and an operation lease: one click opens up to 10 minutes and 500 writes within what the screen declared, closing 120 seconds after the last write; `canopy.connection.begin()` opens it first so a screen can read and dedup before writing. `as: "shared"` needs the agent's admin to have approved the project's declared lines. The page sends at most 8 calls at once across its frames and queues the rest (60 s, then a sentence). A rejection carries `e.error` and, when connecting would fix it, `e.connect_url`, which the frame can only reach through `canopy.navigate(e.connect_url)` (the viewer is asked, and it opens in a new tab). Readers see the declaration beside the declared tasks (`DeclaredConnections`), and so does a member on an app page, in the words of `lib/connectionLines.ts`: "This screen can use your Salesforce: ..." or "This screen acts as eva in Salesforce: ...". The trade and its limits: [`vault.md`](vault.md) § Calls from screens.
 
 ## Writing one (usually an agent)
 

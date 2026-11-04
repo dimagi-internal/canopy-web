@@ -48,7 +48,7 @@ from apps.mcp_apps_host import mcp_apps, mcp_apps_views
 from apps.realtime.groups import session_group
 from apps.tokens.models import HostGrant, PersonalToken
 from apps.workspaces.models import WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import declare
 from tests.fixtures import site_gateway as sg
 from tests.fixtures.host_results import META_KEY, ResultStore, facts
 from tests.fixtures.sensitive import vault_key
@@ -180,7 +180,7 @@ def w():
     """sg.world (a visitor's conversation, for `site_read`) plus a member's own
     conversation on the same site with two colleagues, each with their own grant."""
     w = sg.world()
-    publish(w["agent"], IFACE)
+    declare(w["agent"], IFACE["capabilities"])
     w["eddie"], w["vera"] = _member(w["ws"], "eddie"), _member(w["ws"], "vera")
     w["mine"] = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["owner"],
                                        metadata={"embed_app": "connect-labs"})
@@ -703,7 +703,7 @@ def test_site_read_follows_the_owners_ceiling(w, host):
     uri = _link(out.structured_content)["uri"]
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "ceiling": ["mcp__*connect_labs__marketplace_*"]}
-    publish(w["agent"], {"capabilities": caps})
+    declare(w["agent"], caps)
     host.seen.clear()
     with sg.visitor(w), pytest.raises(Exception, match="may not use"):
         sg.call(host, "site_read", {"uri": uri})
@@ -716,7 +716,7 @@ def _sensitive(w):
 
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    publish(w["agent"], {"capabilities": caps})
+    declare(w["agent"], caps)
     w["agent"].interface_published_by = w["owner"]
     w["agent"].save(update_fields=["interface_published_by"])
     box = Runner.objects.create(name="zdr", workspace=w["ws"], kind=Runner.CLOUD, status=Runner.ONLINE,
@@ -750,7 +750,7 @@ def test_site_read_is_refused_outside_the_requirements_and_never_reaches_the_hos
     if breach != "no_grant":
         sg.grant(w)
     if breach == "undeclared":
-        publish(w["agent"], IFACE)   # `connect` without `data: sensitive`
+        declare(w["agent"], IFACE["capabilities"])   # `connect` without `data: sensitive`
     if breach == "runner":
         RunnerFlag.objects.filter(runner=box).delete()
     uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]

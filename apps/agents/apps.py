@@ -6,6 +6,13 @@ class AgentsConfig(AppConfig):
     name = "apps.agents"
 
     def ready(self) -> None:
+        from . import departure  # noqa: PLC0415 — ready(): the registry loads after the app registry
+
+        departure.register()
+        from apps.events import audit  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        audit.register_workspace_resolver("agents", _audit_workspace)
+
         # Vault-key holders are told an approved device or new admin waits for a
         # zero-knowledge agent's key; the canopy-pat rotation and stale-proposal
         # expiry run on the same off-request clock.
@@ -17,6 +24,8 @@ class AgentsConfig(AppConfig):
         from apps.workspaces.models import Workspace  # noqa: PLC0415 — ready(): models load only after the app registry
 
         from .models import Agent  # noqa: PLC0415 — ready(): models load only after the app registry
+
+        from . import signals  # noqa: F401,PLC0415 — ready(): connects the task-collection page invalidation
 
         # Every agent has its own vault from the moment it exists, linked to the
         # agent (credentials.vault_members) — made here so no read path writes.
@@ -65,3 +74,17 @@ def _pat_rotation() -> None:
             proposals.expire_stale()
         except Exception:  # noqa: BLE001
             logging.getLogger(__name__).exception("proposed-project expiry failed")
+
+
+def _audit_workspace(request, path_args):
+    """The tenant of a setting changed at `/api/agents/{slug}…` (`events.audit`)."""
+    if not (request.path.startswith("/api/agents/") and "slug" in path_args):
+        return None
+    from .models import Agent  # noqa: PLC0415 — models load only after the app registry
+
+    qs = Agent.objects.filter(slug=path_args["slug"])
+    pinned = getattr(request, "workspace_slug", None)
+    if pinned:
+        qs = qs.filter(workspace__slug=pinned)
+    agent = qs.select_related("workspace").first()
+    return agent.workspace if agent is not None else None

@@ -35,6 +35,18 @@ def test_a_pass_runs_the_keeper_and_logs_a_grant(cloud_runner, monkeypatch):
     assert logs and "granted: user 9" in logs[0]
 
 
+def test_the_keeper_is_told_this_boxs_canopy_web(cloud_runner, monkeypatch):
+    """The keeper resolves canopy-web from CANOPY_WEB_API_URL alone, else production."""
+    seen = []
+    monkeypatch.setattr(cloud_runner, "BASE_URL", "https://canopy.staging.example")
+    monkeypatch.delenv("CANOPY_WEB_API_URL", raising=False)
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda argv, **kw: seen.append(kw["env"]) or _Done(""))
+    monkeypatch.setattr(cloud_runner, "_log", lambda *a, **k: None)
+    _run_inline(cloud_runner, monkeypatch)
+    assert cloud_runner.maybe_keep_vaults(now=1000.0) is True
+    assert seen[0]["CANOPY_WEB_API_URL"] == "https://canopy.staging.example"
+
+
 def test_passes_are_spaced_and_repeats_are_quiet(cloud_runner, monkeypatch):
     calls, logs = [], []
     monkeypatch.setattr(cloud_runner.subprocess, "run",

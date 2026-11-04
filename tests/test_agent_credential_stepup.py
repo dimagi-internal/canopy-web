@@ -13,6 +13,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -30,13 +31,6 @@ def fleet():
     browser = Client()
     browser.force_login(jj)
     return {"jj": jj, "ws": ws, "agent": agent, "browser": browser}
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
 
 
 def _put(client, values, **extra):
@@ -69,7 +63,7 @@ def test_an_expired_step_up_does_not_count(fleet):
 
 
 def test_a_pat_write_needs_no_step_up(fleet):
-    r = _put(Client(), {"nova-api-key": SECRET}, HTTP_AUTHORIZATION=f"Bearer {_pat(fleet['jj'])}")
+    r = _put(Client(), {"nova-api-key": SECRET}, HTTP_AUTHORIZATION=f"Bearer {pat_token(fleet['jj'])}")
     assert r.status_code == 200
 
 

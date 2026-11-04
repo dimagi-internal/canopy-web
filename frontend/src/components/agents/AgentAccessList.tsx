@@ -15,15 +15,18 @@ import {
 import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { AccessLineForm } from './AccessLineForm'
-import { ADDABLE_ROLES, ADDRESS_ONLY_KINDS, ascending, canText, roleWord } from './accessWords'
+import type { AddableRole } from './accessWords'
+import { ADDABLE_ROLES, ADDRESS_ONLY_KINDS, WRITE_ROLES, ascending, canText, lineWhat, roleWord } from './accessWords'
 import { AgentAccessPeople } from './AgentAccessPeople'
 import { AgentAdmins } from './AgentAdmins'
+import { Td, Tr } from '@/components/DataTable'
 
 // WHO HAS WHICH ROLE ON THIS AGENT — one list.
 //
 // An agent has ONE access list of (who, role) lines (docs/superpowers/specs/
-// 2026-10-30-agent-roles-and-access-list-design.md). Roles: viewer < user < editor < agent
-// admin < owner. This agent's own lines are changed here by its agent admins; lines
+// 2026-10-30-agent-roles-and-access-list-design.md, roles in 2026-11-02-agent-permissions-and-roles-design.md).
+// Roles: read only < read & write < editor < agent admin < owner; a line may instead open one
+// named capability. This agent's own lines are changed here by its agent admins; lines
 // inherited from a workspace are read-only (changed on the workspace); the owner and the
 // agent admins hold their role without a line. The server decides every rule (a refusal is
 // shown next to what was tried); this draws it.
@@ -106,11 +109,11 @@ export function AgentAccessList({
         <table className="w-full text-[12px]" data-testid="access-lines">
           <tbody>
             {data.implicit.map((i) => (
-              <tr key={`${i.role}:${i.who}`} data-testid="access-line-implicit" className="border-b border-border/50">
-                <td className="py-1 pr-3 text-foreground">{i.who}</td>
-                <td className="py-1 pr-3 text-foreground">{roleWord(i.role)}</td>
-                <td className="py-1 text-muted-foreground">{i.why} · not a line, cannot be removed here</td>
-              </tr>
+              <Tr rule="bottom-soft" key={`${i.role}:${i.who}`} data-testid="access-line-implicit">
+                <Td density="compact-gap" tone="foreground">{i.who}</Td>
+                <Td density="compact-gap" tone="foreground">{roleWord(i.role)}</Td>
+                <Td tone="muted">{i.why} · not a line, cannot be removed here</Td>
+              </Tr>
             ))}
             {own.map((l) => (
               <OwnLine
@@ -123,10 +126,10 @@ export function AgentAccessList({
               />
             ))}
             {inherited.map((l) => (
-              <tr key={`ws-${l.id}`} data-testid="access-line-inherited" className="border-b border-border/50">
-                <td className="py-1 pr-3 text-foreground">{l.who}</td>
-                <td className="py-1 pr-3 text-foreground">{roleWord(l.role)}</td>
-                <td className="py-1 text-muted-foreground">
+              <Tr rule="bottom-soft" key={`ws-${l.id}`} data-testid="access-line-inherited">
+                <Td density="compact-gap" tone="foreground">{l.who}</Td>
+                <Td density="compact-gap" tone="foreground">{lineWhat(l)}</Td>
+                <Td tone="muted">
                   set on {l.scope_workspace}
                   {l.manual_only ? ' · needs approval before anything goes out' : ''}
                   {l.scope_workspace && (
@@ -137,12 +140,12 @@ export function AgentAccessList({
                       </Link>
                     </>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
             {own.length === 0 && inherited.length === 0 && data.implicit.length === 0 && (
               <tr>
-                <td className="py-1 text-muted-foreground">Nobody yet.</td>
+                <Td tone="muted">Nobody yet.</Td>
               </tr>
             )}
           </tbody>
@@ -170,6 +173,7 @@ export function AgentAccessList({
           <AccessLineForm
             roles={data.roles}
             workspaces={workspaces.map((w) => [w.slug, w.display_name] as [string, string])}
+            doors={data.doors}
             onAdd={async (line) => {
               const added = await addAccessLine(agentSlug, line)
               setError(null)
@@ -208,45 +212,47 @@ function OwnLine({
   line: AccessLineOut
   editable: boolean
   busy: boolean
-  onPatch: (patch: { role?: 'viewer' | 'user' | 'editor'; manual_only?: boolean }) => void
+  onPatch: (patch: { role?: AddableRole; manual_only?: boolean }) => void
   onRemove: () => void
 }) {
   const addressOnly = ADDRESS_ONLY_KINDS.includes(line.kind as never)
   return (
-    <tr data-testid="access-line" className="border-b border-border/50">
-      <td className="py-1 pr-3 text-foreground">{line.who}</td>
-      <td className="py-1 pr-3">
-        {editable ? (
+    <Tr rule="bottom-soft" data-testid="access-line">
+      <Td density="compact-gap" tone="foreground">{line.who}</Td>
+      <Td density="compact-gap">
+        {editable && line.role ? (
           <select
             value={line.role}
             disabled={busy}
             aria-label={`Role for ${line.who}`}
-            onChange={(e) => onPatch({ role: e.target.value as 'viewer' | 'user' | 'editor' })}
+            onChange={(e) => onPatch({ role: e.target.value as AddableRole })}
             className="rounded-md border border-input bg-input px-1.5 py-0.5 text-[12px] text-foreground"
           >
             {ADDABLE_ROLES.map((r) => (
-              <option key={r} value={r} disabled={r === 'editor' && addressOnly}>
+              <option key={r} value={r} disabled={WRITE_ROLES.includes(r) && addressOnly}>
                 {roleWord(r)}
               </option>
             ))}
           </select>
         ) : (
-          <span className="text-foreground">{roleWord(line.role)}</span>
+          <span className="text-foreground">{lineWhat(line)}</span>
         )}
-      </td>
-      <td className="py-1 text-muted-foreground">
+      </Td>
+      <Td tone="muted">
         {editable ? (
           <span className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={line.manual_only}
-                disabled={busy}
-                aria-label={`Needs approval before anything goes out for ${line.who}`}
-                onChange={(e) => onPatch({ manual_only: e.target.checked })}
-              />
-              Needs approval before anything goes out
-            </label>
+            {line.role && (
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={line.manual_only}
+                  disabled={busy}
+                  aria-label={`Needs approval before anything goes out for ${line.who}`}
+                  onChange={(e) => onPatch({ manual_only: e.target.checked })}
+                />
+                Needs approval before anything goes out
+              </label>
+            )}
             <button
               type="button"
               disabled={busy}
@@ -260,7 +266,7 @@ function OwnLine({
         ) : (
           <span>set on this agent{line.manual_only ? ' · needs approval before anything goes out' : ''}</span>
         )}
-      </td>
-    </tr>
+      </Td>
+    </Tr>
   )
 }

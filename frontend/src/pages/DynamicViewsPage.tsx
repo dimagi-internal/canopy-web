@@ -4,6 +4,7 @@ import { createDynamicView, getDynamicViewGuide, listDynamicViews, type DynamicV
 import { useScopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
 import type { DynamicViewSource } from '@/api/dynamicViews'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /**
  * A workspace's dynamic views: AI-generated screens over canopy's own data, each
@@ -77,35 +78,35 @@ export default function DynamicViewsPage() {
       {rows && rows.length > 0 && (
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="px-2 py-1.5 font-medium">View</th>
-              <th className="px-2 py-1.5 font-medium">For</th>
-              <th className="px-2 py-1.5 text-right font-medium">Version</th>
-              <th className="px-2 py-1.5 font-medium">Last changed</th>
-            </tr>
+            <Tr rule="bottom" head="xs">
+              <Th density="tight">View</Th>
+              <Th density="tight">For</Th>
+              <Th density="tight" className="text-right">Version</Th>
+              <Th density="tight">Last changed</Th>
+            </Tr>
           </thead>
           <tbody>
             {[...rows]
               .sort((a, b) => Number(!!a.project) - Number(!!b.project) || a.title.localeCompare(b.title))
               .map((v) => (
-                <tr key={v.id} className="border-b border-border last:border-0">
-                  <td className="px-2 py-1.5">
+                <Tr rule="bottom-last" key={v.id}>
+                  <Td density="tight">
                     <Link className="font-medium hover:underline" to={scoped(`/views/${v.id}`)}>{v.title}</Link>
                     {v.description && <div className="text-xs text-muted-foreground">{v.description}</div>}
-                  </td>
-                  <td className="px-2 py-1.5">
+                  </Td>
+                  <Td density="tight">
                     {v.project ? (
                       <Link className="hover:underline" to={scoped(`/projects/${v.project}`)}>{v.project_name ?? v.project}</Link>
                     ) : (
                       <span className="text-muted-foreground">Workspace</span>
                     )}
-                  </td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{v.version}</td>
-                  <td className="px-2 py-1.5 text-muted-foreground">
+                  </Td>
+                  <Td density="tight" numeric align="right">{v.version}</Td>
+                  <Td density="tight" tone="muted">
                     {new Date(v.updated_at).toLocaleString()}
                     {v.updated_by_email ? ` · ${v.updated_by_email}` : ''}
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
           </tbody>
         </table>

@@ -37,7 +37,7 @@ export type IdeSession = {
   emdash_project?: string
   project?: string
   runner_reported?: boolean
-  /** You started it, or it was found on your own box (`SessionOut.started_by_you`). */
+  /** You started it, it was found on your own box, or an agent you asked dispatched it from your chat (`SessionOut.started_by_you`). */
   started_by_you?: boolean
   /** The session this one was started from: forked, Slack-branched or dispatched. */
   parent_session_id?: string | null

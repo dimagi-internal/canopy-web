@@ -13,11 +13,10 @@ from unittest import mock
 
 import pytest
 from asgiref.sync import async_to_sync
+from cryptography.hazmat.primitives.asymmetric import ec
 from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
-
-from cryptography.hazmat.primitives.asymmetric import ec
 
 from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
@@ -25,22 +24,16 @@ from apps.canopy_sessions import chat_keys
 from apps.canopy_sessions.models import ChatKey, RunnerBinding, Session
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey, Turn
-from tests.fixtures.vault_zk import ref
 from apps.mcp import page_tools
 from apps.mcp.tools import page as page_tool
-from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.passkeys.testing import grant_step_up
+from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.vault_zk import ref
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
 TOKEN = "ghp_not_a_real_token_0123456789"
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
 
 
 @pytest.fixture()
@@ -62,7 +55,7 @@ def world():
     browser.force_login(owner)
     grant_step_up(browser)
     return {"owner": owner, "ws": ws, "bot": bot, "agent": agent, "chat": chat,
-            "browser": browser, "agent_client": Client(HTTP_AUTHORIZATION=f"Bearer {_pat(bot)}")}
+            "browser": browser, "agent_client": Client(HTTP_AUTHORIZATION=f"Bearer {pat_token(bot)}")}
 
 
 def _share(world, session, name="GH_TOKEN", value=TOKEN):

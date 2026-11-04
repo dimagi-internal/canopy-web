@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { holdFleet, releaseFleetHold, stopFleet, type FleetHoldOut } from '@/api/harness'
 import { HoldBanner, HoldStopPanel } from './HoldStopPanel'
 
-// The SYSTEM controls (apps/harness/models.py::FleetHold, /fleet-stop): the hold and
+// The SYSTEM controls (apps/harness/models/fleet.py::FleetHold, /fleet-stop): the hold and
 // stop-everything for every workspace at once. For SYSTEM superusers
 // (`User.is_superuser`); the per-workspace pair is WorkspaceControlsCard.
 //

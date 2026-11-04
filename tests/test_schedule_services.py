@@ -10,7 +10,8 @@ from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness import schedule_turns, claim
 from apps.harness.models import AgentSchedule, Runner, RunnerAssignment, Turn
-from apps.workspaces.testing import a_member, a_workspace, enrolled
+from apps.workspaces.testing import a_member, a_workspace
+from apps.harness.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 

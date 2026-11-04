@@ -1,5 +1,5 @@
-"""A workspace editor who is only a user: the access list gives editors a `user` line, so they go
-through the capabilities like any member instead of driving the whole agent. The retired
+"""A workspace editor who is only a reader: the access list gives editors a `read_only` line, so
+they go through the capabilities like any member instead of driving the whole agent. The retired
 `editors: confined` setting is refused at publish and points at the access list.
 docs/architecture/access.md; the door-by-door matrix is in tests/test_access_matrix.py."""
 from __future__ import annotations
@@ -10,12 +10,11 @@ from django.contrib.auth.models import User
 from apps.agents import access, roles
 from apps.agents.interface import InterfaceError, parse, validate
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
-from apps.workspaces.models import Workspace, WorkspaceMembership as M
+from apps.workspaces.models import Workspace
+from apps.workspaces.models import WorkspaceMembership as M
+from tests.access_helpers import allow, declare, editors_run
 
-from tests.access_helpers import editors_run, publish
-
-ASK = {"ask": {"callers": ["member"], "tools": ["Read"]}}
-SUPPORT = {"editors": "confined", "capabilities": ASK}
+ASK = {"ask": {"tools": ["Read"]}}
 
 
 @pytest.mark.parametrize("value", ["confined", "full", "confine", "", None, True])
@@ -41,15 +40,16 @@ def w(db):
     return {"agent": agent, "owner": op, "admin": adm, "editor": ed, "viewer": vw}
 
 
-def _editors_are_users(agent, role=roles.USER):
-    """Everyone in the workspace at least editor gets only a `user` line."""
+def _editors_are_users(agent, role=roles.READ_ONLY):
+    """Everyone in the workspace at least editor gets only a `read_only` line."""
     return AgentGrant.objects.create(
         agent=agent, kind=AgentGrant.WORKSPACE, subject_workspace_id=agent.workspace_id,
         at_least="editor", role=role)
 
 
 def _support(w):
-    publish(w["agent"], {"capabilities": ASK}, editors=False)
+    declare(w["agent"], ASK)
+    allow(w["agent"], role=roles.READ_ONLY)
     _editors_are_users(w["agent"])
 
 
@@ -69,14 +69,21 @@ def test_editor_given_an_editor_line_is_full(w):
     assert (d.access, d.manual_only) == (access.FULL, False)
 
 
-def test_an_editor_whose_user_line_has_no_capability_to_use_is_refused(w):
-    publish(w["agent"], {"capabilities": {"ask": {"role": "user", "tools": ["Read"]}}}, editors=False)
-    _editors_are_users(w["agent"], roles.VIEWER)                   # a viewer line cannot use it
-    assert access.decide(w["agent"], w["editor"], verified=True).access == access.NONE
+def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
+    declare(w["agent"], {"ask": {"tools": ["Read"]}, "data": {"tools": ["Read"]}})
+    AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE,
+                              subject_workspace_id=w["agent"].workspace_id, at_least="editor",
+                              capability="data")
+    d = access.decide(w["agent"], w["editor"], verified=True, capability="data")
+    assert (d.access, d.capability) == (access.CONFINED, "data")
+    assert d.agent_role is None and d.permissions == {roles.use("data")}      # a door, not a role
+    assert access.decide(w["agent"], w["editor"], verified=True).access == access.NONE   # no `ask` line
 
 
 def test_editors_who_run_the_agent_are_full_and_manual(w):
-    publish(w["agent"], {"capabilities": ASK})
+    declare(w["agent"], ASK)
+    allow(w["agent"], role=roles.READ_ONLY)
+    editors_run(w["agent"])
     d = access.decide(w["agent"], w["editor"], verified=True)
     assert (d.access, d.manual_only) == (access.FULL, True)
 
@@ -89,7 +96,8 @@ def test_owner_and_admins_unaffected(w, who):
 
 
 def test_viewer_unaffected_by_the_editor_line(w):
-    publish(w["agent"], {"capabilities": ASK}, editors=False)
+    declare(w["agent"], ASK)
+    allow(w["agent"], role=roles.READ_ONLY)
     before = access.decide(w["agent"], w["viewer"], verified=True)
     _editors_are_users(w["agent"])
     assert access.decide(w["agent"], w["viewer"], verified=True) == before

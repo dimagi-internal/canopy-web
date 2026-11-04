@@ -433,3 +433,34 @@ class SlackMenuPost(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["session", "key"], name="slack_menu_once_per_question"),
         ]
+
+
+class SlackChoicePost(models.Model):
+    """A post carrying reply buttons (`apps/slack/choices.py`) and what became of them.
+
+    The words a button sends live here, so a click decides nothing by what it
+    carries. `chosen` is claimed under this row's lock: it is what makes a double
+    click deliver one message, and what the post is redrawn from. `thread_key` is the
+    thread the session held when posted, so a click after a detach or a move to a new
+    thread does not act.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        "canopy_sessions.Session", on_delete=models.CASCADE, related_name="slack_choice_posts",
+    )
+    channel_id = models.CharField(max_length=32)
+    slack_ts = models.CharField(max_length=32)
+    thread_key = models.CharField(max_length=128)
+    #: [{"label", "reply", "style"}], in button order.
+    actions = models.JSONField(default=list)
+    #: The post takes one choice: its first click settles every button, not just its own.
+    exclusive = models.BooleanField(default=False)
+    #: {"<button index>": {"by": Slack user id, "at": ISO time}}, each button pressed.
+    chosen = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["channel_id", "slack_ts"], name="slack_choice_post_once"),
+        ]

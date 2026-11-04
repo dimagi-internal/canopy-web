@@ -190,7 +190,12 @@ def device_key_from_proof(request: HttpRequest, agent):
         jkt = device_keys.verify_proof(request)
     except device_keys.ProofError as exc:
         logger.info("device proof refused for %s: %s", agent.slug, exc)
-        return None, f"DPoP proof refused: {exc}", None
+        reason = f"DPoP proof refused: {exc}"
+        signer = device_keys.known_key(exc.jkt) if exc.jkt else None
+        if signer is not None:
+            reason += (f". {signer.runner.name}\u2019s approved key signed it, which usually means "
+                       "that machine slept or stalled mid-request")
+        return None, reason, None
     key = device_keys.active_key_for_agent(agent, jkt)
     if key is not None:
         return key, None, None

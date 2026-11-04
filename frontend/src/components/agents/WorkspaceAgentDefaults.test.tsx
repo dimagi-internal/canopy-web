@@ -20,20 +20,20 @@ vi.mock('@/workspace/WorkspaceProvider', () => ({
 const { WorkspaceAgentDefaults } = await import('./WorkspaceAgentDefaults')
 
 const LINE: AccessLineOut = {
-  id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'viewer',
+  id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'read_only', capability: '', include_below: false,
   user_id: null, subject_workspace: 'connect', at_least: '', domain: '', verified: false, manual_only: false, note: '',
   granted_by_email: null, granted_at: null, can_edit: true, warning: '',
 }
 
 const ROLES: AgentDefaultsOut['roles'] = [
-  { role: 'owner', can: ['ask', 'use what it publishes', 'run the whole agent', 'change its skills and capabilities', 'configure it', 'transfer or delete it'] },
-  { role: 'admin', can: ['ask', 'use what it publishes', 'run the whole agent', 'change its skills and capabilities', 'configure it'] },
-  { role: 'editor', can: ['ask', 'use what it publishes', 'run the whole agent', 'change its skills and capabilities'] },
-  { role: 'user', can: ['ask', 'use what it publishes'] },
-  { role: 'viewer', can: ['ask'] },
+  { role: 'owner', can: ['ask', 'drive the whole agent', 'change its skills and capabilities', 'configure it', 'transfer or delete it'], permissions: [] },
+  { role: 'admin', can: ['ask', 'drive the whole agent', 'change its skills and capabilities', 'configure it'], permissions: [] },
+  { role: 'editor', can: ['ask', 'drive the whole agent', 'change its skills and capabilities'], permissions: [] },
+  { role: 'read_write', can: ['ask', 'drive the whole agent'], permissions: [] },
+  { role: 'read_only', can: ['ask'], permissions: [] },
 ]
 const defaults = (lines: AccessLineOut[], o: Partial<AgentDefaultsOut> = {}): AgentDefaultsOut =>
-  ({ lines, roles: ROLES, can_edit: true, can_give_editor: false, ...o })
+  ({ lines, roles: ROLES, can_edit: true, can_give_write: false, ...o })
 
 afterEach(() => {
   cleanup()
@@ -50,14 +50,19 @@ describe('WorkspaceAgentDefaults', () => {
     await waitFor(() => expect(removeAgentDefault).toHaveBeenCalledWith('connect', 7))
   })
 
-  it('offers editor only to the workspace owner', async () => {
+  it('offers every role that drives the whole agent only to the workspace owner', async () => {
     listAgentDefaults.mockResolvedValue(defaults([]))
     const { unmount } = render(<WorkspaceAgentDefaults workspace="connect" />)
-    expect(((await screen.findByRole('radio', { name: /editor/i })) as HTMLInputElement).disabled).toBe(true)
+    for (const name of [/editor/i, /Read & write/]) {
+      expect(((await screen.findByRole('radio', { name })) as HTMLInputElement).disabled).toBe(true)
+    }
+    expect(((await screen.findByRole('radio', { name: /Read only/ })) as HTMLInputElement).disabled).toBe(false)
     unmount()
-    listAgentDefaults.mockResolvedValue(defaults([], { can_give_editor: true }))
+    listAgentDefaults.mockResolvedValue(defaults([], { can_give_write: true }))
     render(<WorkspaceAgentDefaults workspace="connect" />)
-    expect(((await screen.findByRole('radio', { name: /editor/i })) as HTMLInputElement).disabled).toBe(false)
+    for (const name of [/editor/i, /Read & write/]) {
+      expect(((await screen.findByRole('radio', { name })) as HTMLInputElement).disabled).toBe(false)
+    }
   })
 
   it('adds a default and shows a refusal inline', async () => {
@@ -65,12 +70,13 @@ describe('WorkspaceAgentDefaults', () => {
     addAgentDefault.mockRejectedValueOnce(new Error('changing a workspace\'s default access takes a workspace admin'))
     render(<WorkspaceAgentDefaults workspace="connect" />)
     fireEvent.change(await screen.findByLabelText('Who'), { target: { value: 'workspace' } })
+    fireEvent.click(screen.getByRole('radio', { name: /Read only/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Add default' }))
     expect((await screen.findByRole('alert')).textContent).toContain('takes a workspace admin')
     addAgentDefault.mockResolvedValueOnce(LINE)
     fireEvent.click(screen.getByRole('button', { name: 'Add default' }))
     await waitFor(() =>
-      expect(addAgentDefault).toHaveBeenLastCalledWith('connect', expect.objectContaining({ kind: 'workspace', workspace: 'connect', role: 'user' })),
+      expect(addAgentDefault).toHaveBeenLastCalledWith('connect', expect.objectContaining({ kind: 'workspace', workspace: 'connect', role: 'read_only' })),
     )
   })
 

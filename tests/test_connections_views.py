@@ -1,6 +1,7 @@
 """The browser legs of the connections flow (start, callback), person and agent.
 
-The service layer is covered in `test_connections_services.py`; this pins what
+The service layer is covered in `test_connections_services.py` and
+`test_connections_connect.py`; this pins what
 only the views decide: who may start a flow for whom, where the browser lands
 afterwards, that `return_to` cannot leave the site, and that an agent flow is
 re-authorized at completion (admin can be revoked between the two legs).
@@ -17,14 +18,16 @@ from django.urls import reverse
 from apps.agents.models import Agent
 from apps.connections.models import Connection
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.fixtures.connections import FakeSF, _resp, _token_body, sf_app
+from tests.fixtures.connections import FakeSF, _resp, _token_body, sf_app, vault_key
 
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
 def user():
-    return get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    u = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(u)  # a connection is sealed to it
+    return u
 
 
 @pytest.fixture
@@ -78,15 +81,23 @@ def test_start_redirects_to_salesforce_for_self(client):
     assert q["code_challenge_method"] == ["S256"]
 
 
-def test_full_person_flow_connects_and_returns(client, user):
+def test_full_person_flow_connects_and_lands_on_the_share_screen(client, user):
     state = _state(_start(client, return_to="/settings?tab=x"))
     with FakeSF():
         resp = _callback(client, state)
-    path, q = _landing(resp)
-    assert path == "/settings"
-    assert q == {"tab": "x", "connection": "salesforce", "status": "connected"}
     conn = Connection.objects.get()
     assert conn.user_id == user.pk and conn.agent_id is None
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/settings?tab=x"})
+
+
+def test_a_refused_person_flow_lands_back_and_stores_nothing(client, user):
+    state = _state(_start(client, return_to="/settings?tab=x"))
+    with FakeSF(identity=_resp(403, {"error": "nope"})):
+        resp = _callback(client, state)
+    path, q = _landing(resp)
+    assert path == "/settings"
+    assert q == {"tab": "x", "connection": "salesforce", "status": "error", "reason": "provider_error"}
+    assert not Connection.objects.exists()
 
 
 def test_start_for_agent_requires_admin(client, user, eva):
@@ -102,8 +113,9 @@ def test_agent_flow_stores_agent_owned_connection(client, eva):
     state = _state(_start(client, agent="eva"))
     with FakeSF():
         resp = _callback(client, state)
-    assert _landing(resp)[1]["status"] == "connected"
-    assert Connection.objects.get().agent_id == eva.pk
+    conn = Connection.objects.get()
+    assert conn.agent_id == eva.pk
+    assert _landing(resp)[0] == f"/w/w/connections/{conn.pk}/connected"
 
 
 def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):
@@ -123,9 +135,14 @@ def test_callback_refuses_when_admin_revoked_between_legs(client, user, eva):
                                  "/\t/evil.example", "/\r\n/evil.example", "/x\nLocation: //evil.example"])
 def test_return_to_rejects_offsite(client, bad):
     state = _state(_start(client, return_to=bad))
-    with FakeSF():
+    with FakeSF(identity=_resp(403, {"error": "nope"})):          # refused: lands on return_to
         resp = _callback(client, state)
     assert _landing(resp)[0] == "/settings"
+    assert "evil" not in resp["Location"]
+    state = _state(_start(client, return_to=bad))
+    with FakeSF():                                                # connected: carried to the share screen
+        resp = _callback(client, state)
+    assert _landing(resp)[1] == {"return_to": "/settings"}
     assert "evil" not in resp["Location"]
 
 
@@ -268,3 +285,66 @@ def test_a_provider_error_at_authorize_lands_as_provider_error(client):
     resp = client.get(reverse("connections_callback", args=["salesforce", "w"]),
                       {"error": "temporarily_unavailable", "state": state})
     assert _landing(resp)[1]["reason"] == "provider_error"
+
+
+def test_a_lend_with_limits_carries_them_through_to_the_share_screen(client, eva):
+    state = _state(_start(client, lend_minutes="240", owner_turns_only="1", for_agent="eva", return_to="/w/w/views/2"))
+    with FakeSF():
+        resp = _callback(client, state)
+    conn = Connection.objects.get()
+    assert conn.owner_turns_only is True and conn.expires_at is not None
+    left = (conn.expires_at - conn.created_at).total_seconds()
+    assert 239 * 60 < left <= 240 * 60
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/w/w/views/2", "agent": "eva"})
+
+
+def test_a_connect_with_nothing_asked_lands_on_the_connected_screen(client):
+    with FakeSF():
+        resp = _callback(client, _state(_start(client, return_to="/w/w/views/2")))
+    conn = Connection.objects.get()
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/connected", {"return_to": "/w/w/views/2"})
+
+
+def test_a_connect_naming_an_agent_lands_on_share_with_it_ticked(client, eva):
+    with FakeSF():
+        resp = _callback(client, _state(_start(client, for_agent="eva", return_to="/w/w/views/2")))
+    conn = Connection.objects.get()
+    assert not conn.limited
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/w/w/views/2", "agent": "eva"})
+
+
+@pytest.mark.parametrize("limit", [{"lend_minutes": "60"}, {"owner_turns_only": "1"}])
+def test_a_connect_naming_limits_lands_on_share(client, limit):
+    with FakeSF():
+        resp = _callback(client, _state(_start(client, return_to="/w/w/views/2", **limit)))
+    conn = Connection.objects.get()
+    assert _landing(resp) == (f"/w/w/connections/{conn.pk}/share", {"return_to": "/w/w/views/2"})
+
+
+def test_a_reconnect_lifting_the_limits_lands_on_the_connected_screen(client):
+    with FakeSF():
+        _callback(client, _state(_start(client, lend_minutes="60")))
+        resp = _callback(client, _state(_start(client)))
+    assert _landing(resp)[0].endswith("/connected")
+
+
+def test_a_reconnect_naming_no_limits_is_a_standing_connection(client):
+    with FakeSF():
+        _callback(client, _state(_start(client, lend_minutes="60", owner_turns_only="1")))
+        _callback(client, _state(_start(client)))
+    conn = Connection.objects.get()
+    assert conn.expires_at is None and conn.owner_turns_only is False
+
+
+@pytest.mark.parametrize("minutes", ["4", "10081", "soon", "-5"])
+def test_a_bad_time_limit_is_refused_rather_than_dropped(client, minutes):
+    resp = _start(client, lend_minutes=minutes, return_to="/settings")
+    assert _landing(resp)[1]["reason"] == "bad_lend"
+    assert not client.session.get("connections_oauth")
+
+
+def test_for_agent_must_look_like_a_slug(client):
+    state = _state(_start(client, for_agent="../../x", return_to="/settings"))
+    with FakeSF():
+        resp = _callback(client, state)
+    assert "agent" not in _landing(resp)[1]

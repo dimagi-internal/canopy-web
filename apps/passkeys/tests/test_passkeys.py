@@ -17,6 +17,7 @@ from django.test import Client
 from apps.passkeys import stepup
 from apps.passkeys.models import Passkey
 from apps.passkeys.testing import SoftAuthenticator, grant_step_up
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -31,13 +32,6 @@ def browser(jj):
     c = Client()
     c.force_login(jj)
     return c
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
 
 
 def _post(client, path, body=None, **extra):
@@ -120,7 +114,7 @@ def test_a_registration_without_user_verification_is_refused(browser):
 
 
 def test_a_token_cannot_register_a_passkey(jj):
-    r = _post(Client(), "/api/passkeys/register/begin", HTTP_AUTHORIZATION=f"Bearer {_pat(jj)}")
+    r = _post(Client(), "/api/passkeys/register/begin", HTTP_AUTHORIZATION=f"Bearer {pat_token(jj)}")
     assert r.status_code == 403
     assert r.json()["error"] == "browser_session_required"
 
@@ -252,7 +246,7 @@ def test_a_step_up_belongs_to_the_user_who_earned_it(jj):
 
 
 def test_a_token_can_never_step_up(jj):
-    r = _post(Client(), "/api/passkeys/step-up/begin", HTTP_AUTHORIZATION=f"Bearer {_pat(jj)}")
+    r = _post(Client(), "/api/passkeys/step-up/begin", HTTP_AUTHORIZATION=f"Bearer {pat_token(jj)}")
     assert r.status_code == 403 and r.json()["error"] == "browser_session_required"
 
 
@@ -311,6 +305,6 @@ def test_vault_setup_is_done_once_the_person_has_a_vault_key(jj, browser):
 
 def test_vault_setup_is_never_required_of_a_token(jj):
     # A token can never step up, so it could never make a vault key.
-    res = Client().get("/api/vault/setup", HTTP_AUTHORIZATION=f"Bearer {_pat(jj)}")
+    res = Client().get("/api/vault/setup", HTTP_AUTHORIZATION=f"Bearer {pat_token(jj)}")
     assert res.status_code == 200, res.content
     assert res.json()["required"] is False

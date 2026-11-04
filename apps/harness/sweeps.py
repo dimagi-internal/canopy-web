@@ -15,11 +15,11 @@ from django.utils import timezone
 
 from . import sensitivity
 from .claim import sweep_expired_leases
-from .closing import close_turn
 from .drills import expire_stale_drills
 from .models import FleetHold, Turn
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 from .services import wake_due_runners as _wake_due_runners
+from .turn_close import close_turn
 from .waiting import note_waiting_turns
 
 logger = logging.getLogger(__name__)

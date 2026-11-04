@@ -30,8 +30,17 @@ import pytest
 from asgiref.sync import async_to_sync
 from canopy_sdk import contract
 from canopy_sdk.host import (
-    ClientKeyResolver, DPoPGate, DPoPRefused, GrantHandler, GrantRefused, HostConfig, ResourceVerifier,
-    authorization_server_metadata, delegated_principal, issue_id_jag, sign_visitor_assertion,
+    ClientKeyResolver,
+    DPoPGate,
+    DPoPRefused,
+    GrantHandler,
+    GrantRefused,
+    HostConfig,
+    ResourceVerifier,
+    authorization_server_metadata,
+    delegated_principal,
+    issue_id_jag,
+    sign_visitor_assertion,
 )
 from canopy_sdk.keys import generate_private_key, public_pem
 from canopy_sdk.stores import MemoryCache, MemoryJtiStore, MemoryTokenStore
@@ -44,15 +53,15 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import decrypt_secret
+from apps.embedding import assertions
 from apps.harness import caller_tokens
 from apps.harness.models import Turn
+from apps.host_grants import client_identity, host_gateway, outbound
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
-from apps.host_grants import client_identity, host_gateway, outbound
-from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 from tests.fixtures import passkey_confirm
 
 pytestmark = pytest.mark.django_db
@@ -62,7 +71,7 @@ RESOURCE = "https://host.test/mcp/"
 TOKEN_ENDPOINT = "https://host.test/o/token/"
 SUBJECT = "u-42"
 IFACE = {"capabilities": {
-    "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
+    "connect": {"sites": ["connect-labs"],
                 "ceiling": ["mcp__*connect_labs__marketplace_*"],
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
 }}
@@ -156,7 +165,10 @@ def site(host):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(agent, IFACE)
+    declare(agent, IFACE["capabilities"])
+    allow(agent, capability="connect", contact=True)
+    allow(agent, capability="connect")
+    editors_run(agent)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     # What the host publishes, registered in canopy.
     app.public_keys = [public_pem(host.key)]
@@ -316,16 +328,15 @@ def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site
 
     from django.utils import timezone
 
+    from apps.harness.claim import claim_next_turn
     from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
     from apps.harness.routing import PROFILES_VERSION
-    from apps.harness.claim import claim_next_turn
 
     settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
     host.config = dataclasses.replace(host.config, runner_requirements=("sensitive_data",))
     # A sensitive conversation runs only in a capability that handles sensitive data (spec
     # 2026-10-22-sensitive-data-agents §5).
-    publish(site["agent"], {"capabilities": {"connect": {
-        **IFACE["capabilities"]["connect"], "data": "sensitive"}}})
+    declare(site["agent"], {"connect": {**IFACE["capabilities"]["connect"], "data": "sensitive"}})
     r = _arrive(host, scopes=(), member=False)
     assert r.status_code == 200, r.content
     auth = {"HTTP_AUTHORIZATION": f"Bearer {r.json()['token']}"}

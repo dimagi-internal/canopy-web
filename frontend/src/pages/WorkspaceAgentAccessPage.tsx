@@ -5,14 +5,15 @@ import { clsx } from 'clsx'
 import { grantAgentAdmin, revokeAgentAdmin } from '@/api/agents'
 import {
   getAgentTopology,
-  WorkspaceApiError,
   type AgentEdgeOut,
   type AgentTopologyAgentOut,
   type AgentTopologyOut,
 } from '@/api/workspaces'
 import { edgeKey, explainEdge, grantable, indexEdges } from './agentTopology'
+import { Td, Th, Tr } from '@/components/DataTable'
 import { TopologyViews } from './topology/TopologyViews'
 import { scopedPath } from '../lib/scopedLinks'
+import { ApiError } from '@/api/problem'
 
 // THE AGENT TOPOLOGY: which agent can make which other agent do what.
 //
@@ -59,7 +60,7 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
       .then((t) => { if (!off) setTopo(t) })
       .catch((e: unknown) => {
         if (off) return
-        if (e instanceof WorkspaceApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) setForbidden(true)
         else setError(e instanceof Error ? e.message : 'Could not load the agent topology')
       })
     return () => { off = true }
@@ -154,36 +155,36 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
           <div className="overflow-x-auto">
             <table className="text-[12px]" data-testid="agent-matrix">
               <thead>
-                <tr className="border-b border-border">
-                  <th className="py-1.5 pr-3 text-left font-medium text-muted-foreground">sends ↓ · receives →</th>
+                <Tr rule="bottom">
+                  <Th density="cozy-gap" align="left" className="text-muted-foreground">sends ↓ · receives →</Th>
                   {list.map((dst) => (
-                    <th key={dst.slug} className="px-2 py-1.5 text-center font-medium text-foreground">
+                    <Th key={dst.slug} density="tight" className="text-center text-foreground">
                       <Link to={scopedPath(dst.workspace, `/agents/${dst.slug}/settings`)} className="hover:underline">
                         {dst.name}
                       </Link>
                       <div className="font-normal text-muted-foreground">{dst.workspace}</div>
-                    </th>
+                    </Th>
                   ))}
-                </tr>
+                </Tr>
               </thead>
               <tbody>
                 {list.map((src) => (
-                  <tr key={src.slug} className={clsx('border-b border-border', !src.login_email && 'opacity-50')}>
-                    <th className="py-1.5 pr-3 text-left font-normal">
+                  <Tr rule="bottom" key={src.slug} className={clsx(!src.login_email && 'opacity-50')}>
+                    <Th density="cozy-gap" weight="normal" align="left">
                       <span className="font-medium text-foreground">{src.name}</span>{' '}
                       <span className="text-muted-foreground">{src.workspace}</span>
                       <div className="text-[11px] text-muted-foreground">{src.login_email ?? 'no login'}</div>
-                    </th>
+                    </Th>
                     {list.map((dst) => {
                       if (src.slug === dst.slug) {
-                        return <td key={dst.slug} className="px-2 text-center text-foreground-subtle">—</td>
+                        return <Td density="none" align="center" key={dst.slug} className="px-2 text-foreground-subtle">—</Td>
                       }
                       const key = edgeKey(src.slug, dst.slug)
                       const e = edges.get(key)
                       if (!e) return <td key={dst.slug} />
                       const c = CELL[e.access]
                       return (
-                        <td key={dst.slug} className="px-1 text-center">
+                        <Td density="none" align="center" key={dst.slug} className="px-1">
                           <button
                             type="button"
                             onClick={() => setPicked(picked === key ? null : key)}
@@ -200,10 +201,10 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
                               <span className="ml-1 text-[10px] text-muted-foreground">{e.capabilities.join(',')}</span>
                             )}
                           </button>
-                        </td>
+                        </Td>
                       )
                     })}
-                  </tr>
+                  </Tr>
                 ))}
               </tbody>
             </table>

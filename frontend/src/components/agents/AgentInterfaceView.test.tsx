@@ -37,27 +37,38 @@ vi.mock('@/api/agents', async (orig) => ({
 
 const { AgentInterfaceView } = await import('./AgentInterfaceView')
 
+const DEFAULT_PROFILE = {
+  entry: null,
+  tools: ['Read', 'Grep', 'Glob', 'Write', 'mcp__*canopy-web__who_is_asking'],
+  bash: ['canopy email read --repo . {thread_id}'],
+  read_paths: ['{cwd}/**'],
+  write_paths: ['{cwd}/.echo-read/*'],
+}
+const READ_DEFAULT = { source: 'default', override: null, default_profile: DEFAULT_PROFILE, default_profile_version: 1 }
+const READ_OVERRIDE = { ...READ_DEFAULT, source: 'override', override: 'ask' }
+
 const PUBLISHED = {
+  read_mode: READ_OVERRIDE,
   interface: {
     capabilities: { ask: {
-      description: 'Ask ACE.', role: 'viewer',
-      tools: ['Read'], bash: ['canopy email read --repo . {thread_id}'], input: { opportunity_id: 'integer' },
+      description: 'Ask ACE.',
+      tools: ['Read'], bash: ['canopy email read --repo . {thread_id}'],
     } },
   },
-  source: 'capabilities:\n  ask:\n    role: viewer  # comment kept\n',
-  yaml: 'capabilities:\n  ask:\n    role: viewer  # comment kept\n',
+  source: 'capabilities:\n  ask:\n    description: Ask ACE.  # comment kept\n',
+  yaml: 'capabilities:\n  ask:\n    description: Ask ACE.  # comment kept\n',
   is_default: false,
   published_at: '2026-09-21T12:00:00Z', published_by_email: 'op@dimagi.com',
 }
 
 const SENSITIVE_SOURCE = `capabilities:
   data:
-    role: user
     sites: [connect-labs]
     data: sensitive   # vouched
     tools: [Read]
 `
 const DEFAULT = {
+  read_mode: READ_DEFAULT,
   interface: { version: 1, capabilities: {} },
   source: '', yaml: '', is_default: true, published_at: null, published_by_email: null,
 }
@@ -68,7 +79,8 @@ const accepts = (draft: { interface?: unknown; source?: string }) => ({
 })
 
 const SENSITIVE_ON = {
-  interface: { capabilities: { data: { role: 'user', sites: ['connect-labs'], data: 'sensitive', tools: ['Read'] } } },
+  read_mode: READ_DEFAULT,
+  interface: { capabilities: { data: { sites: ['connect-labs'], data: 'sensitive', tools: ['Read'] } } },
   source: SENSITIVE_SOURCE, published_at: '2026-10-22T09:00:00Z', published_by_email: 'jj@dimagi.com',
 }
 const change = (id: number, operation: string, body: unknown, via = 'ui') => ({
@@ -90,48 +102,67 @@ afterEach(() => {
 })
 
 describe('AgentInterfaceView', () => {
-  it('says an agent on the default offers no capabilities, and offers no edit to a non-admin', async () => {
+  it('says an agent on the default has read mode and no doors, and offers no edit to a non-admin', async () => {
     getAgentInterface.mockResolvedValue(DEFAULT)
     render(<AgentInterfaceView agentSlug="echo" agentName="Echo" />)
-    expect((await screen.findByTestId('interface-default')).textContent).toMatch(/offers no capabilities \(default\).*Access setting/)
-    expect(screen.queryByRole('button', { name: /Add capabilities|Edit/ })).toBeNull()
+    expect((await screen.findByTestId('interface-default')).textContent).toMatch(/has no doors \(default\), only read mode.*Access setting/)
+    expect(screen.queryByRole('button', { name: /Add a door|Edit|Override/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Reset/ })).toBeNull()
   })
 
-  it('shows each capability with its lowest role and inputs, no access summary, and no MCP tool', async () => {
+  it('shows the default read profile in plain words', async () => {
+    getAgentInterface.mockResolvedValue(DEFAULT)
+    render(<AgentInterfaceView agentSlug="echo" agentName="Echo" />)
+    const list = await screen.findByTestId('read-mode-profile')
+    expect(list.textContent).toContain('Can read: {cwd}/**')
+    expect(list.textContent).toContain('Can write only to: {cwd}/.echo-read/*')
+    expect(list.textContent).toContain('Can run only these commands: canopy email read --repo . {thread_id}')
+    expect(list.textContent).toMatch(/no command/)
+    expect(screen.getByTestId('read-mode-default').textContent).toMatch(/on every agent from the start/)
+  })
+
+  it('says an agent that published an ask overrides read mode whole, and offers to go back', async () => {
+    getAgentInterface.mockResolvedValue(PUBLISHED)
+    saveAgentInterfaceModel.mockImplementation(async (_s: string, m: unknown) => ({ ...DEFAULT, interface: m }))
+    render(<AgentInterfaceView agentSlug="ace" agentName="ACE" canEdit />)
+    expect((await screen.findByTestId('read-mode-override')).textContent).toMatch(/replaces canopy's default read mode whole/)
+    expect(screen.queryByTestId('read-mode-profile')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Override' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to the default read mode' }))
+    await waitFor(() => expect(saveAgentInterfaceModel).toHaveBeenCalled())
+    expect(saveAgentInterfaceModel.mock.calls[0][1].capabilities).not.toHaveProperty('ask')
+    expect(await screen.findByTestId('read-mode-default')).toBeTruthy()
+  })
+
+  it('shows each capability with no role column, no access summary, no inputs and no MCP tool', async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
     render(<AgentInterfaceView agentSlug="ace" />)
     const row = await screen.findByTestId('interface-capability')
     expect(screen.queryByTestId('summary-line')).toBeNull()
     expect(screen.queryByTestId('access-summary')).toBeNull()
     expect(screen.queryByTestId('interface-warning')).toBeNull()
-    expect(row.textContent).toContain('Viewer')
-    expect(row.textContent).toContain('Inputs: opportunity_id: integer')
+    expect(screen.queryByText('Lowest role')).toBeNull()
+    expect(row.textContent).not.toContain('Inputs')
     expect(row.textContent).not.toContain('ace__ask')
     expect(row.textContent).toContain('canopy email read --repo . {thread_id}')
     expect(screen.getByText(/set on the Access setting/)).toBeTruthy()
   })
 
-  it('a capability with no role reads as User, the default', async () => {
-    getAgentInterface.mockResolvedValue({ ...PUBLISHED, interface: { capabilities: { act: { tools: ['Read'] } } } })
-    render(<AgentInterfaceView agentSlug="ace" />)
-    expect((await screen.findByTestId('interface-capability')).textContent).toContain('User')
-  })
-
-  it('an admin adds the starter ask capability for colleagues and saves it as a viewer capability', async () => {
+  it('an admin overrides read mode from a copy of the default and saves it with no role', async () => {
     getAgentInterface.mockResolvedValue(DEFAULT)
     saveAgentInterfaceModel.mockImplementation(async (_s: string, m: unknown) => ({ ...PUBLISHED, interface: m }))
     render(<AgentInterfaceView agentSlug="echo" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Add capabilities' }))
-    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Add an ask capability for colleagues' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Override' }))
+    expect(screen.queryByRole('button', { name: 'Add an ask capability for colleagues' })).toBeNull()   // the button is gone
     expect((await screen.findAllByTestId('capability-card')).length).toBe(1)
-    expect((screen.getByLabelText('ask role') as HTMLSelectElement).value).toBe('viewer')
+    expect((screen.getByLabelText('ask tools') as HTMLTextAreaElement).value).toContain('Grep')        // a copy of the default
+    expect(screen.queryByLabelText('ask role')).toBeNull()      // a capability has no role to pick
     await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(saveAgentInterfaceModel).toHaveBeenCalled())
     const sent = saveAgentInterfaceModel.mock.calls[0][1]
-    expect(sent.capabilities.ask.role).toBe('viewer')
+    expect(sent.capabilities.ask.write_paths).toEqual(['{cwd}/.echo-read/*'])
+    expect(sent.capabilities.ask).not.toHaveProperty('role')
     expect(sent.capabilities.ask).not.toHaveProperty('callers')
     expect(sent).not.toHaveProperty('full')
     expect(await screen.findByTestId('interface-capability')).toBeTruthy()
@@ -141,7 +172,8 @@ describe('AgentInterfaceView', () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
     render(<AgentInterfaceView agentSlug="ace" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
-    await screen.findByLabelText('ask role')
+    await screen.findByLabelText('ask description')
+    expect(screen.queryByLabelText('ask role')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add who' })).toBeNull()
     expect(screen.queryByTestId('caller-row')).toBeNull()
     expect(screen.queryByText(/Whole agent/)).toBeNull()
@@ -149,35 +181,14 @@ describe('AgentInterfaceView', () => {
     expect(screen.getAllByText(/Access setting/).length).toBeGreaterThan(0)
   })
 
-  it('changes a capability to a user capability with the role choice, and sends that role', async () => {
-    getAgentInterface.mockResolvedValue(PUBLISHED)
-    saveAgentInterfaceModel.mockImplementation(async (_s: string, m: unknown) => ({ ...PUBLISHED, interface: m }))
-    render(<AgentInterfaceView agentSlug="ace" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
-    const role = (await screen.findByLabelText('ask role')) as HTMLSelectElement
-    expect(role.value).toBe('viewer')
-    expect(Array.from(role.options).map((o) => [o.value, o.text])).toEqual([
-      ['viewer', 'Viewer — anyone the access list gives at least viewer'],
-      ['user', 'User — only users and above'],
-    ])
-    fireEvent.change(role, { target: { value: 'user' } })
-    await waitFor(() =>
-      expect(validateAgentInterface).toHaveBeenLastCalledWith('ace', expect.objectContaining({
-        interface: expect.objectContaining({ capabilities: expect.objectContaining({ ask: expect.objectContaining({ role: 'user' }) }) }),
-      })))
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(saveAgentInterfaceModel).toHaveBeenCalled())
-    expect(saveAgentInterfaceModel.mock.calls[0][1].capabilities.ask.role).toBe('user')
-  })
-
-  it('a capability with no role shows User in the form, and a site capability starts as a viewer capability', async () => {
+  it('a site capability starts with no role either', async () => {
     getAgentInterface.mockResolvedValue({ ...DEFAULT, interface: { capabilities: { act: { tools: ['Read'] } } }, is_default: false })
     render(<AgentInterfaceView agentSlug="ace" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
-    expect(((await screen.findByLabelText('act role')) as HTMLSelectElement).value).toBe('user')
+    await screen.findByLabelText('act description')
     fireEvent.click(screen.getByRole('button', { name: 'Add a connect-labs site capability' }))
-    expect(((await screen.findByLabelText('connect role')) as HTMLSelectElement).value).toBe('viewer')
+    await screen.findByLabelText('connect description')
+    expect(screen.queryByLabelText('connect role')).toBeNull()
   })
 
   it("shows the server parser's reason next to the field it is about, and will not save", async () => {
@@ -215,16 +226,16 @@ describe('AgentInterfaceView', () => {
 
   it('moves between the form and the YAML through the server, and saves the YAML as written', async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
-    saveAgentInterface.mockResolvedValue({ ...PUBLISHED, source: 'capabilities:\n  ask:\n    role: user\n' })
+    saveAgentInterface.mockResolvedValue({ ...PUBLISHED, source: 'capabilities:\n  ask:\n    description: Ask\n' })
     render(<AgentInterfaceView agentSlug="ace" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
     fireEvent.click(await screen.findByRole('tab', { name: 'Advanced: YAML' }))
     const box = (await screen.findByLabelText('Interface (YAML)')) as HTMLTextAreaElement
-    fireEvent.change(box, { target: { value: 'capabilities:\n  ask:\n    role: user\n' } })
-    await waitFor(() => expect(validateAgentInterface).toHaveBeenLastCalledWith('ace', { source: 'capabilities:\n  ask:\n    role: user\n' }))
+    fireEvent.change(box, { target: { value: 'capabilities:\n  ask:\n    description: Ask\n' } })
+    await waitFor(() => expect(validateAgentInterface).toHaveBeenLastCalledWith('ace', { source: 'capabilities:\n  ask:\n    description: Ask\n' }))
     await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('ace', 'capabilities:\n  ask:\n    role: user\n'))
+    await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('ace', 'capabilities:\n  ask:\n    description: Ask\n'))
   })
 
   it('"Reset to default" replaces unpublish and returns the default', async () => {
@@ -233,7 +244,7 @@ describe('AgentInterfaceView', () => {
     render(<AgentInterfaceView agentSlug="ace" agentName="ACE" canEdit />)
     expect(screen.queryByRole('button', { name: /Unpublish/ })).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: 'Reset to default' }))
-    expect((await screen.findByTestId('interface-default')).textContent).toMatch(/offers no capabilities \(default\)/)
+    expect((await screen.findByTestId('interface-default')).textContent).toMatch(/has no doors \(default\)/)
   })
 })
 
@@ -241,7 +252,7 @@ describe('AgentInterfaceView — the sensitive-data setting', () => {
   it('the form checkbox says what turning it on vouches for', async () => {
     getAgentInterface.mockResolvedValue(DEFAULT)
     render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Add capabilities' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a door' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add a connect-labs site capability' }))
     expect(screen.queryByTestId('sensitive-on')).toBeNull()
     fireEvent.click(await screen.findByLabelText('connect handles sensitive data'))
@@ -259,7 +270,7 @@ describe('AgentInterfaceView — the sensitive-data setting', () => {
   it('marks each capability that handles sensitive data in the table', async () => {
     getAgentInterface.mockResolvedValue({
       ...SENSITIVE_ON,
-      interface: { capabilities: { ...SENSITIVE_ON.interface.capabilities, ask: { role: 'viewer', tools: ['Read'] } } },
+      interface: { capabilities: { ...SENSITIVE_ON.interface.capabilities, ask: { tools: ['Read'] } } },
     })
     render(<AgentInterfaceView agentSlug="labsdata" />)
     const rows = await screen.findAllByTestId('interface-capability')
@@ -273,7 +284,7 @@ describe('AgentInterfaceView — the sensitive-data setting', () => {
     getAgentInterfaceHistory.mockResolvedValue([
       change(3, 'reset_interface', {}),
       change(2, 'publish_interface', { source: SENSITIVE_SOURCE }),
-      change(1, 'publish_interface', { source: 'capabilities:\n  ask:\n    role: viewer\n' }, 'mcp'),
+      change(1, 'publish_interface', { source: 'capabilities:\n  ask:\n    description: Ask\n' }, 'mcp'),
     ])
     render(<AgentInterfaceView agentSlug="labsdata" />)
     const rows = await screen.findAllByTestId('interface-change')
@@ -284,7 +295,7 @@ describe('AgentInterfaceView — the sensitive-data setting', () => {
   })
 
   it('the switch turns one capability on at once, like any other edit', async () => {
-    const off = { ...SENSITIVE_ON, interface: { capabilities: { data: { role: 'user', sites: ['connect-labs'], tools: ['Read'] } } } }
+    const off = { ...SENSITIVE_ON, interface: { capabilities: { data: { sites: ['connect-labs'], tools: ['Read'] } } } }
     getAgentInterface.mockResolvedValue(off)
     setCapabilitySensitive.mockResolvedValue(SENSITIVE_ON)
     render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
@@ -297,7 +308,7 @@ describe('AgentInterfaceView — the sensitive-data setting', () => {
 
   it('the switch turns one capability off at once, and is not offered to a non-admin', async () => {
     getAgentInterface.mockResolvedValue(SENSITIVE_ON)
-    setCapabilitySensitive.mockResolvedValue({ ...SENSITIVE_ON, interface: { capabilities: { data: { role: 'user', sites: ['connect-labs'], tools: ['Read'] } } } })
+    setCapabilitySensitive.mockResolvedValue({ ...SENSITIVE_ON, interface: { capabilities: { data: { sites: ['connect-labs'], tools: ['Read'] } } } })
     const { unmount } = render(<AgentInterfaceView agentSlug="labsdata" />)
     await screen.findByTestId('handles-sensitive')
     expect(screen.queryByRole('switch')).toBeNull()

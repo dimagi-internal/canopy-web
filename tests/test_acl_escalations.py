@@ -21,25 +21,19 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
+from apps.harness import claim
 from apps.harness import initiator as who
 from apps.harness import services as hsvc
-from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.passkeys.testing import give_vault_key
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 from tests.fixtures.device_proof import accept_device_proof
+from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
 
 WS = "esc-ws"
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
 
 
 def _runner(user, name) -> Runner:
@@ -88,7 +82,7 @@ def test_an_assignment_alone_does_not_release_secrets(esc):
     box = _runner(esc["editor"], "editor-box")
     RunnerAssignment.objects.create(agent=esc["agent"], runner=box, rank=0, enabled=False)
     res = Client().get("/api/agents/escbot/credentials/resolve",
-                       HTTP_AUTHORIZATION=f"Bearer {_pat(esc['editor'])}")
+                       HTTP_AUTHORIZATION=f"Bearer {pat_token(esc['editor'])}")
     assert res.status_code in (403, 404)
     assert "s3cret" not in res.content.decode()
 
@@ -102,7 +96,7 @@ def test_an_agent_admins_box_still_resolves(esc, monkeypatch):
     RunnerAssignment.objects.create(agent=esc["agent"], runner=box, rank=0)
     accept_device_proof(monkeypatch, box)  # this test is about who may resolve, not the proof
     res = Client().get("/api/agents/escbot/credentials/resolve",
-                       HTTP_AUTHORIZATION=f"Bearer {_pat(esc['editor'])}")
+                       HTTP_AUTHORIZATION=f"Bearer {pat_token(esc['editor'])}")
     assert res.status_code == 200, res.content
     # Ciphertext the box's own key opens; canopy-web never hands out the value.
     assert res.json()["values"]["canopy-pat"].startswith("zks1:")
@@ -225,7 +219,7 @@ def test_the_claiming_box_still_reports(esc):
     res = Client().post(f"/api/harness/turns/{turn.id}/finish",
                         data={"status": "done", "result_note": "ok"},
                         content_type="application/json",
-                        HTTP_AUTHORIZATION=f"Bearer {_pat(esc['owner'])}")
+                        HTTP_AUTHORIZATION=f"Bearer {pat_token(esc['owner'])}")
     assert res.status_code == 200, res.content
 
 
@@ -273,7 +267,7 @@ def test_the_claiming_box_reports_on_a_turn_its_owner_cannot_read(esc, path, bod
     404 (the readability check ran first), stranding the turn CLAIMED until its lease
     expired, its work never recorded. The box that holds the claim reports on it."""
     turn = _private_chat_turn_claimed_by(esc, esc["editor"])
-    box = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(esc['editor'])}")
+    box = Client(HTTP_AUTHORIZATION=f"Bearer {pat_token(esc['editor'])}")
     res = box.post(f"/api/harness/turns/{turn.id}/{path}", data=body, content_type="application/json")
     assert res.status_code == 200, res.content
 

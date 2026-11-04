@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  canopy-web's own key as a sealed-connection recipient (apps/connections/server_key.py).
+  A P-256 KEY_AGREEMENT key: canopy-web names it in a connection's envelopes and a machine
+  that trusts it keeps it as a recipient. Its private half never leaves KMS; the task role
+  can only DeriveSharedSecret and GetPublicKey with it. Its own small stack, so the app
+  stack never replaces it. NOT deployed by the pipeline: a person deploys it, then sets the
+  canopy-web stack's ConnectionsServerKmsKey parameter to this stack's KeyAlias output.
+
+Parameters:
+  TaskRoleArn:
+    Type: String
+    Default: arn:aws:iam::858923557655:role/canopy-web-task-role
+    Description: canopy-web's task role (canopy-web-task-role.cfn.yaml) — the only principal that may derive.
+
+Resources:
+  ConnectionsKey:
+    Type: AWS::KMS::Key
+    # Every envelope sealed to this key is lost with it: never delete it with the stack.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub '${AWS::StackName} canopy-web sealed-connection ECDH key'
+      KeySpec: ECC_NIST_P256
+      KeyUsage: KEY_AGREEMENT
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdministersButCannotDerive
+            Effect: Allow
+            Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+          - Sid: OnlyCanopyWebDerives
+            Effect: Allow
+            Principal: { AWS: !Ref TaskRoleArn }
+            Action:
+              - kms:DeriveSharedSecret
+              - kms:GetPublicKey
+            Resource: '*'
+      Tags:
+        - { Key: purpose, Value: canopy-web-connections }
+
+  ConnectionsKeyAlias:
+    Type: AWS::KMS::Alias
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AliasName: alias/canopy-web-connections
+      TargetKeyId: !Ref ConnectionsKey
+
+Outputs:
+  KeyArn:
+    Value: !GetAtt ConnectionsKey.Arn
+  KeyAlias:
+    Value: !Ref ConnectionsKeyAlias

@@ -11,12 +11,13 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
+from apps.agents import roles
 from apps.agents.models import Agent, AgentAdmin, AgentCredential, AgentCredentialRead, AgentLicense
 from apps.harness.models import Turn
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 from tests.fixtures.device_proof import accept_device_proof
+from tests.token_helpers import pat_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -34,11 +35,6 @@ def _session(user):
     return c
 
 
-def _bearer(user):
-    raw, _row = PersonalToken.create_for_user(user=user, label="t")
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 @pytest.fixture
 def world(monkeypatch):
     jj = _user("jj")
@@ -53,8 +49,11 @@ def world(monkeypatch):
         WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
     agent = Agent.objects.create(
         slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["nova-api-key"])
-    publish(agent, {"version": 1, "full": ["member@dimagi.com"], "capabilities": {
-        "ask": {"callers": ["member", "contact"], "tools": ["Read"]}}})
+    declare(agent, {"ask": {"tools": ["Read"]}}, version=1)
+    allow(agent, role=roles.EDITOR, domain="dimagi.com")
+    allow(agent, role=roles.READ_ONLY)
+    allow(agent, role=roles.READ_ONLY, contact=True)
+    editors_run(agent)
     AgentCredential.objects.create(agent=agent, name="nova-api-key", value_zk=SECRET, kv=0)
     AgentAdmin.objects.create(agent=agent, user=sarvesh, granted_by=jj)
     # Who may read, not the device layer (tests/test_canopy_vault_zk.py pins the proof).
@@ -72,7 +71,7 @@ def _open(user, session="s1"):
 
 
 def _resolve(user, turn_id=None):
-    headers = _bearer(user)
+    headers = pat_headers(user)
     if turn_id:
         headers["HTTP_X_CANOPY_TURN_ID"] = str(turn_id)
     return Client().get("/api/agents/ace/credentials/resolve", **headers)
@@ -91,7 +90,7 @@ def test_a_full_rule_member_is_licensed_on_first_use(world):
 
 
 def test_an_editor_with_no_full_rule_is_licensed_through_the_editor_tier(world):
-    """hal@dimagi-ai.com: an editor the `full:` rule does not name."""
+    """hal@dimagi-ai.com: an editor the whole-agent editor line does not name."""
     assert _open(world["hal"]).status_code == 201
     lic = AgentLicense.objects.get(agent=world["agent"], user=world["hal"])
     assert lic.status == AgentLicense.ACTIVE and lic.basis.startswith("grant:")
@@ -183,7 +182,7 @@ def test_a_revoked_license_stops_reads_mid_turn(world):
 
 def test_the_access_check_says_license(world):
     turn_id = _open(world["aath"]).json()["turn_id"]
-    headers = {**_bearer(world["aath"]), "HTTP_X_CANOPY_TURN_ID": turn_id}
+    headers = {**pat_headers(world["aath"]), "HTTP_X_CANOPY_TURN_ID": turn_id}
     body = Client().get("/api/agents/ace/credentials/access", **headers).json()
     assert body["may_resolve"] is True and body["via"] == "license"
 

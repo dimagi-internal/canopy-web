@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { grantAgentAdmin, revokeAgentAdmin, type AgentAccessRowOut } from '@/api/agents'
 import { roleAllows } from '@/lib/workspaceRoles'
+import { Td } from '@/components/DataTable'
 
 // WHO IS THIS AGENT'S OWNER AND WHICH PEOPLE ARE ITS AGENT ADMINS.
 //
@@ -52,18 +53,18 @@ export function AgentAdmins({
       <table className="mt-1 ml-3 text-[12px]">
         <tbody>
           <tr data-testid="agent-admin-row">
-            <td className="w-24 py-0.5 pr-3 text-foreground-secondary">Owner</td>
-            <td className="py-0.5 text-foreground">{owner ? owner.name : 'No owner'}</td>
+            <Td density="flush" tone="secondary" className="w-24">Owner</Td>
+            <Td density="hair" tone="foreground">{owner ? owner.name : 'No owner'}</Td>
             <td />
           </tr>
           {granted.map((r) => (
             <tr key={r.user_id} data-testid="agent-admin-row">
-              <td className="w-24 py-0.5 pr-3 text-foreground-secondary">Agent admin</td>
-              <td className="py-0.5 text-foreground">
+              <Td density="flush" tone="secondary" className="w-24">Agent admin</Td>
+              <Td density="hair" tone="foreground">
                 {r.name}
                 {r.basis && <span className="text-muted-foreground"> · {r.basis}</span>}
-              </td>
-              <td className="py-0.5 pl-3">
+              </Td>
+              <Td density="hair" className="pl-3">
                 {canManage && (
                   <button
                     type="button"
@@ -75,7 +76,7 @@ export function AgentAdmins({
                     Remove
                   </button>
                 )}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>

@@ -165,8 +165,10 @@ def resolve(user, credential: dict | None, email: str) -> OnBehalf:
     return _check(user, credential, email)
 
 
-def _check(user, credential: dict | None, email: str | None, *,
-           session_login_live: bool = False) -> OnBehalf:
+def _serving(user, credential: dict | None, *, session_login_live: bool = False):
+    """The turn login behind `user`'s request and the turn it serves NOW: `(grant,
+    current, agent)`, or Refused saying why the login speaks for no running turn of its
+    agent (a stored token, a lower role, a finished turn, a confined one)."""
     cred = credential or {}
     kind = kinds.kind_of(cred)
     if kind is None or not kind.may_act_on_behalf or not cred.get("id"):
@@ -192,6 +194,26 @@ def _check(user, credential: dict | None, email: str | None, *,
     acting = turn_agent(current)
     if acting is None or acting.pk != agent.pk:
         raise Refused("the turn this login serves now runs for another agent")
+    return grant, current, agent
+
+
+def serving_turn(user) -> Turn | None:
+    """The one turn `user`'s request is made INSIDE: `user` is an agent's own login and the
+    request carries the per-turn login canopy-web issued for a turn of that agent that is
+    running now (not a stored token, a session login, a finished or confined turn). Worked
+    out from the server's own record, never from anything the agent sends. None otherwise."""
+    cred = getattr(user, CREDENTIAL_ATTR, None) if user is not None else None
+    if not cred:
+        return None
+    try:
+        return _serving(user, cred)[1]
+    except Refused:
+        return None
+
+
+def _check(user, credential: dict | None, email: str | None, *,
+           session_login_live: bool = False) -> OnBehalf:
+    grant, current, agent = _serving(user, credential, session_login_live=session_login_live)
     person = _principal(current)
     if person is None:
         raise Refused("the turn this login serves was not started by a person")
@@ -252,3 +274,96 @@ def note(ob: OnBehalf, decision: str) -> None:
         }], workspace=ob.agent.workspace)
     except Exception:  # noqa: BLE001 — the record must not undo the decision
         logger.exception("on behalf: could not record %s for %s", decision, ob.turn.pk)
+
+
+# --- who a turn's login is answering to, for the reads that ask (`Standing`) -----------
+#: On the request's user: the credential the request authenticated with, stashed by the
+#: door (`remember`) so `standing` can be worked out lazily, only by a read that asks.
+CREDENTIAL_ATTR = "_canopy_turn_credential"
+STANDING_ATTR = "_canopy_turn_standing"
+#: On a turn's `origin_ref`: set by the server when an agent turn nobody asked for starts it.
+UNATTENDED_DISPATCH = "unattended_dispatch"
+
+
+@dataclass(frozen=True)
+class Standing:
+    """Who the running turn behind an agent's login is answering to: one `person_id`
+    (its verified human asker, or the person it was started on behalf of), or `unattended`
+    (canopy or another agent started it and no person is behind it: a schedule, a trigger,
+    a dispatch with no person stamped). `operator`: that person administers the agent
+    itself (`Agent.is_admin`), who runs it for everyone it serves."""
+
+    turn_id: str
+    person_id: int | None = None
+    unattended: bool = False
+    operator: bool = False
+
+
+def remember(user, credential: dict | None) -> None:
+    """The door's one call: note which credential `user`'s request carried."""
+    if user is not None and credential:
+        setattr(user, CREDENTIAL_ATTR, dict(credential))
+
+
+def standing(user) -> Standing | None:
+    """Whom `user`'s request answers to, from server state alone (`Turn.initiator_*`, the
+    server-stamped `origin_ref["on_behalf_of"]`) — nothing the agent sends. None when the
+    request is not made inside a running turn of the agent whose login it is (a stored
+    token, a session, OAuth, a socket, a finished or confined turn), when its asker is a
+    contact or an unverified user, or when the turn is unknown: no standing, so it reads
+    nothing that needs one. Judged on the turn's session at read time, so it follows the
+    session's newest turn."""
+    if user is None:
+        return None
+    cached = getattr(user, STANDING_ATTR, False)
+    if cached is not False:
+        return cached
+    found = None
+    cred = getattr(user, CREDENTIAL_ATTR, None)
+    if cred:
+        try:
+            _, current, agent = _serving(user, cred, session_login_live=True)
+            found = _standing_of(current, agent)
+        except Refused:
+            found = None
+    setattr(user, STANDING_ATTR, found)
+    return found
+
+
+def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
+    try:
+        person = _principal(turn)
+    except Refused:
+        return None  # a human asked, and canopy cannot vouch for them
+    if person is None and turn.initiator_kind == who.SYSTEM and turn.initiator_user_id:
+        # Canopy started it ON A PERSON'S ACCOUNT (a schedule an editor made, an agent task's
+        # follow-up): whoever may create one chose its prompt, so it answers to them as if they
+        # asked. An agent's login or a deactivated account as the owner proves no person.
+        if not _is_person(turn.initiator_user):
+            return None
+        person = turn.initiator_user
+    if person is not None:
+        acting_cap(turn)  # their `acts_as` lowers their administering too, as on their turn
+        return Standing(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person))
+    if turn.initiator_kind in (who.SYSTEM, who.AGENT):
+        return Standing(str(turn.pk), unattended=True)
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    if (turn.initiator_kind == who.USER and _agent_login(turn.initiator_user)
+            and ref.get(UNATTENDED_DISPATCH) is True):
+        # Another agent's dispatch, from a turn nobody asked for (`dispatch_stamp`).
+        return Standing(str(turn.pk), unattended=True)
+    return None  # a contact, an unvouched chain, or nobody established
+
+
+def dispatch_stamp(user) -> dict:
+    """What `enqueue_turn` adds to the origin_ref of a turn started by `user`, an agent's
+    login, when no person is behind it: `unattended_dispatch`, only if `user`'s own request
+    runs inside a turn nobody asked for. A dispatch from anything else (a contact's or an
+    unverified user's turn, a stored token) is NOT nobody-asked: it carries no stamp and
+    its standing is None. Server-only: `enqueue_turn` drops a client's copy."""
+    stand = standing(user)
+    return {UNATTENDED_DISPATCH: True} if stand is not None and stand.unattended else {}
+
+
+def _agent_login(user) -> bool:
+    return bool(user is not None and Agent.objects.filter(user_id=user.pk).exists())

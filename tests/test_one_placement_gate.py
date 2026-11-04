@@ -17,7 +17,7 @@ from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Runner, RunnerAdmin, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 from tests.access_helpers import editors_run
 
 pytestmark = pytest.mark.django_db

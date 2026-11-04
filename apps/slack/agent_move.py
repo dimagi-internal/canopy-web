@@ -16,10 +16,17 @@ from apps.agents.move import Plan
 
 from . import ingest
 from .models import SlackChannelIngest, SlackChannelIngestAllow
+from .services import installation_for_workspace
 
 
 def participant(p: Plan, apply: bool) -> None:
     agent, dest = p.agent, p.dest
+    if agent.slack_enabled:
+        before, now = installation_for_workspace(p.source.slug), installation_for_workspace(dest.slug)
+        if (before and before.pk) != (now and now.pk):
+            p.breaks("slack", f"'{dest.slug}' is " + (f"connected to a different Slack ({now.team_name})"
+                                                      if now else "not connected to Slack")
+                     + f", so {agent.slug}'s Slack command stops working where it was")
     rows = SlackChannelIngest.objects.filter(agent=agent).exclude(workspace_id=dest.slug)
     open_ = list(rows.filter(status__in=(SlackChannelIngest.PENDING, *ingest.LIVE))
                  .select_related("agent", "installation", "workspace"))

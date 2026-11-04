@@ -12,14 +12,15 @@ from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.tokens.mint_session import mint_session
 from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
-from apps.host_grants import views_oauth
-from apps.host_grants.views_oauth import client_metadata as oauth_client_metadata
-from apps.host_grants.views_oauth import jwks as oauth_jwks
+from apps.oauth_server import views_oauth
+from apps.oauth_server.views_oauth import client_metadata as oauth_client_metadata
+from apps.oauth_server.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
 
@@ -34,7 +35,7 @@ urlpatterns = [
     # for the deployed runner version's installer (apps/harness/runner_releases.py).
     # Before the SPA catch-all.
     path("download/runner/<str:platform>", download_runner, name="download-runner"),
-    path("api/debug/", include("apps.common.urls_debug")),
+    path("api/debug/mint-session/", mint_session, name="debug-mint-session"),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
     # The GitHub App connect flow. Bare views (redirects + session), and
     # deliberately NOT public: the callback exists to bind a GitHub grant to a
@@ -52,7 +53,7 @@ urlpatterns = [
     # Metadata Document — whose URL IS canopy's client_id — and the JWKS it
     # names. Bare views because the URL is the identifier a host allowlists;
     # public (a host must read them before trusting anything) and carrying
-    # public keys only. See apps/host_grants/views_oauth.py.
+    # public keys only. See apps/oauth_server/views_oauth.py.
     path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
     path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
     # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): the

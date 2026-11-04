@@ -12,8 +12,8 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, sensitive_data
-from apps.agents.interface import InterfaceError, is_default, parse
+from apps.agents import access, roles, sensitive_data
+from apps.agents.interface import InterfaceError, is_default, is_read_mode, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
 from apps.events.models import SettingChange
@@ -23,21 +23,20 @@ from apps.harness.models import RunnerAssignment, Turn
 from apps.passkeys import stepup
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 
-DATA = {"role": "viewer", "sites": ["connect-labs"], "data": "sensitive",
+DATA = {"sites": ["connect-labs"], "data": "sensitive",
         "tools": ["Read", "Grep", "Glob", "Skill", "ToolSearch",
                   "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]}
 IFACE = {"capabilities": {"data": DATA,
-                          "ask": {"role": "user", "tools": ["Read", "Bash"]}}}
-#: Who the access list lets in, by capability: the old `callers` the tests were written with.
+                          "ask": {"tools": ["Read", "Bash"]}}}
+#: Who the access list lets in, by capability: "member" (the workspace's members) or "contact".
 WHO = {"data": ["contact", "member"], "ask": ["member"], "connect": ["contact"]}
 SOURCE = """capabilities:
   data:
-    role: viewer
     sites: [connect-labs]
     data: sensitive
     tools: [Read, Grep, Glob, Skill, ToolSearch, "mcp__*canopy-web__current_page",
@@ -76,9 +75,19 @@ def _put(c, slug, **body):
     return c.put(f"/api/agents/{slug}/interface", data=body, content_type="application/json")
 
 
+def _let_in(agent, who, capability):
+    """`ask` is what `read` opens, so it is a read-only line; any other capability a named line."""
+    line = dict(role=roles.READ_ONLY) if is_read_mode(capability) else dict(capability=capability)
+    allow(agent, contact=(who == "contact"), **line)
+
+
 def _declare(agent, by, doc=IFACE, who_=WHO):
-    """Publish `doc`'s capabilities and let `who_` (old-style callers per capability) in."""
-    publish(agent, {"capabilities": {n: {**c, "callers": who_[n]} for n, c in doc["capabilities"].items()}})
+    """Publish `doc`'s capabilities and let `who_` (members and/or contacts, per capability) in."""
+    declare(agent, doc["capabilities"])
+    for name in doc["capabilities"]:
+        for caller in who_[name]:
+            _let_in(agent, caller, name)
+    editors_run(agent)
     agent.interface_published_by = by
     agent.save(update_fields=["interface_published_by"])
 
@@ -156,7 +165,7 @@ def test_a_person_sets_it_and_the_change_is_audited(w):
 def test_turning_it_off_is_audited(w):
     _put(_client(w["owner"]), "labsdata", source=SOURCE)
     r = _put(_client(w["owner"], stepped_up=False), "labsdata",
-             source="capabilities:\n  ask:\n    role: user\n")
+             source="capabilities:\n  ask:\n    description: Ask\n")
     assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
     assert not sensitive_data.handles_sensitive(w["agent"], "data")
@@ -196,7 +205,7 @@ def test_on_the_site_the_sensitive_door_confines_even_the_owner(w, who_):
 def test_the_owner_keeps_their_role_and_mode_rights_when_confined(w):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w["owner"], _site_session(w))
-    assert d.role == access.OWNER and d.may_pin_runner
+    assert d.relationship == access.OWNER and d.may_pin_runner
 
 
 def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
@@ -208,7 +217,9 @@ def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
 
 
 def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the_owner(w):
-    publish(w["agent"], {"capabilities": {"ask": {"callers": ["member"]}}})
+    declare(w["agent"], {"ask": {}})
+    _let_in(w["agent"], "member", "ask")
+    editors_run(w["agent"])
     d = _turn(w, w["owner"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
     assert d.access == access.NONE and "handles sensitive data" in d.reason
 
@@ -224,15 +235,16 @@ def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
 def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
     # The sensitive door takes a user; a workspace viewer's line makes them only a viewer.
     _declare(w["agent"], w["owner"], doc={"capabilities": {
-        "data": {**DATA, "role": "user"},
-        "ask": {"role": "viewer", "tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})
+        "data": {**DATA},
+        "ask": {"tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})
     d = _turn(w, w["viewer"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
     assert d.access == access.NONE and "'data' does not list you" in d.reason
 
 
 def test_without_sensitive_nothing_changes(w):
-    publish(w["agent"], {"capabilities": {
-        "connect": {"callers": ["contact"], "sites": ["connect-labs"]}}})
+    declare(w["agent"], {"connect": {"sites": ["connect-labs"]}})
+    _let_in(w["agent"], "contact", "connect")
+    editors_run(w["agent"])
     assert _turn(w, w["owner"], _site_session(w)).access == access.FULL
 
 
@@ -274,11 +286,9 @@ SWITCHABLE = """# who may read a host's data
 capabilities:
   data:
     # the site's data door
-    role: viewer
     sites: [connect-labs]
     tools: [Read, Grep, "mcp__*canopy-web__current_page"]
   ask:
-    role: user
     tools: [Read, Bash]
 """
 
@@ -303,7 +313,7 @@ def test_with_sensitive_writes_one_line_and_keeps_every_comment():
 
 
 def test_with_sensitive_refuses_a_layout_it_cannot_edit_by_line():
-    flow = 'capabilities: {data: {role: viewer, sites: [connect-labs]}}\n'
+    flow = 'capabilities: {data: {sites: [connect-labs]}}\n'
     with pytest.raises(sensitive_data.SourceEditError):
         sensitive_data.with_sensitive(flow, "data", True)
     with pytest.raises(sensitive_data.SourceEditError):

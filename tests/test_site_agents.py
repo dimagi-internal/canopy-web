@@ -21,24 +21,37 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentBootstrapReport
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
 from apps.host_grants import client_identity, site_needs
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
-from tests.access_helpers import publish
+from apps.harness.testing import enrolled
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 
 SITE = "connect-labs"
-SENSITIVE_IFACE = {"capabilities": {"data": {
+SENSITIVE_CAPS = {"data": {
     "description": "Ask data questions about the workflow you are looking at",
-    "callers": ["contact", "member"], "sites": [SITE], "data": "sensitive",
-    "tools": ["mcp__*canopy-web__who_is_asking"]}}}
-PLAIN_IFACE = {"capabilities": {"connect": {
-    "callers": ["contact"], "sites": [SITE], "tools": ["mcp__*canopy-web__who_is_asking"]}}}
+    "sites": [SITE], "data": "sensitive",
+    "tools": ["mcp__*canopy-web__who_is_asking"]}}
+PLAIN_CAPS = {"connect": {
+    "sites": [SITE], "tools": ["mcp__*canopy-web__who_is_asking"]}}
+
+
+def _sensitive(agent):
+    declare(agent, SENSITIVE_CAPS)
+    allow(agent, capability="data", contact=True)
+    allow(agent, capability="data")
+    editors_run(agent)
+
+
+def _plain(agent):
+    declare(agent, PLAIN_CAPS)
+    allow(agent, capability="connect", contact=True)
+    editors_run(agent)
 
 
 @pytest.fixture(autouse=True)
@@ -57,12 +70,12 @@ def w():
     labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=owner,
                                     description="data questions", interface_published_by=owner,
                                     interface_published_at=timezone.now())
-    publish(labsdata, SENSITIVE_IFACE)
+    _sensitive(labsdata)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
-    publish(ace, PLAIN_IFACE)
+    _plain(ace)
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=ws, owner=owner)
     unlisted = Agent.objects.create(slug="unlisted", name="Unlisted", workspace=ws, owner=owner)
-    publish(unlisted, PLAIN_IFACE)
+    _plain(unlisted)
     key = generate_private_key("EdDSA")
     app = AppCredential.create_credential(name=SITE, created_by=owner, workspace=ws)
     app.public_keys = [public_pem(key)]
@@ -189,7 +202,7 @@ def test_an_agent_of_another_workspace_is_never_listed(w):
     stranger = get_user_model().objects.create_user("s", "s@dimagi.com", "pw")
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=stranger)
     foreign = Agent.objects.create(slug="foreign", name="Foreign", workspace=other)
-    publish(foreign, PLAIN_IFACE)
+    _plain(foreign)
     AppCredentialAgent.objects.create(app=w["app"], agent=foreign)
     assert "foreign" not in _agents(w).slugs
 
@@ -232,6 +245,34 @@ def test_an_offline_runner_is_listed_but_not_ready(w):
     data = _agents(w).agent("labsdata")
     assert data.flags_available == ("sensitive_data",) and not data.ready_with_flag("sensitive_data") and not data.ready
     assert any("is ready now" in p for p in data.problems)
+
+
+def _cloud_runner(w, agent, *, paired_as, renamed_to=None):
+    runner = enrolled(Runner.objects.create(
+        name=paired_as, kind=Runner.CLOUD, host=paired_as, owner=w["owner"], status=Runner.ONLINE,
+        ready=True, last_heartbeat_at=timezone.now()))
+    if renamed_to:
+        Runner.objects.filter(pk=runner.pk).update(name=renamed_to)  # a person renames it; paired_as stays
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=1, enabled=True)
+    return runner
+
+
+def test_a_renamed_cloud_runner_is_ready_on_the_report_its_box_filed_under_the_name_it_paired_as(w):
+    # The box reports as $RUNNER_NAME ("cloud-ec2-2"); a person later renamed the runner
+    # ("cloud-ec2-live"). The report is still that runner's.
+    ace = w["ace"]
+    _cloud_runner(w, ace, paired_as="cloud-ec2-2", renamed_to="cloud-ec2-live")
+    AgentBootstrapReport.objects.create(agent=ace, runner_name="cloud-ec2-2", mailbox_ok=True)
+    got = _agents(w).agent("ace")
+    assert got.ready and got.problems == ()
+
+
+def test_a_cloud_runner_with_no_report_under_either_of_its_names_is_still_not_ready(w):
+    ace = w["ace"]
+    _cloud_runner(w, ace, paired_as="cloud-ec2-2", renamed_to="cloud-ec2-live")
+    AgentBootstrapReport.objects.create(agent=ace, runner_name="some-other-box", mailbox_ok=True)
+    got = _agents(w).agent("ace")
+    assert not got.ready and any("is ready now" in p for p in got.problems)
 
 
 def test_runner_flags_are_every_known_flag_with_its_meaning(w):

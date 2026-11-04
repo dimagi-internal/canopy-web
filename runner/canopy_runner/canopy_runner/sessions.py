@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from canopy_transcript import turn_ended_in_interrupt
+
 from . import activity, emdash, hooks, startup_watch, transcript
 from .client import Client
 from .config import Config
@@ -111,6 +113,10 @@ class _Watch:
 
 _ENGINE_FLAG: dict[str, _Watch] = {}
 
+#: `agent_status` for a session emdash says is working and whose turn Escape ended.
+#: Not emdash's word: this runner's correction of its flag.
+INTERRUPTED = "interrupted"
+
 # How long after it last grew a session that has ALREADY proved its engine flag
 # wrong keeps claiming to be running.
 #
@@ -156,9 +162,15 @@ def annotate_engine_staleness(
     than the flag change, so the turn's own closing write is inside the baseline rather
     than mistaken for new work.
 
-    One-directional by construction: this can only ever say "still running", never
-    "not running". A blank flag is left alone (the server has its own fallback for
-    those) and a `working` flag needs no help.
+    The writes can only ever say "still running". A blank flag is left alone (the
+    server has its own fallback for those).
+
+    A `working` flag is wrong one way, and the transcript says so outright: Escape
+    fires no `Stop`, so the flag stays "working" over a stopped agent until the next
+    prompt ends. A session whose conversation ends in the interrupt marker is reported
+    INTERRUPTED instead, which the server reads as not running. A background agent
+    that outlives the stop reads as stopped until it wakes the main loop; its new
+    record ends the marker's hold.
     """
     home = Path.home()
     claude_home = home / ".claude" / "projects"
@@ -169,7 +181,7 @@ def annotate_engine_staleness(
             continue
         live.add(task)
         status = str(s.get("agent_status") or "").strip()
-        if not status or status == emdash.WORKING:
+        if not status:
             _ENGINE_FLAG.pop(task, None)  # nothing to second-guess
             continue
         try:
@@ -179,6 +191,11 @@ def annotate_engine_staleness(
             )
         except Exception:  # noqa: BLE001 — a fragile half must not cost us the report
             path = None
+        if status == emdash.WORKING:
+            _ENGINE_FLAG.pop(task, None)
+            if path is not None and turn_ended_in_interrupt(path):
+                s["agent_status"] = INTERRUPTED
+            continue
         size = transcript.activity_bytes(path)
         now = now_fn()
         w = _ENGINE_FLAG.get(task)

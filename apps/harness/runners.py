@@ -460,7 +460,7 @@ def request_refresh(runner: Runner, by=None) -> Runner:
     A request already pending is left as it is — its time, its asker and its
     before-snapshot — so asking twice neither restarts the clock nor loses the
     "before" the page compares against."""
-    from . import runner_refresh  # noqa: PLC0415 — import cycle through alerts_runner_credential
+    from . import runner_refresh  # noqa: PLC0415 — import cycle through alerts.runner_credential
 
     if runner.refresh_requested():
         return runner

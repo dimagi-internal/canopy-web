@@ -2,7 +2,7 @@
 // plus the members/invites admin surface (Task 4) and the pre-auth invite
 // preview + accept calls the /invite/:token page drives (Task 5).
 import { apiV2 } from './client.v2'
-import { ApiError, ensureOk } from './problem'
+import { ensureOk } from './problem'
 import type { components } from './generated'
 
 export type WorkspaceOut = components['schemas']['WorkspaceOut']
@@ -35,8 +35,6 @@ export type AdmissionRulePatch = components['schemas']['AdmissionRulePatch']
 // InviteAcceptPage's mismatch state). Mirrors the `ApiError` shape already used
 // by `api/sessions.ts` / `api/chat.ts`, just built on top of openapi-fetch's
 // typed responses instead of a hand-rolled fetch.
-// `WorkspaceApiError` is the shared `ApiError` (./problem) under its old name.
-export { ApiError as WorkspaceApiError }
 
 // None of these operations declares an error response in the OpenAPI schema
 // (django-ninja's HttpError raises are exceptions, not declared response
@@ -232,7 +230,7 @@ export async function acceptInvite(token: string): Promise<WorkspaceOut> {
 // failure modes here (403 not-eligible, 409 slug-taken, 422 bad charset) are
 // expected user-facing outcomes the caller displays inline, not exceptional
 // conditions. This endpoint declares no error response in the OpenAPI schema
-// (see the `WorkspaceApiError` comment above), so `res.error` narrows the
+// (see `ApiError` in ./problem), so `res.error` narrows the
 // whole result to `never` under `if (res.error)` — branching on
 // `res.response.ok` instead sidesteps that false-negative.
 export async function createWorkspace(

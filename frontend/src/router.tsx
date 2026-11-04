@@ -34,12 +34,15 @@ import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
 import { ActAsApprovalPage } from './pages/ActAsApprovalPage'
+import { ConnectedPage } from './pages/connections/ConnectedPage'
+import { ShareConnectionPage } from './pages/connections/ShareConnectionPage'
 import { PagePermissionConfirmPage } from './pages/PagePermissionConfirmPage'
 import { SignOffPage } from './pages/SignOffPage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { WorkspaceEmailPage } from '@/pages/WorkspaceEmailPage'
+import { MailInboxPage } from '@/pages/MailInboxPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
 import { WorkspaceConnectionAppsSection } from '@/components/settings/ConnectionAppsPanel'
 import { DddPage } from './pages/DddPage'
@@ -98,6 +101,8 @@ const WorkspaceAppsPage = lazySection(() => import('./pages/WorkspaceAppsPage'))
 const WorkspaceAppPage = lazySection(() => import('./pages/WorkspaceAppPage'))
 const WorkspaceAppCustomizePage = lazySection(() => import('./pages/WorkspaceAppCustomizePage'))
 const WorkspaceAppStoreDetailPage = lazySection(() => import('./pages/WorkspaceAppStoreDetailPage'))
+const LocalAppDetailPage = lazySection(() => import('./pages/LocalAppDetailPage'))
+const LocalAppReviewPage = lazySection(() => import('./pages/LocalAppReviewPage'))
 const PublicAppPage = lazySection(() => import('./pages/PublicAppPage'))
 const LinkAppPage = lazySection(() => import('./pages/LinkAppPage'))
 const NewAgentPage = lazySection(() =>
@@ -402,6 +407,9 @@ export const routeTable: RouteObject[] = [
       ...['topology', 'email', 'access-requests', 'secrets', 'retention', 'admission-rules'].map((to) => (
         { path: `/w/:workspace/${to}`, element: <SettingsRedirect to={to} /> })),
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
+      // Where the OAuth callback lands: "Connected as …", then who may use it (one passkey touch).
+      { path: '/w/:workspace/connections/:id/connected', element: <ConnectedPage /> },
+      { path: '/w/:workspace/connections/:id/share', element: <ShareConnectionPage /> },
       // The approve link up.sh prints for a new cloud box (one passkey touch).
       { path: '/w/:workspace/runner-invitations/:invitationId', element: <RunnerInvitationApprovePage /> },
       // A connected site asking you to approve one action with your passkey: the
@@ -421,6 +429,9 @@ export const routeTable: RouteObject[] = [
       // Self-contained apps the workspace runs (apps/workspace_apps), drawn in the same sandbox.
       { path: '/w/:workspace/apps', element: <LazySection><WorkspaceAppsPage /></LazySection> },
       { path: '/w/:workspace/apps/store', element: <LazySection><WorkspaceAppStoreDetailPage /></LazySection> },
+      // Programs that run on a person's own computer (apps/local_apps); a separate install from the web apps above.
+      { path: '/w/:workspace/apps/local/review/:id', element: <LazySection><LocalAppReviewPage /></LazySection> },
+      { path: '/w/:workspace/apps/local/:key', element: <LazySection><LocalAppDetailPage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/customize', element: <LazySection><WorkspaceAppCustomizePage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/:page?', element: <LazySection><WorkspaceAppPage /></LazySection> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
@@ -429,6 +440,8 @@ export const routeTable: RouteObject[] = [
       // The workspace's work: every task (My tasks, Waiting on me, …) as a table,
       // a board or a calendar; one task's page; what waits for a decision.
       { path: '/w/:workspace/tasks', element: <TasksPage /> },
+      // Your own copies of mail forwarded to you (Settings → Email: keep a copy).
+      { path: '/w/:workspace/mail', element: <MailInboxPage /> },
       { path: '/w/:workspace/tasks/:taskKey', element: <TaskPage /> },
       // A proposal waiting on a yes or no, with everything needed to decide it (the push, Slack and email link here).
       { path: '/w/:workspace/approvals/:approvalId', element: <ApprovalPage /> },

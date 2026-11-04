@@ -672,7 +672,7 @@ def runners_without_fix(inv) -> list[str]:
 
 def close_live_fixes(now=None) -> int:
     """Close every `pending_deploy` investigation whose fix now runs on every
-    runner it hit. Run from the alert tick (`alerts_turn_failure.reconcile`), so
+    runner it hit. Run from the alert tick (`alerts.turn_failure.reconcile`), so
     no timer of its own. Returns how many closed."""
     closed = 0
     for inv in FailureInvestigation.objects.filter(status=FailureInvestigation.PENDING_DEPLOY):
@@ -693,7 +693,7 @@ def sync_alert(inv, *, by=None, payload: dict | None = None, close: bool = True)
     """Make the investigation's `turn_failure` alert say what the row says, now.
     Open (any status but resolved) → raised/updated, assigned to whoever has it;
     resolved → closed, `payload` on its event. Returns the alert (or None)."""
-    from . import alerts_turn_failure as src  # cycle: alerts_turn_failure -> auto_debug  # noqa: PLC0415
+    from .alerts import turn_failure as src  # cycle: alerts.turn_failure -> auto_debug  # noqa: PLC0415
 
     if inv.status in src.RAISING_STATUSES:
         return alerts.raise_now(src.KIND, src.raise_for(inv))

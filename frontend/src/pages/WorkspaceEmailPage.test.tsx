@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,7 +21,7 @@ const domain = {
       value: 'inbound-smtp.us-east-1.amazonaws.com', priority: 10, ok: false, found: ['10 mx.zoho.com.'] },
   ],
   routes: [{ id: 9, local_part: '*', address: '*@marshellis.com', kind: 'forward', agent_slug: '',
-             forward_to_user_id: 1, forward_to_email: 'jjackson@dimagi.com', enabled: true, auto: false }],
+             forward_to_user_id: 1, forward_to_email: 'jjackson@dimagi.com', enabled: true, auto: false, keep_copy: false }],
 }
 
 vi.mock('@/api/mail', async (orig) => ({
@@ -33,6 +33,9 @@ vi.mock('@/api/mail', async (orig) => ({
   shareMailDomain: vi.fn(async () => domain),
   updateMailDomain: vi.fn(async () => domain),
   refreshMailDomain: vi.fn(async () => domain),
+  fetchInboundLog: vi.fn(async () => ({ retention_days: 30, items: [
+    { id: 1, recipient: 'jjackson@marshellis.com', original_from: 'a@x.org', subject: 'Hello', outcome: 'dropped:spam',
+      verdicts: { spam: 'FAIL' }, created_at: '2026-11-02T20:00:00Z' }] })),
 }))
 vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [{ slug: 'hal', name: 'Hal', workspace: 'marshellis' }] })) }))
 vi.mock('@/api/workspaces', async (orig) => ({
@@ -113,7 +116,7 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.change(screen.getByLabelText('Member'), { target: { value: '1' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
-      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true }))
+      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: true }))
   })
   it('confirms before removing an address, saying threads are kept', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
@@ -161,7 +164,7 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
-      local_part: '*', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: false }))
+      local_part: '*', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: false, keep_copy: false }))
   })
   it('an admin toggles an address on and off through the same save', async () => {
     renderPage()
@@ -169,7 +172,7 @@ describe('WorkspaceEmailPage', () => {
     expect((box as HTMLInputElement).checked).toBe(true)
     fireEvent.click(box)
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
-      local_part: '*', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: false }))
+      local_part: '*', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: false, keep_copy: false }))
   })
   it('a non-admin sees Enabled as text, with no toggle', async () => {
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
@@ -212,7 +215,7 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.change(screen.getByLabelText('Local part'), { target: { value: 'new' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
-      local_part: 'new', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true }))
+      local_part: 'new', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: false }))
   })
   it('a shared domain shows its owner and only this workspace\'s addresses, no DNS or domain controls', async () => {
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
@@ -262,7 +265,7 @@ describe('WorkspaceEmailPage', () => {
     const { container } = renderPage()
     expect((await screen.findByTestId('mail-records-summary')).textContent).toBe('All 2 in place')
     expect(screen.queryByTestId('mail-records')).toBeNull()
-    expect(headings(container)).toEqual(['Addresses', 'Settings', 'DNS records'])
+    expect(headings(container)).toEqual(['Addresses', 'Inbound mail', 'Settings', 'DNS records'])
     const text = container.textContent ?? ''
     expect(text.indexOf('DNS records')).toBeLessThan(text.indexOf('Remove domain'))
     fireEvent.click(screen.getByRole('button', { name: 'Show records' }))
@@ -286,5 +289,44 @@ describe('WorkspaceEmailPage', () => {
     expect(await screen.findByText('automatic')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
     expect(screen.getByTestId('mail-agent-addresses-skipped').textContent).toMatch(/sift/)
+  })
+  it('a forward can also keep a copy in the member\'s canopy inbox', async () => {
+    renderPage()
+    await screen.findByText('*@marshellis.com')
+    fireEvent.change(screen.getByLabelText('Local part'), { target: { value: 'jj' } })
+    fireEvent.change(screen.getByLabelText('Route kind'), { target: { value: 'forward' } })
+    fireEvent.change(screen.getByLabelText('Member'), { target: { value: '1' } })
+    const keep = screen.getByLabelText('Keep a copy in their canopy inbox') as HTMLInputElement
+    expect(keep.checked).toBe(true) // on unless someone says not to
+    fireEvent.click(keep)
+    fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
+    await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
+      local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: false }))
+  })
+  it('the ledger says what happened to a forwarded copy after SES took it', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true, items: [{ ...domain, status: 'verified', receiving: true }] } as never)
+    vi.mocked(mail.fetchInboundLog).mockResolvedValueOnce({ retention_days: 30, items: [
+      { id: 2, recipient: 'a@marshellis.com', original_from: 'b@x.org', subject: 'S', outcome: 'forwarded', delivery: 'bounced',
+        verdicts: {}, created_at: '2026-11-02T20:00:00Z' }] })
+    renderPage()
+    const log = await screen.findByTestId('mail-inbound-log')
+    await vi.waitFor(() => expect(within(log).getByText('Forwarded, but it bounced')).toBeTruthy())
+  })
+  it('an admin sees what happened to each inbound message, drops included', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true, items: [{ ...domain, status: 'verified', receiving: true }] } as never)
+    renderPage()
+    const log = await screen.findByTestId('mail-inbound-log')
+    await vi.waitFor(() => expect(within(log).getByText('Dropped: SES marked it spam')).toBeTruthy())
+    expect(within(log).getByText('Hello')).toBeTruthy()
+    expect(within(log).getByText('jjackson@marshellis.com')).toBeTruthy()
+  })
+  it('shows Keep a copy as its own column and flips it on a forwarding row without opening Edit', async () => {
+    renderPage()
+    expect(await screen.findByText('Keep a copy in canopy')).toBeTruthy()
+    fireEvent.click(await screen.findByLabelText('Keep a copy in canopy: *@marshellis.com'))
+    await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
+      local_part: '*', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true, keep_copy: true }))
   })
 })

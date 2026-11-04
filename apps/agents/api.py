@@ -38,19 +38,17 @@ from apps.api.route_gates import gate
 from apps.canopy_sessions.control import close_agent_sessions
 from apps.contacts.hcp.sensitive import _context_turn
 from apps.events import audit
-from apps.harness import clis, closeout, turn_access
+from apps.harness import agent_report, clis, turn_access
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.passkeys import stepup
 from apps.plugins import services as plugin_services
 from apps.realtime import groups
-from apps.slack import commands as slack_commands
-from apps.slack.models import SlackInstallation
 from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, agent_login, creation, mailbox, sensitive_data, services
+from . import access, agent_login, command_sync, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key
@@ -60,7 +58,16 @@ from .gates import (
     agent_for_work,
     listed_agent_workspaces,
 )
-from .interface import InterfaceError, default_interface, is_default, parse, validate
+from .interface import (
+    READ_PROFILE_VERSION,
+    InterfaceError,
+    default_interface,
+    default_read_profile,
+    is_default,
+    parse,
+    read_mode_override,
+    validate,
+)
 from .models import (
     AgentAdmin,
     AgentCredentialRead,
@@ -652,7 +659,11 @@ def _interface_out(agent) -> dict:
     """An agent always has an interface; a row that somehow holds none (`{}`) reads as the default."""
     by = agent.interface_published_by
     iface = agent.interface or default_interface()
+    override = read_mode_override(iface)
     return {"interface": iface, "source": agent.interface_source or "",
+            "read_mode": {"source": "override" if override else "default", "override": override,
+                          "default_profile": default_read_profile(agent),
+                          "default_profile_version": READ_PROFILE_VERSION},
             # The same model as YAML, for the Advanced view and the CLI, when no
             # hand-written source was kept.
             "yaml": agent.interface_source or yaml.safe_dump(iface, sort_keys=False),
@@ -1091,18 +1102,8 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     agent = agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
     agent.save(update_fields=["slack_enabled", "updated_at"])
-    result = slack_commands.sync_quietly(SlackInstallation.objects.filter(links__workspace=agent.workspace).first())
-    detail = result.get("detail", "")
-    if result["status"] == "synced":
-        name = slack_commands.command_name(agent.slug)
-        if name is None:
-            detail = f"`{agent.slug}` is too long to be a Slack command; use `/canopy {agent.slug}`."
-        elif name in result.get("added", []):
-            detail = f"Added {name} to Slack."
-        elif name in result.get("removed", []):
-            detail = f"Removed {name} from Slack."
-    return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=result["status"],
-                           command_detail=detail)
+    status, detail = command_sync.sync(agent)
+    return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=status, command_detail=detail)
 
 
 @router.get("/{slug}/test-vault-key", response=TestVaultKeyOut,
@@ -1213,8 +1214,8 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
 
     # Everyone sees what the agent did; a turn's prompt and transcript link are
     # a log (turn_access).
-    turns = turn_access.redact(list(closeout.list_turns(agent, limit=limit)), request.user)
-    closeout.stamp_share_urls(turns)
+    turns = turn_access.redact(list(agent_report.list_turns(agent, limit=limit)), request.user)
+    agent_report.stamp_share_urls(turns)
     items = [AgentTurnOut.model_validate(t) for t in turns]
     return paginate(items, offset=0, limit=limit)
 
@@ -1227,7 +1228,7 @@ def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status
 
     # A report-only row (no dispatch matched) is a turn someone ran by hand; the
     # caller posting its close-out is the best account of who that was.
-    turn = closeout.upsert_turn(agent, payload,
+    turn = agent_report.upsert_turn(agent, payload,
                                 initiator=who.for_request(request, via="closeout"))
-    closeout.stamp_share_urls([turn])
+    agent_report.stamp_share_urls([turn])
     return Status(201, AgentTurnOut.model_validate(turn))

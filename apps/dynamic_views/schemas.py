@@ -32,6 +32,9 @@ class DynamicViewOut(DynamicViewSummaryOut):
     sources: list[dict[str, Any]]
     agent_tasks: list[DynamicViewAgentTask] = Field(
         default_factory=list, description="The agent tasks the view's code may start, as its viewer.")
+    connections: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="The Salesforce calls the view's code may make: [{provider, as, agent?, reads, writes}].")
     created_by_email: str | None = None
     created_at: dt.datetime
 
@@ -49,6 +52,11 @@ class DynamicViewIn(StrictModel):
         default_factory=list,
         description="The agent tasks the code may start with canopy.runAgentTask: [{agent, name}]. Each agent "
                     "must be in the view's workspace and one you may give tasks to yourself.")
+    connections: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="The Salesforce calls the code may make: [{provider, as: viewer|shared, agent?, reads: "
+                    "[{method, path}], writes: [{method, path}]}]. Each line must be on the allowlist; a write "
+                    "names its object exactly (sobjects/Lead/*). A shared entry names an agent in the workspace.")
     note: str = ""
 
 
@@ -59,6 +67,7 @@ class DynamicViewPatch(StrictModel):
     code: str | None = None
     sources: list[dict[str, Any]] | None = None
     agent_tasks: list[dict[str, Any]] | None = None
+    connections: list[dict[str, Any]] | None = None
     project: str | None = Field(None, description="A project handle; an empty string moves it to the workspace.")
     note: str = ""
 
@@ -72,6 +81,7 @@ class DynamicViewRevisionOut(StrictModel):
     code: str
     sources: list[dict[str, Any]]
     agent_tasks: list[DynamicViewAgentTask] = Field(default_factory=list)
+    connections: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DynamicViewRollbackIn(StrictModel):

@@ -20,6 +20,7 @@ from apps.mail import agent_mail, domains, parse, ses
 from apps.mail.models import MailDomain, MailMessage, MailRoute, MailThread
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.device_proof import accept_device_proof
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 FIX = Path(__file__).parent / "fixtures" / "mail"
@@ -199,24 +200,15 @@ def test_scaffold_input_accepts_google_account():
     assert s.google_account == "nova@dimagi-ai.com"
 
 
-def _bearer(user) -> Client:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    c = Client()
-    c.defaults["HTTP_AUTHORIZATION"] = f"Bearer {raw}"
-    return c
-
-
 def test_credentials_resolve_names_the_google_account(w, monkeypatch):
     accept_device_proof(monkeypatch)
     nova = Agent.objects.create(slug="nova", name="Nova", workspace=w.ws, owner=w.owner,
                                 email="nova@dimagi.ai", google_account="nova@dimagi-ai.com")
     _route(w, "nova", agent=nova)
-    out = _bearer(w.owner).get("/api/agents/nova/credentials/resolve").json()
+    out = pat_client(w.owner).get("/api/agents/nova/credentials/resolve").json()
     assert out["mailbox"] == "nova@dimagi.ai" and out["mailbox_backend"] == "ses"
     assert out["google_account"] == "nova@dimagi-ai.com"
-    ada = _bearer(w.owner).get("/api/agents/ada/credentials/resolve").json()
+    ada = pat_client(w.owner).get("/api/agents/ada/credentials/resolve").json()
     assert ada["google_account"] == "ada@dimagi-ai.com"
 
 

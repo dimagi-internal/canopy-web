@@ -1,5 +1,5 @@
 // A workspace project's knowledge base: its sources and its version log
-// (apps/agents/kb_api.py).
+// (apps/agents/api_kb.py).
 
 import { apiV2 } from './client.v2'
 import type { components } from './generated'

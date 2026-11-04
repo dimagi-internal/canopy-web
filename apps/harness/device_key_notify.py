@@ -64,7 +64,7 @@ def notify_pending(key, *, reapproval: bool = False) -> dict:
     """Email + Web Push each approver about `key`, now pending. Never raises.
 
     A NEW pending key on a runner that lives in a workspace is the
-    `device_key_pending` alert (`alerts_device_key`): its own blocking notice
+    `device_key_pending` alert (`alerts.device_key`): its own blocking notice
     reaches the same people once, so it is not also mailed here. Still mailed:
     a re-approval (an active key with a new ECDH key — the alert covers only
     `pending` keys) and any key on a private runner (workspace NULL — an alert

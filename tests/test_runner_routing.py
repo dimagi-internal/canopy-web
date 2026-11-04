@@ -20,7 +20,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import a_workspace
 
 from apps.harness import initiator as _initiator
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
 
 # Queued by canopy itself: these tests are about the queue, not about who asked.
 _BY_CANOPY = _initiator.system(via="test")

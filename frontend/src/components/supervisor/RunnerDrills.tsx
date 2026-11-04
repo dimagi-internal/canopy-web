@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { startDrill, listDrills, type RunnerDrillOut } from '@/api/drills'
 import { relativeAge } from '@/lib/relativeAge'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // Per-agent readiness grid for one runner — the drill-down behind the
 // RunnerStatus badge. Loads the runner's drill outcomes, offers a "Drill
@@ -153,33 +154,33 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="border-b border-border bg-muted text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-2 py-1.5 font-medium">Agent</th>
-                <th className="px-2 py-1.5 font-medium">Outcome</th>
-                <th className="px-2 py-1.5 font-medium">Age</th>
-                <th className="px-2 py-1.5 font-medium">Summary</th>
-                <th className="px-2 py-1.5 font-medium">Turn</th>
-              </tr>
+              <Tr rule="bottom" head="plain" className="bg-muted text-[10px] uppercase tracking-wide">
+                <Th density="tight">Agent</Th>
+                <Th density="tight">Outcome</Th>
+                <Th density="tight">Age</Th>
+                <Th density="tight">Summary</Th>
+                <Th density="tight">Turn</Th>
+              </Tr>
             </thead>
             <tbody>
               {drills.map((d) => {
                 const chip = chipFor(d, now)
                 return (
-                  <tr key={d.id} className="border-b border-border last:border-b-0" data-testid={`drill-row-${d.id}`}>
-                    <td className="px-2 py-1.5 text-foreground">{d.agent_slug}</td>
-                    <td className="px-2 py-1.5">
+                  <Tr rule="bottom-last" key={d.id} data-testid={`drill-row-${d.id}`}>
+                    <Td density="tight" tone="foreground">{d.agent_slug}</Td>
+                    <Td density="tight">
                       <span
                         className={`rounded border px-1.5 py-0.5 text-[10px] ${chip.cls}`}
                         data-testid={`drill-outcome-${d.id}`}
                       >
                         {chip.label}
                       </span>
-                    </td>
-                    <td className="px-2 py-1.5 text-muted-foreground">{ageFor(d, now)}</td>
-                    <td className="max-w-[16rem] truncate px-2 py-1.5 text-foreground-secondary" title={d.summary}>
+                    </Td>
+                    <Td density="tight" tone="muted">{ageFor(d, now)}</Td>
+                    <Td density="tight" tone="secondary" className="max-w-[16rem] truncate" title={d.summary}>
                       {d.summary || '—'}
-                    </td>
-                    <td className="px-2 py-1.5 text-muted-foreground">
+                    </Td>
+                    <Td density="tight" tone="muted">
                       {d.turn_id ? (
                         // No established single-turn-detail route exists yet (the
                         // agent "Turns" rail lists packaged AgentTurns, a
@@ -192,8 +193,8 @@ export function RunnerDrills({ runnerId }: { runnerId: string }): JSX.Element {
                       ) : (
                         '—'
                       )}
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 )
               })}
             </tbody>

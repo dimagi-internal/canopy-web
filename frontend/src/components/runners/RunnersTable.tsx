@@ -8,6 +8,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { statusTone } from '@/pages/runnerTopology'
 import { fixHref } from '@/components/supervisor/RunnerHealth'
 import { runnerHref, scopedPath } from '../../lib/scopedLinks'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // THE RUNNER TABLE — one table for Health and Topology → Runners, over the
 // topology's own runner rows (`harness.topology.build`). Facts and states only:
@@ -47,19 +48,19 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
     <div className="overflow-x-auto">
       <table className="w-full min-w-[960px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="runners-table">
         <thead className="text-left text-muted-foreground">
-          <tr><th className="py-1 font-medium">Runner</th><th className="font-medium">Owner</th>
-            <th className="font-medium">Status</th><th className="font-medium" title="Running the code the deployed server expects">Code</th>
-            <th className="font-medium">Its own checks</th><th className="font-medium text-right">Agents</th>
-            <th className="font-medium" title="When the box last sent the token counts of its sessions">Usage report</th>
-            <th className="font-medium">Last heartbeat</th></tr>
+          <tr><Th>Runner</Th><Th density="none">Owner</Th>
+            <Th density="none">Status</Th><Th density="none" title="Running the code the deployed server expects">Code</Th>
+            <Th density="none">Its own checks</Th><Th density="none" align="right">Agents</Th>
+            <Th density="none" title="When the box last sent the token counts of its sessions">Usage report</Th>
+            <Th density="none">Last heartbeat</Th></tr>
         </thead>
         <tbody className="divide-y divide-border">
           {runners.map((r) => (
             <Fragment key={r.id}>
-              <tr data-runner={r.name} aria-selected={open === r.id}
+              <Tr data-runner={r.name} aria-selected={open === r.id}
                   className={clsx('cursor-pointer hover:bg-muted/50', open === r.id && 'bg-primary/10')}
                   onClick={() => toggle(r.id)}>
-                <td className="py-1.5">
+                <Td density="cozy">
                   <button type="button" aria-expanded={open === r.id}
                           className="inline-flex items-center gap-1 font-mono text-foreground">
                     {open === r.id
@@ -81,28 +82,28 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                   {r.flags.map((f) => (
                     <span key={f} className="ml-1 rounded border border-border px-1 text-[10px] uppercase text-muted-foreground">{f}</span>
                   ))}
-                </td>
-                <td className="text-foreground-secondary">
+                </Td>
+                <Td density="none" tone="secondary">
                   {r.owner_email ? <a href={`mailto:${r.owner_email}`} onClick={stop} className="hover:underline">{r.owner_email}</a> : '—'}
-                </td>
-                <td className="whitespace-nowrap">
+                </Td>
+                <Td density="none" nowrap>
                   <span className={statusTone(r.status)}>{r.status}</span>
                   {r.paused && r.status !== 'paused' && <span className="text-muted-foreground"> · paused</span>}
                   {!r.ready && <span className="text-muted-foreground"> · not ready</span>}
-                </td>
-                <td className="whitespace-nowrap text-foreground-secondary">
+                </Td>
+                <Td density="none" tone="secondary" nowrap>
                   {r.code_current === true ? 'current' : r.code_current === false ? <span className="text-warning">update pending</span> : 'unknown'}
-                </td>
-                <td className="whitespace-nowrap text-foreground-secondary" data-testid="runner-checks"
+                </Td>
+                <Td density="none" tone="secondary" nowrap data-testid="runner-checks"
                     title={r.problems.map((p) => p.name).join(', ') || undefined}>
                   <CheckCounts problems={r.problems} />
-                </td>
-                <td className="text-right tabular-nums">{r.agent_count}</td>
-                <td className="whitespace-nowrap text-foreground-secondary">
+                </Td>
+                <Td density="none" numeric align="right">{r.agent_count}</Td>
+                <Td density="none" tone="secondary" nowrap>
                   {r.usage_reported_at ? relativeAge(r.usage_reported_at, now, { seconds: false }) : 'no report'}
-                </td>
-                <td className="whitespace-nowrap text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}</td>
-              </tr>
+                </Td>
+                <Td density="none" tone="secondary" nowrap>{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}</Td>
+              </Tr>
               {open === r.id && (
                 <tr><td colSpan={8} className="bg-muted/30 p-3"><RunnerDetail runner={r} workspace={workspace} /></td></tr>
               )}

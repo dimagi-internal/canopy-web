@@ -45,18 +45,18 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 
 | Kind | Source | Severity | Chip |
 |---|---|---|---|
-| `runner_credential` | `apps/harness/alerts_runner_credential.py` | blocking | Runner credential |
-| `turn_failure` | `apps/harness/alerts_turn_failure.py` (every unresolved investigation, raised the moment the failure is recorded; held by the debugger agent until handed to a person; lives in the investigation's — the debugger's — workspace, see below) | action | Failed turns |
-| `unclaimable_turns` | `apps/harness/alerts_unclaimable.py` | blocking | Stuck turns |
-| `device_key_pending` | `apps/harness/alerts_device_key.py` | blocking | Device key |
-| `runner_code` | `apps/harness/alerts_runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
-| `runner_refresh` | `apps/harness/alerts_runner_refresh.py` (a Refresh still pending 30 min after it was asked; handed to the person who asked, so they are told once; says what it waits on — offline, turns in flight, or the box's floor between self-restarts; resolves when the box reports the bootstrap) | action | Runner refresh |
-| `canopy_projects_off` | `apps/harness/alerts_project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
+| `runner_credential` | `apps/harness/alerts/runner_credential.py` | blocking | Runner credential |
+| `turn_failure` | `apps/harness/alerts/turn_failure.py` (every unresolved investigation, raised the moment the failure is recorded; held by the debugger agent until handed to a person; lives in the investigation's — the debugger's — workspace, see below) | action | Failed turns |
+| `unclaimable_turns` | `apps/harness/alerts/unclaimable.py` | blocking | Stuck turns |
+| `device_key_pending` | `apps/harness/alerts/device_key.py` | blocking | Device key |
+| `runner_code` | `apps/harness/alerts/runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
+| `runner_refresh` | `apps/harness/alerts/runner_refresh.py` (a Refresh still pending 30 min after it was asked; handed to the person who asked, so they are told once; says what it waits on — offline, turns in flight, or the box's floor between self-restarts; resolves when the box reports the bootstrap) | action | Runner refresh |
+| `canopy_projects_off` | `apps/harness/alerts/project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
 | `transfer_left_open` | `apps/canopy_sessions/alerts_handoff.py` (a transferred session's task still open on the box it left: its close keeps failing, or it was kept because it holds the only copy of the work; 14 days) | action | Transfers |
 | `agent_token_expiring` | `apps/agents/alerts_agent_token.py` (an agent's newest stored canopy token expires within 14 days and nothing rotates it — automatic rotation off; says how to turn rotation on or give the agent a fresh login; only the agent's admins see it) | action | Agent login |
-| `trigger_stopped` | `apps/harness/alerts_trigger.py` (one per enabled agent trigger whose creator may no longer set it up — left the workspace, deactivated, or lost agent admin / `agent.work` — so it no longer fires, `triggers.refusal`; seen by whoever may set such a trigger up on the agent) | action | Triggers |
+| `trigger_stopped` | `apps/harness/alerts/trigger.py` (one per enabled agent trigger whose creator may no longer set it up — left the workspace, deactivated, or lost agent admin / `agent.work` — so it no longer fires, `triggers.refusal`; seen by whoever may set such a trigger up on the agent) | action | Triggers |
 | `approval_request` | `apps/approvals/alerts_approval.py` (one per pending approval request, scoped by its kind to the workspace and agent screens; Approve / Decline are the kind's server buttons and show only to people who hold the authority it needs; resolves when the request is decided, withdrawn or expires — see [`approvals.md`](approvals.md)) | action | Approval |
-| `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), every routed runner is directed-only, or none of its own listed runners would take its turns by the setup checklist's `runner_takers` — another tenant's box, or one whose owner may not hold it) | setup | Agent routing |
+| `agent_cant_run` | `apps/harness/alerts/agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), every routed runner is directed-only, or none of its own listed runners would take its turns by the setup checklist's `runner_takers` — another tenant's box, or one whose owner may not hold it) | setup | Agent routing |
 
 Actions: a source returns `Action(id, label, closes, href)`. An `href` action is
 a link followed in the browser; the page also posts it to `POST
@@ -169,8 +169,8 @@ every 30 s.
   "Dismissed (n)" fold with who dismissed each and when, and Undo. Absent when
   nothing is open or dismissed.
 - **Topology** (`/w/:ws/settings/topology`): the side panel's "Alerts here"
-  (`workspace:<slug>`, which also matches every workspace below it) replaces the old can't-run list, badge and "lacks its
-  repo" line; "held to some capabilities" and "runners serving nobody" stay as
+  (`workspace:<slug>`, which also matches every workspace below it) is the one place a runner or agent
+  problem shows (no separate can't-run list, badge or "lacks its repo" line); "held to some capabilities" and "runners serving nobody" stay as
   plain facts.
 - **Agent page** (`/w/:ws/agents/:slug`): `agent:<slug>` above every section,
   nothing when empty.

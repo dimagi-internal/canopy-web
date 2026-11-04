@@ -21,14 +21,15 @@ from django.utils import timezone
 
 from apps.admission import defaults, notices, runner_notices
 from apps.admission.models import AdmissionNotice, AdmissionRule, AdmissionSettings
+from apps.agents import roles
 from apps.agents.models import Agent, AgentGrant
 from apps.harness import services
 from apps.harness.claim import claim_next_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
-from tests.access_helpers import publish
+from apps.harness.testing import enrolled
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -37,7 +38,21 @@ VIKRAM = "vkumar@dimagi.com"
 PASS_ALL = ("mx.google.com; dkim=pass header.i=@dimagi.com; spf=pass "
             "smtp.mailfrom=dimagi.com; dmarc=pass header.from=dimagi.com")
 VERIFIED = [{"name": "Authentication-Results", "value": PASS_ALL}]
-CONFINING = {"capabilities": {"ask": {"callers": ["contact@dimagi.com:verified"]}}}
+
+
+def _confine(hal):
+    """`ask` for verified dimagi.com contacts only, and workspace editors drive it manually."""
+    declare(hal, {"ask": {}})
+    allow(hal, role=roles.READ_ONLY, contact=True, domain="dimagi.com", verified=True)
+    editors_run(hal)
+
+
+def _ask_any_contact(hal):
+    declare(hal, {"ask": {}})
+    allow(hal, role=roles.READ_ONLY, contact=True)
+    editors_run(hal)
+
+
 CAPS = {"sessions": True, "profiles": PROFILES_VERSION, "envelope": ENVELOPE_VERSION}
 
 
@@ -55,7 +70,7 @@ def fleet():
     M.objects.create(workspace=ws, user=jj, role=M.OWNER)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj,
                                turn_mode=Agent.MANUAL)
-    publish(hal, CONFINING)
+    _confine(hal)
     cloud = _runner("cloud-ec2-2", Runner.CLOUD, jj)
     laptop = _runner("jj-mbp", Runner.EMDASH, jj)
     return {"jj": jj, "ws": ws, "hal": hal, "cloud": cloud, "laptop": laptop}
@@ -215,6 +230,23 @@ def test_a_new_workspace_is_seeded_and_seeding_is_idempotent(fleet):
     assert defaults.seed(ws.pk) == 0
 
 
+def test_migration_0011_rewrites_only_an_unedited_offered_nothing_reason(fleet):
+    # Deletable once migration 0011 has deployed (CLAUDE.md: a data migration's test).
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    mig = importlib.import_module("apps.admission.migrations.0011_rewrite_offered_nothing_reason")
+    a = Workspace.objects.create(slug="mig-a", display_name="A", created_by=fleet["jj"])
+    b = Workspace.objects.create(slug="mig-b", display_name="B", created_by=fleet["jj"])
+    AdmissionRule.objects.filter(workspace=a, seed_key="offered-nothing").update(reason=mig.OLD[0])
+    AdmissionRule.objects.filter(workspace=b, seed_key="offered-nothing").update(reason="edited by a person")
+    mig.rewrite(django_apps, None)
+    assert AdmissionRule.objects.get(workspace=a, seed_key="offered-nothing").reason == mig.NEW
+    assert AdmissionRule.objects.get(workspace=b, seed_key="offered-nothing").reason == "edited by a person"
+    assert mig.NEW == next(d for d in defaults.DEFAULTS if d["seed_key"] == "offered-nothing")["reason"]
+
+
 def test_origin_choices_track_the_turn_vocabulary():
     assert dict(AdmissionRule.ORIGIN_CHOICES).keys() == dict(Turn.ORIGIN_CHOICES).keys()
 
@@ -239,7 +271,7 @@ def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbac
     # A no-reply address cannot be a verified dimagi.com contact in the ask
     # list, so give it a rule of its own.
     hal = fleet["hal"]
-    publish(hal, {"capabilities": {"ask": {"callers": ["contact"]}}})
+    _ask_any_contact(hal)
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
                               sender=sender, headers=[])
     assert notice.status == AdmissionNotice.SKIPPED and "no-reply" in notice.detail
@@ -256,7 +288,7 @@ def test_a_person_whose_address_merely_contains_the_letters_is_still_a_person(se
 def test_another_agents_address_gets_no_notice_however_the_turn_was_typed(
         fleet, django_capture_on_commit_callbacks):
     hal = fleet["hal"]
-    publish(hal, {"capabilities": {"ask": {"callers": ["contact"]}}})
+    _ask_any_contact(hal)
     Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["jj"],
                          email="ada@dimagi-ai.com")
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
@@ -494,7 +526,8 @@ def test_a_person_offered_nothing_is_refused_and_their_rule_fires(
         fleet, django_capture_on_commit_callbacks):
     hal = fleet["hal"]
     AgentGrant.objects.filter(agent=hal).delete()
-    publish(hal, None)  # nothing published, no contact line: a contact is offered nothing
+    declare(hal, None)  # nothing published, no contact line: a contact is offered nothing
+    editors_run(hal)
     rule = _seeded(fleet["ws"], "offered-nothing")
     rule.notify_owner = True
     rule.save()
@@ -704,3 +737,37 @@ def test_a_confined_caller_on_a_thread_that_started_manual_is_not_raised(
     assert turn.turn_mode != "auto"
     rule.refresh_from_db()
     assert rule.fired_count == 0
+
+
+def _rejected_turn(chat_session_id=None):
+    from types import SimpleNamespace as NS
+
+    turn = NS(pk="t-1", origin="canopy_web_chat", origin_ref={}, initiator_contact_id=None,
+              initiator_user_id=None, chat_session_id=chat_session_id,
+              chat_session=NS(workspace_id="connect") if chat_session_id else None)
+    rule = NS(pk=58, reach=False, reason="paused", notify_sender=False)
+    agent = NS(name="Hal", slug="hal", workspace_id="connect")
+    return turn, rule, agent
+
+
+def test_a_rejected_chat_links_to_the_chat_that_holds_the_message():
+    """2026-11-03: the owner was asked to dismiss a rejected chat that neither they nor the
+    agent could read, because the card named the turn and not the conversation."""
+    from apps.admission import notices
+
+    links = notices.fix_links(*_rejected_turn("s-9"))
+    assert links[0]["label"] == "The chat this message came from"
+    assert links[0]["url"].endswith("/w/connect/sessions/s-9")
+    with mock.patch("apps.admission.rules.summary", return_value="any turn"):
+        _, body = notices._owner_body(*_rejected_turn("s-9"))
+    assert "still in its chat" in body
+    assert "open the thread yourself" not in body
+
+
+def test_a_rejected_email_keeps_its_thread_wording_and_no_chat_link():
+    from apps.admission import notices
+
+    assert all("chat" not in link["label"] for link in notices.fix_links(*_rejected_turn()))
+    with mock.patch("apps.admission.rules.summary", return_value="any turn"):
+        _, body = notices._owner_body(*_rejected_turn())
+    assert "open the thread yourself" in body

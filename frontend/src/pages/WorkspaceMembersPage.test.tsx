@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import type { MemberOut, InviteOut } from '@/api/workspaces'
+import { ApiError } from '@/api/problem'
 
 // vi.mock is hoisted above these declarations, but the factories aren't invoked
 // until the dynamic `import('./WorkspaceMembersPage')` below actually pulls in
@@ -17,14 +18,6 @@ const createInvite = vi.fn<(slug: string, email: string, role: string) => Promis
 const revokeInvite = vi.fn<(slug: string, inviteId: number) => Promise<void>>()
 const reissueInvite = vi.fn<(slug: string, inviteId: number) => Promise<InviteOut>>()
 
-class FakeWorkspaceApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
 vi.mock('@/api/workspaces', () => ({
   listMembers,
   removeMember,
@@ -33,7 +26,6 @@ vi.mock('@/api/workspaces', () => ({
   createInvite,
   revokeInvite,
   reissueInvite,
-  WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
 let mockRole: string | undefined = 'owner'
@@ -70,6 +62,7 @@ function member(overrides: Partial<MemberOut> = {}): MemberOut {
   return {
     user_id: 1,
     email: 'alice@dimagi.com',
+    display_name: 'Alice',
     role: 'owner',
     joined_at: '2026-01-01T00:00:00Z',
     inherited: false,
@@ -445,7 +438,7 @@ describe('WorkspaceMembersPage', () => {
       member({ user_id: 2, email: 'carol@dimagi.com', role: 'viewer' }),
     ])
     listInvites.mockResolvedValue([])
-    setMemberRole.mockRejectedValue(new FakeWorkspaceApiError(400, 'cannot demote the last owner'))
+    setMemberRole.mockRejectedValue(new ApiError(400, 'cannot demote the last owner'))
 
     renderPage()
     await screen.findByText('carol@dimagi.com')
@@ -457,7 +450,7 @@ describe('WorkspaceMembersPage', () => {
   })
 
   it('redirects to the workspace home on a 404 (non-member)', async () => {
-    listMembers.mockRejectedValue(new FakeWorkspaceApiError(404, 'workspace not found'))
+    listMembers.mockRejectedValue(new ApiError(404, 'workspace not found'))
     listInvites.mockResolvedValue([])
 
     renderPage()

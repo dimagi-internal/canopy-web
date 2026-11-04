@@ -40,17 +40,18 @@ logger = logging.getLogger("canopy_runner")
 #: chat_pump.CANCEL_MAX_ATTEMPTS — the same question, asked about a session.
 MAX_ATTEMPTS = 3
 
-#: {session_key: {"session_id": str, "attempts": int, "interrupt_ids": set}} —
-#: stops rung and not yet confirmed. Guarded because ring() and take() run on
-#: different threads.
-_pending: dict[str, dict] = {}
+#: {(project, session_key): {"session_id": str, "attempts": int, "interrupt_ids": set}}
+#: — stops rung and not yet confirmed. Keyed by both because task names are unique per
+#: project only. Guarded because ring() and take() run on different threads.
+_pending: dict[tuple[str, str], dict] = {}
 #: Stop ids already carried out here, so the durable record read before the
 #: server retired it is not rung a second time.
 _done_ids: set[str] = set()
 _lock = threading.Lock()
 
 
-def ring(session_key: str, session_id: str = "", interrupt_id: str = "") -> None:
+def ring(session_key: str, session_id: str = "", interrupt_id: str = "",
+         *, project: str = "") -> None:
     """A stop arrived for this session. Called from the wake-listener thread, and
     by `pull()` for one recorded on the server.
 
@@ -63,8 +64,9 @@ def ring(session_key: str, session_id: str = "", interrupt_id: str = "") -> None
     with _lock:
         if interrupt_id and interrupt_id in _done_ids:
             return
-        entry = _pending.setdefault(session_key, {"session_id": session_id, "attempts": 0,
-                                                  "interrupt_ids": set()})
+        entry = _pending.setdefault((project, session_key),
+                                    {"session_id": session_id, "attempts": 0,
+                                     "interrupt_ids": set()})
         if session_id:
             entry["session_id"] = session_id
         if interrupt_id:
@@ -79,13 +81,15 @@ def pull(cfg, client, runner_id: str) -> int:
     new = 0
     for item in client.sync_session_interrupts(runner_id):
         key, iid = str(item.get("session_key") or ""), str(item.get("interrupt_id") or "")
+        project = str(item.get("project") or "")
         if not key or not iid:
             continue
         with _lock:
-            known = iid in _done_ids or iid in _pending.get(key, {}).get("interrupt_ids", ())
+            known = iid in _done_ids or iid in _pending.get((project, key), {}).get(
+                "interrupt_ids", ())
         if known:
             continue
-        ring(key, str(item.get("session_id") or ""), iid)
+        ring(key, str(item.get("session_id") or ""), iid, project=project)
         new += 1
     return new
 
@@ -103,8 +107,8 @@ def _retire(client, runner_id: str, session_id: str, ids: set[str], outcome: str
             logger.debug("session stop: could not retire %s", iid, exc_info=True)
 
 
-def take() -> list[tuple[str, str]]:
-    """The rung stops as (session_key, session_id), for this tick's attempt.
+def take() -> list[tuple[tuple[str, str], str]]:
+    """The rung stops as ((project, session_key), session_id), for this tick's attempt.
 
     `settle()` drops the ones that are finished with, so a stop that lands cleanly
     leaves no state behind and one that does not is retried a bounded number of
@@ -114,15 +118,15 @@ def take() -> list[tuple[str, str]]:
         return [(key, entry["session_id"]) for key, entry in _pending.items()]
 
 
-def settle(session_key: str, *, confirmed: bool) -> tuple[bool, set[str]]:
+def settle(key: tuple[str, str], *, confirmed: bool) -> tuple[bool, set[str]]:
     """Record this tick's outcome. Returns (whether the stop is now finished with —
     it landed, or used up its attempts — and the server ids it carried)."""
     with _lock:
-        entry = _pending.get(session_key)
+        entry = _pending.get(key)
         if entry is None:
             return True, set()
         if confirmed or entry["attempts"] + 1 >= MAX_ATTEMPTS:
-            _pending.pop(session_key, None)
+            _pending.pop(key, None)
             return True, set(entry.get("interrupt_ids") or ())
         entry["attempts"] += 1
         return False, set()
@@ -138,13 +142,17 @@ def drain(cfg, client, runner_id: str) -> int:
     from . import cdp_control, desktop
 
     confirmed_count = 0
-    for session_key, session_id in take():
+    for key, session_id in take():
+        project, session_key = key
         try:
             if desktop.worktree_for(cfg, session_key) is not None:
                 # A Claude desktop session: its mod aborts the running turn.
                 res = desktop.stop(cfg, session_key)
             else:
-                res = cdp_control.interrupt(session_key, port=cfg.cdp_port) or {}
+                # Aimed by (project, task) when the stop knows its project: task names
+                # are unique per project only (cdp_control.interrupt).
+                scope = {"project": project} if project else {}
+                res = cdp_control.interrupt(session_key, port=cfg.cdp_port, **scope) or {}
             # A sidecar older than the verifying `interrupt` returns no `action`.
             # Unverified, NOT success — runner and sidecar update separately.
             action = res.get("action") or "unreadable"
@@ -153,7 +161,7 @@ def drain(cfg, client, runner_id: str) -> int:
             action = "unreadable"
 
         confirmed = action in ("interrupted", "idle")
-        done, ids = settle(session_key, confirmed=confirmed)
+        done, ids = settle(key, confirmed=confirmed)
         if done and ids:
             _retire(client, runner_id, session_id, ids, action if confirmed else "failed")
 

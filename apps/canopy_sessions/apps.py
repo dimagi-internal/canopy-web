@@ -9,6 +9,9 @@ class CanopySessionsConfig(AppConfig):
     label = "canopy_sessions"
 
     def ready(self) -> None:
+        from . import departure  # noqa: PLC0415 — ready(): wiring after the app registry is loaded
+
+        departure.register()
         from . import signals  # noqa: F401  (Message projection receiver)
         from . import autotitle  # noqa: F401  (auto-title receiver)
         # Shared chat secrets past their 30 minutes are deleted off-request, so the

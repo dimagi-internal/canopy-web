@@ -5,9 +5,10 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
+from apps.agents import roles
 from apps.agents.models import Agent, AgentAdmin
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import editors_run, publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -38,7 +39,9 @@ def fleet():
     M.objects.create(workspace=dimagi, user=eva_login, role=M.EDITOR)
     ada = Agent.objects.create(slug="ada", name="Ada", workspace=dimagi, owner=jj, user=ada_login)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=connect, owner=jj)
-    publish(hal, {"capabilities": {"ask": {"callers": ["member"]}}})
+    declare(hal, {"ask": {}})
+    allow(hal, role=roles.READ_ONLY)
+    editors_run(hal)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=jj, user=eva_login)
     editors_run(eva)
     return {"jj": jj, "ada": ada, "hal": hal, "eva": eva, "ada_login": ada_login}

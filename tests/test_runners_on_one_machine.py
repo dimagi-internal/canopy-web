@@ -21,8 +21,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import routing
-from apps.harness import claim, runners as harness_runners
+from apps.harness import claim, routing
+from apps.harness import runners as harness_runners
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey, Turn, WorkspaceRunnerOrder
 from apps.harness.runners import backfill_machine_ids, set_runner_machine
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -351,7 +351,7 @@ def test_the_fleet_list_reads_roots_in_constant_queries(box, monkeypatch):
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
 
-    from apps.harness import api_runners as harness_api
+    from apps.harness import api_runners_fleet as harness_api  # list_runners looks `_with_roots` up here
 
     jj, dimagi = box["jj"], box["dimagi"]
     family = Workspace.objects.create(slug="marshellis", display_name="M", created_by=jj)

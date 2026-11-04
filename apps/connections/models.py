@@ -1,33 +1,38 @@
-"""Server-held OAuth connections to third-party providers (Salesforce first).
+"""OAuth connections to third-party providers (Salesforce, Google), held sealed.
 
 A `ConnectionApp` is one workspace's OAuth client for one provider: the client
 id, the client secret and the provider's options, configured by a workspace
 admin. Every `Connection` was minted by one app and is refreshed and revoked
-with that app's credentials; there is no site-wide client.
+with that app's client; there is no site-wide client.
 
-A `Connection` is one grant canopy holds so work can be done AS an owner: a
+A `Connection` is one account connected so work can be done AS an owner: a
 person (their CLI, their sessions) or an agent (its turns). Exactly one owner,
 never both, and there is no fallback between them.
 
-Secrets and tokens are Fernet ciphertext (`apps.common.encryption`); a provider
-may rotate the refresh token on every refresh, so only canopy-web refreshes,
-under a row lock (see the service layer). What differs between providers lives
-in `providers/`, never here: `provider` is just the registry key.
+canopy-web holds no token it can use. The refresh token is sealed to the owner
+(and the machines the owner allows) in `Connection.sealed`; the access token a
+machine last minted is sealed beside it. The app's client secret is the only
+Fernet ciphertext here (`apps.common.encryption`). What differs between
+providers lives in `providers/`, never here: `provider` is just the registry key.
 """
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
-from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
+
+from . import wire
 
 
 class ConnectionApp(models.Model):
     """One workspace's OAuth client for one provider.
 
-    Removed only through `services.remove_app`, which revokes and records every
+    Removed only through `services.remove_app`, which disconnects and records every
     connection made with it first. `workspace` is PROTECT so deleting a workspace
     cannot bypass that: the workspace delete answers 409 until its admins have
     removed its apps (`workspace_delete_hint` is what that 409 tells them)."""
@@ -51,6 +56,9 @@ class ConnectionApp(models.Model):
     configured_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )
+    # Set when an admin removes the app: hidden from then on, and deleted once
+    # every connection made with it has been revoked.
+    removed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -82,6 +90,26 @@ class ConnectionApp(models.Model):
 
 
 class Connection(models.Model):
+    """One account an owner connected: the sealed refresh token and the metadata
+    around it. canopy-web can open `sealed` and `access_sealed` only when they name its own KMS key
+    (`server_use`, `server_tokens`).
+
+    `sealed` is a `zks1` envelope (name `refresh`) bound to `binding`; at connect
+    it is sealed to the owner's member key only (`state = unshared`), and the
+    owner's browser re-seals it to the machines its signed grant statement
+    allows (`active`). `access_sealed` (name `access`) is the current access
+    token, written by whoever last refreshed. `sealed_sig` /
+    `access_sig` are each envelope's writer MACs (null only on canopy-web's
+    first seal). `sealed_digest` is SHA-256 of `sealed`, for compare-and-swap
+    writes. The `lease_*` columns are the one refresh lease. The wire format is
+    `docs/vault/zk-v1/connections_v1_reference.py`."""
+
+    UNSHARED = "unshared"
+    ACTIVE = "active"
+    REVOKING = "revoking"
+    STATES = [(UNSHARED, "Not shared yet"), (ACTIVE, "Active"), (REVOKING, "Revoking")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE,
         related_name="connections",
@@ -90,34 +118,80 @@ class Connection(models.Model):
         "agents.Agent", null=True, blank=True, on_delete=models.CASCADE,
         related_name="connections",
     )
-    # The workspace app that minted this grant; its credentials refresh and revoke it.
-    # CASCADE for `services.remove_app`'s own delete, which has revoked and recorded
-    # each connection first (an app is never deleted any other way: its workspace FK
-    # is PROTECT).
+    # The workspace app that minted this grant; machines refresh and revoke it with
+    # that app's client. CASCADE for the app's own removal, which happens only
+    # once its connections are gone (an app's workspace FK is PROTECT).
     app = models.ForeignKey(ConnectionApp, on_delete=models.CASCADE, related_name="connections")
     provider = models.CharField(max_length=40)
     # The provider's stable id for the account (Salesforce: "<org id>/<user id>").
     account_id = models.CharField(max_length=255)
     # Display only — never used for authorization.
     account_label = models.CharField(max_length=255, blank=True, default="")
-    # The account's own API base, for a provider with one per account (Salesforce);
-    # empty where the provider's API host is fixed.
+    # Display only: a machine takes the API base from the sealed plaintext, checked
+    # against the provider's host rules, never from here.
     instance_url = models.URLField(blank=True, default="")
     # What the provider GRANTED (its `scope`), space-separated; what was asked for
     # when it did not say.
     scopes = models.CharField(max_length=500, blank=True, default="")
-    refresh_token_enc = models.TextField(blank=True, default="")
-    access_token_enc = models.TextField(blank=True, default="")
-    access_token_expires_at = models.DateTimeField(null=True, blank=True)
-    # How long the last access token lived when issued (the provider's `expires_in`,
-    # or the configured lifetime): what a caller's `min_life` is capped against.
-    access_token_seconds = models.PositiveIntegerField(null=True, blank=True)
-    # Set when a refresh is rejected; cleared on every successful refresh.
+    state = models.CharField(max_length=10, choices=STATES, default=UNSHARED)
+
+    sealed = models.TextField(blank=True, default="")
+    sealed_sig = models.JSONField(null=True, blank=True)
+    sealed_digest = models.CharField(max_length=64, blank=True, default="")
+    access_sealed = models.TextField(blank=True, default="")
+    access_sig = models.JSONField(null=True, blank=True)
+    access_expires_at = models.DateTimeField(null=True, blank=True)
+    # RFC 7638 thumbprint of the owner's member public key, sealed inside `sealed`
+    # too; only its holder signs the grant statement.
+    owner_key = models.CharField(max_length=64, blank=True, default="")
+    # Whose member key `owner_key` is: the person, or the admin who connected an
+    # agent's. SET_NULL: the row outlives them (another admin disconnects it, then connects).
+    signer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    # That key and that person as they were at connect, kept so machines can still judge
+    # and revoke this row after the signer replaced their key or was deleted. A convenience
+    # and never a trust: a reader checks this key's thumbprint against the `owner_key`
+    # sealed in the envelope, so a server that changes these only gets itself refused.
+    owner_public_jwk = models.JSONField(default=dict, blank=True)
+    owner_user_id = models.CharField(max_length=32, blank=True, default="")
+    # The owner's endorsements of machines as they stood when a share or a keeper's re-seal
+    # landed, each verified under `owner_public_jwk`. Re-endorsing under a new key overwrites
+    # the live row, and every machine would then refuse a writer only the old signature vouches
+    # for, including for a revoke. Readers verify these as any other: never on the server's word.
+    owner_endorsements = models.JSONField(default=list, blank=True)
+    # The switch: canopy-web's own key (`server_key`) may open this connection. Only the owner's
+    # choice moves it: a reconnect never resets it to the provider's default, though one naming
+    # limits turns it off (`limited`). A machine trusts
+    # the statement's `canopy_web`, never this (`recipients.server_recipient`).
+    server_use = models.BooleanField(default=False, db_default=False)
+    # The owner's signed grant statement (the machines it may reach); version 0 = none yet.
+    statement = models.JSONField(null=True, blank=True)
+    statement_sig = models.CharField(max_length=128, blank=True, default="")
+    statement_version = models.PositiveIntegerField(default=0)
+
+    # The refresh lease: one holder (a device's ECDH thumbprint) at a time.
+    lease_id = models.UUIDField(null=True, blank=True)
+    lease_holder = models.CharField(max_length=64, blank=True, default="")
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    lease_written = models.BooleanField(default=False)
+
+    # Set when a refresh is rejected (`invalid_grant`); cleared by a reconnect or a good write-back.
     refresh_failed_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
+    revoking_since = models.DateTimeField(null=True, blank=True)
+    # Whether the holder that confirms the revoke must also revoke at the provider
+    # (not when another connection of that account through that app remains).
+    revoke_at_provider = models.BooleanField(default=True)
+    # A lend with limits, chosen when the owner started connecting and shown on the share
+    # screen. `expires_at`: no machine is handed it from then on, and the sweep disconnects it,
+    # which revokes it at the provider. Null: until it is disconnected. `owner_turns_only`:
+    # staged only on a turn its owner started (`services.started_by_owner`). canopy-web enforces
+    # both, so neither is proof against a hacked canopy-web; that one still cannot read a token.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    owner_turns_only = models.BooleanField(default=False)
     # Who completed the sign-in. SET_NULL: an agent's connection outlives the
-    # admin who connected it (deleting that person must not take the agent's
-    # Salesforce identity with them).
+    # admin who connected it.
     connected_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
     )
@@ -153,17 +227,30 @@ class Connection(models.Model):
 
     @property
     def needs_reconnect(self) -> bool:
-        """True when the stored grant cannot mint an access token any more."""
-        return not self.refresh_token_enc or self.refresh_failed_at is not None
+        """True once a machine's refresh was rejected: the owner must connect again."""
+        return self.refresh_failed_at is not None
+
+    @property
+    def expired(self) -> bool:
+        """True once a lend's time has run out, before the sweep has disconnected it."""
+        return self.expires_at is not None and self.expires_at <= timezone.now()
+
+    @property
+    def limited(self) -> bool:
+        """Lent with limits, so narrowly that canopy-web never uses it: no switch, no canopy-web box
+        on the share screen, and a statement naming canopy-web is refused."""
+        return self.expires_at is not None or self.owner_turns_only
+
+    @property
+    def binding(self) -> str:
+        """`connection:<uuid>`, the binding id both envelopes are sealed to."""
+        return wire.binding_id(self.id)
 
 
 class ConnectionGrant(models.Model):
-    """An AGENT's connection used by another agent.
-
-    Today's case: Eva's Salesforce user (eva@dimagi-ai.com), used by Echo. Only
-    for agent-owned connections; a person's connection is never granted to an
-    agent. Granting needs admin of both agents (enforced where it is created).
-    """
+    """A connection lent to an agent other than its owner: a person's to an agent
+    they administer, or one agent's to another. Who may lend is checked where a
+    grant statement is accepted; this row only records it."""
 
     connection = models.ForeignKey(Connection, on_delete=models.CASCADE, related_name="grants")
     agent = models.ForeignKey(
@@ -181,10 +268,54 @@ class ConnectionGrant(models.Model):
             models.UniqueConstraint(fields=["connection", "agent"], name="connectiongrant_unique"),
         ]
 
-    def clean(self) -> None:
-        if self.connection.agent_id is None:
-            raise ValidationError("Only an agent-owned connection can be granted to another agent.")
 
-    def save(self, *args, **kwargs) -> None:
-        self.clean()
-        super().save(*args, **kwargs)
+class ConnectionOperation(models.Model):
+    """A lease on writing from one screen, opened by one person (`call_service`).
+
+    canopy-web can't tell a click from a script; the page around the screen decides that before it
+    asks for one. What a row does is limit how far a write can go: this person, this screen, this
+    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes. It slides:
+    each write moves `expires_at` to `call_service.OPERATION_SECONDS` from then, never past
+    `hard_limit_at`, so a long run of writes isn't cut off midway and one click still has an end.
+    Expired rows are deleted by `keeper.sweep`."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    # `declarations.Surface.kind` and `.full_ref`: "view" and its id, "app" and "<workspace>/<key>".
+    surface_kind = models.CharField(max_length=20)
+    surface_ref = models.CharField(max_length=200)
+    # `declarations.Surface.revision`: a view's version, an app's live version id.
+    revision = models.BigIntegerField(null=True, blank=True)
+    writes_used = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(db_index=True)
+    hard_limit_at = models.DateTimeField()
+
+
+class ConnectionSurfaceShare(models.Model):
+    """An agent's connection serving one project's or app's screens, as its admin approved.
+
+    `approved_reads` and `approved_writes` are the declared lines the admin approved, read from the
+    surface when they did so (`services.share_with_surface`), never from what a client sent. A
+    screen's call stops when its declaration holds a line they don't cover. An agent's connection
+    only: a person's own account is never used by someone else."""
+
+    PROJECT = "project"
+    APP = "app"
+    KINDS = [(PROJECT, "Project"), (APP, "App")]
+
+    connection = models.ForeignKey(Connection, on_delete=models.CASCADE, related_name="surface_shares")
+    kind = models.CharField(max_length=10, choices=KINDS)
+    # `declarations.Surface.share_key`: a project's id, or an app's "<workspace>/<key>".
+    ref = models.CharField(max_length=200)
+    approved_reads = models.JSONField(default=list, blank=True)
+    approved_writes = models.JSONField(default=list, blank=True)
+    # SET_NULL for the same reason as `ConnectionGrant.granted_by`.
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["connection", "kind", "ref"], name="connectionsurfaceshare_unique"),
+        ]

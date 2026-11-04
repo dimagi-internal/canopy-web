@@ -25,9 +25,9 @@ from apps.canopy_sessions.models import Message, Session, SessionParticipant
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.vault_zk import VECTORS, ref
+from tests.token_helpers import bearer_headers, pat_token
 
 pytestmark = pytest.mark.django_db
 
@@ -40,15 +40,6 @@ def _fresh_cache():
     cache.clear()
     yield
     cache.clear()
-
-
-def _pat(user) -> str:
-    raw, _ = PersonalToken.create_for_user(user=user, label="t")
-    return raw
-
-
-def _bearer(token: str) -> dict:
-    return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
 
 
 class F:
@@ -78,14 +69,14 @@ def f(client):
     client.force_login(x.jj)
     grant_step_up(client)
     x.client = client
-    x.jj_pat, x.sam_pat, x.carol_pat, x.bot_pat = (_pat(u) for u in (x.jj, x.sam, x.carol, x.bot))
+    x.jj_pat, x.sam_pat, x.carol_pat, x.bot_pat = (pat_token(u) for u in (x.jj, x.sam, x.carol, x.bot))
     x.sign = ec.generate_private_key(ec.SECP256R1())
     x.ecdh = ec.generate_private_key(ec.SECP256R1())
     from canopy_sdk.keys import header_jwk
 
     res = Client().post("/api/runner-device-keys/", data={
         "runner": str(x.runner.pk), "public_jwk": header_jwk(x.sign), "kind": "secure-enclave", "label": "mbp",
-        "ecdh_public_jwk": ref.jwk(x.ecdh.public_key())}, content_type="application/json", **_bearer(x.jj_pat))
+        "ecdh_public_jwk": ref.jwk(x.ecdh.public_key())}, content_type="application/json", **bearer_headers(x.jj_pat))
     assert res.status_code in (200, 201), res.content
     x.device = RunnerDeviceKey.objects.get(pk=res.json()["id"])
     assert client.post(f"/api/runner-device-keys/{x.device.pk}/approve").status_code == 200
@@ -102,7 +93,7 @@ def f(client):
 
 
 def _ask(f, name="GITHUB_TOKEN", token=None, session=True):
-    headers = _bearer(token or f.bot_pat)
+    headers = bearer_headers(token or f.bot_pat)
     if session:
         headers["HTTP_X_CANOPY_PARENT_SESSION"] = str(f.session.pk)
     return Client().post(f"{BASE}/secret-requests", data={"name": name, "reason": "push to its repo"},
@@ -125,7 +116,7 @@ def _fulfil(f, rid, value_zk, token=None, kv=0, client=None):
     if client is not None:
         return client.put(f"{BASE}/secret-requests/{rid}/value", data=body, content_type="application/json")
     return Client().put(f"{BASE}/secret-requests/{rid}/value", data=body, content_type="application/json",
-                        **_bearer(token or f.sam_pat))
+                        **bearer_headers(token or f.sam_pat))
 
 
 # ---- §7 endorsements: the reference and the server agree ------------------------------
@@ -187,7 +178,7 @@ def test_only_an_admin_may_endorse(f):
     e = ref.endorse(str(f.agent.pk), "device", f.device.ecdh_jkt, f.ecdh.public_key(), f.member, str(f.jj.pk))
     res = Client().post(f"{BASE}/vault/zk/endorsements", data={"endorsements": [
         {k: e[k] for k in ("kind", "target", "key_jkt", "by_jkt", "sig")}]}, content_type="application/json",
-        **_bearer(f.sam_pat))
+        **bearer_headers(f.sam_pat))
     assert res.status_code in (403, 404)
 
 
@@ -218,7 +209,7 @@ def test_a_session_header_naming_another_agents_chat_is_ignored(f):
     other = Agent.objects.create(slug="other", name="Other", workspace=f.ws, owner=f.jj)
     foreign = Session.objects.create(workspace=f.ws, agent=other, created_by=f.jj, origin=Session.ORIGIN_WEB)
     res = Client().post(f"{BASE}/secret-requests", data={"name": "GITHUB_TOKEN"}, content_type="application/json",
-                        HTTP_X_CANOPY_PARENT_SESSION=str(foreign.pk), **_bearer(f.bot_pat))
+                        HTTP_X_CANOPY_PARENT_SESSION=str(foreign.pk), **bearer_headers(f.bot_pat))
     assert res.status_code == 200 and res.json()["session_id"] is None
 
 
@@ -250,28 +241,28 @@ def test_the_credentials_page_lists_open_requests_including_one_from_no_chat(f):
     in_chat = _ask(f).json()["id"]
     no_chat = _ask(f, name="kindora", session=False).json()
     assert no_chat["session_id"] is None
-    listed = Client().get(f"{BASE}/secret-requests", **_bearer(f.jj_pat))
+    listed = Client().get(f"{BASE}/secret-requests", **bearer_headers(f.jj_pat))
     assert listed.status_code == 200, listed.content
     assert [r["id"] for r in listed.json()] == [no_chat["id"], in_chat]
     assert all("value" not in r and "value_zk" not in r for r in listed.json())
     assert _fulfil(f, in_chat, _seal(f), token=f.jj_pat).status_code == 200
     AgentSecretRequest.objects.filter(pk=no_chat["id"]).update(expires_at=timezone.now())
-    assert Client().get(f"{BASE}/secret-requests", **_bearer(f.jj_pat)).json() == []
+    assert Client().get(f"{BASE}/secret-requests", **bearer_headers(f.jj_pat)).json() == []
 
 
 def test_only_an_admin_lists_the_open_requests(f):
     _ask(f)
     for token in (f.sam_pat, f.bot_pat):
-        assert Client().get(f"{BASE}/secret-requests", **_bearer(token)).status_code == 403
+        assert Client().get(f"{BASE}/secret-requests", **bearer_headers(token)).status_code == 403
 
 
 def test_recipients_are_for_admins_and_whoever_may_answer_the_open_request(f):
     rid = _ask(f).json()["id"]
     url = f"{BASE}/vault/zk/recipients"
-    assert Client().get(url, **_bearer(f.sam_pat)).status_code == 403
-    assert Client().get(f"{url}?secret_request={rid}", **_bearer(f.sam_pat)).status_code == 200
-    assert Client().get(f"{url}?secret_request={rid}", **_bearer(f.carol_pat)).status_code == 403
-    assert Client().get(f"{url}?secret_request={rid}", **_bearer(f.bot_pat)).status_code == 403
+    assert Client().get(url, **bearer_headers(f.sam_pat)).status_code == 403
+    assert Client().get(f"{url}?secret_request={rid}", **bearer_headers(f.sam_pat)).status_code == 200
+    assert Client().get(f"{url}?secret_request={rid}", **bearer_headers(f.carol_pat)).status_code == 403
+    assert Client().get(f"{url}?secret_request={rid}", **bearer_headers(f.bot_pat)).status_code == 403
 
 
 # ---- answering ----------------------------------------------------------------------------
@@ -279,7 +270,7 @@ def test_recipients_are_for_admins_and_whoever_may_answer_the_open_request(f):
 def _resolve(f):
     htu = f"http://testserver{RESOLVE}"
     return Client().get(RESOLVE, HTTP_DPOP=make_dpop_proof(f.sign, "GET", htu), HTTP_X_CANOPY_TURN_ID="t-1",
-                        **_bearer(f.jj_pat))
+                        **bearer_headers(f.jj_pat))
 
 
 def test_a_chat_writer_fills_a_missing_secret_and_the_runner_opens_it(f):
@@ -297,7 +288,7 @@ def test_a_chat_writer_fills_a_missing_secret_and_the_runner_opens_it(f):
     assert ref.open_sealed_value(sealed, str(f.agent.pk), "GITHUB_TOKEN", "device", f.device.ecdh_jkt,
                                  f.ecdh) == "ghp_from_sam"
     # The agent learns the outcome, never the value.
-    status = Client().get(f"{BASE}/secret-requests/{rid}", **_bearer(f.bot_pat)).json()
+    status = Client().get(f"{BASE}/secret-requests/{rid}", **bearer_headers(f.bot_pat)).json()
     assert status["status"] == "fulfilled" and status["has_value"] is True
     assert "ghp_from_sam" not in json.dumps(status)
 

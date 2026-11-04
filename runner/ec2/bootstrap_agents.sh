@@ -203,6 +203,20 @@ resolve_roster() {  # -> comma-joined slugs; served first, registry, AGENT_SLUGS
 FAILED_AGENTS=()
 READY_AGENTS=()
 
+# This pass can run beside the runner's claim loop (cloud_runner.py,
+# start_bootstrap_beside_claims). These tell it what a starting turn must not meet: "tools"
+# holds every claim while a tool it runs is being replaced, "agent:<slug>" holds that
+# agent's while it is prepared. Unset (the --credentials-only timer pass) they do nothing.
+hold_claims() {
+  [[ -n "${CANOPY_SETUP_HOLD_FILE:-}" ]] && printf '%s\n' "$1" >"$CANOPY_SETUP_HOLD_FILE" 2>/dev/null
+  return 0
+}
+release_claims() {
+  [[ -n "${CANOPY_SETUP_HOLD_FILE:-}" ]] && rm -f "$CANOPY_SETUP_HOLD_FILE" 2>/dev/null
+  return 0
+}
+trap release_claims EXIT
+
 # ── Step 1: tooling ─────────────────────────────────────────────────────────────
 step1_tooling() {
   log "step 1: tooling"
@@ -375,6 +389,7 @@ step3_agents() {
       fail "$slug: canopy CLI not on PATH — cannot prepare (step 1 installs it)"
       FAILED_AGENTS+=("$slug"); continue
     fi
+    hold_claims "agent:$slug"
     AGENT_ROOT="$AGENT_ROOT" canopy agent prepare --runner --slug "$slug" "${args[@]}" \
       || warn "$slug: canopy agent prepare reported problems (its readiness report says which)"
     if (( CREDENTIALS_ONLY )) || [[ -d "$AGENT_ROOT/$slug/.git" ]]; then
@@ -388,6 +403,7 @@ step3_agents() {
   # first turn clones it with that turn's token (cloud_runner._ensure_agent_clone), and
   # only a failure THERE is reported (`agents_unprepared`, routing.cannot_serve).
   # Reporting it here would stop canopy-web from ever sending the turn that fixes it.
+  release_claims
   if (( ! CREDENTIALS_ONLY )); then
     : >"$AGENT_ROOT/.unprepared" 2>/dev/null || true
   fi
@@ -409,11 +425,15 @@ ensure_claude_current() {
     warn "could not read the latest Claude Code version (registry unreachable?) — keeping ${have:-none}"
   elif [[ "$have" == "$latest" ]]; then
     ok "Claude Code $have is current"
-  elif npm i -g --prefix "$HOME/.local" "@anthropic-ai/claude-code@$latest" >/dev/null 2>&1; then
-    hash -r
-    ok "Claude Code ${have:-none} -> $(claude --version 2>/dev/null | awk '{print $1}')"
   else
-    warn "Claude Code update ${have:-none} -> $latest failed — keeping ${have:-none}"
+    hold_claims tools
+    if npm i -g --prefix "$HOME/.local" "@anthropic-ai/claude-code@$latest" >/dev/null 2>&1; then
+      hash -r
+      ok "Claude Code ${have:-none} -> $(claude --version 2>/dev/null | awk '{print $1}')"
+    else
+      warn "Claude Code update ${have:-none} -> $latest failed — keeping ${have:-none}"
+    fi
+    release_claims
   fi
 }
 
@@ -503,11 +523,13 @@ reinstall_cli_from_marketplace_clone() {
       [[ -n "$value" ]] && with+=(--with "$value")
     done < <(python3 "$extras_py" 2>/dev/null)
   fi
+  hold_claims tools
   if uv tool install --force --reinstall ${with[@]+"${with[@]}"} "$clone" >/dev/null 2>&1; then
     ok "canopy CLI re-pointed at the marketplace clone ($clone)${with:+, keeping ${#with[@]} --with args}"
   else
     warn "could not re-point the canopy CLI at $clone — doctor will flag its provenance"
   fi
+  release_claims
 }
 
 # ── Step 4b: prune caches ────────────────────────────────────────────────────────
@@ -515,7 +537,8 @@ reinstall_cli_from_marketplace_clone() {
 # kept. cloud-ec2-1's 20 GB root reached 100% on 2026-10-04 because nothing ever
 # removed a plugin version (33 canopy, 24 ace, ~9 GB) or an npm/uv download.
 # Full bootstrap only — never the --credentials-only timer pass — so it runs at a
-# service start or the daily self-refresh, when no turn is running.
+# service start or a self-refresh. Turns may be running: each keeps the version it
+# started on while that is the installed one or the newest spare.
 step4b_prune_caches() {
   log "step 4b: prune plugin / npm / uv caches"
   local before after

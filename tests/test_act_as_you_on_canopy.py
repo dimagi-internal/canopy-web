@@ -47,6 +47,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
 from tests.fixtures.passkey_confirm import give_passkey
+from tests.token_helpers import bearer_headers
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -99,17 +100,13 @@ def _login(w, turn) -> str:
     return turn_agent_tokens.issue(turn, w["box"])["token"]
 
 
-def _bearer(raw: str) -> dict:
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 def _ask(login: str, scope="either", reason="Move my three stale tasks to Done", **extra):
     return Client().post(REQUESTS, json.dumps({"reason": reason, "scope": scope, **extra}),
-                         content_type="application/json", **_bearer(login))
+                         content_type="application/json", **bearer_headers(login))
 
 
 def _status(login: str, grant_id):
-    return Client().get(f"{REQUESTS}{grant_id}", **_bearer(login))
+    return Client().get(f"{REQUESTS}{grant_id}", **bearer_headers(login))
 
 
 def _browser(user) -> Client:
@@ -174,7 +171,7 @@ def test_the_person_is_always_the_turns_asker_never_one_the_agent_names(w):
 def test_naming_someone_else_on_behalf_is_refused(w):
     r = Client().post(REQUESTS, json.dumps({"reason": "x", "scope": "read"}),
                       content_type="application/json",
-                      HTTP_X_CANOPY_ON_BEHALF_OF="col@dimagi.com", **_bearer(_login(w, _turn(w))))
+                      HTTP_X_CANOPY_ON_BEHALF_OF="col@dimagi.com", **bearer_headers(_login(w, _turn(w))))
     assert r.status_code == 403
 
 
@@ -278,7 +275,7 @@ def test_approve_and_decline_refuse_every_token(w, action):
     gid = _ask(_login(w, _turn(w))).json()["id"]
     raw, _ = PersonalToken.create_for_user(user=w["jj"], label="laptop")
     r = Client().post(f"{REQUESTS}{gid}/{action}", json.dumps({"credential": {}, "scope": "write"}),
-                      content_type="application/json", **_bearer(raw))
+                      content_type="application/json", **bearer_headers(raw))
     assert r.status_code == 403
     assert ActAsGrant.objects.get(pk=gid).status == "pending"
 
@@ -332,7 +329,7 @@ def test_only_the_login_that_asked_reads_it(w):
 
 def test_the_token_signs_in_as_the_person(w):
     token, grant, _ = _live_token(w)
-    r = Client().get("/api/me/attention/", **_bearer(token))
+    r = Client().get("/api/me/attention/", **bearer_headers(token))
     assert r.status_code == 200, r.content
 
 
@@ -341,13 +338,13 @@ def test_thirty_minutes_from_the_touch_never_extended(w):
     assert grant.expires_at - grant.approved_at == dt.timedelta(minutes=30)
     end = grant.expires_at
     for _ in range(3):  # use, re-read, try to approve again: the end never moves
-        Client().get("/api/me/attention/", **_bearer(token))
+        Client().get("/api/me/attention/", **bearer_headers(token))
         _status(login, grant.pk)
         assert _browser(w["jj"]).post(f"{REQUESTS}{grant.pk}/approve/begin").status_code == 409
     grant.refresh_from_db()
     assert grant.expires_at == end
     ActAsGrant.objects.filter(pk=grant.pk).update(expires_at=timezone.now() - dt.timedelta(seconds=1))
-    r = Client().get("/api/me/attention/", **_bearer(token))
+    r = Client().get("/api/me/attention/", **bearer_headers(token))
     assert r.status_code == 401 and "30 minutes" in r.json()["detail"]
     assert ActAsGrant.objects.get(pk=grant.pk).status == "expired"
 
@@ -355,7 +352,7 @@ def test_thirty_minutes_from_the_touch_never_extended(w):
 def test_the_token_dies_with_the_turn(w):
     token, grant, _ = _live_token(w)
     Turn.objects.filter(pk=grant.turn_id).update(status=Turn.DONE)
-    r = Client().get("/api/me/attention/", **_bearer(token))
+    r = Client().get("/api/me/attention/", **bearer_headers(token))
     assert r.status_code == 401 and "turn" in r.json()["detail"]
 
 
@@ -369,13 +366,13 @@ def test_approval_after_the_turn_ended_is_refused(w):
 @pytest.mark.parametrize("who", ["agent", "person"])
 def test_stop_ends_it_at_once(w, who):
     token, grant, login = _live_token(w)
-    caller = Client(**_bearer(login)) if who == "agent" else _browser(w["jj"])
+    caller = Client(**bearer_headers(login)) if who == "agent" else _browser(w["jj"])
     assert caller.post(f"{REQUESTS}{grant.pk}/stop").json()["status"] == "stopped"
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 401
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 401
 
 
 def test_an_unknown_token_signs_in_as_no_one(w):
-    assert Client().get("/api/me/attention/", **_bearer(act_as.PREFIX + "nope")).status_code == 401
+    assert Client().get("/api/me/attention/", **bearer_headers(act_as.PREFIX + "nope")).status_code == 401
 
 
 # --- what it reaches -------------------------------------------------------------------------
@@ -383,16 +380,16 @@ def test_an_unknown_token_signs_in_as_no_one(w):
 
 def test_a_read_grant_reads_and_refuses_every_write(w):
     token, _, _ = _live_token(w, "read")
-    assert Client().get("/api/agents/hal/", **_bearer(token)).status_code == 200
+    assert Client().get("/api/agents/hal/", **bearer_headers(token)).status_code == 200
     r = Client().patch("/api/agents/hal/turn-mode", json.dumps({"turn_mode": "auto"}),
-                       content_type="application/json", **_bearer(token))
+                       content_type="application/json", **bearer_headers(token))
     assert r.status_code == 403 and "read-only" in r.json()["detail"]
 
 
 def test_a_write_grant_writes_as_the_person(w):
     token, _, _ = _live_token(w, "write")
     r = Client().patch("/api/agents/hal/turn-mode", json.dumps({"turn_mode": "auto"}),
-                       content_type="application/json", **_bearer(token))
+                       content_type="application/json", **bearer_headers(token))
     assert r.status_code == 200, r.content
 
 
@@ -426,7 +423,7 @@ EXCLUDED_UNDER_WRITE = [
 def test_a_write_grant_never_reaches_the_excluded_routes(w, method, path):
     token, _, _ = _live_token(w, "write")
     path = path.replace("{ws}", w["ws"].slug)
-    r = Client().generic(method, path, "{}", content_type="application/json", **_bearer(token))
+    r = Client().generic(method, path, "{}", content_type="application/json", **bearer_headers(token))
     assert r.status_code in (401, 403), (method, path, r.status_code)
     if r.status_code == 403:
         assert "act-as-you permission" in r.json()["detail"]
@@ -458,14 +455,14 @@ def test_every_exclusion_names_a_real_route_family():
 def test_a_route_mcp_does_not_serve_is_refused(w):
     token, _, _ = _live_token(w, "write")
     r = Client().post("/api/harness/runners/heartbeat", "{}", content_type="application/json",
-                      **_bearer(token))
+                      **bearer_headers(token))
     assert r.status_code == 403
 
 
 def test_the_token_cannot_mint_and_never_steps_up(w):
     token, _, _ = _live_token(w, "write")
     r = Client().post("/api/agents/hal/canopy-login", "{}", content_type="application/json",
-                      **_bearer(token))
+                      **bearer_headers(token))
     assert r.status_code == 403
 
 
@@ -531,7 +528,7 @@ def test_mcp_refuses_the_token_once_the_turn_ends(w):
 
 def test_every_rest_request_is_a_call_log_row_naming_the_agent(w):
     token, grant, _ = _live_token(w, "write")
-    Client().get("/api/agents/hal/", **_bearer(token))
+    Client().get("/api/agents/hal/", **bearer_headers(token))
     row = MCPAuditLog.objects.get(tool="get_agent")
     assert (row.user, row.acting_agent, row.act_as_grant, row.ok) == (w["jj"], "hal", str(grant.pk), True)
     listed = _browser(w["jj"]).get("/api/events/mcp-calls").json()["items"]
@@ -540,7 +537,7 @@ def test_every_rest_request_is_a_call_log_row_naming_the_agent(w):
 
 def test_every_transition_is_an_admin_event_without_the_reason(w):
     token, grant, login = _live_token(w, "write")
-    Client(**_bearer(login)).post(f"{REQUESTS}{grant.pk}/stop")
+    Client(**bearer_headers(login)).post(f"{REQUESTS}{grant.pk}/stop")
     kinds = list(Event.objects.filter(source="harness.act_as").values_list("kind", flat=True))
     assert set(kinds) == {"act_as.requested", "act_as.approved", "act_as.stopped"}
     approved = Event.objects.get(kind="act_as.approved")
@@ -566,7 +563,7 @@ def test_a_turn_the_token_starts_is_not_a_verified_askers(w):
     payload = {"agent_slug": "hal", "origin": "api", "idempotency_key": uuid.uuid4().hex,
                "prompt": "and again"}
     r = Client().post("/api/harness/turns/", json.dumps(payload), content_type="application/json",
-                      **_bearer(token))
+                      **bearer_headers(token))
     assert r.status_code in (201, 403), r.content
     if r.status_code == 201:
         made = Turn.objects.get(pk=r.json()["id"])
@@ -595,10 +592,10 @@ def test_a_laptop_session_login_asks_and_its_token_lives_while_the_session_is_he
     gid = asked.json()["id"]
     assert _approve(w, gid, "read").status_code == 200
     token = _status(login, gid).json()["token"]
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 200
     # The session closes: the permission is over.
     type(session).objects.filter(pk=session.pk).update(status="archived")
-    r = Client().get("/api/me/attention/", **_bearer(token))
+    r = Client().get("/api/me/attention/", **bearer_headers(token))
     assert r.status_code == 401
 
 
@@ -608,7 +605,7 @@ def test_a_laptop_session_permission_ends_when_someone_else_drives_the_session(w
     _approve(w, gid, "read")
     token = _status(login, gid).json()["token"]
     _turn(w, by=w["col"], chat_session=session, status=Turn.DONE)  # a colleague's message
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 401
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 401
 
 
 # --- a chat: the link reaches the person only when the asking turn ends -----------------------
@@ -648,10 +645,10 @@ def test_in_a_chat_the_request_outlives_the_turn_and_a_later_turn_collects_it_on
     assert _status(second_login, gid).json()["token"] is None
     assert _status(first_login, gid).json()["token"] is None  # once, whoever collects it
     token = got["token"]
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 200
     # The asking turn has long ended; the conversation is what keeps it.
     Turn.objects.filter(pk=second.pk).update(status=Turn.DONE)
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 200
 
 
 def test_in_a_chat_the_permission_ends_when_someone_else_speaks_or_the_chat_closes(w):
@@ -662,9 +659,9 @@ def test_in_a_chat_the_permission_ends_when_someone_else_speaks_or_the_chat_clos
     _approve(w, gid, "read")
     token = _status(login, gid).json()["token"]
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 200
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 200
     type(session).objects.filter(pk=session.pk).update(status="archived")
-    assert Client().get("/api/me/attention/", **_bearer(token)).status_code == 401
+    assert Client().get("/api/me/attention/", **bearer_headers(token)).status_code == 401
 
 
 def test_in_a_chat_a_colleagues_message_ends_a_waiting_request(w):
@@ -695,7 +692,7 @@ def test_a_later_turn_in_the_chat_may_stop_it(w):
     gid = _ask(_login(w, turn)).json()["id"]
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
     later = _login(w, _chat_turn(w, session))
-    assert Client(**_bearer(later)).post(f"{REQUESTS}{gid}/stop").json()["status"] == "stopped"
+    assert Client(**bearer_headers(later)).post(f"{REQUESTS}{gid}/stop").json()["status"] == "stopped"
 
 
 def test_one_request_waits_per_chat(w):
@@ -713,10 +710,10 @@ def test_the_agent_lists_its_requests_in_this_chat_without_tokens(w):
     _approve(w, gid, "read")
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
     later = _login(w, _chat_turn(w, session))
-    listed = Client().get(REQUESTS, **_bearer(later)).json()
+    listed = Client().get(REQUESTS, **bearer_headers(later)).json()
     assert [r["id"] for r in listed] == [gid] and "token" not in listed[0]
     other = _login(w, _turn(w, agent=w["eva"]))
-    assert Client().get(REQUESTS, **_bearer(other)).json() == []
+    assert Client().get(REQUESTS, **bearer_headers(other)).json() == []
     # The token is still uncollected: the later turn collects it.
     assert _status(later, gid).json()["token"]
 
@@ -739,3 +736,85 @@ def test_an_unreviewed_turn_may_act_as_you_to_read_only(w):
 
 def test_a_reviewed_turn_may_still_ask_for_write(w):
     assert _ask(_login(w, _turn(w, turn_mode="manual")), scope="write").status_code in (200, 201)
+
+
+# --- an auto chat the person is attending may ask for write ----------------------------------
+
+
+def _attended(w, **kw):
+    """An auto turn typed by Jonathan in a canopy-web chat he is present in."""
+    from apps.canopy_sessions import presence
+
+    session = _chat(w)
+    presence.touch(session.id, w["jj"].pk)
+    return _turn(w, chat_session=session, turn_mode="auto", **kw)
+
+
+def test_an_attended_auto_chat_may_ask_for_write_and_the_passkey_approval_is_the_review(w):
+    turn = _attended(w)
+    login = _login(w, turn)
+    asked = _ask(login, scope="either")
+    assert asked.status_code == 201, asked.content
+    gid = asked.json()["id"]
+    # Still nothing without the person's passkey touch, and only the same person approves.
+    assert _status(login, gid).json().get("token") in (None, "")
+    assert _browser(w["col"]).post(f"{REQUESTS}{gid}/approve/begin").status_code == 404
+    assert _approve(w, gid, "write").status_code == 200
+    assert ActAsGrant.objects.get(pk=gid).scope == "write"
+    assert _status(login, gid).json()["token"].startswith(act_as.PREFIX)
+
+
+def test_an_attended_auto_chat_approval_survives_the_person_leaving_the_chat_tab(w):
+    from apps.canopy_sessions import presence
+
+    turn = _attended(w)
+    gid = _ask(_login(w, turn), scope="write").json()["id"]
+    presence.leave(turn.chat_session_id, w["jj"].pk)  # they went to the approval page
+    assert _approve(w, gid, "write").status_code == 200
+
+
+@pytest.mark.parametrize("change", [
+    {"initiator_kind": "system", "initiator_assurance": "internal", "initiator_via": "schedule"},
+    {"initiator_kind": "agent", "initiator_assurance": "internal", "initiator_via": "agent"},
+    {"origin": Turn.ORIGIN_EMAIL},
+    {"origin": Turn.ORIGIN_API},
+    {"origin": Turn.ORIGIN_CANOPY_SCHEDULER},
+    {"capability": "ask"},
+])
+def test_auto_turns_nobody_attends_stay_read_only(w, change):
+    from apps.canopy_sessions import presence
+
+    session = _chat(w)
+    presence.touch(session.id, w["jj"].pk)
+    turn = _turn(w, chat_session=session, turn_mode="auto")
+    login = _login(w, turn)  # issued first: a confined turn is never given one
+    Turn.objects.filter(pk=turn.pk).update(**change)
+    r = _ask(login, scope="write")
+    assert r.status_code == 403, (change, r.content)
+
+
+def test_an_auto_chat_with_the_person_absent_stays_read_only(w):
+    from apps.canopy_sessions import presence
+
+    turn = _attended(w)
+    presence.leave(turn.chat_session_id, w["jj"].pk)
+    r = _ask(_login(w, turn), scope="write")
+    assert r.status_code == 403 and "unreviewed" in r.json()["detail"]
+    assert _ask(_login(w, turn), scope="read").status_code == 201
+
+
+def test_an_auto_chat_present_for_someone_else_stays_read_only(w):
+    """Present means the asker, not any member of the chat."""
+    from apps.canopy_sessions import presence
+
+    session = _chat(w)
+    presence.touch(session.id, w["col"].pk)
+    turn = _turn(w, chat_session=session, turn_mode="auto")
+    assert _ask(_login(w, turn), scope="write").status_code == 403
+
+
+def test_an_unattended_auto_grant_cannot_be_approved_as_write_either(w):
+    """A read request raised to write is refused as before; and a write request from a
+    non-chat auto turn never exists to approve."""
+    login = _login(w, _turn(w, turn_mode="auto"))
+    assert _ask(login, scope="write").status_code == 403

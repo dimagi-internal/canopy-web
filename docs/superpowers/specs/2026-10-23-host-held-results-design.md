@@ -62,7 +62,7 @@ never the data. One design for every conversation; sensitivity only changes what
 > own `KeptResult` table). The SDK keeps only the link's definition and checks
 > (`canopy_sdk.resources`: `resource_link`, `validate_link(s)`, `check_scheme`,
 > `notify_updated`) and the `RESOURCE_SCHEMES` declaration in `site.json`. What canopy
-> keeps of a link, and its bounds, is in `docs/architecture/embedding-a-canopy-agent.md` §8b.
+> keeps of a link, and its bounds, is in `docs/architecture/embedding-actions-and-access.md` §8b.
 
 `canopy_sdk` gains a host helper so a host returns "facts + an artifact" without building
 storage, expiry or ACL itself:

@@ -140,3 +140,12 @@ export function unwrap<T>(res: FetchResult<T>, what: string): T {
   }
   return res.data
 }
+
+/**
+ * The text to show for a caught error: its message (an `ApiError`'s is already
+ * the server's `detail`, else its title), else `fallback`. The one helper for
+ * `catch (e)` blocks — don't write another `e instanceof Error ? …`.
+ */
+export function errorText(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback
+}

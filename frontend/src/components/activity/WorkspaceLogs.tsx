@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listEvents, listMcpCalls, type LogEvent, type McpCall } from "@/api/logs";
 import { relativeAge } from "@/lib/relativeAge";
+import { Td, Th, Tr } from '@/components/DataTable'
 
 // The two logs beside the turn log on Activity. Both are the workspace
 // ADMIN's (apps/workspaces/permissions.py, LOGS_READ): an admin or owner sees
@@ -44,29 +45,29 @@ export function EventLogTable() {
     <div className="overflow-x-auto rounded border border-border">
       <table className="w-full text-sm" data-testid="event-log">
         <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Last seen</th>
-            <th className="px-3 py-2 font-medium">Level</th>
-            <th className="px-3 py-2 font-medium">Source</th>
-            <th className="px-3 py-2 font-medium">What</th>
-            <th className="px-3 py-2 font-medium">Count</th>
-          </tr>
+          <Tr rule="bottom" head="xs">
+            <Th density="roomy">Last seen</Th>
+            <Th density="roomy">Level</Th>
+            <Th density="roomy">Source</Th>
+            <Th density="roomy">What</Th>
+            <Th density="roomy">Count</Th>
+          </Tr>
         </thead>
         <tbody>
           {rows.map((e) => (
-            <tr key={e.id} className="border-b border-border last:border-0">
-              <td className="px-3 py-2 text-foreground-secondary" title={new Date(e.last_seen_at).toLocaleString()}>
+            <Tr rule="bottom-last" key={e.id}>
+              <Td density="roomy" tone="secondary" title={new Date(e.last_seen_at).toLocaleString()}>
                 {relativeAge(e.last_seen_at, now, { seconds: false })}
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td density="roomy">
                 <span className={`inline-block rounded border px-1.5 py-0.5 text-xs ${LEVEL_TOKEN[e.level] ?? "border-border text-muted-foreground"}`}>
                   {e.level}
                 </span>
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">{e.source} · {e.kind}</td>
-              <td className="px-3 py-2 text-foreground">{e.summary || e.key}</td>
-              <td className="px-3 py-2 tabular-nums text-foreground-secondary">{e.count}</td>
-            </tr>
+              </Td>
+              <Td density="roomy" tone="muted">{e.source} · {e.kind}</Td>
+              <Td density="roomy" tone="foreground">{e.summary || e.key}</Td>
+              <Td density="roomy" tone="secondary" numeric>{e.count}</Td>
+            </Tr>
           ))}
         </tbody>
       </table>
@@ -96,28 +97,28 @@ export function McpCallsTable() {
         <div className="overflow-x-auto rounded border border-border">
           <table className="w-full text-sm" data-testid="mcp-calls">
             <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Who</th>
-                <th className="px-3 py-2 font-medium">Tool</th>
-                <th className="px-3 py-2 font-medium">Call</th>
-                <th className="px-3 py-2 font-medium">Result</th>
-              </tr>
+              <Tr rule="bottom" head="xs">
+                <Th density="roomy">Time</Th>
+                <Th density="roomy">Who</Th>
+                <Th density="roomy">Tool</Th>
+                <Th density="roomy">Call</Th>
+                <Th density="roomy">Result</Th>
+              </Tr>
             </thead>
             <tbody>
               {rows.map((c) => (
-                <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2 text-foreground-secondary" title={new Date(c.created_at).toLocaleString()}>
+                <Tr rule="bottom-last" key={c.id}>
+                  <Td density="roomy" tone="secondary" title={new Date(c.created_at).toLocaleString()}>
                     {relativeAge(c.created_at, now, { seconds: false })}
-                  </td>
-                  <td className="px-3 py-2 text-foreground">{c.user_email || "—"}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-foreground">{c.tool}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{c.args_summary}</td>
-                  <td className="px-3 py-2 text-xs">
+                  </Td>
+                  <Td density="roomy" tone="foreground">{c.user_email || "—"}</Td>
+                  <Td density="roomy" tone="foreground" mono className="text-xs">{c.tool}</Td>
+                  <Td density="roomy" tone="muted" mono className="text-xs">{c.args_summary}</Td>
+                  <Td density="roomy" className="text-xs">
                     {c.ok ? <span className="text-success">ok</span>
                       : <span className="text-destructive" title={c.error}>failed</span>}
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
             </tbody>
           </table>

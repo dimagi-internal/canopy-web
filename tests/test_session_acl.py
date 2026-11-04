@@ -19,6 +19,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import access, attach
+from apps.harness import turn_asker
 from apps.canopy_sessions.consumers import SessionConsumer
 from apps.canopy_sessions.models import SessionParticipant
 from apps.workspaces.models import WorkspaceMembership
@@ -135,13 +136,16 @@ def test_a_laptop_session_is_its_box_owner_s_alone():
 
 def test_a_coach_and_a_runner_admin_read_what_was_sent_and_nothing_more():
     people, s, _ws = _world()
+    # The coach's login reads inside a turn nobody asked for (a sweep): `review_grantors`.
+    setattr(people["coach"], "_canopy_turn_standing", turn_asker.Standing("t", unattended=True))
     for who in ("coach", "box_admin"):
         user = people[who]
         assert access.role_for(user, s["discovered"]) == SessionParticipant.VIEWER, who
         assert access.can_write(user, s["discovered"]) is False, who
         assert access.may_pull(user, s["discovered"]) is False, who
-        r = _client(user).post(f"/api/canopy-sessions/{s['discovered'].id}/backfill")
-        assert r.status_code == 403 and "already sent" in r.json()["detail"], who
+        if who == "box_admin":  # the coach has no browser sign-in: it reads only inside a turn
+            r = _client(user).post(f"/api/canopy-sessions/{s['discovered'].id}/backfill")
+            assert r.status_code == 403 and "already sent" in r.json()["detail"], who
     # The runner admin may move what is on the box they were trusted with...
     assert access.may_move(people["box_admin"], s["discovered"])
     # ...the coach may not, and neither sees the web chats a review grant does not cover.

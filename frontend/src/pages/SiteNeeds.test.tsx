@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { SiteNeeds } from '@/api/connectedApps'
 
-const { SiteNeedsTable } = await import('./ConnectedAppsPage')
+const { SiteNeedsTable } = await import('./connectedApps/SiteNeedsTable')
 
 afterEach(cleanup)
 

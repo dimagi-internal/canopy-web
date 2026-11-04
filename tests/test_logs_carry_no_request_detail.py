@@ -22,6 +22,8 @@ from django.utils.log import log_response
 from apps.common.log_format import JsonFormatter
 from apps.common.log_redact import RedactRequestDetail, path_template
 
+pytestmark = pytest.mark.guard
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOKEN = "Zq9xK2vB7mLwR4tYp8sN3cHf6dJ1aE5g"
 TICKET = "tkt-Secret-Value-123"

@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.harness.models import Runner, RunnerFlag, Turn
 from apps.host_grants import client_identity, host_gateway
-from tests.access_helpers import publish
+from tests.access_helpers import declare
 from tests.fixtures import site_gateway as sg
 from tests.fixtures.site_gateway import HOST_TOKEN, IFACE, RESOURCE
 from tests.fixtures.site_gateway import call as _call
@@ -41,7 +41,7 @@ def _sensitive_cap(w, *, sensitive=True):
     """`connect` handles sensitive data; the turn on a sensitive-data box."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    publish(w["agent"], {"capabilities": caps})
+    declare(w["agent"], caps)
     w["agent"].interface_published_by = w["owner"]
     w["agent"].save(update_fields=["interface_published_by"])
     box = Runner.objects.create(name="cloud-zdr-1", workspace=w["ws"], kind=Runner.CLOUD,
@@ -135,7 +135,7 @@ def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
 
 def test_turning_sensitive_off_closes_the_door(w, host):
     _sensitive_cap(w)
-    publish(w["agent"], IFACE)
+    declare(w["agent"], IFACE["capabilities"])
     # The sensitive turn's caller token itself now stands for nothing
     # (`caller_tokens._sensitive_grant`), before the gateway's own refusal.
     with pytest.raises(AssertionError):

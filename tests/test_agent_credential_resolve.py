@@ -19,24 +19,12 @@ from apps.passkeys.testing import give_vault_key
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 from tests.fixtures.device_proof import accept_device_proof
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 
 WS = "credsrc-ws"
 SECRET = "s3cret-not-a-real-token"
-
-
-def _pat(user) -> str:
-    from apps.tokens.models import PersonalToken
-
-    raw, _ = PersonalToken.create_for_user(user=user, label="test")
-    return raw
-
-
-def _bearer(user) -> Client:
-    c = Client()
-    c.defaults["HTTP_AUTHORIZATION"] = f"Bearer {_pat(user)}"
-    return c
 
 
 def _session(user) -> Client:
@@ -84,7 +72,7 @@ def _resolve_events(agent):
 
 @pytest.mark.parametrize("who", ["owner", "admin"])
 def test_an_admin_without_a_runner_resolves_and_is_audited_as_admin(cs, who):
-    res = _bearer(cs[who]).get("/api/agents/csbot/credentials/resolve")
+    res = pat_client(cs[who]).get("/api/agents/csbot/credentials/resolve")
     assert res.status_code == 200, res.content
     body = res.json()
     assert body["values"]["canopy-pat"].startswith("zks1:") and SECRET not in res.content.decode()
@@ -94,7 +82,7 @@ def test_an_admin_without_a_runner_resolves_and_is_audited_as_admin(cs, who):
 
 def test_a_runner_resolve_is_audited_as_runner(cs):
     box = _box(cs["admin"], cs["agent"])
-    res = _bearer(cs["admin"]).get("/api/agents/csbot/credentials/resolve",
+    res = pat_client(cs["admin"]).get("/api/agents/csbot/credentials/resolve",
                                    HTTP_X_CANOPY_RUNNER=str(box.pk))
     assert res.status_code == 200, res.content
     [ev] = _resolve_events(cs["agent"])
@@ -105,7 +93,7 @@ def test_a_runner_owner_resolving_without_naming_the_box_is_audited_as_admin(cs)
     """canopy-web#1563: pairing a box is a fact about the caller; a request
     that names no box is the admin's own session."""
     _box(cs["admin"], cs["agent"])
-    res = _bearer(cs["admin"]).get("/api/agents/csbot/credentials/resolve")
+    res = pat_client(cs["admin"]).get("/api/agents/csbot/credentials/resolve")
     assert res.status_code == 200, res.content
     [ev] = _resolve_events(cs["agent"])
     assert ev.payload["via"] == "admin"
@@ -118,7 +106,7 @@ def test_an_admin_session_cookie_is_still_refused(cs):
 
 
 def test_a_plain_member_is_refused_and_told_what_access_to_get(cs):
-    res = _bearer(cs["editor"]).get("/api/agents/csbot/credentials/resolve")
+    res = pat_client(cs["editor"]).get("/api/agents/csbot/credentials/resolve")
     assert res.status_code == 403
     body = res.content.decode()
     assert SECRET not in body
@@ -128,7 +116,7 @@ def test_a_plain_member_is_refused_and_told_what_access_to_get(cs):
 
 def test_a_non_member_gets_404_not_a_reason(cs):
     stranger = get_user_model().objects.create_user(username="x", email="x@elsewhere.org")
-    res = _bearer(stranger).get("/api/agents/csbot/credentials/resolve")
+    res = pat_client(stranger).get("/api/agents/csbot/credentials/resolve")
     assert res.status_code == 404
 
 
@@ -143,7 +131,7 @@ def test_access_for_an_admin_says_admin(cs):
 
 def test_access_for_a_runner_pair_says_runner_over_bearer(cs):
     _box(cs["owner"], cs["agent"])
-    body = _bearer(cs["owner"]).get("/api/agents/csbot/credentials/access").json()
+    body = pat_client(cs["owner"]).get("/api/agents/csbot/credentials/access").json()
     assert body["may_resolve"] is True and body["via"] == "runner"
 
 

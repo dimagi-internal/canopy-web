@@ -451,8 +451,8 @@ def _index_views(app, scopes) -> None:
     never lists: it calls canopy's MCP on the agent's own login (path D). Its
     first `propose_session_closes` would then render as a plain tool result.
     The tools are canopy's own, so their `_meta` is known here without a call."""
-    from apps.mcp.tools.close_review import VIEW_TOOL_META
     from apps.mcp_apps_host import mcp_apps
+    from apps.mcp_apps_host.mcp_apps import VIEW_TOOL_META
 
     tools = [(name, meta) for scope in scopes for name in SCOPE_TOOLS.get(scope, ())
              if (meta := VIEW_TOOL_META.get(name))]

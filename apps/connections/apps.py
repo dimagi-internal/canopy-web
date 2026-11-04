@@ -16,3 +16,13 @@ class ConnectionsConfig(AppConfig):
         from .agent_move import participant  # noqa: PLC0415 - same
 
         move.register(participant)
+
+        # Revoking rows nobody will finish, and removed apps, on the off-request clock.
+        from . import scheduler  # noqa: PLC0415 - same
+
+        scheduler.register()
+
+        # A project or app gone for good takes what was approved for it.
+        from . import declarations, services  # noqa: PLC0415 - same
+
+        declarations.on_share_target_removed(services.surface_removed)

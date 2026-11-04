@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type JSX, type ReactNode } from 'react'
-import { AgentApiError, getProjectTeam, type IdeaOut, type ProjectTeamOut } from '@/api/agents'
+import { getProjectTeam, type IdeaOut, type ProjectTeamOut } from '@/api/agents'
 import { IdeaRow, PeopleList, } from '@/pages/agents/ideaParts'
 import { STAGE_LABEL, tally, type Stage } from '@/pages/agents/ideaStage'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { MarkShipped, StandingList, AddIdea } from './ProjectOverviewParts'
+import { ApiError } from '@/api/problem'
 
 // A PROJECT'S OVERVIEW — the top of its one page, and all a teammate needs:
 // what it is, where it stands, the ideas (with "Add your idea"), the people.
@@ -49,7 +50,7 @@ export function ProjectOverview({
       .catch((err: unknown) => {
         if (cancelled) return
         const error =
-          err instanceof AgentApiError && err.status === 404
+          err instanceof ApiError && err.status === 404
             ? 'This project does not exist, or you are not a member of its workspace.'
             : err instanceof Error
               ? err.message

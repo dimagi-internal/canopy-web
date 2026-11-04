@@ -237,6 +237,12 @@ LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
 #: When this runner last finished a bootstrap (unix seconds), beside its state file.
 BOOTSTRAPPED_MARKER = STATE_FILE.with_name(".canopy-bootstrapped-at")
+#: What bootstrap_agents.sh is replacing right now, beside the state file: "tools" while
+#: it reinstalls `claude` or `canopy`, "agent:<slug>" while it prepares that agent. See
+#: `setting_up`. A file because the script is another process; older than
+#: SETUP_HOLD_MAX_SECONDS it is what a killed script left, and means nothing.
+SETUP_HOLD_FILE = STATE_FILE.with_name(".canopy-setup-hold")
+SETUP_HOLD_MAX_SECONDS = int(os.environ.get("SETUP_HOLD_MAX_SECONDS", "600"))
 
 # Where this runner's bytes live, and the two files the auto-updater
 # (runner/ec2/update_runner.sh, spec 2026-07-30) shares with it:
@@ -1037,7 +1043,7 @@ def maybe_sweep_disk(*, now: float | None = None) -> bool:
         return False
     now = time.time() if now is None else now
     running = _SWEEP_STATE["thread"]
-    if (running is not None and running.is_alive()) or _in_flight_ids():
+    if (running is not None and running.is_alive()) or _in_flight_ids() or bootstrap_running():
         return False
     full = _disk_pct() >= DISK_WARN_PCT
     last = _SWEEP_STATE["at"]
@@ -1132,6 +1138,7 @@ def health_report() -> dict:
         _data_mode_check()
         _claim_check()
         _update_check()
+        _clones_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -1151,7 +1158,10 @@ def health_report() -> dict:
     # for a refresh (canopy_release.refresh_owed). "" = unknown.
     return {"checks": checks, "checked_at": time.time(), "bootstrapped_at": _BOOTSTRAPPED_AT,
             "canopy_version": _CANOPY_CLI["v"] or "",
-            "refresh_floor_until": _refresh_floor_until()}
+            "refresh_floor_until": _refresh_floor_until(),
+            # Why this box is not asking for work for the moment ("" = it is); what a
+            # queued turn's status says instead of "picking this up".
+            "setting_up": setting_up()}
 
 
 # ── self-refresh ─────────────────────────────────────────────────────────────
@@ -1228,7 +1238,9 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     claims. Returns True when a restart was started."""
     now = time.time() if now is None else now
     reason = _refresh_reason(pending, now)
-    if not reason:
+    if not reason or bootstrap_running():
+        # Mid-pass, a refresh would only start the pass again; finishing is what
+        # discharges the request.
         return False
     handoff = _refresh_can_hand_off()
     if _in_flight_ids() and not handoff:
@@ -1431,6 +1443,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
     def _loop() -> None:
         failing = 0
+        restaging = None
         while not stop.wait(LEASE_HEARTBEAT_SECONDS):
             status, reply = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
             if status != 200:
@@ -1446,7 +1459,15 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
             # durable copy of the `cancel` frame, heard even with no socket.
             honour_stops(reply)
             _restage_delegated_google()
-            _restage_connections(turn_id)
+            # Its own thread: a stage can take minutes, and this thread's beat is the
+            # turn's lease and how it hears a stop.
+            if restaging is None or not restaging.is_alive():
+                restaging = threading.Thread(target=_restage_connections, args=(turn_id,), daemon=True,
+                                             name=f"restage-{turn_id[:8]}")
+                try:
+                    restaging.start()
+                except RuntimeError as exc:  # no thread to be had: the next beat tries again
+                    _log(f"warn: could not start a re-stage for turn {turn_id}: {exc}")
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1621,6 +1642,13 @@ INHERITED_SESSION_MARKERS = (
 )
 
 
+def _cli_base_env() -> dict:
+    """Where a canopy CLI this runner starts must call: this box's canopy-web. Each name
+    is read by different CLI code, and with `CANOPY_WEB_API_URL` unset the CLI's default
+    is production, so a box elsewhere would send production its runner token and proofs."""
+    return {"CANOPY_BASE_URL": BASE_URL, "CANOPY_WEB_API_URL": BASE_URL}
+
+
 def _child_safe_env() -> dict:
     """`os.environ` with the parent's Claude session identity removed.
 
@@ -1749,7 +1777,7 @@ def _stage_delegated_google(slug: str, *, now: float | None = None) -> list[str]
         except (OSError, ValueError, AttributeError):
             pass
         env = _child_safe_env()
-        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+        env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
         try:
             res = subprocess.run([_canopy_cli(), "cred", "google-token", "--runner", "--agent", slug,
                                   "--delegated", account], env=env, capture_output=True, text=True,
@@ -1774,28 +1802,51 @@ def _restage_delegated_google() -> None:
 
 # ── Connections: the agent's provider tokens (Salesforce, …), staged per TURN ──
 #
-# canopy-web holds each connection (the agent's own, or one another agent shares with
-# it); the refresh token never reaches the box. At turn start the runner asks canopy-web
-# which providers the turn's agent can use (`GET …/turns/{tid}/connections` — for most
-# agents none, and nothing else runs), and for each one the canopy CLI
-# (`cred connection-token <provider> --runner`, this box's bearer + the turn id) writes a
-# short-lived ACCESS token 0600 to ~/.canopy/connections/<slug>/<provider>.json. Each file
-# is re-staged on the lease heartbeat near expiry and removed when the turn ends.
+# canopy-web stores each connection (the agent's own, or one lent to it) sealed, and can
+# read none of it: the refresh token opens only on a machine it is sealed to. At turn
+# start the runner asks canopy-web which providers the turn's agent can use
+# (`GET …/turns/{tid}/connections` — for most agents none, and nothing else runs), and for
+# each one the canopy CLI (`cred connection-token <provider> --runner`, this box's bearer +
+# device proof + the turn id) opens the sealed token HERE, refreshes it under a lease when
+# it has to, and writes a short-lived ACCESS token 0600 to
+# ~/.canopy/connections/<slug>/<provider>.json. Each file is re-staged on the lease
+# heartbeat near expiry and removed when the turn ends. The runner never sees a token and
+# there is no server fallback: a stage that cannot succeed leaves the turn without one.
 #
 # Log lines use the connections vocabulary: `warn: connections.stage_failed agent=
 # provider= turn= reason="…"` when a token could not be staged (the turn still runs;
-# `provider=*` when the listing itself failed). An agent with no connection is silent,
-# and so is a canopy-web too old to have the listing route (404).
-#: Seconds a staged token must still live; also sent to canopy-web (`--min-life`), so the
-#: server refreshes rather than hand back a cached token that lapses before the next re-stage.
+# `provider=*` when the listing itself failed, or the CLI is too old to open a sealed
+# connection), and one `connections.waiting agent= provider= turn=` when no copy has
+# reached this box yet. An agent with no connection is silent, and so is a canopy-web too
+# old to have the listing route (404).
+#: Seconds a staged token must still live; also given to the CLI (`--min-life`), so it
+#: refreshes rather than reuse an access token that lapses before the next re-stage.
 CONNECTION_TOKEN_MIN_LIFE = 900
-#: CLI exit code for "this agent has no connection for that provider" (409 not_connected).
+#: CLI exit code for "nothing to stage for this box": not connected, or being revoked. One line per turn.
 CONNECTION_NOT_CONNECTED_EXIT = 3
+#: CLI exit code for "no copy has reached this box yet": a keeper seals one to it within
+#: minutes, so the turn keeps its hold and the heartbeat tries again.
+CONNECTION_WAITING_EXIT = 4
+#: How long one stage may run. Holding a just-rotated refresh token, the CLI retries its
+#: write-back for up to 90 s, on top of its per-call timeouts; a kill there loses the
+#: token, and the person has to reconnect, so this is generous on purpose.
+CONNECTION_STAGE_TIMEOUT_SECONDS = 300
+#: The CLI that opens sealed connections (`cred connection-token --runner` through the
+#: material route). An older one knows only a route canopy-web no longer has.
+CONNECTIONS_ZK_MIN_CLI = (0, 2, 838)
 #: A provider key canopy-web may name; anything else never becomes a path or an argv.
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 #: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
 _CONN_HOLDS: dict = {}
 _CONN_LOCK = threading.Lock()
+#: (turn_id, provider) that has said it is waiting, so it says so once. Under _CONN_LOCK.
+_CONN_WAITING: set = set()
+#: (turn, provider) already logged as listed for this box's turn yet not for this box.
+_CONN_NOT_FOR_BOX: set = set()
+#: CLI stages running now: {(slug, provider): how many}. A heartbeat does not start one
+#: over a file already being staged. Its own lock: nothing here touches a hold or a file.
+_CONN_STAGING: dict = {}
+_CONN_STAGING_LOCK = threading.Lock()
 
 
 def _connection_token_path(slug: str, provider: str) -> pathlib.Path:
@@ -1832,11 +1883,21 @@ def _stage_failed_line(slug: str, provider: str, turn_id: str, reason: str) -> N
          f"reason={json.dumps(' '.join(str(reason).split())[-300:], ensure_ascii=False)}")
 
 
+def _cli_too_old_for_connections() -> bool:
+    """Known to be older than `CONNECTIONS_ZK_MIN_CLI`. A CLI that cannot say is run, and
+    its own failure is the line, rather than a guess costing the turn its token."""
+    v = _canopy_cli_version()
+    return v is not None and v < CONNECTIONS_ZK_MIN_CLI
+
+
 def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
     """Turn start: stage a token for each provider the turn's agent can use. One
     canopy-web call for an agent with none; a failure to list is a warn line and the
-    turn runs without. A 404 is a canopy-web without the listing route: silent.
-    Returns the providers canopy-web listed (none when the listing failed)."""
+    turn runs without. A 404 is a canopy-web without the listing route: silent. A CLI
+    too old for connections is one warn line and is not run.
+    Returns the providers being staged (none when the listing failed or the CLI is too
+    old). Runs before the turn's CLI starts, so a slow stage delays the turn's start, by
+    up to CONNECTION_STAGE_TIMEOUT_SECONDS per provider."""
     if not slug:
         return frozenset()
     try:
@@ -1847,13 +1908,17 @@ def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
         status, body = -1, None
         _stage_failed_line(slug, "", turn_id, f"listing failed: {exc}")
     if status == 200 and isinstance(body, dict):
-        listed = set()
+        listed = []
         for provider in body.get("providers") or []:
             if isinstance(provider, str) and _PROVIDER_KEY.fullmatch(provider):
-                listed.add(provider)
-                _stage_connection_token(runner_id, turn_id, slug, provider)
+                listed.append(provider)
             else:
                 _stage_failed_line(slug, "", turn_id, "unusable provider key")
+        if listed and _cli_too_old_for_connections():
+            _stage_failed_line(slug, "", turn_id, "canopy CLI too old for connections")
+            return frozenset()
+        for provider in listed:
+            _stage_connection_token(runner_id, turn_id, slug, provider)
         return frozenset(listed)
     if status == 0:
         _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
@@ -1871,9 +1936,14 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
     holding that file, and discards its work if the turn ended meanwhile. Only `refresh`
     may keep a file that is still fresh: a turn's FIRST stage always asks canopy-web, so
     the turn is checked (runner holds it, agent still connected) and its token issue
-    recorded, never inherited from a file another turn left. Exit 3 from the CLI is
-    silent (and clears a stale file); any other failure is a warn line and the turn still
-    runs. No token is ever logged."""
+    recorded, never inherited from a file another turn left. For the same reason only
+    `refresh` stands aside for a stage already running for this file, which may take
+    minutes; two first stages settle it in the CLI (one takes the refresh lease, the
+    other waits for its result). Exit 3 from the CLI clears a stale file and says so once
+    per turn and provider, since canopy-web listed the provider and this box then got
+    nothing; exit 4 keeps the hold, so the heartbeat retries (a held file that is missing
+    always counts as needing a stage), and says so once; any other failure is a warn line
+    and the turn still runs. No token is ever logged."""
     if not slug:
         return
     now = time.time() if now is None else now
@@ -1883,6 +1953,11 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
         if refresh and (held is None or provider not in held[2]):
             return
         _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | {provider})
+    key = (slug, provider)
+    with _CONN_STAGING_LOCK:
+        if refresh and _CONN_STAGING.get(key):
+            return
+        _CONN_STAGING[key] = _CONN_STAGING.get(key, 0) + 1
     try:
         if refresh:
             try:
@@ -1891,11 +1966,14 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
             except (OSError, ValueError, AttributeError):
                 pass
         env = _child_safe_env()
-        env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+        # The CLI cannot renew this bearer, so it must outlive the whole stage: a 401 in
+        # the middle of a write-back would lose a rotated token.
+        env.update(CANOPY_TOKEN=_bearer(min_life=CONNECTION_STAGE_TIMEOUT_SECONDS + 60),
+                   **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
         res = subprocess.run([_canopy_cli(), "cred", "connection-token", provider, "--runner", "--agent", slug,
                               "--runner-id", runner_id, "--turn", turn_id,
                               "--min-life", str(CONNECTION_TOKEN_MIN_LIFE)],
-                             env=env, capture_output=True, text=True, timeout=120)
+                             env=env, capture_output=True, text=True, timeout=CONNECTION_STAGE_TIMEOUT_SECONDS)
     except BaseException as exc:
         if isinstance(exc, Exception):
             _stage_failed_line(slug, provider, turn_id, str(exc))
@@ -1903,6 +1981,12 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
             return
         _drop_holds(turn_id)   # an interrupt: nothing may stay held
         raise
+    finally:
+        with _CONN_STAGING_LOCK:
+            if _CONN_STAGING.get(key, 0) > 1:
+                _CONN_STAGING[key] -= 1
+            else:
+                _CONN_STAGING.pop(key, None)
     if res.returncode == CONNECTION_NOT_CONNECTED_EXIT:
         # One lock section: a first stage lets go of its hold; a heartbeat keeps the
         # turn's (it is still running, just without a connection). Either way the
@@ -1910,10 +1994,27 @@ def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: s
         # where this turn's hold is dropped and re-added, which a sibling's unstage
         # could fall into.
         with _CONN_LOCK:
+            first = (provider in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2]
+                     and (turn_id, provider) not in _CONN_NOT_FOR_BOX)
+            if first:
+                _CONN_NOT_FOR_BOX.add((turn_id, provider))
             if not refresh:
                 _release(turn_id, provider)
             if not _held_elsewhere(slug, provider, turn_id):
                 _unlink_quietly(target)
+        if first:
+            _log(f"connections.not_for_this_box agent={slug} provider={provider} turn={turn_id}")
+        return
+    if res.returncode == CONNECTION_WAITING_EXIT:
+        with _CONN_LOCK:
+            first = (provider in _CONN_HOLDS.get(turn_id, ("", "", frozenset()))[2]
+                     and (turn_id, provider) not in _CONN_WAITING)
+            if first:
+                _CONN_WAITING.add((turn_id, provider))
+            if not _held_elsewhere(slug, provider, turn_id):
+                _unlink_quietly(target)
+        if first:
+            _log(f"connections.waiting agent={slug} provider={provider} turn={turn_id}")
         return
     if res.returncode != 0:
         _stage_failed_line(slug, provider, turn_id, (res.stderr or "").strip() or f"exit {res.returncode}")
@@ -1943,6 +2044,8 @@ def _drop_holds(turn_id: str) -> None:
     """Release every hold of this turn, deleting (inside the lock) each file no other
     running turn of the same agent holds."""
     with _CONN_LOCK:
+        _CONN_WAITING.difference_update({w for w in _CONN_WAITING if w[0] == turn_id})
+        _CONN_NOT_FOR_BOX.difference_update({w for w in _CONN_NOT_FOR_BOX if w[0] == turn_id})
         held = _CONN_HOLDS.pop(turn_id, None)
         if not held:
             return
@@ -3662,7 +3765,7 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         if hit and now - hit[0] < _AGENT_ENV_TTL_SECONDS:
             return hit[1]
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
     if turn_id:
         env["CANOPY_TURN_ID"] = turn_id
@@ -3722,9 +3825,15 @@ def note_cred_success(slug: str) -> None:
 
 
 def backed_off_slugs(*, now: float | None = None) -> list[str]:
-    """The agents this box will not claim right now (credential-resolve backoff)."""
+    """The agents this box will not claim right now: a credential-resolve backoff,
+    or the one bootstrap is preparing this moment (its turn waits a few seconds
+    rather than start in a clone being pulled)."""
     now = time.time() if now is None else now
-    return sorted(s for s, (_n, until) in _CRED_BACKOFF.items() if until > now)
+    slugs = {s for s, (_n, until) in _CRED_BACKOFF.items() if until > now}
+    hold = _setup_hold_file()
+    if hold.startswith(AGENT_HOLD_PREFIX):
+        slugs.add(hold[len(AGENT_HOLD_PREFIX):])
+    return sorted(slugs)
 
 
 def _turn_env_dir(turn_id: str, *, create: bool = True) -> pathlib.Path | None:
@@ -6035,7 +6144,7 @@ _SCOPED_KEEP_SECONDS = 7 * 24 * 3600
 
 def _scoped_token_env(turn: dict) -> dict:
     """A full-profile turn asked by someone who is not the agent's owner, an admin
-    or canopy (a `full:` rule, an editor) reaches canopy's MCP as its ASKER, not as
+    or canopy (an editor line on the access list) reaches canopy's MCP as its ASKER, not as
     this box's PAT (who-is-asking phase 5, canopy-web#1332).
 
     canopy hands such a turn a caller token (`scoped`) with the claim. The MCP
@@ -6523,6 +6632,120 @@ def _git_quiet(*args: str, timeout: float = 60, env: dict | None = None) -> bool
         return False
 
 
+#: How long a clone may go without a successful fetch before the box says so (the
+#: `clones` health check). A session's worktree is cut from the clone's origin/main,
+#: so a clone that cannot fetch hands every new conversation the agent's OLD skills
+#: and rails (Trellis, 2026-11: PRs merged to main never reached its confined chats).
+CLONE_STALE_SECONDS = int(os.environ.get("CLONE_STALE_SECONDS", "1800"))
+_CLONE_FETCH: dict[str, dict] = {}   # clone path -> {ok_at, failed_at, error}
+_CLONE_FETCH_LOCK = threading.Lock()
+
+
+_URL_CREDENTIALS = re.compile(r"(?<=://)[^/@\s]+@")
+_TOKEN_SHAPES = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b")
+
+
+def _redact_credentials(text: str, env: dict | None) -> str:
+    """`text` with any GitHub token it carries blanked: the exact value in `env`, a GitHub
+    token's shape, and the userinfo of a URL (`https://x-access-token:T@github.com/…`)."""
+    for key in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = str((env or {}).get(key) or "")
+        if len(value) >= 4:
+            text = text.replace(value, "***")
+    return _TOKEN_SHAPES.sub("***", _URL_CREDENTIALS.sub("***@", text))
+
+
+def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = False) -> bool:
+    """Bring `clone` up to its origin — `fetch`, or `pull --ff-only` for an agent's own
+    checkout — and RECORD how it went. A failed fetch used to be swallowed (a private
+    repo fetched without a token fails, and a confined turn has none), leaving the
+    clone stale with nothing logged; now it is logged and turns the `clones` health
+    check amber once the clone is older than CLONE_STALE_SECONDS."""
+    key = str(clone)
+    cmd = ["git", "-C", key, *(["pull", "--ff-only", "--quiet"] if pull else ["fetch", "--quiet", "origin"])]
+    error = ""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
+        if r.returncode != 0:
+            error = " ".join((r.stderr or r.stdout or f"exit {r.returncode}").split())[-300:]
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)[:300]
+    # The error is logged and reported in the `clones` health payload: whatever git
+    # echoed, a token the fetch ran with (or one inside a remote URL) never goes out.
+    error = _redact_credentials(error, env)
+    now = time.time()
+    with _CLONE_FETCH_LOCK:
+        rec = _CLONE_FETCH.setdefault(key, {"ok_at": 0.0, "failed_at": 0.0, "error": ""})
+        if error:
+            rec.update(failed_at=now, error=error)
+        else:
+            rec.update(ok_at=now, error="")
+    if error:
+        _log(f"warn: could not update {clone} from its origin ({error}); new sessions on it run "
+             "the last commit this box fetched")
+    return not error
+
+
+def _clone_age(clone: pathlib.Path, now: float) -> float:
+    """Seconds since `clone` last took anything from its origin: our own record, else the
+    mtime of .git/FETCH_HEAD (what a fetch or pull from an earlier process left)."""
+    with _CLONE_FETCH_LOCK:
+        ok_at = float(_CLONE_FETCH.get(str(clone), {}).get("ok_at") or 0.0)
+    if not ok_at:
+        for head in (clone / ".git" / "FETCH_HEAD", clone / "FETCH_HEAD"):
+            try:
+                ok_at = max(ok_at, head.stat().st_mtime)
+            except OSError:
+                pass
+    return now - ok_at if ok_at else float("inf")
+
+
+def _clones_check(now: float | None = None) -> None:
+    """The `clones` health check: amber when a clone whose fetch is FAILING is older than
+    CLONE_STALE_SECONDS. Silent (ok) otherwise — a clone nobody has tried to update lately
+    is just idle."""
+    now = time.time() if now is None else now
+    with _CLONE_FETCH_LOCK:
+        failing = {k: dict(v) for k, v in _CLONE_FETCH.items() if v.get("error")}
+    stale = []
+    for key, rec in sorted(failing.items()):
+        age = _clone_age(pathlib.Path(key), now)
+        if age > CLONE_STALE_SECONDS:
+            how = "never fetched" if age == float("inf") else f"last fetched {int(age // 60)} min ago"
+            stale.append(f"{pathlib.Path(key).name} ({how}): {rec['error']}")
+    if stale:
+        _set_check("clones", "warn", "new sessions run STALE skills and rails — " + "; ".join(stale) +
+                   ". A private repo needs the agent's GitHub token (its owner lends one at the "
+                   "agent's Settings → External accounts → GitHub).")
+    else:
+        _set_check("clones", "ok", "")
+
+
+def _clone_refresh_env(slug: str, env: dict | None) -> dict | None:
+    """The environment for the RUNNER'S OWN `git fetch` of `slug`'s clone — never a turn's.
+
+    A full turn already carries its GitHub identity in `env`. A caller's (confined) turn
+    carries none, by design, so its fetch of a private repo failed and its session was
+    cut from whatever a full turn last fetched. The runner may use the delegation the
+    agent's owner lent THE AGENT (the box opens it from its own resolve; `_delegated_value`)
+    to keep the agent's own checkout current: it goes into this one git subprocess,
+    read-only in effect, and is never part of the turn's environment (the confined env is an
+    allowlist built before and apart from this). Not on a sensitive-data box, which holds
+    nothing it need not."""
+    if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug:
+        return env
+    # In force NOW, not as last cached: the server's per-turn gate (`…/github-token`, a 409
+    # once the delegation is withdrawn or its person stops being an admin) is not asked
+    # here, so this box's own resolve (at most `_AGENT_ENV_TTL_SECONDS` old; a failed one
+    # counts as no answer) is the only proof the delegation still serves.
+    if _turn_values(slug) is None or _TURN_ENV_ERRORS.get(slug):
+        return env
+    token = _AGENT_DELEGATED.get(slug, {}).get("github-token", "")
+    if not token:
+        return env
+    return {**(env if env is not None else _child_safe_env()), **github_env(token)}
+
+
 def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
                              env: dict | None = None) -> None:
     """Give an agent chat session its OWN worktree of the agent's repo, at the
@@ -6551,11 +6774,11 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
             return
         if dirty or _git_quiet("-C", str(path), "symbolic-ref", "-q", "HEAD"):
             return
-        _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
+        _fetch_clone(clone, env)
         _git_quiet("-C", str(path), "checkout", "--quiet", "--detach", "origin/main")
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
+    _fetch_clone(clone, env)
     for ref in ("origin/main", "HEAD"):
         if _git_quiet("-C", str(clone), "worktree", "add", "--quiet", "--detach", str(path), ref):
             _log(f"session worktree: {path} from {clone.name} {ref}")
@@ -6778,6 +7001,9 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
 
     if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir() and not stale():
         return
+    # A pass running beside the claim loop may be cloning this agent right now: only
+    # this turn waits for it to finish, as every turn once did.
+    _BOOTSTRAP_DONE.wait(timeout=BOOTSTRAP_TIMEOUT_SECONDS)
     with _LAZY_BOOTSTRAP_LOCK:
         # Re-checked under the lock: a concurrent turn may have just done it.
         if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
@@ -6842,7 +7068,12 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
         clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
         if clone is not None and (clone / ".git").exists():
-            _ensure_session_worktree(clone, path, env=env)
+            # Fetched with the runner's own refresh identity when the turn has none (a
+            # caller's confined turn): the session is cut from origin/main, so a fetch that
+            # fails leaves it on the agent's old skills. Never put in the turn's env.
+            fetch_env = _clone_refresh_env(slug, env)
+            _fetch_clone(clone, fetch_env, pull=True)
+            _ensure_session_worktree(clone, path, env=fetch_env)
         elif project:
             _project_worktree(project, path, env)
         return path
@@ -6850,13 +7081,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
         if (agent_dir / ".git").is_dir() and _safe_session_dirname(slug) == slug:
             # The clone is still pulled: the agent's plugin is installed from it.
-            try:
-                subprocess.run(
-                    ["git", "-C", str(agent_dir), "pull", "--ff-only"],
-                    check=False, capture_output=True, timeout=60, env=env,
-                )
-            except Exception as exc:
-                _log(f"warn: git pull in {agent_dir} failed (using clone as-is): {exc}")
+            _fetch_clone(agent_dir, _clone_refresh_env(slug, env), pull=True)
             return _agent_turn_worktree(slug, agent_dir, turn_id, env=env)
     path = pathlib.Path(WORK_DIR) / turn_id[:8]
     if project:
@@ -7508,6 +7733,10 @@ def bootstrap_agent_fleet() -> None:
     silently skip cloning the private repos — this call site is the earliest
     point at which the credentials are guaranteed to exist.
 
+    On a box that has bootstrapped before this runs BESIDE the claim loop
+    (`start_bootstrap_beside_claims`), so a restart does not stop the box taking
+    work; only a box's first pass holds its claims back.
+
     Best-effort end to end: a failure here (network hiccup, one agent's
     manifest broken) is logged loudly and the runner proceeds to claim turns
     anyway — whatever DID bootstrap clean (canopy-web itself, other agents,
@@ -7539,20 +7768,138 @@ def bootstrap_agent_fleet() -> None:
             # wrote are only a liability now (spec §4).
             remove_legacy_secret_files([s for s in _known_agent_slugs() if off_disk_proven(s)])
     finally:
-        # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
-        # is what discharges a refresh request. The checks say how it went.
-        _BOOTSTRAPPED_AT = time.time()
-        # And on disk, for root's `--fleet-ready`: a fleet member is put in service
-        # (or into its warm pool) only once every runner has bootstrapped this boot.
-        try:
-            BOOTSTRAPPED_MARKER.write_text(f"{_BOOTSTRAPPED_AT:.0f}\n")
-        except OSError as exc:
-            _log(f"could not write {BOOTSTRAPPED_MARKER}: {exc}")
+        # Stamped however it went, except cut short by this daemon leaving: this is
+        # "a bootstrap was ATTEMPTED at", which is what discharges a refresh request
+        # and tells `--fleet-ready` and the next start this box has been set up. The
+        # checks say how it went.
+        if not _stop:
+            _BOOTSTRAPPED_AT = time.time()
+            # And on disk, for root's `--fleet-ready`: a fleet member is put in service
+            # (or into its warm pool) only once every runner has bootstrapped this boot.
+            try:
+                BOOTSTRAPPED_MARKER.write_text(f"{_BOOTSTRAPPED_AT:.0f}\n")
+            except OSError as exc:
+                _log(f"could not write {BOOTSTRAPPED_MARKER}: {exc}")
         # The bootstrap may have installed a newer canopy CLI (the off-disk gate).
         _forget_cli_version()
         # Versions may have just moved (bootstrap updates Claude Code and the
         # canopy CLI): re-read them on the next beat rather than in 10 minutes.
         _HEALTH_SLOW_AT = 0.0
+
+
+# -- taking turns while setting up -------------------------------------------------
+# A restart is routine: canopy releases on every merge and a box behind the release
+# refreshes, so a busy day restarts a box many times. Its tools, clones and plugins are
+# all still on disk from the last pass, and the turns it adopts already run beside the
+# new one, so a new turn can too. It waited out the whole pass only because `main()`
+# ran the pass first: 1-2 minutes on a good day, 6 on a loaded box, while every status
+# said it was claiming.
+#
+# So a box that has bootstrapped before starts claiming at once and runs the pass on a
+# thread, at low priority so it does not slow the turns beside it. A box's FIRST pass
+# still comes first: until it ends there is nothing to run a turn with. Claims are held
+# only while what a starting turn needs is being replaced (`setting_up`).
+
+#: Why this daemon may not claim yet, by who holds it. Empty once it may.
+_CLAIM_HOLDS: dict[str, str] = {}
+#: `SETUP_HOLD_FILE`'s form for one agent: only that agent's turns wait.
+AGENT_HOLD_PREFIX = "agent:"
+#: Clear while a pass runs beside the claim loop.
+_BOOTSTRAP_DONE = threading.Event()
+_BOOTSTRAP_DONE.set()
+#: True once this daemon's pass runs beside the claim loop (`_run_bootstrap`'s priority).
+_BOOTSTRAP_BESIDE = False
+#: The running bootstrap script, which must not outlive this daemon (`stop_bootstrap`).
+_BOOTSTRAP_PROC: dict = {"proc": None}
+
+
+def _hold_claims(key: str, why: str) -> None:
+    _CLAIM_HOLDS[key] = why
+
+
+def _release_claims(key: str) -> None:
+    _CLAIM_HOLDS.pop(key, None)
+
+
+def _setup_hold_file() -> str:
+    """What bootstrap_agents.sh says it is replacing ("" = nothing, or a stale file)."""
+    try:
+        if time.time() - SETUP_HOLD_FILE.stat().st_mtime > SETUP_HOLD_MAX_SECONDS:
+            return ""
+        return SETUP_HOLD_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def setting_up() -> str:
+    """Why this box is not asking for work just now, in words a status can repeat;
+    "" when setup is not what stops it. One agent's prepare is not a reason: the box
+    still claims every other agent's turns."""
+    for why in list(_CLAIM_HOLDS.values()):
+        return why
+    hold = _setup_hold_file()
+    if hold and not hold.startswith(AGENT_HOLD_PREFIX):
+        return "installing updated tools"
+    return ""
+
+
+def bootstrap_running() -> bool:
+    return not _BOOTSTRAP_DONE.is_set()
+
+
+def may_bootstrap_beside_claims() -> bool:
+    """Has this box been set up, so a turn can start before this pass ends? The marker
+    says a pass finished on this box, however it went; one that failed leaves the box
+    claiming with what it has, as it always has. `BOOTSTRAP_BESIDE_CLAIMS=0` goes back
+    to the pass first."""
+    return os.environ.get("BOOTSTRAP_BESIDE_CLAIMS", "1") != "0" and BOOTSTRAPPED_MARKER.is_file()
+
+
+def start_bootstrap_beside_claims(enrollment: threading.Thread) -> threading.Thread:
+    """The slow half of a restart, on its own thread: the credential probes, waiting on
+    the device key, and the pass. The probes can go here because a credential not yet
+    asked counts as one that may work (`_credential_readiness`), and before the pass
+    because it may be replacing the CLI they run."""
+    global _BOOTSTRAP_BESIDE
+    _BOOTSTRAP_BESIDE = True
+    _BOOTSTRAP_DONE.clear()
+
+    def _pass() -> None:
+        try:
+            _probe_all()
+            enrollment.join(timeout=60)
+            if not _stop:
+                bootstrap_agent_fleet()
+        except Exception as exc:  # noqa: BLE001 — never takes the claim loop with it
+            _log(f"warn: the bootstrap beside the claim loop failed: {exc}")
+            _set_check("bootstrap", "fail", f"the bootstrap failed: {exc}")
+        finally:
+            _BOOTSTRAP_DONE.set()
+
+    thread = threading.Thread(target=_pass, daemon=True, name="bootstrap")
+    thread.start()
+    return thread
+
+
+def stop_bootstrap() -> None:
+    """A daemon that leaves takes its script with it. A handoff leaves the unit's cgroup
+    running, so the script would go on beside the next daemon's own pass. Cutting one
+    short mid-install is safe: the next daemon's pass starts at once and repairs it."""
+    proc = _BOOTSTRAP_PROC["proc"]
+    if proc is None or proc.poll() is not None:
+        return
+    _log("stopping the bootstrap this daemon started")
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError as exc:
+        _log(f"warn: could not stop the bootstrap: {exc}")
+
+
+def _low_priority_prefix() -> list[str]:
+    """Run a pass beside live turns at the back of the CPU and disk queues: `ionice`
+    best-effort lowest, not idle, which a busy disk could starve for its whole timeout."""
+    out = ["ionice", "-c", "2", "-n", "7"] if shutil.which("ionice") else []
+    return out + (["nice", "-n", "10"] if shutil.which("nice") else [])
 
 
 #: Where the auto-updater learns this runner keeps secrets off disk, so its
@@ -7650,22 +7997,30 @@ def _github_readiness() -> None:
         _log(f"github {slug}: {row.get('status')} — {row.get('detail')}")
 
 
-def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4) -> tuple[int, list[str]]:
+def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4,
+              on_start=None) -> tuple[int, list[str]]:
     """Run `cmd`, passing every output line through to our own stdout (so it
     still lands in `journalctl -u canopy-runner` exactly as before) while
-    keeping the last `keep` non-empty lines for the health check."""
+    keeping the last `keep` non-empty lines for the health check. `cmd` leads its
+    own process group; `on_start` is handed the process."""
     import collections
 
     tail: collections.deque = collections.deque(maxlen=keep)
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace")
+                            text=True, errors="replace", start_new_session=True)
+    if on_start is not None:
+        on_start(proc)
     # A watchdog rather than a check per line: a bootstrap that hangs SILENTLY
     # never yields a line to check on.
     timed_out = threading.Event()
 
     def _kill() -> None:
         timed_out.set()
-        proc.kill()
+        # The group: a child left holding our stdout would keep the read below open.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
 
     watchdog = threading.Timer(timeout, _kill)
     watchdog.daemon = True
@@ -7728,7 +8083,13 @@ def ensure_updater_clone() -> bool:
 
 def _run_bootstrap() -> None:
     ensure_updater_clone()
-    if not sync_runner_src():
+    # A turn starting now imports its packages from this clone: not mid-checkout.
+    _hold_claims("code", "updating its code")
+    try:
+        synced = sync_runner_src()
+    finally:
+        _release_claims("code")
+    if not synced:
         _set_check("bootstrap", "fail", f"no runner clone at {RUNNER_SRC_DIR}; agent bootstrap skipped")
         return
     script = pathlib.Path(RUNNER_SRC_DIR) / "runner" / "ec2" / "bootstrap_agents.sh"
@@ -7746,9 +8107,12 @@ def _run_bootstrap() -> None:
     bearer = _bearer(min_life=BOOTSTRAP_TIMEOUT_SECONDS)
     if bearer:
         env["CANOPY_TOKEN"] = bearer
+    env["CANOPY_SETUP_HOLD_FILE"] = str(SETUP_HOLD_FILE)
+    cmd = [*(_low_priority_prefix() if _BOOTSTRAP_BESIDE else []), "bash", str(script)]
     _log(f"running {script}")
     try:
-        rc, tail = _run_teed(["bash", str(script)], env=env, timeout=BOOTSTRAP_TIMEOUT_SECONDS)
+        rc, tail = _run_teed(cmd, env=env, timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+                             on_start=lambda proc: _BOOTSTRAP_PROC.update(proc=proc))
         _log(f"bootstrap_agents.sh exited {rc}")
         # The last lines carry the reason. "exited 1" alone still sent someone
         # to journald on 2026-09-22 (`line 1024: ace: unbound variable`), which
@@ -7949,7 +8313,7 @@ def _run_vault_cli(runner_id: str) -> dict:
     """`canopy vault runner-credentials`, as this box: `{values, vault_layers}`. Raises
     with the CLI's own words when it cannot."""
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env())
     res = subprocess.run([_canopy_cli(), "vault", "runner-credentials", "--runner", runner_id,
                           "--print-json"], env=env, capture_output=True, text=True, timeout=120)
     lines = (res.stdout or "").strip().splitlines()
@@ -7993,7 +8357,7 @@ _VAULT_STATE: dict = {"open": False}
 def _run_seal_cli(runner_id: str, values: dict) -> dict:
     """`canopy vault runner-seal`, as this box: the values go in on stdin, never argv."""
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env())
     res = subprocess.run([_canopy_cli(), "vault", "runner-seal", "--runner", runner_id],
                          input=json.dumps(values), env=env, capture_output=True, text=True, timeout=120)
     lines = (res.stdout or "").strip().splitlines()
@@ -9013,12 +9377,13 @@ def _beat_while_waiting(runner_id: str) -> None:
         _log(f"warn: heartbeat while waiting for a credential failed ({exc})")
 
 
-def fetch_and_stage_credential(runner_id: str) -> bool:
+def fetch_and_stage_credential(runner_id: str, *, probe: bool = True) -> bool:
     """A CLOUD runner owns no secrets at boot beyond its PAT — it fetches its
     credential bundle from canopy-web (the per-runner hub) and stages it into the
     environment. Blocks (polling) until the Claude token is set, so the operator can
     provision the runner AFTER it has paired and appeared in the fleet. A laptop
-    runner never does this — it uses emdash's ambient auth.
+    runner never does this — it uses emdash's ambient auth. `probe=False` leaves
+    asking the credentials to the caller (`start_bootstrap_beside_claims`).
     """
     while not _stop:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
@@ -9038,9 +9403,10 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             # opened per turn by the canopy CLI (`_turn_values`).
             _log("staged credential bundle from canopy-web (claude)")
             # Before the first ready heartbeat, so "ready" means a credential
-            # answered. The box is not serving yet, so nothing waits on this; a
+            # answered. A new box is not serving yet, so nothing waits on this; a
             # hung CLI costs PROBE_TIMEOUT_SECONDS and reads `unknown`.
-            _probe_all()
+            if probe:
+                _probe_all()
             # Report them now. The next beat is otherwise the first after the
             # bootstrap (up to 40 min), and wire.sh is waiting on these checks.
             try:
@@ -9789,7 +10155,7 @@ def _run_google_mint_cli(runner_id: str, slug: str, work: dict) -> dict:
     """`canopy vault google-mint`, as this box: the work (code + verifier) goes in on stdin,
     never argv; one JSON line comes back — ciphertext, or `{error, detail}`."""
     env = _child_safe_env()
-    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env())
     res = subprocess.run([_canopy_cli(), "vault", "google-mint", "--agent", slug, "--runner", runner_id],
                          input=json.dumps(work), env=env, capture_output=True, text=True, timeout=120)
     lines = (res.stdout or "").strip().splitlines()
@@ -10578,7 +10944,7 @@ def _span(seconds: float) -> str:
 def claim_gate(*, now: float | None = None) -> tuple[bool, str, str]:
     """(claiming, reason, detail): may this box ask for a turn right now, and if
     not, which of its own limits says no. `reason` is "" while claiming, else one
-    of turn_cap / memory / token_refused / data_mode. Also records when the
+    of setup / turn_cap / memory / token_refused / data_mode. Also records when the
     current not-claiming streak started, which the detail names."""
     global _NOT_CLAIMING_SINCE
     now = time.time() if now is None else now
@@ -10586,7 +10952,9 @@ def claim_gate(*, now: float | None = None) -> tuple[bool, str, str]:
     avail = _meminfo_kb(_read_meminfo(), "MemAvailable")
     load = f"{len(in_flight)}/{MAX_CONCURRENT_TURNS} turns in flight"
     free = f"{avail / _GIB_KB:.1f} GiB free" if avail is not None else "free memory unknown"
-    if len(in_flight) >= MAX_CONCURRENT_TURNS:
+    if setup := setting_up():
+        reason, why = "setup", f"{setup} ({load})"
+    elif len(in_flight) >= MAX_CONCURRENT_TURNS:
         reason, why = "turn_cap", (f"at turn cap {len(in_flight)}/{MAX_CONCURRENT_TURNS} "
                                    f"(in flight: {', '.join(t[:8] for t in in_flight)})")
     elif not _memory_headroom_ok():
@@ -13258,7 +13626,7 @@ _KEEP_STATE = {"at": 0.0, "thread": None, "last": ""}
 def _keep_vaults() -> None:
     try:
         out = subprocess.run([_canopy_cli(), "vault", "zk", "keep"], capture_output=True, text=True,
-                             timeout=KEEP_INTERVAL_SECONDS)
+                             env={**_child_safe_env(), **_cli_base_env()}, timeout=KEEP_INTERVAL_SECONDS)
     except Exception as exc:  # noqa: BLE001 — a keeper hiccup never touches the loop
         _log(f"vault keeper: could not run ({exc})")
         return
@@ -13573,6 +13941,13 @@ def main() -> None:
     runner_id = pair_or_load()
     global _RUNNER_ID
     _RUNNER_ID = runner_id
+    # Whatever a script cut short left is nobody's now.
+    try:
+        SETUP_HOLD_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        _log(f"could not clear {SETUP_HOLD_FILE} (it expires on its own): {exc}")
+    beside = may_bootstrap_beside_claims()
+    _hold_claims("start", "restarting" if beside else "setting up for the first time")
     # Turns a previous daemon left running, FIRST: their leases are renewing again
     # before anything slow (the bootstrap) runs, and every sweep below skips them.
     # The clone's packages go on sys.path for them (canopy_acp, canopy_transcript).
@@ -13606,13 +13981,17 @@ def main() -> None:
     # before the startup credential probes: a probe that reads like a cap parses its
     # reset with canopy_transcript. The clone is synced later, in bootstrap; a stale
     # one is fine for a path.)
-    if not fetch_and_stage_credential(runner_id):
+    if not fetch_and_stage_credential(runner_id, probe=not beside):
         return  # stopped before a credential was provisioned
     # Registering the key can change what canopy-web will accept from this box (a
     # new key waits on a person): settle that BEFORE the bootstrap checks the token,
     # not halfway through it, as on 2026-10-18 02:28.
-    enrollment.join(timeout=60)
-    bootstrap_agent_fleet()
+    if beside:
+        start_bootstrap_beside_claims(enrollment)
+    else:
+        enrollment.join(timeout=60)
+        bootstrap_agent_fleet()
+    _release_claims("start")
     # Prefer the WS control channel; fall back to REST polling if it can't be used.
     if not run_over_ws(runner_id):
         run_over_rest(runner_id)
@@ -13652,6 +14031,7 @@ def _finish_stop(*, drain_seconds: float | None = None) -> None:
     restart (an update) keeps them, and the next start sweeps them as usual. A
     turn still running past the drain keeps nothing (`keep_conversation`), and
     what it leaves is swept at the next start, if there is one."""
+    stop_bootstrap()
     if _HANDOFF:
         # An update: the turns keep running under their relays, and the next daemon
         # adopts them. Only a finish already being posted is waited for.

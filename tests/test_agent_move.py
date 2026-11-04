@@ -9,6 +9,8 @@ class. This would happen if someone transferred divisions."
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
@@ -19,7 +21,7 @@ from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.capabilities.models import CapabilityGrant
 from apps.events.models import Event, SettingChange
 from apps.harness.models import Turn
-from apps.mail.models import MailDomain, MailDomainShare, MailMessage, MailRoute, MailThread
+from apps.mail.models import MailDomain, MailDomainShare, MailDraft, MailMessage, MailRoute, MailThread, MailUpload
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -281,6 +283,18 @@ _NOT_THE_AGENTS = {
     "approvals.ApprovalRequest": "a decision about its SUBJECT workspace (who may approve it is that "
                                  "workspace's authority); `requested_by_agent` is who asked, kept as history",
 }
+
+
+def test_a_draft_written_as_the_agent_moves_with_it_and_can_still_be_sent(m):
+    from apps.agents import move
+
+    up = MailUpload.objects.create(workspace=m.src, user=m.owner, filename="a.txt", s3_key="attachments/src/a")
+    d = MailDraft.objects.create(uuid=uuid.uuid4(), workspace=m.src, user=m.owner, agent_slug="mover",
+                                 uploads=[str(up.uuid)])
+    move.move(m.agent, m.dst, by=m.owner)
+    d.refresh_from_db()
+    up.refresh_from_db()
+    assert d.workspace_id == "dst" and up.workspace_id == "dst"
 
 
 def test_every_agent_scoped_table_with_its_own_workspace_is_in_the_move(m):

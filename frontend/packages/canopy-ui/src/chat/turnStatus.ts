@@ -111,6 +111,7 @@ export function pendingLabel({
   }
   if (status?.state === "picking_up") {
     const [first] = status.runners;
+    if (status.setting_up && first) return `${first} is restarting; this starts when it's back…`;
     if (status.pinned && first) return `Sent to ${first}…`;
     return first ? `Picking this up on ${first}…` : "Queued…";
   }
@@ -145,6 +146,11 @@ export interface TurnNotice {
  * straight into the session makes messages but no Turn, so without this a
  * day-old failure sat in red under a thread that was plainly working.
  */
+/** How much newer than a turn's end a row may be and still be that turn's own.
+ *  A mirrored session's rows take their time when they are ingested, seconds
+ *  after the work they record. */
+const TRANSCRIPT_LAG_MS = 60_000;
+
 /** A resume time as the reader's local "Oct 12, 3:00 PM". */
 function formatWhen(iso: string): string {
   const d = new Date(iso);
@@ -203,7 +209,7 @@ export function turnNotice(
   const quiet = quietNotice(status, latestMessageAt, now);
   if (quiet) return quiet;
   if (status.settled && status.finished_at && latestMessageAt
-      && Date.parse(latestMessageAt) > Date.parse(status.finished_at)) {
+      && Date.parse(latestMessageAt) > Date.parse(status.finished_at) + TRANSCRIPT_LAG_MS) {
     return null;
   }
   const offer = status.cloud_runner && status.cloud_runner_id

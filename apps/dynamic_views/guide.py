@@ -25,6 +25,11 @@ PROPS
                                          give an agent a task the view DECLARES (AGENT TASKS below)
                                          and resolve with its result; rejects with the reason when
                                          it fails, is cancelled, times out or the viewer may not
+                                         give that agent tasks
+    canopy.connection.request({provider, method, path, query?, body?, as?, agent?}) -> Promise<{status, body}>
+                                         a Salesforce call the view declares (see SALESFORCE CALLS)
+    canopy.connection.begin() -> Promise<{expires_at, hard_limit_at, writes}>
+                                         open this click's window before any write (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
     canopy.googleAccess.start({agent, account?, services?: ["gmail"], minutes?: 60, purpose?})
                                          -> Promise<{ok, account, until}>  the VIEWER lends an agent
@@ -34,6 +39,18 @@ PROPS
                                          refresh token: it ends by itself (read `my_connected_accounts`
                                          for `session_until`). Rejects when they cancel.
     canopy.googleAccess.end({agent, account?})  end it now
+    canopy.connections.connect({agent, provider, minutes?, ownerTurnsOnly?})
+                                         the VIEWER connects their own account and lends it to an agent
+                                         the view declares tasks for: this page leaves for the provider's
+                                         sign-in and canopy's share screen (agent ticked, limits shown,
+                                         their passkey) and comes back here. `minutes` 5-10080 ends it by
+                                         itself and revokes it; `ownerTurnsOnly` keeps it to turns they
+                                         started. Read `my_connections` for its state and `expires_at`.
+    canopy.connections.outcome() -> Promise<{provider, status, reason} | null>  how the connect that
+                                         brought them back here went (a failure's `reason` is a code; for
+                                         `no_vault_key`, canopy.navigate("/settings#vault-key") sets one up)
+    canopy.connections.disconnect({id, agent}) -> Promise<{outcome}>  end one the viewer lent `agent`:
+                                         a machine, or canopy-web, revokes it at the provider
 - Plain <a href="/tasks/CON-12"> links work too: the frame routes them through navigate.
 
 SOURCES (declared on the view, read for it as the viewer before it draws; `example_sources` beside
@@ -97,11 +114,58 @@ GLOBALS (no imports — the code is not a module)
   bg-card, bg-muted, text-foreground, text-muted-foreground, border, text-success,
   text-warning, text-destructive. Never raw palette colours (stone-*, red-*).
 
+SALESFORCE CALLS
+- Declare the calls the code may make on the view: "connections": [{"provider": "salesforce",
+  "as": "viewer", "reads": [{"method": "GET", "path": "query"}], "writes": [{"method": "PATCH",
+  "path": "sobjects/Lead/*"}]}]. `as` is "viewer" (the viewer's own connection) or "shared" (an
+  agent's shared connection, with "agent": "<slug>" naming an agent in the workspace).
+- A path is relative to the Salesforce API root, in plain form: no dots, queries or encoding. `*`
+  stands for exactly one segment. A write names its object exactly (sobjects/Lead/*, never
+  sobjects/*/*), and a flow or Apex write names the exact flow or class. People, permissions and
+  code objects (User, Profile, PermissionSet, ApexClass, ...) are never writable. Running a report
+  (POST analytics/reports/*) is a read.
+- Every line is checked on save against the allowlist and refused with a sentence naming it; at most
+  5 entries and 50 lines each.
+- Call: canopy.connection.request({provider: "salesforce", method, path, query?, body?, as?, agent?})
+  -> Promise<{status, body}>. `status` is Salesforce's own, also when it refused the call (a 400 is a
+  resolved answer; look at it). canopy refuses in a sentence (not connected, not declared, over the
+  limit, ...) as a rejected promise: show its message. Query values are text. Not connected, the
+  message says where ("Connect Salesforce in Settings → Connections.") and the rejection also has
+  e.connect_url. A frame can't go there itself: offer a button that calls canopy.navigate(e.connect_url),
+  which asks the viewer and opens it in a new tab.
+- Calls wait their turn: at most 8 at once from a page, the rest first come, first served. Fire as many
+  reads in parallel as you like; a call that waits a full minute rejects with a sentence.
+- A READ can run any time. A WRITE must start from a click on this screen: call it straight from an
+  onClick handler, never on load or on a timer. The page checks for the click itself and rejects
+  "This needs a click." otherwise. The click only counts for about 5 seconds, so the write must be
+  the first thing the handler does: a write that comes after several seconds of awaits in the same
+  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared;
+  later writes in that window need no new click. The window closes 120 seconds after the last write
+  (reads don't count), so keep writing or click again. To read and dedup before the first write, call
+  canopy.connection.begin() first thing in the onClick instead: it opens the window and resolves
+  {expires_at, hard_limit_at, writes} (what can be written now), and the first write must then come
+  within 120 seconds. A view that has not been saved yet cannot call ("Save this view to use
+  connections.").
+- The answer is {status, body, text?}: `body` is Salesforce's JSON; when its answer was not JSON,
+  `body` is null and `text` holds the start of it.
+- Example, a read and a click-driven write:
+    const [leads, setLeads] = useState(null);
+    useEffect(() => {
+      canopy.connection.request({provider: "salesforce", method: "GET", path: "query",
+        query: {q: "SELECT Id, Name, Status FROM Lead WHERE OwnerId = '005...' LIMIT 20"}})
+        .then((r) => setLeads(r.body.records)).catch((e) => setError(e.message));
+    }, []);
+    <Button onClick={() => canopy.connection.request({provider: "salesforce", method: "PATCH",
+      path: "sobjects/Lead/" + lead.Id, body: {Status: "Contacted"}})
+        .then(() => canopy.refresh()).catch((e) => setError(e.message))}>Mark contacted</Button>
+
 RULES (the frame enforces them; breaking one fails, it is not "best effort")
 - No network: fetch, XHR, WebSocket and remote images are blocked by the frame's CSP.
-  Everything comes through props.data, canopy.read or canopy.runAgentTask.
-- No writes, except starting an agent task the view declares: the catalog is read-only, and
-  canopy.runAgentTask is refused for any {agent, name} not in the view's agent_tasks.
+  Everything comes through props.data, canopy.read, canopy.runAgentTask or canopy.connection.request.
+- No writes, except starting an agent task the view declares and the Salesforce writes it declares
+  (and only from a click): the catalog is read-only, canopy.runAgentTask is refused for any {agent,
+  name} not in the view's agent_tasks, and canopy.connection.request for any call not in its
+  connections.
 - No storage, cookies or access to the page around the frame.
 - What a view shows, its viewers may see — and so may its author. Read only what the view needs.
 

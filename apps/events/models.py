@@ -253,7 +253,7 @@ class Activity(models.Model):
 
 class SessionUsage(models.Model):
     """What one Claude Code session spent on one UTC day, as its box reported it —
-    THE token record (`apps/events/usage.py`).
+    THE token record (`apps/harness/usage.py`).
 
     Every box scans its own transcripts in the repos canopy names for it and posts
     per-session, per-day totals; no content. Matched on write to canopy's own record

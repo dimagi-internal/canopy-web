@@ -126,21 +126,25 @@ describe('ChatSessionMenu — Slack thread', () => {
     await openMenu()
     fireEvent.click(screen.getByTestId('detach-slack'))
     expect(onDetachSlack).toHaveBeenCalled()
-    expect(screen.queryByText('Open Slack thread')).toBeNull() // menu closed after the click
+    expect(screen.queryByText('Open in Slack')).toBeNull() // menu closed after the click
   })
 
-  it('opens the thread in the Slack desktop app, with the browser as a fallback', async () => {
+  it('opens the thread natively in Slack, the web client only when there is no app link', async () => {
     const assign = vi.fn()
     vi.stubGlobal('location', { ...window.location, assign })
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const app_url = 'slack://channel?team=T1&id=C1&message=1.2&thread_ts=1.2'
-    render(<ChatSessionMenu {...baseProps({ slackThread: { channel: 'C1', url: 'https://app.slack.com/x', app_url } })} />)
+    render(<ChatSessionMenu {...baseProps({ slackThread: { channel: 'C1', channel_name: 'canopy-support', url: 'https://app.slack.com/x', app_url } })} />)
     await openMenu()
+    expect(screen.getByText('Slack · #canopy-support')).toBeTruthy()
     fireEvent.click(screen.getByTestId('slack-thread-app-link'))
     expect(assign).toHaveBeenCalledWith(app_url)
     expect(open).not.toHaveBeenCalled()
+    cleanup()
+    render(<ChatSessionMenu {...baseProps({ slackThread: { channel: 'C1', url: 'https://app.slack.com/x' } })} />)
     await openMenu()
-    fireEvent.click(screen.getByText('Open Slack thread in the browser'))
+    expect(screen.queryByText('Open Slack thread in the browser')).toBeNull()
+    fireEvent.click(screen.getByTestId('slack-thread-app-link'))
     expect(open).toHaveBeenCalledWith('https://app.slack.com/x', '_blank', 'noopener,noreferrer')
     vi.unstubAllGlobals()
     open.mockRestore()

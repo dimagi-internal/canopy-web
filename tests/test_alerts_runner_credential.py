@@ -18,7 +18,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_runner_credential as src
+from apps.harness.alerts import runner_credential as src
 from apps.harness import aws_iam_proof
 from apps.harness.models import (
     Runner,
@@ -36,7 +36,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-SOURCE = "apps.harness.alerts_runner_credential"
+SOURCE = "apps.harness.alerts.runner_credential"
 
 
 def add_runner_credential(runner, *, kind, name=""):

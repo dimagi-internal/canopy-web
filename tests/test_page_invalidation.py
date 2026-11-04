@@ -27,9 +27,9 @@ from django.db import transaction
 from django.test import Client
 
 from apps.agents.models import Agent, AgentTask
+from apps.agents.signals import TASK_RESOURCE
 from apps.canopy_sessions import invalidation, page_state
 from apps.canopy_sessions.models import Session
-from apps.harness.signals import TASK_RESOURCE
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 #: `transaction=True` because `on_commit` is the SUBJECT here. pytest-django's

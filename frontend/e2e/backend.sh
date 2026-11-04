@@ -26,6 +26,10 @@ export ALLOWED_HOSTS="localhost,127.0.0.1"
 # Chat sends queue real turns for a runner, as in production, instead of the
 # inline stub reply: the fake runner (e2e/fake_runner.py) claims and answers them.
 export CHAT_STUB_EXECUTOR=False
+# Passkeys are checked against the page's address, but the dev proxy rewrites Host
+# to the API's, so name it. vault-new-key.spec.ts drives real ceremonies.
+export PASSKEY_RP_ID=localhost
+export PASSKEY_ORIGINS=http://localhost:3000
 # Port is overridable: on a shared machine :8000 is often already taken by
 # another account's dev server, and a hardcoded port makes the suite simply
 # unrunnable there rather than failing with anything actionable.

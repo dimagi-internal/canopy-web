@@ -257,6 +257,9 @@ export interface TurnStatus {
   claimed_by: string | null;
   /** Directed at this runner rather than offered to the cascade. */
   pinned: boolean;
+  /** For `picking_up`: every runner that would take it is restarting, so it starts
+   *  in a moment rather than now. Absent on an older server. */
+  setting_up?: boolean;
   /** A runner it could be moved to right now, when moving it would help. Only
    *  ever an offer; acting on it re-checks everything server-side. */
   cloud_runner: string | null;
@@ -375,6 +378,10 @@ export interface SessionState {
   /** The snapshot's oldest row's ordinal — where its tail begins. Absent on an
    *  older server; the reducer then uses the snapshot's lowest `turn_index`. */
   oldest_loaded_turn_index?: number | null;
+  /** This snapshot follows a reset: the conversation's rows were rebuilt, so it
+   *  replaces everything held rather than merging (`keepLoadedHistory` is
+   *  skipped). Only on the frame the server pushes when a rebuild lands. */
+  rebuilt?: boolean;
 }
 
 /** One subagent of a session, from the files Claude Code keeps beside its

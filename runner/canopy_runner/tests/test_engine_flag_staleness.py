@@ -201,3 +201,63 @@ def test_a_new_transcript_resettles_rather_than_comparing_across_files(tmp_path,
     s2 = _session("completed")
     _run([s2])
     assert "agent_status_stale" not in s2
+
+
+def _interrupted_transcript(path):
+    path.write_text('{"type":"user","message":{"content":[{"type":"text",'
+                    '"text":"[Request interrupted by user]"}]}}\n')
+
+
+def test_a_stopped_session_is_not_reported_working(tmp_path, monkeypatch):
+    """Escape ends the turn with no `Stop` hook, so emdash's flag stays "working"
+    until the next prompt, and the chat says "Thinking… stopping…" over a stopped
+    agent. Measured 2026-11-03 on `canopy`: marker at 15:31:14, flag still set
+    minutes later."""
+    sessions_mod._ENGINE_FLAG.clear()
+    parent = tmp_path / "sess.jsonl"
+    _interrupted_transcript(parent)
+    _resolve_to(monkeypatch, parent)
+
+    s = _session("working")
+    _run([s])
+    assert s["agent_status"] == sessions_mod.INTERRUPTED
+    assert "agent_status_stale" not in s
+
+
+def test_a_summary_written_after_the_stop_does_not_bring_it_back(tmp_path, monkeypatch):
+    """Claude Code appends `away_summary` minutes later. New bytes, but no new work."""
+    sessions_mod._ENGINE_FLAG.clear()
+    parent = tmp_path / "sess.jsonl"
+    _interrupted_transcript(parent)
+    _resolve_to(monkeypatch, parent)
+    for _ in range(3):
+        _run([_session("working")])
+
+    with parent.open("a") as f:
+        f.write('{"type":"system","subtype":"away_summary"}\n')
+    s = _session("working")
+    _run([s])
+    assert s["agent_status"] == sessions_mod.INTERRUPTED
+    assert "agent_status_stale" not in s
+
+
+def test_a_prompt_after_the_stop_is_working_again(tmp_path, monkeypatch):
+    sessions_mod._ENGINE_FLAG.clear()
+    parent = tmp_path / "sess.jsonl"
+    _interrupted_transcript(parent)
+    _resolve_to(monkeypatch, parent)
+    _run([_session("working")])
+
+    with parent.open("a") as f:
+        f.write('{"type":"user","message":{"content":"carry on"}}\n')
+    s = _session("working")
+    _run([s])
+    assert s["agent_status"] == "working"
+
+
+def test_a_working_flag_with_no_transcript_stays_working(monkeypatch):
+    sessions_mod._ENGINE_FLAG.clear()
+    _resolve_to(monkeypatch, None)
+    s = _session("working")
+    _run([s])
+    assert s["agent_status"] == "working"

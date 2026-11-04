@@ -55,7 +55,12 @@ def status_for_session(session) -> dict | None:
                                         "chat_session", "chat_session__agent")
             .filter(chat_session_id=session.pk).order_by("-created_at").first())
     if turn is None:
-        return None
+        # A session an agent or board turn ran in. Such a turn can be `done` seconds
+        # in while the session works on, so only a failure says anything true here.
+        turn = (Turn.objects.select_related("agent", "claimed_by", "pinned_runner")
+                .filter(canopy_session_id=session.pk).order_by("-created_at").first())
+        if turn is None or turn.status != Turn.FAILED:
+            return None
     return ts.resolve(turn).as_dict()
 
 
@@ -66,7 +71,9 @@ def publish_for_turn(turn) -> None:
     without it, and this runs inside the runner's append path — the same rule
     `realtime.groups.publish` already follows.
     """
-    if not turn.chat_session_id:
+    session_id = turn.chat_session_id or (
+        turn.canopy_session_id if turn.status == turn.FAILED else None)
+    if not session_id:
         return
     try:
         from apps.harness import turn_status as ts
@@ -75,13 +82,13 @@ def publish_for_turn(turn) -> None:
     except Exception:  # noqa: BLE001 — never break an append over a status line
         logger.exception("could not derive turn status for %s", turn.pk)
         return
-    publish(session_group(turn.chat_session_id),
+    publish(session_group(session_id),
             {"type": "session.turn_status", "status": payload})
     if payload.get("settled"):
-        publish_idle(turn.chat_session_id)
+        publish_idle(session_id)
     from .queued_feed import publish_queued
 
-    publish_queued(turn.chat_session_id)
+    publish_queued(session_id)
 
 
 def publish_idle(session_id) -> None:

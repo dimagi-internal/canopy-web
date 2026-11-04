@@ -22,9 +22,9 @@ from django.test import Client
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, RunnerAssignment, Turn
-from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from apps.workspaces.testing import enrolled
+from apps.harness.testing import enrolled
+from tests.token_helpers import pat_client
 
 pytestmark = pytest.mark.django_db
 
@@ -51,11 +51,6 @@ def _as(user) -> Client:
     return c
 
 
-def _pat(user) -> Client:
-    raw, _ = PersonalToken.create_for_user(user=user, label="runner")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
 def _post(c, url, body):
     return c.post(url, body, content_type="application/json")
 
@@ -71,7 +66,7 @@ def _email_turn(key="e-1"):
 
 def test_an_editor_cannot_post_an_email_turn_and_be_promoted_to_the_owner(world):
     _o, editor, _ws, _a = world
-    r = _post(_pat(editor), "/api/harness/turns/", _email_turn())
+    r = _post(pat_client(editor), "/api/harness/turns/", _email_turn())
     assert r.status_code == 403, r.content
     assert "mailbox" in r.json()["detail"]
     assert not Turn.objects.exists()
@@ -79,11 +74,11 @@ def test_an_editor_cannot_post_an_email_turn_and_be_promoted_to_the_owner(world)
 
 def test_the_agents_admin_runner_owner_still_posts_email_turns(world):
     owner, editor, _ws, agent = world
-    r = _post(_pat(owner), "/api/harness/turns/", _email_turn())
+    r = _post(pat_client(owner), "/api/harness/turns/", _email_turn())
     assert r.status_code == 201, r.content
     # An explicit admin is a holder too (runner_may_hold_agent) — same door.
     AgentAdmin.objects.create(agent=agent, user=editor, granted_by=owner)
-    r2 = _post(_pat(editor), "/api/harness/turns/", _email_turn("e-2"))
+    r2 = _post(pat_client(editor), "/api/harness/turns/", _email_turn("e-2"))
     assert r2.status_code == 201, r2.content
 
 

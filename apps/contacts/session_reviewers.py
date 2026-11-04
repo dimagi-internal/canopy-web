@@ -65,10 +65,14 @@ def _sharing_changed(user, agent, *, granted: bool) -> None:
                              "before": not granted, "after": granted})
 
 
-def granted_to(agent) -> list[SessionReviewGrant]:
-    """Who let `agent` review their sessions, oldest grant first."""
-    return list(SessionReviewGrant.objects.filter(agent=agent, revoked_at__isnull=True)
-                .select_related("user").order_by("created_at"))
+def granted_to(agent, user) -> list[SessionReviewGrant]:
+    """Who let `agent` review their sessions, oldest grant first — as many as `user`'s request
+    (the agent's own login) may read now: the same rule as the sessions themselves
+    (`access.review_grantors`), so a turn asked by one person is not told who else enrolled."""
+    from apps.canopy_sessions import access  # noqa: PLC0415 — as this module's other lazy imports
+
+    return list(access.review_grantors(user).filter(agent=agent).select_related("user")
+                .order_by("created_at"))
 
 
 def agent_named(slug: str):

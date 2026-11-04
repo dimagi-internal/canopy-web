@@ -34,49 +34,76 @@ def endorse_msg(agent_id, kind: str, target: str, key_jkt: str) -> str:
     return f"canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
 
 
-def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser_jwk: dict) -> bool:
-    """Is `sig` the endorser's §7 signature over this (agent, kind, target, key)?"""
+def verify_p1363(msg: bytes, sig: str, signer_jwk: dict) -> bool:
+    """Is `sig` (b64u IEEE P1363 r||s, as WebCrypto signs) the signer's ECDSA
+    P-256/SHA-256 signature over `msg`? Never raises."""
     try:
         raw = b64u_bytes(sig, "sig")
         if len(raw) != 64:
             return False
         der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
-        zk.public_key(endorser_jwk).verify(der, endorse_msg(agent_id, kind, target, key_jkt).encode(),
-                                         ec.ECDSA(hashes.SHA256()))
-    except (InvalidSignature, ValueError, ZkError):
+        zk.public_key(signer_jwk).verify(der, msg, ec.ECDSA(hashes.SHA256()))
+    except (InvalidSignature, ValueError, TypeError, AttributeError, ZkError):
         return False
     return True
 
 
-def recipients(agent) -> list[dict]:
+def verify(agent_id, *, kind: str, target: str, key_jkt: str, sig: str, endorser_jwk: dict) -> bool:
+    """Is `sig` the endorser's §7 signature over this (agent, kind, target, key)?"""
+    return verify_p1363(endorse_msg(agent_id, kind, target, key_jkt).encode(), sig, endorser_jwk)
+
+
+def recipients(agent, facts=None) -> list[dict]:
     """Every principal a `zks1` value for `agent` may be sealed to, with the
-    public key and its thumbprint — `zk_seal.recipients_for`, labelled."""
+    public key and its thumbprint — `zk_seal.recipients_for`, labelled. `facts`:
+    `device_keys.serving_facts`, when asking for several agents."""
 
     out = [{"kind": "device", "target": k.ecdh_jkt, "label": f"{k.runner.name} · {k.label or k.kind}",
             "public_jwk": k.ecdh_public_jwk, "key_jkt": device_keys.thumbprint(k.ecdh_public_jwk)}
-           for k in zk.eligible_device_keys(agent)]
+           for k in zk.eligible_device_keys(agent, facts)]
     out += [{"kind": "member", "target": str(ks.user_id), "label": ks.user.email,
              "public_jwk": ks.public_jwk, "key_jkt": device_keys.thumbprint(ks.public_jwk)}
-            for ks in zk.eligible_members(agent)]
+            for ks in zk.eligible_members(agent, facts)]
     return out
 
 
-def endorsements(agent) -> list[dict]:
+def endorsements(agent, facts=None) -> list[dict]:
     """Every endorsement of a CURRENT recipient's CURRENT key, with the
-    endorser's public key so a client can verify it without a second read."""
+    endorser's public key so a client can verify it without a second read.
+    `facts`: `device_keys.serving_facts`, when asking for several agents."""
 
-    live = {(r["kind"], r["target"], r["key_jkt"]) for r in recipients(agent)}
+    live = {(r["kind"], r["target"], r["key_jkt"]) for r in recipients(agent, facts)}
     # Vouched for by someone who is a member NOW: an endorser who left vouches for nobody.
-    endorsers = vault_members.agent_member_ids(agent)
+    endorsers = zk.member_ids(agent, facts)
     rows = [e for e in AgentVaultEndorsement.objects.filter(agent=agent, endorser_id__in=endorsers)
             .select_related("endorser")
             if (e.kind, e.target, e.key_jkt) in live]
-    keys = {ks.user_id: ks.public_jwk for ks in
+    keys = _endorser_keys(rows)
+    return [_row(e, keys) for e in rows]
+
+
+def endorsements_of_device(agent_ids, jkt: str) -> list[dict]:
+    """Every endorsement of device key `jkt` for the agents `agent_ids`, each with its
+    `agent_id` and its endorser's public key: unlike `endorsements`, whether or not the
+    device still reads the agent or its endorser is still a member. For a reader
+    judging a past write, which is signed for what was true then. One whose endorser no
+    longer has a key can be verified by nobody, so it is left out."""
+
+    rows = list(AgentVaultEndorsement.objects.filter(agent_id__in=list(agent_ids), kind="device", target=jkt,
+                                                     key_jkt=jkt).select_related("endorser"))
+    keys = _endorser_keys(rows)
+    return [{**_row(e, keys), "agent_id": str(e.agent_id)} for e in rows if e.endorser_id in keys]
+
+
+def _endorser_keys(rows) -> dict[int, dict]:
+    return {ks.user_id: ks.public_jwk for ks in
             UserVaultKeyset.objects.filter(user_id__in={e.endorser_id for e in rows})}
-    return [{"kind": e.kind, "target": e.target, "key_jkt": e.key_jkt, "by": str(e.endorser_id),
-             "by_email": e.endorser.email, "by_jkt": e.endorser_jkt, "by_public_jwk": keys.get(e.endorser_id),
-             "sig": e.sig}
-            for e in rows]
+
+
+def _row(e: AgentVaultEndorsement, keys: dict[int, dict]) -> dict:
+    return {"kind": e.kind, "target": e.target, "key_jkt": e.key_jkt, "by": str(e.endorser_id),
+            "by_email": e.endorser.email, "by_jkt": e.endorser_jkt, "by_public_jwk": keys.get(e.endorser_id),
+            "sig": e.sig}
 
 
 def add(agent, *, user, items: list, own_machines_only: bool = False) -> int:

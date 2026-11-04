@@ -6,12 +6,12 @@ import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import {
   listAccessRequests,
   setAccessSettings,
-  WorkspaceApiError,
   type AccessRequestOut,
   type AutoApproveRole,
 } from '@/api/workspaces'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { notifyProblem, requesterLabel } from './accessRequests'
+import { ApiError } from '@/api/problem'
 
 /**
  * Access requests — people asking to be invited into this workspace
@@ -62,7 +62,7 @@ export function WorkspaceAccessRequestsPage(): JSX.Element | null {
       await setAccessSettings(slug, next)
       await refresh()
     } catch (e) {
-      setSettingError(e instanceof WorkspaceApiError ? e.message : 'Failed to save')
+      setSettingError(e instanceof ApiError ? e.message : 'Failed to save')
     } finally {
       setSaving(false)
     }

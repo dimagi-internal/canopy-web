@@ -1015,6 +1015,47 @@ def _build_parser() -> argparse.ArgumentParser:
     close_scope.add_argument("--all", action="store_true", help="close every open session")
     close_parser.add_argument("--json", action="store_true", help="machine-readable output")
 
+    # Declared here rather than by local_apps, so the daemon, which builds this parser
+    # too, never imports app code.
+    app_parser = subparsers.add_parser(
+        "app",
+        help="experimental: list, check, start, stop and build local apps, the small "
+             "programs a person runs on this computer. The daemon never starts one",
+    )
+    app_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+    app_commands = app_parser.add_subparsers(dest="app_command", required=True)
+    app_list = app_commands.add_parser("list", help="the apps installed on this computer")
+    app_list.add_argument("--json", action="store_true")
+    app_check = app_commands.add_parser("check", help="run an app's checks")
+    app_check.add_argument("key")
+    app_check.add_argument("--json", action="store_true")
+    app_start = app_commands.add_parser("start", help="check, then start an app")
+    app_start.add_argument("key")
+    app_start.add_argument("--accept-notice", action="store_true",
+                           help="the person has read the app's notice")
+    app_status = app_commands.add_parser("status", help="what is running (never uses the network)")
+    app_status.add_argument("key", nargs="?")
+    app_status.add_argument("--json", action="store_true")
+    app_stop = app_commands.add_parser("stop", help="stop an app (never uses the network)")
+    app_stop.add_argument("key", nargs="?")
+    app_stop.add_argument("--all", action="store_true", help="stop every running app")
+    app_pack = app_commands.add_parser("pack", help="write a folder's deterministic package")
+    app_pack.add_argument("folder")
+    app_pack.add_argument("--out", default="")
+    app_submit = app_commands.add_parser(
+        "submit", help="submit a folder for review; needs CANOPY_WEB_PAT, not the runner's token")
+    app_submit.add_argument("folder")
+    app_submit.add_argument("--note", default="")
+    app_submit.add_argument("--workspace", default="",
+                            help="the workspace it's submitted from; needed if you're in more than one")
+    app_dev = app_commands.add_parser(
+        "dev-install", help="run a folder from disk, unpublished; nothing it calls leaves this computer")
+    app_dev.add_argument("folder")
+    app_dev.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                         help="a setting value (a dev run has no store to configure it)")
+    app_remove = app_commands.add_parser("remove", help="remove an app's files from this computer")
+    app_remove.add_argument("key")
+
     pair_parser = subparsers.add_parser(
         "pair",
         help="set this macOS account up as a runner: pair with canopy-web (once — a "
@@ -1261,7 +1302,8 @@ def make_control_handler(cfg: Config, waker, client=None):
             # Only marks it due: pressing Escape is a CDP round trip, and this thread
             # also carries cancel, wake and menu_answer.
             session_interrupt.ring(str(msg["session_key"]), str(msg.get("session_id") or ""),
-                                   str(msg.get("interrupt_id") or ""))
+                                   str(msg.get("interrupt_id") or ""),
+                                   project=str(msg.get("project") or ""))
             waker.event.set()
         elif msg.get("type") == "check_inbox" and msg.get("mailbox"):
             # THE DOORBELL. Gmail told canopy-web this mailbox changed; check it
@@ -1358,31 +1400,63 @@ def _tolerant_console(streams=None) -> None:
             pass  # not a TextIOWrapper (a test capture, a pipe wrapper) — leave it
 
 
-#: A --log-file larger than this at startup is moved to <file>.1 first: nothing else
-#: rotates it (launchd does not rotate its StandardOutPath either, but a Windows box
-#: keeps one task running for months).
-LOG_ROLL_BYTES = 20 * 1024 * 1024
+#: The runner's own log rolls at this size and keeps this many old files, so the
+#: whole thing is bounded at ~LOG_ROLL_BYTES * (LOG_BACKUPS + 1). Nothing else caps
+#: it: launchd does not rotate its StandardOutPath, and a Windows task runs for
+#: months (runner.log reached 160 MB on one box).
+LOG_ROLL_BYTES = 10 * 1024 * 1024
+LOG_BACKUPS = 5
+
+
+class _LogStream:
+    """sys.stdout/sys.stderr stand-in that writes whole lines through the rotating
+    handler, so a stray print or a traceback rolls the file like a log record does
+    (a second open file on the same path would keep writing to the rotated one)."""
+
+    encoding = "utf-8"
+    errors = "backslashreplace"
+
+    def __init__(self, handler: logging.Handler, name: str, level: int) -> None:
+        self._handler, self._name, self._level, self._buf = handler, name, level, ""
+
+    def write(self, text: str) -> int:
+        self._buf += text
+        *lines, self._buf = self._buf.split("\n")
+        for line in lines:
+            self._emit(line)
+        return len(text)
+
+    def _emit(self, line: str) -> None:
+        self._handler.handle(logging.LogRecord(self._name, self._level, "", 0, line, None, None))
+
+    def flush(self) -> None:
+        if self._buf:
+            self._emit(self._buf)
+            self._buf = ""
+
+    def isatty(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.flush()
 
 
 def _log_to_file(path: str) -> None:
-    """Send logging AND stdout/stderr to `path`. pythonw.exe has no console: without
-    this every log line and every traceback goes nowhere."""
+    """Send logging AND stdout/stderr to `path`, rotating at LOG_ROLL_BYTES. pythonw.exe
+    has no console: without this every log line and every traceback goes nowhere."""
+    from logging.handlers import RotatingFileHandler
+
     p = Path(path).expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if p.stat().st_size > LOG_ROLL_BYTES:
-            import os
-
-            os.replace(p, p.with_name(p.name + ".1"))
-    except OSError:
-        pass
-    stream = open(p, "a", encoding="utf-8", errors="backslashreplace", buffering=1)
-    sys.stdout = sys.stderr = stream
+    handler = RotatingFileHandler(p, maxBytes=LOG_ROLL_BYTES, backupCount=LOG_BACKUPS,
+                                  encoding="utf-8", errors="backslashreplace")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    sys.stdout = _LogStream(handler, "stdout", logging.INFO)
+    sys.stderr = _LogStream(handler, "stderr", logging.WARNING)
     root = logging.getLogger()
     for h in list(root.handlers):
         root.removeHandler(h)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                        stream=stream, force=True)
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
 def main() -> None:
@@ -1432,6 +1506,14 @@ def main() -> None:
 
     if command == "close-sessions":
         raise SystemExit(close_sessions_cmd(args))
+
+    if command == "app":
+        if sys.platform == "win32":
+            print("Local apps run on macOS only.")
+            raise SystemExit(1)
+        from .local_apps import commands as app_commands
+
+        raise SystemExit(app_commands.run(args))
 
     if command == "verify-emdash":
         if not args.config:

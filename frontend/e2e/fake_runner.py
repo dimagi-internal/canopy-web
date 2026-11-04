@@ -199,6 +199,13 @@ class FakeRunner:
                 self.stopped.add(tid)
             self.client.post_session_interrupt_result(self.runner_id, stop["session_id"],
                                                       stop["interrupt_id"], "interrupted")
+        # Full history on request (a Reset, "Load full session"), as `streams.drain_backfills`
+        # ships it: the whole transcript in one final chunk.
+        for b in self.client.sync_backfills(self.runner_id):
+            convo = self.conversations.get(b.get("session_id") or "")
+            rows = conversational_messages(convo.records, -1) if convo else []
+            self.client.post_session_backfill(self.runner_id, b["session_id"], rows, final=True,
+                                              transcript_id=convo.transcript_id if convo else "")
 
     def _run(self, turn: dict) -> None:
         try:

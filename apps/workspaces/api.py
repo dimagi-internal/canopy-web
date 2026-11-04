@@ -17,25 +17,14 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.admission.schemas import (
-    AdmissionRuleIn,
-    AdmissionRuleOut,
-    AdmissionRulePatch,
-    AdmissionRulesOut,
-    AdmissionSettingsIn,
-    AdmissionSettingsOut,
-)
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.retention.schemas import (
-    RetentionOut,
-    RetentionPreviewOut,
-    RetentionRuleIn,
-    RetentionRuleOut,
-)
 from apps.workspaces import permissions as perms
 
 from . import access_requests, invites, login_gate, notifications, services
+from .gates import membership_or_404 as _membership_or_404
+from .gates import require as _require
+from .gates import tree_reader as _tree_reader
 from .models import (
     Workspace,
     WorkspaceAccessRequest,
@@ -48,7 +37,6 @@ from .schemas import (
     AccessRequestIn,
     AccessRequestOut,
     AccessSettingsIn,
-    AgentTopologyOut,
     InviteCreateIn,
     InviteOut,
     InvitePreviewOut,
@@ -61,13 +49,8 @@ from .schemas import (
     MemberTreeWorkspaceOut,
     MyInviteOut,
     RequestableWorkspaceOut,
-    RunnerOrderIn,
-    RunnerOrderRowOut,
-    RunnerTopologyOut,
     WorkspaceAnalyticsOut,
     WorkspaceCreateIn,
-    WorkspaceHealthOut,
-    WorkspaceHealthSetupOut,
     WorkspaceNetworkOut,
     WorkspaceOut,
     WorkspaceParentIn,
@@ -132,30 +115,6 @@ def _m_out(m: WorkspaceMembership) -> WorkspaceOut:
     return _out(m.workspace, m.role, inherited=getattr(m, "inherited", False))
 
 
-def _membership_or_404(user, slug: str) -> WorkspaceMembership:
-    """The caller's membership row, or 404.
-
-    Reads through `services.membership` rather than querying here: this surface
-    needs the ROW (to read its workspace and to mutate it), but "am I in this
-    workspace?" must still have one implementation — see
-    `tests/test_workspace_authorizer_is_sole_gate.py`.
-    """
-    m = services.membership(user, slug)
-    if m is None:
-        raise HttpError(404, f"workspace '{slug}' not found")
-    return m
-
-
-def _require(user, slug: str, capability: str) -> WorkspaceMembership:
-    """The caller's membership, if their role holds `capability`
-    (`permissions.MINIMUM_ROLE`). 404 first — a non-member can't probe roles."""
-    m = _membership_or_404(user, slug)  # 404 first — a non-member can't probe roles
-    if not perms.role_allows(m.role, capability):
-        needed = perms.MINIMUM_ROLE[capability]
-        raise HttpError(403, f"this requires the {needed} role or above")
-    return m
-
-
 def _require_may_manage(m: WorkspaceMembership, target_role: str | None,
                         new_role: str | None = None) -> None:
     """Below owner, members are managed strictly beneath yourself: an admin
@@ -175,7 +134,8 @@ def _target_role(slug: str, user_id: int) -> str | None:
 
 
 def _member_out(m: WorkspaceMembership) -> MemberOut:
-    return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at,
+    return MemberOut(user_id=m.user_id, email=m.user.email, display_name=m.user.get_full_name().strip(),
+                     role=m.role, joined_at=m.joined_at,
                      inherited=getattr(m, "inherited", False))
 
 
@@ -749,74 +709,6 @@ def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
     return _out(ws, role)
 
 
-@router.get("/{slug}/runner-topology", response=RunnerTopologyOut,
-            summary="Which runners serve which agents, across this workspace and every one below it")
-@gate("logs.read")  # root + each descendant where the caller holds it
-def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
-    """This workspace and its descendants, each with its agents and their routing
-    (the default ordered list and every source rule), plus every runner those
-    agents route to or that lives in the tree. Admin and above."""
-    # `logs.read` — the operational read tier (runner drills, health) — on the
-    # root, and again on every descendant: the tree carries owner and admin
-    # down, so an admin of the root sees every division (`INHERITS_DOWN`).
-    from apps.harness import topology
-
-    root, visible = _tree_reader(request, slug)
-    return RunnerTopologyOut(**topology.build(root, visible=visible, viewer=request.user))
-
-
-def _tree_reader(request: HttpRequest, slug: str):
-    """The topology/health read pattern: `logs.read` on the root, then each
-    descendant filtered by the same capability (owners and admins inherit down)."""
-    m = _require(request.user, slug, perms.LOGS_READ)
-    return m.workspace, (lambda s: perms.can(request.user, s, perms.LOGS_READ))
-
-
-@router.get("/{slug}/health", response=WorkspaceHealthOut,
-            summary="What is not set up right, across this workspace and every one below it")
-@gate("logs.read")  # same tree read; can_fix mirrors Agent.is_admin
-def workspace_health(request: HttpRequest, slug: str, setup: bool = True) -> WorkspaceHealthOut:
-    """Every agent in the tree with its setup checklist (the same steps as its own
-    Settings page and `agent_setup`), its vault state (canopy-web, moving)
-    and properties; every workspace with its shared vault; the runners its agents
-    route to or that live in it (the runner topology's rows, plus whether each runs
-    current code and its own failing checks). Each step carries the link
-    that fixes it; `can_fix` says whether the viewer may follow it, else
-    `owner_email` is who to send it to. With `setup=false` each agent's checklist
-    and vault state, and the totals counted from them, are null: read them from
-    `/health/setup` a few agents at a time. Admin and above."""
-    root, visible = _tree_reader(request, slug)
-    return WorkspaceHealthOut(**_health().build(root, request.user, visible, setup=setup))
-
-
-def _health():
-    """`apps.agents.health`, which both health routes read (an upward import:
-    workspaces sits below agents, so it stays one, and lazy)."""
-    from apps.agents import health
-
-    return health
-
-
-#: How many agents one `/health/setup` read may name.
-HEALTH_SETUP_MAX = 25
-
-
-@router.get("/{slug}/health/setup", response=WorkspaceHealthSetupOut,
-            summary="The setup checklist and vault state of some of the tree's agents")
-@gate("logs.read")  # same tree read as /health
-def workspace_health_setup(request: HttpRequest, slug: str, agents: str) -> WorkspaceHealthSetupOut:
-    """The `steps`, `vault` and `left` of each named agent (comma-separated slugs,
-    at most 25) in this workspace's tree, as `/health` reports them. A slug outside
-    the tree is left out. Admin and above."""
-    # The costly half of /health: the page reads the table with setup=false, then
-    # this a few agents at a time, so it shows before every checklist is computed.
-    wanted = {s.strip() for s in agents.split(",") if s.strip()}
-    if len(wanted) > HEALTH_SETUP_MAX:
-        raise HttpError(422, f"At most {HEALTH_SETUP_MAX} agents per read")
-    root, visible = _tree_reader(request, slug)
-    return WorkspaceHealthSetupOut(agents=_health().setup_of(root, request.user, visible, wanted))
-
-
 @router.get("/{slug}/analytics", response=WorkspaceAnalyticsOut,
             summary="Turns, chats, messages, tokens and people over time, by agent, repository and person")
 @gate("logs.read")  # same tree read
@@ -852,281 +744,3 @@ def workspace_network(request: HttpRequest, slug: str, days: int = 30,
     root, visible = _tree_reader(request, slug)
     slugs = [ws.slug for ws, _ in services.subtree(root, visible)] if tree else [root.slug]
     return WorkspaceNetworkOut(**analytics.network(slugs, viewer=request.user, days=days))
-
-
-@router.get("/{slug}/runner-order", response=list[RunnerOrderRowOut],
-            summary="The workspace's default runner order: repo turns, and agents without their own")
-@gate("member")
-def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]:
-    """Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
-    the turn while it is available, the next rank only once every better one is
-    not (or the turn has waited past the cascade grace), and a runner not listed
-    never takes one. Empty: any runner that declares the repo.
-
-    It is also the default order of every AGENT here that has none of its own,
-    and of every workspace below this one that has no order of its own. Such an
-    agent's source rules still come first. Member-readable, like an agent's own
-    order."""
-    from apps.harness.models import WorkspaceRunnerOrder
-
-    m = _require(request.user, slug, perms.READ)
-    rows = (WorkspaceRunnerOrder.objects.filter(workspace=m.workspace)
-            .select_related("runner").order_by("rank"))
-    return [
-        RunnerOrderRowOut(
-            runner_id=row.runner_id, runner_name=row.runner.name, kind=row.runner.kind,
-            rank=row.rank, online=row.runner.live_status == row.runner.ONLINE,
-            ready=row.runner.ready, enabled=row.enabled,
-            projects=row.runner.project_names(),
-        )
-        for row in rows
-    ]
-
-
-@router.put("/{slug}/runner-order", response=list[RunnerOrderRowOut],
-            summary="Replace the workspace's default runner order")
-# admin+; routes agents in every division below too; each runner's owner must be a member (422 otherwise)
-@gate("runners.route", setting=True)
-def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) -> list[RunnerOrderRowOut]:
-    """Wholesale replace (index = rank). Workspace admins and owners
-    (`runners.route`): the order routes agents in every workspace below this one
-    too. Every runner must be able to SERVE this workspace — enrolled in it, its
-    owner an editor or above (`runner_tenant_slugs`) — or the order would name a box the
-    claim path refuses anyway; such a runner is a 422, as is an unknown or retired
-    one."""
-    # Maintainer note: was `agent.work` while the order routed only this
-    # workspace's repo turns; an agent following it may live in a division where
-    # an editor here holds no role at all. Then `own`; lowered to admin
-    # (2026-10-05) — the runners it names must already serve this workspace.
-    from django.db import transaction
-
-    from apps.harness.models import Runner, WorkspaceRunnerOrder
-    from apps.harness.routing import runner_tenant_slugs_of
-
-    m = _require(request.user, slug, perms.RUNNERS_ROUTE)
-    ids = [row.runner_id for row in payload.runners]
-    if len(ids) != len(set(ids)):
-        raise HttpError(422, "duplicate runner id in list")
-    runners = {r.id: r for r in Runner.objects.filter(id__in=ids)
-               .exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER).select_related("owner")}
-    missing = [str(rid) for rid in ids if rid not in runners]
-    if missing:
-        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
-    tenants = runner_tenant_slugs_of(runners.values())
-    outside = sorted(r.name for r in runners.values() if slug not in tenants[r.pk])
-    if outside:
-        raise HttpError(422, f"runner(s) {', '.join(outside)} cannot serve '{slug}': "
-                             "a runner must be enrolled in the workspace (POST "
-                             "/api/harness/runners/{id}/workspaces) and its owner an "
-                             "editor or above there")
-    from apps.harness import routing_audit
-
-    with transaction.atomic():
-        before = routing_audit.workspace_rows(m.workspace)
-        WorkspaceRunnerOrder.objects.filter(workspace=m.workspace).delete()
-        WorkspaceRunnerOrder.objects.bulk_create([
-            WorkspaceRunnerOrder(workspace=m.workspace, runner=runners[row.runner_id],
-                                 rank=i, enabled=row.enabled)
-            for i, row in enumerate(payload.runners)
-        ])
-        routing_audit.record_routing_change(
-            request, workspace=m.workspace,
-            target=f"workspace:{slug}", scope="default runner order",
-            before=before, after=routing_audit.workspace_rows(m.workspace))
-    return get_runner_order(request, slug)
-
-
-@router.get("/{slug}/agent-topology", response=AgentTopologyOut,
-            summary="Which agents can send which other agents work, across this workspace and every one below it")
-@gate("logs.read")  # same; grant/revoke flags mirror _may_manage_admins
-def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
-    """Every agent in this workspace and its descendants, and for each ordered
-    pair what the first gets when it sends the second work with its own canopy
-    login: the whole agent, some of its capabilities, or nothing — and why.
-    Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
-    with the source agent's `login_user_id`."""
-    # Same gate and per-descendant filter as runner_topology.
-    from apps.agents import topology
-
-    root, visible = _tree_reader(request, slug)
-    return AgentTopologyOut(**topology.build(root, request.user, visible=visible))
-
-
-# --- Content retention (apps/retention) ---------------------------------------
-# The routes live here, beside the rest of workspace settings, so they share
-# `_require`; the rules and the purge are apps/retention's.
-
-
-@router.get("/{slug}/retention", response=RetentionOut,
-            summary="How long this workspace keeps chat and turn content")
-@gate("member")  # read-only: everyone may know how long their chats are kept
-def get_retention(request: HttpRequest, slug: str) -> RetentionOut:
-    """This workspace's retention rules and the ones it inherits from the
-    workspaces above it and the deployment. Any member may read them; changing
-    them needs the admin role."""
-    from apps.retention import rules
-
-    m = _require(request.user, slug, perms.READ)
-    return RetentionOut(**rules.policy_for(
-        m.workspace, can_manage=perms.role_allows(m.role, perms.RETENTION_MANAGE)))
-
-
-@router.get("/{slug}/retention/preview", response=RetentionPreviewOut,
-            summary="What the current rules would delete from this workspace right now")
-@gate("retention.manage")
-def retention_preview(request: HttpRequest, slug: str) -> RetentionPreviewOut:
-    """Counts only, per rule, of what would be dropped from this workspace's
-    own chats and turns if the rules were enforced now. Deletes nothing."""
-    from django.conf import settings
-
-    from apps.retention import rules
-    from apps.retention import services as retention_services
-
-    m = _require(request.user, slug, perms.RETENTION_MANAGE)
-    tally = retention_services.preview(m.workspace.slug)
-    return RetentionPreviewOut(
-        workspace=m.workspace.slug,
-        enforced=bool(getattr(settings, "CANOPY_RETENTION_ENFORCE", False)),
-        totals=tally.totals(),
-        by_rule=[
-            {"rule_id": pk, "summary": rules.summary(tally.rules[pk]), "counts": dict(counts)}
-            for pk, counts in sorted(tally.by_rule.items())
-        ],
-    )
-
-
-@router.post("/{slug}/retention/rules", response={201: RetentionRuleOut},
-             summary="Add a retention rule")
-@gate("retention.manage", setting=True)
-def create_retention_rule(request: HttpRequest, slug: str, payload: RetentionRuleIn):
-    """Blank filters match anything; `keep_days` null keeps matching content
-    forever. 422 if a rule with exactly these filters already exists, or the
-    agent is not in this workspace."""
-    from apps.retention import rules
-
-    m = _require(request.user, slug, perms.RETENTION_MANAGE)
-    try:
-        rule = rules.create_rule(m.workspace, payload.model_dump(), user=request.user)
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from exc
-    return Status(201, RetentionRuleOut(**rules.rule_out(rule)))
-
-
-@router.put("/{slug}/retention/rules/{rule_id}", response=RetentionRuleOut,
-            summary="Change a retention rule")
-@gate("retention.manage", setting=True)
-def update_retention_rule(request: HttpRequest, slug: str, rule_id: int,
-                          payload: RetentionRuleIn) -> RetentionRuleOut:
-    """Replaces the rule's filters, retention and note."""
-    from apps.retention import rules
-
-    m = _require(request.user, slug, perms.RETENTION_MANAGE)
-    try:
-        rule = rules.update_rule(m.workspace, rule_id, payload.model_dump(), user=request.user)
-    except LookupError as exc:
-        raise HttpError(404, "no such rule in this workspace") from exc
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from exc
-    return RetentionRuleOut(**rules.rule_out(rule))
-
-
-@router.delete("/{slug}/retention/rules/{rule_id}", response={204: None},
-               summary="Remove a retention rule")
-@gate("retention.manage", setting=True)
-def delete_retention_rule(request: HttpRequest, slug: str, rule_id: int):
-    """Content the rule would have expired falls back to the next rule that
-    matches, or is kept forever."""
-    from apps.retention import rules
-
-    m = _require(request.user, slug, perms.RETENTION_MANAGE)
-    try:
-        rules.delete_rule(m.workspace, rule_id, user=request.user)
-    except LookupError as exc:
-        raise HttpError(404, "no such rule in this workspace") from exc
-    return Status(204, None)
-
-
-# --- Admission rules (apps/admission) -----------------------------------------
-# Beside retention for the same reason: workspace settings share `_require`;
-# the rules, their evaluation and their notices are apps/admission's.
-
-
-@router.get("/{slug}/admission-rules", response=AdmissionRulesOut,
-            summary="Which turns this workspace refuses before they run")
-@gate("member")  # read-only: anyone may know which turns are refused
-def list_admission_rules(request: HttpRequest, slug: str) -> AdmissionRulesOut:
-    """This workspace's admission rules: each one's conditions, action, notices,
-    whether it is on, and how often it has fired. Any member may read them;
-    changing them needs the admin role."""
-    from apps.admission import rules
-
-    m = _require(request.user, slug, perms.READ)
-    return AdmissionRulesOut(
-        **rules.policy_for(m.workspace, can_manage=perms.role_allows(m.role, perms.ADMISSION_MANAGE)),
-    )
-
-
-@router.put("/{slug}/admission-settings", response=AdmissionSettingsOut,
-            summary="Switch automatic replies to rejected senders on or off")
-@gate("admission.manage", setting=True)
-def set_admission_settings(request: HttpRequest, slug: str,
-                           payload: AdmissionSettingsIn) -> AdmissionSettingsOut:
-    """On, a rule with "automatic reply to the sender" replies on the sender's
-    email thread, from the agent's mailbox, in fixed text. Off, the reply is
-    recorded and not sent. Needs the admin role."""
-    from apps.admission import rules
-
-    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
-    return AdmissionSettingsOut(sender_notices_enabled=rules.set_sender_notices(
-        m.workspace, payload.sender_notices_enabled, user=request.user))
-
-
-@router.post("/{slug}/admission-rules", response={201: AdmissionRuleOut},
-             summary="Add an admission rule")
-@gate("admission.manage", setting=True)
-def create_admission_rule(request: HttpRequest, slug: str, payload: AdmissionRuleIn):
-    """Blank conditions match anything, and at least one must be set. An
-    `allow` rule exempts the turns it matches from every `reject` rule. 422 for
-    an agent outside this workspace."""
-    from apps.admission import rules
-
-    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
-    try:
-        rule = rules.create_rule(m.workspace, payload.model_dump(), user=request.user)
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from exc
-    return Status(201, AdmissionRuleOut(**rules.rule_out(rule)))
-
-
-@router.patch("/{slug}/admission-rules/{rule_id}", response=AdmissionRuleOut,
-              summary="Change an admission rule, or switch it on or off")
-@gate("admission.manage", setting=True)
-def update_admission_rule(request: HttpRequest, slug: str, rule_id: int,
-                          payload: AdmissionRulePatch) -> AdmissionRuleOut:
-    """Only the fields sent change."""
-    from apps.admission import rules
-
-    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
-    try:
-        rule = rules.update_rule(m.workspace, rule_id, payload.model_dump(exclude_none=True),
-                                 user=request.user)
-    except LookupError as exc:
-        raise HttpError(404, "no such rule in this workspace") from exc
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from exc
-    return AdmissionRuleOut(**rules.rule_out(rule))
-
-
-@router.delete("/{slug}/admission-rules/{rule_id}", response={204: None},
-               summary="Remove an admission rule")
-@gate("admission.manage", setting=True)
-def delete_admission_rule(request: HttpRequest, slug: str, rule_id: int):
-    """A removed default is not re-seeded. Disabling it keeps it one toggle away."""
-    from apps.admission import rules
-
-    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
-    try:
-        rules.delete_rule(m.workspace, rule_id, user=request.user)
-    except LookupError as exc:
-        raise HttpError(404, "no such rule in this workspace") from exc
-    return Status(204, None)

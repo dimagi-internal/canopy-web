@@ -710,7 +710,8 @@ class RunnerBinding(models.Model):
     # per-conversation `agent_status` ("working" | "awaiting-input"), reported every
     # tick. Blank means the runner could not answer (predates the field, no emdash,
     # drifted schema), NOT "idle": `is_session_running` falls back to activity
-    # recency for a blank, and only trusts a non-blank value.
+    # recency for a blank, and only trusts a non-blank value. "interrupted" is the
+    # runner's correction: emdash says working, the transcript ends in an Escape.
     agent_status = models.CharField(max_length=40, blank=True, default="")
     # The runner's dissent from `agent_status`: it says "not working", but the session
     # is still writing. emdash's flag has no way back to "working" without a human

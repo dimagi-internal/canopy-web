@@ -97,3 +97,19 @@ def test_a_repo_maps_to_at_most_one_agent():
     RepoIdentity.objects.create(repo_slug="canopy-web", agent=hal)
     with pytest.raises(IntegrityError), transaction.atomic():
         RepoIdentity.objects.create(repo_slug="canopy-web", agent=echo)
+
+
+def test_session_identity_says_whose_token_a_chat_borrows_and_why():
+    from apps.canopy_sessions.models import Session
+
+    hal, ws = _agent_with_github_delegation("hal-id", "hal-id-owner@dimagi.com", login="hal-bot", name="Hal")
+    RepoIdentity.objects.create(repo_slug="canopy-web", agent=hal)
+
+    agent_chat = Session.objects.create(workspace=ws, agent=hal)
+    assert delegations.session_identity(agent_chat) == {"agent": hal, "source": "agent", "repo": ""}
+
+    repo_chat = Session.objects.create(workspace=ws, project="canopy-web")
+    assert delegations.session_identity(repo_chat) == {"agent": hal, "source": "repo_default", "repo": "canopy-web"}
+
+    bare = Session.objects.create(workspace=ws, project="undefaulted")
+    assert delegations.session_identity(bare) == {"agent": None, "source": "none", "repo": "undefaulted"}

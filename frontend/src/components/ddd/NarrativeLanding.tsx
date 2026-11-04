@@ -15,19 +15,7 @@ import { CutVideoList } from './CutVideoList'
 import { NarrativeDiff } from './NarrativeDiff'
 import { pairNarrationScenes } from './narrativeScenePairing'
 import { useScopedPath } from '@/lib/scopedLinks'
-
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return ''
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  } catch {
-    return iso
-  }
-}
+import { fmtDate } from '@/lib/format'
 
 /** Small ghost button that turns red on hover — the delete affordance. */
 function DeleteButton({

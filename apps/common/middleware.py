@@ -56,7 +56,7 @@ PUBLIC_PATH_PREFIXES = (
     # canopy's OAuth CLIENT identity — the metadata document whose URL is its
     # client_id, and the public client key it names. A host reads both before
     # it trusts a redemption, so they cannot sit behind a login; neither holds
-    # anything that can sign (apps/host_grants/views_oauth.py). Exact paths.
+    # anything that can sign (apps/oauth_server/views_oauth.py). Exact paths.
     "/oauth/client.json",
     "/oauth/jwks.json",
     # The OAuth token endpoint and discovery documents. The token endpoint
@@ -99,7 +99,7 @@ PUBLIC_PATH_PREFIXES = (
     # credential — that is what the card is for. The public card is served only
     # for an agent that offers outsiders something (404 otherwise, same as no
     # such slug); the extended card requires a session or PAT via Ninja's
-    # `session_auth`. See apps/agents/a2a_api.py.
+    # `session_auth`. See apps/agents/api_a2a.py.
     "/api/a2a/",
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/mail/ses/",         # auth=None — SNS-signed; apps/mail/sns.verify checks signature + topic, 404 otherwise

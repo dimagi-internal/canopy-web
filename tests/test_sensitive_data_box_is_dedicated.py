@@ -14,16 +14,16 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.agents.services import runner_may_hold_agent
-from apps.harness.runner_requirements import is_sensitive_data_box
 from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
+from apps.harness.runner_requirements import is_sensitive_data_box
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 
 SENSITIVE_IFACE = {"capabilities": {"data": {
-    "callers": ["contact", "member"], "sites": ["connect-labs"], "data": "sensitive",
+    "sites": ["connect-labs"], "data": "sensitive",
     "tools": ["Read", "Grep", "Glob", "mcp__*canopy-web__current_page"]}}}
 
 
@@ -33,7 +33,10 @@ def w():
     ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=jj)
-    publish(labsdata, SENSITIVE_IFACE)
+    declare(labsdata, SENSITIVE_IFACE["capabilities"])
+    allow(labsdata, capability="data", contact=True)
+    allow(labsdata, capability="data")
+    editors_run(labsdata)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=jj)
     box = Runner.objects.create(name="cloud-zdr-1", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
@@ -85,7 +88,6 @@ def test_a_sensitive_box_does_not_claim_another_agents_turn(w):
 
 def test_withdrawing_sensitive_takes_the_agent_off_the_box(w):
     _declare(w["box"])
-    publish(w["labsdata"], {"capabilities": {"data": {
-        "callers": ["member"], "sites": ["connect-labs"], "tools": ["Read"]}}})
+    declare(w["labsdata"], {"data": {"sites": ["connect-labs"], "tools": ["Read"]}})
 
     assert not runner_may_hold_agent(w["box"], w["labsdata"])

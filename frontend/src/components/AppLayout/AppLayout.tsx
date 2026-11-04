@@ -67,7 +67,7 @@ function UserMenu() {
         {auth.user.avatar_url ? (
           <img src={auth.user.avatar_url} alt="" className="h-6 w-6 rounded-full" />
         ) : (
-          <span className="h-6 w-6 rounded-full bg-primary text-white text-xs font-semibold flex items-center justify-center">
+          <span className="h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
             {initials}
           </span>
         )}

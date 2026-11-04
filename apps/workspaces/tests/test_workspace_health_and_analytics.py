@@ -15,7 +15,8 @@ from django.test import Client
 from apps.agents.credentials.vault_health import vault_health
 from apps.agents.models import Agent, AgentCredential
 from apps.agents.setup import setup_steps
-from apps.events import activity, usage
+from apps.events import activity
+from apps.harness import usage
 from apps.events.models import Activity, SessionUsage
 from apps.harness import initiator as _initiator
 from apps.harness import services
@@ -280,14 +281,14 @@ def test_health_counts_projects_open_tasks_and_waits_like_the_agent_pages(tree):
                              waiting_on_user=tree["builder"])
     AgentTask.objects.create(agent=hal, ext_id="T3", title="done", status=AgentTask.DONE,
                              waiting_on_user=tree["builder"])
-    hal.interface = {"capabilities": {"ask": {"role": "user"}}}
+    hal.interface = {"capabilities": {"ask": {}}}
     hal.save(update_fields=["interface"])
     from apps.agents.models import AgentGrant
 
-    AgentGrant.objects.create(agent=hal, kind=AgentGrant.WORKSPACE, subject_workspace_id="connect", role="user")
+    AgentGrant.objects.create(agent=hal, kind=AgentGrant.WORKSPACE, subject_workspace_id="connect", role="read_write")
     row = next(a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"] if a["slug"] == "hal")
     assert (row["projects"], row["open_tasks"], row["waiting_tasks"]) == (1, 2, 1)
-    assert (row["has_interface"], row["capabilities"], row["access_lines"]) == (True, 1, ["Everyone in connect: user"])
+    assert (row["has_interface"], row["capabilities"], row["access_lines"]) == (True, 1, ["Everyone in connect: read_write"])
 
 
 def test_health_shows_open_sessions_and_only_the_latest_ones_the_viewer_may_open(tree):
@@ -389,7 +390,7 @@ def test_health_lists_the_trees_runners_with_their_code_and_problems(tree, setti
     from django.utils import timezone
 
     from apps.harness.models import Runner, RunnerAssignment
-    from apps.workspaces.testing import enrolled
+    from apps.harness.testing import enrolled
 
     settings.RUNNER_CODE_SHA = "new"
     box = enrolled(Runner.objects.create(
@@ -413,7 +414,7 @@ def test_health_and_topology_serve_one_runner_row_with_its_reason_and_fix(tree):
     from django.utils import timezone
 
     from apps.harness.models import Runner
-    from apps.workspaces.testing import enrolled
+    from apps.harness.testing import enrolled
 
     enrolled(Runner.objects.create(
         name="laptop", kind=Runner.EMDASH, workspace_id="dimagi", owner=tree["ceo"], status=Runner.DEGRADED,

@@ -2,23 +2,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthContext } from '@/auth/AuthProvider'
 
 const m = vi.hoisted(() => ({
   listAgentConnections: vi.fn(),
   disconnectAgentConnection: vi.fn(),
-  grantConnection: vi.fn(),
-  revokeConnectionGrant: vi.fn(),
   listAgents: vi.fn(),
+  listAgentProjects: vi.fn(),
+  listWorkspaceProjects: vi.fn(),
+  listInstalledApps: vi.fn(),
+  listSurfaceShares: vi.fn(),
+  previewSurfaceShare: vi.fn(),
+  approveSurfaceShare: vi.fn(),
+  stopSurfaceShare: vi.fn(),
   role: { current: null as string | null },
 }))
 vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
   listAgentConnections: m.listAgentConnections,
   disconnectAgentConnection: m.disconnectAgentConnection,
-  grantConnection: m.grantConnection,
-  revokeConnectionGrant: m.revokeConnectionGrant,
+  listSurfaceShares: m.listSurfaceShares,
+  previewSurfaceShare: m.previewSurfaceShare,
+  approveSurfaceShare: m.approveSurfaceShare,
+  stopSurfaceShare: m.stopSurfaceShare,
 }))
-vi.mock('@/api/agents', () => ({ listAgents: m.listAgents }))
+vi.mock('@/api/agents', () => ({ listAgents: m.listAgents, listProjects: m.listAgentProjects }))
+vi.mock('@/api/work', () => ({ listProjects: m.listWorkspaceProjects }))
+vi.mock('@/api/workspaceApps', () => ({ listInstalledApps: m.listInstalledApps }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => m.role.current }))
 
 import { AgentConnectionsPanel } from './AgentConnectionsPanel'
@@ -29,17 +39,29 @@ function conn(over: Record<string, unknown> = {}) {
     id: 3, provider: 'salesforce', title: 'Salesforce', account_label: 'eva@dimagi-ai.com', workspace: 'w', workspace_name: 'W',
     instance_url: 'https://dimagi.my.salesforce.com', needs_reconnect: false, usable: true, missing_scopes: [],
     connected_at: '2026-10-01T00:00:00Z', last_used_at: null, connected_by_email: 'jj@dimagi.com',
-    granted_from: null, shared_with: [], ...over,
+    granted_from: null, shared_with: [], state: 'active',
+    statement: { version: 1, agents: [], my_computers: [], endorsers: [] }, holders: [], waiting: [], my_machines: [], ...over,
   }
 }
+const me = { current: 'jj@dimagi.com' }
 const show = () =>
-  render(<MemoryRouter initialEntries={['/agents/eva/settings/accounts']}><AgentConnectionsPanel agent={{ slug: 'eva' }} /></MemoryRouter>)
+  render(
+    <AuthContext.Provider value={{ status: 'authenticated', user: { email: me.current } as never }}>
+      <MemoryRouter initialEntries={['/agents/eva/settings/accounts']}><AgentConnectionsPanel agent={{ slug: 'eva' }} /></MemoryRouter>
+    </AuthContext.Provider>,
+  )
 
 beforeEach(() => {
   vi.clearAllMocks()
   m.role.current = null
+  me.current = 'jj@dimagi.com'
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
-  for (const k of ['disconnectAgentConnection', 'grantConnection', 'revokeConnectionGrant'] as const) m[k].mockResolvedValue(undefined)
+  m.disconnectAgentConnection.mockResolvedValue({ outcome: 'revoking', machine_revokes: true })
+  m.listSurfaceShares.mockResolvedValue([])
+  m.listAgentProjects.mockResolvedValue([])
+  m.listWorkspaceProjects.mockResolvedValue([{ id: 7, handle: 'leads', name: 'Lead intake', workspace: 'w' }])
+  m.listInstalledApps.mockResolvedValue([{ key: 'crm', name: 'CRM', workspace: 'w' }])
+  m.stopSurfaceShare.mockResolvedValue(undefined)
 })
 afterEach(cleanup)
 
@@ -74,6 +96,7 @@ describe('AgentConnectionsPanel', () => {
     show()
     fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
     await waitFor(() => expect(m.disconnectAgentConnection).toHaveBeenCalledWith('eva', 3))
+    expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
   })
 
   it('shows Reconnect, and a not-configured provider disabled', async () => {
@@ -107,40 +130,95 @@ describe('AgentConnectionsPanel', () => {
     expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
-  it('shares with another agent (chip appears, picker clears), then stops sharing (chip goes)', async () => {
-    let sharedWith: string[] = []
-    m.listAgentConnections.mockImplementation(async () => ({
-      providers: [PROVIDER], connections: [conn({ shared_with: sharedWith })],
-    }))
-    m.grantConnection.mockImplementation(async (_s: string, _i: number, to: string) => { sharedWith = [to] })
-    m.revokeConnectionGrant.mockImplementation(async () => { sharedWith = [] })
+  it('an unshared agent connection says so and Share goes to the share page', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
     show()
-    const sel = (await screen.findByLabelText('Share with')) as HTMLSelectElement
-    await screen.findByRole('option', { name: 'echo' })
-    // The agent itself is never offered.
-    expect(screen.queryByRole('option', { name: 'eva' })).toBeNull()
-    fireEvent.change(sel, { target: { value: 'echo' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
-    await waitFor(() => expect(m.grantConnection).toHaveBeenCalledWith('eva', 3, 'echo'))
-    const stop = await screen.findByRole('button', { name: 'Stop sharing with echo' })
-    expect(screen.getByText('Shared with echo.')).toBeTruthy()
-    // Already shared: not offered again, so the picker has nothing left.
+    expect(await screen.findByText('Not shared yet: no agent or computer can use it.')).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Share' }) as HTMLAnchorElement
+    expect(a.getAttribute('href')).toBe('/w/w/connections/3/share?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
     expect(screen.queryByLabelText('Share with')).toBeNull()
-    fireEvent.click(stop)
-    await waitFor(() => expect(m.revokeConnectionGrant).toHaveBeenCalledWith('eva', 3, 'echo'))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop sharing with echo' })).toBeNull())
-    expect(((await screen.findByLabelText('Share with')) as HTMLSelectElement).value).toBe('')
   })
 
-  it('shows a connection shared by another agent and lets the admin stop using it', async () => {
+  it('shows who it is lent to read-only, with one link to change it and waiting machines named', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({
+        shared_with: ['echo'], statement: { version: 2, agents: ['echo'], my_computers: [], endorsers: [] },
+        waiting: [{ agent: 'echo', runner: 'echo box' }],
+      })],
+    })
+    show()
+    expect(await screen.findByText('Lent to: echo')).toBeTruthy()
+    expect(screen.getByText('Waiting for a machine that holds it: echo box (echo)')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Stop sharing/ })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Change who can use it' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Give waiting machines a copy' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Open to check its machines' })).toBeTruthy()
+  })
+
+  it('hides the share links from an admin who did not connect it, and says who can change it', async () => {
+    me.current = 'other@dimagi.com'
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ state: 'unshared' }), conn({ id: 4, shared_with: ['echo'], waiting: [{ agent: 'echo', runner: 'b' }],
+        statement: { version: 2, agents: ['echo'], my_computers: [], endorsers: [] } })],
+    })
+    show()
+    expect((await screen.findAllByText('Connected by jj@dimagi.com; only they can change who uses it.'))).toHaveLength(2)
+    expect(screen.queryByRole('link', { name: /Share|Change who|Give waiting|check its machines/ })).toBeNull()
+    expect(screen.getByText('Lent to: echo')).toBeTruthy()
+  })
+
+  it('shows a connection lent by another agent as lent, with nothing to change', async () => {
     m.listAgentConnections.mockResolvedValue({
       providers: [PROVIDER], connections: [conn({ id: 9, granted_from: 'hal' })],
     })
     show()
-    expect(await screen.findByText(/shared by hal/)).toBeTruthy()
+    expect(await screen.findByText(/Lent by hal/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Stop using' }))
-    await waitFor(() => expect(m.revokeConnectionGrant).toHaveBeenCalledWith('hal', 9, 'eva'))
+    expect(screen.queryByRole('button', { name: 'Stop using' })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Share|Change who/ })).toBeNull()
+  })
+
+  it('says Reconnect required for an agent’s own expired connection', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ needs_reconnect: true })] })
+    show()
+    expect(await screen.findByText('Reconnect required.')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Change who can use it' })).toBeNull()
+  })
+
+  it('says so when a connection lent to it is not shared yet', async () => {
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ granted_from: 'jj@dimagi.com', state: 'unshared', usable: true })] })
+    show()
+    expect(await screen.findByText('Not shared yet: its owner must share it again before this agent can use it.')).toBeTruthy()
+  })
+
+  it('tells someone else who may change an unshared connection, without nesting paragraphs', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    me.current = 'ada@dimagi.com'
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
+    show()
+    const line = await screen.findByText(/Connected by jj@dimagi.com; only they can change who uses it\./)
+    expect(line.closest('p')?.parentElement?.closest('p')).toBeNull()
+    expect(error.mock.calls.join(' ')).not.toContain('validateDOMNesting')
+    error.mockRestore()
+  })
+
+  it('does not say connected by nobody', async () => {
+    me.current = 'ada@dimagi.com'
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ connected_by_email: '' })] })
+    show()
+    expect(await screen.findByText(/The person who connected it no longer has an account\./)).toBeTruthy()
+    expect(screen.queryByText(/Connected by ;/)).toBeNull()
+  })
+
+  it('never lists a connection that is being disconnected', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER], connections: [conn({ state: 'revoking', account_label: 'gone@x.test' })],
+    })
+    show()
+    await screen.findByTestId('agent-connection-provider-salesforce')
+    expect(screen.queryByText('gone@x.test')).toBeNull()
   })
 
   it('never prints query-string text it does not know', async () => {
@@ -188,7 +266,7 @@ describe('AgentConnectionsPanel', () => {
     show()
     expect(await screen.findByText('Made in Dimagi before the move — disconnect it and connect here.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Share' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy()
     const connect = screen.getByRole('button', { name: 'Connect Salesforce' })
     expect((connect.closest('form') as HTMLFormElement).getAttribute('action')).toMatch(/\/auth\/connections\/salesforce\/x\/start\/$/)
@@ -201,7 +279,7 @@ describe('AgentConnectionsPanel', () => {
     })
     show()
     expect(await screen.findByText('hal is no longer in Dimagi, where this was made, so it no longer works.')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Stop using' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Stop using' })).toBeNull()
   })
 
   it('prompts to reconnect for a scope the app added since', async () => {
@@ -216,5 +294,163 @@ describe('AgentConnectionsPanel', () => {
     expect(await screen.findByText('Reconnect to allow: Send mail')).toBeTruthy()
     expect(screen.getByText('Its owner must reconnect to allow: Send mail')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: 'Reconnect' })).toHaveLength(1)
+  })
+
+  describe('screens that may use the account', () => {
+    const calls = (over: Record<string, unknown> = {}) => conn({ provider_calls: true, server_use: true, ...over })
+    const line = (method: string, path: string) => ({ method, path })
+    const share = (over: Record<string, unknown> = {}) => ({
+      id: 5, kind: 'project', ref: '7', title: 'Lead intake', account_label: 'eva@dimagi-ai.com',
+      approved_reads: [line('GET', 'sobjects/Lead/*')], approved_writes: [],
+      pending_reads: [], pending_writes: [], needs_approval: false, ...over,
+    })
+    const open = async (c = calls()) => {
+      m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [c] })
+      m.role.current = 'admin'
+      show()
+      return screen.findByText('Project screens that may use eva’s account')
+    }
+    const named = { slug: 'eva', name: 'Eva' }
+    void named
+
+    it('lists the shared screens with what they may read and change, and the one sentence', async () => {
+      m.listSurfaceShares.mockResolvedValue([share({ approved_writes: [line('POST', 'actions/custom/flow/Create_Lead_From_Contact')] })])
+      await open()
+      expect(await screen.findByText('Lead intake')).toBeTruthy()
+      expect(screen.getByText('Read Leads')).toBeTruthy()
+      expect(screen.getByText('Run the flow Create_Lead_From_Contact')).toBeTruthy()
+      expect(screen.getByText('Anyone who can open that screen acts as eva in Salesforce.')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Approve changes' })).toBeNull()
+    })
+
+    it('adds a project: preview in plain words, then Approve sends exactly the lines seen', async () => {
+      m.previewSurfaceShare.mockResolvedValue({
+        kind: 'project', ref: '7', title: 'Lead intake', reads: [line('GET', 'sobjects/Lead/*')], writes: [line('PATCH', 'sobjects/Lead/*')],
+      })
+      m.approveSurfaceShare.mockResolvedValue(share())
+      await open()
+      fireEvent.change(await screen.findByLabelText('Screen to add'), { target: { value: 'project:7' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Look at what it asks for' }))
+      expect(await screen.findByText('Read Leads')).toBeTruthy()
+      expect(screen.getByText('Change Leads')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      await waitFor(() => expect(m.approveSurfaceShare).toHaveBeenCalledWith(3, 'project', '7', {
+        reads: [line('GET', 'sobjects/Lead/*')], writes: [line('PATCH', 'sobjects/Lead/*')],
+      }))
+      expect(m.previewSurfaceShare).toHaveBeenCalledWith(3, 'project', '7')
+    })
+
+    it('adds an installed app', async () => {
+      m.previewSurfaceShare.mockResolvedValue({ kind: 'app', ref: 'w/crm', title: 'CRM', reads: [line('GET', 'query')], writes: [] })
+      m.approveSurfaceShare.mockResolvedValue(share({ kind: 'app', ref: 'w/crm', title: 'CRM' }))
+      await open()
+      fireEvent.change(await screen.findByLabelText('Screen to add'), { target: { value: 'app:w/crm' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Look at what it asks for' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+      await waitFor(() => expect(m.approveSurfaceShare).toHaveBeenCalledWith(3, 'app', 'w/crm', expect.anything()))
+    })
+
+    it('a changed declaration reloads the preview and says so', async () => {
+      const { ApiError } = await import('@/api/problem')
+      m.previewSurfaceShare
+        .mockResolvedValueOnce({ kind: 'project', ref: '7', title: 'Lead intake', reads: [line('GET', 'sobjects/Lead/*')], writes: [] })
+        .mockResolvedValueOnce({ kind: 'project', ref: '7', title: 'Lead intake', reads: [line('GET', 'sobjects/Lead/*')], writes: [line('DELETE', 'sobjects/Lead/*')] })
+      m.approveSurfaceShare.mockRejectedValue(new ApiError(409, 'changed', { error: 'declaration_changed', detail: 'changed' }))
+      await open()
+      fireEvent.change(await screen.findByLabelText('Screen to add'), { target: { value: 'project:7' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Look at what it asks for' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+      expect(await screen.findByText('This screen changed while you were looking. Check what it asks for now.')).toBeTruthy()
+      expect(await screen.findByText('Delete Leads')).toBeTruthy()
+    })
+
+    it('needs_approval shows Approve changes with what is new, and approving goes through the preview', async () => {
+      m.listSurfaceShares.mockResolvedValue([share({ needs_approval: true, pending_writes: [line('PATCH', 'sobjects/Lead/*')] })])
+      m.previewSurfaceShare.mockResolvedValue({
+        kind: 'project', ref: '7', title: 'Lead intake', reads: [line('GET', 'sobjects/Lead/*')], writes: [line('PATCH', 'sobjects/Lead/*')],
+      })
+      m.approveSurfaceShare.mockResolvedValue(share())
+      await open()
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve changes' }))
+      expect(await screen.findByText('Change Leads')).toBeTruthy()
+      expect(m.approveSurfaceShare).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      await waitFor(() => expect(m.approveSurfaceShare).toHaveBeenCalled())
+    })
+
+    it('Stop ends a share', async () => {
+      m.listSurfaceShares.mockResolvedValue([share()])
+      await open()
+      fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+      await waitFor(() => expect(m.stopSurfaceShare).toHaveBeenCalledWith(3, 5))
+    })
+
+    it('with the switch off there is no add control, only the reason', async () => {
+      await open(calls({ server_use: false }))
+      expect(screen.getByText('Turn on Used by canopy-web first.')).toBeTruthy()
+      expect(screen.queryByLabelText('Screen to add')).toBeNull()
+    })
+
+    it.each(['editor', 'member', null])('whoever the panel loads for gets the controls, whatever their workspace role (%s)', async (role) => {
+      m.listSurfaceShares.mockResolvedValue([share({ needs_approval: true, pending_reads: [line('GET', 'query')] })])
+      m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [calls()] })
+      m.role.current = role
+      show()
+      await screen.findByText('Project screens that may use eva’s account')
+      expect(await screen.findByLabelText('Screen to add')).toBeTruthy()
+      expect(await screen.findByRole('button', { name: 'Stop' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Approve changes' })).toBeTruthy()
+    })
+
+    it('a 404 on the shares shows no share section, and no error', async () => {
+      const { ApiError } = await import('@/api/problem')
+      m.listSurfaceShares.mockRejectedValue(new ApiError(404, 'Not Found', { title: 'Not Found' }))
+      m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [calls()] })
+      show()
+      await waitFor(() => expect(m.listSurfaceShares).toHaveBeenCalled())
+      await screen.findByTestId('agent-connection-3')
+      await waitFor(() => expect(screen.queryByTestId('screen-shares-3')).toBeNull())
+      expect(screen.queryByText(/Could not read/)).toBeNull()
+      expect(screen.queryByText('Project screens that may use eva’s account')).toBeNull()
+    })
+
+    it('another failure to read the shares says so', async () => {
+      m.listSurfaceShares.mockRejectedValue(new Error('boom'))
+      m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [calls()] })
+      show()
+      expect(await screen.findByTestId('screen-shares-3')).toBeTruthy()
+    })
+
+    it("the picker lists the workspace's projects, not the agent's", async () => {
+      m.listAgentProjects.mockResolvedValue([{ id: 99, handle: 'mine', name: 'Only Eva', workspace: 'w' }])
+      m.listWorkspaceProjects.mockResolvedValue([
+        { id: 7, handle: 'leads', name: 'Lead intake', workspace: 'w' },
+        { id: 8, handle: 'kpi', name: 'KPI board', workspace: 'w' },
+        { id: 9, handle: 'away', name: 'Elsewhere', workspace: 'other' },
+      ])
+      await open()
+      expect(await screen.findByRole('option', { name: 'Project: KPI board' })).toBeTruthy()
+      expect(m.listWorkspaceProjects).toHaveBeenCalledWith('open', 'w')
+      expect(m.listAgentProjects).not.toHaveBeenCalled()
+      expect(screen.queryByRole('option', { name: 'Project: Elsewhere' })).toBeNull()
+    })
+
+    it('says writes before reads, with an agent search in the agent\'s name', async () => {
+      m.listSurfaceShares.mockResolvedValue([share({
+        approved_reads: [line('GET', 'query')], approved_writes: [line('DELETE', 'sobjects/Lead/*'), line('POST', 'apexrest/Thing')],
+      })])
+      await open()
+      const items = (await screen.findAllByRole('listitem')).map((li) => li.textContent)
+      expect(items).toEqual(['Delete Leads', 'Run the Salesforce action Thing', 'Search any record eva can see'])
+    })
+
+    it('a workspace admin who is not the agent\'s admin sees no read failure', async () => {
+      const { ApiError } = await import('@/api/problem')
+      m.listAgentConnections.mockRejectedValue(new ApiError(403, 'admin only', { title: 'Forbidden' }))
+      m.role.current = 'admin'
+      show()
+      await waitFor(() => expect(m.listAgentConnections).toHaveBeenCalled())
+      await waitFor(() => expect(screen.queryByText('Could not read the agent’s connections.')).toBeNull())
+    })
   })
 })

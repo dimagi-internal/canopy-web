@@ -98,6 +98,7 @@ INSTALLED_APPS = [
     "apps.shareouts",
     "apps.dynamic_views",
     "apps.workspace_apps",
+    "apps.local_apps",
     "apps.mcp",
     "apps.session_sharing",
     "apps.push",
@@ -732,6 +733,16 @@ HARNESS_QUEUE_SWEEP_TICK_S = env.int("HARNESS_QUEUE_SWEEP_TICK_S", default=15)
 # Seconds between the canopy-pat rotation's off-request ticks
 # (apps/common/ticks.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
 CANOPY_PAT_ROTATION_TICK_S = env.int("CANOPY_PAT_ROTATION_TICK_S", default=900)
+
+# True only under config.settings.test (and so pgtest): gates test-only hooks such as
+# apps.connections.server_key.use_software_key_for_tests.
+TESTING = False
+# canopy-web's own KMS key as a sealed-connection recipient (deploy/aws/canopy-web-connections-key.cfn.yaml):
+# a key id, ARN or alias. Unset, canopy-web can't use any connection on its own.
+CONNECTIONS_SERVER_KMS_KEY = env("CONNECTIONS_SERVER_KMS_KEY", default="")
+# Accept a `canopy_web` key in a connection's signed share statement. Off until the CLI that
+# understands it has shipped to every machine.
+CONNECTIONS_SERVER_STATEMENTS = env.bool("CONNECTIONS_SERVER_STATEMENTS", default=False)
 # How often canopy-web evaluates every schedule's cron and fires the due slots
 # (apps/harness/schedule_clock.py). <= 0 turns the server clock off.
 CANOPY_SCHEDULE_TICK_S = env.int("CANOPY_SCHEDULE_TICK_S", default=60)
@@ -848,7 +859,11 @@ REVIEW_SUGGESTION_NOTIFY_TO = env.list("REVIEW_SUGGESTION_NOTIFY_TO", default=["
 # Who reads access requests from the public site's request-access form
 # (apps/beta_requests). Empty = record them without mailing anyone.
 CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")
-# Who may SET the fleet hold (apps/harness/models.py::FleetHold) without being a
+# Off while the local apps framework is being practised on: a submission from a workspace
+# offering local apps is released at once and shown as unreviewed. On, it needs the
+# `local_app.release` approval. docs/architecture/local-apps.md
+LOCAL_APPS_REQUIRE_APPROVAL = env.bool("LOCAL_APPS_REQUIRE_APPROVAL", default=False)
+# Who may SET the fleet hold (apps/harness/models/fleet.py::FleetHold) without being a
 # superuser. Holding only stops new work and loses nothing, so the agent that conducts
 # the fleet (Ada) can pull the brake the moment something looks wrong; RELEASING stays
 # superuser-only, so an agent can stop the fleet but never restart it.

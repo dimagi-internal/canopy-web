@@ -69,6 +69,10 @@ CATALOG: tuple[Model, ...] = (
           "The VIEWER's own accounts that agents can use: agent, provider, account, in_force — "
           "nothing about the credential; `session_until` when lent for a session. Lets a page say "
           "whether they connected, e.g. Gmail to Bailey, and for how long."),
+    Model("my_connections", "/connections/",
+          "The VIEWER's own connections: `connections` with account_label, provider, state (`unshared` until "
+          "they share it), statement.agents, expires_at, needs_reconnect, nothing that opens one; `providers` "
+          "says which are set up. Lets a page say whether they lent an account to an agent, and until when."),
     Model("agents", "/agent-roster/", "Every agent in the workspace, with what it is doing."),
     Model("agent", "/agents/{slug}/", "One agent, with counts."),
     Model("agent_turns", "/agents/{slug}/turns/", "An agent's recent turns.", ("limit",)),

@@ -125,7 +125,8 @@ def visible_session_q(user) -> Q:
        with it, which has a creator.
     5. you are an agent's own login (`Agent.user`) and the session's person let
        THAT agent review their sessions (a live `SessionReviewGrant`, the
-       person's own act). Their sessions are the ones they created and the
+       person's own act), and only inside a running turn of that agent whose asker is that
+       same person, nobody, or the agent's admin (`review_grantors`). Their sessions are the ones they created and the
        runner-discovered sessions on a box they own that are not an agent's own
        work (`sessions_of_q`). Never a sensitive one: a session carrying any
        runner requirement is left out (`_not_sensitive_q`, the SQL form of
@@ -268,6 +269,45 @@ def is_own_session(user, session) -> bool:
     return binding is not None and binding.runner_id is not None and binding.runner.owner_id == user.pk
 
 
+#: How far up `parent_session` `started_by_you_among` walks.
+MAX_LINEAGE_DEPTH = 32
+
+
+def started_by_you_among(user, sessions) -> set:
+    """The pks among `sessions` that `user` started: their own (`is_own_session`), or
+    one dispatched from a conversation of theirs — an agent they asked created it
+    under its own login, so `created_by` is the agent, but `parent_session` leads
+    back to the chat they typed in. Two queries per level of nesting for the whole page.
+
+    A DISPLAY rule for the "Started by me" filter, never an access one: it grants
+    nothing, which is why it is not folded into `sessions_of_q` (review grants and
+    coaching read that)."""
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    mine, frontier = set(), {}  # frontier: row pk -> the ancestor we are asking about
+    for s in sessions:
+        if is_own_session(user, s):
+            mine.add(s.pk)
+        elif s.parent_session_id:
+            frontier[s.pk] = s.parent_session_id
+    for _ in range(MAX_LINEAGE_DEPTH):
+        if not frontier:
+            break
+        asked = set(frontier.values())
+        own = set(Session.objects.filter(sessions_of_q([user.pk]), pk__in=asked)
+                  .values_list("pk", flat=True))
+        parents = dict(Session.objects.filter(pk__in=asked - own, parent_session_id__isnull=False)
+                       .values_list("pk", "parent_session_id"))
+        nxt = {}
+        for pk, ancestor in frontier.items():
+            if ancestor in own:
+                mine.add(pk)
+            elif ancestor in parents and parents[ancestor] != pk:
+                nxt[pk] = parents[ancestor]
+        frontier = nxt
+    return mine
+
+
 def _not_sensitive_q() -> Q:
     """Sessions that are certainly not sensitive: no runner requirement at all.
     `sensitivity.is_sensitive` reads the same key; any value there (even one that
@@ -275,14 +315,46 @@ def _not_sensitive_q() -> Q:
     return ~Q(metadata__has_key=rr.METADATA_KEY)
 
 
+def review_grantors(user):
+    """THE rule for leg 5, in one place: whose review grants `user`'s request may use.
+
+    `user` must be an agent's own login, and the request must be made INSIDE a running
+    turn of that agent (`turn_asker.standing`, worked out from the turn's server-side
+    record, never from anything the agent sends). Then:
+
+    * a turn a person asked for (verified, or the person an agent was started for)
+      reads the sessions of THAT person alone — "coach me" is me only — so only their
+      own grant counts;
+    * a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up)
+      answers to that person, as if they had asked: whoever may create it chose its prompt;
+    * a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from
+      such a turn: the server stamps `unattended_dispatch`) reads every grantor's, which
+      is the coaching sweep; so does one asked by an administrator of the agent itself,
+      who runs it for all it serves (`Agent.is_admin`);
+    * no turn at all — a stored token, a session, a socket, a finished, confined or
+      unverified-asker turn, or a dispatch from a turn like those — reads nobody's: it
+      cannot show whom it is answering to.
+
+    Returns a `SessionReviewGrant` queryset (user ids via `.values("user_id")`). The
+    agent's roster of who enrolled (`granted-to-me`) is this same queryset."""
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+
+    grants = SessionReviewGrant.objects.filter(agent__user=user, revoked_at__isnull=True)
+    stand = turn_asker.standing(user)
+    if stand is None:
+        return grants.none()
+    if stand.unattended or stand.operator:
+        return grants
+    return grants.filter(user_id=stand.person_id)
+
+
 def _review_grant_q(user) -> Q:
-    """Leg 5: the sessions of the people who let the agent whose own login
-    `user` is review them. Empty for anyone else."""
+    """Leg 5: the sessions of the people `review_grantors` allows this request to read.
+    Empty for anyone else."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
-    granters = (SessionReviewGrant.objects
-                .filter(agent__user=user, revoked_at__isnull=True).values("user_id"))
-    return sessions_of_q(granters) & Q(contact__isnull=True) & _not_sensitive_q()
+    return (sessions_of_q(review_grantors(user).values("user_id"))
+            & Q(contact__isnull=True) & _not_sensitive_q())
 
 
 def _agent_admin_q(user) -> Q:

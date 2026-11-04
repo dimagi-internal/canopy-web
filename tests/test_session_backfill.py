@@ -204,3 +204,36 @@ def test_backfill_requested_when_runner_is_paused(monkeypatch):
     assert r.live_status == Runner.PAUSED
     assert c.post(f"/api/canopy-sessions/{s.id}/backfill").json() == {"status": "requested"}
     assert published, "a paused (but alive) runner must still be signalled"
+
+
+def test_a_reset_tells_open_chats_once_its_history_has_landed(monkeypatch, django_capture_on_commit_callbacks):
+    """A reset deletes the rows a watching tab holds and the rebuild may number
+    them differently, so when the runner's last chunk lands every open chat is
+    told to take a fresh snapshot whole (`session.rebuilt`). A plain "Load full
+    session" backfill tells nobody: the tab that asked merges what it gets."""
+    from apps.canopy_sessions import services
+
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    user, ws, s, r, c = _ctx()
+    r.last_heartbeat_at = timezone.now()
+    r.save(update_fields=["last_heartbeat_at"])
+    s = Session.objects.select_related("runner_binding__runner").get(pk=s.pk)
+    ship = lambda final: c.post(  # noqa: E731
+        f"/api/harness/runners/{r.id}/session-backfill",
+        {"session_id": str(s.id), "messages": [], "final": final, "transcript_id": "tx1"},
+        content_type="application/json")
+
+    assert services.reset_session(s)["ok"]
+    with django_capture_on_commit_callbacks(execute=True):
+        assert ship(final=False).status_code == 200
+    assert {"type": "session.rebuilt"} not in published  # still arriving
+    with django_capture_on_commit_callbacks(execute=True):
+        assert ship(final=True).status_code == 200
+    assert published.count({"type": "session.rebuilt"}) == 1
+    s.refresh_from_db()
+    assert services.REBUILDING_KEY not in s.metadata
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert ship(final=True).status_code == 200  # a later "Load full session"
+    assert published.count({"type": "session.rebuilt"}) == 1

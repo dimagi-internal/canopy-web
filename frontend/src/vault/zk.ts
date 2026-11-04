@@ -252,29 +252,41 @@ export const endorseMsg = (agentId: string, kind: string, target: string, keyJkt
 const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' } as const
 const ECDSA_SHA256 = { name: 'ECDSA', hash: 'SHA-256' } as const
 
+/** The person's ECDSA P-256 signature over a message that carries its own fixed
+ *  prefix: IEEE P1363 r||s (64 bytes), b64u. */
+export async function signWithScalar(scalar: Uint8Array, signerPub: { x?: string; y?: string },
+                                     message: string): Promise<string> {
+  if (scalar.length !== 32) throw new Error('a P-256 scalar is 32 bytes')
+  const key = await subtle().importKey('jwk', { ...publicJwk(signerPub), d: b64u(scalar) }, ECDSA, false, ['sign'])
+  return b64u(new Uint8Array(await subtle().sign(ECDSA_SHA256, key, enc.encode(message))))
+}
+
+/** Is `sig` (64-byte P1363, b64u) the signature of `message` by `pub`? Never throws. */
+export async function verifySignature(pub: { x?: string; y?: string }, sig: string, message: string): Promise<boolean> {
+  try {
+    const raw = unb64u(sig)
+    if (raw.length !== 64) return false
+    const key = await subtle().importKey('jwk', publicJwk(pub), ECDSA, false, ['verify'])
+    return await subtle().verify(ECDSA_SHA256, key, raw, enc.encode(message))
+  } catch {
+    return false
+  }
+}
+
 /** Sign "this key may read this agent" with the person's scalar. */
 export async function endorse(scalar: Uint8Array, signerPub: { x?: string; y?: string }, agentId: string,
                               kind: 'device' | 'member', target: string,
                               recipientPub: { x?: string; y?: string }): Promise<Endorsement> {
-  if (scalar.length !== 32) throw new Error('a P-256 scalar is 32 bytes')
-  const key = await subtle().importKey('jwk', { ...publicJwk(signerPub), d: b64u(scalar) }, ECDSA, false, ['sign'])
   const keyJkt = await jkt(recipientPub)
-  const sig = new Uint8Array(await subtle().sign(ECDSA_SHA256, key, enc.encode(endorseMsg(agentId, kind, target, keyJkt))))
-  return { kind, target, key_jkt: keyJkt, by_jkt: await jkt(signerPub), sig: b64u(sig) }
+  const sig = await signWithScalar(scalar, signerPub, endorseMsg(agentId, kind, target, keyJkt))
+  return { kind, target, key_jkt: keyJkt, by_jkt: await jkt(signerPub), sig }
 }
 
 /** Is `e` the endorser's valid §7 signature for this agent? Never throws. */
 export async function verifyEndorsement(e: { kind: string; target: string; key_jkt: string; by_jkt: string; sig: string },
                                         agentId: string, endorserPub: { x?: string; y?: string }): Promise<boolean> {
-  try {
-    if (e.by_jkt !== (await jkt(endorserPub))) return false
-    const sig = unb64u(e.sig)
-    if (sig.length !== 64) return false
-    const key = await subtle().importKey('jwk', publicJwk(endorserPub), ECDSA, false, ['verify'])
-    return await subtle().verify(ECDSA_SHA256, key, sig, enc.encode(endorseMsg(agentId, e.kind, e.target, e.key_jkt)))
-  } catch {
-    return false
-  }
+  if (e.by_jkt !== (await jkt(endorserPub))) return false
+  return verifySignature(endorserPub, e.sig, endorseMsg(agentId, e.kind, e.target, e.key_jkt))
 }
 
 /** A thumbprint as a person compares it: groups of four, upper case, 8 groups. */
@@ -398,7 +410,7 @@ export function parseRecoveryCode(code: string): Bytes {
   let v = 0n
   for (const ch of s) {
     const i = CROCKFORD.indexOf(ch)
-    if (i < 0) throw new Error(`"${ch}" is not in a recovery code`)
+    if (i < 0) throw new Error('A recovery code has only letters and digits, and that one has a character it cannot contain')
     v = (v << 5n) | BigInt(i)
   }
   v >>= BigInt(5 * s.length - 256)
@@ -457,7 +469,7 @@ export function parseSecretKeyCode(code: string): Bytes {
   let v = 0n
   for (const ch of s) {
     const i = CROCKFORD.indexOf(ch)
-    if (i < 0) throw new Error(`"${ch}" is not in a Secret Key`)
+    if (i < 0) throw new Error('A Secret Key has only letters and digits, and that one has a character it cannot contain')
     v = (v << 5n) | BigInt(i)
   }
   return hexToBytes((v >> 2n).toString(16).padStart(32, '0'))

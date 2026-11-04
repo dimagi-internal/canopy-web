@@ -17,8 +17,9 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
+from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.token_helpers import delegated_headers
 
 pytestmark = pytest.mark.django_db
 
@@ -45,11 +46,6 @@ def w():
     return {"ws": ws, "lili": lili, "owner": owner, "ace": ace, "hidden": hidden, "app": app}
 
 
-def _bearer(app, user):
-    raw, _ = DelegatedToken.issue(app=app, user=user, ttl_seconds=3600)
-    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
-
-
 def _session(user, agent):
     return Session.objects.create(agent=agent, created_by=user, workspace=agent.workspace)
 
@@ -66,7 +62,7 @@ def _make_available(user, **features):
 def test_the_widget_shows_the_effective_state_of_your_own_session(w):
     _make_available(w["lili"], record=True, use=False)
     s = _session(w["lili"], w["ace"])
-    r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **_bearer(w["app"], w["lili"]))
+    r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **delegated_headers(w["app"], w["lili"]))
     assert r.status_code == 200, r.content
     body = r.json()
     assert {k: body["record"][k] for k in ("available", "default", "override", "effective")} == {
@@ -78,19 +74,19 @@ def test_the_widget_shows_the_effective_state_of_your_own_session(w):
 def test_nothing_available_still_answers_so_the_widget_can_hide_it(w):
     s = _session(w["lili"], w["ace"])
     body = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory",
-                        **_bearer(w["app"], w["lili"])).json()
+                        **delegated_headers(w["app"], w["lili"])).json()
     assert body["record"]["available"] is False and body["use"]["available"] is False
 
 
 def test_someone_elses_session_is_404(w):
     s = _session(w["owner"], w["ace"])
-    r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **_bearer(w["app"], w["lili"]))
+    r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **delegated_headers(w["app"], w["lili"]))
     assert r.status_code == 404
 
 
 def test_a_session_with_an_agent_the_site_does_not_offer_is_404(w):
     s = _session(w["lili"], w["hidden"])
-    r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **_bearer(w["app"], w["lili"]))
+    r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **delegated_headers(w["app"], w["lili"]))
     assert r.status_code == 404
 
 
@@ -108,7 +104,7 @@ def test_a_site_acting_for_the_person_cannot_change_it(w):
     s = _session(w["lili"], w["ace"])
     r = Client().put(f"/api/people/me/sessions/{s.pk}/agent-memory/",
                      data=json.dumps({"record": "off"}), content_type="application/json",
-                     **_bearer(w["app"], w["lili"]))
+                     **delegated_headers(w["app"], w["lili"]))
     assert r.status_code == 403
     assert "not_delegable" in r.json()["detail"]
 
@@ -122,6 +118,6 @@ def test_canopys_own_widget_signed_in_by_session_can_change_it(w):
     c.force_login(w["lili"])
     r = c.put(f"/api/people/me/sessions/{s.pk}/agent-memory/",
               data=json.dumps({"use": "off"}), content_type="application/json",
-              **_bearer(w["app"], w["lili"]))
+              **delegated_headers(w["app"], w["lili"]))
     assert r.status_code == 200, r.content
     assert r.json()["use"]["effective"] is False

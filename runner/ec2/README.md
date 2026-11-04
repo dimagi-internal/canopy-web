@@ -65,7 +65,7 @@ keyless from then on. `up.sh` records `<stack>-invitation.json` (`{id, runner_id
 from which `wire.sh --name` takes the runner id. An invitation expires after an hour;
 re-run `up.sh` for a new one. An update of a stack whose runner exists needs no
 invitation: a replaced instance re-attaches by its role. Flow and rules:
-`docs/architecture/runners.md` § How a runner signs in.
+`docs/architecture/runner-credentials.md` § How a runner signs in.
 
 **A second box, proven without routing any work to it** (what was run on 2026-10-04):
 ```bash
@@ -193,6 +193,7 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `canopy.cli` | the canopy CLI did not run (fail) or is behind the marketplace plugin (warn) — Refresh |
 | `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — the runner sweeps scratch and prunes caches on its own at its next idle moment; a fail that stays is not scratch: grow `VolumeSize` (see "Disk") |
 | `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR/sessions` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
+| `clones` | an agent's (or project's) clone cannot fetch its origin and is older than `CLONE_STALE_SECONDS` (30 min): new chat sessions are cut from it and run STALE skills/CLAUDE.md. A private repo needs the agent's GitHub delegation (the runner fetches with it in its own git process, never in a confined turn's env) |
 | `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → External accounts → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
 | `env.<slug>` | the agent's `~/.<slug>/.env` could not be resolved from its Canopy vault when a turn was claimed (the CLI's reason in the detail) — turns run on the last good values, which may be stale. Fix the vault; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
 
@@ -1000,7 +1001,7 @@ running would either suppress a real update or trigger a needless one.
 ## Runner fleets: capacity that scales itself
 
 A fleet is an Auto Scaling group of interchangeable runners that canopy-web grows and
-shrinks with the work waiting (`docs/architecture/runners.md` § Runner fleets; spec
+shrinks with the work waiting (`docs/architecture/runner-fleets.md` § Runner fleets; spec
 `docs/superpowers/specs/2026-10-24-runner-fleets-design.md`). Members keep nothing the
 fleet needs:
 - their identity is their instance, proven to AWS;

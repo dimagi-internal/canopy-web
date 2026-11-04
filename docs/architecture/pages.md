@@ -55,7 +55,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   that needs attention carries a dot) and `Section`/`Setting`
   (`settingsLayout.tsx`). Each tab is a route (`…/:tab`), so a deep link names a
   place and a tab loads only its own data. Every other surface LINKS to that page
-  (`runnerHref`, `vaultHref` in `lib/scopedLinks.ts`; `alerts_runner_credential.runner_path`
+  (`runnerHref`, `vaultHref` in `lib/scopedLinks.ts`; `alerts.runner_credential.runner_path`
   server-side) or embeds one of its read-only pieces (the fleet map shows
   `RunnerFacts`) — it never rebuilds the object's controls. An object page in
   the agent rail (Agent settings) renders `ObjectTabs` inside the rail's section.
@@ -138,6 +138,20 @@ Every browser-facing address canopy-web serves. The SPA route table is
   [`dynamic-views.md`](dynamic-views.md)). The list (`?project=<handle>` narrows,
   `?new=1` opens New view); one view, with History (restore) and, for editors, the
   code and sources beside a live preview of the draft (`?edit=1`).
+- **`/apps/local/:key`**, **`/apps/local/review/:id`** — local apps ([`local-apps.md`](local-apps.md)): one app's disclosure, install and configure; a submission's code and facts for its reviewer.
+- **`/apps`** (+ `/store?app=<key>`, `/:appKey/:page?`, `/:appKey/customize`) — workspace apps
+  (`apps/workspace_apps`; [`workspace-apps.md`](workspace-apps.md)): the installed list, one app of
+  canopy's catalog before it is installed (screenshots, roles, records, public pages), an installed
+  app's pages drawn in the dynamic-view sandbox, and its draft-based customize page. Anyone in the
+  workspace reads; admins install, switch on/off, make public pages live, remove.
+- **`/mcp`** — the MCP servers a person can add: every published workspace project serving
+  its own tools, here and below, each with the line that adds it to Claude Code
+  (`McpServersPage.tsx`; served through the one project gateway,
+  [`work.md`](work.md), [`mcp-surface.md`](mcp-surface.md)). Nothing is added for the person.
+- **`/approvals/:approvalId`** — one typed approval request (`apps/approvals`,
+  [`approvals.md`](approvals.md)): what approving will run, rendered by the server from the
+  request's parameters, the requester's own words kept apart; Approve or Decline here or from
+  the Slack message, push or email that linked to it.
 - **`/projects/:handle/kb`** — a knowledge base's sources and version log
   (`GET …/kb/sources`, `GET …/kb/versions`, `KnowledgeBasePage.tsx`), read-only:
   each version its steward published, its counts, size, publisher and which one is
@@ -152,7 +166,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   subtasks finishing never ship it — its owner or its person marks it done (the
   person may, on `act_on_task`). Every tally on every page is a count over
   `ideas.of_project` (top-level idea tasks), so the views cannot disagree.
-- **`/agents`** — the workspace's agents as a table (`GET /api/agent-roster/`): last turn and whether it failed, turns and failures in 7 days, open and waiting tasks, active projects, mode, owner; editors get **New agent**.
+- **`/agents`** — the workspace's agents as a table (`GET /api/agent-roster/`): an **About** column (the description, shown whole, minus the factory's `<Name> — ` lead and operating-model sentence; full text on hover), last turn and whether it failed, turns and failures in 7 days, open and waiting tasks, active projects, mode, owner; editors get **New agent**.
 - **`/agents/new`** — create an agent (`NewAgentPage`). Name, slug, mandate,
   optional mailbox; then the GitHub owner + repo name and a fine-grained token,
   with links to GitHub's new-repo and new-token forms filled in (the token steps
@@ -187,11 +201,21 @@ Every browser-facing address canopy-web serves. The SPA route table is
     authority) and, when that person lost the right, that it stopped and why;
     create, edit, pause, delete, run a schedule now (access.md § Triggers).
   - **Huddles**.
-  - **Mail** (`mail`) — read-only email threads for the agent
-    (`GET /api/mail/threads/{workspace}?agent=`): thread table beside the open
-    thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
-    CSP, meta refreshes stripped; attachments are
-    presigned download links. No address → points to Settings → Email.
+  - **Mail** (`mail`) — the agent's mailbox in the SAME client as a person's own mail
+    (`components/mail/MailClient`, below), replying and composing *as the agent* for someone who may
+    act as it (`canEdit`; the server checks FULL). No address → points to Settings → Email.
+  - **Mail** (`/w/:ws/mail`, Workspace menu) — the signed-in person's own mail client for
+    forward routes (Keep a copy is on unless unchecked), private to the person (`MailThread.owner`).
+    `MailClient` is one implementation for both: they differ only in the source (`forwarded` vs
+    `agent`) and who the server lets send. The open thread and folder are in the URL
+    (`?thread=<uuid>&folder=`). Folders: Inbox, Sent, Drafts, Archived, Spam, Trash; 30-second refresh
+    and on tab focus; list and reader scroll apart, one pane at a time below `lg`; select several; older
+    messages and quoted text collapse; a failed sender check warns on the message. Drafts save as you
+    type and return when their thread opens. Send waits 5 seconds with Undo (the draft stays saved until
+    it has gone); moving a thread offers Undo. Sends plain text with Cc, Bcc and attachments; an address
+    that does not parse blocks Send. Its keys are in the app's `?` list (`components/work/keys.ts`). HTML renders only in the sandbox
+    in `components/mail/MessageView` (`docs/architecture/mail.md` § Safety invariants). Settings → Email
+    shows each domain's inbound ledger (admins).
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent
@@ -280,6 +304,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     (`POST /api/workspaces/{slug}/members/`, no invite), a new role PATCHes, "—"
     removes after a confirm. Errors show on the cell. Filter by email, "only
     show gaps".
+  - **connections** — the workspace's OAuth apps (one per provider, Salesforce and Google):
+    client ID, a write-only secret, the extra permissions to ask for, and the callback URL to
+    register (`apps/connections`, [`vault.md`](vault.md) § OAuth connections are sealed to their owner).
   - **access-requests** (+ `/:requestId`, the page the admins' notification
     links to) — requests to be invited; approve at a role or deny.
   - **slack** — the workspace's Slack connection (one Slack may serve several
@@ -397,7 +424,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   hour), and one Approve button; the passkey step-up is the API client's
   (`auth/stepUp.ts`). Only the invitation's creator can open it (404 otherwise)
   or approve it, and a token cannot (`apps/harness/api_runner_invitations.py`,
-  `docs/architecture/runners.md` § How a runner signs in).
+  `docs/architecture/runner-credentials.md` § How a runner signs in).
+- **`/members/:userId`** — one member: role, when they joined, person or agent, the agents they
+  operate here and the other workspaces you share with them; admins and owners also see who
+  invited them and when they last signed in.
 - **`/sign-offs/:signOffId`** — a connected site asking you to approve one action
   with your passkey (labs creating a full-access MCP token): the `approve_url` the
   site sends you to, also on Home. Shows the site, the action in its words, and the
@@ -558,6 +588,32 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
+- **`/w/:workspace/connections/:id/connected`** — "Connected": where the OAuth callback
+  lands. Reads the share state (facts and ciphertext) but never unlocks the vault: no
+  passkey. One sentence says which account was connected and, only when
+  `server.reachable` and the provider is one canopy-web calls, that project screens and apps
+  can use it now (Done goes back to `return_to`; "Also let agents or my computers use it"
+  goes to Share). An agent's connection offers "Turn on for <agent>'s machines" instead of
+  Done. Otherwise it says one step is left and offers Choose (Share); a switch left on
+  with nothing sealed to canopy-web says canopy-web couldn't be reached. The lists show
+  "Used by canopy-web" for those providers: a plain switch to turn off an unshared
+  connection (`POST /api/connections/{id}/server-use`), a link to Share for anything else.
+- **`/w/:workspace/connections/:id/share`** — "Share this connection": where Connected and
+  Settings' Share on a not-shared connection lead. Your
+  passkey (`useVaultUnlock`) opens the connection in this browser and shows
+  the account from the opened envelope; the owner then ticks agents they administer
+  and their own computers (name plus fingerprint) and shares
+  (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the
+  owner agent is fixed on. Never shared and nobody chosen: Share is off and Not now
+  leaves it unshared ("Not shared yet: no agent or computer can use it."); once shared,
+  unticking everyone withdraws it. Machines left out are named with why; a chosen machine
+  vouched for only by someone this browser has not trusted offers "Trust <name>'s
+  vouching" with their fingerprint; a changed endorser key stops the share; an envelope
+  that fails verification says "can't be opened safely" and offers Reconnect;
+  a reconnect over an earlier share warns first; opened by someone whose key is not the
+  one it is sealed to, it says why and to disconnect and connect again. Afterwards it goes to `return_to`
+  (a same-site path) or Settings. The key lives in a ref for the flow, never state
+  (`pages/connections/ShareConnectionPage.tsx`).
 - **`/act-as/:requestId`** — an agent, in a turn you started, asking to act as you
   on canopy (the push and the supervisor feed card link here): the agent, its reason
   verbatim, the conversation, what it asked for. "Allow read-only (30 min)" (first),
@@ -684,6 +740,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   canopy plugin.
 - **`/guide`** — the in-app guide, generated from `frontend/src/guide/surfaces.ts`.
 - **`/people/me`** — what agents know about you, and your agent-memory settings (a section of `/settings`).
+- **`/people/:personId/page`** — a person's memory page, read-only, for an agent they let see it from their own `/people/me`: what is remembered, the conversations that used it, who can read it; each look is logged. Anyone not let in sees nothing.
 - **`/hcp-clients`** — the HCP service's client registry (superusers).
 - **`/beta-requests`** (+ `/:requestId`) — requests for access to Canopy from
   the public site; only their reviewer or a superuser sees them.

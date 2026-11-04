@@ -22,7 +22,7 @@ from apps.harness.models import Turn
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.page_tools import to_mcp_tool
 from apps.mcp.server import mcp
-from tests.access_helpers import publish
+from tests.access_helpers import declare, editors_run
 from tests.fixtures import site_gateway as sg
 
 pytestmark = pytest.mark.django_db
@@ -50,9 +50,11 @@ def w():
 
 
 def _sensitive(w):
-    caps = dict(sg.IFACE["capabilities"])
+    # (the callers' access lines are already on the agent from sg.world())
+    caps = {n: {k: v for k, v in c.items() if k != "callers"} for n, c in sg.IFACE["capabilities"].items()}
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
-    publish(w["agent"], {"capabilities": caps})
+    declare(w["agent"], caps)
+    editors_run(w["agent"])
     for s in (w["session"], w["other"]):
         s.metadata = {**s.metadata, **SENSITIVE}
         s.save(update_fields=["metadata"])

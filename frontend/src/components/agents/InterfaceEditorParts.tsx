@@ -1,12 +1,10 @@
 // The pieces of the capabilities editor: the lines field and one capability's card. The editor and its state are `InterfaceEditor`.
 import { useState } from 'react'
 import {
-  CAPABILITY_ROLES,
   fromLines,
   problemsFor,
   toLines,
   type Capability,
-  type CapabilityRole,
   type Problem,
 } from './interfaceModel'
 
@@ -77,7 +75,6 @@ export function CapabilityCard({
 }) {
   const set = (patch: Partial<Capability>) => onChange({ ...cap, ...patch })
   const err = (f: string) => problemsFor(problems, `${name}.${f}`)
-  const inputs = Object.entries(cap.input ?? {})
   return (
     <div data-testid="capability-card" className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -99,21 +96,6 @@ export function CapabilityCard({
         </button>
       </div>
       <Errors messages={problemsFor(problems, name)} testId="card-error" />
-      <label className="flex flex-col gap-0.5 text-[12px] font-medium text-foreground">
-        <span>Role</span>
-        <select
-          aria-label={`${name} role`}
-          value={cap.role ?? 'user'}
-          onChange={(e) => set({ role: e.target.value as CapabilityRole })}
-          className={`${field} w-auto max-w-full`}
-        >
-          {CAPABILITY_ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-        </select>
-        <span className="text-[11px] font-normal text-muted-foreground">
-          This is the lowest role that may use it. Who has which role is set on the agent&apos;s Access setting.
-        </span>
-        <Errors messages={err('role')} />
-      </label>
       <details open className="flex flex-col gap-2">
         <summary className="cursor-pointer text-[12px] font-medium text-foreground">What it may use</summary>
         <div className="mt-2 flex flex-col gap-2">
@@ -133,48 +115,6 @@ export function CapabilityCard({
           <LinesField label={`${name} write paths`} hint="none → it cannot write" value={cap.write_paths} onChange={(write_paths) => set({ write_paths })} errors={err('write_paths')} rows={2} />
           <LinesField label={`${name} sites`} hint="Connected sites whose pages use this capability" value={cap.sites} onChange={(sites) => set({ sites })} errors={err('sites')} rows={2} />
           <LinesField label={`${name} ceiling`} hint="optional: narrows a site's tools" value={cap.ceiling} onChange={(ceiling) => set({ ceiling })} errors={err('ceiling')} rows={2} />
-          <div className="flex flex-col gap-1">
-            <div className="text-[11px] text-muted-foreground">Input — typed fields (declared and shown; no capability passes them today)</div>
-            {inputs.map(([k, t]) => (
-              <div key={k} className="flex items-center gap-2 text-[12px]">
-                <span className="font-mono">{k}</span>
-                <select
-                  aria-label={`${name} input ${k} type`}
-                  value={t}
-                  onChange={(e) => set({ input: { ...cap.input, [k]: e.target.value } })}
-                  className={`${field} w-auto`}
-                >
-                  {['string', 'integer', 'number', 'boolean'].map((x) => <option key={x}>{x}</option>)}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = { ...cap.input }
-                    delete next[k]
-                    set({ input: next })
-                  }}
-                  className="text-muted-foreground underline"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            <div>
-              <button
-                type="button"
-                className={smallButton}
-                onClick={() => {
-                  const taken = new Set(Object.keys(cap.input ?? {}))
-                  let n = 'field'
-                  for (let i = 2; taken.has(n); i++) n = `field_${i}`
-                  set({ input: { ...cap.input, [n]: 'string' } })
-                }}
-              >
-                Add input
-              </button>
-            </div>
-            <Errors messages={err('input')} />
-          </div>
           <label className="flex items-center gap-2 text-[12px] text-foreground">
             <input
               type="checkbox"

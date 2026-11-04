@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { refreshRunner, type RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
+import { Td } from '@/components/DataTable'
 
 // A RUNNER'S REFRESH, as the person who pressed it reads it. The button is the
 // runner page's header action (it was a small outline button inside the Health
@@ -142,10 +143,10 @@ export function RunnerRefreshStatus({ runner, now: fixedNow }: { runner: RunnerO
           <tbody>
             {changes.map((c) => (
               <tr key={c.name} data-testid={`runner-refresh-change-${c.name}`}>
-                <td className="pr-3 text-muted-foreground">{c.name}</td>
-                <td className="pr-2 font-mono text-[11px] text-muted-foreground">{c.before || '?'}</td>
-                <td className="pr-2 text-muted-foreground">→</td>
-                <td className="font-mono text-[11px] text-foreground">{c.after || '?'}</td>
+                <Td density="none" tone="muted" className="pr-3">{c.name}</Td>
+                <Td density="none" tone="muted" mono className="pr-2 text-[11px]">{c.before || '?'}</Td>
+                <Td density="none" tone="muted" className="pr-2">→</Td>
+                <Td density="none" tone="foreground" mono className="text-[11px]">{c.after || '?'}</Td>
               </tr>
             ))}
           </tbody>

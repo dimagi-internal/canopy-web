@@ -9,6 +9,16 @@ things (a test account, a seat), with no machine and no AWS call (§6). Design r
 (framework tier), `canopy_sdk.ondemand.EphemeralInstance`,
 `canopy_runtime.schema.CapabilityManifest`.
 
+**"Capability" means five things in canopy.** This page is about (c).
+
+| | Meaning | Where |
+|---|---|---|
+| (a) | **Interface capability**: a door an agent publishes (`ask`, a page's resource), run in an allowlisted profile for callers on its access list | `apps/agents/interface.py`, `docs/architecture/access.md` |
+| (b) | **Workspace permission**: a named right a workspace role holds (`perms.can(user, ws, perms.X)`) | `apps/workspaces/permissions.py`, `docs/architecture/roles.md` |
+| (c) | **Cloud capability**: a leased machine or named pool slot | `apps/capabilities`, this page |
+| (d) | **`Runner.capabilities`**: the JSON a box reports about itself (what it serves, its repos) | `apps/harness/models/runner.py`, `docs/architecture/runners.md` |
+| (e) | **`Storyboard.capability`**: the level a share link grants (read, comment, ...) | `apps/storyboards/models.py` |
+
 **Who owns what.** canopy-web owns the generic half and nothing domain-specific: the
 manifest schema, the `ec2-ephemeral` and `pool` kinds, the grant, the lease lifecycle, caps, audit
 and the sweep. The agent's repo (or a shared repo it points at) owns everything else:
@@ -24,7 +34,7 @@ so no other labs service gets the grant. Pass `BrokerRoleName=canopy-web-task-ro
 
 ## 1. Declare it in your repo
 
-One `capability.yaml` per capability, e.g. `infra/capabilities/android-emulator/capability.yaml`
+One `capability.yaml` per capability, e.g. `infra/capabilities/android-emulator/capability.yaml` in the agent's own repo (ACE's, here)
 (`CapabilityManifest`, version 1; unknown keys are an error):
 
 ```yaml
@@ -269,7 +279,7 @@ coalesced so a persistent failure is one row with a count), readable at
    and no running exec for `idle_release_s`.
 3. **The sweep.** Off-request: every web process runs it as a job on the shared clock
    (`apps/common/ticks.py`, registered by `apps/capabilities/scheduler.py`, every
-   `CAPABILITY_SWEEP_INTERVAL_S`, default 30 s; `runners.md` § Periodic work). A cache key makes it at most once per 25 s
+   `CAPABILITY_SWEEP_INTERVAL_S`, default 30 s; `runner-routing.md` § Periodic work). A cache key makes it at most once per 25 s
    **across the fleet**; if the cache (Redis) fails, each process falls back to its own
    clock rather than skipping. A runner's claim (`apps/harness/claim.py`) triggers it too,
    above every early return, but only when no sweep has finished for 90 s — so a fleet hold
@@ -368,7 +378,7 @@ which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capabil
 - **A secret value is sealed before it is stored.** A writer that can seals it itself (to the
   readers `GET …/vault/zk/recipients` names, checking their endorsements) and sends `zks1:…`,
   stored as sent after a shape check (422 if malformed). A plaintext value — what the MCP tool
-  and ACE's `scripts/test-worker-set.ts` send — is sealed in the request, server side, and
+  and the ACE repo's `scripts/test-worker-set.ts` send — is sealed in the request, server side, and
   never stored or logged in clear. 409 when nobody can read the agent's secrets yet (no vault
   key, no approved machine). A seal reaches the readers of that moment; it then follows
   the agent's readers (below).

@@ -3,23 +3,23 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartAction,
   disconnectAgentConnection,
-  grantConnection,
   listAgentConnections,
-  revokeConnectionGrant,
   type ConnectionOut,
   type ConnectionsView,
 } from '@/api/connections'
-import { listAgents } from '@/api/agents'
 import { getCsrfToken } from '@/api/base'
-import { ConnectOutcome, Scopes, detailLine, missingScopes } from '@/components/settings/ConnectionsPanel'
+import { ApiError } from '@/api/problem'
+import { ConnectOutcome, Scopes, SharingStatus, detailLine, disconnected, listed, missingScopes } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
+import { useAuth } from '@/auth/AuthProvider'
+import { AgentScreenShares } from './AgentScreenShares'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 /**
- * What an agent can act as through canopy-held connections: its own, and ones
- * another agent shares with it. Admin-only (the server enforces it too).
+ * What an agent can act as through connections: its own, and ones lent to it by
+ * another agent or a person. Admin-only (the server enforces it too).
  *
  * Disconnecting asks for a fresh passkey; the API client's step-up middleware
  * prompts and retries, so this just calls DELETE.
@@ -41,42 +41,37 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
  */
 export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string; workspace?: string | null } }) {
   const [data, setData] = useState<ConnectionsView | null>(null)
-  const [others, setOthers] = useState<string[]>([])
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<number | null>(null)
-  const [pick, setPick] = useState<Record<number, string>>({})
+  const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
   const outcome = params.get('connection') ? params : null
   // The agent's workspace: the API names it on every provider row.
   const workspace = data?.providers.find((p) => p.workspace)?.workspace || agent.workspace || ''
+  const email = useAuth().user?.email ?? ''
   const canSetUp = roleAllows(useWorkspaceRole(workspace), 'integrations')
 
   const load = useCallback(() => {
-    listAgentConnections(agent.slug).then((d) => { setData(d); setError('') }).catch(() => setError('Could not read the agent’s connections.'))
+    listAgentConnections(agent.slug).then((d) => { setData(d); setError('') }).catch((e) => {
+      // Its admins' alone, whatever the workspace role: for anyone else there is nothing to show.
+      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) setError('')
+      else setError('Could not read the agent’s connections.')
+    })
   }, [agent.slug])
   useEffect(load, [load, outcome?.get('status')])
-  useEffect(() => {
-    listAgents({ limit: 200 })
-      .then((p) => setOthers(p.items.map((a) => a.slug).filter((s) => s !== agent.slug)))
-      .catch(() => setOthers([]))
-  }, [agent.slug])
-
   function dismiss() {
     const next = new URLSearchParams(params)
     for (const k of ['connection', 'status', 'reason']) next.delete(k)
     setParams(next, { replace: true })
   }
 
-  async function run(id: number, what: () => Promise<void>, done: string) {
+  async function run(id: string, what: () => Promise<string>) {
     setBusy(id)
     setError('')
     setNotice('')
     try {
-      await what()
-      setNotice(done)
-      setPick((s) => ({ ...s, [id]: '' }))
+      setNotice(await what())
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That did not work.')
@@ -93,7 +88,7 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
       {error && <p className="text-[13px] text-destructive">{error}</p>}
       {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
       {data.providers.map((p) => {
-        const rows = data.connections.filter((c) => c.provider === p.name)
+        const rows = listed(data.connections).filter((c) => c.provider === p.name)
         // A connection left behind by a move does not count: connect again here.
         const own = rows.filter((c) => !c.granted_from && c.usable)
         const start = { action: connectionStartAction(p.name, p.workspace || workspace), returnTo: pathname, agent: agent.slug }
@@ -106,13 +101,11 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 c={c}
                 start={{ ...start, action: connectionStartAction(c.provider, c.workspace ?? '') }}
                 busy={busy === c.id}
-                others={others}
-                picked={pick[c.id] ?? ''}
-                onPick={(v) => setPick((s) => ({ ...s, [c.id]: v }))}
-                onDisconnect={() => run(c.id, () => disconnectAgentConnection(agent.slug, c.id), 'Disconnected.')}
-                onGrant={(to) => run(c.id, () => grantConnection(agent.slug, c.id, to), `Shared with ${to}.`)}
-                onRevoke={(to) => run(c.id, () => revokeConnectionGrant(c.granted_from ?? agent.slug, c.id, to), c.granted_from ? 'Stopped using it.' : `Stopped sharing with ${to}.`)}
-                self={agent.slug}
+                returnTo={pathname}
+                agent={agent}
+                canChange={!!email && !!c.connected_by_email && c.connected_by_email.toLowerCase() === email.toLowerCase()}
+                onChanged={load}
+                onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id), c.owner_key_replaced))}
               />
             ))}
             {!p.configured ? (
@@ -159,22 +152,19 @@ function ConnectForm({ label, action, returnTo, agent }: { label: string } & Sta
 }
 
 function Row({
-  c, start, busy, others, picked, onPick, onDisconnect, onGrant, onRevoke, self,
+  c, start, busy, returnTo, canChange, agent, onDisconnect, onChanged,
 }: {
+  agent: { slug: string; name?: string }
   c: ConnectionOut
   start: StartForm
   busy: boolean
-  others: string[]
-  picked: string
-  onPick: (v: string) => void
+  returnTo: string
+  canChange: boolean
   onDisconnect: () => void
-  onGrant: (to: string) => void
-  onRevoke: (to: string) => void
-  self: string
+  onChanged: () => void
 }) {
-  const shared = !!c.granted_from
-  const sharedWith = c.shared_with ?? []
-  const candidates = c.usable ? others.filter((s) => s !== self && !sharedWith.includes(s)) : []
+  // One lent to this agent: its owner changes or withdraws it by sharing again, not here.
+  const lent = !!c.granted_from
   const where = c.workspace_name || c.workspace
   const missing = c.usable ? missingScopes(c) : ''
   return (
@@ -184,74 +174,42 @@ function Row({
           <p className="font-medium text-foreground">{c.account_label}</p>
           <p className="text-[12px] text-muted-foreground">
             {detailLine(c)}
-            {shared && <> · shared by {c.granted_from}</>}
+            {lent && <> · Lent by {c.granted_from}</>}
           </p>
           <Scopes c={c} />
           {!c.usable ? (
             <p className="text-[12px] text-warning">
-              {shared
+              {lent
                 ? `${c.granted_from} is no longer in ${where}, where this was made, so it no longer works.`
                 : `Made in ${where} before the move — disconnect it and connect here.`}
             </p>
-          ) : c.needs_reconnect ? (
-            <p className="text-[12px] text-warning">
-              {shared ? 'This connection needs reconnecting by its owner.' : 'This connection expired or was revoked. Reconnect it.'}
-            </p>
-          ) : missing ? (
-            <p className="text-[12px] text-warning">
-              {shared ? `Its owner must reconnect to allow: ${missing}` : `Reconnect to allow: ${missing}`}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {shared ? (
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => onRevoke(self)}>
-              Stop using
-            </Button>
+          ) : lent ? (
+            c.needs_reconnect ? <p className="text-[12px] text-warning">Reconnect required: its owner must reconnect it.</p>
+              : c.state === 'unshared' ? <p className="text-[12px] text-warning">Not shared yet: its owner must share it again before this agent can use it.</p>
+              : missing ? <p className="text-[12px] text-warning">Its owner must reconnect to allow: {missing}</p> : null
           ) : (
             <>
-              {c.usable && (c.needs_reconnect || missing !== '') && <ConnectForm label="Reconnect" {...start} />}
-              <Button size="sm" variant="outline" disabled={busy} onClick={onDisconnect}>
-                {busy ? 'Working…' : 'Disconnect'}
-              </Button>
+              <SharingStatus c={c} returnTo={returnTo} canChange={canChange} onChanged={onChanged} />
+              {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
             </>
           )}
         </div>
+        {!lent && (
+          <div className="flex shrink-0 items-center gap-2">
+            {c.usable && (c.needs_reconnect || missing !== '') && <ConnectForm label="Reconnect" {...start} />}
+            <Button size="sm" variant="outline" disabled={busy} onClick={onDisconnect}>
+              {busy ? 'Working…' : 'Disconnect'}
+            </Button>
+          </div>
+        )}
       </div>
-      {!shared && sharedWith.length > 0 && (
-        <ul className="flex flex-wrap items-center gap-2 text-[12px]" aria-label="Shared with">
-          {sharedWith.map((to) => (
-            <li key={to} className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5">
-              <span>{to}</span>
-              <button
-                type="button"
-                disabled={busy}
-                aria-label={`Stop sharing with ${to}`}
-                onClick={() => onRevoke(to)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                Stop sharing
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {!shared && candidates.length > 0 && (
-        <div className="flex items-center gap-2 text-[12px]">
-          <label htmlFor={`share-${c.id}`} className="text-muted-foreground">Share with</label>
-          <select
-            id={`share-${c.id}`}
-            value={picked}
-            onChange={(e) => onPick(e.target.value)}
-            className="rounded border border-border bg-background px-2 py-1"
-          >
-            <option value="">Choose an agent…</option>
-            {candidates.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <Button size="sm" variant="outline" disabled={busy || !picked} onClick={() => onGrant(picked)}>
-            Share
-          </Button>
-        </div>
+      {!lent && c.usable && c.provider_calls && (
+        <AgentScreenShares
+          connectionId={c.id}
+          agentName={agent.name || agent.slug}
+          workspace={c.workspace ?? ''}
+          serverUse={!!c.server_use}
+        />
       )}
     </div>
   )

@@ -4,6 +4,7 @@ import { Button, Input } from 'canopy-ui/ui'
 
 import { RoleSelect, ROLE_TEXT_CLASS } from './RoleSelect'
 import type { RoleOption } from './roles'
+import { errorText } from '../../api/problem'
 
 // Add people from a list the server says you may add — never a typed address.
 // Type to narrow, pick one or several (Enter or click), choose a role, Add.
@@ -21,10 +22,6 @@ function matches(c: Candidate, q: string): boolean {
   if (!q) return true
   const hay = `${c.display_name} ${c.email} ${c.agent_slug ?? ''}`.toLowerCase()
   return q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w))
-}
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback
 }
 
 export function AddPeoplePicker({

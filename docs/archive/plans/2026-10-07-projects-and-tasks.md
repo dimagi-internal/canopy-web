@@ -532,7 +532,7 @@ def filter_tasks(qs, *, user=None, project="", status="", waiting="", ask="", ba
 **Files:**
 - Modify: `apps/agents/schemas.py` (task/project/action schemas; delete `AgentWorkProduct*`, `AgentTaskSyncIn`, `AgentTaskCommand*`, `CommandResultOut`, `AgentCommandApplyIn`, `work_product_count`)
 - Modify: `apps/agents/api.py` (L1236–1260 work products; L1363–1530 projects/tasks/commands)
-- Create: `apps/agents/fleet_api.py` (`/api/tasks/`, `/api/projects/`)
+- Create: `apps/agents/api_fleet.py` (`/api/tasks/`, `/api/projects/`)
 - Delete: `apps/harness/items_api.py`; its schemas in `apps/harness/schemas.py` (`ItemIn`, `ItemOut`, `ItemDecideIn`, `ItemDismissIn`)
 - Modify: `apps/agent_runs/documents.py` (delete `list_agent_projects` + `AgentProjectRefOut` if unused elsewhere)
 - Modify: `apps/api/api.py` (L205–257 routers), `apps/api/route_gates.py` (gate entries for removed/added operations)
@@ -718,7 +718,7 @@ def act_on_task(request, slug: str, ref: str, payload: AgentTaskActionIn):
 
 Plus `GET /{slug}/actions/` (`list_task_actions`, `?status=`), `POST /{slug}/actions/{id}/applied` (`mark_task_action_applied`, agent self or editor — copy the gate from the deleted `apply_command`), `PATCH /{slug}/tasks/{ref}/` (body of old `patch_task`, `ref` lookup). `get_project` returns `AgentProjectDetailOut` with `tasks` = project tasks ordered live-first, and `recent_turns` = last 10 `Turn`s for the agent whose `task_ext_ids` overlap the project's ext_ids (`Turn.objects.filter(agent=agent, task_ext_ids__overlap=ids)` — check the field type in `apps/harness/models.py`; if it is a JSONField use `Q(task_ext_ids__contains=[id])` OR-ed per id). Check `_visible_agent_workspace_ids` returns ids — it is what `dispatch` compares against.
 
-`apps/agents/fleet_api.py`:
+`apps/agents/api_fleet.py`:
 
 ```python
 from ninja import Router

@@ -28,7 +28,7 @@ from apps.harness import clis
 from apps.workspaces.models import Workspace
 
 from . import approvals as approval_cards
-from . import client, ingest, relay, services
+from . import choices, client, ingest, relay, services
 from .verify import SignatureError, verify_slack_signature
 
 logger = logging.getLogger(__name__)
@@ -330,7 +330,8 @@ def commands(request: HttpRequest) -> HttpResponse:
 @require_POST
 def interactions(request: HttpRequest) -> HttpResponse:
     """Button presses on canopy's posts (Block Kit `block_actions`): a question
-    post, a status line's Run-on-cloud, a closed conversation's Start-a-new-session.
+    post, a status line's Run-on-cloud, a closed conversation's Start-a-new-session,
+    a reply button on a post in a bound thread.
 
     Signed exactly like the other two doors. Only OUR buttons are acted on: a
     checkbox or radio toggle also arrives here, one payload per click, and is
@@ -357,7 +358,7 @@ def interactions(request: HttpRequest) -> HttpResponse:
         return _group_run_click(payload, action_id, action)
     if action_id in approval_cards.ACTIONS:
         return approval_cards.handle_click(payload, action)
-    if not (action_id.startswith(menus.PICK)
+    if not (action_id.startswith((menus.PICK, choices.ACTION_PREFIX))
             or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD, services.RESTART_CLOSED)):
         return HttpResponse(status=200)
     installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
@@ -373,7 +374,9 @@ def interactions(request: HttpRequest) -> HttpResponse:
         thread_ts=str(message.get("thread_ts") or ""),
     )
     try:
-        if action_id == services.RESTART_CLOSED:
+        if action_id.startswith(choices.ACTION_PREFIX):
+            outcome = choices.click(installation, inbound, action, message)
+        elif action_id == services.RESTART_CLOSED:
             outcome = services.restart_from_click(
                 installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
                 message_ts=inbound.ts, action=action,

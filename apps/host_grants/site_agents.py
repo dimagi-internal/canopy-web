@@ -39,7 +39,6 @@ from canopy_sdk.jose import unverified_claims
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.agents import interface as iface_mod
 from apps.agents import sensitive_data
 from apps.agents.models import Agent, AgentBootstrapReport
 from apps.agents.setup import runner_takers
@@ -152,7 +151,6 @@ def site_capabilities(agent: Agent, site: str) -> list[dict]:
         out.append({
             "name": name,
             "description": cap.get("description") or "",
-            "role": iface_mod.capability_role(cap),
             "handles_sensitive": claim is not None,
             "sensitive_set_by": _person(agent.interface_published_by) if claim else "",
             "sensitive_set_at": (agent.interface_published_at.isoformat()
@@ -169,7 +167,7 @@ def _runners(agent: Agent) -> tuple[list[Runner], list[Runner]]:
     reported = set(AgentBootstrapReport.objects.filter(agent=agent)
                    .values_list("runner_name", flat=True))
     ready = [r for r in takers if r.is_available
-             and (r.kind != Runner.CLOUD or r.name in reported)]
+             and (r.kind != Runner.CLOUD or r.report_names & reported)]
     return takers, ready
 
 

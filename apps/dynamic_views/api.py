@@ -14,8 +14,10 @@ from ninja.errors import HttpError
 
 from apps.agents import services as agent_services
 from apps.agents.gates import listed_agent_workspaces, may_edit_project, visible_agent_workspaces
+from apps.agents.models import AgentProject
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.connections import declarations
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path_or_none
@@ -49,7 +51,7 @@ def _summary_fields(view: DynamicView) -> dict:
 
 def _out(view: DynamicView) -> DynamicViewOut:
     return DynamicViewOut(**_summary_fields(view), code=view.code, sources=view.sources or [],
-                          agent_tasks=view.agent_tasks or [],
+                          agent_tasks=view.agent_tasks or [], connections=view.connections or [],
                           created_by_email=view.created_by.email if view.created_by_id else None,
                           created_at=view.created_at)
 
@@ -59,6 +61,31 @@ def _view_or_404(request: HttpRequest, view_id: int) -> DynamicView:
     if view is None or view.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(404, f"view {view_id} not found")
     return view
+
+
+def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
+    """The view a Salesforce call comes from, by the gate that reads a view. What it may ask is what
+    the revision the page drew declares and, on an older one, what the view declares now as well: a
+    widening waits for the page to catch up, and a narrowing applies at once."""
+    view = _view_or_404(request, ref["id"])
+    revision = view.revisions.filter(version=ref["version"]).first()
+    if revision is None:
+        raise HttpError(404, f"view {view.pk} has no version {ref['version']}")
+    return declarations.Surface(kind="view", ref=str(view.pk), workspace=view.workspace_id,
+                                revision=revision.version, declared=revision.connections or [],
+                                current=None if revision.version == view.version else view.connections or [],
+                                project=str(view.project_id) if view.project_id else None)
+
+
+def connection_share_target(ref: str) -> declarations.ShareTarget | None:
+    """A project, for sharing an agent's connection with: what its views declare now, all of them."""
+    project = AgentProject.objects.filter(pk=int(ref)).first() if ref.isdecimal() else None
+    if project is None:
+        return None
+    declared = [entry for connections in DynamicView.objects.filter(project=project).order_by("pk")
+                .values_list("connections", flat=True) for entry in connections or []]
+    return declarations.ShareTarget(ref=str(project.pk), title=project.name, workspace=project.workspace_id,
+                                    declared=declared)
 
 
 def _project_or_422(workspace: str, handle: str):
@@ -117,7 +144,9 @@ def list_dynamic_views(request: HttpRequest, project: str = "") -> list[DynamicV
 def create_dynamic_view(request: HttpRequest, payload: DynamicViewIn) -> Status:
     """Validates the code (it must define `View`), every source against the
     catalog, and every declared agent task (`agent_tasks`: the agent must be in the
-    view's workspace and one you may give tasks to yourself); a refusal names what
+    view's workspace and one you may give tasks to yourself), and every declared
+    Salesforce call (`connections`: each line must be on the allowlist, a write names its
+    object exactly, a shared entry names an agent in the workspace); a refusal names what
     is wrong. Returns the view with its `url`."""
     ws = _ws_for_write(request, payload.workspace)
     project = _project_or_422(ws, payload.project) if payload.project else None
@@ -176,7 +205,7 @@ def list_dynamic_view_revisions(request: HttpRequest, view_id: int) -> list[Dyna
     return [DynamicViewRevisionOut(version=r.version, title=r.title, note=r.note,
                                    changed_by_email=r.changed_by.email if r.changed_by_id else None,
                                    changed_at=r.changed_at, code=r.code, sources=r.sources or [],
-                                   agent_tasks=r.agent_tasks or [])
+                                   agent_tasks=r.agent_tasks or [], connections=r.connections or [])
             for r in view.revisions.select_related("changed_by")]
 
 

@@ -8,13 +8,13 @@ from django.utils import timezone
 
 from apps.attention import alerts
 from apps.attention.models import Alert
-from apps.harness import alerts_project_opt_in as src
+from apps.harness.alerts import project_opt_in as src
 from apps.harness.models import ProjectOptIn, Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = [pytest.mark.django_db, pytest.mark.explicit_opt_in]
 
-SOURCE = "apps.harness.alerts_project_opt_in"
+SOURCE = "apps.harness.alerts.project_opt_in"
 
 
 def _user(name):

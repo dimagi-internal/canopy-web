@@ -1,7 +1,7 @@
 // Connecting a site to canopy — the surface that replaced the Django admin.
 //
 // Owner-only, tenant-scoped, and shaped like `api/workspaces.ts` beside it:
-// same `WorkspaceApiError` so a caller can branch on 404 (not a member) versus
+// same `ApiError` so a caller can branch on 404 (not a member) versus
 // 403 (a member who is not an owner), and the same `res.response.ok` check
 // rather than `res.error`, whose static type openapi-fetch infers as
 // always-undefined for routes that declare no error model.

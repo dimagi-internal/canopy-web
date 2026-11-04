@@ -21,6 +21,7 @@ import { usePeek } from '@/components/work/usePeek'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /** How long a burst of task changes waits before Triage re-reads. */
 const REFRESH_DEBOUNCE_MS = 600
@@ -252,18 +253,18 @@ export function TriagePage(): JSX.Element {
               <col className="w-[17rem]" />
             </colgroup>
             <thead>
-              <tr className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                <th className="px-2 py-1.5 font-medium">Kind</th>
-                <th className="sr-only">Priority</th>
-                <th className="px-1 py-1.5 font-medium">Key</th>
-                <th className="py-1.5 font-medium">What and why</th>
-                <th className="hidden py-1.5 font-medium md:table-cell">Proposed by</th>
-                <th className="hidden py-1.5 font-medium lg:table-cell">Project</th>
-                <th className="hidden py-1.5 font-medium sm:table-cell" title="Backing: for / passes">Backing</th>
-                <th className="hidden py-1.5 font-medium md:table-cell">Confidence</th>
-                <th className="py-1.5 pr-2 text-right font-medium">Age</th>
-                <th className="py-1.5 pr-2 text-right font-medium">Decide</th>
-              </tr>
+              <Tr rule="bottom" head="label" className="font-medium">
+                <Th density="tight">Kind</Th>
+                <Th density="none" weight="inherit" srOnly>Priority</Th>
+                <Th density="narrow">Key</Th>
+                <Th density="cozy">What and why</Th>
+                <Th density="cozy" hideBelow="md">Proposed by</Th>
+                <Th density="cozy" hideBelow="lg">Project</Th>
+                <Th density="cozy" hideBelow="sm" title="Backing: for / passes">Backing</Th>
+                <Th density="cozy" hideBelow="md">Confidence</Th>
+                <Th density="cozy-gutter" align="right">Age</Th>
+                <Th density="cozy-gutter" align="right">Decide</Th>
+              </Tr>
             </thead>
             <tbody>
               {rows.map((entry) => (
@@ -325,23 +326,25 @@ function TriageRow({
   const projectHandle = entry.project_address?.split('/')
   const quote = entry.human_why?.[0]
   return (
-    <tr
+    <Tr
+      rule="bottom-last"
+      top
       data-triage={entry.ref}
       aria-current={focused ? 'true' : undefined}
       onClick={onFocus}
       className={cn(
-        'group border-b border-border align-top last:border-0 hover:bg-muted/50',
+        'group hover:bg-muted/50',
         focused && 'bg-primary/5 outline outline-1 -outline-offset-1 outline-primary/60',
       )}
     >
-      <td className="px-2 py-1.5">
+      <Td density="tight">
         <StatusBadge tone={kind.tone}>{kind.label}</StatusBadge>
-      </td>
-      <td className="px-1 py-1.5">{!isProject && <PriorityIcon priority={entry.priority ?? 0} />}</td>
-      <td className="truncate px-1 py-1.5 font-mono text-[11.5px] text-muted-foreground" title={entry.ref}>
+      </Td>
+      <Td density="narrow">{!isProject && <PriorityIcon priority={entry.priority ?? 0} />}</Td>
+      <Td density="narrow" tone="muted" mono className="truncate text-[11.5px]" title={entry.ref}>
         {isProject ? '—' : entry.ref}
-      </td>
-      <td className="min-w-0 py-1.5 pr-2">
+      </Td>
+      <Td density="cozy-gutter" className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           {isProject ? (
             <Link to={entry.url} className="truncate font-medium text-foreground hover:text-primary">
@@ -377,11 +380,11 @@ function TriageRow({
           </p>
         )}
         {isProject && <p className="mt-0.5 text-[11.5px] text-muted-foreground">Decide it on its page.</p>}
-      </td>
-      <td className="hidden truncate py-1.5 pr-2 text-[12px] text-foreground-secondary md:table-cell" title={entry.proposed_by}>
+      </Td>
+      <Td density="cozy-gutter" tone="secondary" hideBelow="md" className="truncate text-[12px]" title={entry.proposed_by}>
         {proposer(entry.proposed_by)}
-      </td>
-      <td className="hidden truncate py-1.5 pr-2 text-[12px] lg:table-cell">
+      </Td>
+      <Td density="cozy-gutter" hideBelow="lg" className="truncate text-[12px]">
         {entry.project_address && !isProject && projectHandle && projectHandle.length === 2 ? (
           <Link to={scopedPath(projectHandle[0] || workspace, `/projects/${projectHandle[1]}`)} className="text-foreground-secondary hover:text-primary">
             {entry.project_name || entry.project_address}
@@ -389,8 +392,8 @@ function TriageRow({
         ) : (
           <span className="text-foreground-subtle">—</span>
         )}
-      </td>
-      <td className="hidden whitespace-nowrap py-1.5 pr-2 text-[12px] text-muted-foreground sm:table-cell" title={`${entry.backers} for, ${entry.passes} passed`}>
+      </Td>
+      <Td density="cozy-gutter" tone="muted" nowrap hideBelow="sm" className="text-[12px]" title={`${entry.backers} for, ${entry.passes} passed`}>
         <span className="inline-flex items-center gap-0.5">
           <ThumbsUp aria-hidden="true" className="size-3" />
           {entry.backers}
@@ -399,14 +402,14 @@ function TriageRow({
           <ThumbsDown aria-hidden="true" className="size-3" />
           {entry.passes}
         </span>
-      </td>
-      <td className={cn('hidden py-1.5 pr-2 text-[12px] capitalize md:table-cell', CONFIDENCE_TONE[entry.confidence] ?? 'text-muted-foreground')}>
+      </Td>
+      <Td density="cozy-gutter" hideBelow="md" className={cn('text-[12px] capitalize', CONFIDENCE_TONE[entry.confidence] ?? 'text-muted-foreground')}>
         {entry.confidence || '—'}
-      </td>
-      <td className="whitespace-nowrap py-1.5 pr-2 text-right text-[11.5px] text-muted-foreground" title={entry.created_at}>
+      </Td>
+      <Td density="cozy-gutter" tone="muted" nowrap align="right" className="text-[11.5px]" title={entry.created_at}>
         {relativeAge(entry.created_at, new Date(), { seconds: false })}
-      </td>
-      <td className="py-1 pr-2 text-right">
+      </Td>
+      <Td density="compact-gutter" align="right">
         {isProject ? (
           <Link to={entry.url} className="rounded border border-border px-1.5 py-0.5 text-[12px] text-foreground-secondary hover:bg-muted">
             Open project
@@ -436,7 +439,7 @@ function TriageRow({
           </div>
         )}
         {focused && !isProject && <p className="mt-0.5 text-[11px] text-muted-foreground">S {startsLine(entry)}</p>}
-      </td>
-    </tr>
+      </Td>
+    </Tr>
   )
 }

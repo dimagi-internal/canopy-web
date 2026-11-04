@@ -30,7 +30,6 @@ import contextvars
 import datetime
 import decimal
 import functools
-import inspect
 import re
 import uuid
 from typing import Any
@@ -111,18 +110,29 @@ def _captured(capture: change_capture.Capture) -> list[dict]:
 
 # ---- the wrapper ----
 
-def operation_id(func) -> str:
-    """The route's operationId — its explicit `operation_id=`, else the same rule
-    `CanopyNinjaAPI` uses."""
-    from apps.api.api import _app_label, api
+_operation_id = None
 
-    explicit = api.explicit_operation_ids().get(inspect.unwrap(func))
-    if explicit:
-        return explicit
-    name = func.__name__
-    if name in api._shared_view_names():
-        return f"{_app_label(func.__module__)}_{name}"
-    return name
+
+def register_operation_id(fn) -> None:
+    """The composition root (`apps/api/api.py`) says how a route is named: `fn(view)` -> its
+    operationId, the same rule the schema uses. The audit never imports the API."""
+    global _operation_id
+    _operation_id = fn
+
+
+def operation_id(func) -> str:
+    """The route's operationId, by the rule the API registered."""
+    return _operation_id(func) if _operation_id else func.__name__
+
+
+# A setting's tenant is not always in the request's own path arguments (`/api/agents/{slug}`,
+# `{runner_id}`); the app that owns the noun registers how to find it from ready(). A resolver
+# is `fn(request, path_args)` -> a Workspace or None, asked in registration order.
+_workspace_resolvers: dict[str, object] = {}
+
+
+def register_workspace_resolver(name: str, fn) -> None:
+    _workspace_resolvers[name] = fn
 
 
 def audited(func):
@@ -274,21 +284,10 @@ def _workspace_for(request, path_args: dict):
         return ws(path_args["workspace"])
     if path.startswith("/api/workspaces/") and "slug" in path_args:
         return ws(path_args["slug"])
-    if path.startswith("/api/agents/") and "slug" in path_args:
-        from apps.agents.models import Agent
-
-        qs = Agent.objects.filter(slug=path_args["slug"])
-        if pinned:
-            qs = qs.filter(workspace__slug=pinned)
-        agent = qs.select_related("workspace").first()
-        if agent is not None:
-            return agent.workspace
-    if "runner_id" in path_args:
-        from apps.harness.models import Runner
-
-        runner = Runner.objects.filter(pk=path_args["runner_id"]).select_related("workspace").first()
-        if runner is not None and runner.workspace_id:
-            return runner.workspace
+    for resolver in _workspace_resolvers.values():
+        found = resolver(request, path_args)
+        if found is not None:
+            return found
     return ws(pinned)
 
 
@@ -296,7 +295,7 @@ def _workspace_for(request, path_args: dict):
 
 def visible_to(request):
     """The rows the caller may read — the MCP call log's rule
-    (`apps/events/api.py::list_mcp_calls`): every change in a workspace where
+    (`apps/mcp/audit_api.py::list_mcp_calls`): every change in a workspace where
     they hold `logs.read`, plus every change they made themselves. A
     NULL-workspace row (a person's own setting) is only ever its actor's. A
     request pinned to `/api/w/{ws}/` sees only that workspace's rows."""

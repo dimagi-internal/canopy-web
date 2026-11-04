@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import './frame.css'
 import {
   CHANNEL,
+  frameRejection,
   isMessage,
   type AgentTaskStatus,
   type AppContext,
@@ -89,6 +90,31 @@ const canopy = {
     /** End it now (and any standing connection of that account to that agent). */
     end(request: { agent: string; account?: string }) {
       return ask((id) => ({ channel: CHANNEL, type: 'google-access', id, request: { ...request, action: 'end' } }))
+    },
+  },
+  /** The viewer connects an account of their own and lends it to an agent: the page leaves for
+   * the provider and canopy's share screen, and comes back. Ends it, and reads how it went. */
+  connections: {
+    connect(request: { agent: string; provider: string; minutes?: number; ownerTurnsOnly?: boolean }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { ...request, action: 'connect' } }))
+    },
+    disconnect(request: { id: string; agent: string }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { ...request, action: 'disconnect' } }))
+    },
+    outcome() {
+      return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { action: 'outcome' } }))
+    },
+  },
+  /** Call a connected account the view declares (`connections`), through canopy: resolves {status, body}
+   * or rejects with a sentence (`e.message`; `e.error`, and `e.connect_url` when connecting would fix it).
+   * A write needs a real click on the page; a read does not. */
+  connection: {
+    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'connection-call', id, request: req }))
+    },
+    /** Open this click's window first, to read and dedup before writing: {expires_at, hard_limit_at, writes}. */
+    begin() {
+      return ask((id) => ({ channel: CHANNEL, type: 'connection-begin', id }))
     },
   },
   /** Re-read a task this view started: its status, error and, once done, result. */
@@ -195,7 +221,7 @@ function App() {
         if (!waiter) return
         pending.delete(msg.id)
         if (msg.ok) waiter.resolve(msg.data)
-        else waiter.reject(new Error(msg.error))
+        else waiter.reject(frameRejection(msg))
       }
     }
     window.addEventListener('message', onMessage)

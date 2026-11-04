@@ -12,7 +12,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from .models import MailDomain, MailEvent, MailMessage
+from .models import MailDomain, MailEvent, MailForwardLog, MailMessage
 
 WINDOW = dt.timedelta(days=7)
 MIN_SENDS = 50
@@ -63,6 +63,7 @@ def record(event: dict, *, sns_message_id: str = "") -> None:
         MailEvent.objects.create(**row)
     if kind in _STATUS and msg_id:
         MailMessage.objects.filter(ses_message_id=msg_id).update(delivery_status=_STATUS[kind])
+        MailForwardLog.objects.filter(ses_message_id=msg_id).update(delivery_status=_STATUS[kind])
     # Opportunistic prune of this domain only: a small delete on the (domain, kind, at) index.
     MailEvent.objects.filter(domain=domain, at__lt=timezone.now() - RETAIN).delete()
     if kind in _EVALUATE_ON or (kind == "Send" and MailEvent.objects.filter(

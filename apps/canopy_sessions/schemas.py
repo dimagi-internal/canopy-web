@@ -387,6 +387,10 @@ class HumanInputPageOut(Schema):
 class SlackBindingOut(Schema):
     """The Slack thread a session is connected to (apps/slack/share.py::binding_of)."""
     channel: str
+    #: The channel's name (no `#`), when canopy has looked it up; "" otherwise. Show this, not `channel`.
+    channel_name: str = ""
+    #: A direct message: there is no channel name to show.
+    is_dm: bool = False
     thread_ts: str = ""
     #: Opens the thread in Slack's web client; "" when canopy can't build one.
     url: str = ""
@@ -520,8 +524,9 @@ class SessionOut(Schema):
     #: Who started it, by name ("" when a runner or an agent did): a list shows a
     #: private conversation by this, since it keeps no title. Not content.
     started_by_name: str = ""
-    #: The session is the reader's own (`access.sessions_of_q`): they started it,
-    #: or it was found on their own box and is not an agent's own work.
+    #: The session is the reader's own: they started it, it was found on their own
+    #: box and is not an agent's own work (`access.sessions_of_q`), or an agent they
+    #: asked dispatched it from a conversation of theirs (`access.started_by_you_among`).
     started_by_you: bool = False
     #: The page it was started on: the `resource` its page first declared, set once
     #: (`Session.origin_resource`). "" when it was not started on a page that names one.
@@ -673,6 +678,17 @@ class SlashCommandOut(Schema):
     source: str = ""
 
 
+class GithubIdentityOut(Schema):
+    """Whose GitHub identity this session's turns borrow (`delegations.session_identity`)."""
+    #: The agent's slug; "" when none.
+    agent: str = ""
+    #: `agent` (an agent chat), `repo_default` (an agentless repo chat; the repo's default
+    #: agent, `RepoIdentity`) or `none` (turns get no GitHub token).
+    source: Literal["agent", "repo_default", "none"] = "none"
+    #: The repo whose default it is, for `repo_default` and `none`.
+    repo: str = ""
+
+
 class SessionInfoOut(Schema):
     """Everything canopy stores about a session, in one read — for the Session
     info panel. `session` is the same shape the list and detail reads serve."""
@@ -694,6 +710,7 @@ class SessionInfoOut(Schema):
     turns_limit: int = 0
     participant_count: int = 0
     message_count: int = 0
+    github_identity: GithubIdentityOut = GithubIdentityOut()
 
 
 class SendOut(Schema):

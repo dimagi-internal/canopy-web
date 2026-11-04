@@ -21,7 +21,7 @@ close).
   `signed_out` / `unrouted`) because the remedy differs — wait (for a runner, or
   for the turn ahead of it), open the laptop, sign Claude in on the box, or fix the
   agent's routing — and no client can derive those facts itself. `signed_out` is a
-  runner that is online but reports `Runner.signed_out` (see runners.md § Runner
+  runner that is online but reports `Runner.signed_out` (see runner-fleets.md § Runner
   readiness); it claims nothing, so "picking this up" would be a lie. A channel may collapse states, but only
   from the full set.
 - **Not a column.** It is a function of rows that change on their own clock
@@ -86,7 +86,7 @@ close).
 ## Recording: one path, keyed on whether a transcript exists
 
 - A conversation runs on one agent CLI for life (`Session.cli`, set by its first claim;
-  `runners.md` § Which CLI runs a turn): its transcript lives in that CLI's own store.
+  `runner-routing.md` § Which CLI runs a turn): its transcript lives in that CLI's own store.
 
 - `services.transcript_sourced(session)` is the one question: is a real runner
   driving this, so does a transcript exist? `Session.origin` means only "how this
@@ -251,7 +251,20 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   (Slack) passes `()` explicitly.
 - **A send only enqueues.** `send.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
-  `client_id` so the sender's optimistic row dedupes against the queued entry.
+  `client_id` so the sender's optimistic row dedupes against the queued entry. A
+  DONE send stays listed (`delivering`) for `DONE_LANDING_GRACE` while no person's
+  line has been stored since it was sent, so a reconnect always finds it in this
+  list or in `ended_sends`.
+- **The echo of your line is matched by its `client_id`.** The stored row keeps the
+  send's nonce and the live `chat.user_message` carries it (in the AG-UI chunk's
+  metadata too); the sender's page matches it exactly, falls back to words only for
+  a line that has none and only against a line still waiting for its echo, and
+  places the row by its ordinal (`sessionReducer`).
+- **The open page checks itself against the server.** After each turn ends, and on
+  coming back to a tab hidden a minute or more, `ChatPage`'s `useTailCheck` reads
+  `GET /{id}` and compares it with what it holds (`canopy-ui/chat/tailDivergence`);
+  on a difference it applies the server's rows (`resyncTail`) and records a
+  `web.chat` / `chat.diverged` event (ids only).
 - **A send that never lands is still shown.** `send.ended_sends` (wire key
   `cancelled`, in the snapshot and `session.queued`) lists every send whose turn
   ended without its row reaching the transcript, each with `state` (its final
@@ -266,6 +279,11 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   `runner.session_interrupt` frame; the runner drains the record on its poll tick
   (`GET /runners/{id}/session-interrupts`, retired by id through
   `…/session-interrupt-result`, offered for `control.INTERRUPT_TTL`).
+  Escape fires no `Stop` hook, so emdash's `agent_status` stays `working` over a
+  stopped agent. The laptop runner reports `interrupted` instead while the
+  conversation's last word is the marker (`canopy_transcript.turn_ended_in_interrupt`,
+  `sessions.annotate_engine_staleness`), and that report's edge says `idle` to an open
+  chat, within one report tick of the stop.
   The socket action `chat.unqueue {turn_id}` is `send.unqueue_send`: your OWN
   send, only while still `QUEUED` (a claimed one may already be in the agent's
   input), finished CANCELLED and the queued list re-sent; anything else is refused
@@ -296,26 +314,26 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   byte-for-byte the row's text, in send order; `Message.author` / `source_turn_id`
   come from that turn's initiator. No match → `author=None` (correct for a line
   typed straight into emdash).
-- `authorship.parse` still reads the legacy `[canopy from="…" user=N turn=<hex>]`
-  marker (newline optional) for old and backfilled rows; don't emit it.
+- `authorship.parse` also reads the legacy `[canopy from="…" user=N turn=<hex>]`
+  marker (newline optional), which old and backfilled rows carry; never emit it.
 - A ledger-sourced session fans `chat.user_message` out on commit
   (`send._publish_user_message` → `consumers.chat_user_message`) so peers see a
   send live; transcript-sourced sessions get this from the streamed rows.
-- `onTakeOver` / `takeOverDraft` stay in `canopy-ui`'s public API as deprecated
-  no-ops — ace-web still passes them.
+- `onTakeOver` / `takeOverDraft` are deprecated no-ops in `canopy-ui`'s public API,
+  kept because ace-web still passes them.
 - Spec: `docs/superpowers/specs/2026-09-26-per-person-drafts-and-authored-messages-design.md`.
 
 ## Which box takes a chat's first turn
 
 - **A bound chat** claims only on its binding's runner (stickiness, below).
 - **An unbound chat with an agent** follows the agent's runner list and rules
-  (`runners.md` → "An agent's runner list").
+  (`runner-routing.md` → "An agent's runner list").
 - **An unbound project chat** (no agent, only `Session.project`) runs on a box that
   declares the repo and that the workspace's runner order shares — or, with no
   order, one the person who sent it administers. A teammate's project chat in a
   workspace with no order does not land on your box; it waits, and `/supervisor`'s
   unclaimable report says "no runner order in <ws>, and <person> administers no box
-  with <repo>" (`runners.md` → "Project chats"). A chat with neither an agent nor a
+  with <repo>" (`runner-routing.md` → "Project chats"). A chat with neither an agent nor a
   repo follows the same order-or-your-box rule.
 - **Picking a box** for a chat is one rule, `canopy_sessions.placement.may_place`,
   asked by every door that chooses: the "Run on" picker's `runner_id`, a send's

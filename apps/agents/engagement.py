@@ -15,10 +15,10 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
+from django.apps import apps as django_apps
 from django.db import DatabaseError, transaction
 from django.utils import timezone
 
-from apps.huddles.models import ProjectCheckin
 
 from .models import Agent, AgentProject, AgentTask, EngagementEvent, ProjectBacking
 
@@ -91,7 +91,8 @@ def resolve_checkin(workspaces, checkin: str) -> list[str]:
     checkin = (checkin or "").strip()
     if not checkin or checkin.isdigit():
         return [checkin] if checkin else []
-    ids = ProjectCheckin.objects.filter(project__workspace_id__in=list(workspaces),
+    # By label, not import: check-ins are `huddles`', a layer above.
+    ids = django_apps.get_model("huddles", "ProjectCheckin").objects.filter(project__workspace_id__in=list(workspaces),
                                         name__iexact=checkin).values_list("pk", flat=True)
     return [str(i) for i in ids] or [checkin]
 

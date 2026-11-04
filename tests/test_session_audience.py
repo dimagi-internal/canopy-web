@@ -59,6 +59,11 @@ def _more_shapes(people, shapes, ws):
 def test_the_audience_is_exactly_who_the_acl_lets_read():
     people, shapes, ws = _world()
     _more_shapes(people, shapes, ws)
+    # The audience names who MAY read, the coach included: its login reads inside a turn
+    # nobody asked (`access.review_grantors`), which is the widest case.
+    from apps.harness import turn_asker
+
+    setattr(people["coach"], turn_asker.STANDING_ATTR, turn_asker.Standing("t", unattended=True))
     for label, s in shapes.items():
         readers = audience.readers(s)
         for who, user in people.items():

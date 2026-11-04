@@ -33,6 +33,7 @@ export { restToKitMessage, type RestMessage } from "./restMessage";
 // Reducer (pure)
 export { sessionReducer } from "./sessionReducer";
 export { prependHistory } from "./history";
+export { tailDivergence, type TailDivergence } from "./tailCheck";
 
 // Hooks
 export {

@@ -5,7 +5,8 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Navigate } from 'react-router-dom'
 
-import { AgentApiError, getProject } from '@/api/agents'
+import { getProject } from '@/api/agents'
+import { ApiError } from '@/api/problem'
 
 export function ProjectRefRedirect({ slug, projectRef }: { slug: string; projectRef: string }): JSX.Element {
   const key = `${slug}/${projectRef}`
@@ -18,7 +19,7 @@ export function ProjectRefRedirect({ slug, projectRef }: { slug: string; project
       .catch((err: unknown) => {
         if (cancelled) return
         const error =
-          err instanceof AgentApiError && err.status === 404
+          err instanceof ApiError && err.status === 404
             ? `No project ${projectRef} on ${slug}.`
             : err instanceof Error
               ? err.message

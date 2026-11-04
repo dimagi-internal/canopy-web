@@ -240,6 +240,9 @@ function Palette({ workspace, nav, onClose }: { workspace: string; nav: Resolved
     }
   }
 
+  // shared-dialog-exception: a command palette is a combobox, not a form dialog. It has no title or
+  // close button, sits near the top, owns ArrowUp/Down/Enter and its own Escape, and keeps focus in
+  // its input; the shared Dialog's focus management and chrome would fight all of that.
   let lastGroup: Group | null = null
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/70 px-4 pt-[12vh] backdrop-blur-[1px]" onMouseDown={onClose}>

@@ -8,6 +8,7 @@ from __future__ import annotations
 import inspect
 import logging
 
+from django.core.exceptions import RequestDataTooBig
 from django.http import Http404, HttpRequest, HttpResponse
 from ninja import NinjaAPI
 from ninja.errors import AuthenticationError, HttpError, ValidationError
@@ -19,6 +20,7 @@ from .errors import (
     TYPE_AUTH,
     TYPE_INTERNAL,
     TYPE_NOT_FOUND,
+    TYPE_PAYLOAD_TOO_LARGE,
     TYPE_VALIDATION,
     Problem,
     ProblemError,
@@ -113,9 +115,23 @@ api = CanopyNinjaAPI(
 # `SettingChange` row commit together. Registered here, before any router is
 # added, so it reaches every route — and so every entry point (web UI, CLI,
 # script, MCP tool) through the one place they all pass.
-from apps.events.audit import audited as _audited  # noqa: E402
+from apps.events import audit as _audit  # noqa: E402
 
-api.add_decorator(_audited)
+
+def _operation_id_of(func) -> str:
+    """A route's operationId — its explicit `operation_id=`, else the rule `CanopyNinjaAPI` uses.
+    Handed to the audit, which records the operation without importing this module."""
+    explicit = api.explicit_operation_ids().get(inspect.unwrap(func))
+    if explicit:
+        return explicit
+    name = func.__name__
+    if name in api._shared_view_names():
+        return f"{_app_label(func.__module__)}_{name}"
+    return name
+
+
+_audit.register_operation_id(_operation_id_of)
+api.add_decorator(_audit.audited)
 
 
 def _problem_response(request: HttpRequest, problem: Problem, members: dict | None = None) -> HttpResponse:
@@ -199,6 +215,19 @@ def _on_http404(request: HttpRequest, exc: Http404) -> HttpResponse:
     return _problem_response(request, problem)
 
 
+@api.exception_handler(RequestDataTooBig)
+def _on_too_big(request: HttpRequest, exc: RequestDataTooBig) -> HttpResponse:
+    """A body past `DATA_UPLOAD_MAX_MEMORY_SIZE`, found when the payload is parsed: the caller's, not a 500."""
+    problem = Problem(
+        type=TYPE_PAYLOAD_TOO_LARGE,
+        title="Payload too large",
+        status=413,
+        detail="That is too much to send in one request.",
+        instance=request.path,
+    )
+    return _problem_response(request, problem)
+
+
 @api.exception_handler(Exception)
 def _on_unhandled(request: HttpRequest, exc: Exception) -> HttpResponse:
     logger.exception("Unhandled exception in v2 handler")
@@ -221,7 +250,7 @@ def _auth_smoke(request: HttpRequest) -> dict:
 
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
 from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
-from apps.agents.a2a_api import router as a2a_router  # noqa: E402
+from apps.agents.api_a2a import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
 from apps.agents.api_board import router as agent_board_router  # noqa: E402
@@ -239,15 +268,15 @@ from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.api_vault_keeper import router as vault_keeper_router  # noqa: E402
 from apps.agents.api_vaults import router as workspace_vaults_router  # noqa: E402
-from apps.agents.contributors_api import router as contributors_router  # noqa: E402
+from apps.agents.api_contributors import router as contributors_router  # noqa: E402
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agents.api_aws import router as agent_aws_router  # noqa: E402
-from apps.agents.engagement_api import router as engagement_router  # noqa: E402
-from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
-from apps.agents.tasks_api import router as workspace_tasks_router  # noqa: E402
-from apps.agents.kb_api import router as kb_router  # noqa: E402
-from apps.agents.proposals_api import router as proposals_router  # noqa: E402
+from apps.agents.api_engagement import router as engagement_router  # noqa: E402
+from apps.agents.api_fleet import router as fleet_tasks_router  # noqa: E402
+from apps.agents.api_tasks import router as workspace_tasks_router  # noqa: E402
+from apps.agents.api_kb import router as kb_router  # noqa: E402
+from apps.agents.api_proposals import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
 from apps.agents.api_login_requests import router as agent_login_requests_router  # noqa: E402
@@ -262,11 +291,13 @@ from apps.agent_tasks.api import router as agent_tasks_router  # noqa: E402
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
 from apps.capabilities.api import runner_router as capability_keeper_router  # noqa: E402
-from apps.common.api import common_router, public_router  # noqa: E402
+from apps.common.api import public_router  # noqa: E402
+from apps.tokens.api_me import router as me_router  # noqa: E402
 from apps.connections.api import agents_router as connections_agents_router  # noqa: E402
 from apps.connections.api import me_router as connections_me_router  # noqa: E402
 from apps.connections.api import router as connections_router  # noqa: E402
 from apps.connections.api import workspaces_router as connection_apps_router  # noqa: E402
+from apps.connections.api_runner import router as connections_runner_router  # noqa: E402
 from apps.connections.api_turns import router as connections_turns_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
@@ -285,13 +316,15 @@ from apps.host_grants.grants_api import me_router as host_grants_me_router  # no
 from apps.agents.api_delegated import me_router as delegated_me_router  # noqa: E402
 from apps.embedding.embed_api import embed_router
 from apps.events.api import router as events_router  # noqa: E402
+from apps.events.api import settings_router as events_settings_router  # noqa: E402
+from apps.mcp.audit_api import router as mcp_audit_router  # noqa: E402
 from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.github_connect.api import router as github_router  # noqa: E402
 from apps.harness.api import router as harness_router  # noqa: E402
 from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
-from apps.harness.api_local import local_turns_router, private_runners_router  # noqa: E402
+from apps.harness.api_local_turns import local_turns_router, private_runners_router  # noqa: E402
 from apps.harness.api_project_opt_in import router as project_opt_in_router  # noqa: E402
 from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
 from apps.harness.api_box_egress import box_egress_router  # noqa: E402
@@ -320,6 +353,8 @@ from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
 from apps.shareouts.api import router as shareouts_router  # noqa: E402
 from apps.dynamic_views.api import router as dynamic_views_router  # noqa: E402
+from apps.local_apps.api import router as local_apps_router  # noqa: E402
+from apps.local_apps.api import runner_router as local_apps_runner_router  # noqa: E402
 from apps.workspace_apps.api import public_router as public_apps_router  # noqa: E402
 from apps.workspace_apps.api import router as workspace_apps_router  # noqa: E402
 from apps.slack.api import router as slack_config_router  # noqa: E402
@@ -332,9 +367,13 @@ from apps.timeline.api import router as timeline_router  # noqa: E402
 from apps.tokens.api import router as tokens_router  # noqa: E402
 from apps.walkthroughs.api import router as walkthroughs_router  # noqa: E402
 from apps.workspaces.api import router as workspaces_router  # noqa: E402
+from apps.admission.api import router as admission_rules_router  # noqa: E402
+from apps.retention.api import router as retention_router  # noqa: E402
+from apps.harness.api_workspace_routing import router as workspace_routing_router  # noqa: E402
+from apps.agents.api_workspace_health import router as workspace_health_router  # noqa: E402
 
 api.add_router("/issues", issues_router)
-api.add_router("", common_router)
+api.add_router("", me_router)
 api.add_router("", public_router)
 api.add_router("/walkthroughs", walkthroughs_router)
 api.add_router("/tokens", tokens_router)
@@ -344,9 +383,11 @@ api.add_router("/tokens", oauth_connected_router)
 # the `tokens` tag) where its routes and MCP tool names were published.
 api.add_router("/tokens", github_router)
 api.add_router("/connections", connections_router)  # server-held OAuth connections (Salesforce first)
-api.add_router("/me/connections", connections_me_router)  # /api/me/connections/{provider}/token — before "/me"
+api.add_router("/me/connections", connections_me_router)  # my CLI's material, lease, write-back — before "/me"
 api.add_router("/feedback", feedback_router)
 api.add_router("/events", events_router)
+api.add_router("/events", mcp_audit_router)  # the MCP call log, read where the event log is
+api.add_router("/events", events_settings_router)
 api.add_router("/inbound", inbound_router)
 api.add_router("/mail", mail_router)
 api.add_router("/slack-config", slack_config_router)
@@ -369,6 +410,8 @@ api.add_router("/shareouts", shareouts_router)
 api.add_router("/dynamic-views", dynamic_views_router)
 api.add_router("", workspace_apps_router)
 api.add_router("", public_apps_router)
+api.add_router("/local-apps", local_apps_router)
+api.add_router("/harness/runners", local_apps_runner_router)
 api.add_router("/sessions", sessions_router)
 # Agents are workspace-scoped. Mounted flat (single, clean schema); the canonical
 # tenant URL /api/w/{ws}/agents/... is gated + stripped to this flat path by
@@ -397,7 +440,7 @@ api.add_router("/agents", agent_pat_rotation_router)
 api.add_router("/agents", connections_agents_router)  # an agent's connections + grants
 api.add_router("/agents", agent_readiness_router)
 # A2A Agent Card discovery — public in the login middleware; each route
-# self-enforces (apps/agents/a2a_api.py).
+# self-enforces (apps/agents/api_a2a.py).
 api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
 api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent
@@ -424,6 +467,10 @@ api.add_router("", fleet_tasks_router)
 api.add_router("", workspace_tasks_router)
 api.add_router("", kb_router)
 api.add_router("/workspaces", workspaces_router)
+api.add_router("/workspaces", retention_router)  # /{slug}/retention… (workspace settings, served by the retention app)
+api.add_router("/workspaces", admission_rules_router)  # /{slug}/admission-… (served by the admission app)
+api.add_router("/workspaces", workspace_routing_router)  # /{slug}/runner-topology, /runner-order (harness)
+api.add_router("/workspaces", workspace_health_router)  # /{slug}/health…, /agent-topology (agents)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
 api.add_router("/workspaces", connected_apps_router)
 api.add_router("/workspaces", connection_apps_router)  # a workspace's OAuth clients for connections
@@ -457,7 +504,8 @@ api.add_router("/private-runners", private_runners_router)
 api.add_router("", workspace_vaults_router)  # workspace vaults: /workspaces/{slug}/vaults, /vaults/{id}
 api.add_router("/harness", vault_keeper_router)  # the keeper's calls, under the runner's own path
 api.add_router("/harness", capability_keeper_router)  # … and its slot-secret calls
-api.add_router("/harness", connections_turns_router)  # a turn's agent connection token (apps/connections)
+api.add_router("/harness", connections_turns_router)  # a turn's agent connections and their material
+api.add_router("/harness", connections_runner_router)  # a box's refresh lease and write-back (apps/connections)
 api.add_router("/harness", harness_router)
 api.add_router("/me/canopy-projects", project_opt_in_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).

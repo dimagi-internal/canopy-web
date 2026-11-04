@@ -144,7 +144,7 @@ def clear_page_state(session: Session) -> None:
 
 
 #: How long a sensitive conversation's page is kept while no turn of it is live.
-#: Its last turn ending forgets it at once (`harness.closing._forget_the_page`); this
+#: Its last turn ending forgets it at once (`harness.turn_close._forget_the_page`); this
 #: covers the page no turn ever ends for — declared, and then nothing sent, or a turn
 #: that never existed. The panel declares the page again before its next send, so
 #: forgetting it costs nothing a person sees.

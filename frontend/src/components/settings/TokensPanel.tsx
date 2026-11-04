@@ -6,6 +6,7 @@ import { copyText } from 'canopy-ui/lib'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 import { relativeAge } from '@/lib/relativeAge'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 /**
  * List / mint / revoke Personal Access Tokens.
@@ -156,20 +157,20 @@ export function TokensPanel() {
       ) : (
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">Label</th>
-              <th className="py-1 font-medium">Created</th>
-              <th className="py-1 font-medium">Last used</th>
-              <th className="py-1 font-medium">Status</th>
-              <th />
-            </tr>
+            <Tr head="plain">
+              <Th>Label</Th>
+              <Th>Created</Th>
+              <Th>Last used</Th>
+              <Th>Status</Th>
+              <Th density="none" weight="inherit" />
+            </Tr>
           </thead>
           <tbody>
             {tokens.map((t) => (
-              <tr key={t.id} className="border-t border-border">
-                <td className="py-1.5 text-foreground-secondary">{t.label}</td>
-                <td className="py-1.5 text-muted-foreground">{t.created_at.slice(0, 10)}</td>
-                <td className="py-1.5 text-muted-foreground">
+              <Tr rule="top" key={t.id}>
+                <Td density="cozy" tone="secondary">{t.label}</Td>
+                <Td density="cozy" tone="muted">{t.created_at.slice(0, 10)}</Td>
+                <Td density="cozy" tone="muted">
                   <span className={recentlyUsed(t) && !t.revoked_at ? 'text-foreground' : undefined}>
                     {t.last_used_at ? relativeAge(t.last_used_at) : 'never'}
                   </span>
@@ -178,9 +179,9 @@ export function TokensPanel() {
                       {t.last_used_client}
                     </div>
                   )}
-                </td>
-                <td className="py-1.5 text-muted-foreground">{tokenStatus(t)}</td>
-                <td className="py-1.5 text-right">
+                </Td>
+                <Td density="cozy" tone="muted">{tokenStatus(t)}</Td>
+                <Td density="cozy" align="right">
                   {t.revoked_at ? null : (
                     <button
                       type="button"
@@ -190,8 +191,8 @@ export function TokensPanel() {
                       Revoke
                     </button>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>

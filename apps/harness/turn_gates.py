@@ -21,6 +21,7 @@ from . import initiator as who
 from . import turn_asker
 from . import turn_mode as turn_modes
 from .models import Runner, Turn
+from .runner_queries import runner_read_q
 from .schemas import TurnIn
 
 
@@ -123,8 +124,6 @@ def check_email_poster(request: HttpRequest, payload: TurnIn, agent) -> None:
 def resolve_pin(request: HttpRequest, payload: TurnIn, agent):
     """The runner `payload.runner_id` pins the turn to, or None — refused when
     the caller cannot see it (422) or it could never run the turn (403)."""
-    from .api import runner_read_q  # cycle: api imports this module for the route
-
     pinned = None
     if payload.runner_id is not None:
         # The question here is exactly "can the caller SEE this runner?" — a runner
@@ -228,7 +227,7 @@ def check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> Non
     raise HttpError(
         403,
         f"turn_mode=auto is for {agent.slug}'s owner or admins; you may request "
-        "turn_mode=manual (or none — a workspace editor's turns run manual anyway), "
+        "turn_mode=manual (or none — a line that is manual_only on your access list runs manual anyway), "
         "or ask its owner to make you an admin",
     )
 

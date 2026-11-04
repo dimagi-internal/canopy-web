@@ -56,6 +56,7 @@ import { useSessionMeta } from './chat/useSessionMeta'
 import { useSlashCommands } from './chat/useSlashCommands'
 import { CanopyAIButton } from '@/widget/CanopyAIButton'
 import { useTranscriptPaging } from './chat/useTranscriptPaging'
+import { useTailCheck } from './chat/useTailCheck'
 import { openInBrowser, passkeysWorkHere } from '@/auth/passkeyHere'
 import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
@@ -211,6 +212,7 @@ function ChatPageInner({
   )
 
   const paging = useTranscriptPaging(id, socket.prependMessages, socket.state.has_more_before)
+  useTailCheck(id, socket.state, socket.resyncTail)
 
   // Paint before the socket's snapshot lands: from this tab's last copy of the chat
   // (`sessionCache`) at once, else from the REST detail's tail as soon as it is read.
@@ -498,13 +500,7 @@ function ChatPageInner({
         <ChatPanel
           state={panelState}
           connected={socket.connected}
-          statusSlot={meta?.slack ? (
-            <SlackThreadChip
-              thread={meta.slack}
-              onDetach={canDetachSlack ? () => void actions.detachSlack() : undefined}
-              detaching={actions.detachingSlack}
-            />
-          ) : undefined}
+          statusSlot={meta?.slack ? <SlackThreadChip thread={meta.slack} /> : undefined}
           currentUserId={socket.state.current_user_id}
           onSend={(body) => {
             // The server consumes whatever the session is holding, so the chips

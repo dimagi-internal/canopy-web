@@ -119,8 +119,3 @@
 
 **Priority:** P2
 **Depends on:** None
-
-## Completed
-
-### MCP Layer — shipped (PR #71)
-Exposed canopy-web as a FastMCP 3.x Streamable-HTTP server at `/api/mcp/` (`apps/mcp/`), authenticated per-user via Personal Access Tokens, with audit logging and write rate-limiting. Tools reuse the REST service layer. Tools today: `list_insights`, `clear_insights`. See `docs/architecture/mcp-surface.md`.

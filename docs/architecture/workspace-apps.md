@@ -22,11 +22,13 @@ What runs is `compose(template manifest, overlay)` (`overlay.py`), validated aga
 
 ## The manifest (an app is data, never server code)
 
-`roles` (each a **workspace capability** via `permissions.can`, or grant-only), `collections`
+`roles` (each a **workspace permission** via `permissions.can`, or grant-only), `collections`
 (typed fields incl. `file`; `read` role; optional `public` projection), `actions` (the only writes;
 `effects` the platform performs — email to an address on the record, worded by settings),
 `pages` (sandboxed JSX, with named `slots`), `settings`, `fixtures` (sample records for test
 copies) and `scenarios` (plain-language checks). Installing one runs nothing on the server.
+
+A manifest may also carry a top-level `connections` declaration, the same shape as a dynamic view's (`[{provider, as: "viewer"|"shared", agent?, reads, writes}]`, validated by `manifest.py`, composed through overlays unchanged). Member-door pages may call Salesforce through canopy-web within it; public pages never do. A shared agent connection is approved per app on the agent's Accounts tab ([`vault.md`](vault.md) § Calls from screens).
 
 What an app can say without code, each enforced in `services.act` / `services.query`:
 
@@ -102,7 +104,7 @@ publish.
 
 ## Reused, not rebuilt
 
-- **Access**: app roles are workspace capabilities; managing is `integrations`, granting is
+- **Access**: app roles are workspace permissions; managing is `integrations`, granting is
   `members.manage`; every route declares `@gate`. No workspace role is named.
 - **Pages**: the dynamic-view sandbox (opaque origin, `connect-src 'none'`, no `allow-forms`),
   compiler, kit and protocol. An app page gets an `app` prop; a plain view still refuses writes.

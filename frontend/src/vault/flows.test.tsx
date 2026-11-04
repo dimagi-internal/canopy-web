@@ -5,15 +5,22 @@
 // what the UI sent with the keys only the person/device holds — proving the
 // payloads are the protocol, not just that a call was made.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
-  putZkValues: vi.fn(), rotateZk: vi.fn(),
+  putZkValues: vi.fn(), rotateZk: vi.fn(), getVaultMembers: vi.fn(), listWorkspaceVaults: vi.fn(),
+  listMyAgentsWithVaults: vi.fn(), listMyWorkspacesWithVaults: vi.fn(), reportVaultClient: vi.fn(),
+  VaultApiError: class extends Error {
+    status: number
+    constructor(status: number, message: string) { super(message); this.status = status }
+  },
 }))
 vi.mock('@/api/vault', () => api)
 const passkeysApi = vi.hoisted(() => ({ registerThisDevice: vi.fn(), listPasskeys: vi.fn(), deletePasskey: vi.fn() }))
 vi.mock('@/api/passkeys', () => passkeysApi)
+const chat = vi.hoisted(() => ({ myKeyCopies: vi.fn(), putMyKeyCopies: vi.fn() }))
+vi.mock('@/api/chat', async (orig) => ({ ...(await orig<typeof import('@/api/chat')>()), ...chat }))
 const prf = vi.hoisted(() => ({ assertWithPrf: vi.fn(), browserSupportsPrf: vi.fn() }))
 vi.mock('@/vault/prf', async (orig) => ({ ...(await orig<typeof import('./prf')>()), ...prf }))
 
@@ -21,7 +28,8 @@ const zk = await import('./zk')
 const { VaultKeyPanel } = await import('@/components/settings/VaultKeyPanel')
 const { AgentZkSection, ZK_TRUST_CAVEAT } = await import('@/pages/agents/AgentZkSection')
 const { USE_A_PASSPHRASE } = await import('./prf')
-const { vaultKeyRoute } = await import('./operations')
+const { unlockVaultKey, vaultKeyRoute } = await import('./operations')
+const { wrapInfo } = await import('./sealedChat')
 
 const USER = '7'
 const AGENT_ID = '42'
@@ -117,6 +125,244 @@ describe('Set up vault key', () => {
 async function person() {
   return zk.generateKeyPair()
 }
+
+describe('Create a new vault key', () => {
+  // Someone who lost the passphrase + Secret Key: the only seal is a passphrase one, so the old key cannot open.
+  const lockedOut = () => keysetOut({
+    exists: true, public_jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }, seals: [{ alg: '2skd' }],
+    passkeys: [{ credential_id: 'cred-1', label: 'mac', prf_enabled: true, sealed: false }] })
+  const copy = { session_id: 's-1', conversation: 'c-1', agent_name: 'Labs Data', started_at: '2026-10-20T10:00:00Z' }
+  const member = (user_id: number, email: string, role: string, has_copy: boolean) =>
+    ({ user_id, email, role, has_copy, sources: [], has_vault_key: true })
+  const PASS = 'orchid lantern 42 vapor'
+
+  beforeEach(() => {
+    api.listMyAgentsWithVaults.mockResolvedValue({ items: [], total: 0 })
+    api.listMyWorkspacesWithVaults.mockResolvedValue([])
+    api.putKeyset.mockImplementation(async (b) => keysetOut({ exists: true, ...b }))
+    chat.myKeyCopies.mockResolvedValue([])
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
+  })
+
+  async function open(ks: ReturnType<typeof keysetOut> = lockedOut()) {
+    api.getKeyset.mockResolvedValue(ks)
+    render(<VaultKeyPanel />)
+    fireEvent.click(await screen.findByTestId('new-key-open'))
+    return screen.findByTestId('new-key')
+  }
+  const createButton = () => screen.getByTestId('new-key-create') as HTMLButtonElement
+  const whenReady = () => waitFor(() => expect(createButton().disabled).toBe(false))
+  function typePassphrase() {
+    fireEvent.change(screen.getByLabelText('New vault passphrase'), { target: { value: PASS } })
+    fireEvent.change(screen.getByLabelText('Repeat the passphrase'), { target: { value: PASS } })
+  }
+
+  it('says up front what it does not need and does not delete', async () => {
+    await open()
+    expect(screen.getByTestId('new-key-lead').textContent)
+      .toContain('does not need your current passphrase, Secret Key or passkey, and nothing stored in any vault is deleted')
+  })
+
+  it('with no private conversations the screen is the one confirm: no question and no browser dialog', async () => {
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    await open()
+    await whenReady()
+    expect(screen.queryByTestId('new-key-conversations')).toBeNull()
+    expect(api.putKeyset).not.toHaveBeenCalled()
+    fireEvent.click(createButton())
+    await waitFor(() => expect(api.putKeyset).toHaveBeenCalled())
+    expect(api.putKeyset.mock.calls[0][0].replace).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByTestId('new-key')).toBeNull())
+  })
+
+  it('asks about private conversations with nothing preselected, and waits for an answer', async () => {
+    chat.myKeyCopies.mockResolvedValue([copy])
+    await open()
+    expect((await screen.findByTestId('new-key-conversations')).textContent).toContain('1 private conversation')
+    expect((screen.getByTestId('new-key-carry') as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByTestId('new-key-without') as HTMLInputElement).checked).toBe(false)
+    await screen.findByTestId('new-key-no-vaults')
+    expect(createButton().disabled).toBe(true)
+    fireEvent.click(screen.getByTestId('new-key-without'))
+    expect(createButton().disabled).toBe(false)
+  })
+
+  it('without carrying: never asks to unlock the old key, and names what was left behind', async () => {
+    chat.myKeyCopies.mockResolvedValue([copy])
+    await open()
+    fireEvent.click(await screen.findByTestId('new-key-without'))
+    await whenReady()
+    fireEvent.click(createButton())
+    await waitFor(() => expect(api.putKeyset).toHaveBeenCalled())
+    expect(api.putKeyset.mock.calls[0][0].replace).toBe(true)
+    expect(screen.queryByTestId('vault-unlock')).toBeNull()
+    expect(chat.putMyKeyCopies).not.toHaveBeenCalled()
+    const notice = await screen.findByTestId('vault-key-notice')
+    expect(notice.textContent).toContain('not carried over')
+    expect(notice.textContent).toContain('with Labs Data')
+  })
+
+  it('carrying over: opens each copy with the old key and re-wraps it to the new one', async () => {
+    const me = await person()
+    const scalar = new Uint8Array(32).fill(5)
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', PRF_OUT)
+    const wrap = await zk.wrapEcdhEs(scalar, me.publicJwk, wrapInfo('c-1', USER))
+    chat.myKeyCopies.mockResolvedValue([{ ...copy, wrap }])
+    chat.putMyKeyCopies.mockResolvedValue({ stored: 1 })
+    await open(keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal],
+                           passkeys: [{ credential_id: 'cred-1', label: 'mac', prf_enabled: true, sealed: true }] }))
+    fireEvent.click(await screen.findByTestId('new-key-carry'))
+    await whenReady()
+    fireEvent.click(createButton())
+    await waitFor(() => expect(chat.putMyKeyCopies).toHaveBeenCalled())
+    const body = api.putKeyset.mock.calls[0][0]
+    expect(body.replace).toBe(true)
+    const newScalar = await zk.openUserKey(body.seals[0], USER, PRF_OUT)
+    const newPrivate = await zk.importPrivateScalar(newScalar, body.public_jwk)
+    const stored = chat.putMyKeyCopies.mock.calls[0][0][0]
+    expect(Array.from(await zk.unwrapEcdhEs(stored.wrap, newPrivate, body.public_jwk, wrapInfo('c-1', USER))))
+      .toEqual(Array.from(new Uint8Array(32).fill(5)))
+    expect((await screen.findByTestId('vault-key-notice')).textContent).toContain('carried over to the new key')
+  })
+
+  it('a passkey that gives no PRF: says nothing changed, then a new passphrase and Secret Key, never the old key', async () => {
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: null })
+    await open()
+    await whenReady()
+    fireEvent.click(createButton())
+    expect((await screen.findByTestId('new-key-error')).textContent).toContain('nothing was changed')
+    expect(api.putKeyset).not.toHaveBeenCalled()
+    expect(createButton().disabled).toBe(true)
+    typePassphrase()
+    await whenReady()
+    fireEvent.click(createButton())
+    const code = (await screen.findByTestId('vault-secret-key', {}, { timeout: 5000 })).textContent!
+    expect(screen.queryByTestId('vault-unlock')).toBeNull()
+    const body = api.putKeyset.mock.calls[0][0]
+    expect(body.replace).toBe(true)
+    expect(body.seals[0].alg).toBe('2skd')
+    expect((await zk.openUserKey2skd(body.seals[0], USER, PASS, zk.parseSecretKeyCode(code))).length).toBe(32)
+    expect(screen.getByTestId('vault-emergency-kit')).toBeTruthy()
+  })
+
+  it('passkeys known not to report PRF: asks for the passphrase from the start, with no passkey touch', async () => {
+    await open(keysetOut({ exists: true, public_jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }, seals: [{ alg: '2skd' }],
+                           passkeys: [{ credential_id: 'cred-1', label: 'app', prf_enabled: false, sealed: false }] }))
+    expect(screen.getByTestId('new-key-passphrase')).toBeTruthy()
+    typePassphrase()
+    await whenReady()
+    fireEvent.click(createButton())
+    await screen.findByTestId('vault-secret-key', {}, { timeout: 5000 })
+    expect(prf.assertWithPrf).not.toHaveBeenCalled()
+  })
+
+  it('carrying with a passkey that cannot open the old key: points at the other answer, not a new passphrase', async () => {
+    chat.myKeyCopies.mockResolvedValue([copy])
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: null })
+    const me = await person()
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', PRF_OUT)
+    await open(keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal],
+                           passkeys: [{ credential_id: 'cred-1', label: 'mac', prf_enabled: true, sealed: true }] }))
+    fireEvent.click(await screen.findByTestId('new-key-carry'))
+    await whenReady()
+    fireEvent.click(createButton())
+    expect((await screen.findByTestId('new-key-error')).textContent).toContain('without carrying them over')
+    expect(screen.queryByTestId('new-key-passphrase')).toBeNull()
+    expect(api.putKeyset).not.toHaveBeenCalled()
+  })
+
+  it('still shows the Secret Key when the key was replaced but carrying failed afterwards', async () => {
+    const me = await person()
+    const sk = zk.randomBytes(16)
+    window.localStorage.setItem(`canopy-vault-secret-key:${USER}`, zk.secretKeyCode(sk))
+    const seal = await zk.sealUserKey2skd(me.scalar, USER, 'the old passphrase here', sk)
+    const wrap = await zk.wrapEcdhEs(new Uint8Array(32).fill(5), me.publicJwk, wrapInfo('c-1', USER))
+    chat.myKeyCopies.mockResolvedValue([{ ...copy, wrap }])
+    chat.putMyKeyCopies.mockRejectedValue(new Error('boom'))
+    await open(keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal],
+                           passkeys: [{ credential_id: 'cred-1', label: 'app', prf_enabled: false, sealed: false }] }))
+    fireEvent.click(await screen.findByTestId('new-key-carry'))
+    typePassphrase()
+    await whenReady()
+    fireEvent.click(createButton())
+    fireEvent.change(await screen.findByLabelText('Vault passphrase'), { target: { value: 'the old passphrase here' } })
+    fireEvent.click(screen.getByTestId('vault-unlock-passphrase'))
+    // The store retries with real backoff (3.5 s) around two passphrase derivations.
+    await screen.findByTestId('vault-secret-key', {}, { timeout: 25000 })
+    expect((await screen.findByTestId('vault-key-notice')).textContent).toContain('could not be carried over')
+  }, 30000)
+
+  it('lists each vault with who can let you back in, flags the ones only you can open, and skips the rest', async () => {
+    api.listMyAgentsWithVaults.mockResolvedValue({ items: [
+      { slug: 'eva', name: 'Eva' }, { slug: 'solo', name: 'Solo' }, { slug: 'other', name: 'Other' },
+      { slug: 'homeless', name: 'Homeless' }, { slug: 'broken', name: 'Broken' }], total: 5 })
+    api.getVaultMembers.mockImplementation(async (slug: string) => {
+      if (slug === 'homeless') throw new api.VaultApiError(404, 'no vault')
+      if (slug === 'broken') throw new api.VaultApiError(500, 'boom')
+      const members = {
+        eva: [member(7, 'me@x', 'member', true), member(8, 'owner@x', 'owner', true), member(9, 'waiting@x', 'admin', false)],
+        // A plain member holding a copy cannot grant (granting is admin-gated), so this is still flagged.
+        solo: [member(7, 'me@x', 'owner', true), member(8, 'plain@x', 'member', true)],
+        other: [member(7, 'me@x', 'admin', false), member(8, 'owner@x', 'owner', true)],
+      }[slug]
+      return { vault_id: `v-${slug}`, members, holders: { keepers: [] } }
+    })
+    api.listMyWorkspacesWithVaults.mockResolvedValue([{ slug: 'connect', name: 'Connect' }, { slug: 'gone', name: 'Gone' }])
+    api.listWorkspaceVaults.mockImplementation(async (slug: string) => {
+      if (slug === 'gone') throw new Error('nope')
+      return [{ vault_id: 'v-ws', name: 'Shared', members: [member(7, 'me@x', 'member', true)], holders: { keepers: ['box'] } }]
+    })
+    await open()
+    const eva = await screen.findByTestId('new-key-vault-v-eva')
+    expect(eva.textContent).toContain('owner@x can let you back in')
+    expect(eva.textContent).not.toContain('waiting@x')
+    expect(within(eva).queryByTestId('new-key-alone')).toBeNull()
+    expect(within(screen.getByTestId('new-key-vault-v-solo')).getByTestId('new-key-alone').textContent)
+      .toContain('Check with an owner or admin first')
+    expect(screen.getByTestId('new-key-vault-v-ws').textContent).toContain('box (a machine) can let you back in')
+    expect(screen.queryByTestId('new-key-vault-v-other')).toBeNull()
+    // The vault nobody else can reopen comes first.
+    expect(screen.getByTestId('new-key-vaults').firstElementChild).toBe(screen.getByTestId('new-key-vault-v-solo'))
+    const unread = screen.getByTestId('new-key-unread').textContent!
+    expect(unread).toContain('Broken')
+    expect(unread).toContain('Gone')
+    expect(unread).not.toContain('Homeless')
+  })
+
+  it('a failed listing reads as "could not read", never as "no vaults"', async () => {
+    api.listMyAgentsWithVaults.mockRejectedValue(new Error('down'))
+    await open()
+    expect((await screen.findByTestId('new-key-unread')).textContent).toContain('your agents')
+  })
+
+  it('tells someone with the wrong passphrase there is a way out', async () => {
+    const me = await person()
+    const sk = zk.randomBytes(16)
+    window.localStorage.setItem(`canopy-vault-secret-key:${USER}`, zk.secretKeyCode(sk))
+    const seal = await zk.sealUserKey2skd(me.scalar, USER, 'the right passphrase', sk)
+    await expect(unlockVaultKey(async () => ({ method: 'passphrase', passphrase: 'not the right one!' }),
+      keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal] }) as never))
+      .rejects.toThrow('Lost your passphrase or Secret Key? Create a new vault key - it does not need them.')
+    expect(api.reportVaultClient).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'unlock', method: 'passphrase', outcome: 'failed', asked: ['passphrase'], secret_key_remembered: true,
+      error: 'no passphrase seal opened (1 tried, Secret Key remembered)',
+    }))
+    expect(JSON.stringify(api.reportVaultClient.mock.calls)).not.toContain('not the right one!')
+  }, 20000)
+
+  it('reports a Secret Key that will not parse without any character of what was typed', async () => {
+    const me = await person()
+    const seal = await zk.sealUserKey2skd(me.scalar, USER, 'the right passphrase', zk.randomBytes(16))
+    const typed = 'CV1-' + '#'.repeat(26)
+    await expect(unlockVaultKey(async () => ({ method: 'passphrase', passphrase: 'the right passphrase', secretKey: typed }),
+      keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal] }) as never)).rejects.toThrow('Secret Key')
+    const sent = JSON.stringify(api.reportVaultClient.mock.calls)
+    expect(sent).toContain('Secret Key did not parse')
+    expect(sent).not.toContain('#')
+  })
+})
 
 describe('An agent page: nothing to set up by hand', () => {
   it('shows a born agent (no key of its own yet) as private, with no setup button', async () => {

@@ -1,19 +1,19 @@
-"""Domain-wide access, aligned DKIM, and the interface held on canopy-web.
+"""Domain-wide access and aligned DKIM.
 
-* An access-list line "anyone at dimagi.com, verified -> editor" (old words:
-  `full: [contact@dimagi.com:verified]`) gives verified senders at a trusted
+* An access-list line "anyone at dimagi.com, verified -> editor" gives verified senders at a trusted
   domain the agent's WHOLE profile, enforced by canopy on proof about THIS message.
 * A domain that DKIM-signs its own mail but publishes no DMARC record
   (dimagi-associate.com) can still prove a message: aligned DKIM.
-* The interface is live state on canopy-web, saved as the YAML its editor wrote.
+
+The interface saved as YAML is tested in tests/test_declared_interface.py.
 """
 from __future__ import annotations
 
 import pytest
 from django.contrib.auth.models import User
-from django.test import Client
 
-from apps.agents.interface import ASK, FULL, InterfaceError, parse
+from apps.agents import roles
+from apps.agents.interface import ASK, FULL
 from apps.agents.models import Agent
 from apps.contacts.email_auth import grade_of
 from apps.contacts.models import Contact
@@ -21,13 +21,23 @@ from apps.harness import caller_context, services
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
-from .access_helpers import publish
+from .access_helpers import allow, declare
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 DOMAINS = ["dimagi.com", "dimagi-ai.com", "dimagi-associate.com"]
-ACE = {"full": [f"contact@{d}:verified" for d in DOMAINS] + [f"member@{d}" for d in DOMAINS],
-       "capabilities": {"ask": {"callers": ["contact"]}}}
+
+
+def _ace(agent, *extra_contact_capabilities):
+    """Verified contacts and members of each trusted domain are editors; any contact may `ask`
+    (and use `extra_contact_capabilities`)."""
+    declare(agent, {name: {} for name in ("ask", *extra_contact_capabilities)})
+    for d in DOMAINS:
+        allow(agent, role=roles.EDITOR, contact=True, domain=d, verified=True)
+        allow(agent, role=roles.EDITOR, domain=d)
+    allow(agent, role=roles.READ_ONLY, contact=True)
+    for name in extra_contact_capabilities:
+        allow(agent, capability=name, contact=True)
 
 
 def _hdr(from_domain, *, dmarc=None, dkim_d=None):
@@ -45,7 +55,7 @@ def w():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op)
-    publish(agent, ACE, editors=False)
+    _ace(agent)
     return {"op": op, "ws": ws, "agent": agent}
 
 
@@ -109,60 +119,7 @@ def test_a_member_at_a_trusted_domain_gets_every_mcp_tool(w):
     from apps.agents.interface import offered_to
 
     agent = w["agent"]
-    publish(agent, {**ACE, "capabilities": {"ask": {"callers": ["contact"]},
-                                            "report": {"callers": ["contact"]}}}, editors=False)
+    _ace(agent, "report")
     mem = User.objects.create_user("mem", "mem@dimagi-ai.com", "pw")
     M.objects.create(user=mem, workspace=w["ws"], role=M.EDITOR)
     assert offered_to(mem, agent) == ["ask", "report"]
-
-
-def test_full_rules_are_refused_and_point_at_the_access_list():
-    with pytest.raises(InterfaceError, match="access list"):
-        parse({"full": ["everyone"]})
-    with pytest.raises(InterfaceError, match="access list"):
-        parse({"full": ["contact@*.com"]})
-
-
-# --- held on canopy-web as YAML ------------------------------------------------------
-
-YAML = """# What ACE offers.
-capabilities:
-  ask:
-    role: viewer   # anyone who may ask
-"""
-
-
-def _client(u):
-    c = Client()
-    c.force_login(u)
-    return c
-
-
-def test_the_yaml_is_saved_verbatim_and_parsed(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface", {"source": YAML},
-                             content_type="application/json")
-    assert r.status_code == 200, r.content
-    body = r.json()
-    assert body["source"].strip() == YAML.strip()                     # comments kept
-    assert body["interface"]["capabilities"]["ask"]["role"] == "viewer"
-    assert _client(w["op"]).get("/api/agents/ace/interface").json()["source"].strip() == YAML.strip()
-
-
-def test_bad_yaml_is_a_422_that_says_why(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface", {"source": "capabilities: [unclosed"},
-                             content_type="application/json")
-    assert r.status_code == 422 and "YAML" in r.content.decode()
-
-
-def test_yaml_cannot_construct_objects(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface",
-                             {"source": "!!python/object/apply:os.system ['id']"},
-                             content_type="application/json")
-    assert r.status_code == 422
-
-
-def test_exactly_one_of_source_or_interface(w):
-    c = _client(w["op"])
-    assert c.put("/api/agents/ace/interface", {}, content_type="application/json").status_code == 422
-    assert c.put("/api/agents/ace/interface", {"source": YAML, "interface": {}},
-                 content_type="application/json").status_code == 422

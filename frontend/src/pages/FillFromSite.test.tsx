@@ -10,7 +10,7 @@ vi.mock('@/api/connectedApps', async (importOriginal) => ({
   discoverSite: (...args: unknown[]) => discoverSite(...args),
 }))
 
-const { FillFromSite, SiteAddressFill, discoverySource } = await import('./ConnectedAppsPage')
+const { FillFromSite, SiteAddressFill, discoverySource } = await import('./connectedApps/SiteFactsTable')
 
 afterEach(() => {
   cleanup()

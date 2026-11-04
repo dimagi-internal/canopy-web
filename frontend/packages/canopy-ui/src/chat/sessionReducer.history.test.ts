@@ -44,6 +44,14 @@ describe("a reconnect's snapshot keeps the history this tab loaded", () => {
     expect(next.has_more_before).toBe(true)
   })
 
+  it("keeps nothing from before a reset: a rebuilt snapshot replaces the rows", () => {
+    // The tab holds 0..20; the rebuild kept only the current transcript, renumbered.
+    const prev = state({ messages: range(0, 20), has_more_before: false })
+    const next = sessionReducer(prev, snapshot({ messages: range(5, 9), has_more_before: false, rebuilt: true }))
+    expect(next.messages.map((m) => m.turn_index)).toEqual(range(5, 9).map((m) => m.turn_index))
+    expect(next.has_more_before).toBe(false)
+  })
+
   it("takes the snapshot's word when nothing older was loaded", () => {
     const next = sessionReducer(state({ messages: range(11, 20) }), snapshot({ messages: range(11, 22), has_more_before: true }))
     expect(next.messages).toHaveLength(12)

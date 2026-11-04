@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
+import { usePolled } from '@/hooks/usePolled'
 import { runnerHref } from '@/lib/scopedLinks'
 import {
   approveRunnerInvitation,
@@ -8,6 +9,7 @@ import {
   RunnerInvitationError,
   type RunnerInvitationOut,
 } from '@/api/runnerInvitations'
+import { Td, Th, Tr } from '@/components/DataTable'
 
 const STATUS_TEXT: Record<RunnerInvitationOut['status'], string> = {
   pending: 'Waiting for your approval.',
@@ -60,13 +62,13 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
   // Approved but not yet paired: the box asks every 15s, so keep re-reading
   // until it has (`consumed`) or the invitation runs out.
   const waitingForBox = inv?.status === 'approved'
-  useEffect(() => {
-    if (!invitationId || !waitingForBox) return
-    const timer = setInterval(() => {
-      getRunnerInvitation(invitationId).then(setInv).catch(() => {})
-    }, PAIR_POLL_MS)
-    return () => clearInterval(timer)
-  }, [invitationId, waitingForBox])
+  usePolled(
+    async (signal) => {
+      const next = await getRunnerInvitation(invitationId as string).catch(() => null)
+      if (next && !signal.aborted) setInv(next)
+    },
+    { ms: PAIR_POLL_MS, deps: [invitationId], enabled: Boolean(invitationId) && waitingForBox, immediate: false },
+  )
 
   if (!invitationId) return null
   if (loadError) {
@@ -150,20 +152,20 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
             <table className="mt-4 w-full text-left text-[13px]" aria-label="Runners">
               <thead className="text-[12px] text-muted-foreground">
                 <tr>
-                  <th className="py-1 pr-3 font-medium">Runner</th>
-                  <th className="py-1 pr-3 font-medium">Serves</th>
-                  <th className="py-1 pr-3 font-medium">Workspace</th>
-                  <th className="py-1 font-medium">Paired</th>
+                  <Th density="compact-gap">Runner</Th>
+                  <Th density="compact-gap">Serves</Th>
+                  <Th density="compact-gap">Workspace</Th>
+                  <Th>Paired</Th>
                 </tr>
               </thead>
               <tbody>
                 {runners.map((r) => (
-                  <tr key={r.name} className="border-t border-border" data-testid="invitation-runner">
-                    <td className="py-1 pr-3 font-mono">{r.name}</td>
-                    <td className="py-1 pr-3">{r.kind === 'agent' ? `only agent ${r.slug}` : 'its workspace tree'}</td>
-                    <td className="py-1 pr-3">{r.workspace}</td>
-                    <td className="py-1 font-mono text-[12px]">{r.runner_id ?? '—'}</td>
-                  </tr>
+                  <Tr rule="top" key={r.name} data-testid="invitation-runner">
+                    <Td density="compact-gap" mono>{r.name}</Td>
+                    <Td density="compact-gap">{r.kind === 'agent' ? `only agent ${r.slug}` : 'its workspace tree'}</Td>
+                    <Td density="compact-gap">{r.workspace}</Td>
+                    <Td mono className="text-[12px]">{r.runner_id ?? '—'}</Td>
+                  </Tr>
                 ))}
               </tbody>
             </table>

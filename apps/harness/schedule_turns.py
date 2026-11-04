@@ -25,9 +25,8 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.models import AgentTask
-from apps.huddles.models import ProjectCheckin
 
-from . import triggers
+from . import schedule_hooks, triggers
 from .models import (
     AgentSchedule,
     Turn,
@@ -75,11 +74,6 @@ def schedule_initiator(schedule, *, manual: bool = False):
     return who.system(via=via, accountable=schedule.created_by)
 
 
-def checkin_of(schedule):
-    """The project check-in (apps/huddles) this schedule runs, or None."""
-    return ProjectCheckin.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
-
-
 def fire_after_of(schedule) -> dt.datetime:
     """The lower bound a due-slot search starts from — the one anchor every firer
     (the server's own clock, `schedule_clock`, and a runner, via
@@ -99,7 +93,7 @@ def fire_after_of(schedule) -> dt.datetime:
 def _refuse_if_stopped(schedule, *, slot: dt.datetime | None = None) -> None:
     """Raise `triggers.TriggerRefused` when the trigger's creator no longer holds the
     right to it (`triggers.refusal`). Loud, never silent: the refusal is written to
-    the workspace event log here, and `alerts_trigger` keeps an alert open on the
+    the workspace event log here, and `alerts.trigger` keeps an alert open on the
     agent until it is fixed. A refused SLOT is consumed (`last_slot`), so the clock
     and every runner stop re-reporting it each tick; the next slot is judged afresh."""
     reason = triggers.refusal(schedule)
@@ -156,10 +150,8 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
             f"schedule {schedule.id} is a one-off for {schedule.run_once_at.isoformat()}, "
             f"not {slot.isoformat()}"
         )
-    if checkin_of(schedule) is not None:
-        from apps.huddles import checkins
-
-        _run, created = checkins.announce(schedule, slot)
+    if schedule_hooks.owns(schedule):
+        _run, created = schedule_hooks.announce(schedule, slot)
         return None, created
     key = f"sched:{schedule.id}:{slot.isoformat()}"
     with transaction.atomic():
@@ -213,10 +205,8 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
     from .services import enqueue_turn  # services.py imports this module
 
     _refuse_if_stopped(schedule)
-    if checkin_of(schedule) is not None:
-        from apps.huddles import checkins
-
-        checkins.announce(schedule, timezone.now(), manual=True)
+    if schedule_hooks.owns(schedule):
+        schedule_hooks.announce(schedule, timezone.now(), manual=True)
         return None
 
     with transaction.atomic():

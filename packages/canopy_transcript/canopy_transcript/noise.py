@@ -17,6 +17,9 @@ rule that holds in one of them.
 """
 from __future__ import annotations
 
+# What Escape writes as a `type: "user"` record (`questions.turn_ended_in_interrupt`).
+INTERRUPT_MARKER = "[request interrupted by user"
+
 # Matched case-insensitively against the message's leading text.
 SYSTEM_NOISE_PREFIXES = (
     "<task-notification>",
@@ -35,7 +38,7 @@ SYSTEM_NOISE_PREFIXES = (
     # across the fleet (81 rows): the bare marker and "…for tool use", both
     # caught by this prefix. The information it carries — that the turn was
     # interrupted — is already obvious from the message that follows it.
-    "[request interrupted by user",
+    INTERRUPT_MARKER,
     # Reading an image makes Claude Code add a `type: "user"` record giving its
     # dimensions ("[Image: original 1440x3214, displayed at 896x2000. Multiply
     # coordinates by …]"), and a Stop hook that blocks writes its feedback the

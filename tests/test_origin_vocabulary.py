@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentTask
 from apps.harness import services
-from apps.agents.models import AgentTask
 from apps.harness.models import Turn
 from apps.harness.schemas import TurnIn, TurnSpecIn
 from apps.workspaces.testing import a_workspace
-
 
 _EXT = iter(range(1, 10_000))
 
@@ -24,13 +22,13 @@ def _ext() -> str:
     return f"T{next(_EXT)}"
 
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.guard]
 
 
 def test_the_vocabulary_is_exactly_seven_values():
     assert {v for v, _label in Turn.ORIGIN_CHOICES} == {
         "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack",
-        "local",  # a person's own session on their private runner (apps/harness/local.py)
+        "local",  # a person's own session on their private runner (apps/harness/local_turns.py)
     }
 
 

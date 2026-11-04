@@ -2,7 +2,7 @@
 
 The roster composes four sources (owner, explicit admins, implicit workspace-owner
 admins, the agent's access list). It must say exactly what the harness would
-do, so the parity test below checks it against `interface.capability_for` for a
+do, so the parity test below checks it against `access.decide_for_turn` for a
 real signed-in turn of every member.
 """
 from __future__ import annotations
@@ -11,12 +11,12 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import interface
+from apps.agents import access, interface, roles
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.access_helpers import editors_run, publish
+from tests.access_helpers import allow, declare, editors_run
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -88,13 +88,16 @@ def test_an_editor_line_for_workspace_editors_means_admins_and_editors_only(worl
 
 def test_the_access_list_confines_members_by_their_line(world):
     a = world["agent"]
-    publish(a, {
-        "full": ["member@dimagi.com:verified", "contact@dimagi.com:verified"],
-        "capabilities": {
-            "ask": {"description": "Ask a question", "callers": ["member", "contact"]},
-            "status": {"description": "Status", "callers": ["member@dimagi.com"]},
-        },
+    declare(a, {
+        "ask": {"description": "Ask a question"},
+        "status": {"description": "Status"},
     })
+    allow(a, role=roles.EDITOR, domain="dimagi.com")
+    allow(a, role=roles.EDITOR, contact=True, domain="dimagi.com", verified=True)
+    allow(a, role=roles.READ_ONLY)
+    allow(a, role=roles.READ_ONLY, contact=True)
+    allow(a, capability="status", domain="dimagi.com")
+    editors_run(a)
     body = _get(world["ed"]).json()
     rows = _by_email(body)
     # a dimagi member is lifted to the whole agent by their editor line
@@ -109,9 +112,9 @@ def test_the_access_list_confines_members_by_their_line(world):
 
 def test_member_listed_nowhere_has_no_access(world):
     a = world["agent"]
-    publish(a, {
-        "capabilities": {"ask": {"description": "Ask", "callers": ["member@dimagi.com"]}},
-    })
+    declare(a, {"ask": {"description": "Ask"}})
+    allow(a, role=roles.READ_ONLY, domain="dimagi.com")
+    editors_run(a)
     rows = _by_email(_get(world["boss"]).json())
     assert rows["vw@partner.org"]["access"] == "none"
     assert rows["vw@partner.org"]["capabilities"] == []
@@ -130,10 +133,10 @@ def test_non_member_gets_404(world):
 def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
     a = world["agent"]
     if published:
-        publish(a, {
-            "full": ["member@dimagi.com:verified"],
-            "capabilities": {"ask": {"description": "Ask", "callers": ["member@partner.org"]}},
-        })
+        declare(a, {"ask": {"description": "Ask"}})
+        allow(a, role=roles.EDITOR, domain="dimagi.com")
+        allow(a, role=roles.READ_ONLY, domain="partner.org")
+        editors_run(a)
     else:
         editors_run(a)
     rows = _by_email(_get(world["boss"]).json())
@@ -141,7 +144,7 @@ def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
         user = world[key]
         turn = Turn(agent=a, prompt="hi", initiator_kind=who.USER,
                     initiator_assurance=who.SESSION, initiator_user=user)
-        decided = interface.capability_for(turn, a)
+        decided = access.decide_for_turn(turn, a).stamp
         row = rows[user.email]
         if decided == interface.FULL:
             assert row["access"] == "full", user.email
@@ -159,7 +162,8 @@ def test_the_roster_lists_the_agents_own_login_as_the_system_not_a_person(tmp_pa
     from django.test import Client
 
     from apps.agents.models import Agent
-    from apps.workspaces.models import Workspace, WorkspaceMembership as M
+    from apps.workspaces.models import Workspace
+    from apps.workspaces.models import WorkspaceMembership as M
 
     mk = get_user_model().objects.create_user
     boss, bot = mk("rboss", "rboss@dimagi.com", "pw"), mk("rhal", "rhal@dimagi-ai.com", "pw")

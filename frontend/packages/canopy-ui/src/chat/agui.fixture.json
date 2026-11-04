@@ -118,7 +118,8 @@
         "author": {
           "name": "Jon",
           "user_id": 7
-        }
+        },
+        "client_id": "c-41"
       }
     },
     "agui": [
@@ -130,7 +131,8 @@
             "author": {
               "name": "Jon",
               "user_id": 7
-            }
+            },
+            "client_id": "c-41"
           }
         },
         "messageId": "u1",

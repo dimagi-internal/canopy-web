@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import uuid
 
-from django.db.models import Q
 from django.http import HttpRequest, StreamingHttpResponse
 from ninja import Status
 from ninja.errors import HttpError
@@ -22,7 +21,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import (
-    claim,
+    claim_reach,
     clis,
     ledger,
     sensitivity,
@@ -39,13 +38,11 @@ from . import (
 from .api import (  # noqa: E402
     ALLOWED_EVENT_KINDS,
     TRANSCRIPT_APPEND_MAX_BYTES,
-    agents_own_thread_q,
+    caller_context_turn_or_404,
     reporting_turn_or_404,
     router,
-    site_turn_q,
     turn_content_or_404,
     turn_or_404,
-    visible_sessions,
 )
 from .models import (
     Turn,
@@ -68,6 +65,7 @@ from .schemas import (
     UnclaimableTurnOut,
 )
 from .turn_agent_tokens import turn_agent
+from .turn_queries import site_turn_q, visible_turns_qs
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +84,9 @@ def list_unclaimable_turns(request: HttpRequest):
     # a caller in two trees who names none gets a 422).
     ws_slugs = wsvc.request_workspace_slugs(request)
     site_q = site_turn_q(request)
-    rows = (claim.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
+    rows = (claim_reach.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
             if site_q is not None else
-            claim.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
+            claim_reach.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
     # Each row says whether the caller may cancel it, so the warning offers the
     # one fix that always works right where it is shown.
     turns = Turn.objects.select_related("agent", "chat_session").in_bulk([r["turn_id"] for r in rows])
@@ -143,64 +141,6 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
     # Through the same content gate the get/list routes use: a replay hands back
     # an existing row, and the caller sees of it only what they may read.
     return Status(201 if created else 200, turn_access.redact([turn], request.user)[0])
-
-
-def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
-    """Every turn this caller may see LISTED — the exact tenant + site filter
-    `list_turns` applies, newest first. Shared so a derived view over turns (the
-    huddles API) can never show a turn `/api/harness/turns/` would not. Content
-    is a separate gate: rows still go through `turn_access` before their prompt
-    or transcript is read.
-
-    The read rule applies (`wsvc.read_scope`): pinned, the pin and the caller's
-    workspaces below it (a `/api/w/dimagi/` list includes connect's turns for a
-    member of both); unpinned, a caller whose workspaces sit in more than one
-    tree gets a 422 rather than a list mixing organisations.
-
-    `slugs` overrides the scope outright, for a by-id view that has already
-    resolved its subject's tree (`huddles.get_huddle`, `threads.get_thread`)."""
-    if slugs is None:
-        slugs = wsvc.request_workspace_slugs(request)
-    qs = Turn.objects.select_related(
-        "agent", "claimed_by", "initiator_user", "initiator_contact",
-        "pinned_runner", "requested_turn_mode_by",
-        # A chat turn's session and its agent are read per row by TurnOut.
-        "chat_session", "chat_session__agent",
-        # TurnOut.canopy_session_url (an agent/project turn's conversation).
-        "canopy_session",
-        # TurnOut.raised_from_task_ext_id.
-        "raised_from_task",
-    ).order_by("-created_at")
-    # Tenant filter, split by target kind (agent / project / session) — mirrors
-    # claim_next_turn's tenant_q (services.py) and turn_or_404 (this module).
-    #
-    # Security review 2026-07-26, hole B: this used to be one clause,
-    # `Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True)`,
-    # with two independent problems. (1) The isnull leg left an unhomed
-    # agent's turns (TurnOut: prompt, origin_ref, session_id) visible to ANY
-    # authenticated caller — more permissive than `agent_for_read`'s fail-closed
-    # gate, recreating the exact list-vs-gate drift `_runner_visibility_q`'s
-    # docstring warns about (a turn the list shows, then 404s on every
-    # action). (2) `agent__workspace_id` traverses a nullable FK: for a
-    # PROJECT or SESSION turn (agent_id IS NULL), the LEFT JOIN makes
-    # `agent__workspace_id__isnull=True` true unconditionally — so that one
-    # clause also leaked every tenant's project/session turns to every
-    # authenticated user, regardless of the turn's own workspace. (Confirmed
-    # empirically pre-fix: an unrelated stranger's GET returned another
-    # tenant's project turn.) Both close by gating each target kind on its
-    # own workspace source, with no null-workspace escape hatch anywhere in
-    # this list — unlike claim_next_turn, which keeps one for agent turns
-    # specifically as a documented, claim-routing-only exception.
-    qs = qs.filter(
-        (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
-        | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
-        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs)
-           & (Q(chat_session__in=visible_sessions(request)) | agents_own_thread_q()))
-    )
-    site_q = site_turn_q(request)
-    if site_q is not None:
-        qs = qs.filter(site_q)
-    return qs
 
 
 @router.get("/turns/", response=list[TurnOut])
@@ -293,7 +233,7 @@ def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
     # /api/contacts/, which any member of the tenant can already read.
     from .caller_context import build
 
-    return {"envelope": build(turn_content_or_404(request, turn_id), reader_user=request.user)}
+    return {"envelope": build(caller_context_turn_or_404(request, turn_id), reader_user=request.user)}
 
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)

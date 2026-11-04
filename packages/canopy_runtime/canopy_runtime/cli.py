@@ -3,8 +3,8 @@
 
 It used to also be a reconciler that resolved an agent's secrets and
 provisioned a box. No runner ever called it: an agent is prepared by canopy's
-``canopy agent prepare`` and its env filled by ``canopy cred sync`` (canopy
-docs/architecture/agent-setup-lifecycle.md), so it was retired (2026-10-15).
+``canopy agent prepare`` and its env filled by ``canopy cred sync`` (the canopy repo's
+agent-setup-lifecycle doc), so it was retired (2026-10-15).
 """
 from __future__ import annotations
 

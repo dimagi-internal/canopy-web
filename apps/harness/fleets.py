@@ -66,7 +66,7 @@ from apps.events import activity
 from apps.workspaces import permissions as perms
 
 from . import aws_iam_proof, credential_sets, device_keys
-from .claim import _assignment_rows_for_turns, _coverage
+from .claim_reach import _assignment_rows_for_turns, _coverage
 from .models import (
     SERVES,
     FleetHold,
@@ -790,7 +790,7 @@ def _shrink(fleet: RunnerFleet, aws: Aws, in_service: list[Runner], f: dict, des
 def _retire_gone(m: Runner, now: dt.datetime) -> None:
     """Its instance is no longer in the group (terminated, or detached by hand): the
     runner is retired, and what it was running is queued again (`requeue_lost`)."""
-    from .closing import close_turn  # noqa: PLC0415 — closing imports the services stack
+    from .turn_close import close_turn  # noqa: PLC0415 — closing imports the services stack
 
     for turn in Turn.objects.filter(claimed_by=m, status__in=list(EXECUTING)):
         if not requeue_lost(turn):

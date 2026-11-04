@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import cdp_control, emdash
+from .platform_jobs import no_window
 from .client import ClientError
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,7 @@ def _clone(ask: _Ask, run: Run) -> None:
     try:
         ask.dest.parent.mkdir(parents=True, exist_ok=True)
         proc = run(["git", "clone", "--", ask.repo_url, str(ask.dest)], capture_output=True, text=True,
-                   timeout=CLONE_TIMEOUT, env=_git_env())
+                   timeout=CLONE_TIMEOUT, env=_git_env(), **no_window())
     except (OSError, subprocess.SubprocessError) as exc:
         ask.error = f"git clone {ask.repo_url} failed: {exc}"
         return
@@ -197,7 +198,7 @@ def _existing_checkout_problem(ask: _Ask, run: Run) -> str:
     """'' when the folder already there is a checkout of this repo; else why not."""
     try:
         proc = run(["git", "-C", str(ask.dest), "remote", "get-url", "origin"], capture_output=True,
-                   text=True, timeout=30, env=_git_env())
+                   text=True, timeout=30, env=_git_env(), **no_window())
     except (OSError, subprocess.SubprocessError) as exc:
         return f"{ask.dest} exists and could not be read as a git checkout: {exc}"
     if proc.returncode != 0:

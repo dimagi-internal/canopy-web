@@ -250,7 +250,7 @@ def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False, facts=No
     # A cloud box serves an agent only once its bootstrap has cloned it, and every
     # bootstrap reports per agent — so no report from that box means it has not yet.
     reported = set(AgentBootstrapReport.objects.filter(agent=agent).values_list("runner_name", flat=True))
-    ready = [r for r in takers if r.kind != Runner.CLOUD or r.name in reported]
+    ready = [r for r in takers if r.kind != Runner.CLOUD or r.report_names & reported]
     unset = [r for r in takers if r not in ready]
     online = [r for r in ready if r.live_status == Runner.ONLINE]
     title = "Give it a runner, to run on its own"

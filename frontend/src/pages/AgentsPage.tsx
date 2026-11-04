@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { listAgentRoster, type AgentRosterRow } from '@/api/agents'
+import { agentSummary } from '@/lib/agentSummary'
 import { relativeAge } from '@/lib/relativeAge'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '../lib/scopedLinks'
+import { Td, Th, Tr } from '@/components/DataTable'
 
-// The workspace's agents, one row each: who it is and what it is doing — tasks
+// The workspace's agents, one row each: who it is, what it is for (About: its
+// description, shown whole, not clamped), and what it is doing — tasks
 // open and waiting on a person, active projects, and its turns (the last one and
 // how it ended, and how many ran and failed this week). A table, so the fleet
 // can be scanned; each row opens the agent's own workspace.
@@ -77,30 +80,40 @@ export function AgentsPage() {
           <table className="w-full text-[13px]">
             <thead className="bg-card text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Agent</th>
-                <th className="px-3 py-2 font-medium">Last turn</th>
-                <th className="px-3 py-2 text-right font-medium" title="Turns in the last 7 days">Turns 7d</th>
-                <th className="px-3 py-2 text-right font-medium" title="Failed or lost in the last 7 days">Failed</th>
-                <th className="px-3 py-2 text-right font-medium" title="Tasks not done">Open</th>
-                <th className="px-3 py-2 text-right font-medium" title="Open tasks waiting on a person">Waiting</th>
-                <th className="px-3 py-2 text-right font-medium" title="Active projects">Projects</th>
-                <th className="px-3 py-2 font-medium">Mode</th>
-                <th className="px-3 py-2 font-medium">Owner</th>
+                <Th density="roomy">Agent</Th>
+                <Th density="roomy" title="What the agent is for (hover for its full description)">About</Th>
+                <Th density="roomy">Last turn</Th>
+                <Th density="roomy" className="text-right" title="Turns in the last 7 days">Turns 7d</Th>
+                <Th density="roomy" className="text-right" title="Failed or lost in the last 7 days">Failed</Th>
+                <Th density="roomy" className="text-right" title="Tasks not done">Open</Th>
+                <Th density="roomy" className="text-right" title="Open tasks waiting on a person">Waiting</Th>
+                <Th density="roomy" className="text-right" title="Active projects">Projects</Th>
+                <Th density="roomy">Mode</Th>
+                <Th density="roomy">Owner</Th>
               </tr>
             </thead>
             <tbody>
-              {agents.map((a) => (
-                <tr key={a.slug} className="border-t border-border align-top hover:bg-card/60">
-                  <td className="px-3 py-2">
-                    <Link to={a.url} className="flex items-start gap-2.5">
+              {agents.map((a) => {
+                const about = agentSummary(a.name, a.description)
+                return (
+                <Tr rule="top" top key={a.slug} className="hover:bg-card/60">
+                  <Td density="roomy">
+                    <Link to={a.url} className="flex items-center gap-2.5">
                       <Avatar agent={a} />
-                      <span className="min-w-0">
-                        <span className="block font-medium text-foreground hover:text-primary">{a.name}</span>
-                        {a.description && <span className="line-clamp-1 max-w-md text-[12px] text-muted-foreground">{a.description}</span>}
-                      </span>
+                      <span className="font-medium text-foreground hover:text-primary">{a.name}</span>
                     </Link>
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2">
+                  </Td>
+                  <Td density="roomy">
+                    {about ? (
+                      <span className="block max-w-md whitespace-normal text-[12px] leading-snug text-foreground-secondary md:min-w-[16rem]"
+                        title={a.description}>
+                        {about}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground" title={a.description || undefined}>—</span>
+                    )}
+                  </Td>
+                  <Td density="roomy" nowrap>
                     {a.last_turn_at ? (
                       <span className={FAILED.has(a.last_turn_status) ? 'text-destructive' : 'text-foreground-secondary'}
                         title={`${a.last_turn_status} · ${new Date(a.last_turn_at).toLocaleString()}`}>
@@ -110,18 +123,19 @@ export function AgentsPage() {
                     ) : (
                       <span className="text-muted-foreground">never</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-right"><Num n={a.turns_7d} /></td>
-                  <td className="px-3 py-2 text-right">
+                  </Td>
+                  <Td density="roomy" align="right"><Num n={a.turns_7d} /></Td>
+                  <Td density="roomy" align="right">
                     {a.failed_7d ? <span className="tabular-nums font-medium text-destructive">{a.failed_7d}</span> : <Num n={0} />}
-                  </td>
-                  <td className="px-3 py-2 text-right"><Num n={a.open_tasks} /></td>
-                  <td className="px-3 py-2 text-right"><Num n={a.waiting_tasks} warn /></td>
-                  <td className="px-3 py-2 text-right"><Num n={a.active_projects} /></td>
-                  <td className="px-3 py-2 text-foreground-secondary">{a.turn_mode}</td>
-                  <td className="px-3 py-2 text-foreground-secondary">{a.owner_email ?? '—'}</td>
-                </tr>
-              ))}
+                  </Td>
+                  <Td density="roomy" align="right"><Num n={a.open_tasks} /></Td>
+                  <Td density="roomy" align="right"><Num n={a.waiting_tasks} warn /></Td>
+                  <Td density="roomy" align="right"><Num n={a.active_projects} /></Td>
+                  <Td density="roomy" tone="secondary">{a.turn_mode}</Td>
+                  <Td density="roomy" tone="secondary">{a.owner_email ?? '—'}</Td>
+                </Tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -43,6 +43,15 @@ PROTOCOL_VERSION = "2026-01-26"
 DEFAULT_VISIBILITY = ("model", "app")
 MODEL, APP = "model", "app"
 
+#: The /ide close-review View's resource and each of its tools' `_meta`, declared
+#: once: `apps.mcp.tools.close_review` decorates its tools with it, and
+#: `host_grants.self_host._index_views` records it in the canopy-web site's UI index.
+CLOSE_REVIEW_VIEW_URI = "ui://canopy/ide/close-review"
+VIEW_TOOL_META: dict[str, dict] = {
+    "propose_session_closes": {"ui": {"resourceUri": CLOSE_REVIEW_VIEW_URI, "visibility": ["model", "app"]}},
+    "close_proposed_sessions": {"ui": {"resourceUri": CLOSE_REVIEW_VIEW_URI, "visibility": ["app"]}},
+}
+
 #: An index entry not seen in a listing for this long is dropped: a host that
 #: retired a View should stop getting one rendered for it.
 INDEX_TTL = timedelta(days=7)

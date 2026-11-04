@@ -23,7 +23,7 @@ CONTENT = {
     "agents": [{
         "slug": "labsdata", "name": "labsdata", "description": "data questions",
         "workspace": "connect", "owner": "Jo", "url": "https://canopy.example/w/connect/agents/labsdata",
-        "capabilities": [{"name": "data", "description": "ask", "callers": ["contact", "member"],
+        "capabilities": [{"name": "data", "description": "ask",
                           "handles_sensitive": True, "sensitive_set_by": "Jo", "sensitive_set_at": "2026-10-22T22:00:09Z"}],
         "runners": {"flags_available": ["sensitive_data"], "ready_with": {"sensitive_data": True}},
         "ready": True, "problems": [],

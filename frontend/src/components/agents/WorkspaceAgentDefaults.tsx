@@ -3,12 +3,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { addAgentDefault, listAgentDefaults, removeAgentDefault, type AccessLineOut, type AgentDefaultsOut } from '@/api/agents'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { AccessLineForm } from './AccessLineForm'
-import { roleWord } from './accessWords'
+import { lineWhat } from './accessWords'
+import { Td, Tr } from '@/components/DataTable'
 
 // DEFAULT ACCESS FOR AGENTS: lines every agent in this workspace and below inherits, unless
 // that agent opts out (its Access setting). Workspace admins change them; a default that
 // gives the whole agent (editor) is the workspace OWNER's call. The server says what the
-// caller may do (`can_edit`, `can_give_editor`) and refuses the rest in its own words.
+// caller may do (`can_edit`, `can_give_write`) and refuses the rest in its own words.
 export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
   const { workspaces } = useWorkspace()
   const [data, setData] = useState<AgentDefaultsOut | null>(null)
@@ -53,13 +54,13 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
         <table className="mb-3 w-full text-[12px]">
           <tbody>
             {data.lines.map((l) => (
-              <tr key={l.id} data-testid="agent-default" className="border-b border-border/50">
-                <td className="py-1 pr-3 text-foreground">{l.who}</td>
-                <td className="py-1 pr-3 text-foreground">{roleWord(l.role)}</td>
-                <td className="py-1 text-muted-foreground">
+              <Tr rule="bottom-soft" key={l.id} data-testid="agent-default">
+                <Td density="compact-gap" tone="foreground">{l.who}</Td>
+                <Td density="compact-gap" tone="foreground">{lineWhat(l)}</Td>
+                <Td tone="muted">
                   {l.manual_only ? 'needs approval before anything goes out' : ''}
-                </td>
-                <td className="py-1 text-right">
+                </Td>
+                <Td align="right">
                   {l.can_edit && (
                     <button
                       type="button"
@@ -70,8 +71,8 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
                       Remove
                     </button>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </Tr>
             ))}
           </tbody>
         </table>
@@ -87,7 +88,7 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
         <AccessLineForm
           roles={data.roles}
           workspaces={workspaces.map((w) => [w.slug, w.display_name] as [string, string])}
-          canGiveEditor={data.can_give_editor}
+          canGiveWrite={data.can_give_write}
           submitLabel="Add default"
           onAdd={async (line) => {
             const added = await addAgentDefault(workspace, line)
@@ -102,9 +103,9 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
           {notice}
         </p>
       )}
-      {data?.can_edit && !data.can_give_editor && (
+      {data?.can_edit && !data.can_give_write && (
         <p className="m-0 mt-2 text-[11px] text-muted-foreground">
-          Only a workspace owner can give editor to everyone as a default.
+          Only a workspace owner can give read & write or editor to everyone as a default.
         </p>
       )}
     </div>

@@ -58,6 +58,20 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
     is in flight — post an update, or (after `detach_session_from_slack`) bind
     again, only in the conversation's own channel. To move the conversation to
     a fresh thread in one step, use `start_new_slack_thread`.
+
+    `actions` puts reply buttons under a post into a bound thread (`bind`, an
+    update to a bound session, or `turn_id`; refused on a broadcast), so a person
+    can answer in one tap: `[{"label": "Book all", "reply": "book all", "style":
+    "primary"}, {"label": "Skip today", "reply": "skip today"}]`. `style` is
+    optional: `primary` or `danger`. Up to 25; a label over 75 characters is cut
+    short. Pressing one sends `reply` to this session as a message from whoever
+    pressed it, exactly as if they had typed it in the thread, under the same
+    rules as a typed reply; you handle it when it arrives. Each button works on its
+    own: the first click on it that reaches the session replaces that button with
+    who chose what, the others stay pressable, and a person may press several. Pass
+    `exclusive: true` for a post that takes one choice, whose first click removes all
+    its buttons. A click that cannot act tells that person it did nothing and leaves
+    the button in place.
     """
     visible = session_api.readable_sessions(request)
     own = False
@@ -78,7 +92,8 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
                                  "claude_session_id or session_id") from None
     result = share.share_session(request.user, channel=payload.channel, summary=payload.summary,
                                  mode=payload.mode, session=session, workspace=payload.workspace,
-                                 own_turn=own)
+                                 own_turn=own, actions=[a.model_dump() for a in payload.actions],
+                                 exclusive=payload.exclusive)
     if result.status == share.SENSITIVE:
         raise HttpError(403, result.message)
     if not result.ok:

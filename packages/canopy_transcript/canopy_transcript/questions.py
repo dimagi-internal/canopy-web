@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import time
 
+from .noise import INTERRUPT_MARKER
 from .records import read_tail_records
 
 ASK_TOOL = "AskUserQuestion"
@@ -332,6 +333,79 @@ def turn_ended_in_api_error(payload) -> bool:
         if record.get("type") in _NON_CONVERSATIONAL or record.get("isSidechain"):
             continue
         return bool(record.get("isApiErrorMessage"))
+    return False
+
+
+def turn_ended_in_interrupt(path) -> bool:
+    """Whether the last thing this session's conversation said is an Escape.
+
+    **The second turn ending that fires no `Stop`.** Escape makes Claude Code write
+    `[Request interrupted by user]` (or `… for tool use`) as a `user` record and
+    return to the prompt, so emdash's `agent_status`, which only hooks move, stays
+    "working" until the next prompt ends.
+
+    Only a `user` or `assistant` record decides. Everything else is bookkeeping that
+    lands after the stop (`system/away_summary` arrived three minutes after one,
+    `file-history-snapshot`, `last-prompt`), except an `api-request*`, which is
+    new work: the next prompt's request can be written before that prompt's record.
+
+    Fails closed: an unreadable transcript answers False, which leaves the flag as
+    emdash reported it.
+    """
+    for record in reversed(read_tail_records(path)):
+        kind = record.get("type")
+        if isinstance(kind, str) and kind.startswith("api-request"):
+            return False
+        if kind not in ("user", "assistant") or record.get("isSidechain"):
+            continue
+        return kind == "user" and _is_interrupt_marker(record)
+    return False
+
+
+def _is_interrupt_marker(record: dict) -> bool:
+    """A `text` block only: a `tool_result` carrying these words is an agent that
+    read them somewhere, not an agent that was stopped."""
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content.lower().startswith(INTERRUPT_MARKER)
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(b, dict) and b.get("type") == "text"
+               and str(b.get("text") or "").lower().startswith(INTERRUPT_MARKER)
+               for b in content)
+
+
+def turn_ended_without_stop(payload) -> bool:
+    """Whether this session's turn is already over, though no `Stop` hook said so.
+
+    An API error is one such ending (`turn_ended_in_api_error`); a hook answering
+    `continue: false` is another. credential_guard ended Ada's debug turn 05590519
+    that way on 2026-11-03, a call the model had already started landed after the
+    stop, and the idle `Notification` a minute later read as a mid-turn block. So
+    the last thing said proves nothing there. `turn_duration` does: Claude Code
+    writes it as a turn ends, and a turn in progress has none after its own prompt.
+
+    **Fails closed**, like `turn_ended_in_api_error`.
+    """
+    if turn_ended_in_api_error(payload):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    path = payload.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return False
+    for record in reversed(read_tail_records(path)):
+        kind = record.get("type")
+        # New work: the next prompt's request can be written before its own record.
+        if isinstance(kind, str) and kind.startswith("api-request"):
+            return False
+        if record.get("isSidechain"):
+            continue
+        if kind == "system" and record.get("subtype") == "turn_duration":
+            return True
+        if kind in ("user", "assistant"):
+            return False
     return False
 
 

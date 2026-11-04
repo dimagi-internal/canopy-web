@@ -491,6 +491,8 @@ def test_the_session_payload_shows_its_thread(slack, linked, alice, repo_session
     _share(alice, session=repo_session, mode=share.BIND)
     slack_out = c.get(url).json()["slack"]
     assert slack_out["channel"] == "C1" and slack_out["shared"] is True
+    # No name cached yet: the API says so rather than passing the id off as one.
+    assert slack_out["channel_name"] == "" and slack_out["is_dm"] is False
     assert slack_out["url"].endswith(f"/C1/thread/C1-{POSTED_TS}")
     # The desktop app's own link, straight to the same thread.
     assert slack_out["app_url"] == (
