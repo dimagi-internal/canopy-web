@@ -7,6 +7,7 @@ from django.http import HttpRequest
 from ninja import Status
 
 from apps.api.route_gates import gate
+from apps.events import audit
 
 from . import (
     claim,
@@ -51,7 +52,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
 
 
 @router.post("/runners/{runner_id}/refresh", response=RunnerOut)
-@gate("runner-admin", kind="action")
+@gate("runner-admin", setting=True)
 def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Ask this runner to refresh itself at its next idle moment: re-run its
     bootstrap, which updates the canopy plugin and CLI, Claude Code, and each
@@ -60,7 +61,7 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     # The administer tier, not the act-as tier: this changes what the box runs
     # on, the same class of operation as setting its credentials.
     runner = runner_admin_or_404(request, runner_id)
-    return _with_roots(request, harness_runners.request_refresh(runner, by=request.user))
+    return _with_roots(request, harness_runners.request_refresh(runner, by=request.user, via=audit.request_via(request)))
 
 
 @router.get("/runners/{runner_id}/usage-scope", response=UsageScopeOut)

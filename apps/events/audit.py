@@ -179,11 +179,16 @@ def _refused(result) -> bool:
 
 # ---- the row ----
 
-def _record(request, op: str, kwargs: dict, notes: list) -> None:
+def _provenance(request) -> dict:
     from apps.common import request_context
+
+    return getattr(request, "provenance_context", None) or request_context.current()
+
+
+def _record(request, op: str, kwargs: dict, notes: list) -> None:
     from apps.events.models import SettingChange
 
-    ctx = getattr(request, "provenance_context", None) or request_context.current()
+    ctx = _provenance(request)
     cred = ctx.get("credential") or {}
     user = getattr(request, "user", None)
     user = user if getattr(user, "is_authenticated", False) else None
@@ -225,6 +230,13 @@ def _record(request, op: str, kwargs: dict, notes: list) -> None:
 
 def _verb(method: str) -> str:
     return {"POST": "ran", "PUT": "set", "PATCH": "changed", "DELETE": "removed"}.get(method, method.lower())
+
+
+def request_via(request) -> str:
+    """Through what this request came, as `SettingChange.via` spells it: ui, mcp,
+    cli, api, runner or unknown."""
+    ctx = _provenance(request)
+    return _via(ctx, ctx.get("credential") or {})
 
 
 def _via(ctx: dict, cred: dict) -> str:

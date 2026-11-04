@@ -447,7 +447,7 @@ def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = F
 
 
 # ---- Runner administrators (administer a box without speaking for it) -----
-def request_refresh(runner: Runner, by=None) -> Runner:
+def request_refresh(runner: Runner, by=None, via: str = "") -> Runner:
     """Ask a box to refresh itself — re-run its bootstrap (plugins, the canopy
     CLI, Claude Code, each agent's provisioning) at its next idle moment.
 
@@ -456,7 +456,8 @@ def request_refresh(runner: Runner, by=None) -> Runner:
     and the request is discharged by the box reporting a newer bootstrap — never
     by this side guessing that it happened.
 
-    `by`: the person asking, told when it finishes (`runner_refresh.finished`).
+    `by`: the login asking. `via`: through what (`audit.request_via`). Only a person
+    at the page is told when it finishes (`runner_refresh.finished`).
     A request already pending is left as it is — its time, its asker and its
     before-snapshot — so asking twice neither restarts the clock nor loses the
     "before" the page compares against."""
@@ -466,10 +467,12 @@ def request_refresh(runner: Runner, by=None) -> Runner:
         return runner
     runner.refresh_requested_at = timezone.now()
     runner.refresh_requested_by = by if getattr(by, "is_authenticated", False) else None
+    runner.refresh_requested_via = via
     runner.refresh_before = runner_refresh.snapshot(runner)
+    runner.refresh_after = {}
     runner.refresh_finished_at = None
-    runner.save(update_fields=["refresh_requested_at", "refresh_requested_by", "refresh_before",
-                               "refresh_finished_at"])
+    runner.save(update_fields=["refresh_requested_at", "refresh_requested_by", "refresh_requested_via",
+                               "refresh_before", "refresh_after", "refresh_finished_at"])
     return runner
 
 
