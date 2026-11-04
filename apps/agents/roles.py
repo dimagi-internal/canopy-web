@@ -11,6 +11,7 @@ These are AGENT roles; a workspace has its own.
 """
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 from apps.agents.interface_default import READ_MODE_NAMES, is_read_mode
@@ -94,10 +95,47 @@ LADDER = tuple(reversed(ROLES.order))
 #: neither is a line.
 GRANTABLE = (EDITOR, READ_WRITE, READ_ONLY)
 PERMISSIONS = frozenset(_PLAIN)
+_DOOR = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 
 
 def permissions_of(role: str | None) -> frozenset[str]:
+    """What a FIXED role (`owner`, `admin`) holds, or a built-in's DEFAULT. Never what a line
+    grants: a line reads its role's row (`AgentGrant.permissions`), which a person may have edited."""
     return ROLES.permissions_of(role)
+
+
+class InvalidRole(ValueError):
+    """A role definition the catalog refuses, in words fit to show beside the form."""
+
+
+def validate_permissions(permissions) -> frozenset[str]:
+    """The CLOSED permission set for a role being saved, or InvalidRole.
+
+    A role is built from the fixed vocabulary at the read / write / agent_edit level: `read`,
+    `write`, `agent_edit` and `use:<door>`. `admin` and `own` are `Agent.is_admin` and
+    `Agent.owner`, never a line, so no role can hold them; `use:*` is what `write` is. The set is
+    closed (write carries read and every door, agent_edit carries write) and stored closed."""
+    wanted = {str(p) for p in permissions or ()}
+    if not wanted:
+        raise InvalidRole("a role must allow something")
+    for p in sorted(wanted):
+        if p in (ADMINISTER, OWN):
+            raise InvalidRole(f"a role cannot allow {p!r}: that comes from who the agent belongs to "
+                              "(its owner and its admins), never from an access line")
+        scope, sep, door = p.partition(":")
+        if p in ROLE_PERMISSIONS:
+            continue
+        if sep and scope == USE and door and door != "*" and _DOOR.match(door):
+            continue
+        raise InvalidRole(f"{p!r} is not something a role can allow: use read, write, agent_edit "
+                          "or use:<door>")
+    return ROLES.close(wanted)
+
+
+def drives(permissions) -> bool:
+    """Does a role with these permissions let its holder drive (or, which implies it, change) the
+    agent? The one question every rail asks: it is by permission, never by a role's name."""
+    return ROLES.holds(permissions, WRITE)
 
 
 def allows(role: str | None, permission: str) -> bool:

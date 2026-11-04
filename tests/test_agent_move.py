@@ -324,11 +324,11 @@ def test_the_access_list_stays_on_the_agent_and_a_line_naming_the_old_home_is_fl
     from apps.agents import move
     from apps.agents.models import AgentGrant
 
-    AgentGrant.objects.create(agent=m.agent, kind=AgentGrant.PERSON, user=m.editor, role="user")
+    AgentGrant.objects.create(agent=m.agent, kind=AgentGrant.PERSON, user=m.editor, role="read_write")
     AgentGrant.objects.create(agent=m.agent, kind=AgentGrant.WORKSPACE, subject_workspace=m.src,
-                              role="viewer")
+                              role="read_only")
     stayer = Agent.objects.get(slug="stayer")
-    AgentGrant.objects.create(agent=stayer, kind=AgentGrant.PERSON, user=m.editor, role="user")
+    AgentGrant.objects.create(agent=stayer, kind=AgentGrant.PERSON, user=m.editor, role="read_write")
 
     p = move.plan(m.agent, m.dst, by=m.owner)
 

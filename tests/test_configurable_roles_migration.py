@@ -66,3 +66,15 @@ def test_a_role_that_is_not_a_builtin_aborts_naming_the_line(default_workspace):
     with pytest.raises(RuntimeError, match=f"line {line.pk}"):
         MigrationExecutor(connection).migrate(AFTER)
     Grant.objects.filter(pk=line.pk).delete()      # so the teardown can migrate to the top
+
+
+def test_a_straggler_written_after_the_link_is_linked_before_the_constraint(default_workspace):
+    apps = _state(AFTER)
+    Agent, Grant = apps.get_model("agents", "Agent"), apps.get_model("agents", "AgentGrant")
+    user = get_user_model().objects.create_user("o", "o@dimagi.com", "pw")
+    ace = Agent.objects.create(slug="ace", name="Ace", workspace_id=default_workspace.pk, owner_id=user.pk)
+    # what the previous release writes while the deploy is under way: a role, no row
+    line = Grant.objects.create(agent=ace, kind="contact", role="read_only", subject_key="contact:")
+    apps = _state([("agents", "0125_role_line_matches_row")])
+    got = apps.get_model("agents", "AgentGrant").objects.get(pk=line.pk)
+    assert got.role_def.key == "read_only" and got.role_def.workspace_id == default_workspace.pk

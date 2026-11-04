@@ -18,7 +18,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, grants, roles
+from . import access, grants, rolecatalog, roles
 from .gates import agent_for_admin, agent_for_read
 from .interface import is_read_mode
 from .models import Agent, AgentGrant
@@ -54,10 +54,26 @@ def _out(line: AgentGrant, *, can_edit: bool, warning: str = "") -> AccessLineOu
         can_edit=can_edit)
 
 
-def _roles_out() -> list[AccessRoleOut]:
-    return [AccessRoleOut(role=r, can=[_CAN[p] for p in _PERMISSIONS if roles.allows(r, p)],
-                          permissions=[p for p in _PERMISSIONS if roles.allows(r, p)])
-            for r in roles.LADDER]
+def _can(permissions) -> list[str]:
+    """What a role with these (closed) permissions lets someone do, in words."""
+    doors = sorted(p.partition(":")[2] for p in permissions if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
+    out = [_CAN[p] for p in _PERMISSIONS if roles.holds(permissions, p)]
+    return out + [f"use the {d!r} door" for d in doors if not roles.holds(permissions, roles.WRITE)]
+
+
+def _roles_out(home: str) -> list[AccessRoleOut]:
+    """The fixed roles (`owner`, `admin`: they come with the agent, never from a line), then every role a
+    line under `home` may give, strongest first."""
+    fixed = [AccessRoleOut(role=r, can=_can(roles.permissions_of(r)),
+                           permissions=[p for p in _PERMISSIONS if roles.allows(r, p)])
+             for r in (roles.OWNER, roles.ADMIN)]
+    rows = []
+    for row in rolecatalog.visible(home):
+        held = roles.ROLES.close(row.permissions)
+        plain = [p for p in _PERMISSIONS if p in held]
+        doors = sorted(p for p in held if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
+        rows.append(AccessRoleOut(role=row.key, can=_can(held), permissions=plain + doors))
+    return fixed + rows
 
 
 def _implicit(agent: Agent) -> list[AccessImplicitOut]:
@@ -68,10 +84,10 @@ def _implicit(agent: Agent) -> list[AccessImplicitOut]:
     return out
 
 
-def _fields(payload: AccessLineIn, actor) -> dict:
+def _fields(payload: AccessLineIn, actor, home: str) -> dict:
     try:
         fields = grants.check_line(
-            actor, kind=payload.kind, role=payload.role, capability=payload.capability,
+            actor, home=home, kind=payload.kind, role=payload.role, capability=payload.capability,
             user_id=payload.user_id, email=payload.email, workspace=payload.workspace,
             at_least=payload.at_least, domain=payload.domain, verified=payload.verified,
             include_below=payload.include_below)
@@ -127,7 +143,7 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
     lines = [_out(ln, can_edit=admin and ln.agent_id is not None) for ln in grants.lines_for(agent)]
     return AccessListOut(
         inherit_workspace_defaults=agent.inherit_workspace_defaults,
-        lines=lines, implicit=_implicit(agent), roles=_roles_out(), can_edit=admin,
+        lines=lines, implicit=_implicit(agent), roles=_roles_out(agent.workspace_id), can_edit=admin,
         doors=sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n)))
 
 
@@ -141,7 +157,7 @@ def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> S
     read_only gives read mode, which every agent has. A line that names people only by address
     (domain, contact) can give read_only or a door, never a role that drives the whole agent."""
     agent = agent_for_admin(request, slug)
-    line = _create({"agent": agent}, _fields(payload, request.user), request.user)
+    line = _create({"agent": agent}, _fields(payload, request.user, agent.workspace_id), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),
                       summary=f"added {grants.describe(line)} as {line.role or 'use ' + line.capability} "
                               f"on {agent.slug}")
@@ -163,26 +179,26 @@ def change_access_line(request: HttpRequest, slug: str, line_id: int, payload: A
     agent = agent_for_admin(request, slug)
     line = _own_line(agent, line_id)
     before = _summary(line)
-    _apply_patch(line, payload)
+    _apply_patch(line, payload, agent.workspace_id)
     audit.note_change(scope=f"access-list:{agent.slug}", before=before, after=_summary(line),
                       summary=f"changed {grants.describe(line)} on {agent.slug}")
     return _out(line, can_edit=True)
 
 
-def _apply_patch(line: AgentGrant, payload: AccessLinePatch) -> None:
+def _apply_patch(line: AgentGrant, payload: AccessLinePatch, home: str) -> None:
     if payload.role is not None:
         if line.capability:
             raise HttpError(422, "this line opens one named capability; remove it and add a role line")
         try:
-            grants.check_role(line.kind, payload.role)
+            row = grants.check_role(line.kind, payload.role, home)
         except grants.LineError as exc:
             raise HttpError(422, str(exc)) from exc
-        line.role = payload.role
+        line.role, line.role_def = payload.role, row
     if payload.manual_only is not None:
         line.manual_only = payload.manual_only
     if payload.note is not None:
         line.note = payload.note
-    line.save(update_fields=["role", "manual_only", "note"])
+    line.save(update_fields=["role", "role_def", "manual_only", "note"])
 
 
 @router.delete("/{slug}/access-list/{line_id}", response={204: None},
@@ -231,15 +247,16 @@ def list_agent_defaults(request: HttpRequest, slug: str) -> AgentDefaultsOut:
     return AgentDefaultsOut(
         lines=[_out(ln, can_edit=manage) for ln in
                AgentGrant.objects.filter(workspace=ws).select_related("user", "granted_by")],
-        roles=_roles_out(), can_edit=manage, can_give_write=perms.can(request.user, ws, perms.OWN))
+        roles=_roles_out(ws.slug), can_edit=manage, can_give_write=perms.can(request.user, ws, perms.OWN))
 
 
 def _require_default_rights(request: HttpRequest, ws: Workspace, role: str) -> None:
+    row = rolecatalog.role_for(ws.slug, role) if role else None
     if not perms.can(request.user, ws, perms.MEMBERS_MANAGE):
         raise HttpError(403, "changing a workspace's default access takes a workspace admin")
     # By permission, not by name: any role that lets people drive (or change) every agent here.
-    if role and roles.allows(role, roles.WRITE) and not perms.can(request.user, ws, perms.OWN):
-        raise HttpError(403, "a default that lets people drive every agent in the workspace "
+    if grants.grants_write(row) and not perms.can(request.user, ws, perms.OWN):
+        raise HttpError(403, "a default that lets people drive every agent in the workspace (or change them) "
                              f"({role}) is the workspace owner's to set")
 
 
@@ -249,7 +266,7 @@ def _require_default_rights(request: HttpRequest, ws: Workspace, role: str) -> N
 def add_agent_default(request: HttpRequest, slug: str, payload: AccessLineIn) -> Status:
     ws = _workspace_or_404(request, slug)
     _require_default_rights(request, ws, payload.role)
-    line = _create({"workspace": ws}, _fields(payload, request.user), request.user)
+    line = _create({"workspace": ws}, _fields(payload, request.user, ws.slug), request.user)
     audit.note_change(scope=f"agent-defaults:{ws.slug}", before=None, after=_summary(line),
                       summary=f"added {grants.describe(line)} as {line.role} on every agent in {ws.slug}")
     return Status(201, _out(line, can_edit=True, warning=grants.domain_warning(line, ws.slug)))

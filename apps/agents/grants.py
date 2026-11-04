@@ -28,7 +28,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, ancestor_chains
 
-from . import roles
+from . import rolecatalog, roles
 from .models import AgentGrant
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def lines_for(agent) -> list[AgentGrant]:
     if agent.inherit_workspace_defaults and agent.workspace_id:
         chain = [agent.workspace_id, *agent.workspace.ancestor_slugs()]
         scope |= Q(agent__isnull=True, workspace_id__in=chain)
-    return list(AgentGrant.objects.filter(scope).select_related("user", "granted_by"))
+    return list(AgentGrant.objects.filter(scope).select_related("user", "granted_by", "role_def"))
 
 
 def lines_for_many(agents) -> dict[int, list[AgentGrant]]:
@@ -109,7 +109,7 @@ def lines_for_many(agents) -> dict[int, list[AgentGrant]]:
     out: dict[int, list[AgentGrant]] = {a.pk: [] for a in agents}
     if not agents:
         return out
-    for line in AgentGrant.objects.filter(agent__in=agents).select_related("user"):
+    for line in AgentGrant.objects.filter(agent__in=agents).select_related("user", "role_def"):
         out[line.agent_id].append(line)
     inheriting = [a for a in agents if a.inherit_workspace_defaults and a.workspace_id]
     if not inheriting:
@@ -118,7 +118,8 @@ def lines_for_many(agents) -> dict[int, list[AgentGrant]]:
     chains = ancestor_chains(dict(Workspace.objects.filter(slug__in=homes).values_list("slug", "parent_id")))
     defaults: dict[str, list[AgentGrant]] = {}
     scope = homes | {slug for chain in chains.values() for slug in chain}
-    for line in AgentGrant.objects.filter(agent__isnull=True, workspace_id__in=scope).select_related("user"):
+    defaults_qs = AgentGrant.objects.filter(agent__isnull=True, workspace_id__in=scope)
+    for line in defaults_qs.select_related("user", "role_def"):
         defaults.setdefault(line.workspace_id, []).append(line)
     for a in inheriting:
         for slug in (a.workspace_id, *chains.get(a.workspace_id, [])):
@@ -157,8 +158,10 @@ def resolve(agent, asker: Asker, lines: list[AgentGrant] | None = None) -> Resol
     if not found:
         return Resolution(None)
     # Role lines first, strongest first; then the capability lines by name.
-    found.sort(key=lambda ln: (-roles.rank(ln.role), ln.capability))
-    role = roles.highest(ln.role for ln in found)
+    # The strongest role is the one that allows the most (permissions after closure), ties by key; it
+    # is for display and the envelope. `permissions` carries the decision.
+    found.sort(key=lambda ln: (bool(ln.capability), -len(ln.permissions), ln.role, ln.capability))
+    role = next((ln.role for ln in found if ln.role), None)
     writers = [ln for ln in found if roles.holds(ln.permissions, roles.WRITE)]
     return Resolution(role, manual_only=bool(writers) and all(ln.manual_only for ln in writers),
                       lines=tuple(found),
@@ -173,9 +176,9 @@ class LineError(ValueError):
 
 _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
 _CAPABILITY = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
-#: Roles a person can ADD today. `admin` stays `Agent.is_admin` (owner, workspace owner,
-#: `AgentAdmin`); folding it into the list is a follow-up.
-ADDABLE = roles.GRANTABLE
+# The roles a line can give are the catalog's (`rolecatalog`): the built-ins and whatever a workspace
+# defined, visible down its chain. `admin` and `owner` are never among them: `Agent.is_admin` and
+# `Agent.owner`, not lines.
 #: Kinds whose members are identified only by an address a message can claim. They can give
 #: `read_only` or open a named capability; they can never give a role that contains `write`
 #: (that takes a named person or a workspace's people), whatever that role is called.
@@ -183,9 +186,10 @@ ADDABLE = roles.GRANTABLE
 ADDRESS_ONLY = (AgentGrant.DOMAIN, AgentGrant.CONTACT)
 
 
-def grants_write(role: str | None) -> bool:
-    """Does `role` let its holder drive the whole agent? The permission the rails are about."""
-    return roles.allows(role, roles.WRITE)
+def grants_write(role) -> bool:
+    """Does the role (its row) let its holder drive the whole agent (or change it, which implies
+    it)? The permission the rails are about, whatever the role is called."""
+    return role is not None and roles.drives(roles.ROLES.close(role.permissions))
 
 
 def _person(actor, user_id, email):
@@ -199,18 +203,22 @@ def _person(actor, user_id, email):
     return user
 
 
-def check_role(kind, role: str | None) -> None:
-    """The rails on WHICH role a kind of line may give. Raises LineError."""
-    if role not in ADDABLE:
-        raise LineError(f"role must be one of {list(ADDABLE)}; to make someone an admin of the agent, "
-                        "add them as an admin")
-    if kind in ADDRESS_ONLY and grants_write(role):
-        raise LineError("a line that names people only by their address can give read_only or open a "
-                        f"named capability, not {role} (it lets them drive the whole agent): name the "
-                        "person, or everyone in a workspace")
+def check_role(kind, role: str | None, home: str):
+    """The rails on WHICH role a kind of line may give; returns the role's row. `home` is the
+    workspace the line lives under (the agent's, or the workspace a default is on): the role must be
+    visible from it. Raises LineError."""
+    row = rolecatalog.role_for(home, role) if role else None
+    if row is None:
+        raise LineError(f"no role called {role!r} is available here (see the roles of this workspace); "
+                        "to make someone an admin of the agent, add them as an admin")
+    if kind in ADDRESS_ONLY and grants_write(row):
+        raise LineError("a line that names people only by their address can give a role that only reads "
+                        f"or opens a named capability, not {role} (it lets them drive the whole agent, "
+                        "or change it): name the person, or everyone in a workspace")
+    return row
 
 
-def check_line(actor, *, kind, role=None, capability=None, user_id=None, email=None, workspace="",
+def check_line(actor, *, home, kind, role=None, capability=None, user_id=None, email=None, workspace="",
                at_least="", domain="", verified=True, include_below=False, scope_is_workspace=False):
     """Validate one line a person is adding; returns the normalised field dict.
 
@@ -223,12 +231,13 @@ def check_line(actor, *, kind, role=None, capability=None, user_id=None, email=N
             raise LineError(f"{capability!r} is not a capability name")
         role = ""
     else:
-        check_role(kind, role)
+        role_def = check_role(kind, role, home)
     domain = (domain or "").strip().lower().lstrip("@")
     if include_below and kind != AgentGrant.WORKSPACE:
         raise LineError("'or any workspace below it' only applies to a line naming a workspace")
-    fields: dict = {"kind": kind, "role": role, "capability": capability, "domain": "", "at_least": "",
-                    "verified": True, "include_below": False}
+    fields: dict = {"kind": kind, "role": role, "role_def": None if capability else role_def,
+                    "capability": capability, "domain": "", "at_least": "", "verified": True,
+                    "include_below": False}
     if kind == AgentGrant.PERSON:
         fields["user"] = _person(actor, user_id, email)
     elif kind == AgentGrant.WORKSPACE:
