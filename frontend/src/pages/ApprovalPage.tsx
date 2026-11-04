@@ -12,6 +12,33 @@ const OUTCOME: Record<ApprovalCard['status'], string> = {
   expired: 'Expired',
 }
 
+function sameOrigin(url: string): boolean {
+  try {
+    return new URL(url).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * One step of a plan, with a link to this Canopy made clickable (a release's step that opens its
+ * code review). Only this Canopy's own: a plan also quotes what a submitter wrote, and someone
+ * deciding shouldn't be one click from a page that person chose.
+ */
+function PlanStep({ text }: { text: string }): JSX.Element {
+  return (
+    <>
+      {text.split(/(https?:\/\/\S+)/).map((part, i) =>
+        i % 2 === 1 && sameOrigin(part) ? (
+          <a key={i} href={part} className="text-primary hover:underline" target="_blank" rel="noreferrer">{part}</a>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  )
+}
+
 /**
  * One approval request (`/w/:workspace/approvals/:id`) — the page a push, a Slack message, an email and
  * an alert all open. What approving WILL DO is the server's rendering of the request's typed params
@@ -68,9 +95,9 @@ export function ApprovalPage(): JSX.Element | null {
           <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
             If you approve, this happens
           </h2>
-          <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-[13px] text-foreground">
+          <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-[13px] text-foreground [overflow-wrap:anywhere]">
             {card.plan.map((s, i) => (
-              <li key={i}>{s}</li>
+              <li key={i}><PlanStep text={s} /></li>
             ))}
           </ol>
           <p className="mt-2 text-[12px] text-muted-foreground">
