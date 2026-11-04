@@ -61,19 +61,29 @@ def _can(permissions) -> list[str]:
     return out + [f"use the {d!r} door" for d in doors if not roles.holds(permissions, roles.WRITE)]
 
 
+def role_can(role: str) -> list[str]:
+    """What a fixed role (`owner`, `admin`) lets someone do, in words."""
+    return _can(roles.permissions_of(role))
+
+
+def role_out(row) -> AccessRoleOut:
+    """A catalog role as the access-list forms show it."""
+    held = roles.ROLES.close(row.permissions)
+    plain = [p for p in _PERMISSIONS if p in held]
+    doors = sorted(p for p in held if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
+    return AccessRoleOut(role=row.key, can=_can(held), permissions=plain + doors, label=row.label,
+                         description=row.description, contains_write=roles.drives(held),
+                         defined_on=row.workspace_id)
+
+
 def _roles_out(home: str) -> list[AccessRoleOut]:
     """The fixed roles (`owner`, `admin`: they come with the agent, never from a line), then every role a
     line under `home` may give, strongest first."""
-    fixed = [AccessRoleOut(role=r, can=_can(roles.permissions_of(r)),
-                           permissions=[p for p in _PERMISSIONS if roles.allows(r, p)])
+    fixed = [AccessRoleOut(role=r, can=_can(roles.permissions_of(r)), label=r.title(), fixed=True,
+                           permissions=[p for p in _PERMISSIONS if roles.allows(r, p)],
+                           contains_write=True)
              for r in (roles.OWNER, roles.ADMIN)]
-    rows = []
-    for row in rolecatalog.visible(home):
-        held = roles.ROLES.close(row.permissions)
-        plain = [p for p in _PERMISSIONS if p in held]
-        doors = sorted(p for p in held if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
-        rows.append(AccessRoleOut(role=row.key, can=_can(held), permissions=plain + doors))
-    return fixed + rows
+    return fixed + [role_out(row) for row in rolecatalog.visible(home)]
 
 
 def _implicit(agent: Agent) -> list[AccessImplicitOut]:
@@ -153,9 +163,10 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
 def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> Status:
     """A line says who has what: a person, everyone in a workspace (optionally also any workspace
     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
-    (read_only, read_write, editor) or, rarely, one door (a named capability the agent published).
-    read_only gives read mode, which every agent has. A line that names people only by address
-    (domain, contact) can give read_only or a door, never a role that drives the whole agent."""
+    (a key from `GET /api/workspaces/{ws}/agent-roles`: the built-ins read_only, read_write and editor,
+    and any a workspace defined) or, rarely, one door (a named capability the agent published).
+    A line that names people only by address (domain, contact) can give a role that only reads or opens
+    doors, never one that drives or changes the agent."""
     agent = agent_for_admin(request, slug)
     line = _create({"agent": agent}, _fields(payload, request.user, agent.workspace_id), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),

@@ -37,19 +37,23 @@ def ensure_seeded(workspace_slug: str) -> list[AgentRole]:
     return out
 
 
-def role_for(workspace_slug: str, key: str) -> AgentRole | None:
-    """The role `key` as a line on `workspace_slug` sees it: along the chain, the root's first
-    (keys are unique along a chain, so there is at most one that matters). A built-in key
-    that has no row yet is seeded on the root, so a line can always name a built-in."""
+def find(workspace_slug: str, key: str) -> AgentRole | None:
+    """The role `key` as a line on `workspace_slug` sees it, read only: along the chain, the root's
+    first (keys are unique along a chain, so there is at most one that matters)."""
     chain = chain_of(workspace_slug)
     rows = {r.workspace_id: r for r in AgentRole.objects.filter(workspace_id__in=chain, key=key)}
-    for slug in reversed(chain):
-        if slug in rows:
-            return rows[slug]
-    if key in roles.SEED_KEYS:
-        ensure_seeded(chain[-1])
-        return AgentRole.objects.filter(workspace_id=chain[-1], key=key).first()
-    return None
+    return next((rows[slug] for slug in reversed(chain) if slug in rows), None)
+
+
+def role_for(workspace_slug: str, key: str) -> AgentRole | None:
+    """`find`, except that a built-in key that has no row yet is seeded on the root, so a line
+    can always name a built-in."""
+    row = find(workspace_slug, key)
+    if row is None and key in roles.SEED_KEYS:
+        root = root_of(workspace_slug)
+        ensure_seeded(root)
+        row = AgentRole.objects.filter(workspace_id=root, key=key).first()
+    return row
 
 
 def visible(workspace_slug: str) -> list[AgentRole]:

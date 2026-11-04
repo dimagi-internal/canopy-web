@@ -694,7 +694,8 @@ class AgentAccessRowOut(StrictModel):
     # `AccessListOut`). `agent_role` above is the older three-word view and stays for
     # readers that have not moved.
     # `system` is the agent's own login: not a person, and not on the ladder.
-    role: Literal["owner", "admin", "editor", "read_write", "read_only", "system"] | None = None
+    # The key of the role: a built-in or one a workspace defined (the roles come from the catalog).
+    role: str | None = None
     source: str = ""
     # What put them there, in words ("Everyone in dimagi", "Anyone at @dimagi.com (verified)",
     # "Owns the workspace"); "" when it is just the role the workspace gives an editor.
