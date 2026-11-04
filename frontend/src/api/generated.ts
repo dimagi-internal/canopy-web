@@ -6261,9 +6261,10 @@ export interface paths {
          *     you), `ask=open|closed`, `batch` (a batch_key), `parent` (an ext_id for
          *     that task's direct subtasks, or `none` for top-level tasks only).
          *
-         *     Filtered to a project the agent leads or works on, the list is EVERY task
-         *     in that project — a person's, an unassigned one, another agent's — the
-         *     same tasks `get_project` lists.
+         *     Filtered to a project the agent leads or works on and the caller may read,
+         *     the list is EVERY task in that project — a person's, an unassigned one,
+         *     another agent's — the same tasks `get_project` lists. The ref resolves to
+         *     ONE project the way the agent's other routes do (its own alias first).
          */
         readonly get: operations["list_tasks"];
         readonly put?: never;
@@ -9285,7 +9286,9 @@ export interface paths {
          * Change who may publish a project's updates
          * @description `lead_agent_may_publish`: let the project's lead agent publish its own
          *     drafted updates rather than wait for a person (off by default). An admin of
-         *     the project's workspace decides; every change is in the settings audit.
+         *     the project's workspace decides — a person, never an agent's login — and
+         *     every change is in the settings audit, naming the lead agent it covers.
+         *     Handing the lead seat on, or moving the project, turns it off again.
          */
         readonly patch: operations["set_project_update_settings"];
         readonly trace?: never;
