@@ -63,7 +63,11 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
   enough); not on a sensitive-data box; the turn's env is a separate allowlist and never
   receives it. git's error is redacted (`_redact_credentials`) before it is logged or
   reported by the `clones` health check, which is amber when a failing clone is older
-  than `CLONE_STALE_SECONDS`. Held by `runner/ec2/tests/test_clone_refresh_token_exposure.py`.
+  than `CLONE_STALE_SECONDS` and names what kept the token away (`_clone_refresh_blocker`).
+  That resolve names NO turn (`_turn_values(outside_turn=True)`): a turn id makes canopy-web
+  cap the runner's owner to the turn's `acts_as`, which makes them no admin of the agent and
+  the resolve a 403. Held by `runner/ec2/tests/test_clone_refresh_token_exposure.py` and
+  `test_clone_refresh_resolve_names_no_turn.py`.
 - **Agentless repo turns and project chats** (`Turn.project`, or the chat
   session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row
