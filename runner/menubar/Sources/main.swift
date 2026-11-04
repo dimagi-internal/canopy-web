@@ -607,8 +607,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
             if let pairing = Pairing.load() {
                 tip = "Canopy Runner — approve this Mac in your browser (code \(pairing.code))"
             }
+            if runningApps > 0 {
+                tip += "\n\(runningApps) experimental app\(runningApps == 1 ? "" : "s") running"
+            }
             btn.toolTip = tip
+            applyBadge()
         }
+        refreshAppStatusOnTick()
         if isBundled { refreshFirstRun() }
         // Note: we do NOT assign statusItem.menu here — a permanent menu would swallow the
         // left-click we use to open the web panel. The menu is shown on demand (right-click).
@@ -703,6 +708,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         closeMenu = sub
         closeItem.submenu = sub
         menu.addItem(closeItem)
+        addExperimentalItem(to: menu)
         menu.addItem(.separator())
 
         let opensItem = NSMenuItem(title: "Opens on", action: nil, keyEquivalent: "")
@@ -781,6 +787,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === opensOnMenu { fillOpensOn(menu); return }
+        if menu === experimentalMenu { fillExperimental(menu); return }
         guard menu === closeMenu else { return }
         menu.removeAllItems()
         func note(_ title: String) {
@@ -1002,6 +1009,316 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         NSWorkspace.shared.open(logFile)
     }
     @objc func quit() { NSApplication.shared.terminate(nil) }
+
+    // -- experimental: local apps --
+    // Everything here comes from `canopy-runner app …`, so the menu has no opinion of its
+    // own about what is installed or running. `status --json` never touches the network;
+    // `list --json` can, so it only runs when the menu is about to be shown, off the main
+    // thread, and the submenu draws whatever it last said.
+    var experimentalMenu: NSMenu?
+    var localApps: LocalAppList?
+    var localAppsLoading = false
+    var runningApps = 0
+    var appStatusInFlight = false
+    var appStatusTick = 0
+    // Every third 5-second refresh: a Python start costs more than the rest of a refresh.
+    let appStatusEveryTicks = 3
+
+    func addExperimentalItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: runningApps > 0 ? "Experimental — \(runningApps) running" : "Experimental",
+                              action: nil, keyEquivalent: "")
+        let sub = NSMenu(title: "Experimental")
+        sub.delegate = self
+        experimentalMenu = sub
+        item.submenu = sub
+        menu.addItem(item)
+        refreshLocalApps()
+    }
+
+    func refreshLocalApps() {
+        guard !localAppsLoading, let cli = RunnerCLI.load() else { return }
+        localAppsLoading = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let answer = cli.run("app", ["list", "--json"])
+            let list = LocalAppList.parse(answer.out, code: answer.code)
+            DispatchQueue.main.async {
+                self.localAppsLoading = false
+                self.localApps = list
+                self.runningApps = list.apps.filter(\.running).count
+                self.applyBadge()
+                if let menu = self.experimentalMenu { self.fillExperimental(menu) }
+            }
+        }
+    }
+
+    func fillExperimental(_ menu: NSMenu) {
+        menu.removeAllItems()
+        func note(_ title: String) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        note("These can change or disappear without notice")
+        menu.addItem(.separator())
+        if RunnerCLI.load() == nil {
+            note("Runner is not installed")
+        } else if let list = localApps {
+            if list.needsNewerRunner {
+                note("Needs a newer runner — update it first")
+            } else {
+                if list.offline { note("Can't reach canopy — showing what's on this Mac") }
+                // A source starts with the app that uses it, so it gets no controls of its own.
+                let startable = list.apps.filter { $0.provides.isEmpty }
+                if startable.isEmpty { note("No apps installed") }
+                for app in startable { addLocalApp(app, to: menu) }
+            }
+        } else {
+            note("Loading…")
+        }
+        menu.addItem(.separator())
+        add(menu, "Stop all", #selector(stopAllApps))
+        add(menu, "Browse apps…", #selector(browseApps))
+    }
+
+    func addLocalApp(_ app: LocalApp, to menu: NSMenu) {
+        let item = NSMenuItem(title: app.menuTitle, action: nil, keyEquivalent: "")
+        let sub = NSMenu(title: app.name)
+        let status = NSMenuItem(title: app.statusLine, action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        sub.addItem(status)
+        if let url = app.sessionURL {
+            let open = NSMenuItem(title: "Open session…", action: #selector(openAppSession(_:)), keyEquivalent: "")
+            open.target = self
+            open.representedObject = url
+            sub.addItem(open)
+        }
+        sub.addItem(.separator())
+        let toggle = NSMenuItem(title: app.running ? "Stop" : "Start…",
+                                action: app.running ? #selector(stopApp(_:)) : #selector(startApp(_:)),
+                                keyEquivalent: "")
+        toggle.target = self
+        toggle.representedObject = app.key
+        toggle.isEnabled = app.running || app.refusal == nil
+        sub.addItem(toggle)
+        item.submenu = sub
+        menu.addItem(item)
+    }
+
+    func showAppAlert(_ title: String, _ text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    // Failed checks first, each saying how to fix it; only then the notice; only then start.
+    @objc func startApp(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String, let cli = RunnerCLI.load() else { return }
+        let app = localApps?.apps.first { $0.key == key }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let answer = cli.run("app", ["check", key, "--json"])
+            let failure = LocalAppList.checkFailure(answer.out, code: answer.code)
+            DispatchQueue.main.async {
+                if let failure {
+                    self.showAppAlert("\(app?.name ?? key) isn't ready", failure)
+                    return
+                }
+                self.confirmAndStart(key: key, app: app, cli: cli)
+            }
+        }
+    }
+
+    func confirmAndStart(key: String, app: LocalApp?, cli: RunnerCLI) {
+        let confirm = NSAlert()
+        confirm.messageText = "Start \(app?.name ?? key)?"
+        confirm.informativeText = app?.noticeText ?? ""
+        confirm.addButton(withTitle: "Start")
+        confirm.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (code, out) = cli.run("app", ["start", key, "--accept-notice"])
+            DispatchQueue.main.async {
+                if code != 0 {
+                    self.showAppAlert("\(app?.name ?? key) didn't start",
+                                      out.isEmpty ? "The runner reported nothing (exit \(code))."
+                                          : out.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                self.refreshAppStatus()
+                self.refreshLocalApps()
+            }
+        }
+    }
+
+    @objc func stopApp(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        runStop([key])
+    }
+
+    @objc func stopAllApps() { runStop(["--all"]) }
+
+    func runStop(_ scope: [String]) {
+        guard let cli = RunnerCLI.load() else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (code, out) = cli.run("app", ["stop"] + scope)
+            DispatchQueue.main.async {
+                if code != 0 {
+                    self.showAppAlert("Couldn't stop it",
+                                      out.isEmpty ? "The runner reported nothing (exit \(code))."
+                                          : out.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                self.refreshAppStatus()
+            }
+        }
+    }
+
+    @objc func openAppSession(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let url = URL(string: raw) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func browseApps() {
+        if let url = URL(string: baseURL() + "/app") { NSWorkspace.shared.open(url) }
+    }
+
+    // The badge: an app that's listening should be obvious at a glance. No apps folder means
+    // nothing was ever installed here, so most runners never start a process for this.
+    func refreshAppStatusOnTick() {
+        appStatusTick += 1
+        if appStatusTick % appStatusEveryTicks == 0 { refreshAppStatus() }
+    }
+
+    func refreshAppStatus() {
+        guard !appStatusInFlight,
+              FileManager.default.fileExists(atPath: canopyDir.appendingPathComponent("apps").path),
+              let cli = RunnerCLI.load() else { return }
+        appStatusInFlight = true
+        DispatchQueue.global(qos: .utility).async {
+            let (code, out) = cli.run("app", ["status", "--json"])
+            let running = code == 0 ? LocalAppList.runningCount(out) : nil
+            DispatchQueue.main.async {
+                self.appStatusInFlight = false
+                if let running {
+                    self.runningApps = running
+                    self.applyBadge()
+                }
+            }
+        }
+    }
+
+    func applyBadge() {
+        guard let btn = statusItem.button else { return }
+        if runningApps > 0 {
+            btn.imagePosition = .imageLeading
+            btn.attributedTitle = NSAttributedString(string: " ●", attributes: [
+                .foregroundColor: NSColor.systemRed,
+                .font: NSFont.menuBarFont(ofSize: 10)])
+        } else {
+            btn.imagePosition = .imageOnly
+            btn.title = ""
+        }
+    }
+}
+
+// What `app list --json` says about one app. Every field is optional on the wire, because
+// a runner and this menu bar can be different versions for a while.
+struct LocalApp {
+    let key: String
+    let name: String
+    let version: String
+    let running: Bool
+    let unpublished: Bool
+    let refusal: String?
+    let stopReason: String?
+    let sessionURL: String?
+    let notice: String
+    let reads: [String]
+    let sends: [String]
+    let provides: [String]
+    let needsAcceptance: Bool
+    let changes: [String]
+
+    init?(_ raw: [String: Any]) {
+        guard let key = raw["key"] as? String else { return nil }
+        self.key = key
+        name = raw["name"] as? String ?? key
+        version = raw["version"] as? String ?? ""
+        running = raw["running"] as? Bool ?? false
+        unpublished = raw["unpublished"] as? Bool ?? false
+        refusal = raw["refusal"] as? String
+        stopReason = raw["stop_reason"] as? String
+        sessionURL = (raw["session_url"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        notice = raw["notice"] as? String ?? ""
+        let disclosure = raw["disclosure"] as? [String: Any] ?? [:]
+        reads = disclosure["reads"] as? [String] ?? []
+        sends = disclosure["sends"] as? [String] ?? []
+        provides = raw["provides"] as? [String] ?? []
+        needsAcceptance = raw["needs_acceptance"] as? Bool ?? false
+        changes = raw["changes"] as? [String] ?? []
+    }
+
+    var menuTitle: String {
+        var title = name
+        if unpublished { title += " (unpublished)" }
+        if running { title += " — running" }
+        return title
+    }
+
+    var statusLine: String {
+        if running { return "Running" }
+        if let refusal { return "Can't start: \(refusal)" }
+        if let stopReason, !stopReason.isEmpty { return "Stopped: \(stopReason)" }
+        return "Not running"
+    }
+
+    var noticeText: String {
+        var lines: [String] = []
+        if !notice.isEmpty { lines.append(notice) }
+        lines += reads.map { "Reads: \($0)" }
+        lines += sends.map { "Sends: \($0)" }
+        if needsAcceptance {
+            lines.append("A newer version is waiting for you to accept what changed, so this runs the one you accepted:")
+            lines += changes
+        }
+        return lines.joined(separator: "\n\n")
+    }
+}
+
+struct LocalAppList {
+    let apps: [LocalApp]
+    let offline: Bool
+    let needsNewerRunner: Bool
+
+    // Exit 2 is argparse: a runner too old to know the `app` command.
+    static func parse(_ out: String, code: Int32) -> LocalAppList {
+        guard code == 0,
+              let obj = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any],
+              let raw = obj["apps"] as? [[String: Any]] else {
+            return LocalAppList(apps: [], offline: code != 2, needsNewerRunner: code == 2)
+        }
+        return LocalAppList(apps: raw.compactMap(LocalApp.init), offline: obj["offline"] as? Bool ?? false,
+                            needsNewerRunner: false)
+    }
+
+    static func runningCount(_ out: String) -> Int? {
+        guard let obj = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any] else { return nil }
+        return obj["running"] as? Int
+    }
+
+    // nil when the app may start; otherwise what to tell the person.
+    static func checkFailure(_ out: String, code: Int32) -> String? {
+        if code == 2 { return "This needs a newer runner. Update it first." }
+        guard let obj = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any] else {
+            return "The runner couldn't run the checks (exit \(code))."
+        }
+        if let refusal = obj["refusal"] as? String { return refusal }
+        if obj["ok"] as? Bool == true { return nil }
+        let failed = (obj["checks"] as? [[String: Any]] ?? []).filter { $0["ok"] as? Bool != true }
+        let lines = failed.map { "\($0["label"] as? String ?? "A check failed")\nTo fix: \($0["fix"] as? String ?? "")" }
+        return lines.isEmpty ? "The checks failed." : lines.joined(separator: "\n\n")
+    }
 }
 
 if relocateIfNeeded() { exit(0) }
