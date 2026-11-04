@@ -317,6 +317,40 @@ class AgentAdmin(models.Model):
         return f"{self.user_id} admin of {self.agent_id}"
 
 
+class AgentRole(models.Model):
+    """A named bundle of agent permissions an access-list line can give
+    (`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`).
+
+    Defined on a workspace and usable by that workspace and every one below it; a key means one
+    thing everywhere it is visible (the service refuses a clash along a chain). The permissions
+    are the CLOSED set (`write` carries `read`, `agent_edit` carries `write`) chosen from the fixed
+    vocabulary `read`, `write`, `agent_edit` and `use:<door>`: never `admin` or `own`, which come
+    from `Agent.is_admin` and `Agent.owner`, not from a line. The built-ins (`read_only`,
+    `read_write`, `editor`) are seeded rows: editable, never deletable.
+    """
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="agent_roles")
+    #: Immutable slug stored on every line that holds the role and sent in the caller envelope.
+    key = models.CharField(max_length=40)
+    label = models.CharField(max_length=80)
+    description = models.CharField(max_length=300, blank=True, default="")
+    permissions = models.JSONField(default=list)
+    builtin = models.BooleanField(default=False)
+    position = models.PositiveSmallIntegerField(default=0)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "key"]
+        constraints = [models.UniqueConstraint(fields=["workspace", "key"], name="uniq_agent_role_key")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.key} on {self.workspace_id}"
+
+
 class AgentGrant(models.Model):
     """One line of an access list: `(who, role)`. See `apps/agents/grants.py`.
 
@@ -359,7 +393,12 @@ class AgentGrant(models.Model):
     verified = models.BooleanField(default=True)
     #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named capability
     #: (the scoped permission `use:<capability>`). Exactly one of the two is set.
-    role = models.CharField(max_length=12, blank=True, default="")
+    role = models.CharField(max_length=40, blank=True, default="")
+    #: The role's row: what the line grants is the ROW's permissions, so editing the role changes its
+    #: holders and nothing else moves. `role` is the row's key, kept as a copy (the envelope, the
+    #: unique `subject_key`, the check constraint). Null exactly when `role` is "".
+    role_def = models.ForeignKey(AgentRole, null=True, blank=True, on_delete=models.PROTECT,
+                                 related_name="lines")
     capability = models.CharField(max_length=41, blank=True, default="")
     #: Every turn this line lets someone start runs `manual`: an admin approves what goes
     #: out. The editor lines migrated from "a workspace editor is an editor" keep it, so
@@ -424,7 +463,23 @@ class AgentGrant(models.Model):
             capability=self.capability)
         if self.domain:
             self.domain = self.domain.lower()
+        kwargs = self._link_role(kwargs)
         super().save(*args, **kwargs)
+
+    def _link_role(self, kwargs: dict) -> dict:
+        """Point `role_def` at the row for `role` when the caller did not (a line made in a test, a
+        patch that changed `role`): resolved along the line's own chain. Routes pass the row."""
+        if not self.role:
+            self.role_def = None
+        elif self.role_def_id is None or self.role_def.key != self.role:
+            from .. import rolecatalog  # noqa: PLC0415 — the catalog imports these models
+
+            home = self.workspace_id or (self.agent.workspace_id if self.agent_id else None)
+            self.role_def = rolecatalog.role_for(home, self.role) if home else None
+        fields = kwargs.get("update_fields")
+        if fields is not None and ("role" in fields or "role_def" in fields) and "role_def" not in fields:
+            kwargs = {**kwargs, "update_fields": [*fields, "role_def"]}
+        return kwargs
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.subject_key} -> {self.role} on {self.agent_id or self.workspace_id}"

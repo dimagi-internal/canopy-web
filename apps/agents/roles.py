@@ -11,6 +11,8 @@ These are AGENT roles; a workspace has its own.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from apps.agents.interface_default import READ_MODE_NAMES, is_read_mode
 from apps.common.rolesets import RoleSet
 
@@ -36,15 +38,43 @@ USE = "use"
 
 _PLAIN = (READ, WRITE, AGENT_EDIT, ADMINISTER, OWN)
 
-#: THE table. Each role names what it holds; the dependency rule below closes it, so
-#: `editor` really is read + write + agent_edit and `admin` everything but `own`.
-_TABLE = {
-    READ_ONLY: {READ},
-    READ_WRITE: {WRITE},
-    EDITOR: {AGENT_EDIT},
+
+class Seed(NamedTuple):
+    """A built-in role a workspace catalog starts with (`AgentRole`, `builtin=True`): the three a
+    line can give. Only the seeder and "reset to default" read it; a line reads its role's ROW."""
+
+    key: str
+    label: str
+    description: str
+    permissions: frozenset[str]
+
+
+#: The built-in roles, weakest first. Rows are seeded from these on every root workspace
+#: (`rolecatalog.ensure_seeded`, the signal on workspace creation, migration 0122) and are
+#: editable and cloneable afterwards; the decision never reads this.
+SEED = (
+    Seed(READ_ONLY, "Read only", "Can ask the agent questions in read mode.", frozenset({READ})),
+    Seed(READ_WRITE, "Read and write", "Can drive the whole agent.", frozenset({WRITE})),
+    Seed(EDITOR, "Editor", "Can drive the whole agent and change its skills and capabilities.",
+         frozenset({AGENT_EDIT})),
+)
+SEED_KEYS = tuple(s.key for s in SEED)
+
+#: The roles fixed in code: not rows, not lines (`Agent.owner`, `Agent.is_admin`).
+_FIXED = {
     ADMIN: {ADMINISTER},
     OWNER: {OWN, ADMINISTER},
 }
+
+#: What a custom role may be built from. `admin` and `own` come from who the agent belongs to,
+#: never from an access line, so no role can hold them; `use:*` is what `write` is.
+ROLE_PERMISSIONS = (READ, WRITE, AGENT_EDIT)
+#: Keys no role may take: the fixed roles, and the words the access vocabulary retired.
+RESERVED_KEYS = frozenset({OWNER, ADMIN, SYSTEM, "viewer", "user", "member", "contact"})
+
+#: THE vocabulary table: the fixed roles and the defaults of the built-ins, closed by the
+#: dependency rule below (`editor` is read + write + agent_edit, `admin` everything but `own`).
+_TABLE = {**{s.key: set(s.permissions) for s in SEED}, **_FIXED}
 
 #: The dependency rule: agent_edit implies write implies read; admin implies all but own; driving
 #: the whole agent opens every capability.

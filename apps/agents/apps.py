@@ -33,6 +33,9 @@ class AgentsConfig(AppConfig):
         # another parent ends the shares that would now straddle two trees.
         post_save.connect(_prune_shares, sender=Workspace, dispatch_uid="agents.prune_shares")
 
+        # A new root workspace starts with the built-in roles (read only, read and write, editor).
+        post_save.connect(_seed_roles, sender=Workspace, dispatch_uid="agents.seed_roles")
+
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
         ticks.register("agents.skill_catalog", _skill_catalog, 5 * 60)
@@ -43,6 +46,13 @@ def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
         from .credentials import vault_members  # noqa: PLC0415 — a signal handler: imported once the app is ready
 
         vault_members.vault_for_agent(instance)
+
+
+def _seed_roles(sender, instance, created, raw=False, **kwargs) -> None:
+    if created and not raw and not instance.parent_id:
+        from . import rolecatalog  # noqa: PLC0415 — a signal handler: imported once the app is ready
+
+        rolecatalog.ensure_seeded(instance.pk)
 
 
 def _prune_shares(sender, instance, created, raw=False, **kwargs) -> None:
