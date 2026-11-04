@@ -2,6 +2,29 @@
 
 ## Canopy-Web Platform
 
+### Coaching facts in analytics
+
+**What:** `coaching.note_sent`, `coaching.reply` and `coaching.finding_routed` as `activity.emit` facts, ids only.
+
+**Why not yet:** canopy-web has no signal for any of them, so no kind exists in `activity.KINDS`.
+- `note_sent`: a coach's mail reaches `POST /api/mail/send/{ws}` like any of its mail. Nothing marks it a coaching note; matching the subject would be a guess. The fact is born in the coach's `bin/trellis-coach-ledger record-note`.
+- `reply`: the inbound mail is stored, but whether it means useful, wrong, already knew or pause is decided in a coach turn and kept in that box's ledger.
+- `finding_routed`: `bin/trellis-friction` writes local files, and its report is draft text for a person. Nothing leaves the box.
+
+**What it would take:** a narrow route the agent's own login calls inside a running turn, taking a closed kind and ids, never free text, plus the three calls from the coach's repo. `POST /api/events/` is not it: `Event` is the fleet log, not `Activity`.
+
+**Effort:** S here, plus the coach's repo.
+
+### Ask a coach to review one session
+
+**What:** "Ask Trellis to review this" on one session, without the standing grant or a passkey step-up.
+
+**Why not built:** `SessionReviewGrant` is per person with no per-session scope, and a scope is not a small change. `user_id` is what these read as "this person is coached": `access._review_grant_q`, `coaching.is_coached` (the full upload), `session_reviewers.live`, `coach_offer` and `granted_to` (the coach's roster, which decides who gets emailed), and `audience._coaches`. A one-session row left unhandled in any of them would widen a read to all the person's sessions or enrol them in the weekly pass.
+
+**The smaller route:** add the agent's login to that session as a viewer `SessionParticipant`, which the Slack "review the sessions shared in it" switch already does (`slack.audience.sync`). But that leg is not bound to the turn's asker as `review_grantors` is, so the login could read the session from any turn. It needs that binding decided first, a session-page action, and a read path in the coach's `bin/trellis-sessions`, which today only reads a person's own sessions under a grant, by channel, or under act-as.
+
+**Effort:** M, mostly the access decision.
+
 ### Proactive Conversation Detection
 
 **What:** Monitor Slack channels and open claw sessions for conversations that contain reusable approaches. Surface as suggestions in the web UI.
