@@ -41,10 +41,9 @@ def check() -> dict:
         report["trees"].add(tree)
         where = f"agent {line.agent_id}" if line.agent_id else f"defaults of {line.workspace_id}"
         who = {"line": line.pk, "where": where, "role": line.role, "tree": tree}
-        if line.role not in roles.SEED_KEYS:
-            report["unknown"].append(who)
-            continue
         if not report["migrated"]:
+            if line.role not in roles.SEED_KEYS:
+                report["unknown"].append(who)
             continue
         row = line.role_def
         if row is None:
@@ -53,6 +52,8 @@ def check() -> dict:
         if row.workspace_id != tree or row.key != line.role:
             report["wrong_tree"].append({**who, "row": f"{row.key} on {row.workspace_id}"})
             continue
+        if line.role not in roles.SEED_KEYS:
+            continue    # a role somebody defined: nothing to compare it with, it is what it says
         before = roles.ROLES.permissions_of(line.role)
         after = roles.ROLES.close(row.permissions)
         if after != before:

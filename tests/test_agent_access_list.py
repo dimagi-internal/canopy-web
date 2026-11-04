@@ -297,35 +297,35 @@ def test_an_address_only_line_can_never_grant_a_role_containing_write(w, kind, r
     """An address is claimable by a message: the rail is the permission, not the role's name."""
     assert roles.allows(role, roles.WRITE)
     with pytest.raises(grants.LineError, match="drive the whole agent"):
-        grants.check_line(w["boss"], kind=kind, role=role, domain="dimagi.com")
+        grants.check_line(w["boss"], home="dimagi", kind=kind, role=role, domain="dimagi.com")
 
 
 @pytest.mark.parametrize("kind", [G.DOMAIN, G.CONTACT])
 def test_an_address_only_line_may_give_read_only_or_a_named_capability(w, kind):
-    assert grants.check_line(w["boss"], kind=kind, role=roles.READ_ONLY, domain="dimagi.com")["role"] == "read_only"
-    got = grants.check_line(w["boss"], kind=kind, capability="connect", domain="dimagi.com")
+    assert grants.check_line(w["boss"], home="dimagi", kind=kind, role=roles.READ_ONLY, domain="dimagi.com")["role"] == "read_only"
+    got = grants.check_line(w["boss"], home="dimagi", kind=kind, capability="connect", domain="dimagi.com")
     assert (got["role"], got["capability"]) == ("", "connect")
 
 
 def test_a_workspace_or_person_line_may_give_write(w):
     for role in (roles.READ_WRITE, roles.EDITOR):
-        assert grants.check_line(w["boss"], kind=G.WORKSPACE, role=role, workspace="dimagi")["role"] == role
-        assert grants.check_line(w["boss"], kind=G.PERSON, role=role, email=w["ed"].email)["role"] == role
+        assert grants.check_line(w["boss"], home="dimagi", kind=G.WORKSPACE, role=role, workspace="dimagi")["role"] == role
+        assert grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, role=role, email=w["ed"].email)["role"] == role
 
 
 @pytest.mark.parametrize("role", [roles.ADMIN, roles.OWNER, "user", "viewer", "", None])
 def test_only_the_three_built_in_roles_are_addable(w, role):
     with pytest.raises(grants.LineError):
-        grants.check_line(w["boss"], kind=G.PERSON, role=role, email=w["ed"].email)
+        grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, role=role, email=w["ed"].email)
 
 
 def test_a_line_must_name_exactly_one_of_role_and_capability(w):
     with pytest.raises(grants.LineError, match="either a role or one named capability"):
-        grants.check_line(w["boss"], kind=G.PERSON, role=roles.READ_ONLY, capability="x", email=w["ed"].email)
+        grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, role=roles.READ_ONLY, capability="x", email=w["ed"].email)
     with pytest.raises(grants.LineError, match="either a role or one named capability"):
-        grants.check_line(w["boss"], kind=G.PERSON, email=w["ed"].email)
+        grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, email=w["ed"].email)
     with pytest.raises(grants.LineError, match="not a capability name"):
-        grants.check_line(w["boss"], kind=G.PERSON, capability="Not Valid", email=w["ed"].email)
+        grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, capability="Not Valid", email=w["ed"].email)
 
 
 # --- "...or any workspace below it" -------------------------------------------------------
@@ -404,9 +404,9 @@ def test_bulk_read_answers_the_same_for_a_subtree_line(tree):
 
 
 def test_check_line_takes_the_option_only_on_a_workspace_line(tree):
-    got = grants.check_line(tree["boss"], kind=G.WORKSPACE, role=roles.READ_WRITE, workspace="dimagi",
+    got = grants.check_line(tree["boss"], home="dimagi", kind=G.WORKSPACE, role=roles.READ_WRITE, workspace="dimagi",
                             include_below=True)
     assert got["include_below"] is True
     with pytest.raises(grants.LineError, match="only applies to a line naming a workspace"):
-        grants.check_line(tree["boss"], kind=G.DOMAIN, role=roles.READ_ONLY, domain="dimagi.com",
+        grants.check_line(tree["boss"], home="dimagi", kind=G.DOMAIN, role=roles.READ_ONLY, domain="dimagi.com",
                           include_below=True)

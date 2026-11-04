@@ -74,13 +74,20 @@ def test_the_parity_check_passes_on_lines_it_just_linked(default_workspace, caps
     assert "ok: every line grants what it granted" in capsys.readouterr().out
 
 
-def test_the_parity_check_names_an_unlinked_line_and_an_edited_builtin(default_workspace):
+def test_the_database_refuses_a_role_line_without_its_row_and_a_row_without_a_role(default_workspace):
+    from django.db import IntegrityError, transaction
+
     agent = Agent.objects.create(slug="ace", name="Ace", workspace=default_workspace, owner=a_user())
     line = AgentGrant.objects.create(agent=agent, kind=AgentGrant.DOMAIN, domain="a.org", role=roles.READ_ONLY)
-    AgentGrant.objects.filter(pk=line.pk).update(role_def=None)
-    report = role_parity.check()
-    assert not report["ok"] and [x["line"] for x in report["unlinked"]] == [line.pk]
-    AgentGrant.objects.filter(pk=line.pk).update(role_def=AgentRole.objects.get(key="read_only"))
+    with pytest.raises(IntegrityError), transaction.atomic():
+        AgentGrant.objects.filter(pk=line.pk).update(role_def=None)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        AgentGrant.objects.filter(pk=line.pk).update(role="", capability="x")
+
+
+def test_the_parity_check_reports_an_edited_builtin_as_intended(default_workspace):
+    agent = Agent.objects.create(slug="ace", name="Ace", workspace=default_workspace, owner=a_user())
+    line = AgentGrant.objects.create(agent=agent, kind=AgentGrant.DOMAIN, domain="a.org", role=roles.READ_ONLY)
     AgentRole.objects.filter(key="read_only").update(permissions=["read", "use:connect"])
     report = role_parity.check()
     assert report["ok"] and [x["line"] for x in report["edited"]] == [line.pk]   # an edit is intended

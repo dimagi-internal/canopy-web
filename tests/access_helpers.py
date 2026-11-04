@@ -61,3 +61,13 @@ def allow(agent, *, role: str = "", capability: str = "", contact: bool = False,
         row.role = role
         row.save(update_fields=["role"])
     return row
+
+
+def make_role(workspace, key: str, permissions, **fields):
+    """A role a workspace defines (`AgentRole`), stored closed like the service stores it. A line made
+    with `role=key` under that workspace (or one below) then points at it."""
+    from apps.agents.models import AgentRole
+
+    fields.setdefault("label", key.replace("_", " ").title())
+    return AgentRole.objects.create(workspace=workspace, key=key,
+                                    permissions=sorted(roles.validate_permissions(permissions)), **fields)

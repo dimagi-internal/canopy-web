@@ -50,3 +50,25 @@ def role_for(workspace_slug: str, key: str) -> AgentRole | None:
         ensure_seeded(chain[-1])
         return AgentRole.objects.filter(workspace_id=chain[-1], key=key).first()
     return None
+
+
+def visible(workspace_slug: str) -> list[AgentRole]:
+    """Every role a line under `workspace_slug` may give: those defined on it and on each workspace
+    above, strongest first (most permissions, then key). A key seen twice along a chain (two roots
+    that were nested together) shows once, the one nearest the root, which is the one `role_for` gives.
+    Seeds the built-ins on the root when it has none (a root made before seeding existed)."""
+    chain = chain_of(workspace_slug)
+    ensure_seeded(chain[-1]) if not AgentRole.objects.filter(workspace_id=chain[-1]).exists() else None
+    by_key: dict[str, AgentRole] = {}
+    for row in AgentRole.objects.filter(workspace_id__in=chain):
+        held = by_key.get(row.key)
+        if held is None or chain.index(row.workspace_id) > chain.index(held.workspace_id):
+            by_key[row.key] = row
+    return sorted(by_key.values(), key=lambda r: (-len(roles.ROLES.close(r.permissions)), r.key))
+
+
+def drivers(workspace_slug: str) -> list[str]:
+    """The keys of the visible roles that let their holder drive the agent, weakest first: what a
+    caller is told to ask for (`caller_context`)."""
+    rows = [r for r in visible(workspace_slug) if roles.drives(roles.ROLES.close(r.permissions))]
+    return [r.key for r in reversed(rows)]

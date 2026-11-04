@@ -425,6 +425,10 @@ class AgentGrant(models.Model):
                 condition=(~models.Q(role="") & models.Q(capability=""))
                 | (models.Q(role="") & ~models.Q(capability="")),
                 name="agent_grant_role_or_capability"),
+            models.CheckConstraint(
+                condition=(models.Q(role="", role_def__isnull=True)
+                           | (~models.Q(role="") & models.Q(role_def__isnull=False))),
+                name="agent_grant_role_matches_row"),
             models.UniqueConstraint(fields=["agent", "subject_key"],
                                     condition=models.Q(agent__isnull=False),
                                     name="uniq_agent_grant_subject"),
@@ -453,8 +457,13 @@ class AgentGrant(models.Model):
 
     @property
     def permissions(self) -> frozenset[str]:
-        """What the line grants: its role's permissions, or the one `use:<capability>`."""
-        return roles.permissions_of(self.role) if self.role else frozenset({roles.use(self.capability)})
+        """What the line grants: its role's ROW (closed), or the one `use:<capability>`. Read the
+        lines with `select_related("role_def")` (`grants.lines_for*`) so this is no query."""
+        if not self.role:
+            return frozenset({roles.use(self.capability)})
+        if self.role_def_id is not None:
+            return roles.ROLES.close(self.role_def.permissions)
+        return frozenset()   # a role with no row grants nothing (never guessed from its name)
 
     def save(self, *args, **kwargs):
         self.subject_key = self.key_of(

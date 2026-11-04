@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from apps.agents import roles
+from apps.agents import rolecatalog, roles
 from apps.agents.credentials import authority
 from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
@@ -684,12 +684,13 @@ def _access_help(turn, agent, rel: str) -> dict | None:
     if agent is None or not turn.capability:
         return None
     grant = _grant(turn, agent)
+    drivers = rolecatalog.drivers(agent.workspace_id) or [roles.EDITOR]
     return {
         "your_role": grant.get("role") or rel,
         "workspace": agent.workspace_id,
-        "role_needed_for_full": roles.lowest_role_with(roles.WRITE),
+        "role_needed_for_full": drivers[0],
         "who_can_grant": (f"{agent.slug}'s owner or an admin: add you to the agent's access list "
-                          f"as {roles.lowest_role_with(roles.WRITE)} or {roles.EDITOR}"),
+                          f"as {' or '.join(drivers)}"),
     }
 
 
