@@ -4286,7 +4286,7 @@ export interface paths {
         /**
          * Remove a local app from a computer
          * @description A running copy is told to stop at its next heartbeat, which now answers 404. The
-         *     local copy goes when the runner next lists its apps.
+         *     local copy goes when the runner next lists its apps and it isn't running.
          */
         readonly delete: operations["remove_local_app"];
         readonly options?: never;
@@ -25298,6 +25298,13 @@ export interface components {
              */
             readonly installs_with: readonly string[];
             /**
+             * Source Disclosures
+             * @default []
+             */
+            readonly source_disclosures: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
              * Agents
              * @default []
              */
@@ -25607,6 +25614,8 @@ export interface components {
             readonly running: boolean;
             /** Source Key */
             readonly source_key?: string | null;
+            /** Agent */
+            readonly agent?: string | null;
             /**
              * Consumes
              * @default []
@@ -25639,6 +25648,11 @@ export interface components {
         readonly LocalAppStartRunIn: {
             /** Version */
             readonly version: string;
+            /**
+             * Source Version
+             * @default
+             */
+            readonly source_version: string;
         };
         /** LocalAppBeatOut */
         readonly LocalAppBeatOut: {

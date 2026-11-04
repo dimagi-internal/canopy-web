@@ -1234,6 +1234,7 @@ struct LocalApp {
     let stopReason: String?
     let sessionURL: String?
     let notice: String
+    let fullNotice: String
     let reads: [String]
     let sends: [String]
     let provides: [String]
@@ -1251,6 +1252,7 @@ struct LocalApp {
         stopReason = raw["stop_reason"] as? String
         sessionURL = (raw["session_url"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         notice = raw["notice"] as? String ?? ""
+        fullNotice = raw["full_notice"] as? String ?? ""
         let disclosure = raw["disclosure"] as? [String: Any] ?? [:]
         reads = disclosure["reads"] as? [String] ?? []
         sends = disclosure["sends"] as? [String] ?? []
@@ -1275,9 +1277,14 @@ struct LocalApp {
 
     var noticeText: String {
         var lines: [String] = []
-        if !notice.isEmpty { lines.append(notice) }
-        lines += reads.map { "Reads: \($0)" }
-        lines += sends.map { "Sends: \($0)" }
+        // The runner composes this: it names the agent and covers the source too.
+        if !fullNotice.isEmpty {
+            lines.append(fullNotice)
+        } else {
+            if !notice.isEmpty { lines.append(notice) }
+            lines += reads.map { "Reads: \($0)" }
+            lines += sends.map { "Sends: \($0)" }
+        }
         if needsAcceptance {
             lines.append("A newer version is waiting for you to accept what changed, so this runs the one you accepted:")
             lines += changes

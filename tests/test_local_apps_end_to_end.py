@@ -21,7 +21,7 @@ from apps.approvals import services as approvals
 from apps.canopy_sessions.models import Message, Session
 from apps.harness.models import Runner, RunnerAccessToken, RunnerDeviceKey
 from apps.local_apps import manifest as server_manifest
-from apps.local_apps import services, trust
+from apps.local_apps import services
 from apps.local_apps.models import LocalAppRun, LocalAppSubmission
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -108,7 +108,7 @@ def install(world) -> LocalAppSubmission:
     web.force_login(world["person"])
     r = web.post("/api/local-apps/store/dimagi/apps/meeting-assistant/install",
                  {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper", "brief": "Be blunt"},
-                  "accept_digest": trust.digest(sub.manifest)}, content_type=J)
+                  "accept_digest": services.install_digest(sub, services.sources_of(sub))}, content_type=J)
     assert r.status_code == 201, r.content
     return sub
 

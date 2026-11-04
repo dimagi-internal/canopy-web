@@ -88,6 +88,8 @@ def _settings(raw) -> dict:
             "label": str(spec.get("label") or name)[:200],
             "help": str(spec.get("help") or "")[:500],
             "required": bool(spec.get("required", False)),
+            # jsonb doesn't keep key order, and a form should follow the author's.
+            "order": len(out),
         }
         if "default" in spec:
             out[name]["default"] = spec["default"]

@@ -301,7 +301,7 @@ def accept_local_app_changes(
 @gate("self", setting=True)
 def remove_local_app(request: HttpRequest, installation_id: int):
     """A running copy is told to stop at its next heartbeat, which now answers 404. The
-    local copy goes when the runner next lists its apps."""
+    local copy goes when the runner next lists its apps and it isn't running."""
     _my_installation(request, installation_id).delete()
     return Status(204, None)
 

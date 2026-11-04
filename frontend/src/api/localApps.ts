@@ -40,7 +40,10 @@ export interface LocalAppFileDiff {
 }
 
 export function settingsSpecOf(raw: LocalAppDetail["settings"] | LocalAppInstallation["settings_spec"]): LocalAppSettingsSpec {
-  return raw as unknown as LocalAppSettingsSpec;
+  // Sorted by `order` because the database doesn't keep a JSON object's key order.
+  const entries = Object.entries(raw as unknown as Record<string, LocalAppSettingsSpec[string] & { order?: number }>);
+  entries.sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0));
+  return Object.fromEntries(entries) as LocalAppSettingsSpec;
 }
 
 export function factsOf(review: LocalAppReview): LocalAppFacts {

@@ -333,3 +333,20 @@ def test_the_manifest_declares_what_the_app_calls():
     manifest = json.loads((APP.parent / "manifest.json").read_text())
     assert manifest["consumes"] == ["transcript"]
     assert set(manifest["canopy"]) == {"sessions.create", "sessions.send", "turns.status"}
+
+
+def test_text_held_behind_a_slow_agent_is_split_and_none_is_lost(monkeypatch):
+    monkeypatch.setattr(m, "MAX_BATCH_CHARS", 40)
+    h = Harness()
+    h.feed.ended = False
+    words = [f"word{i}" for i in range(20)]
+    h.feed.buffer = [seg(w, float(i)) for i, w in enumerate(words)]
+    h.feed.ended = True
+    for _ in range(10):
+        h.advance(1)
+        if h.feed.stop_reason:
+            break
+    assert h.feed.stop_reason == "meeting_ended"
+    assert len(h.sent) > 1
+    joined = " ".join(text for text, _ in h.sent)
+    assert all(w in joined for w in words)

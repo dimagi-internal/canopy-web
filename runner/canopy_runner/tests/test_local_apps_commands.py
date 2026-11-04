@@ -69,7 +69,7 @@ class FakeServer:
         self.downloads.append((key, version))
         return self.packages[key]
 
-    def start_run(self, key, version):
+    def start_run(self, key, version, source_version=""):
         if self.start_refusal:
             raise server.Refused(self.start_refusal)
         self.started.append((key, version))
@@ -476,7 +476,7 @@ def test_the_run_routes_and_their_shapes(wire):
     srv.finish("r1", "max_minutes", {"sent": 1})
     assert srv.canopy("r1", "sessions.create", {"title": "t"}) == (201, {"id": "s1", "url": "u"})
     by_path = {s["path"]: s for s in Recorder.seen}
-    assert by_path[f"{PREFIX}/{KEY}/runs/"]["body"] == {"version": "1.0"}
+    assert by_path[f"{PREFIX}/{KEY}/runs/"]["body"] == {"version": "1.0", "source_version": ""}
     assert by_path[f"{PREFIX}/runs/r1/heartbeat"]["body"] == {"state": "listening", "counts": {"sent": 1}}
     assert by_path[f"{PREFIX}/runs/r1/finish"]["body"] == {"reason": "max_minutes", "counts": {"sent": 1}}
     assert by_path[f"{PREFIX}/runs/r1/canopy"]["body"] == {"op": "sessions.create", "args": {"title": "t"}}
@@ -541,3 +541,24 @@ def test_submit_shows_the_servers_refusal(tmp_path, wire, monkeypatch, capsys):
     Recorder.routes = {"/api/local-apps/submissions/": (409, {"detail": "That version exists with different bytes."})}
     with pytest.raises(server.Refused, match="different bytes"):
         server.submit(wire, "person-token", b"zip", "")
+
+
+def test_a_second_start_during_the_prompt_never_reaches_the_server(tmp_path, monkeypatch, no_spawn):
+    """The server ends any earlier run when one starts, so this would stop a live meeting."""
+    fake = FakeServer(listing(write_app(tmp_path / "a")))
+    use(monkeypatch, fake)
+    calls = iter([False, True])
+    monkeypatch.setattr(commands.state, "host_alive", lambda key: next(calls))
+    assert commands.run(parse("start", KEY, "--accept-notice")) == 1
+    assert fake.started == []
+
+
+def test_list_drops_code_it_would_no_longer_run(tmp_path, monkeypatch):
+    version = commands.state.version_dir(KEY, "0.0.9")
+    version.mkdir(parents=True)
+    keep = commands.state.version_dir(KEY, "0.1.0")
+    keep.mkdir(parents=True)
+    commands._prune([{"key": KEY, "version": "0.1.0"}], {})
+    assert keep.is_dir() and not version.exists()
+    commands._prune([], {})
+    assert not keep.exists()

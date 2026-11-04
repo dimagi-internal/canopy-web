@@ -123,7 +123,7 @@ def install(world, sub=None, settings=None) -> LocalAppInstallation:
         {
             "runner_id": str(world["laptop"].pk),
             "settings": settings or {"agent": "helper"},
-            "accept_digest": trust.digest(sub.manifest),
+            "accept_digest": services.install_digest(sub, services.sources_of(sub)),
         },
         content_type=J,
     )
@@ -622,3 +622,128 @@ def test_a_real_runner_token_reaches_its_routes(world):
     assert reaches("POST", f"/api/harness/runners/{rid}/local-apps/runs/{uuid.uuid4()}/canopy", rid)
     assert not reaches("POST", "/api/local-apps/submissions", rid)
     assert not reaches("POST", f"/api/canopy-sessions/{uuid.uuid4()}/send", rid)
+
+
+# --- what independent review found -------------------------------------------------------
+
+
+def test_leaving_the_workspace_stops_the_run_and_refuses_the_next_start(world):
+    install(world, released(world))
+    run = start(world)
+    WorkspaceMembership.objects.filter(user=world["person"], workspace=world["ws"]).delete()
+    assert beat(world, run) == {"stop": True, "reason": "no_longer_in_workspace"}
+    assert "no longer in" in _listed(world)["refusal"]
+
+
+def test_losing_the_agent_mid_run_stops_it(world, monkeypatch):
+    install(world, released(world))
+    run = start(world)
+    monkeypatch.setattr(services, "_usable_agent", lambda *a, **k: (_ for _ in ()).throw(services.Refused("no", 403)))
+    assert beat(world, run) == {"stop": True, "reason": "no_longer_allowed_to_use_agent"}
+
+
+def test_being_removed_from_the_session_stops_the_sends(world, monkeypatch):
+    install(world, released(world))
+    run = start(world)
+    session = call(world, run, "sessions.create", {"title": "t"})["body"]["id"]
+    monkeypatch.setattr(services.session_access, "can_write", lambda *a: False)
+    assert call(world, run, "sessions.send", {"session_id": session, "text": "hi", "client_id": "a"})["status"] == 403
+
+
+def test_a_refused_turn_isnt_reported_as_sent(world, monkeypatch):
+    install(world, released(world))
+    run = start(world)
+    session = call(world, run, "sessions.create", {"title": "t"})["body"]["id"]
+
+    class Cancelled:
+        pk = uuid.uuid4()
+        status = Turn.CANCELLED
+    monkeypatch.setattr(services.doors, "send_from", lambda *a, **k: (None, Cancelled))
+    assert call(world, run, "sessions.send", {"session_id": session, "text": "hi", "client_id": "a"})["status"] == 403
+
+
+def test_revoking_a_source_stops_runs_listening_to_it(world):
+    source = released(world, manifest(key="whisper-source", name="Whisper", provides=["transcript"], settings={},
+                                      canopy=[], notice=""))
+    sub = released(world, manifest(consumes=["transcript"]))
+    r = client(world["person"]).post(
+        "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
+        {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper"},
+         "accept_digest": services.install_digest(sub, [source])}, content_type=J)
+    assert r.status_code == 201, r.content
+    r = client(world["person"]).post(f"{runner_base(world)}/meeting-assistant/runs/",
+                                     {"version": "0.1.0", "source_version": "0.1.0"}, content_type=J)
+    assert r.status_code == 201, r.content
+    run = r.json()["run_id"]
+    assert beat(world, run)["stop"] is False
+    services.revoke(source, reason="bad", user=world["root"])
+    assert beat(world, run) == {"stop": True, "reason": "revoked"}
+
+
+def test_installing_accepts_the_sources_promise_and_never_a_newer_one_in_passing(world):
+    source = released(world, manifest(key="whisper-source", name="Whisper", provides=["transcript"], settings={},
+                                      canopy=[], notice=""))
+    sub = released(world, manifest(consumes=["transcript"]))
+    detail = client(world["person"]).get("/api/local-apps/store/dimagi/apps/meeting-assistant").json()
+    assert detail["source_disclosures"][0]["disclosure"]["reads"] == ["a transcript"]
+    assert detail["digest"] == services.install_digest(sub, [source]) != trust.digest(sub.manifest)
+    install_body = {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper"},
+                    "accept_digest": detail["digest"]}
+    url = "/api/local-apps/store/dimagi/apps/meeting-assistant/install"
+    assert client(world["person"]).post(url, install_body, content_type=J).status_code == 201
+
+    wider = released(world, manifest(key="whisper-source", name="Whisper", provides=["transcript"], settings={},
+                                     canopy=[], notice="", version="0.2.0",
+                                     disclosure={"reads": ["your calendar"], "sends": []}))
+    install_body["accept_digest"] = services.install_digest(sub, [wider])
+    assert client(world["person"]).post(url, install_body, content_type=J).status_code == 201
+    row = LocalAppInstallation.objects.get(template__key="whisper-source")
+    assert row.accepted_digest == trust.digest(source.manifest)
+    assert services.resolve(row)["needs_acceptance"] is True
+
+
+@pytest.mark.parametrize("route", ["install", "configure", "accept"])
+def test_an_agent_acting_for_the_person_cant_change_what_they_agreed_to(world, monkeypatch, route):
+    sub = released(world)
+    inst = install(world, sub)
+    monkeypatch.setattr("apps.local_apps.api.kinds.speaks_for_a_turn", lambda request: True)
+    c = client(world["person"])
+    if route == "install":
+        r = c.post("/api/local-apps/store/dimagi/apps/meeting-assistant/install",
+                   {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper"},
+                    "accept_digest": trust.digest(sub.manifest)}, content_type=J)
+    elif route == "configure":
+        r = c.patch(f"/api/local-apps/installations/{inst.pk}", {"settings": {"brief": "x"}}, content_type=J)
+    else:
+        r = c.post(f"/api/local-apps/installations/{inst.pk}/accept", {"digest": "x"}, content_type=J)
+    assert r.status_code == 403
+
+
+def test_a_runs_routes_arent_tools_for_an_agent():
+    from apps.mcp.api_tools import EXCLUDED
+    for op in ("list_runner_local_apps", "get_runner_local_app_package", "start_runner_local_app",
+               "beat_runner_local_app", "finish_runner_local_app", "call_canopy_for_local_app"):
+        assert op in EXCLUDED
+
+
+def test_code_a_reviewer_couldnt_read_cant_be_submitted(world, monkeypatch):
+    monkeypatch.setattr(pkg, "MAX_DIFF_LINES", 3)
+    r = client(world["author"]).post("/api/local-apps/submissions/", {
+        "package_b64": b64(package(files={"a_data.txt": "x\n" * 50})), "workspace": "dimagi"}, content_type=J)
+    assert r.status_code == 422 and "reviewer" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("files", [{"./app.py": "x"}, {"APP.py": "x"}])
+def test_the_server_refuses_what_a_runner_couldnt_unpack(files):
+    with pytest.raises(pkg.BadPackage):
+        pkg.read(package(files=files))
+
+
+def test_a_package_fits_in_a_request_body():
+    from django.conf import settings
+    assert (pkg.MAX_PACKED * 4) // 3 + 1024 < settings.DATA_UPLOAD_MAX_MEMORY_SIZE
+
+
+def test_settings_remember_the_authors_order_through_jsonb():
+    from apps.local_apps import manifest as mf
+    assert [s["order"] for s in mf.validate(manifest())["settings"].values()] == [0, 1]

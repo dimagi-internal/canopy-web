@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -48,6 +49,7 @@ class Plan:
     source: Optional["Plan"] = None
     needs_acceptance: bool = False
     changes: list = dataclasses.field(default_factory=list)
+    agent: str = ""
 
 
 # --- talking to the server ---------------------------------------------------------
@@ -346,7 +348,7 @@ def _prune(apps: list, dev: dict) -> None:
     for key in state.installed_keys():
         if key in dev or state.host_alive(key):
             continue
-        versions = state.versions_dir(key)
+        versions = state.app_dir(key) / "versions"
         if not versions.is_dir():
             continue
         for folder in versions.iterdir():
@@ -364,11 +366,11 @@ def _cmd_list(args) -> int:
     dev = _dev_entries()
     if not offline:
         _prune(apps, dev)
+    apps = [a for a in apps if a.get("key") not in dev]
+    apps += [_list_entry_from_dev(key, record) for key, record in sorted(dev.items())]
     by_key = {a.get("key"): a for a in apps}
     for app in apps:
         app["full_notice"] = _entry_notice(app, by_key)
-    apps = [a for a in apps if a.get("key") not in dev]
-    apps += [_list_entry_from_dev(key, record) for key, record in sorted(dev.items())]
     for app in apps:
         app.setdefault("unpublished", False)
         try:

@@ -74,6 +74,15 @@ export default function LocalAppDetailPage(): JSX.Element {
             Installing this also installs {app.installs_with.join(', ')}, which it needs in order to work.
           </p>
         )}
+        {app.source_disclosures?.map((source) => {
+          const promise = source as unknown as { name: string; disclosure?: { reads?: string[]; sends?: string[] } }
+          return (
+            <div key={promise.name} data-testid="local-app-source-disclosure">
+              <Promises title={`${promise.name} reads`} items={promise.disclosure?.reads} />
+              <Promises title={`${promise.name} sends`} items={promise.disclosure?.sends} />
+            </div>
+          )
+        })}
         <p className="mt-3 text-[13px] text-muted-foreground">
           Canopy reviewed this code before listing it. It runs as you, and can read what you can read.
         </p>

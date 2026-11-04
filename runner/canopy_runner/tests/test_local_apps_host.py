@@ -587,3 +587,39 @@ def test_the_real_apps_run_end_to_end_with_nothing_leaving_and_nothing_logged(tm
     assert record["counts"]["sent"] == 1
     for path in (state.log_file("meeting-assistant"), state.run_file("meeting-assistant")):
         assert SPOKEN not in path.read_text() and "goodbye" not in path.read_text()
+
+
+def test_a_bomb_of_a_line_is_just_a_bad_line(tmp_path):
+    """A deeply nested line raises RecursionError from json. It must not end the supervisor."""
+    app = program(tmp_path, "app", """
+next(lines())
+sys.stdout.write("[" * 200000 + "\\n")
+sys.stdout.flush()
+out({"type": "stopped", "reason": "survived"})
+""")
+    host, reason = run(make_spec(app), max_line=1_000_000)
+    assert reason == "survived"
+    assert host.bad_lines == 1
+
+
+def test_an_apps_own_helpers_dont_outlive_it(tmp_path):
+    marker = tmp_path / "helper.pid"
+    app = program(tmp_path, "app", f"""
+import subprocess
+next(lines())
+helper = subprocess.Popen(["sleep", "60"])
+open({str(marker)!r}, "w").write(str(helper.pid))
+out({{"type": "stopped", "reason": "done"}})
+""")
+    _host, reason = run(make_spec(app))
+    assert reason == "done"
+    pid = int(marker.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    os.kill(pid, 9)
+    raise AssertionError("the helper survived its app")

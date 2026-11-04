@@ -224,7 +224,7 @@ class Feed:
         if final:
             if self.pending and self.pending.attempts < FINAL_SEND_ATTEMPTS:
                 return  # the last batch hasn't landed; the next tick retries it
-            if self.pending is None and self.buffer and final != "meeting_gone":
+            if self.pending is None and self.buffer:
                 return  # more than one message's worth was held; the next tick sends the rest
             if self.pending:
                 self.log("dropped_unsent", words=self.pending.words)
