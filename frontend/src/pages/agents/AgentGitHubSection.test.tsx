@@ -51,6 +51,7 @@ describe('AgentGitHubSection', () => {
   it('gives the owner the pre-filled GitHub form and a paste box', async () => {
     getAgentGitHub.mockResolvedValue(UNSET)
     show('olive@dimagi.com')
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect GitHub' }))
     await waitFor(() => expect(screen.getByTestId('github-setup')).toBeTruthy())
     expect(screen.getByRole('link', { name: 'Create the token on GitHub' }).getAttribute('href'))
       .toBe(UNSET.create_url)
@@ -61,41 +62,49 @@ describe('AgentGitHubSection', () => {
   it('gives an admin the paste box too, and says whose token is in force', async () => {
     getAgentGitHub.mockResolvedValue({ ...WORKING, lent_by_email: 'ada@dimagi-ai.com', login: 'ada' })
     show('ada@dimagi-ai.com')
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace token' }))
     await waitFor(() => expect(screen.getByTestId('github-setup')).toBeTruthy())
-    expect(screen.getByTestId('github-status').textContent).toContain('delegated by ada@dimagi-ai.com')
+    expect(screen.getByTestId('github-status').textContent).toContain('acts as @ada')
     expect(screen.getByRole('button', { name: 'Withdraw' })).toBeTruthy()
   })
 
   it('offers Withdraw only to the person whose token is in force', async () => {
     getAgentGitHub.mockResolvedValue(WORKING)
     show('ada@dimagi-ai.com')
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace token' }))
     await waitFor(() => expect(screen.getByTestId('github-setup')).toBeTruthy())
     expect(screen.queryByRole('button', { name: 'Withdraw' })).toBeNull()
   })
 
-  it('says which machines a token given now is sealed to, before it is pasted', async () => {
+  it('says so when no machine can open a delegated token yet, and nothing about sealing', async () => {
+    getAgentGitHub.mockResolvedValue({ ...UNSET, eligible_machines: [] })
+    show('olive@dimagi.com')
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect GitHub' }))
+    const text = (await screen.findByTestId('github-who-can-open')).textContent
+    expect(text).toContain('needs an approved device key first')
+    cleanup()
     getAgentGitHub.mockResolvedValue({ ...UNSET, eligible_machines: ['cloud-ec2-2', 'jj-mbp-cdp'] })
     show('olive@dimagi.com')
-    await waitFor(() => expect(screen.getByTestId('github-who-can-open')).toBeTruthy())
-    const text = screen.getByTestId('github-who-can-open').textContent
-    expect(text).toContain('cloud-ec2-2, jj-mbp-cdp')
-    expect(text).toContain('Nobody can read it in canopy, including you')
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect GitHub' }))
+    await screen.findByTestId('github-setup')
+    expect(screen.queryByTestId('github-who-can-open')).toBeNull()
+    expect(screen.getByTestId('agent-github').textContent).not.toContain('Nobody can read it')
   })
 
-  it('says a delegated token in the vault can be opened only by its machines, and is not re-checked here', async () => {
+  it('does not list machines, and offers no re-check for a token in the vault', async () => {
     getAgentGitHub.mockResolvedValue({ ...WORKING, in_vault: true, machines: ['cloud-ec2-2'],
                                        checked_by: 'cloud-ec2-2', checked_at: '2026-10-26T10:00:00Z' })
     show('olive@dimagi.com')
-    await waitFor(() => expect(screen.getByTestId('github-machines')).toBeTruthy())
-    expect(screen.getByTestId('github-machines').textContent).toContain('Only these machines can open it: cloud-ec2-2')
-    expect(screen.getByTestId('github-status').textContent).toContain('by cloud-ec2-2')
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace token' }))
+    await screen.findByTestId('github-setup')
+    expect(screen.getByTestId('agent-github').textContent).not.toContain('cloud-ec2-2')
     expect(screen.queryByRole('button', { name: 'Check now' })).toBeNull()
   })
 
   it('tells its person to replace a token a machine found no longer works', async () => {
     getAgentGitHub.mockResolvedValue({ ...WORKING, in_vault: true, no_longer_works: true })
     show('olive@dimagi.com')
-    await waitFor(() => expect(screen.getByTestId('github-status').textContent).toContain('Not working'))
+    await waitFor(() => expect(screen.getByTestId('agent-github').textContent).toContain('Not working'))
     expect(screen.getByTestId('agent-github').textContent).toContain('no longer works — olive@dimagi.com replaces it')
   })
 
@@ -111,6 +120,7 @@ describe('AgentGitHubSection', () => {
     getAgentGitHub.mockResolvedValue(UNSET)
     setAgentGitHub.mockRejectedValue(new Error('dimagi-internal/echo: the token cannot see this repo'))
     show('olive@dimagi.com')
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect GitHub' }))
     await waitFor(() => expect(screen.getByLabelText('GitHub token')).toBeTruthy())
     fireEvent.change(screen.getByLabelText('GitHub token'), { target: { value: 'github_pat_x' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -137,7 +147,12 @@ describe('AgentGitHubSection', () => {
     getAgentGitHub.mockResolvedValue(WORKING)
     show('someone@dimagi.com')
     await waitFor(() => expect(screen.getByTestId('github-status').textContent).toContain('@olive'))
-    expect(screen.getByTestId('github-status').textContent).toContain('Working')
-    expect(screen.getByTestId('github-checks').textContent).toContain('can open pull requests')
+    expect(screen.getByTestId('agent-github').textContent).toContain('Working')
+    // Only a failing check is worth a line.
+    expect(screen.queryByTestId('github-checks')).toBeNull()
+    cleanup()
+    getAgentGitHub.mockResolvedValue({ ...WORKING, checks: [{ repo: 'dimagi-internal/echo', ok: false, detail: 'cannot open pull requests' }] })
+    show('someone@dimagi.com')
+    await waitFor(() => expect(screen.getByTestId('github-checks').textContent).toContain('cannot open pull requests'))
   })
 })

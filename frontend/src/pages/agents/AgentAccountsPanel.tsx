@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { toneClasses } from 'canopy-ui/lib'
+import { Button } from 'canopy-ui/ui'
 
 import {
   getAgentCredentialStatus,
@@ -10,33 +10,22 @@ import {
   type GoogleMintOut,
 } from '@/api/agents'
 import { getAgentMailbox, type AgentMailboxOut } from '@/api/mail'
-import type { CredStatus } from '@/pages/agents/agentCredentials'
+import { AccountRow } from '@/pages/agents/AccountRow'
+import { ConnectionRows, ConnectionsBanner, useAgentConnections } from '@/pages/agents/AgentConnectionsPanel'
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { declaresMailbox, followMint, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/googleMint'
-import { Td } from '@/components/DataTable'
 
-// The agent's External accounts tab: the outside accounts it acts as —
-// GitHub and its Google mailbox.
-//
-// It LEADS with a status list (#1314): one line per account, each reported up
-// by its own detail section, so the one that needs a person (a mailbox nobody
-// connected) is the first thing on screen, with its action on the same line.
-
-const TONE: Record<CredStatus['tone'], string> = {
-  success: toneClasses('success'),
-  warning: toneClasses('warning'),
-  destructive: toneClasses('destructive'),
-  muted: toneClasses('neutral'),
-}
-
-const MARK: Record<CredStatus['tone'], string> = { success: '✓', warning: '!', destructive: '✗', muted: '–' }
-
-type StatusKey = 'github'
+// The agent's External accounts tab: the outside accounts it acts as, as ONE list,
+// one row per account, every row alike: service name | status and one short detail |
+// one action. GitHub first, then Google, Salesforce, and any other Connections
+// provider. Rows from Connections are admin-only (the server enforces it too).
 
 export function AgentAccountsPanel({
   agent,
+  isAdmin = false,
 }: {
-  agent: { slug: string; email?: string | null }
+  agent: { slug: string; email?: string | null; name?: string; workspace?: string | null }
+  isAdmin?: boolean
 }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -53,13 +42,7 @@ export function AgentAccountsPanel({
   const outcome = mintOutcome(returned.status, { account: returned.account, agentEmail: returned.expected || agent.email })
   const [progress, setProgress] = useState<string | null>(null)
   const [mailBox, setMailBox] = useState<AgentMailboxOut | null>(null)
-  const [status, setStatus] = useState<Partial<Record<StatusKey, CredStatus>>>({})
-  const report = useCallback(
-    (key: StatusKey) => (s: CredStatus) => setStatus((prev) => ({ ...prev, [key]: s })),
-    [],
-  )
-  // Stable per key, so a section's effect does not re-fire on every render.
-  const [onGitHub] = useState(() => report('github'))
+  const conns = useAgentConnections(agent, isAdmin)
 
   useEffect(() => {
     getAgentCredentialStatus(agent.slug).then(setRows, () => setRows([]))
@@ -116,17 +99,7 @@ export function AgentAccountsPanel({
   const hosted = mailBox?.kind === 'hosted'
   const hasMailbox = rows !== null && declaresMailbox(rows, hosted ? null : agent.email)
   const gog = rows?.find((r) => r.name === GOG_TOKEN_REF)
-  const mailbox: CredStatus = gog?.set
-    ? { label: 'Connected', tone: 'success' }
-    : { label: 'Not connected', tone: 'destructive' }
-
-  const statusRows: { key: string; name: string; href?: string; s: CredStatus | undefined }[] = [
-    { key: 'github', name: 'GitHub', href: '#cred-github', s: status.github },
-    ...(hosted ? [{ key: 'email', name: 'Email', href: '#reach', s: mailBox?.live
-      ? { label: 'Canopy-hosted', tone: 'success' } as CredStatus
-      : { label: 'Canopy-hosted, not routed', tone: 'warning' } as CredStatus }] : []),
-    ...(hasMailbox ? [{ key: 'mailbox', name: hosted ? 'Google sign-in (Drive)' : 'Google mailbox', s: mailbox }] : []),
-  ]
+  const connected = Boolean(gog?.set)
 
   return (
     <div data-testid="agent-accounts">
@@ -146,55 +119,39 @@ export function AgentAccountsPanel({
           )}
         </p>
       )}
+      <ConnectionsBanner conns={conns} />
 
-      <table id="cred-mailbox" className="mb-6 w-full scroll-mt-6 text-[12px]" data-testid="credential-status">
-        <tbody className="divide-y divide-border">
-          {statusRows.map((r) => (
-            <tr key={r.key} data-testid={`credential-status-${r.key}`}>
-              <Td density="cozy" tone="foreground" className="w-48">
-                {r.href ? (
-                  <a href={r.href} className="hover:text-primary">
-                    {r.name}
-                  </a>
-                ) : (
-                  r.name
-                )}
-              </Td>
-              <Td density="cozy">
-                {r.s ? (
-                  <span className={`rounded border px-1.5 py-0.5 text-[11px] ${TONE[r.s.tone]}`}>
-                    {MARK[r.s.tone]} {r.s.label}
-                  </span>
-                ) : (
-                  <span className="text-[11px] text-muted-foreground">…</span>
-                )}
-              </Td>
-              <Td density="cozy" align="right">
-                {r.key === 'mailbox' && (
-                  // Signing in is the only way a mailbox token is minted, so the
-                  // action sits on its own status line.
-                  <button
-                    type="button"
-                    onClick={() => void connectMailbox()}
-                    disabled={busy}
-                    className={`min-h-11 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-40 sm:min-h-0 ${
-                      gog?.set
-                        ? 'border border-input text-foreground hover:border-primary'
-                        : 'bg-primary text-primary-foreground hover:bg-primary/90'
-                    }`}
-                  >
-                    Connect Google mailbox
-                  </button>
-                )}
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {progress && !error && <p className="mb-3 text-[13px] text-muted-foreground" data-testid="google-mint-progress">{progress}</p>}
-      {error && <p className="mb-3 text-[13px] text-destructive">{error}</p>}
-
-      <AgentGitHubSection slug={agent.slug} onStatus={onGitHub} />
+      <div role="list" className="divide-y divide-border" data-testid="credential-status">
+        <AgentGitHubSection slug={agent.slug} />
+        {hasMailbox && (
+          // Signing in is the only way a mailbox token is minted, so the action sits on its row.
+          <AccountRow
+            id="cred-mailbox"
+            testId="credential-status-mailbox"
+            name="Google"
+            pill={connected ? { label: 'Connected', tone: 'success' } : { label: 'Not connected', tone: 'neutral' }}
+            detail={hosted ? null : agent.email}
+            action={
+              <Button size="sm" variant={connected ? 'outline' : 'default'} disabled={busy} onClick={() => void connectMailbox()}>
+                {connected ? 'Reconnect' : 'Connect Google'}
+              </Button>
+            }
+          >
+            {progress && !error && <p data-testid="google-mint-progress">{progress}</p>}
+            {error && <p className="text-destructive">{error}</p>}
+          </AccountRow>
+        )}
+        {isAdmin && rows !== null && <ConnectionRows agent={agent} conns={conns} mailboxShown={hasMailbox} />}
+        {hosted && (
+          <AccountRow
+            testId="credential-status-email"
+            name="Email"
+            pill={mailBox?.live ? { label: 'Canopy-hosted', tone: 'success' } : { label: 'Canopy-hosted, not routed', tone: 'warning' }}
+            action={<a href="#reach" className="text-[12px] text-primary hover:underline">Channels</a>}
+          />
+        )}
+      </div>
+      {!hasMailbox && error && <p className="mt-3 text-[13px] text-destructive">{error}</p>}
     </div>
   )
 }

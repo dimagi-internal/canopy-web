@@ -185,23 +185,22 @@ describe('Security — its secrets', () => {
 })
 
 describe('External accounts', () => {
-  it('leads with a status list, the unconnected mailbox and its action on one line', async () => {
-    // ada/echo/eva/hal on 2026-10-04: declared 0, mailbox set — and no button,
-    // so re-minting their mailbox needed a terminal and a hand-written secret.
+  // ada/echo/eva/hal on 2026-10-04: declared 0, mailbox set — and no button,
+  // so re-minting their mailbox needed a terminal and a hand-written secret.
+  it('puts the unconnected mailbox and its action on one row, first in the list after GitHub', async () => {
     getAgentCredentialStatus.mockResolvedValue([])
     inRouter(<AgentAccountsPanel agent={{ ...AGENT, email: 'echo@dimagi-ai.com' }} />)
     const mailbox = await screen.findByTestId('credential-status-mailbox')
     expect(mailbox.textContent).toContain('Not connected')
-    expect(within(mailbox).getByRole('button', { name: 'Connect Google mailbox' })).toBeTruthy()
-    // The list is the first thing in the tab (the outcome banner aside).
-    expect(screen.getByTestId('agent-accounts').firstElementChild).toBe(screen.getByTestId('credential-status'))
+    expect(within(mailbox).getByRole('button', { name: 'Connect Google' })).toBeTruthy()
+    expect(screen.getByTestId('agent-accounts').querySelector('[role="list"]')).toBe(screen.getByTestId('credential-status'))
   })
 
-  it('offers no mailbox button to an agent with neither a mailbox nor a gog-token', async () => {
+  it('offers no mailbox row to an agent with neither a mailbox nor a gog-token', async () => {
     getAgentCredentialStatus.mockResolvedValue([])
     inRouter(<AgentAccountsPanel agent={AGENT} />)
-    await screen.findByTestId('credential-status-github')
-    expect(screen.queryByText('Connect Google mailbox')).toBeNull()
+    await waitFor(() => expect(getAgentCredentialStatus).toHaveBeenCalled())
+    expect(screen.queryByText('Connect Google')).toBeNull()
     expect(screen.queryByTestId('credential-status-mailbox')).toBeNull()
   })
 
