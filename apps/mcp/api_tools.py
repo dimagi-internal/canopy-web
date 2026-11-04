@@ -118,6 +118,12 @@ EXCLUDED: dict[str, str] = {
                              "would put the keys in a model's context",
     # Runner protocol.
     "pair_runner": _RUNNER,
+    "list_runner_local_apps": _RUNNER,
+    "get_runner_local_app_package": _RUNNER,
+    "start_runner_local_app": _RUNNER,
+    "beat_runner_local_app": _RUNNER,
+    "finish_runner_local_app": _RUNNER,
+    "call_canopy_for_local_app": _RUNNER,
     "get_runner_credential": _RUNNER,
     "resolve_runner_credential": _RUNNER,
     "put_runner_vault_values": _RUNNER,

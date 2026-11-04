@@ -67,7 +67,7 @@ pack + submit  ──────► validate, store, compute facts
 
 1. **Pack.** `canopy-runner app pack <folder>` validates the manifest and writes a deterministic zip: sorted names, fixed times, `tests/` and caches left out. The same folder gives the same sha256.
 2. **Submit.** `POST /api/local-apps/submissions/` with the package base64-encoded, so it also works as an MCP tool. `canopy-runner app submit <folder>` and any agent with a token do the same. It needs `content.write` in a workspace. Submitting the same version and sha again returns the same submission; the same version with different bytes is refused, because versions are immutable.
-3. **Validate.** The server never runs the package. It checks size (5 MB packed, 20 MB unpacked, 200 files), paths (no traversal, no symlinks, no binaries), the manifest, that `version` is newer than the latest release, and computes **facts** for the reviewer: every file and size, modules imported that reach the network or start processes, and what changed in the trust surface.
+3. **Validate.** The server never runs the package. It checks size (1.5 MB packed, because a package travels inside a JSON body, 20 MB unpacked, 200 files), paths (no traversal, no symlinks, no binaries), the manifest, that `version` is newer than the latest release, that the changes are few enough to review (4,000 diff lines, because what can't be read can't be reviewed), and computes **facts** for the reviewer: every file and size, modules imported that reach the network or start processes, and what changed in the trust surface.
 4. **Approve.** Submitting files an `ApprovalRequest` of kind `local_app.release`, so it arrives by push, Slack and email like every other approval, with an audit trail. Its snapshot names the exact sha256, so what's approved is exactly those bytes. A review page shows the code, the diff from the last release and the facts. Approving needs `is_superuser` for now, because the catalog is Canopy's and Canopy is vouching for it, and nobody approves their own submission.
 5. **Release.** Approving creates the immutable `AppTemplateVersion` and lists the app. A released app belongs to Canopy's catalog (`owner=None`) with the submitting workspace recorded, so it's visible to every workspace that has switched local apps on, and it holds no tenant data.
 6. **Reach a computer.** At each Start, the runner asks the server what to run. See **Updates**.
@@ -125,7 +125,7 @@ The store lists local apps beside web apps, with a detail page showing the discl
 
 ## Manifest
 
-`manifest.json`, like a bundled workspace app, validated by one module on the server and a copy in the runner, kept equal by a test.
+`manifest.json`, like a bundled workspace app. The server's validator is the stricter one, and a test pins that whatever it approves every runner accepts.
 
 ```json
 {

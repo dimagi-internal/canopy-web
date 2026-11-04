@@ -4325,6 +4325,347 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/local-apps/store/{workspace}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Apps that run on your computer
+         * @description Empty until a workspace admin switches local apps on. These apps can record
+         *     conversations, so a workspace chooses to offer them.
+         */
+        readonly get: operations["list_local_app_store"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/store/{workspace}/switch": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Offer local apps in this workspace, or stop
+         * @description Turning this off also stops running copies at their next heartbeat.
+         */
+        readonly put: operations["set_local_apps_switch"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/store/{workspace}/apps/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One local app, as someone deciding to install it */
+        readonly get: operations["get_local_app"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/store/{workspace}/apps/{key}/install": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Install a local app on one of your computers
+         * @description Send back the `digest` you were shown. A web page can install and configure an
+         *     app, but only the person at the computer can start one.
+         */
+        readonly post: operations["install_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/installations/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Your installed local apps, on all your computers */
+        readonly get: operations["list_my_local_apps"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/installations/{installation_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a local app from a computer
+         * @description A running copy is told to stop at its next heartbeat, which now answers 404. The
+         *     local copy goes when the runner next lists its apps and it isn't running.
+         */
+        readonly delete: operations["remove_local_app"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Configure a local app */
+        readonly patch: operations["configure_local_app"];
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/installations/{installation_id}/accept": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Accept what a new version of a local app reads and sends */
+        readonly post: operations["accept_local_app_changes"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/runs/{run_id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop a running local app from the website
+         * @description Read at the app's next heartbeat, at most about 15 seconds later on a computer
+         *     that's online. There is no way to start one from here.
+         */
+        readonly post: operations["stop_local_app_run"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/submissions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Local app versions, newest first
+         * @description Yours; a superuser sees all, to review and revoke.
+         */
+        readonly get: operations["list_local_app_submissions"];
+        readonly put?: never;
+        /**
+         * Submit a local app version for review
+         * @description A package from `canopy-runner app pack`, base64-encoded. Nothing runs on the
+         *     server. Files an approval for a superuser; nothing reaches anyone until it's
+         *     approved. The same version with the same bytes returns the same submission.
+         */
+        readonly post: operations["submit_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/submissions/{submission_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One submission: its code changes and facts
+         * @description For its reviewer or its author. `diff` is against the last released version.
+         */
+        readonly get: operations["get_local_app_submission"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/submissions/{submission_id}/revoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop a released version everywhere
+         * @description Start refuses it, Canopy calls for its runs are refused at once, and running
+         *     copies are told to stop at their next heartbeat. The reason is shown to people.
+         */
+        readonly post: operations["revoke_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/local-apps/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This computer's installed local apps
+         * @description Each app's version to run at its next Start, and why it can't start if it can't.
+         */
+        readonly get: operations["list_runner_local_apps"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/local-apps/{key}/package": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A local app version's package
+         * @description Only the version this installation would run now. The runner checks the bytes
+         *     against the sha256 from the list.
+         */
+        readonly get: operations["get_runner_local_app_package"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/local-apps/{key}/runs/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start a local app run
+         * @description The last word on whether it may start: revoked, switched off, unaccepted and an
+         *     agent the person can no longer use are all refused here.
+         */
+        readonly post: operations["start_runner_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/local-apps/runs/{run_id}/heartbeat": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** A running local app reports in */
+        readonly post: operations["beat_runner_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/local-apps/runs/{run_id}/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** A local app run ended */
+        readonly post: operations["finish_runner_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/local-apps/runs/{run_id}/canopy": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A Canopy call for a running local app
+         * @description Only ops the manifest declares. The agent comes from the person's installation,
+         *     and a send reaches only a session this run opened. Refusals arrive as `status`, so
+         *     an app handles them; they never become anything more than that.
+         */
+        readonly post: operations["call_canopy_for_local_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sessions/upload": {
         readonly parameters: {
             readonly query?: never;
@@ -25305,6 +25646,510 @@ export interface components {
             };
             /** Draft */
             readonly draft: boolean;
+        };
+        /** LocalAppListingOut */
+        readonly LocalAppListingOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Version */
+            readonly version: string;
+            /**
+             * Tagline
+             * @default
+             */
+            readonly tagline: string;
+            /**
+             * Consumes
+             * @default []
+             */
+            readonly consumes: readonly string[];
+            /**
+             * Provides
+             * @default []
+             */
+            readonly provides: readonly string[];
+            /**
+             * Installed
+             * @default false
+             */
+            readonly installed: boolean;
+        };
+        /** LocalAppStoreOut */
+        readonly LocalAppStoreOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Can Switch */
+            readonly can_switch: boolean;
+            /** Apps */
+            readonly apps: readonly components["schemas"]["LocalAppListingOut"][];
+        };
+        /** LocalAppSwitchOut */
+        readonly LocalAppSwitchOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /** LocalAppSwitchIn */
+        readonly LocalAppSwitchIn: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /** LocalAppComputerOut */
+        readonly LocalAppComputerOut: {
+            /** Id */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+        };
+        /** LocalAppDetailOut */
+        readonly LocalAppDetailOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Version */
+            readonly version: string;
+            /** Publisher */
+            readonly publisher: string;
+            /** Notice */
+            readonly notice: string;
+            /** Disclosure */
+            readonly disclosure: {
+                readonly [key: string]: readonly string[];
+            };
+            /** Settings */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+            /** Digest */
+            readonly digest: string;
+            /**
+             * Installs With
+             * @default []
+             */
+            readonly installs_with: readonly string[];
+            /**
+             * Source Disclosures
+             * @default []
+             */
+            readonly source_disclosures: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly {
+                readonly [key: string]: string;
+            }[];
+            /**
+             * Computers
+             * @default []
+             */
+            readonly computers: readonly components["schemas"]["LocalAppComputerOut"][];
+            /**
+             * Versions
+             * @default []
+             */
+            readonly versions: readonly components["schemas"]["LocalAppVersionOut"][];
+            /**
+             * Enabled
+             * @default false
+             */
+            readonly enabled: boolean;
+        };
+        /** LocalAppVersionOut */
+        readonly LocalAppVersionOut: {
+            /** Version */
+            readonly version: string;
+            /** Released At */
+            readonly released_at?: string | null;
+            /**
+             * Changelog
+             * @default
+             */
+            readonly changelog: string;
+            /**
+             * Revoked
+             * @default false
+             */
+            readonly revoked: boolean;
+        };
+        /** LocalAppInstallationOut */
+        readonly LocalAppInstallationOut: {
+            /** Id */
+            readonly id: number;
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            readonly computer: components["schemas"]["LocalAppComputerOut"];
+            /** Settings */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+            /** Settings Spec */
+            readonly settings_spec: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly {
+                readonly [key: string]: string;
+            }[];
+            /** Version */
+            readonly version?: string | null;
+            /**
+             * Needs Acceptance
+             * @default false
+             */
+            readonly needs_acceptance: boolean;
+            /**
+             * Changes
+             * @default []
+             */
+            readonly changes: readonly string[];
+            /**
+             * Digest
+             * @default
+             */
+            readonly digest: string;
+            /** Refusal */
+            readonly refusal?: string | null;
+            readonly last_run?: components["schemas"]["LocalAppRunOut"] | null;
+        };
+        /** LocalAppRunOut */
+        readonly LocalAppRunOut: {
+            /** Id */
+            readonly id: string;
+            /** Version */
+            readonly version: string;
+            /** Started At */
+            readonly started_at: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * State
+             * @default
+             */
+            readonly state: string;
+            /**
+             * Counts
+             * @default {}
+             */
+            readonly counts: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Stop Reason
+             * @default
+             */
+            readonly stop_reason: string;
+            /**
+             * Stop Requested
+             * @default false
+             */
+            readonly stop_requested: boolean;
+            /**
+             * Running
+             * @default false
+             */
+            readonly running: boolean;
+        };
+        /** LocalAppInstallIn */
+        readonly LocalAppInstallIn: {
+            /** Runner Id */
+            readonly runner_id: string;
+            /**
+             * Settings
+             * @default {}
+             */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+            /** Accept Digest */
+            readonly accept_digest: string;
+        };
+        /** LocalAppConfigureIn */
+        readonly LocalAppConfigureIn: {
+            /** Settings */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** LocalAppAcceptIn */
+        readonly LocalAppAcceptIn: {
+            /** Digest */
+            readonly digest: string;
+        };
+        /** LocalAppSubmissionOut */
+        readonly LocalAppSubmissionOut: {
+            /** Id */
+            readonly id: number;
+            /** Key */
+            readonly key: string;
+            /** Version */
+            readonly version: string;
+            /** Sha256 */
+            readonly sha256: string;
+            /** Status */
+            readonly status: string;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            /** Review Url */
+            readonly review_url: string;
+        };
+        /** LocalAppSubmitIn */
+        readonly LocalAppSubmitIn: {
+            /** Package B64 */
+            readonly package_b64: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /** Workspace */
+            readonly workspace?: string | null;
+        };
+        /** LocalAppReviewOut */
+        readonly LocalAppReviewOut: {
+            /** Id */
+            readonly id: number;
+            /** Key */
+            readonly key: string;
+            /** Version */
+            readonly version: string;
+            /** Sha256 */
+            readonly sha256: string;
+            /** Status */
+            readonly status: string;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            /** Review Url */
+            readonly review_url: string;
+            /** Name */
+            readonly name: string;
+            /** Size */
+            readonly size: number;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /**
+             * Submitted By
+             * @default
+             */
+            readonly submitted_by: string;
+            /** Submitted At */
+            readonly submitted_at: string;
+            /** Manifest */
+            readonly manifest: {
+                readonly [key: string]: unknown;
+            };
+            /** Facts */
+            readonly facts: {
+                readonly [key: string]: unknown;
+            };
+            /** Prior Version */
+            readonly prior_version?: string | null;
+            /**
+             * Trust Changes
+             * @default []
+             */
+            readonly trust_changes: readonly string[];
+            /**
+             * Diff
+             * @default []
+             */
+            readonly diff: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Revoked Reason
+             * @default
+             */
+            readonly revoked_reason: string;
+            /**
+             * Can Revoke
+             * @default false
+             */
+            readonly can_revoke: boolean;
+        };
+        /** LocalAppRevokeIn */
+        readonly LocalAppRevokeIn: {
+            /** Reason */
+            readonly reason: string;
+        };
+        /** RunnerLocalAppOut */
+        readonly RunnerLocalAppOut: {
+            /** Key */
+            readonly key: string;
+            /** Name */
+            readonly name: string;
+            /** Version */
+            readonly version?: string | null;
+            /** Sha256 */
+            readonly sha256?: string | null;
+            /** Size */
+            readonly size?: number | null;
+            /**
+             * Notice
+             * @default
+             */
+            readonly notice: string;
+            /**
+             * Disclosure
+             * @default {}
+             */
+            readonly disclosure: {
+                readonly [key: string]: readonly string[];
+            };
+            /**
+             * Entry
+             * @default []
+             */
+            readonly entry: readonly string[];
+            /**
+             * Max Minutes
+             * @default 0
+             */
+            readonly max_minutes: number;
+            /**
+             * Settings
+             * @default {}
+             */
+            readonly settings: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Needs Acceptance
+             * @default false
+             */
+            readonly needs_acceptance: boolean;
+            /**
+             * Changes
+             * @default []
+             */
+            readonly changes: readonly string[];
+            /** Refusal */
+            readonly refusal?: string | null;
+            /**
+             * Running
+             * @default false
+             */
+            readonly running: boolean;
+            /** Source Key */
+            readonly source_key?: string | null;
+            /** Agent */
+            readonly agent?: string | null;
+            /**
+             * Consumes
+             * @default []
+             */
+            readonly consumes: readonly string[];
+            /**
+             * Provides
+             * @default []
+             */
+            readonly provides: readonly string[];
+            /**
+             * Checks
+             * @default []
+             */
+            readonly checks: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
+        /** RunnerLocalAppsOut */
+        readonly RunnerLocalAppsOut: {
+            /** Apps */
+            readonly apps: readonly components["schemas"]["RunnerLocalAppOut"][];
+        };
+        /** LocalAppStartRunOut */
+        readonly LocalAppStartRunOut: {
+            /** Run Id */
+            readonly run_id: string;
+        };
+        /** LocalAppStartRunIn */
+        readonly LocalAppStartRunIn: {
+            /** Version */
+            readonly version: string;
+            /**
+             * Source Version
+             * @default
+             */
+            readonly source_version: string;
+        };
+        /** LocalAppBeatOut */
+        readonly LocalAppBeatOut: {
+            /** Stop */
+            readonly stop: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+        };
+        /** LocalAppBeatIn */
+        readonly LocalAppBeatIn: {
+            /**
+             * State
+             * @default
+             */
+            readonly state: string;
+            /**
+             * Counts
+             * @default {}
+             */
+            readonly counts: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** LocalAppFinishIn */
+        readonly LocalAppFinishIn: {
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Counts
+             * @default {}
+             */
+            readonly counts: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** LocalAppCanopyCallOut */
+        readonly LocalAppCanopyCallOut: {
+            /** Status */
+            readonly status: number;
+            /** Body */
+            readonly body: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** LocalAppCanopyCallIn */
+        readonly LocalAppCanopyCallIn: {
+            /** Op */
+            readonly op: string;
+            /**
+             * Args
+             * @default {}
+             */
+            readonly args: {
+                readonly [key: string]: unknown;
+            };
         };
         /**
          * SessionUploadOut
@@ -52906,6 +53751,470 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly list_local_app_store: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppStoreOut"];
+                };
+            };
+        };
+    };
+    readonly set_local_apps_switch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppSwitchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppSwitchOut"];
+                };
+            };
+        };
+    };
+    readonly get_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppDetailOut"];
+                };
+            };
+        };
+    };
+    readonly install_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppInstallIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppInstallationOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_local_apps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["LocalAppInstallationOut"][];
+                };
+            };
+        };
+    };
+    readonly remove_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly installation_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly configure_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly installation_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppConfigureIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppInstallationOut"];
+                };
+            };
+        };
+    };
+    readonly accept_local_app_changes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly installation_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppAcceptIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppInstallationOut"];
+                };
+            };
+        };
+    };
+    readonly stop_local_app_run: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly run_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppRunOut"];
+                };
+            };
+        };
+    };
+    readonly list_local_app_submissions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["LocalAppSubmissionOut"][];
+                };
+            };
+        };
+    };
+    readonly submit_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppSubmitIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
+                };
+            };
+        };
+    };
+    readonly get_local_app_submission: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly submission_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppReviewOut"];
+                };
+            };
+        };
+    };
+    readonly revoke_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly submission_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppRevokeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
+                };
+            };
+        };
+    };
+    readonly list_runner_local_apps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerLocalAppsOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_local_app_package: {
+        readonly parameters: {
+            readonly query: {
+                readonly version: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly start_runner_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppStartRunIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppStartRunOut"];
+                };
+            };
+        };
+    };
+    readonly beat_runner_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly run_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppBeatIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppBeatOut"];
+                };
+            };
+        };
+    };
+    readonly finish_runner_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly run_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppFinishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly call_canopy_for_local_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly run_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppCanopyCallIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppCanopyCallOut"];
                 };
             };
         };

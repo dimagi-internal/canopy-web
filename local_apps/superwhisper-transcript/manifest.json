@@ -1,0 +1,27 @@
+{
+  "key": "superwhisper-transcript",
+  "name": "Superwhisper transcript",
+  "description": "Reads the transcript of the meeting Superwhisper is recording now.",
+  "version": "0.1.0",
+  "changelog": "First release.",
+  "entry": ["{python}", "source.py"],
+  "platforms": ["macos"],
+  "provides": ["transcript"],
+  "max_minutes": 480,
+  "notice": "",
+  "disclosure": {
+    "reads": ["the transcript and speaker names of the Superwhisper meeting that started in the last 15 minutes"],
+    "sends": []
+  },
+  "settings": {
+    "from_start": {"type": "bool", "label": "Include what was said before you pressed Start"}
+  },
+  "checks": [
+    {
+      "label": "Superwhisper's command-line tool is set up",
+      "run": ["{python}", "source.py", "--check"],
+      "fix": "Install Superwhisper's command-line tool so that ~/.local/bin/superwhisper exists, then try again."
+    }
+  ],
+  "canopy": []
+}
