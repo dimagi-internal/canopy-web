@@ -28,7 +28,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-THREAD = "1a1a1ea35aa5be78"
+THREAD = "1a2b3c4d5e6f7a8b"
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def ctx():
         name="cloud-ec2-live", kind=Runner.CLOUD, workspace=ws, location=Runner.LOCAL,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user, host="cloud-ec2-2",
         capabilities={"sessions": True})
-    anchor = session_sync.email_thread_session(agent, THREAD, "Feedback on RUTF supply dashboard")
+    anchor = session_sync.email_thread_session(agent, THREAD, "Feedback on the dashboard")
 
     class Ctx:
         pass
@@ -61,7 +61,7 @@ def _mail_turn(ctx, name, *, thread=THREAD, mode="auto", kind="user", user=None)
 
 def _record(ctx, turn=None, *, thread=THREAD, key="05c619da"):
     return session_sync.record_session(
-        ctx.agent, thread, runner=ctx.cloud, session_key=key, title="Feedback on RUTF", turn=turn,
+        ctx.agent, thread, runner=ctx.cloud, session_key=key, title="Feedback", turn=turn,
     ).session
 
 

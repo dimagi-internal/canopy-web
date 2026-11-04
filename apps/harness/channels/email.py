@@ -163,8 +163,32 @@ def admit_thread_people(session, origin_ref, contact) -> list:
                                      *_address_list(ref.get("cc"))])
 
 
-def admit_addresses(session, addresses) -> list:
-    """The members behind `addresses` become EDITOR participants of `session`.
+def admit_mail_people_to_work(session, turn) -> list:
+    """The members a verified message was addressed to may READ the work session it
+    ran in. The anchor holds nothing to read; this is where the thread's answer is.
+
+    Only this message's people, not the anchor's: a thread can hold both an admin's
+    full session and a confined caller's (`#<capability>`), and a caller's Cc must not
+    open the admin's. VIEWER, because a work session is a live agent: typing into it
+    stays with the agent's admins, who have that through `access.role_for` anyway. A
+    row someone already has keeps its role. Only a person's or a contact's mail with
+    this message's alignment on the turn, and never a turn linked to another session."""
+    if turn is None or session is None or turn.origin != Turn.ORIGIN_EMAIL:
+        return []
+    if (turn.initiator_kind not in (who.USER, who.CONTACT)
+            or turn.initiator_assurance not in Contact.EMAIL_ALIGNED):
+        return []
+    if not Turn.objects.filter(pk=turn.pk, canopy_session=session).exists():
+        return []
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    addresses = [*_address_list(ref.get("from")), *_address_list(ref.get("to")),
+                 *_address_list(ref.get("cc"))]
+    return admit_addresses(session, addresses, role=SessionParticipant.VIEWER)
+
+
+def admit_addresses(session, addresses, *, role: str = SessionParticipant.EDITOR) -> list:
+    """The members behind `addresses` become participants of `session` (EDITOR unless
+    `role` says otherwise).
 
     The caller has already decided these addresses are trustworthy as the thread's
     people (`admit_thread_people`: an aligned inbound message; `apps/mail` sending:
@@ -181,10 +205,10 @@ def admit_addresses(session, addresses) -> list:
         if not addr or addr in seen:
             continue
         seen.add(addr)
-        user, role = address_holder(addr, session.workspace_id)
-        if user is None or role is None or not _is_person(user):
+        user, membership = address_holder(addr, session.workspace_id)
+        if user is None or membership is None or not _is_person(user):
             continue
-        if ensure_participant(session, user, SessionParticipant.EDITOR) is not None:
+        if ensure_participant(session, user, role) is not None:
             admitted.append(user)
     return admitted
 
