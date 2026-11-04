@@ -88,6 +88,16 @@ export function reviewShare(state: ShareStateOut, choice: ShareChoice, trust: Tr
   return 'ready'
 }
 
+/** The machines an agent's own connection goes to, named so nobody has to guess: each runner of
+ *  the owner agent, once. On a `ready` review every one of them is sealed to, so the same names
+ *  say what will happen before the store and what happened after it. */
+export function ownerAgentMachines(state: ShareStateOut): string[] {
+  const owner = state.owner_agent?.id
+  if (!owner) return []
+  const names = state.candidates.filter((c) => c.kind === 'device' && c.agent_id === owner).map((c) => c.runner_name)
+  return [...new Set(names)].filter(Boolean).sort()
+}
+
 /** A person closing the passkey prompt (or the browser refusing it without a click) is not a
  *  failure to report: the page asks again with a button. */
 export function promptDismissed(e: unknown): boolean {

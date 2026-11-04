@@ -218,7 +218,9 @@ function ConnectionRow({
       ? { label: 'Reconnect needed', tone: 'warning' }
       : lent && c.state === 'unshared'
         ? { label: 'Not shared yet', tone: 'warning' }
-        : { label: 'Connected', tone: 'success' }
+        : !lent && c.state === 'unshared'
+          ? { label: 'Not stored yet', tone: 'warning' }
+          : { label: 'Connected', tone: 'success' }
   return (
     <AccountRow
       testId={`agent-connection-${c.id}`}
@@ -253,7 +255,7 @@ function ConnectionRow({
           : missing ? <p className="text-warning">Its owner must reconnect to allow: {missing}</p> : null
       ) : (
         <>
-          <SharingStatus c={c} returnTo={returnTo} canChange={canChange} onChanged={onChanged} />
+          <SharingStatus c={c} returnTo={returnTo} canChange={canChange} onChanged={onChanged} owner={agent} />
           {!c.needs_reconnect && missing && <p className="text-warning">Reconnect to allow: {missing}</p>}
         </>
       )}
