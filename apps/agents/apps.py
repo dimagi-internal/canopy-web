@@ -37,6 +37,7 @@ class AgentsConfig(AppConfig):
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
+        ticks.register("agents.skill_catalog", _skill_catalog, 5 * 60)
 
 
 def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
@@ -88,3 +89,9 @@ def _audit_workspace(request, path_args):
         qs = qs.filter(workspace__slug=pinned)
     agent = qs.select_related("workspace").first()
     return agent.workspace if agent is not None else None
+
+
+def _skill_catalog() -> None:
+    from . import skill_catalog
+
+    skill_catalog.refresh_all()

@@ -60,6 +60,7 @@ SOURCES: list[str] = [
     "apps.harness.alerts.trigger",
     "apps.canopy_sessions.alerts_handoff",
     "apps.agents.alerts_agent_token",
+    "apps.agents.alerts_skill_catalog",
     "apps.approvals.alerts_approval",
 ]
 
