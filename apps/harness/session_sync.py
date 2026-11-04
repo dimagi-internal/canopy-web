@@ -437,7 +437,9 @@ def record_session(
 
         seed_stream_desired(binding)
         turn = turn or _turn_of_agent_thread(agent, thread_key, runner)
+        turn = turn or _mail_turn_on_thread(agent, thread_key, runner)
         link_turn_session(turn, binding.session)
+        _reopen_for_mail(turn, binding.session)
         # A session now exists in some CLI's store: hold the conversation to it.
         if (cli := _reported_cli(turn, binding.session, runner)):
             clis.pin_conversation([binding.session_id], cli)
@@ -482,14 +484,44 @@ def _turn_of_agent_thread(agent, thread_key: str, runner: Runner):
     return Turn.objects.filter(pk=turn_id, agent=agent, claimed_by=runner).first()
 
 
+def _mail_turn_on_thread(agent, thread_key: str, runner: Runner):
+    """The mail turn this runner is executing on the Gmail thread `thread_key` names:
+    the laptop runner sends no `turn_id`, and a confined turn's key carries
+    `#<capability>`. Else None."""
+    thread_id = (thread_key or "").split("#", 1)[0]
+    if agent is None or not thread_id:
+        return None
+    return (Turn.objects.filter(origin=Turn.ORIGIN_EMAIL, claimed_by=runner, chat_session__agent=agent,
+                                origin_ref__thread_id=thread_id, status__in=list(EXECUTING))
+            .order_by("-created_at").first())
+
+
+def _reopen_for_mail(turn, session) -> None:
+    """A reply on a closed thread runs in the thread's closed work session: list it
+    again, as a chat send does. `mail_anchor.revive_for_mail` cannot, at enqueue: it
+    does not know yet which session the turn lands in, and a thread can hold a
+    confined caller's session too. Only while the turn runs, so a late retry of
+    record-session cannot undo a person's close."""
+    if (turn is None or turn.origin != Turn.ORIGIN_EMAIL or turn.status not in EXECUTING
+            or session.status != Session.ARCHIVED):
+        return
+    from apps.canopy_sessions import control  # noqa: PLC0415 — cycle: control -> session_sync
+
+    control.unarchive_session(session, reason="new mail on the thread")
+
+
 def link_turn_session(turn, session) -> bool:
-    """Record that an agent/project `turn` ran in canopy `session`, so whoever
+    """Record that an agent/project/mail `turn` ran in canopy `session`, so whoever
     dispatched it can follow up there with only the turn id (`TurnOut.
     canopy_session_id`). First write wins, like `stamp_turn_session`: a later
     record-session for a reused thread never moves a turn to another session.
-    A chat turn is skipped — its `chat_session` already is its conversation.
+    A chat turn is skipped — its `chat_session` already is its conversation. A mail
+    turn is not: its `chat_session` is the thread's anchor, which it does not run in,
+    and this link is what makes it drive its work session (`staleness.driving_turns`).
     True if a row was linked."""
-    if turn is None or session is None or turn.chat_session_id:
+    if turn is None or session is None or turn.chat_session_id == session.pk:
+        return False
+    if turn.chat_session_id and turn.origin != Turn.ORIGIN_EMAIL:
         return False
     linked = bool(
         Turn.objects.filter(pk=turn.pk, canopy_session__isnull=True).update(canopy_session=session)
