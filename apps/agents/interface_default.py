@@ -36,7 +36,7 @@ def is_read_mode(name: str | None) -> bool:
 
 
 #: Bump on ANY change to what `default_read_profile` returns; the envelope records it.
-READ_PROFILE_VERSION = 1
+READ_PROFILE_VERSION = 2
 
 #: The skill whose presence in the agent's published catalog gives the default its entry.
 ANSWER_CALLER_SKILL = "answer-caller"
@@ -61,11 +61,16 @@ def _repo_reads(agent) -> list[str]:
     ref = (getattr(agent, "repo_ref", "") or "main").strip()
     ref = ref if _REF.match(ref) else "main"
     api = f"https://api.github.com/repos/{owner}/{repo}"
+    # `-g` and `--path-as-is` are part of every pattern, not a courtesy: the guard judges the URL as
+    # text, but curl removes `..` segments before it connects (`.../{repo}/contents/../../../../user`
+    # is `https://api.github.com/user`; `raw.../{repo}/{ref}/../../../x/y/main/z` is another repo)
+    # and expands a quoted `[1-100000]` or `{a,b}` into that many requests from the box's one address.
+    curl = "curl -sS -g --path-as-is"
     return [
-        f'curl -sS -H "Accept: application/vnd.github.raw" {api}/contents/*',
-        f"curl -sS {api}/contents/*",
-        f"curl -sS {api}/git/trees/{ref}?recursive=1",
-        f"curl -sS https://raw.githubusercontent.com/{owner}/{repo}/{ref}/*",
+        f'{curl} -H "Accept: application/vnd.github.raw" {api}/contents/*',
+        f"{curl} {api}/contents/*",
+        f"{curl} {api}/git/trees/{ref}?recursive=1",
+        f"{curl} https://raw.githubusercontent.com/{owner}/{repo}/{ref}/*",
     ]
 
 
