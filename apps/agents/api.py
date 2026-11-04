@@ -937,8 +937,8 @@ def revoke_admin(request: HttpRequest, slug: str, user_id: int):
     return _admin_rows(agent)
 
 
-@router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",)
-@gate("agent.work", setting=True)
+@router.delete("/{slug}/", response={204: None}, summary="Delete an agent (its owner or a workspace owner)",)
+@gate("agent-owner", setting=True)
 def delete_agent(request: HttpRequest, slug: str):
     """Remove an agent and everything hanging off it.
 
@@ -949,13 +949,8 @@ def delete_agent(request: HttpRequest, slug: str):
     *rehearsing* the onboarding path impossible: you could not walk a new
     operator's steps end to end without leaving a fake agent behind forever.
 
-    Gated at the same reshaping tier as everything else `agent_for_work`
-    covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
-    where deletion was the ONLY gated write on this surface — everything else,
-    including the credential/vault writers, was membership-or-nothing): a
-    viewer cannot destroy a fleet member's board. `agent_for_work` resolves
-    the agent via `agent_for_read` first, so a non-member gets 404 (no
-    existence leak) rather than 403.
+    Only the agent's owner or a workspace owner may: it ends the agent for everyone. A non-member
+    gets 404 rather than 403, so the route does not leak that the agent exists.
 
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, skills, syncs,
     schedules, task actions, runner assignments/drills), so this is a real
@@ -965,7 +960,9 @@ def delete_agent(request: HttpRequest, slug: str):
     and an offline runner does so when it is back.
     """
 
-    agent = agent_for_work(request, slug)
+    agent = agent_for_read(request, slug)
+    if not _may_transfer_owner(request, agent):
+        raise HttpError(403, f"only {agent.slug}'s owner or a workspace owner can delete it")
     # Its projects and tasks are the workspace's: they stay, led and assigned by
     # nobody (`AgentProject.agent` / `AgentTask.agent` are SET_NULL).
     # Its sessions would otherwise outlive it: still listed, their emdash tasks

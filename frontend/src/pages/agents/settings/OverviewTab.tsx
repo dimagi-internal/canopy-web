@@ -93,8 +93,8 @@ export function OverviewTab({ agent, isAdmin, canRoute, admins, hold, setHold, c
       </div>
     </Section>
 
-    {/* Same gate as the route (delete_agent: agent.work), so only people who can. */}
-    {canRoute && (
+    {/* Same gate as the route (delete_agent: the agent's owner or a workspace owner). */}
+    {agent.can_transfer_owner && (
       <Section id="delete" title="Delete">
         <DeleteAgentControl slug={agent.slug} name={agent.name} workspace={agent.workspace ?? ''} />
       </Section>

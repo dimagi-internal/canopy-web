@@ -33,6 +33,9 @@ class AgentsConfig(AppConfig):
         # another parent ends the shares that would now straddle two trees.
         post_save.connect(_prune_shares, sender=Workspace, dispatch_uid="agents.prune_shares")
 
+        # Moving a workspace in the tree changes which roles its lines may hold.
+        post_save.connect(_carry_role_lines, sender=Workspace, dispatch_uid="agents.carry_role_lines")
+
         # A new root workspace starts with the built-in roles (read only, read and write, editor).
         post_save.connect(_seed_roles, sender=Workspace, dispatch_uid="agents.seed_roles")
 
@@ -53,6 +56,13 @@ def _seed_roles(sender, instance, created, raw=False, **kwargs) -> None:
         from . import rolecatalog  # noqa: PLC0415 — a signal handler: imported once the app is ready
 
         rolecatalog.ensure_seeded(instance.pk)
+
+
+def _carry_role_lines(sender, instance, created, raw=False, **kwargs) -> None:
+    if not created and not raw:
+        from . import roleadmin  # noqa: PLC0415 — a signal handler: imported once the app is ready
+
+        roleadmin.carry_lines_after_move(instance)
 
 
 def _prune_shares(sender, instance, created, raw=False, **kwargs) -> None:

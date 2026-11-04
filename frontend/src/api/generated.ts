@@ -5168,7 +5168,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /**
-         * Delete an agent (editor/owner)
+         * Delete an agent (its owner or a workspace owner)
          * @description Remove an agent and everything hanging off it.
          *
          *     Registration (`POST /`) was a one-way door until this existed: an agent
@@ -5178,13 +5178,8 @@ export interface paths {
          *     *rehearsing* the onboarding path impossible: you could not walk a new
          *     operator's steps end to end without leaving a fake agent behind forever.
          *
-         *     Gated at the same reshaping tier as everything else `agent_for_work`
-         *     covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
-         *     where deletion was the ONLY gated write on this surface — everything else,
-         *     including the credential/vault writers, was membership-or-nothing): a
-         *     viewer cannot destroy a fleet member's board. `agent_for_work` resolves
-         *     the agent via `agent_for_read` first, so a non-member gets 404 (no
-         *     existence leak) rather than 403.
+         *     Only the agent's owner or a workspace owner may: it ends the agent for everyone. A non-member
+         *     gets 404 rather than 403, so the route does not leak that the agent exists.
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, skills, syncs,
          *     schedules, task actions, runner assignments/drills), so this is a real

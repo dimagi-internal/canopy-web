@@ -391,6 +391,8 @@ class AgentGrant(models.Model):
     #: request always does.
     domain = models.CharField(max_length=253, blank=True, default="")
     verified = models.BooleanField(default=True)
+    workspace_delete_hint = "Remove the workspace's default access lines (Settings → Agent defaults) first."
+
     #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named capability
     #: (the scoped permission `use:<capability>`). Exactly one of the two is set.
     role = models.CharField(max_length=40, blank=True, default="")

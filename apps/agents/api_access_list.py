@@ -118,7 +118,10 @@ def _create(scope: dict, fields: dict, actor) -> AgentGrant:
         raise HttpError(409, f"{grants.describe(line)} is already on the list — change that line instead")
     try:
         with transaction.atomic():
+            grants.lock_role_for(line)
             line.save()
+    except grants.LineError as exc:
+        raise HttpError(422, str(exc)) from exc
     except IntegrityError as exc:  # a concurrent identical add loses the unique constraint
         raise HttpError(409, "that line is already on the list") from exc
     return line
@@ -209,7 +212,12 @@ def _apply_patch(line: AgentGrant, payload: AccessLinePatch, home: str) -> None:
         line.manual_only = payload.manual_only
     if payload.note is not None:
         line.note = payload.note
-    line.save(update_fields=["role", "role_def", "manual_only", "note"])
+    try:
+        with transaction.atomic():
+            grants.lock_role_for(line)
+            line.save(update_fields=["role", "role_def", "manual_only", "note"])
+    except grants.LineError as exc:
+        raise HttpError(422, str(exc)) from exc
 
 
 @router.delete("/{slug}/access-list/{line_id}", response={204: None},
