@@ -29,8 +29,10 @@ from . import proposals, services, work
 from .api_board import act_and_record, apply_task_patch
 from .gates import (
     listed_agent_workspaces,
+    may_decide_publishing,
     may_edit_project,
     may_edit_task,
+    project_agent_login,
     project_ws_or_404,
     require_project_edit,
     task_or_404,
@@ -39,6 +41,7 @@ from .gates import (
 from .models import AgentProject, AgentTask, Label, ProjectBacking, ProjectUpdate, SavedView
 from .schemas import (
     ActOut,
+    AgentProjectOut,
     AgentTaskActionIn,
     AgentTaskActionOut,
     AgentTaskOut,
@@ -57,6 +60,7 @@ from .schemas import (
     ProjectUpdateIn,
     ProjectUpdateOut,
     ProjectUpdatePublishIn,
+    ProjectUpdateSettingsIn,
     SavedViewIn,
     SavedViewOut,
     SavedViewPatch,
@@ -488,7 +492,7 @@ def delete_milestone(request: HttpRequest, workspace: str, handle: str, mileston
 def list_project_updates(request: HttpRequest, workspace: str, handle: str,
                          limit: int = 50) -> list[ProjectUpdateOut]:
     project = project_ws_or_404(request, workspace, handle)
-    rows = project.updates.select_related("author_user", "author_agent", "published_by")
+    rows = project.updates.select_related("author_user", "author_agent", "published_by", "published_by_agent")
     if not may_edit_project(request, project):
         rows = rows.filter(status=ProjectUpdate.PUBLISHED)
     return [ProjectUpdateOut.model_validate(u) for u in rows[:clamp_limit(limit)]]
@@ -504,8 +508,7 @@ def post_project_update(request: HttpRequest, workspace: str, handle: str, paylo
     health: the agent proposes, the person decides."""
     project = project_ws_or_404(request, workspace, handle)
     require_project_edit(request, project)
-    agents = [a for a in [project.agent, *project.member_agents.all()] if a is not None]
-    author_agent = next((a for a in agents if a.is_own_login(request.user)), None)
+    author_agent = project_agent_login(request, project)
     run = None
     if payload.checkin_run is not None:
         run = project.checkin_runs.filter(pk=payload.checkin_run).first()
@@ -519,23 +522,57 @@ def post_project_update(request: HttpRequest, workspace: str, handle: str, paylo
 
 @router.post("/workspace-projects/{workspace}/{handle}/updates/{update_id}/publish", response=ProjectUpdateOut,
              summary="Publish a drafted project update, choosing its health")
-# a person who may change the project; never an agent's own login (it drafts, a person decides)
-@gate("agent.work", "self", kind="content")
+# a person who may change the project; an agent's own login only as the project's
+# lead agent, its own draft, where an admin has turned `lead_agent_may_publish` on
+@gate("agent.work", "agent-login", "self", kind="content")
 def publish_project_update(request: HttpRequest, workspace: str, handle: str, update_id: int,
                            payload: ProjectUpdatePublishIn) -> ProjectUpdateOut:
+    """A person publishes a draft, choosing its health. An agent drafts and a
+    person decides — unless a workspace admin has let this project's lead agent
+    publish (`PATCH …/update-settings`): then the lead agent may publish its own
+    drafts, and the update records it as `published_by_agent`."""
     project = project_ws_or_404(request, workspace, handle)
     require_project_edit(request, project)
-    agents = [a for a in [project.agent, *project.member_agents.all()] if a is not None]
-    if any(a.is_own_login(request.user) for a in agents):
-        raise HttpError(403, "an agent drafts its project's update; a person publishes it")
+    acting_agent = project_agent_login(request, project)
     update = project.updates.filter(pk=update_id).first()
     if update is None:
         raise HttpError(404, f"update {update_id} not found")
     try:
-        update = work.publish_update(update, by_user=request.user, health=payload.health, body=payload.body)
+        update = work.publish_update(update, by_user=None if acting_agent else request.user,
+                                     by_agent=acting_agent, health=payload.health, body=payload.body)
+    except work.PublishRefused as exc:
+        raise HttpError(403, str(exc)) from exc
     except ValueError as exc:
         raise HttpError(409, str(exc)) from exc
     return ProjectUpdateOut.model_validate(update)
+
+
+@router.patch("/workspace-projects/{workspace}/{handle}/update-settings", response=AgentProjectOut,
+              summary="Change who may publish a project's updates")
+@gate("projects.decide", setting=True)
+def set_project_update_settings(request: HttpRequest, workspace: str, handle: str,
+                                payload: ProjectUpdateSettingsIn) -> AgentProjectOut:
+    """`lead_agent_may_publish`: let the project's lead agent publish its own
+    drafted updates rather than wait for a person (off by default). An admin of
+    the project's workspace decides — a person, never an agent's login — and
+    every change is in the settings audit, naming the lead agent it covers.
+    Handing the lead seat on, or moving the project, turns it off again."""
+    project = project_ws_or_404(request, workspace, handle)
+    if not may_decide_publishing(request, project):
+        raise HttpError(403, "letting a lead agent publish updates is a person's decision, "
+                             "and requires the admin role in the project's workspace")
+    if payload.lead_agent_may_publish and project.agent_id is None:
+        raise HttpError(422, f"{project.address} has no lead agent to let publish")
+    before = {"lead_agent_may_publish": project.lead_agent_may_publish}
+    project.lead_agent_may_publish = payload.lead_agent_may_publish
+    project.save(update_fields=["lead_agent_may_publish", "updated_at"])
+    lead = project.agent.slug if project.agent_id else "(none)"
+    audit.note_change(scope=f"project:{project.address}/update_settings", before=before,
+                      after={"lead_agent_may_publish": project.lead_agent_may_publish, "lead_agent": lead},
+                      workspace=project.workspace,
+                      summary=(f"{'let' if project.lead_agent_may_publish else 'stopped'} {project.address}'s lead "
+                               f"agent ({lead}) publish its own updates"))
+    return AgentProjectOut.model_validate(project)
 
 
 # ---- what a project serves to the workspace ----------------------------------

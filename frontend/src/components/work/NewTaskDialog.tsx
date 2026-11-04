@@ -17,6 +17,8 @@ export interface NewTaskDefaults {
   project?: string
   /** `agent:<slug>` or an email. */
   assignee?: string
+  /** A milestone of `project`, by name (a project page filtered to one). */
+  milestone?: string
 }
 
 export function NewTaskDialog({
@@ -57,6 +59,8 @@ export function NewTaskDialog({
         priority,
         status,
         ...(project ? { project } : {}),
+        // The milestone belongs to the default project; another project drops it.
+        ...(defaults?.milestone && project && project === defaults.project ? { milestone: defaults.milestone } : {}),
         ...(assignee ? { assignee } : {}),
         ...(due ? { due } : {}),
       })

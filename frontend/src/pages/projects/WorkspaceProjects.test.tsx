@@ -11,7 +11,7 @@ afterEach(() => {
 const kb = {
   id: 1, agent_slug: 'eva', workspace: 'dimagi', scope: 'workspace', handle: 'givewell-kb', steward_slug: 'eva',
   address: 'dimagi/givewell-kb', url: '/w/dimagi/projects/givewell-kb',
-  board_url: '/w/dimagi/agents/eva/projects/P12', ext_id: 'P12', name: 'GiveWell Knowledge Base',
+  ext_id: 'P12', name: 'GiveWell Knowledge Base',
   outcome: 'Everything GiveWell publishes, cited', status: 'active', task_count: 3, open_task_count: 1,
 } as never
 

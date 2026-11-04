@@ -9,20 +9,32 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 const api = vi.hoisted(() => ({
   getProjectByAddress: vi.fn(),
-  listTasks: vi.fn(async () => [] as unknown[]),
+  listTasks: vi.fn<(q?: Record<string, unknown>, ws?: string) => Promise<unknown[]>>(async () => []),
+  countTasks: vi.fn(async () => 0),
+  getTaskSettings: vi.fn(async () => ({ workspace: 'dimagi', prefix: 'DIM', status_names: {}, update_cadence_days: 7 })),
+  listViews: vi.fn(async () => [] as unknown[]),
   updateProject: vi.fn(async () => ({})),
   postUpdate: vi.fn(async () => ({})),
   publishUpdate: vi.fn(async () => ({})),
+  setUpdateSettings: vi.fn(async () => ({})),
   createMilestone: vi.fn(async () => ({})),
   updateMilestone: vi.fn(async () => ({})),
   deleteMilestone: vi.fn(async () => undefined),
-  createTask: vi.fn(async () => ({})),
+  createTask: vi.fn(async (body: Record<string, unknown>) => ({ key: 'DIM-9', ...body })),
 }))
 vi.mock('@/api/work', async (orig) => ({ ...(await orig<typeof import('@/api/work')>()), ...api }))
 vi.mock('@/components/work/useDirectory', () => ({
-  useDirectory: () => ({ people: [], agents: [], labels: [], projects: [] }),
+  useDirectory: () => ({
+    people: [],
+    agents: [],
+    labels: [],
+    projects: [{ id: 7, name: 'IDM talk', address: 'dimagi/idm-talk' }],
+  }),
   invalidateDirectory: () => {},
 }))
+vi.mock('@/components/work/TaskDetailView', () => ({ TaskDetailView: ({ taskKey }: { taskKey: string }) => <div>detail {taskKey}</div> }))
+vi.mock('@/widget/usePageState', () => ({ usePageState: () => {} }))
+vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceList: () => [{ slug: 'dimagi', role: 'owner' }] }))
 vi.mock('@/components/projects/useEngagementView', () => ({ useEngagementView: () => {} }))
 vi.mock('@/components/projects/ProposalCard', () => ({
   ProposalCard: ({ proposal }: { proposal?: { name?: string } }) => <div data-testid="proposal-card">{proposal?.name ?? 'task'}</div>,
@@ -59,7 +71,7 @@ function task(over: Record<string, unknown> = {}) {
 function detail(over: Record<string, unknown> = {}) {
   return {
     id: 7, agent_slug: 'eva', steward_slug: 'eva', member_agents: ['eva', 'hal'], workspace: 'dimagi', handle: 'idm-talk',
-    address: 'dimagi/idm-talk', url: '/w/dimagi/projects/idm-talk', board_url: '', mcp_kind: '', mcp_path: '',
+    address: 'dimagi/idm-talk', url: '/w/dimagi/projects/idm-talk', mcp_kind: '', mcp_path: '',
     ext_id: 'P3', name: 'IDM talk', outcome: 'A talk people remember', status: 'active', priority: 2,
     start_date: '2026-10-01', target_date: '2026-11-15', owner_email: 'jj@dimagi.com', health: 'at_risk',
     update_missing: false, done_task_count: 1, drive_folder_url: 'https://drive.example/f', repo_slug: '', links: [],
@@ -124,17 +136,42 @@ describe('ProjectPage', () => {
     expect(screen.getByText('← Projects').getAttribute('href')).toBe('/w/dimagi/projects')
   })
 
-  it('reads its tasks by its address, open ones unless asked', async () => {
+  it("lists its tasks with the workspace Tasks list, pinned to the project", async () => {
     api.getProjectByAddress.mockResolvedValue(detail())
     api.listTasks.mockResolvedValue([task()])
     show()
     expect(await screen.findByText('Draft the slides')).toBeTruthy()
-    expect(api.listTasks).toHaveBeenCalledWith(
-      { project: 'dimagi/idm-talk', category: 'triage,backlog,unstarted,started', limit: 500 },
-      'dimagi',
+    const section = screen.getByTestId('project-page').querySelector('#project-tasks') as HTMLElement
+    expect(within(section).getByTestId('tasks-view')).toBeTruthy()
+    expect(api.listTasks).toHaveBeenCalledWith(expect.objectContaining({ project: 'dimagi/idm-talk' }), 'dimagi')
+    // The project is pinned: no project filter and no project column.
+    expect(within(section).queryByLabelText('Project')).toBeNull()
+    // Done work is one status toggle away, as on the Tasks page.
+    fireEvent.click(within(section).getByTestId('category-completed'))
+    await waitFor(() =>
+      expect(api.listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ project: 'dimagi/idm-talk', category: expect.stringContaining('completed') }),
+        'dimagi',
+      ),
     )
-    fireEvent.click(screen.getByLabelText('Show done and canceled'))
-    await waitFor(() => expect(api.listTasks).toHaveBeenLastCalledWith({ project: 'dimagi/idm-talk', limit: 500 }, 'dimagi'))
+  })
+
+  it('opens a task beside the list', async () => {
+    api.getProjectByAddress.mockResolvedValue(detail())
+    api.listTasks.mockResolvedValue([task()])
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Draft the slides' }))
+    expect(await screen.findByText('detail DIM-1')).toBeTruthy()
+  })
+
+  it("shows who a task waits on and its brief, without opening it", async () => {
+    api.getProjectByAddress.mockResolvedValue(detail())
+    api.listTasks.mockResolvedValue([
+      task({ waiting_on_email: 'wouter@dimagi.com', next_action: 'Wouter signs off the budget' }),
+    ])
+    show()
+    expect((await screen.findByTestId('waiting-DIM-1')).textContent).toMatch(/Waiting on wouter/i)
+    expect(screen.getByTestId('brief-DIM-1').textContent).toBe('Wouter signs off the budget')
   })
 
   it('shows a teammate the tasks and progress, without the controls', async () => {
@@ -153,7 +190,8 @@ describe('ProjectPage', () => {
     expect(screen.queryByTestId('post-update')).toBeNull()
     expect(screen.queryByLabelText('Project name')).toBeNull()
     expect(screen.queryByLabelText('Project status')).toBeNull()
-    expect(screen.queryByLabelText('New task')).toBeNull()
+    expect(screen.getByTestId('tasks-view')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /New task/ })).toBeNull()
     expect(screen.queryByLabelText('New milestone')).toBeNull()
     expect(screen.queryByLabelText('Delete Outline')).toBeNull()
   })
@@ -199,10 +237,33 @@ describe('ProjectPage', () => {
       expect(api.createMilestone).toHaveBeenCalledWith('dimagi', 'idm-talk', { name: 'Rehearsal', target_date: '2026-11-10' }),
     )
 
+    api.listTasks.mockResolvedValue([task({ key: 'DIM-2', title: 'Book the room', milestone: 'Outline' })])
     fireEvent.click(screen.getByRole('button', { name: 'Outline' }))
     expect(screen.getByTestId('milestone-filter').textContent).toContain('Outline')
-    expect(screen.queryByText('Draft the slides')).toBeNull()
+    await waitFor(() =>
+      expect(api.listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ project: 'dimagi/idm-talk', milestone: 'Outline' }),
+        'dimagi',
+      ),
+    )
+    await waitFor(() => expect(screen.queryByText('Draft the slides')).toBeNull())
     expect(screen.getByText('Book the room')).toBeTruthy()
+  })
+
+  it('lets an admin turn on the lead agent publishing its own updates', async () => {
+    api.getProjectByAddress.mockResolvedValue(detail({ may_decide: true, lead_agent_may_publish: false }))
+    show()
+    fireEvent.click(await screen.findByLabelText(/publish its own updates/))
+    await waitFor(() =>
+      expect(api.setUpdateSettings).toHaveBeenCalledWith('dimagi', 'idm-talk', { lead_agent_may_publish: true }),
+    )
+  })
+
+  it('tells a teammate the lead agent publishes, with no switch', async () => {
+    api.getProjectByAddress.mockResolvedValue(detail({ may_decide: false, lead_agent_may_publish: true }))
+    show()
+    expect((await screen.findByTestId('lead-agent-publishes')).textContent).toContain('publishes its own updates')
+    expect(screen.queryByRole('checkbox', { name: /publish its own updates/ })).toBeNull()
   })
 
   it('changes a property through the project route', async () => {
@@ -229,15 +290,16 @@ describe('ProjectPage', () => {
     expect(screen.queryByTestId('checkins-panel')).toBeNull()
   })
 
-  it('adds a task to the project', async () => {
+  it('adds a task to the project with the New task dialog', async () => {
     api.getProjectByAddress.mockResolvedValue(detail())
     show()
-    fireEvent.change(await screen.findByLabelText('New task'), { target: { value: 'Rehearse' } })
-    fireEvent.submit(screen.getByLabelText('New task').closest('form')!)
+    await screen.findByTestId('tasks-view')
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }))
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Rehearse' } })
+    fireEvent.submit(screen.getByLabelText('Title').closest('form')!)
     await waitFor(() =>
       expect(api.createTask).toHaveBeenCalledWith(
-        { title: 'Rehearse', project: 'dimagi/idm-talk', workspace: 'dimagi', status: 'todo' },
-        'dimagi',
+        expect.objectContaining({ title: 'Rehearse', project: 'dimagi/idm-talk', workspace: 'dimagi' }),
       ),
     )
   })

@@ -6260,6 +6260,10 @@ export interface paths {
          *     (comma-separated), `waiting=me` (open asks nobody owns plus tasks parked on
          *     you), `ask=open|closed`, `batch` (a batch_key), `parent` (an ext_id for
          *     that task's direct subtasks, or `none` for top-level tasks only).
+         *
+         *     Filtered to a project the agent leads or works on, the list is EVERY task
+         *     in that project — a person's, an unassigned one, another agent's — the
+         *     same tasks `get_project` lists.
          */
         readonly get: operations["list_tasks"];
         readonly put?: never;
@@ -9250,12 +9254,40 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Publish a drafted project update, choosing its health */
+        /**
+         * Publish a drafted project update, choosing its health
+         * @description A person publishes a draft, choosing its health. An agent drafts and a
+         *     person decides — unless a workspace admin has let this project's lead agent
+         *     publish (`PATCH …/update-settings`): then the lead agent may publish its own
+         *     drafts, and the update records it as `published_by_agent`.
+         */
         readonly post: operations["publish_project_update"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/update-settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change who may publish a project's updates
+         * @description `lead_agent_may_publish`: let the project's lead agent publish its own
+         *     drafted updates rather than wait for a person (off by default). An admin of
+         *     the project's workspace decides; every change is in the settings audit.
+         */
+        readonly patch: operations["set_project_update_settings"];
         readonly trace?: never;
     };
     readonly "/api/workspace-projects/{workspace}/{handle}/services/": {
@@ -29431,11 +29463,6 @@ export interface components {
              */
             readonly url: string;
             /**
-             * Board Url
-             * @default
-             */
-            readonly board_url: string;
-            /**
              * Mcp Kind
              * @default
              */
@@ -29490,6 +29517,11 @@ export interface components {
              * @default false
              */
             readonly update_missing: boolean;
+            /**
+             * Lead Agent May Publish
+             * @default false
+             */
+            readonly lead_agent_may_publish: boolean;
             /**
              * Done Task Count
              * @default 0
@@ -29654,11 +29686,6 @@ export interface components {
              */
             readonly url: string;
             /**
-             * Board Url
-             * @default
-             */
-            readonly board_url: string;
-            /**
              * Mcp Kind
              * @default
              */
@@ -29713,6 +29740,11 @@ export interface components {
              * @default false
              */
             readonly update_missing: boolean;
+            /**
+             * Lead Agent May Publish
+             * @default false
+             */
+            readonly lead_agent_may_publish: boolean;
             /**
              * Done Task Count
              * @default 0
@@ -29779,6 +29811,11 @@ export interface components {
              * @default false
              */
             readonly may_edit: boolean;
+            /**
+             * May Decide
+             * @default false
+             */
+            readonly may_decide: boolean;
             /** Services */
             readonly services?: readonly components["schemas"]["ProjectServiceOut"][];
             /** Vaults */
@@ -30128,6 +30165,8 @@ export interface components {
             readonly author_agent?: string | null;
             /** Published By Email */
             readonly published_by_email?: string | null;
+            /** Published By Agent */
+            readonly published_by_agent?: string | null;
             /** Checkin Run */
             readonly checkin_run?: number | null;
             /** Diff */
@@ -35730,6 +35769,11 @@ export interface components {
             readonly health?: ("on_track" | "at_risk" | "off_track") | null;
             /** Body */
             readonly body?: string | null;
+        };
+        /** ProjectUpdateSettingsIn */
+        readonly ProjectUpdateSettingsIn: {
+            /** Lead Agent May Publish */
+            readonly lead_agent_may_publish: boolean;
         };
         /** ProjectServiceIn */
         readonly ProjectServiceIn: {
@@ -60772,6 +60816,33 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ProjectUpdateOut"];
+                };
+            };
+        };
+    };
+    readonly set_project_update_settings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectUpdateSettingsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
         };
