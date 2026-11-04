@@ -499,7 +499,9 @@ class OperationWriteOut(StrictModel):
 
 class ConnectionOperationOut(StrictModel):
     operation_id: uuid.UUID = Field(description="Send this with each write.")
-    expires_at: datetime
+    expires_at: datetime = Field(description="When it ends unless a write comes first: each write moves this to 120 "
+                                             "seconds from then.")
+    hard_limit_at: datetime = Field(description="When it ends whatever is written: 10 minutes from the click.")
     writes: list[OperationWriteOut] = Field(description="What this screen may write. Each write is still checked.")
 
 

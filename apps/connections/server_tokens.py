@@ -102,9 +102,11 @@ class ServerUseOff(services.ConnectionError):  # noqa: N818 — the name is the 
 
     code = "server_use_off"
 
-    def __init__(self, message: str = "") -> None:
-        super().__init__("", message or "canopy-web isn't allowed to use this connection; its owner can turn that "
-                                        "on in Settings → Connections.")
+    def __init__(self, message: str = "", *, why: str = "off") -> None:
+        super().__init__("", message or "canopy-web isn't allowed to use this connection.")
+        #: "off", "limited", "no_key" or "not_sealed". Who can fix each depends on who is asking, so
+        #: the sentence for a person is `call_service`'s; there is no switch on the last three.
+        self.why = why
 
 
 class Waiting(services.ConnectionError):  # noqa: N818 — the name is the interface
@@ -123,8 +125,7 @@ class Refused(services.ConnectionError):  # noqa: N818 — a kind of ConnectionE
     code = "server_refused"
 
     def __init__(self, message: str = "") -> None:
-        super().__init__("", message or "canopy-web could not trust what it holds for this connection; its owner "
-                                        "should connect it again.")
+        super().__init__("", message or "canopy-web could not trust what it holds for this connection.")
 
 
 # ---- the cache ---------------------------------------------------------------------------
@@ -203,10 +204,18 @@ def _row(pk) -> Connection:
     return row
 
 
+def _connect_again(kind, what: str):
+    """An error whose cure is connecting again. `what` says what is wrong and no more, because who can
+    connect it depends on who is asking: `call_service` adds that for a person at a screen."""
+    exc = kind(f"{what} Whoever holds it must connect it again.")
+    exc.what = what
+    return exc
+
+
 def _refused(row: Connection, reason: str) -> Refused:
     """`reason` is a fixed phrase of this module's, never a value out of an envelope."""
     services.record(services.Subject.of(row), "server_refused", warn=True, reason=reason)
-    return Refused()
+    return _connect_again(Refused, "canopy-web could not trust what it holds for this connection.")
 
 
 def _writer_accepted(row: Connection, by: dict, me: str) -> bool:
@@ -294,15 +303,19 @@ def _usable(row: Connection) -> None:
         raise services.NotConnected("This connection is being disconnected.")
     if row.needs_reconnect:
         title = tokens._title(row)
-        raise services.NotConnected(f"This {title} connection no longer works; its owner must connect it again.")
-    if row.limited or not row.server_use or not server_key.available():
+        raise _connect_again(services.NotConnected, f"This {title} connection no longer works.")
+    if not server_key.available():
+        raise ServerUseOff(why="no_key")
+    if row.limited:
+        raise ServerUseOff(why="limited")
+    if not row.server_use:
         raise ServerUseOff()
 
 
 def _sealed_to_me(row: Connection, me: str) -> None:
     if ("device", me) not in zk_seal.sealed_targets(row.sealed) or rcpt.server_recipient(row) is None:
-        raise ServerUseOff("What is stored for this connection isn't sealed so that canopy-web can open it; its owner "
-                           "can connect it again to fix that.")
+        raise ServerUseOff("What is stored for this connection isn't sealed so that canopy-web can open it.",
+                           why="not_sealed")
 
 
 def _live_access(row: Connection, me: str) -> Access | None:
@@ -463,8 +476,7 @@ def _refresh_refused(row: Connection, writer: tokens.Writer, lease_id, refresh_t
     if isinstance(e, providers.ProviderUnavailable):
         return services.ConnectionError("provider_unavailable", f"{title} could not be reached; try again.")
     if code == tokens.INVALID_GRANT:
-        return services.NotConnected(f"{title} refused this connection's refresh token; its owner must connect it "
-                                     "again.")
+        return _connect_again(services.NotConnected, f"{title} refused this connection's refresh token.")
     return services.ConnectionError("provider_error", f"{title} refused the refresh.")
 
 
@@ -589,8 +601,8 @@ def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, 
                         error=last,
                         summary=f"{row.owner_label}'s {tokens._title(row)} refresh token rotated on {NAME} and "
                                 "could not be stored; it may have to be connected again")
-        raise Refused("canopy-web could not store this connection's new token; if it does not work again soon, its "
-                      "owner should connect it again.")
+        raise _connect_again(Refused, "canopy-web could not store this connection's new token, so it may stop "
+                                      "working.")
     raise _refused(row, f"the write-back was refused: {last}")
 
 
@@ -623,8 +635,8 @@ def _no_longer_a_recipient(row: Connection, writer: tokens.Writer, lease: _Lease
                     summary=f"{row.owner_label}'s {title} refresh token rotated on {NAME} just as its owner took "
                             "canopy-web off it, so canopy-web couldn't store the new one. What is stored may have "
                             "stopped working; if so, connect it again")
-    raise Refused(f"Who can use this {title} connection changed while canopy-web was refreshing it, so canopy-web "
-                  "couldn't store the new sign-in. If it stops working, its owner should connect it again.")
+    raise _connect_again(Refused, f"Who can use this {title} connection changed while canopy-web was refreshing it, "
+                                  "so canopy-web couldn't store the new sign-in.")
 
 
 def _stored(row: Connection, token: providers.TokenResponse, plain: dict, digest: str,

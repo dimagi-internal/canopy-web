@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from unittest import mock
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -489,7 +490,8 @@ def test_a_shared_write_needs_approval_and_an_operation(w):
     change(w.view, w.person, [entry(writes=[WRITE_LEAD])])
     held = ConnectionOperation.objects.create(user=w.viewer_user, surface_kind="view", surface_ref=str(w.view.pk),
                                               revision=w.view.version,
-                                              expires_at=timezone.now() + timedelta(seconds=60))
+                                              expires_at=timezone.now() + timedelta(seconds=60),
+                                              hard_limit_at=timezone.now() + timedelta(seconds=60))
     with Salesforce() as sf:
         assert error_of(call(w, **write, operation_id=str(held.pk))) == "needs_approval"
     assert sf.calls == []
@@ -604,6 +606,43 @@ def test_the_switch_off_is_a_sentence_for_the_agents_admin(w):
     assert r.status_code == 409 and error_of(r) == "server_use_off"
     assert "eva" in r.json()["detail"] and "admin" in r.json()["detail"]
     assert sf.calls == []
+
+
+def test_with_no_key_a_shared_screen_is_not_told_to_find_an_admin(w):
+    approved(w)
+    Connection.objects.filter(pk=w.conn.pk).update(server_use=False)
+    with mock.patch.object(server_key, "available", return_value=False), Salesforce() as sf:
+        r = call(w)
+    assert r.status_code == 409 and error_of(r) == "server_use_off"
+    assert r.json()["detail"] == "This workspace hasn't turned on Salesforce for screens yet."
+    assert sf.calls == []
+
+
+def test_with_no_key_and_the_switch_on_says_the_same(w):
+    approved(w)
+    with mock.patch.object(server_key, "available", return_value=False), Salesforce() as sf:
+        r = call(w)
+    assert r.status_code == 409 and error_of(r) == "server_use_off"
+    assert r.json()["detail"] == "This workspace hasn't turned on Salesforce for screens yet."
+    assert sf.calls == []
+
+
+def test_a_broken_shared_connection_names_the_agents_admin_not_its_owner(w):
+    approved(w)
+    Connection.objects.filter(pk=w.conn.pk).update(refresh_failed_at=timezone.now())
+    with Salesforce():
+        r = call(w)
+    assert error_of(r) == "not_connected" and "connect_url" not in r.json()
+    assert "owner" not in r.json()["detail"]
+    assert r.json()["detail"].endswith("An admin of eva can connect it again.")
+
+
+def test_a_shared_session_ended_names_the_agents_admin(w):
+    approved(w)
+    with FakeSF(), Salesforce(Answer(status=401, body=[]), Answer(status=401, body=[])):
+        r = call(w)
+    assert error_of(r) == "session_ended" and "connect_url" not in r.json()
+    assert r.json()["detail"].endswith("An admin of eva can connect it again.")
 
 
 def test_limits_added_after_sharing_stop_it(w):

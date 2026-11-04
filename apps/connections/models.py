@@ -270,12 +270,14 @@ class ConnectionGrant(models.Model):
 
 
 class ConnectionOperation(models.Model):
-    """A short lease on writing from one screen, opened by one person (`call_service`).
+    """A lease on writing from one screen, opened by one person (`call_service`).
 
     canopy-web can't tell a click from a script; the page around the screen decides that before it
     asks for one. What a row does is limit how far a write can go: this person, this screen, this
-    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes. Expired rows are
-    deleted by `keeper.sweep`."""
+    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes. It slides:
+    each write moves `expires_at` to `call_service.OPERATION_SECONDS` from then, never past
+    `hard_limit_at`, so a long run of writes isn't cut off midway and one click still has an end.
+    Expired rows are deleted by `keeper.sweep`."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
@@ -286,6 +288,7 @@ class ConnectionOperation(models.Model):
     revision = models.BigIntegerField(null=True, blank=True)
     writes_used = models.PositiveIntegerField(default=0)
     expires_at = models.DateTimeField(db_index=True)
+    hard_limit_at = models.DateTimeField()
 
 
 class ConnectionSurfaceShare(models.Model):

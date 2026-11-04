@@ -222,6 +222,43 @@ def test_other_workspace_connection_not_used(w):
     assert sf.calls == []
 
 
+def test_not_connected_says_where_to_connect(w):
+    Connection.objects.filter(pk=w.conn.pk).delete()
+    with FakeSF(), Salesforce():
+        r = post(w)
+    assert r.status_code == 409 and error_of(r) == "not_connected"
+    assert "/salesforce/" in r.json()["connect_url"] and "/w/" in r.json()["connect_url"]
+    assert "Connect Salesforce in Settings → Connections." in r.json()["detail"]
+
+
+def test_needs_reconnect_tells_the_owner_themselves_and_gives_the_link(w):
+    Connection.objects.filter(pk=w.conn.pk).update(refresh_failed_at=timezone.now())
+    with Salesforce() as sf:
+        r = post(w)
+    assert r.status_code == 409 and error_of(r) == "not_connected"
+    assert "owner" not in r.json()["detail"]
+    assert r.json()["detail"].endswith("Connect Salesforce in Settings → Connections.")
+    assert r.json()["connect_url"]
+    assert sf.calls == []
+
+
+def test_a_session_ended_gives_the_owner_the_link(w):
+    with FakeSF(), Salesforce(Answer(status=401, body=[]), Answer(status=401, body=[])):
+        r = post(w)
+    assert error_of(r) == "session_ended"
+    assert "owner" not in r.json()["detail"] and r.json()["connect_url"]
+    assert r.json()["detail"].endswith("Connect Salesforce in Settings → Connections.")
+
+
+def test_what_is_stored_not_trusted_tells_the_owner_themselves(w):
+    with FakeSF(), Salesforce(), mock.patch.object(server_tokens, "access", side_effect=server_tokens._refused(
+            w.conn, "a test")):
+        r = post(w)
+    assert error_of(r) == "server_refused"
+    assert "owner" not in r.json()["detail"]
+    assert r.json()["detail"].endswith("Connect Salesforce in Settings → Connections.")
+
+
 def test_ambiguous(w):
     _stored({"user": w.person}, w.person, app=w.app, account_id="00Dorg/005other", account_label="second@dimagi.com",
             server_use=True)
@@ -237,8 +274,27 @@ def test_off_switch_sentence(w):
     with Salesforce() as sf:
         r = post(w)
     assert r.status_code == 409 and error_of(r) == "server_use_off"
-    assert "Settings" in r.json()["detail"]
+    assert r.json()["detail"].endswith("You can turn this on in Settings → Connections.")
+    assert "owner" not in r.json()["detail"]
     assert sf.calls == []
+
+
+def test_with_no_key_nobody_is_told_to_find_a_switch(w):
+    """`_switch_shown` hides the switch while canopy-web has no key, so no sentence may point at it."""
+    with mock.patch.object(server_key, "available", return_value=False), Salesforce() as sf:
+        r = post(w)
+    assert r.status_code == 409 and error_of(r) == "server_use_off"
+    assert r.json()["detail"] == "This workspace hasn't turned on Salesforce for screens yet."
+    assert sf.calls == []
+
+
+def test_a_limited_connection_is_not_told_about_a_switch_it_does_not_have(w):
+    Connection.objects.filter(pk=w.conn.pk).update(owner_turns_only=True)
+    with Salesforce():
+        r = post(w)
+    assert error_of(r) == "server_use_off"
+    assert "turn this on" not in r.json()["detail"] and "owner" not in r.json()["detail"]
+    assert "Settings → Connections" in r.json()["detail"]
 
 
 @pytest.mark.parametrize("limit", ["owner_turns_only", "expires_at"])

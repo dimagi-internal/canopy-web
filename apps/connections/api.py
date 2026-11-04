@@ -266,7 +266,7 @@ def request_connection_call(request: HttpRequest, provider: str, payload: Connec
 
 
 @router.post("/operations", response=ConnectionOperationOut,
-             summary="A short lease on writing from one screen, through the signed-in person's session")
+             summary="A lease on writing from one screen, through the signed-in person's session")
 # A session only; the surface's own read gate decides who may open it (`member` on an app).
 @gate("member", kind="ephemeral-credential",
       viewer_write="a member who may open a screen may write what it declared; this lease only limits how much")
@@ -275,8 +275,9 @@ def open_connection_operation(request: HttpRequest, payload: ConnectionOperation
 
     canopy-web can't verify a click. The page around the screen checks for one before it asks; a script
     that reaches this route with the person's session gets a lease too. What the lease does is limit how
-    far that goes: only what this screen declared, for 120 seconds, at most 500 writes, for this person,
-    this screen and this revision. Each write is still checked against the declaration, so on a page
+    far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
+    this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
+    any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
 
     Only a person signed in here: a personal access token or OAuth token is refused 403

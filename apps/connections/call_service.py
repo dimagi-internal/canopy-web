@@ -34,7 +34,8 @@ import orjson
 import requests
 import urllib3
 from django.core.cache import cache
-from django.db.models import F
+from django.db.models import DateTimeField, F, Value
+from django.db.models.functions import Least
 from django.urls import reverse
 from django.utils import timezone
 
@@ -56,7 +57,10 @@ LAST_USED_EVERY_SECONDS = 60
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_TEXT_CHARS = 1000
+#: A lease slides: it ends this long after its last write (or its opening, before any)...
 OPERATION_SECONDS = 120
+#: ...and this long after its opening, however it is written to.
+OPERATION_HARD_LIMIT_SECONDS = 600
 OPERATION_MAX_WRITES = 500
 OPERATIONS_PER_MINUTE = 60
 _CHUNK_BYTES = 64 * 1024
@@ -109,27 +113,31 @@ def call(request, provider: str, payload) -> dict:
                 if sent.sent:
                     _mark_used(conn)
                     _audit(conn, user, surface, matched, payload.operation_id, payload.as_, sent)
-    except services.NotConnected as exc:
-        if payload.as_ == "viewer":  # connecting their own account wouldn't bring an agent's back
-            exc.members = {"connect_url": request.build_absolute_uri(
+    except services.ConnectionError as exc:
+        said = _said_to_this_caller(exc, provider, payload.as_, payload.agent)
+        # Connecting their own account wouldn't bring an agent's back.
+        if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
+            said.members = {"connect_url": request.build_absolute_uri(
                 reverse("connections_start", args=[provider, surface.workspace]))}
-        raise
+        raise said from None
 
 
 def open_operation(request, surface_ref: dict) -> dict:
     """A lease on this person writing from this screen at this revision: `{operation_id, expires_at,
-    writes}`. Nothing here sees a click, which is the page's to check before it asks. What the lease
-    does is limit how far a script that gets one can go."""
+    hard_limit_at, writes}`. Nothing here sees a click, which is the page's to check before it asks.
+    What the lease does is limit how far a script that gets one can go."""
     _require_session(request)
     surface = declarations.resolve_surface(request, surface_ref)
     writes = _lease_writes(request.user, surface)
     if over(f"connections:operations:{request.user.pk}", OPERATIONS_PER_MINUTE, RATE_WINDOW_SECONDS):
         raise services.ConnectionError("rate_limited", "Too many clicks in the last minute; wait a moment and try "
                                                        "again.")
+    now = timezone.now()
     row = ConnectionOperation.objects.create(
         user=request.user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
-        expires_at=timezone.now() + timedelta(seconds=OPERATION_SECONDS))
-    return {"operation_id": row.pk, "expires_at": row.expires_at, "writes": writes}
+        expires_at=now + timedelta(seconds=OPERATION_SECONDS),
+        hard_limit_at=now + timedelta(seconds=OPERATION_HARD_LIMIT_SECONDS))
+    return {"operation_id": row.pk, "expires_at": row.expires_at, "hard_limit_at": row.hard_limit_at, "writes": writes}
 
 
 @contextmanager
@@ -216,8 +224,8 @@ def _viewer_connection(user, provider: str, surface: declarations.Surface) -> Co
     try:
         return services.connection_for_person(user, provider, workspace=surface.workspace)
     except services.NotConnected:
-        raise services.NotConnected(f"Your {title} isn't connected in this workspace; connect it to use this "
-                                    "screen.") from None
+        raise services.NotConnected(f"Your {title} isn't connected in this workspace. Connect {title} in Settings → "
+                                    "Connections.") from None
     except services.ConnectionError as exc:
         if exc.code != "ambiguous":
             raise
@@ -251,9 +259,9 @@ def _shared_connection(user, provider: str, surface: declarations.Surface, agent
                                     f"admin of {agent} can connect it again.")
     usable = [s for s in live if s.connection.server_use and not s.connection.limited]
     if not usable:
-        raise services.ConnectionError("server_use_off", f"canopy-web isn't allowed to use the {title} account {agent} "
-                                                         f"shared with this screen. An admin of {agent} can turn that "
-                                                         f"on in {agent}'s accounts.")
+        raise services.ConnectionError("server_use_off", _no_key_sentence(provider) if not server_key.available() else
+                                       f"canopy-web isn't allowed to use the {title} account {agent} shared with this "
+                                       f"screen. An admin of {agent} can turn that on in {agent}'s accounts.")
     if len(usable) > 1:  # no account names: which accounts an agent holds is for its admins, on its accounts tab
         raise services.ConnectionError("ambiguous", f"{agent} has shared more than one {title} account with this "
                                                     f"screen. An admin of {agent} can stop all but one.")
@@ -266,6 +274,42 @@ def _shared_connection(user, provider: str, surface: declarations.Surface, agent
     return share.connection
 
 
+def _no_key_sentence(provider: str) -> str:
+    """With no key there is no switch to turn on anywhere (`api._switch_shown`), for anyone."""
+    return f"This workspace hasn't turned on {_title(provider)} for screens yet."
+
+
+def _said_to_this_caller(exc: services.ConnectionError, provider: str, as_: str,
+                         agent: str | None) -> services.ConnectionError:
+    """`server_tokens` says what is wrong with a connection, not who can put it right, because that
+    depends on who is looking: on `as: viewer` the caller is its owner, on `as: shared` one of an
+    agent's admins can. Anything else is already said to the person at the screen."""
+    title = _title(provider)
+    connect = f"Connect {title} in Settings → Connections." if as_ == "viewer" else (
+        f"An admin of {agent} can connect it again.")
+    if isinstance(exc, server_tokens.ServerUseOff):
+        if exc.why == "no_key":
+            sentence = _no_key_sentence(provider)
+        elif exc.why == "not_sealed":
+            sentence = f"What is stored for this connection isn't sealed so that canopy-web can open it. {connect}"
+        elif as_ != "viewer":
+            sentence = (f"canopy-web isn't allowed to use the {title} account {agent} shared with this screen. "
+                        f"An admin of {agent} can turn that on in {agent}'s accounts.")
+        elif exc.why == "limited":  # no switch on a lend with limits (`api._switch_shown`)
+            sentence = (f"Your {title} account was lent with limits, so screens can't use it. Disconnect it and "
+                        "connect it again in Settings → Connections.")
+        else:
+            sentence = (f"canopy-web isn't allowed to use your {title} account. You can turn this on in Settings → "
+                        "Connections.")
+        return services.ConnectionError(exc.code, sentence)
+    what = getattr(exc, "what", "")
+    if not what:
+        return exc
+    said = services.ConnectionError(exc.code, f"{what} {connect}")
+    said.connect_again = True
+    return said
+
+
 def _check_operation(user, conn: Connection, surface: declarations.Surface, matched: calls.Match,
                      operation_id: str | None) -> None:
     """A write spends one place on this person's lease for this screen at this revision."""
@@ -273,13 +317,17 @@ def _check_operation(user, conn: Connection, surface: declarations.Surface, matc
 
 
 def _spend_write(user, operation_id: str | None, surface: declarations.Surface) -> None:
-    """One conditional update, so two callers can't both take the last place. A place is spent before
-    the call and not given back if the call then fails: the count is an upper limit on what was sent."""
+    """One conditional update, so two callers can't both take the last place, and it slides the lease
+    in the same breath, never past its hard limit. A place is spent before the call and not given back
+    if the call then fails: the count is an upper limit on what was sent."""
     pk = _operation_pk(operation_id)
+    now = timezone.now()
     lease = ConnectionOperation.objects.none() if pk is None else ConnectionOperation.objects.filter(
         pk=pk, user=user, surface_kind=surface.kind, surface_ref=surface.full_ref, revision=surface.revision,
-        expires_at__gt=timezone.now())
-    if lease.filter(writes_used__lt=OPERATION_MAX_WRITES).update(writes_used=F("writes_used") + 1):
+        expires_at__gt=now)
+    slid = Value(now + timedelta(seconds=OPERATION_SECONDS), output_field=DateTimeField())
+    if lease.filter(writes_used__lt=OPERATION_MAX_WRITES).update(writes_used=F("writes_used") + 1,
+                                                                 expires_at=Least(F("hard_limit_at"), slid)):
         return
     if lease.exists():
         raise services.ConnectionError("needs_operation", f"One click can make at most {OPERATION_MAX_WRITES} "
@@ -314,8 +362,10 @@ def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict
             got = _token(conn)
             status, raw = _ask(provider, matched, query, body, got, deadline, sent)
         if status == 401:
-            raise services.ConnectionError("session_ended", f"{_title(provider)} ended this connection's session. "
-                                                             "Connect it again in Settings → Connections.")
+            what = f"{_title(provider)} ended this connection's session."
+            ended = services.ConnectionError("session_ended", what)
+            ended.what = what
+            raise ended
     return _answer(status, raw, provider, matched, sent)
 
 

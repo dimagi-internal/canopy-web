@@ -1,5 +1,6 @@
 """`POST /api/connections/operations`: the lease a write needs. canopy-web can't see a click, so
-what it holds to is the limit: this person, this screen, this revision, 120 seconds, 500 writes.
+what it holds to is the limit: this person, this screen, this revision, 120 seconds after the last
+write, 10 minutes from the click, 500 writes.
 Salesforce is stubbed at the `requests` boundary, as in `test_connection_calls_route`."""
 from __future__ import annotations
 
@@ -199,6 +200,66 @@ def test_operation_for_another_revision_refused(w):
     assert sf.calls == []
 
 
+def test_opening_says_when_it_ends_at_the_latest(w):
+    before = timezone.now()
+    out = open_op(w).json()
+    row = ConnectionOperation.objects.get(pk=out["operation_id"])
+    assert timedelta(seconds=599) < row.hard_limit_at - before <= timedelta(seconds=601)
+    assert out["hard_limit_at"].replace("Z", "+00:00") == row.hard_limit_at.isoformat()
+
+
+def test_each_write_gives_the_lease_another_120_seconds(w):
+    operation = op_id(w)
+    ConnectionOperation.objects.filter(pk=operation).update(expires_at=timezone.now() + timedelta(seconds=5))
+    before = timezone.now()
+    with FakeSF(), Salesforce(done()):
+        assert write(w, operation).status_code == 200
+    row = ConnectionOperation.objects.get(pk=operation)
+    assert timedelta(seconds=119) < row.expires_at - before <= timedelta(seconds=121)
+
+
+def test_a_read_does_not_extend_the_lease(w):
+    operation = op_id(w)
+    soon = timezone.now() + timedelta(seconds=5)
+    ConnectionOperation.objects.filter(pk=operation).update(expires_at=soon)
+    with FakeSF(), Salesforce(Answer(body={"records": []})):
+        r = w.client.post(CALL, json.dumps({"method": "GET", "path": "query", "surface": surface_of(w.view),
+                                            "query": {"q": "SELECT Id FROM Lead"}}), content_type=J)
+    assert r.status_code == 200, r.content
+    assert ConnectionOperation.objects.get(pk=operation).expires_at == soon
+
+
+def test_writes_never_extend_past_the_hard_limit(w):
+    operation = op_id(w)
+    limit = timezone.now() + timedelta(seconds=30)
+    ConnectionOperation.objects.filter(pk=operation).update(hard_limit_at=limit, expires_at=limit)
+    with FakeSF(), Salesforce(done()):
+        assert write(w, operation).status_code == 200
+    assert ConnectionOperation.objects.get(pk=operation).expires_at == limit
+
+
+def test_past_the_hard_limit_a_write_needs_a_new_click(w):
+    operation = op_id(w)
+    past = timezone.now() - timedelta(seconds=1)
+    ConnectionOperation.objects.filter(pk=operation).update(hard_limit_at=past, expires_at=past)
+    with FakeSF(), Salesforce() as sf:
+        r = write(w, operation)
+    assert r.status_code == 409 and error_of(r) == "needs_operation"
+    assert sf.calls == []
+
+
+def test_many_writes_outlast_the_first_120_seconds(w):
+    """Bulk logging: every write resets the 120 seconds, so a long run isn't cut off midway."""
+    operation = op_id(w)
+    opened = timezone.now()
+    with FakeSF(), Salesforce(*[done() for _ in range(3)]) as sf:
+        for minutes in (1.9, 3.8, 5.7):
+            with mock.patch("apps.connections.call_service.timezone.now",
+                            return_value=opened + timedelta(minutes=minutes)):
+                assert write(w, operation).status_code == 200
+    assert len(sf.calls) == 3
+
+
 def test_expired_operation_refused(w):
     operation = op_id(w)
     ConnectionOperation.objects.filter(pk=operation).update(expires_at=timezone.now() - timedelta(seconds=1))
@@ -297,7 +358,8 @@ def test_a_person_deleted_takes_their_operations(w):
 def _row(world, *, expired: bool) -> ConnectionOperation:
     delta = timedelta(seconds=-1 if expired else 60)
     return ConnectionOperation.objects.create(user=world.person, surface_kind="view", surface_ref="1", revision=1,
-                                              expires_at=timezone.now() + delta)
+                                              expires_at=timezone.now() + delta,
+                                              hard_limit_at=timezone.now() + delta)
 
 
 def test_sweep_deletes_expired_operations_only(w):
