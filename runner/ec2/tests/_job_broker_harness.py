@@ -30,18 +30,18 @@ class Harness:
     def __init__(self, mod, root, marker, *, uid=2001, runners=(2001,), locked=False):
         self.mod, self.marker = mod, marker
         self.uid, self.runners, self.locked = uid, set(runners), locked
-        self.requests, self.spawned, self.stops, self.as_job_calls = [], [], [], []
+        self.requests, self.spawned, self.stops, self.as_job_calls, self.procs = [], [], [], [], []
         self.dir = tempfile.mkdtemp(prefix="jb", dir="/tmp")
         self.path = os.path.join(self.dir, "sock")
         harness = self
 
         class Recording(mod.JobBroker):
-            def dispatch(self, req, body, conn, uid):
+            def dispatch(self, req, rest, conn, uid):
                 harness.requests.append((req["op"], uid))
-                return super().dispatch(req, body, conn, uid)
+                return super().dispatch(req, rest, conn, uid)
 
-        self.server = Recording(self.path, root=pathlib.Path(root), as_job=self.as_job, spawn=self.spawn,
-                                stop=self.stop, uid_of=lambda sock: self.uid,
+        self.server = Recording(self.path, root=pathlib.Path(root), as_job=self.as_job, as_job_pipe=self.as_job_pipe,
+                                spawn=self.spawn, stop=self.stop, uid_of=lambda sock: self.uid,
                                 runner_uids=lambda: self.runners,
                                 box_state=lambda: {"locked": self.locked, "systemd": 255, "job_user": True})
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -51,12 +51,18 @@ class Harness:
         self.as_job_calls.append(list(args))
         return subprocess.run(list(args), input=input, capture_output=True, timeout=60)
 
+    def as_job_pipe(self, args):
+        self.as_job_calls.append(list(args))
+        return subprocess.Popen(list(args), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+
     def spawn(self, argv):
         self.spawned.append(list(argv))
         props = dict(a.removeprefix("--property=").split("=", 1) for a in argv if a.startswith("--property="))
         command = argv[argv.index("--") + 1:]
         proc = subprocess.Popen(command, cwd=props["WorkingDirectory"], stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        self.procs.append(proc)
         timer = threading.Timer(float(props["RuntimeMaxSec"]), self.kill_all)
         timer.daemon = True
         timer.start()
@@ -69,6 +75,9 @@ class Harness:
 
     def kill_all(self):
         subprocess.run(["pkill", "-KILL", "-f", self.marker], capture_output=True)
+        for proc in self.procs:
+            if proc.poll() is None:
+                proc.kill()
 
     def close(self):
         self.kill_all()

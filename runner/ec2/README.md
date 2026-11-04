@@ -752,8 +752,14 @@ its unit has `NoNewPrivileges`, which protects every model turn it runs. So
 for a uid in `runners.json` only (`SO_PEERCRED`), and only `status`, `export`, `write_token`,
 `start`, `stop` and `cleanup`. No request can name a path, a user, a property or an environment,
 so a caller with a runner's uid gains nothing beyond running code as `canopy-job`, which has
-less than that runner has. It also holds one job at a time, and only the runner that started
-a job can stop it.
+less than that runner has.
+
+**One slot per box, from `export` to `cleanup`, not just while the process runs.** Jobs share a
+uid, so one must never exist beside another's tokens. Only the slot's holder can use or clean it;
+another runner's `export` is refused, "Another job is running on this machine." The connection
+`export` came in on stays open and is the hold: if the runner dies, the kernel closes it, and the
+broker stops the job, clears its files and frees the slot. A slot ends at 121 minutes whatever
+happens. Files that can't be removed refuse the next `export` until they can.
 
 `start` is one `systemd-run --wait --pipe --collect`, built by `systemd_run_argv`: its properties
 are the isolation (Ubuntu 24.04's systemd 255 has them all; the broker reports an older one as
@@ -761,16 +767,21 @@ unsupported, and the box reports no jobs):
 
 | | |
 |---|---|
-| Files | `ProtectHome=yes` (every runner home, so `WORK_DIR`, `~/.canopy`, `~/.<slug>/.env`, `runner-token.json`), `ProtectSystem=strict` with `ReadWritePaths=<its folder>`, `PrivateTmp=yes`, `InaccessiblePaths=` `/etc/canopy-runner`, `/run/canopy`, each broker's `/run` folder, `/opt/agents`, `/opt/canopy-runner`, `/opt/canopy-web`, `/dev/shm`, `/dev/mqueue` |
-| Other processes | `ProtectProc=invisible`, `ProcSubset=pid`, `PrivateDevices=yes` |
-| Privilege | `--uid`/`--gid=canopy-job`, `NoNewPrivileges=yes`, `CapabilityBoundingSet=` |
-| Network | `RestrictAddressFamilies=AF_INET AF_INET6` (so no Unix socket, a broker's included), `IPAddressDeny=` the metadata address and `localhost`, with the DNS stub `127.0.0.53` allowed back |
+| Files | `ProtectHome=yes` (every runner home, so `WORK_DIR`, `~/.canopy`, `~/.<slug>/.env`, `runner-token.json`), `ProtectSystem=strict`, `TemporaryFileSystem=/var/lib/canopy-jobs` with `BindPaths=<its folder>` (it sees only its own job), `PrivateTmp=yes`, `InaccessiblePaths=` `/etc/canopy-runner`, `/run/canopy`, each broker's `/run` folder, `/opt/agents`, `/opt/canopy-runner`, `/opt/canopy-web`, `/dev/shm`, `/dev/mqueue` |
+| Other processes | `ProtectProc=invisible`, `ProcSubset=pid`, `PrivateDevices=yes`, `PrivateIPC=yes`, `RemoveIPC=yes` |
+| Privilege | `--uid`/`--gid=canopy-job`, `NoNewPrivileges=yes`, `CapabilityBoundingSet=`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `LockPersonality=yes`, `SystemCallArchitectures=native`, `ProtectKernelTunables=`, `ProtectKernelModules=`, `ProtectKernelLogs=`, `ProtectControlGroups=`, `ProtectClock=`, `ProtectHostname=yes` |
+| Network | `RestrictAddressFamilies=AF_INET AF_INET6` (so no Unix socket, a broker's included), `IPAddressDeny=` the metadata address, `localhost` and every private range (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `fe80::/10`, `fc00::/7`), with the DNS stub `127.0.0.53` allowed back. The public internet stays open |
 | Limits | `RuntimeMaxSec=` its timeout, `MemoryMax=2G`, `MemorySwapMax=0`, `CPUQuota=100%`, `TasksMax=256`, `LimitFSIZE=5G` |
 | Ending | `KillMode=control-group`: no background process survives. `TimeoutStopSec=10s`: a stop is TERM, then KILL after 10 s |
 | Environment | `env -i` and exactly `PATH`, `HOME`, `LANG`, `CANOPY_AGENT_SLUG`, `CANOPY_TURN_ID`, `CANOPY_JOB_TOKENS` |
 
+`MemoryDenyWriteExecute` is left out on purpose: it breaks some runtimes. `RemoveIPC` acts at uid
+scope when a job's last process ends; with one slot at a time, it can't take another job's IPC.
+
 Each run gets `/var/lib/canopy-jobs/<turn>/` (`repo/`, `home/`, `tokens/`) and its own 0600 copy
-of each of the agent's staged tokens, refreshed every minute. `run` stays an argv: separate
+of each of the agent's staged tokens, refreshed every minute by an atomic rename. A job has the
+run of its own folder, so that write refuses a link at each step down and replaces one rather
+than following it: a planted `tokens -> /run/lock` can't put a token outside the root. `run` stays an argv: separate
 arguments after `--`, no shell, `--expand-environment=no`. Output comes back to the runner in
 frames, so a job can't print its own exit. When a job ends, however it ends, the unit's cgroup
 is gone and the broker empties the jobs root. A non-zero exit, a timeout or a stop is never run
@@ -788,9 +799,9 @@ service. The broker goes in only if the rest held. A sensitive-data box gets non
 
 **The owner rule stays beside `IPAddressDeny`**, because that list can't say what it says:
 `CANOPY-JOB` closes all of loopback by uid, which also covers the stub's address on any other port
-(a service bound to `0.0.0.0` answers there) and the box's own addresses, bar DNS to
-`127.0.0.53:53`. And `IPAddressDeny` needs cgroup BPF, and applies nothing without it. Everything
-else out is open.
+(a service bound to `0.0.0.0` answers there) and the box's own addresses even if they're public,
+bar DNS to `127.0.0.53:53`. And `IPAddressDeny` needs cgroup BPF, and applies nothing without it. Everything
+public out is open.
 
 **A box with any egress-locked runner reports no jobs, from any of its runners**, so a job never
 fails on its first network call: a job can't use a runner's proxy, and the lock's own chain
@@ -826,7 +837,8 @@ ever not apply):
 - No Unix sockets and `ProcSubset=pid` are real limits on what a job can do: anything needing a
   local socket, or `/proc/meminfo`, won't work.
 - Any process of a runner's user can call the broker, so a model turn could start code as
-  `canopy-job`. That has less than the turn has already.
+  `canopy-job`, which has less than the turn has already. It could also take the box's slot and
+  sit on it, holding off jobs for up to 121 minutes: a nuisance, not a way in.
 
 **Manual check on a real box** (none of this can be proved from `_job_can_run`, or from a test
 without systemd). Run this once as root on a new box, and after any change to its setup:
@@ -836,10 +848,13 @@ sudo bash /opt/canopy-web/runner/ec2/job_self_check.sh
 ```
 
 It starts real units through the broker, as a runner's uid, and prints PASS or FAIL per line for
-what the job inside them is refused: `/home/*`, each token and secret path, the metadata address,
-localhost, `/dev/shm`, each broker's socket, and the memory and task limits. It also checks the
-environment, a background process not outliving a job, the broker refusing other uids, DNS and the
-rules. It stops at once if a job is running.
+what the job inside them is refused: `/home/*`, each token and secret path, a sibling's token file,
+the metadata address, localhost, the box's own address, each proxy port, `/dev/shm`, each broker's
+socket, and the memory and task limits. It also checks the environment, a background process not
+outliving a job, the slot holding after a job exits, the broker refusing other uids, DNS and the
+rules. A refusal counts only once root has reached the same thing itself (a real listener, for
+loopback); one it can't establish is a FAIL. So is a client that crashes, or fewer verdicts than it
+expects. It stops at once if a job is running.
 
 ## Several runners on one machine (`Runners`)
 

@@ -18,13 +18,20 @@ BROKER=/run/canopy-jobs/sock
 RUNNERS_FILE=/etc/canopy-runner/runners.json
 ETC=/etc/canopy-runner
 WORK=""
+LISTENER_PID=""
 FAILS=0
+#: What the client and the probe each report whatever the box, on top of one line per entry in
+#: refused.txt, sockets.txt and closed-targets.txt. Fewer verdicts than that means something
+#: crashed part-way, however many PASSes came before it. (A test runs both against these.)
+CLIENT_CHECKS=17
+PROBE_CHECKS=19
 
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; FAILS=$((FAILS + 1)); }
 skip() { printf 'SKIP  %s\n' "$1"; }
 
 cleanup() {
+  [ -n "$LISTENER_PID" ] && kill "$LISTENER_PID" 2>/dev/null
   [ -n "$WORK" ] && rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -138,11 +145,90 @@ fi
   done <<<"$rows"
 } | sort -u > "$WORK/refused.txt"
 printf '%s\n' /run/canopy-kms/sock /run/canopy-aws/sock "$BROKER" > "$WORK/sockets.txt"
+
+echo "== what a job should be refused has to be there first"
+# A refused connection only proves anything if something was listening. So: a real listener, as
+# root, on loopback and the box's own address, reached from the root side. Whatever can't be
+# reached from here is a FAIL, never a job's PASS.
+LOOP_PORT=48731
+listen_py='
+import select, socket, sys
+socks = []
+for spec in sys.argv[1:]:
+    host, port = spec.rsplit(",", 1)
+    s = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, int(port)))
+    except OSError:
+        continue   # the proxy on its own port; or no IPv6. The root-side reach below decides.
+    s.listen(8)
+    socks.append(s)
+while True:
+    for s in select.select(socks, [], [])[0]:
+        c, _ = s.accept()
+        c.close()
+'
+reach_py='
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+s = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
+s.settimeout(4)
+s.connect((host, port))
+'
+listen_on=("0.0.0.0,$LOOP_PORT" "::1,$LOOP_PORT")
 while read -r id _user _home uid; do
   [ -n "${id:-}" ] || continue
-  printf '%s %s\n' "$id" "$((20000 + uid % 10000))"
-done <<<"$rows" > "$WORK/proxy-ports.txt"
-hostname -I 2>/dev/null | awk '{print $1}' > "$WORK/own-ip.txt"
+  listen_on+=("127.0.0.1,$((20000 + uid % 10000))")
+done <<<"$rows"
+python3 -c "$listen_py" "${listen_on[@]}" & LISTENER_PID=$!
+sleep 1
+: > "$WORK/closed-targets.txt"
+target() {  # <what> <host> <port>: a job must be refused this, once root has reached it
+  if python3 -c "$reach_py" "$2" "$3" 2>/dev/null; then
+    pass "root reaches $1 ($2:$3), so a job's refusal means something"
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$WORK/closed-targets.txt"
+  else
+    fail "can't establish that $1 ($2:$3) is reachable from root, so a job's refusal would prove nothing"
+  fi
+}
+target "IMDSv4" 169.254.169.254 80
+target "localhost" 127.0.0.1 "$LOOP_PORT"
+target "the rest of loopback" 127.0.0.2 "$LOOP_PORT"
+target "the DNS stub's other ports" 127.0.0.53 "$LOOP_PORT"
+own_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [ -n "$own_ip" ]; then
+  target "the box's own address" "$own_ip" "$LOOP_PORT"
+else
+  fail "can't establish the box's own address"
+fi
+# IPv6 may truly not be here, and then there is nothing for a job to reach.
+if python3 -c "$reach_py" ::1 "$LOOP_PORT" 2>/dev/null; then
+  target "IPv6 localhost" ::1 "$LOOP_PORT"
+else
+  skip "IPv6 localhost: this box has none"
+fi
+if python3 -c "$reach_py" fd00:ec2::254 80 2>/dev/null; then
+  target "IMDSv6" fd00:ec2::254 80
+else
+  skip "IMDSv6: not answering even for root here"
+fi
+while read -r id _user _home uid; do
+  [ -n "${id:-}" ] || continue
+  target "$id's egress proxy port" 127.0.0.1 "$((20000 + uid % 10000))"
+done <<<"$rows"
+
+# A sibling's folder, planted after a clean slot: the unit has to see only its own.
+sudo -n -u "$first_user" python3 -c '
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX); s.settimeout(60); s.connect(sys.argv[1])
+s.sendall(b"{\"op\": \"cleanup\"}\n"); print(s.recv(4096).decode())' "$BROKER" >/dev/null
+sudo -n -u "$JOB_USER" sh -c "mkdir -p $JOBS_ROOT/sibling-check && echo a-sibling-token > $JOBS_ROOT/sibling-check/secret"
+if [ "$(cat "$JOBS_ROOT/sibling-check/secret" 2>/dev/null)" = a-sibling-token ]; then
+  pass "root sees a sibling's token file, so a job's not seeing it means something"
+else
+  fail "can't establish a sibling's token file at $JOBS_ROOT/sibling-check/secret"
+fi
 
 # What runs inside the unit, as the job would. It only reports; this script's client prints it.
 cat > "$WORK/probe.py" <<'PY'
@@ -160,8 +246,25 @@ got = set(os.environ) - {"LC_CTYPE"}
 (pass_ if os.environ["PATH"] == "/usr/local/bin:/usr/bin:/bin" else fail)("a job's PATH is the fixed one")
 
 tokens = os.environ["CANOPY_JOB_TOKENS"] + "/self-check.json"
-mode = os.stat(tokens).st_mode & 0o777
-(pass_ if mode == 0o600 else fail)(f"its token copy is 0600 ({oct(mode)})")
+try:
+    mode = os.stat(tokens).st_mode & 0o777
+    (pass_ if mode == 0o600 else fail)(f"its token copy is 0600 ({oct(mode)})")
+except OSError as exc:
+    fail(f"its token copy isn't there: {exc}")
+
+# Each unit sees only its own job: the sibling planted before this ran, and nothing else.
+root = os.path.dirname(os.path.dirname(os.environ["CANOPY_JOB_TOKENS"]))
+sibling = root + "/sibling-check/secret"
+try:
+    with open(sibling, "rb"):
+        fail(f"a job can read a sibling's token file ({sibling})")
+except OSError as exc:
+    pass_(f"a job can't read a sibling's token file ({errno.errorcode.get(exc.errno, exc.errno)})")
+try:
+    names = os.listdir(root)
+    (pass_ if names == [os.environ["CANOPY_TURN_ID"]] else fail)(f"a job sees only its own folder in {root} ({len(names)})")
+except OSError as exc:
+    fail(f"could not list {root}: {exc}")
 
 for path in lines("refused.txt"):
     try:
@@ -208,57 +311,44 @@ for path in lines("sockets.txt"):
         pass_(f"a job can't reach {path}")
 
 def closed(what, host, port):
-    family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    s = socket.socket(family)
+    """Root reached each of these a moment ago: not connecting is the refusal, and a unit's
+    IPAddressDeny drops rather than rejects, so silence counts as much as a reset."""
+    s = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
     s.settimeout(4)
     try:
         s.connect((host, port))
-        fail(f"{what} was reachable ({host}:{port})")
-    except TimeoutError:
-        fail(f"{what} gave no refusal, only silence ({host}:{port})")
+        fail(f"a job reached {what} ({host}:{port})")
     except OSError as exc:
-        pass_(f"{what} is refused ({host}:{port}, {errno.errorcode.get(exc.errno, exc.errno)})")
+        pass_(f"a job is refused {what} ({host}:{port}, {errno.errorcode.get(exc.errno, 'no answer')})")
 
-closed("IMDSv4", "169.254.169.254", 80)
-if os.path.exists("/proc/net/if_inet6") or os.path.exists("/sys/class/net/lo/address"):
-    try:
-        closed("IMDSv6", "fd00:ec2::254", 80)
-        closed("IPv6 localhost", "::1", 48731)
-    except OSError:
-        pass_("no IPv6 for a job here")
-closed("localhost", "127.0.0.1", 48731)
-closed("the rest of loopback", "127.0.0.2", 48731)
-closed("the DNS stub's other ports", "127.0.0.53", 48731)
-for ip in lines("own-ip.txt"):
-    closed("the box's own address", ip, 48731)
-for row in lines("proxy-ports.txt"):
-    who, port = row.split()
-    closed(f"{who}'s egress proxy port", "127.0.0.1", int(port))
+for row in lines("closed-targets.txt"):
+    what, host, port = row.split("|")
+    closed(what, host, int(port))
 
-if json.load(open("expect.json"))["locked"]:
-    print("SKIP  DNS: a runner on this box is locked", flush=True)
-else:
-    try:
-        socket.getaddrinfo("canopy.dimagi.com", 443)
-        pass_("DNS works for a job (getaddrinfo canopy.dimagi.com)")
-    except OSError as exc:
-        fail(f"DNS doesn't work for a job: {exc}")
+try:
+    socket.getaddrinfo("canopy.dimagi.com", 443)
+    pass_("DNS works for a job (getaddrinfo canopy.dimagi.com)")
+except OSError as exc:
+    fail(f"DNS doesn't work for a job: {exc}")
 
 # Other users' processes. ProtectProc=invisible hides them entirely.
 others = []
-for name in os.listdir("/proc"):
-    if name.isdigit():
-        try:
-            if os.stat(f"/proc/{name}").st_uid != os.geteuid():
-                others.append(name)
-        except OSError:
-            pass
-(pass_ if not others else fail)(f"a job sees no other user's process in /proc ({len(others)})")
+try:
+    for name in os.listdir("/proc"):
+        if name.isdigit():
+            try:
+                if os.stat(f"/proc/{name}").st_uid != os.geteuid():
+                    others.append(name)
+            except OSError:
+                pass
+    (pass_ if not others else fail)(f"a job sees no other user's process in /proc ({len(others)})")
+except OSError as exc:
+    fail(f"could not list /proc: {exc}")
 
 # The limits, as the cgroup itself states them.
-path = open("/proc/self/cgroup").read().strip().split("::")[-1]
 for name, value in (("memory.max", str(2 * 1024 ** 3)), ("memory.swap.max", "0"), ("pids.max", "256")):
     try:
+        path = open("/proc/self/cgroup").read().strip().split("::")[-1]
         have = open(f"/sys/fs/cgroup{path}/{name}").read().strip()
         (pass_ if have == value else fail)(f"{name} is {value} ({have})")
     except OSError as exc:
@@ -300,18 +390,25 @@ cat > "$WORK/client.py" <<'PY'
 import io, json, os, socket, struct, subprocess, sys, tarfile, uuid
 
 BROKER, work, job_user = sys.argv[1:4]
+EXTRA = os.environ.get("SELF_CHECK_EXTRA", "").split()   # words on each run, which a test finds them by
 
-def ask(req, body=b""):
-    with socket.socket(socket.AF_UNIX) as c:
-        c.settimeout(60)
-        c.connect(BROKER)
+def ask(req, body=b"", keep=False):
+    c = socket.socket(socket.AF_UNIX)
+    c.settimeout(60)
+    c.connect(BROKER)
+    try:
         c.sendall(json.dumps(req).encode() + b"\n" + body)
-        buf = b""
-        while b"\n" not in buf:
-            got = c.recv(65536)
-            if not got:
-                break
-            buf += got
+    except OSError:
+        pass   # a refused export closes without reading its body; the reply still says why
+    buf = b""
+    while b"\n" not in buf:
+        got = c.recv(65536)
+        if not got:
+            break
+        buf += got
+    if keep:
+        return json.loads(buf), c
+    c.close()
     return json.loads(buf)
 
 def say(ok, what):
@@ -320,84 +417,105 @@ def say(ok, what):
 def archive():
     b = io.BytesIO()
     with tarfile.open(fileobj=b, mode="w") as t:
-        for name in ("probe.py", "memory.py", "refused.txt", "sockets.txt", "proxy-ports.txt", "own-ip.txt", "expect.json"):
+        for name in ("probe.py", "memory.py", "refused.txt", "sockets.txt", "closed-targets.txt"):
             t.add(os.path.join(work, name), arcname=name)
     return b.getvalue()
 
-def run(argv, timeout=120):
-    """One job, start to end: (its output, its exit)."""
-    turn = str(uuid.uuid4())
-    data = archive()
-    got = ask({"op": "export", "turn": turn, "size": len(data)}, data)
-    if not got.get("ok"):
-        say(False, f"export was refused: {got}")
-        return "", {}
-    got = ask({"op": "write_token", "turn": turn, "provider": "self-check", "size": 2}, b"{}")
-    say(bool(got.get("ok")), "the broker writes a token copy")
-    output, exit_, buf = b"", {}, b""
-    with socket.socket(socket.AF_UNIX) as c:
-        c.settimeout(timeout + 60)
-        c.connect(BROKER)
-        c.sendall(json.dumps({"op": "start", "turn": turn, "slug": "self-check", "run": argv,
-                              "timeout_seconds": timeout}).encode() + b"\n")
-        while not exit_:
-            got = c.recv(65536)
-            if not got:
-                break
-            buf += got
-            while len(buf) >= 5 and len(buf) >= 5 + struct.unpack(">I", buf[1:5])[0]:
-                n = struct.unpack(">I", buf[1:5])[0]
-                kind, payload, buf = buf[:1], buf[5:5 + n], buf[5 + n:]
-                if kind == b"O":
-                    sys.stdout.write(payload.decode("utf-8", "replace"))
-                    sys.stdout.flush()
-                    output += payload
-                else:
-                    exit_ = json.loads(payload)
-    return output.decode("utf-8", "replace"), exit_
+class Job:
+    """One slot, from export to `done`: the connection stays open, as a runner's does."""
+    def __init__(self):
+        self.turn = str(uuid.uuid4())
+        data = archive()
+        got, self.hold = ask({"op": "export", "turn": self.turn, "size": len(data)}, data, keep=True)
+        if got.get("ok"):
+            got = ask({"op": "write_token", "turn": self.turn, "provider": "self-check", "size": 2}, b"{}")
+        say(bool(got.get("ok")), f"the broker takes an export and writes a token copy ({got})")
+
+    def run(self, argv, timeout=120):
+        output, exit_, buf = b"", {}, b""
+        with socket.socket(socket.AF_UNIX) as c:
+            c.settimeout(timeout + 60)
+            c.connect(BROKER)
+            c.sendall(json.dumps({"op": "start", "turn": self.turn, "slug": "self-check", "run": [*argv, *EXTRA],
+                                  "timeout_seconds": timeout}).encode() + b"\n")
+            while not exit_:
+                got = c.recv(65536)
+                if not got:
+                    break
+                buf += got
+                while len(buf) >= 5 and len(buf) >= 5 + struct.unpack(">I", buf[1:5])[0]:
+                    n = struct.unpack(">I", buf[1:5])[0]
+                    kind, payload, buf = buf[:1], buf[5:5 + n], buf[5 + n:]
+                    if kind == b"O":
+                        sys.stdout.write(payload.decode("utf-8", "replace"))
+                        sys.stdout.flush()
+                        output += payload
+                    else:
+                        exit_ = json.loads(payload)
+        return output.decode("utf-8", "replace"), exit_
+
+    def done(self):
+        got = ask({"op": "cleanup"})
+        self.hold.close()
+        return got
 
 status = ask({"op": "status"})
 say(status.get("ok") is True, f"the broker answers status: {status}")
 say(status.get("supported") is True, f"its systemd can run the unit ({status.get('systemd')})")
-json.dump({"locked": bool(status.get("locked"))}, open(os.path.join(work, "expect.json"), "w"))
 if status.get("locked"):
     print("SKIP  a runner on this box is locked: the broker starts no job here, and no job is reported")
-    sys.exit(0)
+    sys.exit(3)
 
 for req in ({"op": "exec", "command": "id"}, {"op": "start", "turn": "../x", "slug": "a", "run": ["x"], "timeout_seconds": 1},
             {"op": "start", "turn": str(uuid.uuid4()), "slug": "a", "run": "id", "timeout_seconds": 1},
             {"op": "status", "user": "root"}, {"op": "export", "turn": str(uuid.uuid4()), "size": 1, "path": "/etc/x"}):
-    got = ask(req)
-    say("error" in got, f"the broker refuses {json.dumps(req)[:70]}")
+    say("error" in ask(req), f"the broker refuses {json.dumps(req)[:70]}")
 
-ask({"op": "cleanup"})
-output, exit_ = run(["python3", "probe.py"])
+job = Job()
+output, exit_ = job.run(["python3", "probe.py"])
 say("PROBE-DONE" in output, "the probe ran to its end")
 say(exit_ == {"rc": 0, "timed_out": False}, f"a good job exits 0 ({exit_})")
 left = subprocess.run(["pgrep", "-u", job_user], capture_output=True).stdout.split()
 say(not left, f"nothing of {job_user} outlives the job, a process in a new session included ({len(left)})")
-ask({"op": "cleanup"})
+data = archive()
+got = ask({"op": "export", "turn": str(uuid.uuid4()), "size": len(data)}, data)
+say("Another job" in str(got.get("error")), f"the job has exited but its slot holds: a second export is refused ({got})")
+job.done()
 
-output, exit_ = run(["python3", "memory.py"])
+job = Job()
+output, exit_ = job.run(["python3", "memory.py"])
 say("ALLOCATED" not in output and exit_.get("rc") not in (0, None), f"MemoryMax ended a 3 GiB allocation ({exit_})")
-ask({"op": "cleanup"})
+job.done()
 
-output, exit_ = run(["python3", "-c", "import signal,time; signal.signal(15, signal.SIG_IGN); time.sleep(60)"], timeout=3)
+job = Job()
+output, exit_ = job.run(["python3", "-c", "import signal,time; signal.signal(15, signal.SIG_IGN); time.sleep(60)"], timeout=3)
 say(exit_.get("timed_out") is True, f"RuntimeMaxSec ends a job that ignores TERM, and reads as a timeout ({exit_})")
-got = ask({"op": "cleanup"})
-say(bool(got.get("ok")), "cleanup works")
+got = job.done()
+say(bool(got.get("ok")), f"cleanup works ({got})")
 PY
 chmod 644 "$WORK"/*
-# The client, as the runner, says what status said here for the probe to read.
-: > "$WORK/expect.json"
-chmod 666 "$WORK/expect.json"
 
 echo "== a real unit, through the broker, as $first_user"
 out="$(cd / && sudo -n -u "$first_user" python3 "$WORK/client.py" "$BROKER" "$WORK" "$JOB_USER" 2>&1)"
+rc=$?
 printf '%s\n' "$out" | grep -v '^PROBE-DONE$'
 FAILS=$((FAILS + $(grep -c '^FAIL' <<<"$out")))
-if ! grep -q '^PASS' <<<"$out"; then
-  fail "the client didn't run"
+said="$(grep -cE '^(PASS|FAIL)' <<<"$out")"
+if [ "$rc" = 3 ]; then
+  # A locked box: the broker runs nothing, so all that's asked is that it says so.
+  expected=2
+  rc=0
+else
+  expected=$((CLIENT_CHECKS + PROBE_CHECKS + $(wc -l < "$WORK/refused.txt") + $(wc -l < "$WORK/sockets.txt") \
+    + $(wc -l < "$WORK/closed-targets.txt")))
+fi
+if [ "$rc" != 0 ]; then
+  fail "the client exited $rc, so what it didn't get to wasn't checked"
+fi
+if [ "$said" = "$expected" ]; then
+  pass "every check reported ($said of $expected expected)"
+else
+  fail "only $said of $expected expected checks reported, so the rest weren't checked"
 fi
 left="$(find "$JOBS_ROOT" -mindepth 1 2>/dev/null | wc -l)"
 if [ "$left" = 0 ]; then

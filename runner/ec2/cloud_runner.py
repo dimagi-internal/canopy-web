@@ -3406,7 +3406,7 @@ WantedBy=timers.target
     # root's), its own /tmp.
     "canopy-runner@.service": f"""[Unit]
 Description=Canopy runner for %i
-After=network-online.target canopy-runners.service canopy-kms-broker.service canopy-egress.service
+After=network-online.target canopy-runners.service canopy-kms-broker.service canopy-egress.service canopy-job-broker.service
 Wants=network-online.target
 Requires=canopy-runners.service
 [Service]
@@ -7017,6 +7017,8 @@ JOB_BUSY_NOTE = "Another job is running on this machine."
 JOB_RESTARTED_NOTE = "This machine restarted during the job."
 #: The ONE seam between this code and the box's root: the job broker's socket.
 JOB_BROKER_SOCKET = os.environ.get("CANOPY_JOB_BROKER_SOCKET", "/run/canopy-jobs/sock")
+#: The broker starts with --no-block at boot, so a runner can get there just before its socket.
+JOB_BROKER_START_WAIT = (2, 4)
 #: On top of the unit's own RuntimeMaxSec: what stops a job if that somehow didn't.
 JOB_DEADLINE_SLACK_SECONDS = 60
 JOB_POLL_SECONDS = 0.5
@@ -7106,29 +7108,55 @@ def _job_broker_connect(op: str, body: bytes = b"", **fields) -> socket.socket:
     try:
         conn.settimeout(600)
         conn.connect(JOB_BROKER_SOCKET)
-        conn.sendall(json.dumps({"op": op, **fields}).encode() + b"\n" + body)
     except OSError:
         conn.close()
         raise
+    # A refused export closes without reading its body: then its reply still says why.
+    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+        conn.sendall(json.dumps({"op": op, **fields}).encode() + b"\n" + body)
     return conn
 
 
-def _job_broker(op: str, body: bytes = b"", **fields) -> dict:
-    """One request and its reply. A refusal, or a broker that can't be reached, is `JobRefused`."""
+def _job_broker_reply(conn: socket.socket) -> dict:
+    """The reply on `conn`. A refusal, or a broker that can't be reached, is `JobRefused`."""
     try:
-        with _job_broker_connect(op, body, **fields) as conn:
-            buf = b""
-            while b"\n" not in buf:
-                chunk = conn.recv(65536)
-                if not chunk:
-                    break
-                buf += chunk
+        buf = b""
+        while b"\n" not in buf:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
         reply = json.loads(buf)
     except (OSError, ValueError):
         raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
     if not isinstance(reply, dict) or reply.get("error") or not reply.get("ok"):
         raise JobRefused(str((reply or {}).get("error") or "This machine's job service refused that."))
     return reply
+
+
+def _job_broker(op: str, body: bytes = b"", **fields) -> dict:
+    """One request and its reply."""
+    try:
+        conn = _job_broker_connect(op, body, **fields)
+    except OSError:
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    with conn:
+        return _job_broker_reply(conn)
+
+
+def _job_broker_hold(data: bytes, turn_id: str) -> socket.socket:
+    """Take the box's one slot and unpack the repo. The connection stays open and IS the hold:
+    if this process dies the kernel closes it, and the broker stops the job and clears up."""
+    try:
+        conn = _job_broker_connect("export", data, turn=turn_id, size=len(data))
+    except OSError:
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    try:
+        _job_broker_reply(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
 
 
 def _job_user_exists() -> bool:
@@ -7156,10 +7184,17 @@ def _job_can_run() -> bool:
     try:
         if not _job_user_exists() or not JOB_LOCK_FILE.is_file():
             return False
-        status = _job_broker("status")
-    except (JobRefused, OSError) as exc:
-        _log(f"jobs: this box can't run them: {exc}")
+    except OSError:
         return False
+    for wait in (*JOB_BROKER_START_WAIT, None):
+        try:
+            status = _job_broker("status")
+            break
+        except JobRefused as exc:
+            if wait is None:
+                _log(f"jobs: this box can't run them: {exc}")
+                return False
+            time.sleep(wait)
     for key, want, why in (("job_user", True, f"the broker doesn't see {JOB_USER}"),
                            ("supported", True, f"systemd {status.get('systemd')} can't run the unit"),
                            ("locked", False, "a runner on this box is egress-locked")):
@@ -7423,7 +7458,7 @@ class _JobOutput:
 
 def _job_copy_tokens(turn_id: str, slug: str, copied: dict, output: _JobOutput) -> None:
     """Bring the job's copies in line with this turn's staged files: same format, written by
-    the broker as the job user, swapped in atomically. A value goes on the scrub list BEFORE
+    the broker as the job user, swapped in atomically, refusing a link at any step. A value goes on the scrub list BEFORE
     the job can read it. A staged file that has gone (revoked, no longer for this box) takes
     the job's copy with it. A failed copy is a log line: the next tick tries again."""
     held = _held_connections(turn_id)
@@ -7572,6 +7607,7 @@ def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
         return False, str(exc)
     if fd is None:
         return False, JOB_BUSY_NOTE
+    holder = None
     try:
         try:
             _job_broker("cleanup")
@@ -7579,7 +7615,7 @@ def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
             # resolve and stage credentials that only this fetch would ever see.
             data = _job_fetch_archive(str(turn.get("job_repo") or ""), turn_id, _agent_env(None))
             spec = _job_spec_from_archive(data, str(turn.get("job") or ""))
-            _job_broker("export", data, turn=turn_id, size=len(data))
+            holder = _job_broker_hold(data, turn_id)
             del data
             return _job_supervise(turn_id, slug, spec, _JobOutput(emit))
         except JobRefused as exc:
@@ -7587,6 +7623,8 @@ def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
         finally:
             with contextlib.suppress(JobRefused):
                 _job_broker("cleanup")
+            if holder is not None:
+                holder.close()
     finally:
         _job_unlock(fd)
 

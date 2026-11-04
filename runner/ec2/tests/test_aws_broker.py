@@ -146,10 +146,10 @@ def test_install_writes_its_unit_and_starts_it(ab, tmp_path):
     unit = tmp_path / "canopy-aws-broker.service"
     assert ab.install(run=lambda argv, **kw: calls.append(argv), unit_path=unit) is True
     assert f"ExecStart=/usr/bin/python3 {_PATH}" in unit.read_text()
-    assert ["systemctl", "enable", "--now", "canopy-aws-broker.service"] in calls
+    assert ["systemctl", "enable", "--now", "--no-block", "canopy-aws-broker.service"] in calls
     calls.clear()
     assert ab.install(run=lambda argv, **kw: calls.append(argv), unit_path=unit) is False
-    assert ["systemctl", "restart", "canopy-aws-broker.service"] not in calls
+    assert ["systemctl", "restart", "--no-block", "canopy-aws-broker.service"] not in calls
 
 
 def test_stdlib_only():

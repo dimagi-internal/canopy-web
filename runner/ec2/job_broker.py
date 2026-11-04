@@ -11,11 +11,11 @@ kms_broker.py and aws_broker.py do theirs:
 * one JSON line per connection, its body (if any) straight after it, and only these:
 
       status                                      -> {ok, systemd, supported, job_user, locked, running}
-      export       {turn, size} + a tar            -> {ok}   unpack into a new job folder
+      export       {turn, size} + a tar            -> {ok}   take the slot, unpack a new job folder
       write_token  {turn, provider, size} + bytes  -> {ok}   size 0 removes that copy
       start        {turn, slug, run, timeout_seconds} -> frames: output, then the exit
       stop         {turn}                          -> {ok}   the unit stops, TERM then KILL
-      cleanup                                      -> {ok}   stop this caller's job, remove all
+      cleanup                                      -> {ok}   stop this caller's job, remove all, free the slot
       anything else, or any failure                -> {"error": "<a plain sentence>"}
 
 No request names a path, a user, a property or an environment: unknown keys are refused, and
@@ -28,7 +28,12 @@ itself runs are `systemd-run` and `systemctl` on a unit named from that turn id.
 exit, always last. Framing is what keeps a job from printing its own exit. If the caller goes
 away, its job is stopped.
 
-Only one job runs at a time here, and only the runner that started it can stop it. (The
+**The slot.** Jobs share a uid, so one could read another's tokens from outside its unit's view
+if the two ever overlapped, and a job's files exist well before and after its process. So one
+slot runs from `export` to `cleanup`, whoever asks, and only its holder can touch it. The
+connection `export` came in on stays open: that is the hold, and the kernel closes it however its
+runner dies, which stops the job, clears its files and frees the slot. A slot also ends at
+SLOT_MAX_SECONDS. Files that can't be cleared refuse the next `export` until they can. (The
 runners' own box-wide flock, `cloud_runner.JOB_LOCK_FILE`, is what orders them politely.)
 
 `job_broker.py --install` (root): write and start `canopy-job-broker.service` from this file's
@@ -70,6 +75,12 @@ MAX_TOKEN = 64 * 1024
 MAX_ARGV_WORDS = 256
 MAX_ARGV_BYTES = 128 * 1024
 MAX_TIMEOUT_SECONDS = 120 * 60
+#: The longest a slot lasts: the job's maximum, and a minute to set up and clear.
+SLOT_MAX_SECONDS = MAX_TIMEOUT_SECONDS + 60
+#: A runner that stops reading doesn't pin a job, or the slot, for hours.
+SEND_TIMEOUT_SECONDS = 60.0
+#: How much of an export root holds at once: it goes straight to tar.
+STREAM_CHUNK = 1024 * 1024
 MAX_CONNECTIONS = 16
 HEAD_DEADLINE_SECONDS = 5.0
 BODY_DEADLINE_SECONDS = 120.0
@@ -152,17 +163,31 @@ INACCESSIBLE = ("/dev/shm", "/dev/mqueue", "/opt/agents", "/opt/canopy-runner", 
                 "/etc/canopy-runner", "/run/canopy", "/run/canopy-kms", "/run/canopy-aws", "/run/canopy-jobs")
 
 
+#: The metadata address, loopback, and every private range, the VPC's among them. The public
+#: internet stays open: that's what a job is for.
+IP_DENY = ("169.254.169.254", "fd00:ec2::254", "localhost", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+           "100.64.0.0/10", "fe80::/10", "fc00::/7")
+
+
 def job_properties(turn: str, slug: str, timeout_seconds: int, root: str) -> list:
     job = f"{root}/{turn}"
     env = job_env(turn, slug, root)
     return [
-        "NoNewPrivileges=yes", "ProtectHome=yes", "ProtectSystem=strict", f"ReadWritePaths={job}",
-        "PrivateTmp=yes", "PrivateDevices=yes", "ProtectProc=invisible", "ProcSubset=pid",
-        "CapabilityBoundingSet=", "RestrictAddressFamilies=AF_INET AF_INET6",
+        "NoNewPrivileges=yes", "ProtectHome=yes", "ProtectSystem=strict",
+        # A unit sees only its own job: an empty root, with its one folder bound back, writable.
+        f"TemporaryFileSystem={root}", f"BindPaths={job}",
+        "PrivateTmp=yes", "PrivateDevices=yes", "PrivateIPC=yes", "ProtectProc=invisible", "ProcSubset=pid",
+        "CapabilityBoundingSet=", "RestrictAddressFamilies=AF_INET AF_INET6", "RestrictNamespaces=yes",
+        "RestrictSUIDSGID=yes", "RestrictRealtime=yes", "LockPersonality=yes", "SystemCallArchitectures=native",
+        # At uid scope, when the job's last process ends. One slot at a time, so no other job's
+        # IPC can be lost to it, and a next job starts with none.
+        "RemoveIPC=yes",
+        "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes",
+        "ProtectControlGroups=yes", "ProtectClock=yes", "ProtectHostname=yes",
         # `localhost` covers the DNS stub too, so that one address is allowed back: an allow
-        # wins. The stub's other ports, and the box's own addresses, which this list doesn't
-        # name, are closed by the owner rule in `cloud_runner.job_rules`.
-        "IPAddressDeny=169.254.169.254 fd00:ec2::254 localhost", "IPAddressAllow=127.0.0.53",
+        # wins. The stub's other ports, and the box's own address if it isn't private, are
+        # closed by the owner rule in `cloud_runner.job_rules`.
+        f"IPAddressDeny={' '.join(IP_DENY)}", "IPAddressAllow=127.0.0.53",
         "KillMode=control-group", f"RuntimeMaxSec={timeout_seconds}", "TimeoutStopSec=10s",
         # MemorySwapMax: the box has swap, which would otherwise take a job past MemoryMax.
         "MemoryMax=2G", "MemorySwapMax=0", "CPUQuota=100%", "TasksMax=256", "LimitFSIZE=5G",
@@ -197,7 +222,33 @@ def cleanup_argvs(root: str) -> list:
     return [["chmod", "-R", "u+rwx", root], ["find", root, "-mindepth", "1", "-delete"]]
 
 
-TOKEN_SCRIPT = 'umask 077; cat > "$1.tmp" && mv -f "$1.tmp" "$1"'
+#: Run as the job user, on a folder a job has had the run of: each step down refuses a link, and
+#: the file goes in by rename, which replaces a link rather than following it. So a planted
+#: `tokens -> /run/lock` can't put a token where a cleanup won't find it. Empty stdin removes.
+TOKEN_SCRIPT = """
+import os, sys
+root, turn, name = sys.argv[1:4]
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+d = os.open(root, flags)
+for part in (turn, "tokens"):
+    d = os.open(part, flags, dir_fd=d)
+data = sys.stdin.buffer.read()
+tmp = name + ".tmp"
+for stale in ((tmp, name) if not data else (tmp,)):
+    try:
+        os.unlink(stale, dir_fd=d)
+    except FileNotFoundError:
+        pass
+if data:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=d)
+    with os.fdopen(fd, "wb") as out:
+        out.write(data)
+    os.rename(tmp, name, src_dir_fd=d, dst_dir_fd=d)
+"""
+
+
+def token_argv(root: str, turn: str, provider: str) -> list:
+    return ["python3", "-c", TOKEN_SCRIPT, root, turn, f"{provider}.json"]
 
 
 def exit_info(rc: int, elapsed: float, timeout_seconds: int) -> dict:
@@ -229,6 +280,12 @@ def as_job_user(args, input=None):
     """`args` as the job user, with nothing of root's: no groups, no environment."""
     return subprocess.run(args, input=input, capture_output=True, timeout=300, cwd="/", user=JOB_USER,
                           group=JOB_USER, extra_groups=[], env={"PATH": JOB_PATH})
+
+
+def as_job_user_pipe(args):
+    """`as_job_user`, for what is fed as it arrives: an export never sits in root's memory."""
+    return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            cwd="/", user=JOB_USER, group=JOB_USER, extra_groups=[], env={"PATH": JOB_PATH})
 
 
 def spawn_job(argv):
@@ -283,14 +340,18 @@ def peer_uid(sock: socket.socket) -> int:
 class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path: str, *, root: pathlib.Path = pathlib.Path(JOBS_ROOT), as_job=as_job_user, spawn=spawn_job,
-                 stop=stop_unit, uid_of=peer_uid, runner_uids=load_runner_uids, box_state=read_box_state):
+    def __init__(self, path: str, *, root: pathlib.Path = pathlib.Path(JOBS_ROOT), as_job=as_job_user,
+                 as_job_pipe=as_job_user_pipe, spawn=spawn_job, stop=stop_unit, uid_of=peer_uid,
+                 runner_uids=load_runner_uids, box_state=read_box_state):
         self.root = pathlib.Path(root)
-        self.as_job, self.spawn, self.stop, self.uid_of = as_job, spawn, stop, uid_of
-        self.runner_uids, self.box_state = runner_uids, box_state
-        #: The job this box holds: {turn, uid, proc}. One at a time, whoever asks.
+        self.as_job, self.as_job_pipe, self.spawn, self.stop = as_job, as_job_pipe, spawn, stop
+        self.uid_of, self.runner_uids, self.box_state = uid_of, runner_uids, box_state
+        #: The slot: {turn, uid, proc, until}. From export through cleanup, one, whoever asks.
         self._job: dict | None = None
-        self._lock = threading.Lock()
+        #: Whether the jobs root may hold anything. Cleared only by a clear that worked.
+        self._dirty = True
+        #: Every change to the slot or the files under it.
+        self._lock = threading.RLock()
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         super().__init__(path, _Handler)
 
@@ -314,9 +375,9 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         finally:
             self._slots.release()
 
-    def _running(self) -> dict | None:
-        job = self._job
-        return job if job and job.get("proc") is not None and job["proc"].poll() is None else None
+    @staticmethod
+    def _live(job: dict | None) -> bool:
+        return bool(job and job.get("proc") is not None and job["proc"].poll() is None)
 
     def _held_by(self, req: dict, uid: int) -> dict:
         job = self._job
@@ -324,78 +385,166 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             raise Refused("That job isn't this runner's on this machine.")
         return job
 
-    def dispatch(self, req: dict, body: bytes, conn, uid: int):
-        """One validated request. A dict is the reply; `start` answers on `conn` and returns None."""
-        return getattr(self, f"_op_{req['op']}")(req, body, conn, uid)
+    def dispatch(self, req: dict, rest: bytes, conn, uid: int):
+        """One validated request, with whatever of its body came with the line. A dict is the
+        reply; None means the op answered on `conn` itself."""
+        return getattr(self, f"_op_{req['op']}")(req, rest, conn, uid)
 
-    def _op_status(self, req, body, conn, uid) -> dict:
+    def _op_status(self, req, rest, conn, uid) -> dict:
         state = self.box_state()
-        running = self._running()
+        job = self._job
         return {"ok": True, "systemd": state["systemd"], "supported": state["systemd"] >= MIN_SYSTEMD,
-                "job_user": state["job_user"], "locked": state["locked"],
-                "running": running["turn"] if running else ""}
+                "job_user": state["job_user"], "locked": state["locked"], "running": job["turn"] if job else ""}
 
     def _make(self, args, input=None, sentence="Couldn't set up the job's folder.") -> None:
         if self.as_job(args, input=input).returncode != 0:
             raise Refused(sentence)
 
-    def _op_export(self, req, body, conn, uid) -> dict:
-        turn = req["turn"]
-        with self._lock:
-            if self._running():
-                raise Refused("Another job is running on this machine.")
-            self._job = {"turn": turn, "uid": uid, "proc": None}
-        job = self.root / turn
-        for path in (job, job / "repo", job / "home", job / "tokens"):
-            self._make(["mkdir", "-m", "700", str(path)])
-        self._make(unpack_argv(str(job / "repo")), input=body, sentence="Couldn't unpack the repo's files.")
-        return {"ok": True}
-
-    def _op_write_token(self, req, body, conn, uid) -> dict:
-        self._held_by(req, uid)
-        dest = str(self.root / req["turn"] / "tokens" / f"{req['provider']}.json")
-        if req["size"] == 0:
-            self._make(["rm", "-f", dest], sentence="Couldn't remove the job's copy of that token.")
-        else:
-            self._make(["sh", "-c", TOKEN_SCRIPT, "sh", dest], input=body,
-                       sentence="Couldn't write the job's copy of that token.")
-        return {"ok": True}
-
-    def _op_stop(self, req, body, conn, uid) -> dict:
-        self._held_by(req, uid)
-        self.stop(req["turn"])
-        return {"ok": True}
-
-    def _op_cleanup(self, req, body, conn, uid) -> dict:
-        with self._lock:
-            running = self._running()
-            if running and running["uid"] != uid:
-                raise Refused("Another runner's job is running on this machine.")
-        if running:
-            self.stop(running["turn"])
-            deadline = time.monotonic() + 30
-            while running["proc"].poll() is None and time.monotonic() < deadline:
-                time.sleep(0.05)
-            if running["proc"].poll() is None:
-                raise Refused("The job didn't stop.")
-        self.clear_files()
-        self._job = None
-        return {"ok": True}
-
     def clear_files(self) -> None:
+        """Empty the jobs root, or `Refused`: the next export refuses until this has worked."""
         for args in cleanup_argvs(str(self.root)):
-            self.as_job(args)
+            if self.as_job(args).returncode != 0:
+                self._dirty = True
+                raise Refused("Couldn't remove an earlier job's files.")
+        self._dirty = False
 
-    def _op_start(self, req, body, conn, uid) -> None:
-        send_lock = threading.Lock()
+    def _stop_and_wait(self, job: dict) -> None:
+        if self._live(job):
+            self.stop(job["turn"])
+            deadline = time.monotonic() + 30
+            while self._live(job) and time.monotonic() < deadline:
+                time.sleep(0.05)
 
-        def send(kind, data) -> bool:
-            with send_lock:
+    def _release(self, job: dict, why: str) -> None:
+        """Free the slot of a holder that's gone: its job stopped, its files cleared. A clear that
+        fails leaves the box dirty, and the next export tries again before it starts anything."""
+        with self._lock:
+            if self._job is not job:
+                return
+            _log(f"uid {job['uid']}: {why}; freeing the slot of {job['turn']}")
+            self._stop_and_wait(job)
+            self._job = None
+            try:
+                self.clear_files()
+            except Refused as exc:
+                _log(str(exc))
+
+    def _feed_export(self, job: dict, rest: bytes, conn, size: int) -> None:
+        """Stream the tar straight to the job user's `tar`, a chunk at a time."""
+        tar = self.as_job_pipe(unpack_argv(str(self.root / job["turn"] / "repo")))
+        deadline = time.monotonic() + BODY_DEADLINE_SECONDS
+        try:
+            data, sent = rest[:size], 0
+            while True:
+                for at in range(0, len(data), STREAM_CHUNK):
+                    tar.stdin.write(data[at:at + STREAM_CHUNK])
+                sent += len(data)
+                if sent >= size:
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise Refused("The repo's files didn't arrive in time.")
+                conn.settimeout(left)
+                data = conn.recv(min(STREAM_CHUNK, size - sent))
+                if not data:
+                    raise Refused("The repo's files were cut short.")
+            tar.stdin.close()
+            if tar.wait(timeout=300) != 0:
+                raise Refused("Couldn't unpack the repo's files.")
+        except (OSError, subprocess.TimeoutExpired):
+            raise Refused("Couldn't unpack the repo's files.") from None
+        finally:
+            if tar.poll() is None:
+                tar.kill()
+                tar.wait()
+
+    def _op_export(self, req, rest, conn, uid) -> None:
+        """Take the slot, unpack, answer, and stay on this connection: it is the hold."""
+        turn = req["turn"]
+        job = {"turn": turn, "uid": uid, "proc": None, "started": False, "until": time.monotonic() + SLOT_MAX_SECONDS}
+        with self._lock:
+            if self._job:
+                raise Refused("Another job is running on this machine.")
+            if self._dirty:
+                self.clear_files()
+            self._job = job
+            self._dirty = True
+            try:
+                folder = self.root / turn
+                for path in (folder, folder / "repo", folder / "home", folder / "tokens"):
+                    self._make(["mkdir", "-m", "700", str(path)])
+            except Refused:
+                self._release(job, "its folder couldn't be made")
+                raise
+        try:
+            self._feed_export(job, rest, conn, req["size"])
+        except Refused:
+            self._release(job, "its export failed")
+            raise
+        try:
+            conn.settimeout(SEND_TIMEOUT_SECONDS)
+            conn.sendall(b'{"ok": true}\n')
+            conn.settimeout(None)
+        except OSError:
+            self._release(job, "its runner went away during the export")
+            return
+        while self._job is job:
+            if time.monotonic() >= job["until"]:
+                self._release(job, f"it passed the {SLOT_MAX_SECONDS:g}-second limit")
+                return
+            if select.select([conn], [], [], min(0.2, SLOT_MAX_SECONDS))[0]:
                 try:
-                    conn.sendall(frame(kind, data))
-                    return True
+                    gone = conn.recv(1, socket.MSG_DONTWAIT) == b""
+                except (BlockingIOError, InterruptedError):
+                    gone = False
                 except OSError:
-                    return False
+                    gone = True
+                if gone:
+                    self._release(job, "its runner went away")
+                    return
+
+    def _op_write_token(self, req, rest, conn, uid) -> dict:
+        self._held_by(req, uid)
+        body = _read_body(conn, rest, req["size"], time.monotonic() + BODY_DEADLINE_SECONDS) if req["size"] else b""
+        with self._lock:
+            self._held_by(req, uid)
+            self._make(token_argv(str(self.root), req["turn"], req["provider"]), input=body,
+                       sentence="Couldn't update the job's copy of that token.")
+        return {"ok": True}
+
+    def _op_stop(self, req, rest, conn, uid) -> dict:
+        with self._lock:
+            self._held_by(req, uid)
+            self.stop(req["turn"])
+        return {"ok": True}
+
+    def _op_cleanup(self, req, rest, conn, uid) -> dict:
+        """Only the slot's holder cleans while a slot is held."""
+        with self._lock:
+            job = self._job
+            if job and job["uid"] != uid:
+                raise Refused("Another job is running on this machine.")
+            if job:
+                self._stop_and_wait(job)
+                if self._live(job):
+                    raise Refused("The job didn't stop.")
+            self._job = None
+            self.clear_files()
+        return {"ok": True}
+
+    def _op_start(self, req, rest, conn, uid) -> None:
+        send_lock = threading.Lock()
+        stalled = threading.Event()
+
+        def send(kind, data) -> None:
+            with send_lock:
+                if stalled.is_set():
+                    return
+                try:
+                    conn.settimeout(SEND_TIMEOUT_SECONDS)
+                    conn.sendall(frame(kind, data))
+                except OSError:
+                    stalled.set()   # a timeout leaves half a frame: nothing more can be sent
 
         def refuse(sentence):
             send(b"X", json.dumps({"error": sentence}).encode())
@@ -409,8 +558,9 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
                 job = self._held_by(req, uid)
             except Refused as exc:
                 return refuse(str(exc))
-            if self._running():
-                return refuse("Another job is running on this machine.")
+            if job["started"]:
+                return refuse("This job has already been started.")
+            job["started"] = True
             try:
                 job["proc"] = proc = self.spawn(systemd_run_argv(turn, req["slug"], req["run"], timeout,
                                                                  root=str(self.root)))
@@ -420,6 +570,7 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         _log(f"uid {uid}: started {unit_name(turn)}")
 
         def pump():
+            # Always drained, past a stalled reader too: a full pipe would only hold the unit up.
             fd = proc.stdout.fileno()
             while True:
                 try:
@@ -432,21 +583,23 @@ class JobBroker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
         pumping = threading.Thread(target=pump, daemon=True)
         pumping.start()
-        conn.setblocking(True)
-        conn.settimeout(None)
-        gone = False
+        stopped = False
         while proc.poll() is None:
-            if not gone and select.select([conn], [], [], 0.2)[0]:
+            ready = [] if stopped else select.select([conn], [], [], 0.2)[0]
+            gone = False
+            if ready:
                 try:
                     gone = conn.recv(1, socket.MSG_DONTWAIT) == b""
                 except (BlockingIOError, InterruptedError):
                     pass
                 except OSError:
                     gone = True
-                if gone:
-                    _log(f"uid {uid}: its runner went away; stopping {unit_name(turn)}")
-                    self.stop(turn)
-            elif gone:
+            if not stopped and (gone or stalled.is_set()):
+                _log(f"uid {uid}: its runner {'went away' if gone else 'stopped reading'}; "
+                     f"stopping {unit_name(turn)}")
+                self.stop(turn)
+                stopped = True
+            elif stopped:
                 time.sleep(0.2)
         # The unit has ended (`--wait`), and control-group kill took what it left, which is what
         # closes the pipe. The stop is for anything else: nothing here should keep the pipe open.
@@ -511,11 +664,7 @@ class _Handler(socketserver.BaseRequestHandler):
             reply = {"error": "No whole request arrived."}
         else:
             try:
-                req = validate_request(json.loads(line.decode()))
-                body = b""
-                if req.get("size"):
-                    body = _read_body(conn, rest, req["size"], time.monotonic() + BODY_DEADLINE_SECONDS)
-                reply = server.dispatch(req, body, conn, uid)
+                reply = server.dispatch(validate_request(json.loads(line.decode())), rest, conn, uid)
             except (ValueError, UnicodeDecodeError):
                 reply = {"error": "That isn't a request."}
             except Refused as exc:
@@ -545,7 +694,7 @@ def serve(path: str = SOCKET_PATH) -> None:
     server = JobBroker(path)
     try:
         server.clear_files()
-    except (OSError, KeyError, subprocess.SubprocessError) as exc:
+    except (Refused, OSError, KeyError, subprocess.SubprocessError) as exc:
         _log(f"could not clear {JOBS_ROOT} at start: {exc}")
     os.chmod(path, 0o666)   # any local process may CONNECT; only a runner uid is answered
     _log(f"listening on {path}")
@@ -583,9 +732,11 @@ def install(*, run=subprocess.run, unit_path: pathlib.Path | None = None) -> boo
     if changed:
         unit_path.write_text(text)
         run(["systemctl", "daemon-reload"], capture_output=True)
-    run(["systemctl", "enable", "--now", "canopy-job-broker.service"], capture_output=True)
+    # --no-block: this runs inside canopy-runners.service, which the unit is After=, so waiting
+    # for it would be waiting for our own caller to finish.
+    run(["systemctl", "enable", "--now", "--no-block", "canopy-job-broker.service"], capture_output=True)
     if changed:
-        run(["systemctl", "restart", "canopy-job-broker.service"], capture_output=True)
+        run(["systemctl", "restart", "--no-block", "canopy-job-broker.service"], capture_output=True)
     return changed
 
 

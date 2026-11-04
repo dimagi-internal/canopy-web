@@ -10,6 +10,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import stat
 import subprocess
@@ -357,7 +358,22 @@ def test_a_broker_that_doesnt_answer_stops_the_report(can, monkeypatch):
     def gone(op, *a, **k):
         raise can.JobRefused("not answering")
     monkeypatch.setattr(can, "_job_broker", gone)
+    monkeypatch.setattr(can, "JOB_BROKER_START_WAIT", (0, 0))
     assert can._job_can_run() is False
+
+
+def test_a_broker_still_starting_gets_a_moment(can, monkeypatch):
+    """Started with --no-block at boot, so a runner can get there a moment before its socket."""
+    answers = [can.JobRefused("not yet"), dict(STATUS)]
+
+    def starting(op, *a, **k):
+        got = answers.pop(0)
+        if isinstance(got, Exception):
+            raise got
+        return got
+    monkeypatch.setattr(can, "_job_broker", starting)
+    monkeypatch.setattr(can, "JOB_BROKER_START_WAIT", (0, 0))
+    assert can._job_can_run() is True
 
 
 def test_the_broker_is_asked_status_and_only_that(can, monkeypatch):
@@ -430,10 +446,13 @@ def jobs(runner, monkeypatch, tmp_path, origins):
     # Beside the system's, so that `python3` is found under `env -i` here as it is on a box.
     monkeypatch.setattr(broker, "JOB_PATH", f"{pathlib.Path(sys.executable).parent}:/usr/bin:/bin")
     harness = Harness(broker, runner.JOBS_ROOT, runner._marker)
+    harness.holders = []
     monkeypatch.setattr(runner, "JOB_BROKER_SOCKET", harness.path)
     runner._origin = origins / "tools"
     runner._box = harness
     yield runner
+    for holder in harness.holders:
+        holder.close()
     harness.close()
 
 
@@ -620,7 +639,8 @@ def test_scrubber_keeps_a_character_split_across_chunks(jobs):
 
 def _exported(mod):
     data = mod._job_fetch_archive("tools", T1, None)
-    mod._job_broker("export", data, turn=T1, size=len(data))
+    holder = mod._job_broker_hold(data, T1)
+    mod._box.holders.append(holder)
 
 
 def test_a_refreshed_token_is_scrubbed_too(jobs, tmp_path):
@@ -660,8 +680,8 @@ def test_token_copy_refreshed_on_tick(jobs, tmp_path):
     ok, _, out = _go(jobs)
     assert ok is True and "saw the new one" in _text(out) and "0o600" in _text(out)
     # always through a temp name and `mv`, written by the job user with umask 077
-    copies = [c for c in jobs._box.as_job_calls if c[0] == "sh" and "umask 077" in c[2]]
-    assert len(copies) == 2 and 'mv -f' in copies[0][2]
+    copies = [c for c in jobs._box.as_job_calls if "os.rename" in " ".join(c)]
+    assert len(copies) == 2
 
 
 def test_a_withdrawn_token_is_removed_from_the_job(jobs, tmp_path):
@@ -817,8 +837,30 @@ def test_a_new_daemon_ends_the_old_ones_job(jobs):
             break
         time.sleep(0.05)
     assert not _alive(jobs)
+    jobs._box.holders.pop().close()      # and the daemon's death closed its hold on the slot
+    for _ in range(400):
+        if not _left_behind(jobs):
+            break
+        time.sleep(0.05)
     jobs._job_restart_sweep()
     assert _left_behind(jobs) == []
+
+
+def test_the_slot_is_held_for_the_whole_job(jobs, monkeypatch):
+    """Every op of a job's life is inside one export-to-cleanup slot, and the slot's connection
+    stays open throughout: another runner's export is refused at every step."""
+    _define(jobs, ["env"])
+    seen = []
+    real = jobs._job_supervise
+
+    def during(*a):
+        seen.append(jobs._box.server._job["turn"])
+        got = real(*a)
+        seen.append(jobs._box.server._job["turn"])     # the job has exited; still held
+        return got
+    monkeypatch.setattr(jobs, "_job_supervise", during)
+    assert _go(jobs)[0] is True
+    assert seen == [T1, T1] and jobs._box.server._job is None
 
 
 def test_a_broker_that_goes_away_mid_job_is_a_plain_failure(jobs, monkeypatch):
@@ -1176,11 +1218,59 @@ def test_self_check_covers_each_thing_and_is_clean_shell():
                    "/run/canopy-jobs/sock", "runner-token.json", ".canopy-cloud-runner.json", ".gog-secret",
                    "box.env", ".canopy", "/.env", "/home", "/dev/shm", "memory.max", "pids.max", "TasksMax",
                    "NoNewPrivileges", "not a runner", "127.0.0.1", "::1", "getaddrinfo", "/run/canopy/",
-                   '"start"', '"export"', '"cleanup"', "PASS", "FAIL"):
+                   '"start"', '"export"', '"cleanup"', "PASS", "FAIL", "sibling", "48731", "expected"):
         assert needle in text, needle
     if shutil.which("shellcheck"):
         res = subprocess.run(["shellcheck", str(path)], capture_output=True, text=True)
         assert res.returncode == 0, res.stdout
+
+
+def _self_check_part(text, name):
+    return re.search(r"<<'PY'\n(.*?)\nPY\n", text[text.index(f'cat > "$WORK/{name}"'):], re.S).group(1)
+
+
+def test_self_check_counts_what_it_says_it_counts(tmp_path, monkeypatch):
+    """The script compares PASS + FAIL to a count, so a crash after a first PASS can't read as
+    "all passed". This runs its real client and probe against the harness broker and counts:
+    the verdicts are meaningless here, the number of them isn't."""
+    text = (EC2 / "job_self_check.sh").read_text()
+    work = tmp_path / "work"
+    work.mkdir()
+    for name in ("probe.py", "client.py"):
+        (work / name).write_text(_self_check_part(text, name))
+    (work / "memory.py").write_text("raise SystemExit(1)\n")   # 3 GiB isn't this test's business
+    (work / "secret").write_text("x")
+    (work / "refused.txt").write_text(f"{work}/secret\n/nonexistent\n")
+    (work / "sockets.txt").write_text("/nonexistent/a\n/nonexistent/b\n/nonexistent/c\n")
+    (work / "closed-targets.txt").write_text("nothing here|127.0.0.1|9\nnor here|127.0.0.1|19\n")
+    broker = load_broker()
+    monkeypatch.setattr(broker, "JOB_PATH", f"{pathlib.Path(sys.executable).parent}:/usr/bin:/bin")
+    root = tmp_path / "jobs"
+    root.mkdir()
+    marker = f"MARK{tmp_path.name}"
+    harness = Harness(broker, root, marker)
+    try:
+        res = subprocess.run([sys.executable, str(work / "client.py"), harness.path, str(work), "no-such-user"],
+                             capture_output=True, text=True, timeout=120, cwd="/",
+                             env={**os.environ, "SELF_CHECK_EXTRA": marker})
+    finally:
+        harness.close()
+    verdicts = [ln for ln in res.stdout.splitlines() if ln.startswith(("PASS", "FAIL"))]
+    fixed = int(re.search(r"^CLIENT_CHECKS=(\d+)$", text, re.M).group(1))
+    probe = int(re.search(r"^PROBE_CHECKS=(\d+)$", text, re.M).group(1))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert len(verdicts) == fixed + probe + 2 + 3 + 2, res.stdout
+
+
+@pytest.mark.parametrize("needle", [
+    'rc=$?', 'expected', "can't establish", "listen_py",
+])
+def test_self_check_fails_on_what_it_cant_establish(needle):
+    assert needle in (EC2 / "job_self_check.sh").read_text()
+
+
+def test_runner_starts_after_the_job_broker(cloud_runner):
+    assert "canopy-job-broker.service" in cloud_runner.SYSTEMD_UNITS["canopy-runner@.service"].split("Wants=")[0]
 
 
 def test_readme_says_what_a_job_cannot_be_kept_from():

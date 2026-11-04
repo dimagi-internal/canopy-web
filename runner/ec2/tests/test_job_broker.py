@@ -1,6 +1,7 @@
 """The root job starter: what it will do, for whom, and the exact unit it asks for."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -115,9 +116,16 @@ JOB_DIR = f"/var/lib/canopy-jobs/{T}"
 
 
 @pytest.mark.parametrize("prop", [
-    "NoNewPrivileges=yes", "ProtectHome=yes", "ProtectSystem=strict", f"ReadWritePaths={JOB_DIR}", "PrivateTmp=yes",
+    "NoNewPrivileges=yes", "ProtectHome=yes", "ProtectSystem=strict", "PrivateTmp=yes",
+    "TemporaryFileSystem=/var/lib/canopy-jobs", f"BindPaths={JOB_DIR}",
+    "SystemCallArchitectures=native", "RestrictNamespaces=yes", "PrivateIPC=yes", "RemoveIPC=yes",
+    "LockPersonality=yes",
+    "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes", "ProtectControlGroups=yes",
+    "ProtectClock=yes", "ProtectHostname=yes", "RestrictSUIDSGID=yes", "RestrictRealtime=yes",
     "PrivateDevices=yes", "ProtectProc=invisible", "ProcSubset=pid", "CapabilityBoundingSet=",
-    "RestrictAddressFamilies=AF_INET AF_INET6", "IPAddressDeny=169.254.169.254 fd00:ec2::254 localhost",
+    "RestrictAddressFamilies=AF_INET AF_INET6",
+    "IPAddressDeny=169.254.169.254 fd00:ec2::254 localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 "
+    "100.64.0.0/10 fe80::/10 fc00::/7",
     "IPAddressAllow=127.0.0.53", "KillMode=control-group", "RuntimeMaxSec=900", "MemoryMax=2G", "MemorySwapMax=0",
     "CPUQuota=100%", "TasksMax=256", "LimitFSIZE=5G", "TimeoutStopSec=10s", f"WorkingDirectory={JOB_DIR}/repo",
     "InaccessiblePaths=-/dev/shm", "InaccessiblePaths=-/dev/mqueue", "InaccessiblePaths=-/opt/agents",
@@ -137,6 +145,12 @@ def test_unit_property_pinned(jb, prop):
                                   "--gid=canopy-job"])
 def test_unit_flag_pinned(jb, flag):
     assert flag in _argv(jb)[:_argv(jb).index("--")]
+
+
+@pytest.mark.parametrize("absent", ["ReadWritePaths", "MemoryDenyWriteExecute"])
+def test_unit_property_left_out_on_purpose(jb, absent):
+    """ReadWritePaths would leave the sibling jobs in view; MemoryDenyWriteExecute breaks runtimes."""
+    assert not [a for a in _argv(jb) if a.startswith(f"--property={absent}")]
 
 
 def test_the_environment_property_list_is_exactly_the_six(jb):
@@ -205,7 +219,10 @@ def test_a_job_cannot_forge_its_exit_frame(jb):
 @pytest.fixture
 def box(jb, tmp_path):
     h = Harness(jb, tmp_path, f"MARK{tmp_path.name}")
+    h.holders = []
     yield h
+    for c in h.holders:
+        c.close()
     h.close()
 
 
@@ -290,9 +307,35 @@ def test_status_answers(box):
     assert got == {"ok": True, "systemd": 255, "supported": True, "job_user": True, "locked": False, "running": ""}
 
 
+def _hold(h, turn, data):
+    """Export, and keep the connection: it holds the slot, as a runner does for a whole job."""
+    c = socket.socket(socket.AF_UNIX)
+    c.settimeout(20)
+    c.connect(h.path)
+    with contextlib.suppress(OSError):   # a refused export closes without reading its body
+        c.sendall(json.dumps({"op": "export", "turn": turn, "size": len(data)}).encode() + b"\n" + data)
+    buf = b""
+    while b"\n" not in buf:
+        got = c.recv(65536)
+        if not got:
+            break
+        buf += got
+    h.holders.append(c)
+    return c, json.loads(buf)
+
+
+def _wait(predicate, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
 def test_export_tokens_and_a_run_end_to_end(box, tmp_path):
     data = _tar(tmp_path, **{"x.txt": "from the archive\n"})
-    assert _ask(box, {"op": "export", "turn": T, "size": len(data)}, data)["ok"]
+    assert _hold(box, T, data)[1]["ok"]
     assert (tmp_path / T / "repo" / "x.txt").read_text() == "from the archive\n"
     assert (tmp_path / T / "home").is_dir() and (tmp_path / T / "tokens").is_dir()
     assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 3}, b"abc")["ok"]
@@ -314,34 +357,140 @@ def test_start_without_an_export_is_refused(box):
     assert "error" in json.loads(frames[-1][1]) and box.spawned == []
 
 
+def test_a_slot_starts_one_job(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    with _start(box, ["true"]) as c:
+        assert json.loads(_frames(c)[-1][1])["rc"] == 0
+    with _start(box, ["true"]) as c:
+        assert "error" in json.loads(_frames(c)[-1][1])
+    assert len(box.spawned) == 1
+
+
 def test_token_for_another_turn_is_refused(box, tmp_path):
-    data = _tar(tmp_path, a="1")
-    _ask(box, {"op": "export", "turn": T, "size": len(data)}, data)
+    _hold(box, T, _tar(tmp_path, a="1"))
     assert "error" in _ask(box, {"op": "write_token", "turn": T2, "provider": "sf", "size": 1}, b"x")
 
 
 def test_a_locked_box_starts_nothing(box, tmp_path):
-    data = _tar(tmp_path, a="1")
-    _ask(box, {"op": "export", "turn": T, "size": len(data)}, data)
+    _hold(box, T, _tar(tmp_path, a="1"))
     box.locked = True
     with _start(box, ["true"]) as c:
         frames = _frames(c)
     assert "locked" in json.loads(frames[-1][1])["error"] and box.spawned == []
 
 
+# ── the slot: from export through cleanup (the review's critical) ───────────
+# Two jobs share a uid, so one could read the other's tokens. Nobody else may start in between.
+
+BUSY = "Another job is running on this machine."
+
+
+def _as_b(box):
+    box.runners.add(2002)
+    box.uid = 2002
+
+
+def test_another_runner_cant_export_between_a_token_and_the_start(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    _hold(box, T, data)
+    assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 3}, b"abc")["ok"]
+    _as_b(box)
+    assert _hold(box, T2, data)[1]["error"] == BUSY
+    assert not (tmp_path / T2).exists() and (tmp_path / T / "tokens" / "sf.json").read_text() == "abc"
+
+
+def test_another_runner_cant_export_between_a_jobs_exit_and_its_cleanup(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    _hold(box, T, data)
+    assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 3}, b"abc")["ok"]
+    with _start(box, ["true"]) as c:
+        assert json.loads(_frames(c)[-1][1])["rc"] == 0     # A's job has exited
+    _as_b(box)
+    assert _hold(box, T2, data)[1]["error"] == BUSY
+    with _start(box, ["true"], turn=T2) as c:
+        assert "error" in json.loads(_frames(c)[-1][1])
+    assert len(box.spawned) == 1 and (tmp_path / T / "tokens" / "sf.json").exists()
+
+
+def test_the_same_runner_cant_stack_a_second_slot_either(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    _hold(box, T, data)
+    assert _hold(box, T2, data)[1]["error"] == BUSY
+
+
+def test_a_holder_going_away_releases_the_slot_and_clears_its_files(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    c, _ = _hold(box, T, data)
+    assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 3}, b"abc")["ok"]
+    c.close()
+    assert _wait(lambda: not (tmp_path / T).exists())
+    _as_b(box)
+    assert _hold(box, T2, data)[1]["ok"] and (tmp_path / T2).is_dir() and not (tmp_path / T).exists()
+
+
+def test_a_holder_going_away_stops_its_running_job_too(box, tmp_path):
+    data = _tar(tmp_path, a="1")
+    c, _ = _hold(box, T, data)
+    box.mod.JOB_PATH = os.environ["PATH"]
+    s = _start(box, ["python3", "-c", "import time; print('up', flush=True); time.sleep(60)", box.marker])
+    assert s.recv(4096)[5:] == b"up\n"
+    c.close()
+    assert _wait(lambda: T in box.stops and not (tmp_path / T).exists())
+    s.close()
+
+
+def test_files_that_couldnt_be_cleared_refuse_the_next_export(box, tmp_path, monkeypatch):
+    data = _tar(tmp_path, a="1")
+    c, _ = _hold(box, T, data)
+    real = box.as_job
+    monkeypatch.setattr(box.server, "as_job",
+                        lambda args, input=None: subprocess.CompletedProcess(args, 1, b"", b"") if args[0] == "find"
+                        else real(args, input=input))
+    c.close()
+    time.sleep(0.5)
+    _as_b(box)
+    got = _hold(box, T2, data)[1]
+    assert "error" in got and not (tmp_path / T2).exists()
+    monkeypatch.setattr(box.server, "as_job", real)
+    assert _hold(box, T2, data)[1]["ok"] and not (tmp_path / T).exists()
+
+
+def test_a_stale_slot_times_out_with_the_jobs_maximum_and_is_cleared(jb, box, tmp_path, monkeypatch):
+    assert jb.SLOT_MAX_SECONDS == 121 * 60
+    monkeypatch.setattr(box.mod, "SLOT_MAX_SECONDS", 0.3)
+    data = _tar(tmp_path, a="1")
+    _hold(box, T, data)
+    assert _wait(lambda: not (tmp_path / T).exists())
+    _as_b(box)
+    assert _hold(box, T2, data)[1]["ok"]
+
+
+def test_another_runners_cleanup_cant_wipe_a_prepared_job(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    _as_b(box)
+    assert _ask(box, {"op": "cleanup"})["error"] == BUSY
+    assert (tmp_path / T / "repo" / "a").exists()
+    assert box.stops == []
+
+
+def test_cleanup_failing_says_so(box, tmp_path, monkeypatch):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    monkeypatch.setattr(box.server, "as_job", lambda args, input=None: subprocess.CompletedProcess(args, 1, b"", b""))
+    assert "error" in _ask(box, {"op": "cleanup"})
+
+
 def test_one_job_at_a_time_and_another_runner_cant_touch_it(box, tmp_path):
     data = _tar(tmp_path, a="1")
-    _ask(box, {"op": "export", "turn": T, "size": len(data)}, data)
+    _hold(box, T, data)
     py = ["python3", "-c", "import time; print('up', flush=True); time.sleep(60)", box.marker]
     box.mod.JOB_PATH = os.environ["PATH"]
     with _start(box, py) as c:
         c.settimeout(20)
         assert c.recv(4096)[5:] == b"up\n"
-        box.runners.add(2002)
-        box.uid = 2002
-        for req, body in (({"op": "export", "turn": T2, "size": len(data)}, data),
-                          ({"op": "stop", "turn": T}, b""), ({"op": "cleanup"}, b"")):
-            assert "error" in _ask(box, req, body), req
+        _as_b(box)
+        assert _hold(box, T2, data)[1]["error"] == BUSY
+        for req in ({"op": "stop", "turn": T}, {"op": "cleanup"}):
+            assert "error" in _ask(box, req), req
         assert box.stops == []
         box.uid = 2001
         assert _ask(box, {"op": "stop", "turn": T})["ok"] and box.stops == [T]
@@ -350,27 +499,144 @@ def test_one_job_at_a_time_and_another_runner_cant_touch_it(box, tmp_path):
 
 
 def test_a_runner_going_away_stops_its_job(box, tmp_path):
-    data = _tar(tmp_path, a="1")
-    _ask(box, {"op": "export", "turn": T, "size": len(data)}, data)
+    _hold(box, T, _tar(tmp_path, a="1"))
     box.mod.JOB_PATH = os.environ["PATH"]
     c = _start(box, ["python3", "-c", "import time; print('up', flush=True); time.sleep(60)", box.marker])
     assert c.recv(4096)[5:] == b"up\n"
     c.close()
-    for _ in range(200):
-        if box.stops:
-            break
-        time.sleep(0.05)
-    assert box.stops == [T]
+    assert _wait(lambda: box.stops == [T])
 
 
 def test_cleanup_stops_what_its_own_caller_left(box, tmp_path):
-    data = _tar(tmp_path, a="1")
-    _ask(box, {"op": "export", "turn": T, "size": len(data)}, data)
+    _hold(box, T, _tar(tmp_path, a="1"))
     box.mod.JOB_PATH = os.environ["PATH"]
     with _start(box, ["python3", "-c", "import time; print('up', flush=True); time.sleep(60)", box.marker]) as c:
         assert c.recv(4096)[5:] == b"up\n"
         assert _ask(box, {"op": "cleanup"})["ok"]
     assert T in box.stops and list(tmp_path.glob("*-*-*-*-*")) == []
+
+
+def test_a_reader_that_stalls_doesnt_pin_the_slot(box, tmp_path, monkeypatch):
+    monkeypatch.setattr(box.mod, "SEND_TIMEOUT_SECONDS", 0.5)
+    _hold(box, T, _tar(tmp_path, a="1"))
+    box.mod.JOB_PATH = os.environ["PATH"]
+    loud = "import sys\nwhile True: sys.stdout.write('x' * 65536); sys.stdout.flush()\n"
+    c = _start(box, ["python3", "-c", loud, box.marker])      # and never read
+    assert _wait(lambda: box.stops == [T], seconds=20)
+    c.close()
+
+
+# ── token files: a job can plant anything in its own folder ─────────────────
+
+def _token(box, data=b"secret-token"):
+    return _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": len(data)}, data)
+
+
+def test_a_planted_tokens_link_cant_send_a_token_out(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    tokens = tmp_path / T / "tokens"
+    tokens.rmdir()
+    tokens.symlink_to(outside)
+    assert "error" in _token(box)
+    assert list(outside.iterdir()) == []
+
+
+def test_a_planted_job_dir_link_cant_send_a_token_out(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    outside = tmp_path / "outside" / "tokens"
+    outside.mkdir(parents=True)
+    job = tmp_path / T
+    job.rename(tmp_path / "moved")
+    job.symlink_to(tmp_path / "outside")
+    assert "error" in _token(box)
+    assert list(outside.iterdir()) == []
+    job.unlink()
+    (tmp_path / "moved").rename(job)
+
+
+@pytest.mark.parametrize("planted", ["sf.json", "sf.json.tmp"])
+def test_a_planted_file_link_is_replaced_not_followed(box, tmp_path, planted):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    (tmp_path / T / "tokens" / planted).symlink_to(victim)
+    assert _token(box)["ok"]
+    assert victim.read_text() == "untouched"
+    copy = tmp_path / T / "tokens" / "sf.json"
+    assert not copy.is_symlink() and copy.read_text() == "secret-token"
+    assert oct(copy.stat().st_mode)[-3:] == "600"
+    assert not (tmp_path / T / "tokens" / "sf.json.tmp").exists()
+
+
+def test_removing_a_planted_link_doesnt_follow_it(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    (tmp_path / T / "tokens" / "sf.json").symlink_to(victim)
+    assert _ask(box, {"op": "write_token", "turn": T, "provider": "sf", "size": 0})["ok"]
+    assert victim.read_text() == "untouched" and not (tmp_path / T / "tokens" / "sf.json").is_symlink()
+
+
+def test_a_refresh_replaces_the_token_atomically(box, tmp_path):
+    _hold(box, T, _tar(tmp_path, a="1"))
+    assert _token(box, b"first-value")["ok"]
+    inode = (tmp_path / T / "tokens" / "sf.json").stat().st_ino
+    assert _token(box, b"second-value")["ok"]
+    copy = tmp_path / T / "tokens" / "sf.json"
+    assert copy.read_text() == "second-value" and copy.stat().st_ino != inode
+
+
+# ── how much root holds ─────────────────────────────────────────────────────
+
+def test_an_export_is_streamed_never_held_in_root(box, tmp_path, monkeypatch):
+    writes = []
+    real = box.as_job_pipe
+
+    def pipe(args):
+        proc = real(args)
+        stdin = proc.stdin
+
+        class Counting:
+            def write(self, data):
+                writes.append(len(data))
+                return stdin.write(data)
+
+            def __getattr__(self, name):
+                return getattr(stdin, name)
+        proc.stdin = Counting()
+        return proc
+    monkeypatch.setattr(box.server, "as_job_pipe", pipe)
+    data = _tar(tmp_path, big="x" * (5 * 1024 * 1024))
+    assert _hold(box, T, data)[1]["ok"]
+    assert (tmp_path / T / "repo" / "big").stat().st_size == 5 * 1024 * 1024
+    assert sum(writes) == len(data) and max(writes) <= box.mod.STREAM_CHUNK
+    assert box.mod.STREAM_CHUNK <= 1024 * 1024
+
+
+def test_what_root_can_hold_at_once_is_under_16_mb(jb):
+    worst = jb.MAX_CONNECTIONS * (jb.MAX_HEAD + jb.MAX_TOKEN) + jb.STREAM_CHUNK
+    assert worst <= 16 * 1024 * 1024
+
+
+def test_a_refused_export_reads_no_body(box, tmp_path, monkeypatch):
+    data = _tar(tmp_path, a="1")
+    _hold(box, T, data)
+    _as_b(box)
+    with socket.socket(socket.AF_UNIX) as c:
+        c.settimeout(5)
+        c.connect(box.path)
+        c.sendall(json.dumps({"op": "export", "turn": T2, "size": 10 ** 8}).encode() + b"\n")
+        assert b"Another job" in c.recv(4096)       # with no body sent: it didn't wait for one
+
+
+def test_an_export_cut_short_releases_its_slot(box, tmp_path):
+    with socket.socket(socket.AF_UNIX) as c:
+        c.settimeout(5)
+        c.connect(box.path)
+        c.sendall(json.dumps({"op": "export", "turn": T, "size": 1000}).encode() + b"\nshort")
+    assert _wait(lambda: not (tmp_path / T).exists() and box.server._job is None)
 
 
 def test_install_restarts_only_when_its_code_changed(jb, tmp_path):
@@ -380,10 +646,20 @@ def test_install_restarts_only_when_its_code_changed(jb, tmp_path):
     assert jb.install(run=run, unit_path=unit) is True
     text = unit.read_text()
     assert "CANOPY_JOB_BROKER_SHA=" in text and "User=" not in text
-    assert ["systemctl", "restart", "canopy-job-broker.service"] in calls
+    assert ["systemctl", "restart", "--no-block", "canopy-job-broker.service"] in calls
     calls.clear()
     assert jb.install(run=run, unit_path=unit) is False
-    assert ["systemctl", "restart", "canopy-job-broker.service"] not in calls
+    assert ["systemctl", "restart", "--no-block", "canopy-job-broker.service"] not in calls
+
+
+def test_install_never_waits_for_itself_at_boot(jb, tmp_path):
+    """The unit is After=canopy-runners.service, the very oneshot `--setup-runners` runs in, so a
+    blocking `enable --now` or `restart` there waits on its own caller."""
+    calls = []
+    run = lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")  # noqa: E731
+    jb.install(run=run, unit_path=tmp_path / "u.service")
+    starts = [c for c in calls if {"--now", "restart"} & set(c)]
+    assert starts and all("--no-block" in c for c in starts)
 
 
 def test_the_broker_stays_stdlib_only():
