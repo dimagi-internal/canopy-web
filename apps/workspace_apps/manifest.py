@@ -947,7 +947,7 @@ def validate(raw) -> dict:
     key = raw.get("key")
     if not isinstance(key, str) or not KEY.match(key):
         _fail("key", "must be 3-40 lowercase letters, digits and hyphens, starting with a letter")
-    if key in ("store", "local"):
+    if key in ("store", "personal"):
         _fail("key", "'store' is the app store's own address")
     name = str(raw.get("name") or "").strip()
     if not name:

@@ -563,14 +563,13 @@ def test_the_real_apps_run_end_to_end_with_nothing_leaving_and_nothing_logged(tm
     _fake_superwhisper(tmp_path, monkeypatch)
     # Copied, because a real run may write beside the code and the repo must stay clean.
     app_dir = shutil.copytree(LOCAL_APPS / "meeting-assistant", tmp_path / "meeting-assistant")
-    source_dir = shutil.copytree(LOCAL_APPS / "superwhisper-transcript", tmp_path / "source")
     spec = host_mod.RunSpec(
         key="meeting-assistant", version="0.1.0", run_id="dev-1", max_minutes=1,
         canopy=["sessions.create", "sessions.send", "turns.status"], sensitive=True, unpublished=True,
         app=host_mod.ChildSpec(key="meeting-assistant", version="0.1.0", entry=["{python}", "app.py"],
                                cwd=str(app_dir), settings={"brief": "be brief"}),
-        source=host_mod.ChildSpec(key="superwhisper-transcript", version="0.1.0",
-                                  entry=["{python}", "source.py"], cwd=str(source_dir),
+        source=host_mod.ChildSpec(key="meeting-assistant", version="0.1.0",
+                                  entry=["{python}", "source.py"], cwd=str(app_dir),
                                   settings={"from_start": True}))
     host = host_mod.Host(spec, server_mod.StubLink("meeting-assistant"), host_mod.Limits(tick=0.02))
     reason = host.run()

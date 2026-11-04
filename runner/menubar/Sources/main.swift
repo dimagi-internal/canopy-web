@@ -1067,8 +1067,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
                 note("Needs a newer runner — update it first")
             } else {
                 if list.offline { note("Can't reach canopy — showing what's on this Mac") }
-                // A source starts with the app that uses it, so it gets no controls of its own.
-                let startable = list.apps.filter { $0.provides.isEmpty }
+                let startable = list.apps
                 if startable.isEmpty { note("No apps installed") }
                 for app in startable { addLocalApp(app, to: menu) }
             }
@@ -1237,7 +1236,6 @@ struct LocalApp {
     let fullNotice: String
     let reads: [String]
     let sends: [String]
-    let provides: [String]
     let needsAcceptance: Bool
     let changes: [String]
 
@@ -1256,7 +1254,6 @@ struct LocalApp {
         let disclosure = raw["disclosure"] as? [String: Any] ?? [:]
         reads = disclosure["reads"] as? [String] ?? []
         sends = disclosure["sends"] as? [String] ?? []
-        provides = raw["provides"] as? [String] ?? []
         needsAcceptance = raw["needs_acceptance"] as? Bool ?? false
         changes = raw["changes"] as? [String] ?? []
     }
@@ -1277,7 +1274,7 @@ struct LocalApp {
 
     var noticeText: String {
         var lines: [String] = []
-        // The runner composes this: it names the agent and covers the source too.
+        // The runner composes this, and it names the agent.
         if !fullNotice.isEmpty {
             lines.append(fullNotice)
         } else {

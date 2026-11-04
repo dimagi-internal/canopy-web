@@ -4332,10 +4332,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * User apps: apps you install for yourself
-         * @description Sources come along with the apps that need them, so they aren't listed on their own.
-         */
+        /** User apps: apps you install for yourself */
         readonly get: operations["list_local_app_store"];
         readonly put?: never;
         readonly post?: never;
@@ -25632,16 +25629,6 @@ export interface components {
              */
             readonly tagline: string;
             /**
-             * Consumes
-             * @default []
-             */
-            readonly consumes: readonly string[];
-            /**
-             * Provides
-             * @default []
-             */
-            readonly provides: readonly string[];
-            /**
              * Installed
              * @default false
              */
@@ -25688,18 +25675,6 @@ export interface components {
             };
             /** Digest */
             readonly digest: string;
-            /**
-             * Installs With
-             * @default []
-             */
-            readonly installs_with: readonly string[];
-            /**
-             * Source Disclosures
-             * @default []
-             */
-            readonly source_disclosures: readonly {
-                readonly [key: string]: unknown;
-            }[];
             /**
              * Agents
              * @default []
@@ -26003,20 +25978,8 @@ export interface components {
              * @default false
              */
             readonly running: boolean;
-            /** Source Key */
-            readonly source_key?: string | null;
             /** Agent */
             readonly agent?: string | null;
-            /**
-             * Consumes
-             * @default []
-             */
-            readonly consumes: readonly string[];
-            /**
-             * Provides
-             * @default []
-             */
-            readonly provides: readonly string[];
             /**
              * Checks
              * @default []
@@ -26039,11 +26002,6 @@ export interface components {
         readonly LocalAppStartRunIn: {
             /** Version */
             readonly version: string;
-            /**
-             * Source Version
-             * @default
-             */
-            readonly source_version: string;
         };
         /** LocalAppBeatOut */
         readonly LocalAppBeatOut: {

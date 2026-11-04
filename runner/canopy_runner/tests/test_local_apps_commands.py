@@ -50,8 +50,7 @@ def listing(folder: Path, **changes) -> tuple[dict, bytes]:
              "sha256": package.sha256(packed), "size": len(packed), "notice": manifest["notice"],
              "disclosure": manifest["disclosure"], "entry": manifest["entry"],
              "max_minutes": manifest["max_minutes"], "settings": {}, "needs_acceptance": False, "changes": [],
-             "refusal": None, "running": False, "source_key": None, "consumes": manifest["consumes"],
-             "provides": manifest["provides"], "checks": manifest["checks"], **changes}
+             "refusal": None, "running": False, "checks": manifest["checks"], **changes}
     return entry, packed
 
 
@@ -236,26 +235,23 @@ def test_a_check_gets_the_scrubbed_environment(tmp_path, monkeypatch):
     assert commands._run_check(check, tmp_path) is True
 
 
-def test_an_app_with_a_source_starts_both_and_is_sensitive(tmp_path, monkeypatch, no_spawn):
-    source_entry, source_packed = listing(write_app(tmp_path / "s", key="the-source", provides=["transcript"]))
-    source_entry["settings"] = {"from_start": True}
-    entry, packed = listing(write_app(tmp_path / "a", consumes=["transcript"]), source_key="the-source")
-    use(monkeypatch, FakeServer((entry, packed), (source_entry, source_packed)))
+def test_an_app_with_a_source_starts_both_from_one_package_and_is_sensitive(tmp_path, monkeypatch, no_spawn):
+    folder = write_app(tmp_path / "a", source=["{python}", "source.py"])
+    (folder / "source.py").write_text("print('hi')\n")
+    entry, packed = listing(folder)
+    entry["settings"] = {"from_start": True}
+    use(monkeypatch, FakeServer((entry, packed)))
     assert commands.run(parse("start", KEY, "--accept-notice")) == 0
     spec = no_spawn[0]
     assert spec.sensitive is True
-    assert spec.source.key == "the-source" and spec.source.settings == {"from_start": True}
+    assert spec.source.entry == ["{python}", "source.py"] and spec.source.cwd == spec.app.cwd
+    assert spec.source.settings == {"from_start": True}
 
 
-def test_a_consumer_with_no_source_and_a_source_alone_are_refused(tmp_path, monkeypatch, no_spawn, capsys):
-    entry, packed = listing(write_app(tmp_path / "a", consumes=["transcript"]))
-    source_entry, source_packed = listing(write_app(tmp_path / "s", key="the-source", provides=["transcript"]))
-    use(monkeypatch, FakeServer((entry, packed), (source_entry, source_packed)))
-    assert commands.run(parse("start", KEY, "--accept-notice")) == 1
-    assert "needs a source" in capsys.readouterr().out
-    assert commands.run(parse("start", "the-source", "--accept-notice")) == 1
-    assert "is a source" in capsys.readouterr().out
-    assert no_spawn == []
+def test_an_app_with_no_source_isnt_sensitive(tmp_path, monkeypatch, no_spawn):
+    use(monkeypatch, FakeServer(listing(write_app(tmp_path / "a"))))
+    assert commands.run(parse("start", KEY, "--accept-notice")) == 0
+    assert no_spawn[0].sensitive is False and no_spawn[0].source is None
 
 
 def test_another_platform_is_refused(tmp_path, monkeypatch, no_spawn, capsys):
@@ -315,16 +311,12 @@ def test_dev_install_refuses_a_bad_manifest_or_setting(tmp_path, capsys):
     assert "no setting nope" in capsys.readouterr().out
 
 
-def test_a_dev_consumer_uses_a_dev_source_and_never_a_published_one(tmp_path, no_spawn, capsys):
-    write_app(tmp_path / "a", consumes=["transcript"])
-    assert commands.run(parse("dev-install", str(tmp_path / "a"))) == 0
-    capsys.readouterr()
-    assert commands.run(parse("start", KEY, "--accept-notice")) == 1
-    assert "dev-install one first" in capsys.readouterr().out
-    write_app(tmp_path / "s", key="the-source", provides=["transcript"])
-    assert commands.run(parse("dev-install", str(tmp_path / "s"))) == 0
+def test_a_dev_app_runs_its_own_source(tmp_path, no_spawn):
+    folder = write_app(tmp_path / "a", source=["{python}", "source.py"])
+    (folder / "source.py").write_text("print('hi')\n")
+    assert commands.run(parse("dev-install", str(folder))) == 0
     assert commands.run(parse("start", KEY, "--accept-notice")) == 0
-    assert no_spawn[0].source.key == "the-source" and no_spawn[0].sensitive is True
+    assert no_spawn[0].source.cwd == str(folder) and no_spawn[0].sensitive is True
 
 
 def test_pack_writes_the_same_bytes_each_time(tmp_path, capsys):
@@ -476,7 +468,7 @@ def test_the_run_routes_and_their_shapes(wire):
     srv.finish("r1", "max_minutes", {"sent": 1})
     assert srv.canopy("r1", "sessions.create", {"title": "t"}) == (201, {"id": "s1", "url": "u"})
     by_path = {s["path"]: s for s in Recorder.seen}
-    assert by_path[f"{PREFIX}/{KEY}/runs/"]["body"] == {"version": "1.0", "source_version": ""}
+    assert by_path[f"{PREFIX}/{KEY}/runs/"]["body"] == {"version": "1.0"}
     assert by_path[f"{PREFIX}/runs/r1/heartbeat"]["body"] == {"state": "listening", "counts": {"sent": 1}}
     assert by_path[f"{PREFIX}/runs/r1/finish"]["body"] == {"reason": "max_minutes", "counts": {"sent": 1}}
     assert by_path[f"{PREFIX}/runs/r1/canopy"]["body"] == {"op": "sessions.create", "args": {"title": "t"}}

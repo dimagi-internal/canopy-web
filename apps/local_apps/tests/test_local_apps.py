@@ -44,8 +44,6 @@ def manifest(**over) -> dict:
         "changelog": "First.",
         "entry": ["{python}", "app.py"],
         "platforms": ["macos"],
-        "consumes": [],
-        "provides": [],
         "max_minutes": 120,
         "notice": "It leaves your Mac.",
         "disclosure": {"reads": ["a transcript"], "sends": ["text to a session"]},
@@ -128,7 +126,7 @@ def install(world, sub=None, settings=None) -> LocalAppInstallation:
         {
             "runner_id": str(world["laptop"].pk),
             "settings": settings or {"agent": "helper"},
-            "accept_digest": services.install_digest(sub, services.sources_of(sub)),
+            "accept_digest": trust.digest(sub.manifest),
         },
         content_type=J,
     )
@@ -237,6 +235,12 @@ def test_nobody_approves_their_own_submission(world):
         approvals.decide(sub.approval_id, world["root"], "approve")
 
 
+def test_a_source_in_the_package_is_part_of_what_people_accept():
+    old, new = manifest(source=["{python}", "a.py"]), manifest(source=["{python}", "b.py"])
+    assert trust.digest(old) != trust.digest(new)
+    assert "Listens through a different program" in trust.changes(old, new)[0]
+
+
 def test_a_lone_superuser_cant_submit_since_nobody_could_approve_it(world):
     r = client(world["root"]).post(
         "/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"}, content_type=J
@@ -260,7 +264,7 @@ def test_a_declined_version_never_lists(world):
 def test_the_approval_preview_names_the_exact_bytes_and_the_code(world):
     req = submit(world).approval
     plan = "\n".join(req.plan)
-    assert f"sha256 {req.params['sha256']}" in plan and "/apps/local/review/" in plan
+    assert f"sha256 {req.params['sha256']}" in plan and "/apps/personal/review/" in plan
 
 
 def test_a_version_never_changes(world):
@@ -398,41 +402,6 @@ def test_cant_pick_an_agent_from_a_workspace_youre_not_in(world):
         content_type=J,
     )
     assert r.status_code == 403
-
-
-def test_installing_a_consumer_also_installs_its_source(world):
-    released(
-        world,
-        manifest(
-            key="whisper-source",
-            name="Whisper",
-            provides=["transcript"],
-            consumes=[],
-            settings={},
-            canopy=[],
-            notice="",
-        ),
-    )
-    sub = released(world, manifest(consumes=["transcript"]))
-    install(world, sub)
-    keys = set(LocalAppInstallation.objects.filter(user=world["person"]).values_list("template__key", flat=True))
-    assert keys == {"meeting-assistant", "whisper-source"}
-    listed = client(world["person"]).get(f"{runner_base(world)}/").json()["apps"]
-    assert next(a for a in listed if a["key"] == "meeting-assistant")["source_key"] == "whisper-source"
-
-
-def test_a_consumer_with_no_source_cant_install(world):
-    sub = released(world, manifest(consumes=["transcript"]))
-    r = client(world["person"]).post(
-        "/api/local-apps/store/apps/meeting-assistant/install",
-        {
-            "runner_id": str(world["laptop"].pk),
-            "settings": {"agent": "helper"},
-            "accept_digest": trust.digest(sub.manifest),
-        },
-        content_type=J,
-    )
-    assert r.status_code == 409 and "provides" in r.json()["detail"]
 
 
 # --- updates -----------------------------------------------------------------------------
@@ -634,69 +603,6 @@ def test_a_refused_turn_isnt_reported_as_sent(world, monkeypatch):
     assert call(world, run, "sessions.send", {"session_id": session, "text": "hi", "client_id": "a"})["status"] == 403
 
 
-def test_revoking_a_source_stops_runs_listening_to_it(world):
-    source = released(
-        world,
-        manifest(key="whisper-source", name="Whisper", provides=["transcript"], settings={}, canopy=[], notice=""),
-    )
-    sub = released(world, manifest(consumes=["transcript"]))
-    r = client(world["person"]).post(
-        "/api/local-apps/store/apps/meeting-assistant/install",
-        {
-            "runner_id": str(world["laptop"].pk),
-            "settings": {"agent": "helper"},
-            "accept_digest": services.install_digest(sub, [source]),
-        },
-        content_type=J,
-    )
-    assert r.status_code == 201, r.content
-    r = client(world["person"]).post(
-        f"{runner_base(world)}/meeting-assistant/runs/", {"version": "0.1.0", "source_version": "0.1.0"}, content_type=J
-    )
-    assert r.status_code == 201, r.content
-    run = r.json()["run_id"]
-    assert beat(world, run)["stop"] is False
-    services.revoke(source, reason="bad", user=world["root"])
-    assert beat(world, run) == {"stop": True, "reason": "revoked"}
-
-
-def test_installing_accepts_the_sources_promise_and_never_a_newer_one_in_passing(world):
-    source = released(
-        world,
-        manifest(key="whisper-source", name="Whisper", provides=["transcript"], settings={}, canopy=[], notice=""),
-    )
-    sub = released(world, manifest(consumes=["transcript"]))
-    detail = client(world["person"]).get("/api/local-apps/store/apps/meeting-assistant").json()
-    assert detail["source_disclosures"][0]["disclosure"]["reads"] == ["a transcript"]
-    assert detail["digest"] == services.install_digest(sub, [source]) != trust.digest(sub.manifest)
-    install_body = {
-        "runner_id": str(world["laptop"].pk),
-        "settings": {"agent": "helper"},
-        "accept_digest": detail["digest"],
-    }
-    url = "/api/local-apps/store/apps/meeting-assistant/install"
-    assert client(world["person"]).post(url, install_body, content_type=J).status_code == 201
-
-    wider = released(
-        world,
-        manifest(
-            key="whisper-source",
-            name="Whisper",
-            provides=["transcript"],
-            settings={},
-            canopy=[],
-            notice="",
-            version="0.2.0",
-            disclosure={"reads": ["your calendar"], "sends": []},
-        ),
-    )
-    install_body["accept_digest"] = services.install_digest(sub, [wider])
-    assert client(world["person"]).post(url, install_body, content_type=J).status_code == 201
-    row = LocalAppInstallation.objects.get(template__key="whisper-source")
-    assert row.accepted_digest == trust.digest(source.manifest)
-    assert services.resolve(row)["needs_acceptance"] is True
-
-
 @pytest.mark.parametrize("route", ["install", "configure", "accept"])
 def test_an_agent_acting_for_the_person_cant_change_what_they_agreed_to(world, monkeypatch, route):
     sub = released(world)
@@ -803,14 +709,6 @@ def test_anyone_signed_in_can_see_and_install_with_no_switch(world):
 
 def test_an_anonymous_visitor_sees_nothing():
     assert Client().get("/api/local-apps/store/").status_code in (401, 403)
-
-
-def test_the_store_hides_sources_because_they_come_with_what_needs_them(world):
-    released(
-        world,
-        manifest(key="whisper-source", name="Whisper", provides=["transcript"], settings={}, canopy=[], notice=""),
-    )
-    assert client(world["person"]).get("/api/local-apps/store/").json()["apps"] == []
 
 
 def test_the_agent_can_come_from_any_of_your_workspaces_and_decides_where_sessions_land(world):

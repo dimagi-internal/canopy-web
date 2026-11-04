@@ -209,8 +209,3 @@ def test_the_check_asks_for_help_only_and_reports_a_missing_tool(tmp_path):
     assert seen.read_text() == "meetings --help"
     os.remove(path)
     assert subprocess.run([sys.executable, str(SOURCE), "--check"], env=env, timeout=30).returncode == 1
-
-
-def test_the_manifest_says_it_provides_a_transcript_and_makes_no_canopy_calls():
-    manifest = json.loads((SOURCE.parent / "manifest.json").read_text())
-    assert manifest["provides"] == ["transcript"] and manifest["canopy"] == []

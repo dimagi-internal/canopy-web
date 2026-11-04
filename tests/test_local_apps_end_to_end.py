@@ -21,7 +21,7 @@ from apps.approvals import services as approvals
 from apps.canopy_sessions.models import Message, Session
 from apps.harness.models import Runner, RunnerAccessToken, RunnerDeviceKey
 from apps.local_apps import manifest as server_manifest
-from apps.local_apps import services
+from apps.local_apps import services, trust
 from apps.local_apps.models import LocalAppRun, LocalAppSubmission
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -107,13 +107,12 @@ def publish(world, folder: str) -> LocalAppSubmission:
 
 
 def install(world) -> LocalAppSubmission:
-    publish(world, "superwhisper-transcript")
     sub = publish(world, "meeting-assistant")
     web = Client()
     web.force_login(world["person"])
     r = web.post("/api/local-apps/store/apps/meeting-assistant/install",
                  {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper", "brief": "Be blunt"},
-                  "accept_digest": services.install_digest(sub, services.sources_of(sub))}, content_type=J)
+                  "accept_digest": trust.digest(sub.manifest)}, content_type=J)
     assert r.status_code == 201, r.content
     return sub
 
@@ -168,14 +167,14 @@ def test_revoking_stops_a_running_copy_over_the_real_heartbeat(world):
     assert not state.host_alive("meeting-assistant")
 
 
-@pytest.mark.parametrize("folder", ["meeting-assistant", "superwhisper-transcript"])
-def test_what_the_server_accepts_every_runner_accepts(folder):
+def test_what_the_server_accepts_every_runner_accepts():
+    folder = "meeting-assistant"
     """The runner's validator may be looser, for dev-installs. Never stricter, or an approved
     version would refuse to run. Compared on the real apps and on each edge of the rules."""
     raw = json.loads((APPS / folder / "manifest.json").read_text())
     clean = server_manifest.validate(raw)
     assert runner_manifest.validate(clean)["version"] == clean["version"]
     for change in ({"version": "999999.999999.999999.999999"}, {"max_minutes": 480}, {"max_minutes": 1},
-                   {"consumes": [], "provides": ["a" * 40]}, {"changelog": ""}):
+                   {"source": []}, {"changelog": ""}):
         server_ok = server_manifest.validate({**raw, **change})
         assert runner_manifest.validate(server_ok)

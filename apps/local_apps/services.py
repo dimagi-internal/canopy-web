@@ -11,7 +11,6 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime as dt
-import hashlib
 import uuid
 
 from django.conf import settings
@@ -236,12 +235,6 @@ def computers_of(user):
     return Runner.objects.filter(owner=user, kind=Runner.EMDASH).exclude(status=Runner.RETIRED).order_by("name")
 
 
-def provider_of(stream: str) -> LocalAppSubmission | None:
-    """The released app that provides `stream`, if exactly one does."""
-    found = [s for s in catalog() if stream in s.manifest["provides"]]
-    return found[0] if len(found) == 1 else None
-
-
 def _clean_settings(manifest: dict, values: dict, user, *, partial: bool = False) -> dict:
     spec = manifest["settings"]
     unknown = set(values) - set(spec)
@@ -288,7 +281,7 @@ def _workspace_for(manifest: dict, settings: dict, user):
 
 
 def install(*, key: str, user, runner_id, settings: dict, accept_digest: str) -> LocalAppInstallation:
-    """Install an app for this person, and the source it listens to. `accept_digest` is the
+    """Install an app for this person. `accept_digest` is the
     promise they were shown, so a version released while they read can't slip past them."""
     runner = computers_of(user).filter(pk=runner_id).first()
     if runner is None:
@@ -296,52 +289,24 @@ def install(*, key: str, user, runner_id, settings: dict, accept_digest: str) ->
     sub = latest(key)
     if sub is None:
         raise Refused(f"there is no released app '{key}'", 404)
-    sources = []
-    for stream in sub.manifest["consumes"]:
-        source = provider_of(stream)
-        if source is None:
-            raise Refused(f"no single app provides '{stream}' yet", 409)
-        sources.append(source)
-    if install_digest(sub, sources) != accept_digest:
+    if trust.digest(sub.manifest) != accept_digest:
         raise Refused("this app changed while you were reading. Read it again.", 409)
     clean = _clean_settings(sub.manifest, settings or {}, user)
     workspace = _workspace_for(sub.manifest, clean, user)
-    with transaction.atomic():
-        inst = _install_one(sub, user, runner, workspace, clean, accepting=True)
-        for source in sources:
-            # A source already here keeps what was accepted for it. A newer promise of
-            # its own is accepted on its own row, not in passing by installing something else.
-            _install_one(source, user, runner, None, {}, accepting=False)
-    return inst
-
-
-def install_digest(sub: LocalAppSubmission, sources: list[LocalAppSubmission]) -> str:
-    """Everything a person accepts by installing: the app and the source that comes with it."""
-    if not sources:
-        return trust.digest(sub.manifest)
-    return hashlib.sha256("".join(trust.digest(s.manifest) for s in (sub, *sources)).encode()).hexdigest()
-
-
-def sources_of(sub: LocalAppSubmission) -> list[LocalAppSubmission]:
-    return [s for s in (provider_of(stream) for stream in sub.manifest["consumes"]) if s is not None]
-
-
-def _install_one(sub, user, runner, workspace, settings, *, accepting: bool) -> LocalAppInstallation:
-    template = sub.release.template
     inst, created = LocalAppInstallation.objects.get_or_create(
         user=user,
         runner=runner,
-        template=template,
+        template=sub.release.template,
         defaults={
             "workspace": workspace,
-            "settings": settings,
+            "settings": clean,
             "accepted": sub,
             "accepted_digest": trust.digest(sub.manifest),
         },
     )
-    if not created and accepting:
+    if not created:
         inst.workspace, inst.accepted, inst.accepted_digest = workspace, sub, trust.digest(sub.manifest)
-        inst.settings = {**inst.settings, **settings}
+        inst.settings = {**inst.settings, **clean}
         inst.save()
     return inst
 
@@ -406,15 +371,6 @@ def agent_slug(inst: LocalAppInstallation, version: LocalAppSubmission) -> str:
     return ""
 
 
-def source_key_of(version: LocalAppSubmission, inst: LocalAppInstallation) -> str | None:
-    for stream in version.manifest["consumes"]:
-        for other in LocalAppInstallation.objects.filter(user=inst.user, runner=inst.runner).select_related("template"):
-            sub = latest(other.template.key)
-            if sub is not None and stream in sub.manifest["provides"]:
-                return other.template.key
-    return None
-
-
 def live_run(inst: LocalAppInstallation) -> LocalAppRun | None:
     return inst.runs.filter(finished_at__isnull=True, last_beat_at__gte=timezone.now() - RUN_STALE).first()
 
@@ -422,31 +378,15 @@ def live_run(inst: LocalAppInstallation) -> LocalAppRun | None:
 # --- runs -------------------------------------------------------------------------------
 
 
-def start_run(inst: LocalAppInstallation, version: str, source_version: str = "") -> LocalAppRun:
+def start_run(inst: LocalAppInstallation, version: str) -> LocalAppRun:
     state = resolve(inst)
     if state["refusal"]:
         raise Refused(state["refusal"], 403)
     if state["version"].version != version:
         raise Refused(f"run version {state['version'].version}, not {version}", 409)
-    source = _source_for_run(inst, state["version"], source_version)
     # A run that never reported its end (a Mac that slept and never woke it) ends here.
     inst.runs.filter(finished_at__isnull=True).update(finished_at=timezone.now(), stop_reason="replaced")
-    return LocalAppRun.objects.create(installation=inst, version=state["version"], source_version=source)
-
-
-def _source_for_run(inst, version: LocalAppSubmission, source_version: str) -> LocalAppSubmission | None:
-    key = source_key_of(version, inst)
-    if key is None:
-        if version.manifest["consumes"]:
-            raise Refused(f"nothing installed here provides {version.manifest['consumes'][0]}", 409)
-        return None
-    source_inst = LocalAppInstallation.objects.get(user=inst.user, runner=inst.runner, template__key=key)
-    state = resolve(source_inst)
-    if state["refusal"]:
-        raise Refused(f"{source_inst.template.name}: {state['refusal']}", 403)
-    if state["version"].version != source_version:
-        raise Refused(f"run {key} {state['version'].version}, not {source_version or 'nothing'}", 409)
-    return state["version"]
+    return LocalAppRun.objects.create(installation=inst, version=state["version"])
 
 
 def stop_wanted(run: LocalAppRun) -> str:
@@ -455,7 +395,7 @@ def stop_wanted(run: LocalAppRun) -> str:
     and the person losing their access."""
     if run.finished_at:
         return "finished"
-    if run.version.revoked_at or (run.source_version and run.source_version.revoked_at):
+    if run.version.revoked_at:
         return "revoked"
     if run.stop_requested:
         return "stopped_from_website"

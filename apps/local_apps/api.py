@@ -26,7 +26,7 @@ from apps.harness.runner_queries import runner_or_404
 from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces.links import base_url
+from apps.workspaces.links import scoped_url
 from apps.workspaces.models import Workspace
 
 from . import services, trust
@@ -95,7 +95,6 @@ def _refused(exc: services.Refused) -> HttpError:
 @router.get("/store/", response=LocalAppStoreOut, summary="User apps: apps you install for yourself")
 @gate("authenticated")
 def list_local_app_store(request: HttpRequest) -> LocalAppStoreOut:
-    """Sources come along with the apps that need them, so they aren't listed on their own."""
     mine = set(LocalAppInstallation.objects.filter(user=request.user).values_list("template__key", flat=True))
     apps = [
         {
@@ -103,12 +102,9 @@ def list_local_app_store(request: HttpRequest) -> LocalAppStoreOut:
             "name": s.manifest["name"],
             "description": s.manifest["description"],
             "version": s.version,
-            "consumes": s.manifest["consumes"],
-            "provides": s.manifest["provides"],
             "installed": s.key in mine,
         }
         for s in services.catalog()
-        if not s.manifest["provides"]
     ]
     return LocalAppStoreOut(apps=apps)
 
@@ -124,7 +120,6 @@ def get_local_app(request: HttpRequest, key: str) -> LocalAppDetailOut:
     if sub is None:
         raise HttpError(404, "no such app")
     m = sub.manifest
-    sources = services.sources_of(sub)
     versions = LocalAppSubmission.objects.filter(key=key, released_at__isnull=False)
     return LocalAppDetailOut(
         key=sub.key,
@@ -136,12 +131,7 @@ def get_local_app(request: HttpRequest, key: str) -> LocalAppDetailOut:
         notice=m["notice"],
         disclosure=m["disclosure"],
         settings=m["settings"],
-        digest=services.install_digest(sub, sources),
-        installs_with=[x.manifest["name"] for x in sources],
-        source_disclosures=[
-            {"name": x.manifest["name"], "notice": x.manifest["notice"], "disclosure": x.manifest["disclosure"]}
-            for x in sources
-        ],
+        digest=trust.digest(m),
         agents=_usable_agents(request.user),
         computers=[{"id": str(r.pk), "name": r.name} for r in services.computers_of(request.user)],
         versions=[
@@ -318,7 +308,7 @@ def _submission_out(sub: LocalAppSubmission) -> dict:
         "sha256": sub.sha256,
         "status": sub.status,
         "approval_id": sub.approval_id,
-        "review_url": f"{base_url()}/apps/local/review/{sub.pk}",
+        "review_url": scoped_url(sub.workspace, f"/apps/personal/review/{sub.pk}"),
     }
 
 
@@ -486,10 +476,7 @@ def list_runner_local_apps(request: HttpRequest, runner_id: uuid.UUID) -> Runner
                 "changes": state["changes"],
                 "refusal": state["refusal"],
                 "running": services.live_run(inst) is not None,
-                "source_key": services.source_key_of(version, inst) if version else None,
                 "agent": _agent_name(inst, version) if version else None,
-                "consumes": m["consumes"],
-                "provides": m["provides"],
                 "checks": m["checks"],
             }
         )
@@ -519,7 +506,7 @@ def start_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, key: str,
     agent the person can no longer use are all refused here."""
     runner = _own_runner(request, runner_id)
     try:
-        run = services.start_run(_runner_installation(runner, key), payload.version, payload.source_version)
+        run = services.start_run(_runner_installation(runner, key), payload.version)
     except services.Refused as exc:
         raise _refused(exc) from exc
     return Status(201, LocalAppStartRunOut(run_id=str(run.pk)))
