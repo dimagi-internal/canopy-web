@@ -191,7 +191,8 @@ def _out(request: HttpRequest, inst: AppInstallation, space: str = LIVE) -> Inst
     return InstallationOut(**_summary(inst), my_roles=sorted(roles), may_maintain=maintain,
                            may_manage=access.may_manage(request.user, inst.workspace_id),
                            pages=[PageOut(**p) for p in pages], data_model=_schema(m), settings=_settings(m),
-                           draft=draft, manifest=m if maintain else None)
+                           draft=draft, connections=m.get("connections") or [],
+                           manifest=m if maintain else None)
 
 
 def _where(raw: str) -> dict:

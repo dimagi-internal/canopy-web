@@ -18,7 +18,7 @@ import { apiUrl } from '@/api/base'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
 import { connectionClient } from '@/api/connectionCalls'
-import { ConnectionCalls, type DeclaredConnection } from './connectionCalls'
+import { ConnectionCalls, pageClickedFrame, type DeclaredConnection } from './connectionCalls'
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
@@ -156,6 +156,7 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
           surface: { kind: 'app', workspace: sc.workspace.slug, key: a.context.key },
           declared: a.connections,
           canConnect: a.canConnect === true,
+          draft: a.context.draft,
         }
       }
       const saved = !v.preview && sc.view.id > 0 && sc.view.version > 0
@@ -164,7 +165,7 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
         declared: v.connections ?? [],
         canConnect: true,
       }
-    })
+    }, { isActive: () => pageClickedFrame(frame.current) })
   }
   // Leaving the page (or the frame) cancels whatever the view is still waiting on.
   useEffect(() => () => {

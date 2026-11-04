@@ -117,7 +117,7 @@ New kinds in `services.AUDITED`: `server_use_on`, `server_use_off`, `server_refr
 
 **The bridge.** A new `connection` message in `frontend/src/dynamicViews/protocol.ts`, handled in `DynamicViewFrame.tsx` beside `read`, exposed in the frame as `canopy.connection.request(...)`, and available to app pages only on the `member` door. Public app pages never call.
 
-**Writes need a click.** A click inside the frame, forwarded with the message, asks for an operation lease `POST /api/connections/operations`: `{operation_id, declared write set, expires 120 s, cap 500 writes}`. Copilot-proposed writes wait for the model gateway (P5).
+**Writes need a click.** The page around the frame decides whether there was a click: it reads its own `navigator.userActivation.isActive`, with focus on that screen's frame, when the message arrives. The message carries no click, and a claim in it is ignored. A click asks for an operation lease `POST /api/connections/operations`: `{operation_id, declared write set, expires 120 s, cap 500 writes}`. What this cannot stop: a screen can trick the person into a click it wants, and its code can keep writing for the whole window. So the declaration (only what the screen listed) and the window (120 s, 500 writes, this person, this screen and revision) are what bound the damage, not the click. Copilot-proposed writes wait for the model gateway (P5).
 
 **Limits.** 300 calls a minute per person per provider, 30 s timeout, 5 MB response cap, 429 through `TYPE_RATE_LIMIT`. Move `embedding/rate_limit._over` to `apps/common` and share it. A provider call must not hold a database transaction.
 

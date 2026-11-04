@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/problem'
-import { ConnectionCalls, type CallContext, type ConnectionClient } from './connectionCalls'
+import { ConnectionCalls, pageClickedFrame, type CallContext, type ConnectionClient } from './connectionCalls'
 
 const DECLARED = [{
   provider: 'salesforce', as: 'viewer',
@@ -175,5 +175,44 @@ describe('ConnectionCalls', () => {
     await expect(calls.handle('x')).rejects.toThrow()
     await expect(calls.handle({ provider: 'salesforce', method: 'TRACE', path: 'query' })).rejects.toThrow()
     expect(client.request).not.toHaveBeenCalled()
+  })
+
+  it('a draft cannot call, with no request', async () => {
+    const { calls, client } = setup({ active: true, ctx: { draft: true, surface: { kind: 'app', workspace: 'w', key: 'k' } } })
+    await expect(calls.handle(READ)).rejects.toThrow("A draft can't use connections. Publish it first.")
+    expect(client.request).not.toHaveBeenCalled()
+  })
+
+  it('an app that declares a report POST as a read runs it with no click', async () => {
+    const app = { kind: 'app' as const, workspace: 'dimagi', key: 'crm' }
+    const { calls, client } = setup({ active: false, ctx: { surface: app, declared: DECLARED } })
+    await calls.handle({ provider: 'salesforce', method: 'POST', path: 'analytics/reports/00O1' })
+    expect(client.request).toHaveBeenCalled()
+    await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.')
+  })
+})
+
+describe('pageClickedFrame', () => {
+  const frame = { id: 'mine' } as unknown as Element
+  const env = (o: { active?: boolean; focus?: boolean; el?: unknown }) => ({
+    nav: { userActivation: o.active === undefined ? undefined : { isActive: o.active } },
+    doc: { hasFocus: () => o.focus ?? true, activeElement: o.el ?? null },
+  })
+  it('activation with focus elsewhere is not a click on this screen', () => {
+    expect(pageClickedFrame(frame, env({ active: true, el: { id: 'body' } }))).toBe(false)
+  })
+  it('a sibling frame holding focus fails', () => {
+    expect(pageClickedFrame(frame, env({ active: true, el: { id: 'sibling' } }))).toBe(false)
+  })
+  it('the page without focus fails', () => {
+    expect(pageClickedFrame(frame, env({ active: true, focus: false, el: frame }))).toBe(false)
+  })
+  it('focus on this frame with activation passes', () => {
+    expect(pageClickedFrame(frame, env({ active: true, el: frame }))).toBe(true)
+  })
+  it('no activation, or no API, fails closed', () => {
+    expect(pageClickedFrame(frame, env({ active: false, el: frame }))).toBe(false)
+    expect(pageClickedFrame(frame, env({ el: frame }))).toBe(false)
+    expect(pageClickedFrame(null, env({ active: true, el: null }))).toBe(false)
   })
 })

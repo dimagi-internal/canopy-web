@@ -55,6 +55,15 @@ of), app.act(action, {record, input, params}), app.bulk(action, {records, input,
 action the template marks bulk, app.link(link, record) → {url} for a record's private link,
 app.go(page, params). A slot fill is `function Fill({ record, app, ...slotProps })`. Never <form>.
 
+SALESFORCE: when the manifest declares `connections`, a page calls
+canopy.connection.request({provider: "salesforce", method, path, query?, body?}) ->
+Promise<{status, body, text?}> (status is Salesforce's own; refusals reject with a sentence to show).
+Reads run any time. A write must start from a click on the page: call it first thing in the onClick
+handler (the click only counts for about 5 seconds, so a write after several seconds of awaits is
+refused with "This needs a click."). One click opens a window of up to 2 minutes and 500 writes for
+this page, within what the manifest declared. Only on a member's page, never a public one and never
+a draft's test copy.
+
 WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot add these):
   an action's `when` (it applies only to a record in that state — offer the button only then),
   `actor_field` (only the person the record names may run it: an approver approves), `params` (values

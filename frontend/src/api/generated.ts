@@ -24941,6 +24941,13 @@ export interface components {
                 readonly [key: string]: unknown;
             };
             readonly draft?: components["schemas"]["DraftInfoOut"] | null;
+            /**
+             * Connections
+             * @default []
+             */
+            readonly connections: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /** Manifest */
             readonly manifest?: {
                 readonly [key: string]: unknown;

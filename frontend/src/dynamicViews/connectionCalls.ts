@@ -71,11 +71,32 @@ export interface CallContext {
   declared: readonly DeclaredConnection[] | undefined
   /** False on every door but a signed-in member's. */
   canConnect: boolean
+  /** An app draft's test copy: never calls. */
+  draft?: boolean
 }
 
 const METHODS = new Set(['GET', 'POST', 'PATCH', 'DELETE'])
 /** A lease covers at most this many writes (the server's bound). */
 const MAX_WRITES = 500
+
+/**
+ * Was there a click on THIS screen just now? The page is activated by a click in any frame
+ * (or on canopy itself), so activation alone could be spent by a sibling view or a timer. Also
+ * require that this page has focus and that the focused element is this screen's iframe.
+ */
+export function pageClickedFrame(
+  frame: Element | null,
+  env: {
+    nav?: { userActivation?: { isActive?: boolean } }
+    doc?: { hasFocus(): boolean; activeElement: Element | null | unknown }
+  } = {
+    nav: typeof navigator === 'undefined' ? undefined : navigator,
+    doc: typeof document === 'undefined' ? undefined : document,
+  },
+): boolean {
+  if (!frame || !env.doc) return false
+  return env.nav?.userActivation?.isActive === true && env.doc.hasFocus() && env.doc.activeElement === frame
+}
 
 export const NEEDS_CLICK = 'This needs a click.'
 
@@ -96,7 +117,7 @@ interface Lease {
 const surfaceKey = (s: Surface) => (s.kind === 'view' ? `view:${s.id}:${s.version}` : `app:${s.workspace}:${s.key}`)
 
 export interface CallOptions {
-  /** The PAGE's own activation. Read at message receipt; absent means no click. */
+  /** A click on this screen, judged by the PAGE (`pageClickedFrame`). Read at message receipt; absent means no click. */
   isActive?: () => boolean | undefined
   now?: () => number
 }
@@ -113,7 +134,7 @@ export class ConnectionCalls {
   constructor(client: ConnectionClient, context: () => CallContext, opts: CallOptions = {}) {
     this.client = client
     this.context = context
-    this.isActive = opts.isActive ?? (() => (typeof navigator === 'undefined' ? undefined : navigator.userActivation?.isActive))
+    this.isActive = opts.isActive ?? (() => false)
     this.now = opts.now ?? Date.now
   }
 
@@ -132,6 +153,7 @@ export class ConnectionCalls {
   private start(request: unknown): Promise<CallResult> {
     const clicked = this.isActive() === true // before anything else: it is transient
     const ctx = this.context()
+    if (ctx.draft) throw new Error("A draft can't use connections. Publish it first.")
     if (!ctx.canConnect) throw new Error("A public page can't use connections.")
     if (!ctx.surface) throw new Error('Save this view to use connections.')
     const surface = ctx.surface

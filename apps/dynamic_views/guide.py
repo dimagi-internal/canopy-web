@@ -25,6 +25,7 @@ PROPS
                                          give an agent a task the view DECLARES (AGENT TASKS below)
                                          and resolve with its result; rejects with the reason when
                                          it fails, is cancelled, times out or the viewer may not
+                                         give that agent tasks
     canopy.connection.request({provider, method, path, query?, body?, as?, agent?}) -> Promise<{status, body}>
                                          a Salesforce call the view declares (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
@@ -127,10 +128,15 @@ SALESFORCE CALLS
   -> Promise<{status, body}>. `status` is Salesforce's own, also when it refused the call (a 400 is a
   resolved answer; look at it). canopy refuses in a sentence (not connected, not declared, over the
   limit, ...) as a rejected promise: show its message. Query values are text.
-- A READ can run any time. A WRITE must come from a click: call it from an onClick (or something an
-  onClick started), never on load or on a timer. The page checks for the click itself and rejects
-  "This needs a click." otherwise; one click covers the writes it starts for a couple of minutes. A
-  view that has not been saved yet cannot call ("Save this view to use connections.").
+- A READ can run any time. A WRITE must start from a click on this screen: call it straight from an
+  onClick handler, never on load or on a timer. The page checks for the click itself and rejects
+  "This needs a click." otherwise. The click only counts for about 5 seconds, so the write must be
+  the first thing the handler does: a write that comes after several seconds of awaits in the same
+  handler is refused. One click opens a window for this screen of up to 2 minutes and 500 writes,
+  within what the screen declared; later writes in that window need no new click. A view that has
+  not been saved yet cannot call ("Save this view to use connections.").
+- The answer is {status, body, text?}: `body` is Salesforce's JSON; when its answer was not JSON,
+  `body` is null and `text` holds the start of it.
 - Example, a read and a click-driven write:
     const [leads, setLeads] = useState(null);
     useEffect(() => {

@@ -12,6 +12,7 @@ import { useMemo, useState } from 'react'
 import { callApp, type AppPage, type CollectionSource } from '@/api/workspaceApps'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { DynamicViewFrame, readSources } from '@/dynamicViews/DynamicViewFrame'
+import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import type { AppContext, AppOp, ViewScope } from '@/dynamicViews/protocol'
 
 export type Door = 'member' | 'preview' | 'public' | 'link'
@@ -29,6 +30,8 @@ interface Props {
   link?: { token: string; record: Record<string, unknown> }
   dataModel: Record<string, unknown>
   settings: Record<string, unknown>
+  /** The app's declared connections (member door); the server stays the authority. */
+  connections?: readonly DeclaredConnection[]
   viewer: { email: string; name: string }
   onGo: (page: string, params: Record<string, string>) => void
 }
@@ -37,7 +40,7 @@ function isCollection(s: Record<string, unknown>): s is CollectionSource {
   return typeof s.collection === 'string'
 }
 
-export function AppFrame({ workspace, app, page, roles, params, door, draft, link, dataModel, settings, viewer, onGo }: Props) {
+export function AppFrame({ workspace, app, page, roles, params, door, draft, link, dataModel, settings, connections, viewer, onGo }: Props) {
   const [error, setError] = useState<string | null>(null)
   const paramsKey = JSON.stringify(params)
   const rolesKey = roles.join(',')
@@ -60,6 +63,7 @@ export function AppFrame({ workspace, app, page, roles, params, door, draft, lin
       go: onGo,
       canopyReads: door === 'member',
       canConnect: door === 'member',
+      connections: door === 'member' ? connections : undefined,
       async load() {
         if (door === 'link') return { record: link?.record ?? {} }
         const sources = page.sources as Record<string, unknown>[]
@@ -81,7 +85,7 @@ export function AppFrame({ workspace, app, page, roles, params, door, draft, lin
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context, page, workspace.slug, door, draft, link?.token])
+  }, [context, page, workspace.slug, door, draft, link?.token, connections])
 
   const scope: ViewScope = useMemo(
     () => ({ workspace, project: null, view: { id: 0, slug: page.slug, title: page.title, version: 0 }, viewer }),
