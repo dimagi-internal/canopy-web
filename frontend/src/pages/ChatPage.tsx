@@ -68,8 +68,8 @@ import { cachedMessages, rememberMessages } from './chat/sessionCache'
  * full backfill, running/idle) + a minimal title shell.
  *
  * Also the right pane of /ide/:id, where `onLeave` replaces the page's own
- * navigation: a closed session drops back to the tree instead of out of /ide,
- * and a move between workspaces keeps the /ide URL (it names no workspace).
+ * navigation: closing a session opens the next one in the tree instead of
+ * leaving /ide, and a move between workspaces keeps the /ide URL (it names no workspace).
  * `compact` is /ide's denser header: title, target and status on one line.
  * `sessionPath` is where another session opens (a fork made here); /ide keeps
  * it in /ide.
@@ -95,7 +95,7 @@ function ChatPageInner({
   editTitle = false,
   onTitleChange,
 }: {
-  onLeave?: () => void
+  onLeave?: (relayed: boolean) => void
   compact?: boolean
   sessionPath?: (s: ChatSession) => string
   /** Open with the title already being renamed — /ide's just-created session. */

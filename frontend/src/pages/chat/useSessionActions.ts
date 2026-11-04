@@ -27,8 +27,10 @@ export interface SessionActionsOptions {
   sessionId: string
   meta: ChatSessionDetail | null
   setMeta: Dispatch<SetStateAction<ChatSessionDetail | null>>
-  /** Replaces the page's own navigation on close/move (/ide's right pane). */
-  onLeave?: () => void
+  /** Replaces the page's own navigation on close/move (/ide's right pane), and
+   *  is told at once when a close is `relayed` to a runner: that page's list
+   *  follows the close from there. */
+  onLeave?: (relayed: boolean) => void
   /** A rename landed here. */
   onTitleChange?: () => void
   /** Open with the title already being renamed. */
@@ -96,6 +98,8 @@ export function useSessionActions({
   // that and THEN leave. Leaving on the relay alone would claim a result we do
   // not have yet, and staying put for good left you on a dead chat with no way
   // back (Jonathan, 2026-09-18: "it should return me to the previous page").
+  // /ide's pane does not wait: its list shows the pending close beside the
+  // session that opens next, so the claim is not this page's to make.
   const [closing, setClosing] = useState(false)
   const [closeNote, setCloseNote] = useState<string | null>(null)
   const closeThisSession = useCallback(async () => {
@@ -107,7 +111,7 @@ export function useSessionActions({
     }
     if (intent.confirm && !window.confirm('This chat is still working. Close it anyway?')) return
     const leave = () => {
-      if (onLeave) return onLeave()
+      if (onLeave) return onLeave(false)
       const to = closeDestination(window.history.state?.idx, meta.workspace)
       if (to === -1) navigate(-1)
       else navigate(to, { replace: true })
@@ -123,6 +127,7 @@ export function useSessionActions({
         return
       }
       if (result.closing) {
+        if (onLeave) return onLeave(true)
         setCloseNote('Closing on the runner…')
         const deadline = Date.now() + CLOSE_WAIT_MS
         while (Date.now() < deadline) {

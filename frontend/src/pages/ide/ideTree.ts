@@ -158,6 +158,19 @@ export function buildTree<T extends IdeSession>(
   })
 }
 
+/** What opens when the open session is closed: the row below it, skipping rows
+ *  already being deleted. Null when nothing is below, or the row is not shown
+ *  (the pane then goes empty). `rows` is what the tree shows, top to bottom. */
+export function sessionBelow<T extends IdeSession>(
+  rows: readonly T[],
+  sessionId: string,
+  deleting: Readonly<Record<string, unknown>> = {},
+): T | null {
+  const at = rows.findIndex((s) => s.id === sessionId)
+  if (at < 0) return null
+  return rows.slice(at + 1).find((s) => !(s.id in deleting)) ?? null
+}
+
 /** How a linked session came from its parent, for the link's words. */
 export function linkKind(s: IdeSession): 'fork' | 'started' {
   return s.provenance?.forked_from ? 'fork' : 'started'
