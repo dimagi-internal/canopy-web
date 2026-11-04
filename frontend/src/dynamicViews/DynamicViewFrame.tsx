@@ -18,7 +18,7 @@ import { apiUrl } from '@/api/base'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
 import { connectionClient } from '@/api/connectionCalls'
-import { ConnectionCalls, pageClickedFrame, type DeclaredConnection } from './connectionCalls'
+import { ConnectionCalls, pageClickedFrame, refusalMembers, type DeclaredConnection } from './connectionCalls'
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
@@ -302,7 +302,15 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
           // Read the page's own activation NOW, in the message event: handle() does it before any await.
           connectionCalls.current!.handle(msg.request)
             .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
-            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e) }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e), ...refusalMembers(e) }))
+          return
+        }
+        case 'connection-begin': {
+          const id = msg.id
+          // As above: begin() reads the activation before any await.
+          connectionCalls.current!.begin()
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e), ...refusalMembers(e) }))
           return
         }
         case 'navigate': {

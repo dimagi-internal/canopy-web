@@ -444,13 +444,14 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * A short lease on writing from one screen, through the signed-in person's session
+         * A lease on writing from one screen, through the signed-in person's session
          * @description Open the lease every write from this screen must name as `operation_id`.
          *
          *     canopy-web can't verify a click. The page around the screen checks for one before it asks; a script
          *     that reaches this route with the person's session gets a lease too. What the lease does is limit how
-         *     far that goes: only what this screen declared, for 120 seconds, at most 500 writes, for this person,
-         *     this screen and this revision. Each write is still checked against the declaration, so on a page
+         *     far that goes: only what this screen declared, at most 500 writes, for this person, this screen and
+         *     this revision. It ends 120 seconds after its last write, or after it opened if there is none, and in
+         *     any case 10 minutes after it opened. Each write is still checked against the declaration, so on a page
          *     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
          *
          *     Only a person signed in here: a personal access token or OAuth token is refused 403
@@ -19210,8 +19211,15 @@ export interface components {
             /**
              * Expires At
              * Format: date-time
+             * @description When it ends unless a write comes first: each write moves this to 120 seconds from then.
              */
             readonly expires_at: string;
+            /**
+             * Hard Limit At
+             * Format: date-time
+             * @description When it ends whatever is written: 10 minutes from the click.
+             */
+            readonly hard_limit_at: string;
             /**
              * Writes
              * @description What this screen may write. Each write is still checked.

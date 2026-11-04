@@ -11,9 +11,13 @@
  *   arrives (it is transient, so before any await). A click inside the frame
  *   activates this page too; script cannot set it. The frame's message has no click
  *   field at all, and anything in it claiming one is ignored. No such API: fail closed.
- * - One click opens one lease ("operation"): the writes of that click reuse it until
- *   it expires, is used up or the screen changes. A write with neither a live lease
- *   nor a click is refused here, with no request.
+ * - One click opens one lease ("operation"): up to 10 minutes and 500 writes within what
+ *   the screen declared. It ends 120 seconds after its last write, or when it is used up
+ *   or the screen changes. A write with neither a live lease nor a click is refused here,
+ *   with no request. `canopy.connection.begin()` opens it without writing yet.
+ * - Calls wait their turn in one first-come queue for the page, at most 8 at once across
+ *   its frames: a dashboard's load outnumbers what the server takes from one person.
+ *   A write's lease is checked when its turn comes, not when it joined.
  * - A line the screen did not declare is refused here as well, as a courtesy. This is
  *   a declared-line match and nothing more: the server is the authority (allowlist,
  *   revision, whose connection), and refuses in a sentence the frame is shown as is.
@@ -53,9 +57,13 @@ export interface CallResult {
   body?: unknown
   text?: string | null
 }
-export interface Operation {
-  operation_id: string
+export interface LeaseWindow {
   expires_at: string
+  hard_limit_at: string
+  writes: readonly { provider: string; method: string; path: string }[]
+}
+export interface Operation extends LeaseWindow {
+  operation_id: string
 }
 
 export interface ConnectionClient {
@@ -78,6 +86,15 @@ export interface CallContext {
 const METHODS = new Set(['GET', 'POST', 'PATCH', 'DELETE'])
 /** A lease covers at most this many writes (the server's bound). */
 const MAX_WRITES = 500
+/** A lease ends this long after its last write... (the server's `OPERATION_SECONDS`) */
+const LEASE_IDLE_MS = 120_000
+/** ...and this long after its click, whatever is written (`OPERATION_HARD_LIMIT_SECONDS`). */
+const LEASE_HARD_LIMIT_MS = 600_000
+/** Calls going at once from one page, under the server's 10 per person. */
+export const MAX_IN_FLIGHT = 8
+/** How long a call may wait for its turn. */
+export const QUEUE_WAIT_MS = 60_000
+export const QUEUE_GAVE_UP = 'This page has too many calls waiting, and this one waited a minute. Try again in a moment.'
 
 /**
  * Was there a click on THIS screen just now? The page is activated by a click in any frame
@@ -107,12 +124,83 @@ const matches = (line: DeclaredLine, method: string, path: string) => {
   return want.length === got.length && want.every((w, i) => w === '*' || w === got[i])
 }
 
+/**
+ * Time is measured from this browser's clock, from when the answer came, never against the server's
+ * `expires_at`: the two clocks can differ by anything, and the server has the last word on each write.
+ */
 interface Lease {
   key: string
   id: string
-  expires: number
+  opened: number
+  lastWrite: number
   used: number
+  window: LeaseWindow
 }
+
+interface Waiting {
+  owner: object
+  go: () => void
+  fail: (e: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+/** One first-come line for a page's calls. Each frame's `ConnectionCalls` joins the same one. */
+export class CallQueue {
+  private waiting: Waiting[] = []
+  private flying = new Map<symbol, object>()
+
+  /** Run `start` when a place is free, or reject with a sentence after `QUEUE_WAIT_MS`. */
+  run<T>(owner: object, start: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const go = () => {
+        const place = Symbol('place')
+        this.flying.set(place, owner)
+        const leave = () => {
+          if (this.flying.delete(place)) this.next()
+        }
+        let started: Promise<T>
+        try {
+          started = start()
+        } catch (e) {
+          started = Promise.reject(e)
+        }
+        started.then(resolve, reject).finally(leave)
+      }
+      if (this.flying.size < MAX_IN_FLIGHT && !this.waiting.length) return go()
+      const item: Waiting = {
+        owner, go, fail: reject,
+        timer: setTimeout(() => {
+          this.waiting = this.waiting.filter((w) => w !== item)
+          reject(new Error(QUEUE_GAVE_UP))
+        }, QUEUE_WAIT_MS),
+      }
+      this.waiting.push(item)
+    })
+  }
+
+  private next(): void {
+    while (this.flying.size < MAX_IN_FLIGHT && this.waiting.length) {
+      const item = this.waiting.shift()!
+      clearTimeout(item.timer)
+      item.go()
+    }
+  }
+
+  /** This screen is going away: what it has waiting is refused, and what it has going gives up its place. */
+  drop(owner: object): void {
+    const mine = this.waiting.filter((w) => w.owner === owner)
+    this.waiting = this.waiting.filter((w) => w.owner !== owner)
+    for (const item of mine) {
+      clearTimeout(item.timer)
+      item.fail(new Error('This screen closed.'))
+    }
+    for (const [place, who] of this.flying) if (who === owner) this.flying.delete(place)
+    this.next()
+  }
+}
+
+/** The page's own line: everything in this document shares it. */
+const pageQueue = new CallQueue()
 
 const surfaceKey = (s: Surface) => (s.kind === 'view' ? `view:${s.id}:${s.version}` : `app:${s.workspace}:${s.key}`)
 
@@ -120,6 +208,8 @@ export interface CallOptions {
   /** A click on this screen, judged by the PAGE (`pageClickedFrame`). Read at message receipt; absent means no click. */
   isActive?: () => boolean | undefined
   now?: () => number
+  /** The page's line unless a test brings its own. */
+  queue?: CallQueue
 }
 
 export class ConnectionCalls {
@@ -130,12 +220,14 @@ export class ConnectionCalls {
   private context: () => CallContext
   private isActive: () => boolean | undefined
   private now: () => number
+  readonly queue: CallQueue
 
   constructor(client: ConnectionClient, context: () => CallContext, opts: CallOptions = {}) {
     this.client = client
     this.context = context
     this.isActive = opts.isActive ?? (() => false)
     this.now = opts.now ?? Date.now
+    this.queue = opts.queue ?? pageQueue
   }
 
   /**
@@ -150,13 +242,37 @@ export class ConnectionCalls {
     }
   }
 
-  private start(request: unknown): Promise<CallResult> {
-    const clicked = this.isActive() === true // before anything else: it is transient
+  /**
+   * `canopy.connection.begin()`: this click's lease, opened before any write, so a screen can read and
+   * dedup first and still write on it. The frame gets its limits, never its id. Like a write, it runs up
+   * to its first await inside the message event, and a new click opens a new window.
+   */
+  begin(): Promise<LeaseWindow> {
+    try {
+      const clicked = this.isActive() === true // before anything else: it is transient
+      const surface = this.usableSurface()
+      if (!clicked) throw new Error(NEEDS_CLICK)
+      const key = surfaceKey(surface)
+      const opening = this.opening?.key === key ? this.opening.promise : this.open(surface, key)
+      return opening.then((l) => l.window)
+    } catch (e) {
+      return Promise.reject(e)
+    }
+  }
+
+  /** Whether this door may call at all: the same answer for a call and for `begin`. */
+  private usableSurface(): Surface {
     const ctx = this.context()
     if (ctx.draft) throw new Error("A draft can't use connections. Publish it first.")
     if (!ctx.canConnect) throw new Error("A public page can't use connections.")
     if (!ctx.surface) throw new Error('Save this view to use connections.')
-    const surface = ctx.surface
+    return ctx.surface
+  }
+
+  private start(request: unknown): Promise<CallResult> {
+    const clicked = this.isActive() === true // before anything else: it is transient
+    const surface = this.usableSurface()
+    const ctx = this.context()
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('connection.request takes an object.')
     // Only these fields; whatever else the frame's message carried (a claimed click, an
     // operation of its own making) is dropped here, never forwarded.
@@ -192,24 +308,20 @@ export class ConnectionCalls {
     if (isRead) return this.send(provider, base)
 
     const key = surfaceKey(surface)
-    const lease = this.liveLease(key)
-    if (lease) return this.send(provider, { ...base, operation_id: lease.id }, lease)
+    if (this.liveLease(key)) return this.send(provider, base, key)
     let opening = this.opening?.key === key ? this.opening.promise : null
     if (!opening) {
       if (!clicked) throw new Error(NEEDS_CLICK)
       opening = this.open(surface, key)
     }
-    return opening.then((l) => this.send(provider, { ...base, operation_id: l.id }, l))
+    return opening.then(() => this.send(provider, base, key))
   }
 
   private liveLease(key: string): Lease | null {
     const l = this.lease
-    if (!l) return null
-    if (l.key !== key || this.now() >= l.expires || l.used >= MAX_WRITES) {
-      this.lease = null
-      return null
-    }
-    return l
+    if (!l || l.key !== key || l.used >= MAX_WRITES) return null
+    const t = this.now()
+    return t < l.lastWrite + LEASE_IDLE_MS && t < l.opened + LEASE_HARD_LIMIT_MS ? l : null
   }
 
   private open(surface: Surface, key: string): Promise<Lease> {
@@ -218,7 +330,9 @@ export class ConnectionCalls {
     const promise = this.client
       .openOperation(surface, ctl.signal)
       .then((op) => {
-        const lease = { key, id: op.operation_id, expires: Date.parse(op.expires_at), used: 0 }
+        const at = this.now()
+        const { expires_at, hard_limit_at, writes } = op
+        const lease = { key, id: op.operation_id, opened: at, lastWrite: at, used: 0, window: { expires_at, hard_limit_at, writes } }
         this.lease = lease
         return lease
       })
@@ -233,34 +347,59 @@ export class ConnectionCalls {
     return promise
   }
 
-  private send(provider: string, body: CallBody, lease?: Lease): Promise<CallResult> {
-    if (lease) lease.used += 1
-    const ctl = new AbortController()
-    this.inflight.add(ctl)
-    return this.client
-      .request(provider, body, ctl.signal)
-      .catch((e) => {
-        if (lease && e instanceof ApiError && e.code === 'needs_operation' && this.lease === lease) this.lease = null
-        throw refusal(e)
-      })
-      .finally(() => this.inflight.delete(ctl))
+  /** `leaseKey`: this is a write on that surface, so it takes its turn and then needs a live lease. */
+  private send(provider: string, body: CallBody, leaseKey?: string): Promise<CallResult> {
+    return this.queue.run(this, () => {
+      let lease: Lease | null = null
+      if (leaseKey !== undefined) {
+        lease = this.liveLease(leaseKey)
+        if (!lease) throw new Error(NEEDS_CLICK)
+        lease.used += 1
+        lease.lastWrite = this.now()
+      }
+      const ctl = new AbortController()
+      this.inflight.add(ctl)
+      return this.client
+        .request(provider, lease ? { ...body, operation_id: lease.id } : body, ctl.signal)
+        .catch((e) => {
+          if (lease && e instanceof ApiError && e.code === 'needs_operation' && this.lease === lease) this.lease = null
+          throw refusal(e)
+        })
+        .finally(() => this.inflight.delete(ctl))
+    })
   }
 
   /** The screen is going away: abandon what is in flight and forget the lease. */
   closeAll(): void {
     for (const ctl of this.inflight) ctl.abort()
     this.inflight.clear()
+    this.queue.drop(this)
     this.lease = null
     this.opening = null
   }
 }
 
+/** What a view's promise rejects with, past its sentence: the server's code, and where to connect. */
+export class ConnectionRefusal extends Error {
+  error?: string
+  connect_url?: string
+}
+
+/** The members of a refusal that travel to the frame with its sentence. */
+export function refusalMembers(e: unknown): { code?: string; connect_url?: string } {
+  if (!(e instanceof ConnectionRefusal)) return {}
+  return { ...(e.error ? { code: e.error } : {}), ...(e.connect_url ? { connect_url: e.connect_url } : {}) }
+}
+
 /** The error the frame is shown: the server's sentence, or a plain one for a bare 404. */
 function refusal(e: unknown): Error {
   if (e instanceof ApiError) {
-    const code = (e.body as { error?: unknown } | null | undefined)?.error
-    if (e.status === 404 && !code) return new Error("This screen can't reach that.")
-    return new Error(e.message)
+    const body = (e.body ?? {}) as { error?: unknown; connect_url?: unknown }
+    if (e.status === 404 && !body.error) return new Error("This screen can't reach that.")
+    const out = new ConnectionRefusal(e.message)
+    if (typeof body.error === 'string') out.error = body.error
+    if (typeof body.connect_url === 'string') out.connect_url = body.connect_url
+    return out
   }
   return e instanceof Error ? e : new Error(String(e))
 }

@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
   disconnectAgentConnection: vi.fn(),
   listAgents: vi.fn(),
   listAgentProjects: vi.fn(),
+  listWorkspaceProjects: vi.fn(),
   listInstalledApps: vi.fn(),
   listSurfaceShares: vi.fn(),
   previewSurfaceShare: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('@/api/connections', async (orig) => ({
   stopSurfaceShare: m.stopSurfaceShare,
 }))
 vi.mock('@/api/agents', () => ({ listAgents: m.listAgents, listProjects: m.listAgentProjects }))
+vi.mock('@/api/work', () => ({ listProjects: m.listWorkspaceProjects }))
 vi.mock('@/api/workspaceApps', () => ({ listInstalledApps: m.listInstalledApps }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => m.role.current }))
 
@@ -56,7 +58,8 @@ beforeEach(() => {
   m.listAgents.mockResolvedValue({ items: [{ slug: 'eva' }, { slug: 'echo' }], total: 2, offset: 0, limit: 200 })
   m.disconnectAgentConnection.mockResolvedValue({ outcome: 'revoking', machine_revokes: true })
   m.listSurfaceShares.mockResolvedValue([])
-  m.listAgentProjects.mockResolvedValue([{ id: 7, handle: 'leads', name: 'Lead intake', workspace: 'w' }])
+  m.listAgentProjects.mockResolvedValue([])
+  m.listWorkspaceProjects.mockResolvedValue([{ id: 7, handle: 'leads', name: 'Lead intake', workspace: 'w' }])
   m.listInstalledApps.mockResolvedValue([{ key: 'crm', name: 'CRM', workspace: 'w' }])
   m.stopSurfaceShare.mockResolvedValue(undefined)
 })
@@ -358,7 +361,7 @@ describe('AgentConnectionsPanel', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Look at what it asks for' }))
       fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
       expect(await screen.findByText('This screen changed while you were looking. Check what it asks for now.')).toBeTruthy()
-      expect(await screen.findByText('Change Leads')).toBeTruthy()
+      expect(await screen.findByText('Delete Leads')).toBeTruthy()
     })
 
     it('needs_approval shows Approve changes with what is new, and approving goes through the preview', async () => {
@@ -388,15 +391,66 @@ describe('AgentConnectionsPanel', () => {
       expect(screen.queryByLabelText('Screen to add')).toBeNull()
     })
 
-    it('a non-admin sees the list but no controls', async () => {
+    it.each(['editor', 'member', null])('whoever the panel loads for gets the controls, whatever their workspace role (%s)', async (role) => {
       m.listSurfaceShares.mockResolvedValue([share({ needs_approval: true, pending_reads: [line('GET', 'query')] })])
       m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [calls()] })
-      m.role.current = 'member'
+      m.role.current = role
       show()
       await screen.findByText('Project screens that may use eva’s account')
-      expect(screen.queryByLabelText('Screen to add')).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Approve changes' })).toBeNull()
+      expect(await screen.findByLabelText('Screen to add')).toBeTruthy()
+      expect(await screen.findByRole('button', { name: 'Stop' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Approve changes' })).toBeTruthy()
+    })
+
+    it('a 404 on the shares shows no share section, and no error', async () => {
+      const { ApiError } = await import('@/api/problem')
+      m.listSurfaceShares.mockRejectedValue(new ApiError(404, 'Not Found', { title: 'Not Found' }))
+      m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [calls()] })
+      show()
+      await waitFor(() => expect(m.listSurfaceShares).toHaveBeenCalled())
+      await screen.findByTestId('agent-connection-3')
+      await waitFor(() => expect(screen.queryByTestId('screen-shares-3')).toBeNull())
+      expect(screen.queryByText(/Could not read/)).toBeNull()
+      expect(screen.queryByText('Project screens that may use eva’s account')).toBeNull()
+    })
+
+    it('another failure to read the shares says so', async () => {
+      m.listSurfaceShares.mockRejectedValue(new Error('boom'))
+      m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [calls()] })
+      show()
+      expect(await screen.findByTestId('screen-shares-3')).toBeTruthy()
+    })
+
+    it("the picker lists the workspace's projects, not the agent's", async () => {
+      m.listAgentProjects.mockResolvedValue([{ id: 99, handle: 'mine', name: 'Only Eva', workspace: 'w' }])
+      m.listWorkspaceProjects.mockResolvedValue([
+        { id: 7, handle: 'leads', name: 'Lead intake', workspace: 'w' },
+        { id: 8, handle: 'kpi', name: 'KPI board', workspace: 'w' },
+        { id: 9, handle: 'away', name: 'Elsewhere', workspace: 'other' },
+      ])
+      await open()
+      expect(await screen.findByRole('option', { name: 'Project: KPI board' })).toBeTruthy()
+      expect(m.listWorkspaceProjects).toHaveBeenCalledWith('open', 'w')
+      expect(m.listAgentProjects).not.toHaveBeenCalled()
+      expect(screen.queryByRole('option', { name: 'Project: Elsewhere' })).toBeNull()
+    })
+
+    it('says writes before reads, with an agent search in the agent\'s name', async () => {
+      m.listSurfaceShares.mockResolvedValue([share({
+        approved_reads: [line('GET', 'query')], approved_writes: [line('DELETE', 'sobjects/Lead/*'), line('POST', 'apexrest/Thing')],
+      })])
+      await open()
+      const items = (await screen.findAllByRole('listitem')).map((li) => li.textContent)
+      expect(items).toEqual(['Delete Leads', 'Run the Salesforce action Thing', 'Search any record eva can see'])
+    })
+
+    it('a workspace admin who is not the agent\'s admin sees no read failure', async () => {
+      const { ApiError } = await import('@/api/problem')
+      m.listAgentConnections.mockRejectedValue(new ApiError(403, 'admin only', { title: 'Forbidden' }))
+      m.role.current = 'admin'
+      show()
+      await waitFor(() => expect(m.listAgentConnections).toHaveBeenCalled())
+      await waitFor(() => expect(screen.queryByText('Could not read the agent’s connections.')).toBeNull())
     })
   })
 })

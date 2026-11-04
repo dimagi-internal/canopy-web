@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { getInstalledApp, type InstalledApp } from '@/api/workspaceApps'
 import { useAuth } from '@/auth/AuthProvider'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
+import { DeclaredConnections } from '@/dynamicViews/DeclaredConnections'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { AppFrame } from '@/workspaceApps/AppFrame'
 import { SetupList } from '@/workspaceApps/SetupList'
@@ -100,6 +101,9 @@ export default function WorkspaceAppPage() {
       {app.may_maintain && !draft && <SetupList workspace={workspace} appKey={app.key} />}
       {!app.enabled && (
         <div className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">This app is switched off: only those who manage apps can open it.</div>
+      )}
+      {page?.audience === 'member' && !draft && (
+        <DeclaredConnections connections={app.connections as unknown as DeclaredConnection[] | undefined} className="mb-3" />
       )}
       {page ? (
         <AppFrame

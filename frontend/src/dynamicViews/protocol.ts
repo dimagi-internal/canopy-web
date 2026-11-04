@@ -78,7 +78,8 @@ export type HostMessage =
   | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: true; data: unknown }
-  | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: false; error: string }
+  // `code` and `connect_url` come with a refused call to a connected account (`ConnectionRefusal`).
+  | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: false; error: string; code?: string; connect_url?: string }
   | { channel: typeof CHANNEL; type: 'agent-task-status'; id: number; task: AgentTaskStatus }
 
 /** Frame → page. */
@@ -97,11 +98,21 @@ export type FrameMessage =
   // A call to a connected account (Salesforce), answered by a `read-result`. It carries no claim about
   // clicks: the page reads its own activation (connectionCalls.ts).
   | { channel: typeof CHANNEL; type: 'connection-call'; id: number; request: unknown }
+  // Open the lease for this click, answered by a `read-result` with `{expires_at, hard_limit_at, writes}`.
+  | { channel: typeof CHANNEL; type: 'connection-begin'; id: number }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }
   | { channel: typeof CHANNEL; type: 'resize'; height: number }
   | { channel: typeof CHANNEL; type: 'error'; message: string }
+
+/** What a view's promise rejects with: `message` the sentence, `error` and `connect_url` when the page sent them. */
+export function frameRejection(msg: { error: string; code?: string; connect_url?: string }): Error & { error?: string; connect_url?: string } {
+  const e: Error & { error?: string; connect_url?: string } = new Error(msg.error)
+  if (msg.code) e.error = msg.code
+  if (msg.connect_url) e.connect_url = msg.connect_url
+  return e
+}
 
 export function isMessage(d: unknown): d is { channel: string; type: string } {
   return !!d && typeof d === 'object' && (d as { channel?: unknown }).channel === CHANNEL

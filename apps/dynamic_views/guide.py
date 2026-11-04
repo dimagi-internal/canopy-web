@@ -28,6 +28,8 @@ PROPS
                                          give that agent tasks
     canopy.connection.request({provider, method, path, query?, body?, as?, agent?}) -> Promise<{status, body}>
                                          a Salesforce call the view declares (see SALESFORCE CALLS)
+    canopy.connection.begin() -> Promise<{expires_at, hard_limit_at, writes}>
+                                         open this click's window before any write (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
     canopy.googleAccess.start({agent, account?, services?: ["gmail"], minutes?: 60, purpose?})
                                          -> Promise<{ok, account, until}>  the VIEWER lends an agent
@@ -127,14 +129,23 @@ SALESFORCE CALLS
 - Call: canopy.connection.request({provider: "salesforce", method, path, query?, body?, as?, agent?})
   -> Promise<{status, body}>. `status` is Salesforce's own, also when it refused the call (a 400 is a
   resolved answer; look at it). canopy refuses in a sentence (not connected, not declared, over the
-  limit, ...) as a rejected promise: show its message. Query values are text.
+  limit, ...) as a rejected promise: show its message. Query values are text. Not connected, the
+  message says where ("Connect Salesforce in Settings → Connections.") and the rejection also has
+  e.connect_url. A frame can't go there itself: offer a button that calls canopy.navigate(e.connect_url),
+  which asks the viewer and opens it in a new tab.
+- Calls wait their turn: at most 8 at once from a page, the rest first come, first served. Fire as many
+  reads in parallel as you like; a call that waits a full minute rejects with a sentence.
 - A READ can run any time. A WRITE must start from a click on this screen: call it straight from an
   onClick handler, never on load or on a timer. The page checks for the click itself and rejects
   "This needs a click." otherwise. The click only counts for about 5 seconds, so the write must be
   the first thing the handler does: a write that comes after several seconds of awaits in the same
-  handler is refused. One click opens a window for this screen of up to 2 minutes and 500 writes,
-  within what the screen declared; later writes in that window need no new click. A view that has
-  not been saved yet cannot call ("Save this view to use connections.").
+  handler is refused. One click opens up to 10 minutes and 500 writes within what the screen declared;
+  later writes in that window need no new click. The window closes 120 seconds after the last write
+  (reads don't count), so keep writing or click again. To read and dedup before the first write, call
+  canopy.connection.begin() first thing in the onClick instead: it opens the window and resolves
+  {expires_at, hard_limit_at, writes} (what can be written now), and the first write must then come
+  within 120 seconds. A view that has not been saved yet cannot call ("Save this view to use
+  connections.").
 - The answer is {status, body, text?}: `body` is Salesforce's JSON; when its answer was not JSON,
   `body` is null and `text` holds the start of it.
 - Example, a read and a click-driven write:

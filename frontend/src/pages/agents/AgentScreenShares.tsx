@@ -8,9 +8,10 @@ import {
   type SurfaceShare,
   type SurfaceSharePreview,
 } from '@/api/connections'
-import { listProjects } from '@/api/agents'
+import { listProjects } from '@/api/work'
 import { listInstalledApps } from '@/api/workspaceApps'
 import { ApiError, errorText } from '@/api/problem'
+import { ConnectionLine } from '@/lib/ConnectionLine'
 import { describeLines } from '@/lib/connectionLines'
 import { Button } from 'canopy-ui/ui'
 
@@ -18,33 +19,32 @@ type Option = { value: string; label: string }
 type Line = { method: string; path: string }
 const CHANGED = 'This screen changed while you were looking. Check what it asks for now.'
 
-function Lines({ reads, writes }: { reads: readonly Line[]; writes: readonly Line[] }) {
-  const items = [...describeLines(reads), ...describeLines(writes)]
-  const unique = [...new Set(items)]
-  if (!unique.length) return <p className="text-[12px] text-muted-foreground">Nothing.</p>
+function Lines({ reads, writes, who }: { reads: readonly Line[]; writes: readonly Line[]; who: string }) {
+  const lines = describeLines({ reads, writes }, who)
+  if (!lines.length) return <p className="text-[12px] text-muted-foreground">Nothing.</p>
   return (
     <ul className="list-disc pl-4 text-[12px] text-foreground">
-      {unique.map((t) => <li key={t}>{t}</li>)}
+      {lines.map((line) => <li key={line.code ?? line.words}><ConnectionLine line={line} /></li>)}
     </ul>
   )
 }
 
 /**
- * Project and app screens that may call Salesforce as an agent's account. Listing is for anyone who can
- * see the panel; adding, approving and stopping are for `canChange` (the server checks it again, and
- * approving always asks for a passkey, which the API client's step-up middleware prompts for).
+ * Project and app screens that may call Salesforce as an agent's account. The agent's own admins are the
+ * ones who may list, add, approve and stop (`Agent.is_admin`, not a workspace role), so whoever the list
+ * loads for gets the controls, and for anyone else it is a 404 and there is no section at all. Approving
+ * always asks for a passkey, which the API client's step-up middleware prompts for.
  */
 export function AgentScreenShares({
-  connectionId, agentSlug, agentName, workspace, serverUse, canChange,
+  connectionId, agentName, workspace, serverUse,
 }: {
   connectionId: string
-  agentSlug: string
   agentName: string
   workspace: string
   serverUse: boolean
-  canChange: boolean
 }) {
-  const [shares, setShares] = useState<SurfaceShare[]>([])
+  const [shares, setShares] = useState<SurfaceShare[] | null>(null)
+  const [hidden, setHidden] = useState(false)
   const [options, setOptions] = useState<Option[]>([])
   const [pick, setPick] = useState('')
   const [preview, setPreview] = useState<SurfaceSharePreview | null>(null)
@@ -53,15 +53,21 @@ export function AgentScreenShares({
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(() => {
-    listSurfaceShares(connectionId).then(setShares).catch((e) => setError(errorText(e, 'Could not read which screens use this.')))
+    listSurfaceShares(connectionId).then(setShares).catch((e) => {
+      if (e instanceof ApiError && e.status === 404) setHidden(true)
+      else {
+        setShares((was) => was ?? [])
+        setError(errorText(e, 'Could not read which screens use this.'))
+      }
+    })
   }, [connectionId])
   useEffect(load, [load])
 
   useEffect(() => {
-    if (!canChange || !serverUse) return
+    if (!serverUse) return
     let live = true
     Promise.all([
-      listProjects(agentSlug).catch(() => []),
+      workspace ? listProjects('open', workspace).catch(() => []) : Promise.resolve([]),
       workspace ? listInstalledApps(workspace).catch(() => []) : Promise.resolve([]),
     ]).then(([projects, apps]) => {
       if (!live) return
@@ -72,7 +78,7 @@ export function AgentScreenShares({
       ])
     })
     return () => { live = false }
-  }, [agentSlug, workspace, canChange, serverUse])
+  }, [workspace, serverUse])
 
   async function look(kind: SurfaceKind, ref: string, said = '') {
     setBusy(true)
@@ -128,6 +134,8 @@ export function AgentScreenShares({
   const kind = (cut < 0 ? 'project' : pick.slice(0, cut)) as SurfaceKind
   const ref = cut < 0 ? '' : pick.slice(cut + 1)
 
+  if (hidden || shares === null) return null
+
   return (
     <div className="space-y-2 border-t border-border pt-2" data-testid={`screen-shares-${connectionId}`}>
       <p className="text-[12px] font-medium text-foreground">Project screens that may use {agentName}’s account</p>
@@ -138,26 +146,27 @@ export function AgentScreenShares({
         <div key={s.id} className="rounded border border-border p-2" data-testid={`screen-share-${s.id}`}>
           <div className="flex items-center justify-between gap-3">
             <p className="text-[13px] font-medium">{s.title ?? 'A screen that no longer exists'}</p>
-            {canChange && (
-              <div className="flex shrink-0 gap-2">
-                {s.needs_approval && (
-                  <Button size="sm" disabled={busy} onClick={() => look(s.kind as SurfaceKind, s.ref)}>Approve changes</Button>
-                )}
-                <Button size="sm" variant="outline" disabled={busy} onClick={() => stop(s.id)}>Stop</Button>
-              </div>
-            )}
+            <div className="flex shrink-0 gap-2">
+              {s.needs_approval && (
+                <Button size="sm" disabled={busy} onClick={() => look(s.kind as SurfaceKind, s.ref)}>Approve changes</Button>
+              )}
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => stop(s.id)}>Stop</Button>
+            </div>
           </div>
-          <Lines reads={s.approved_reads} writes={s.approved_writes} />
+          <Lines reads={s.approved_reads} writes={s.approved_writes} who={agentName} />
           {s.needs_approval && (
             <p className="text-[12px] text-warning">
-              Stopped until approved. It now also asks to: {describeLines([...s.pending_reads, ...s.pending_writes]).join(', ')}
+              Stopped until approved. It now also asks to:{' '}
+              {describeLines({ reads: s.pending_reads, writes: s.pending_writes }, agentName).map((line, n) => (
+                <span key={line.code ?? line.words}>{n > 0 && ', '}<ConnectionLine line={line} /></span>
+              ))}
             </p>
           )}
         </div>
       ))}
       {!serverUse ? (
         <p className="text-[12px] text-warning">Turn on Used by canopy-web first.</p>
-      ) : canChange ? (
+      ) : (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-[12px] text-muted-foreground" htmlFor={`add-${connectionId}`}>Screen to add</label>
@@ -175,14 +184,14 @@ export function AgentScreenShares({
           {preview && (
             <div className="rounded border border-border bg-muted/40 p-2">
               <p className="text-[12px] font-medium">{preview.title} would be able to:</p>
-              <Lines reads={preview.reads} writes={preview.writes} />
+              <Lines reads={preview.reads} writes={preview.writes} who={agentName} />
               <div className="mt-2">
                 <Button size="sm" disabled={busy} onClick={approve}>Approve</Button>
               </div>
             </div>
           )}
         </div>
-      ) : null}
+      )}
     </div>
   )
 }
