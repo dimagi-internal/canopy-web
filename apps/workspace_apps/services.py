@@ -115,7 +115,7 @@ def latest_version(tmpl: AppTemplate) -> AppTemplateVersion:
 def store(workspace_id: str) -> list[dict]:
     """The templates this workspace may install: canopy's, and its own."""
     sync_bundled()
-    rows = AppTemplate.objects.filter(Q(owner__isnull=True, listed=True) | Q(owner_id=workspace_id))
+    rows = AppTemplate.objects.filter(Q(owner__isnull=True, listed=True) | Q(owner_id=workspace_id), runtime=AppTemplate.WEB)
     out = []
     for t in rows.prefetch_related("versions"):
         v = latest_version(t)
@@ -130,7 +130,8 @@ def store(workspace_id: str) -> list[dict]:
 def _store_template(workspace_id: str, key: str, *, sync: bool = True) -> AppTemplate:
     if sync:
         sync_bundled()
-    t = AppTemplate.objects.filter(key=key).filter(Q(owner__isnull=True, listed=True) | Q(owner_id=workspace_id)).first()
+    t = AppTemplate.objects.filter(key=key, runtime=AppTemplate.WEB).filter(
+        Q(owner__isnull=True, listed=True) | Q(owner_id=workspace_id)).first()
     if t is None:
         raise LookupError(f"no app '{key}' in the store")
     return t
@@ -254,7 +255,7 @@ def install(*, workspace_id: str, user, template: str = "", manifest: dict | Non
         tv = AppTemplateVersion.objects.create(template=tmpl, version=m["version"] or "1", manifest=m,
                                                changelog=m["changelog"])
     else:
-        tmpl = AppTemplate.objects.filter(key=template).first()
+        tmpl = AppTemplate.objects.filter(key=template, runtime=AppTemplate.WEB).first()
         if tmpl is None or (tmpl.owner_id is not None and tmpl.owner_id != workspace_id):
             raise LookupError(f"no app '{template}' in the store")
         tv = latest_version(tmpl)

@@ -44,11 +44,14 @@ class ClientError(Exception):
     identically however many times it is sent.
     """
 
-    def __init__(self, message: str, *, transient: bool = False, status: int | None = None):
+    def __init__(self, message: str, *, transient: bool = False, status: int | None = None,
+                 body: bytes = b""):
         super().__init__(message)
         self.transient = transient
         # The HTTP status when canopy answered; None for a network fault.
         self.status = status
+        # The start of the error response, for a caller that shows canopy's own reason.
+        self.body = body
 
 
 class Client:
@@ -130,11 +133,13 @@ class Client:
             # server having a bad moment; a 4xx is us being wrong, and re-sending
             # it just spends the same error again.
             try:
-                error_body = exc.read()[:200]
+                full_body = exc.read()[:4096]
             except Exception:
-                error_body = b"(could not read error body)"
+                full_body = b"(could not read error body)"
+            error_body = full_body[:200]
             raise ClientError(f"{method} {label} -> {exc.code}: {error_body!r}",
-                              transient=exc.code >= 500, status=exc.code) from exc
+                              transient=exc.code >= 500, status=exc.code,
+                              body=full_body) from exc
         except urllib.error.URLError as exc:
             raise ClientError(f"{method} {label} -> {exc.reason}", transient=True) from exc
         except (TimeoutError, ConnectionError) as exc:

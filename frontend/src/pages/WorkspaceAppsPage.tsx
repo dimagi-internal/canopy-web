@@ -10,6 +10,7 @@ import {
   type InstalledAppSummary,
   type StoreApp,
 } from '@/api/workspaceApps'
+import { LocalAppsSection } from '@/components/localApps/LocalAppsSection'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
@@ -145,6 +146,8 @@ export default function WorkspaceAppsPage() {
           </div>
         ))}
       </div>
+
+      <LocalAppsSection workspace={workspace} />
     </div>
   )
 }
