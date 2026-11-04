@@ -190,6 +190,16 @@ EXCLUDED: dict[str, str] = {
     # A connected site telling canopy its resources changed: signed by the site's own
     # key, a host's door, never a person's or an agent's.
     "resources_updated": _HOST,
+    # The same door for the rest of the site's calls, and two cloud services' webhooks. The
+    # signature IS the credential, so as a tool each could only be refused, and that refusal
+    # reads as the agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on
+    # cloud-ec2-live called get_site_agents, got 401 no_assertion, and credential_guard
+    # aborted the turn (investigation 29).
+    "get_site_agents": _HOST,
+    "create_site_sign_off": _HOST,
+    "get_site_sign_off": _HOST,
+    "ses_inbound": "Amazon SNS push webhook",
+    "ses_events": "Amazon SNS push webhook",
     # A turn's connections (apps/connections): the runner's own question.
     "turn_connections": _RUNNER,
     # A connection's material, lease and write-back (routes 7-12): sealed credentials

@@ -168,6 +168,23 @@ def test_credential_routes_are_excluded_or_argued(db):
     assert set(CREDENTIAL_ROUTES_ON_MCP) <= _operation_ids()
 
 
+def test_routes_a_machine_signs_are_not_tools(db):
+    """A `host` route's credential is a signature made by a site or a cloud service, which an
+    MCP call cannot carry, so as a tool it can only be refused. Worse, the refusal reads as the
+    agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on cloud-ec2-live called
+    `get_site_agents`, got 401 `no_assertion`, and credential_guard aborted the turn."""
+    from apps.api import route_gates
+
+    api.get_openapi_schema()  # binds the routers
+    gates = {op.operation_id or api.get_openapi_operation_id(op): route_gates.gate_of(op.view_func)
+             for bound in api._get_bound_routers()
+             for path_view in bound.path_operations.values() for op in path_view.operations}
+    tools = _tools()
+    hosts = [name for name, g in gates.items() if g is not None and "host" in g.labels]
+    assert "get_site_agents" in hosts  # the label this test keys on still means this
+    assert [name for name in hosts if name in tools] == []
+
+
 def test_no_generated_tool_collides_with_a_hand_written_one(db):
     """FastMCP resolves hand-written tools first, so a route sharing a
     hand-written tool's name would be silently unreachable. A hand-written tool
