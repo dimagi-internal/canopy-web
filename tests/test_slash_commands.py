@@ -2,11 +2,14 @@
 run, and a session's composer is offered that plus its agent's launchable skills
 — only to someone who can send to it."""
 
+import json
+
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
+from apps.agents import skill_catalog
 from apps.agents.models import Agent, AgentSkill
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.harness.models import Runner, RunnerSlashCommands
@@ -92,6 +95,60 @@ def test_a_bound_session_merges_the_runner_list_agent_skills_first(setup):
     assert [r["name"] for r in rows] == ["hal:turn", "hal:setup", "ace:run", "zeta"]
     assert rows[0]["source"] == "agent" and rows[0]["args_hint"] == "scope (optional)"
     assert rows[0]["description"] == "from disk"
+
+
+def test_an_internal_skill_is_not_offered_and_a_report_without_the_field_means_not_internal(setup):
+    RunnerBinding.objects.create(session=setup["session"], runner=setup["runner"], session_key="k")
+    assert _report(setup, [
+        {"name": "hal:shipping", "description": "ships", "source": "plugin", "internal": True},
+        {"name": "hal:ask", "description": "asks", "source": "acp", "internal": False},
+        {"name": "hal:old-runner", "description": "no field at all", "source": "plugin"},
+    ]).status_code == 204
+    names = [r["name"] for r in _commands(setup["owner"], setup["session"])]
+    assert names == ["hal:turn", "hal:ask", "hal:old-runner"]
+
+
+def test_being_launchable_does_not_put_an_internal_skill_on_the_menu(setup):
+    # Marked on the agent's row: a session with no runner yet has no report to ask.
+    AgentSkill.objects.filter(agent=setup["agent"], name="turn").update(internal=True)
+    assert _commands(setup["owner"], setup["session"]) == []
+    # Marked on the report: the row has not caught up yet.
+    AgentSkill.objects.filter(agent=setup["agent"], name="turn").update(internal=False)
+    RunnerBinding.objects.create(session=setup["session"], runner=setup["runner"], session_key="k")
+    _report(setup, [{"name": "hal:turn", "source": "plugin", "internal": True}])
+    assert _commands(setup["owner"], setup["session"]) == []
+
+
+def test_skill_files_on_a_box_to_the_menu_and_the_catalog(setup, tmp_path, monkeypatch):
+    """The whole way: real files, the runner's real scan, its report over the API,
+    the catalog tick, then both reads. The marker is written as Trellis writes it."""
+    from canopy_runner import slash_commands as runner_scan
+
+    monkeypatch.setattr(runner_scan, "_acp_seen", {})
+    plugin = tmp_path / "plugins" / "hal"
+    files = {
+        "turn": "description: Do a turn.",
+        "shipping": "user-invocable: false   # internal: Claude invokes it when a turn is about to ship\n"
+                    "description: How Hal ships.",
+    }
+    for name, header in files.items():
+        path = plugin / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"---\nname: {name}\n{header}\n---\nbody")
+    (tmp_path / ".claude" / "plugins").mkdir(parents=True)
+    (tmp_path / ".claude" / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"plugins": {"hal@hal": [{"installPath": str(plugin)}]}}))
+
+    setup["agent"].skills.all().delete()
+    RunnerBinding.objects.create(session=setup["session"], runner=setup["runner"], session_key="k")
+    assert _report(setup, runner_scan.scan(tmp_path)).status_code == 204
+    assert skill_catalog.refresh(setup["agent"]) == 2
+
+    assert [r["name"] for r in _commands(setup["owner"], setup["session"])] == ["hal:turn"]
+    catalog = _client(setup["owner"]).get("/api/agents/hal/skills/").json()
+    assert {s["name"]: s["internal"] for s in catalog} == {"turn": False, "shipping": True}
+    detail = _client(setup["owner"]).get("/api/agents/hal/").json()
+    assert detail["skill_count"] == 2
 
 
 def test_someone_who_can_only_read_gets_nothing(setup):

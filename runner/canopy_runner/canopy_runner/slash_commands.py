@@ -45,9 +45,23 @@ def _load_json(path: pathlib.Path):
         return None
 
 
+def _scalar(raw: str) -> str:
+    """One `key: value`'s value: its quotes off, or a trailing `# comment` off, as
+    YAML reads it. A `#` only starts a comment after whitespace, and never inside
+    quotes. `user-invocable: false   # internal` is how the fleet's skills say it."""
+    v = raw.strip()
+    m = re.match(r'^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$', v)
+    if m:
+        return m.group(1).replace('\\"', '"')
+    m = re.match(r"^'((?:[^']|'')*)'\s*(?:#.*)?$", v)
+    if m:
+        return m.group(1).replace("''", "'")
+    return re.sub(r"(?:^|\s+)#.*$", "", v)
+
+
 def _frontmatter(text: str) -> tuple[dict, str]:
     """(top-level scalar keys, body). Enough YAML for a skill's header: `key: value`,
-    quoted values, and `|`/`>` blocks folded to one line."""
+    quoted values, comments, and `|`/`>` blocks folded to one line."""
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
@@ -67,12 +81,10 @@ def _frontmatter(text: str) -> tuple[dict, str]:
         m = re.match(r"^([A-Za-z0-9_-]+):\s*(.*)$", line)
         if not m:
             continue
-        k, v = m.group(1), m.group(2).strip()
+        k, v = m.group(1), _scalar(m.group(2))
         if v in ("|", ">", "|-", ">-"):
             key, block = k, []
             continue
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-            v = v[1:-1].replace('\\"', '"') if v[0] == '"' else v[1:-1].replace("''", "'")
         out[k] = v
     if key is not None:
         out[key] = " ".join(b for b in block if b)
@@ -82,26 +94,29 @@ def _frontmatter(text: str) -> tuple[dict, str]:
 def _entry(path: pathlib.Path, prefix: str, default: str, source: str, *,
            named_by_header: bool) -> dict | None:
     """One command from its file. A skill may name itself in its header; a
-    command file is named by its file name."""
+    command file is named by its file name. `user-invocable: false` (Claude Code's
+    own marker: Claude may load it, a person is not offered it) is reported as
+    `internal`, so canopy-web keeps the skill in the catalog and off the `/` menu."""
     try:
         text = path.read_text(errors="replace")
     except OSError:
         return None
     meta, body = _frontmatter(text)
-    if str(meta.get("user-invocable", "")).lower() == "false":
-        return None
     name = prefix + ((meta.get("name") if named_by_header else "") or default)
     if not _NAME.match(name):
         return None
     description = meta.get("description", "")
     if not description:
         description = next((ln.strip().lstrip("#").strip() for ln in body.splitlines() if ln.strip()), "")
-    return {
+    entry = {
         "name": name,
         "description": description[:MAX_DESCRIPTION],
         "args_hint": str(meta.get("argument-hint", ""))[:MAX_ARGS_HINT],
         "source": source,
     }
+    if str(meta.get("user-invocable", "")).lower() == "false":
+        entry["internal"] = True
+    return entry
 
 
 def _scan_dir(root: pathlib.Path, prefix: str, source: str) -> list[dict]:
@@ -167,7 +182,9 @@ def remember_acp(available) -> None:
 def scan(home: pathlib.Path | None = None) -> list[dict]:
     """Every command a session on this box can run, by name, sorted. On a name
     clash the first wins: what ACP announced (Claude's own list), then the
-    account's own, then plugins."""
+    account's own, then plugins. The exception is a file that says it is internal,
+    which beats ACP: `_acp_seen` lives as long as the process, so it still holds
+    what a session announced before the skill was marked."""
     home = home or pathlib.Path.home()
     found: list[dict] = [_acp_seen[k] for k in sorted(_acp_seen)]
     found += _scan_dir(home / ".claude", "", "user")
@@ -175,7 +192,10 @@ def scan(home: pathlib.Path | None = None) -> list[dict]:
         found += _scan_dir(root, f"{plugin}:", "plugin")
     by_name: dict[str, dict] = {}
     for e in found:
-        by_name.setdefault(e["name"], e)
+        if e.get("internal"):
+            by_name[e["name"]] = e
+        else:
+            by_name.setdefault(e["name"], e)
     return [by_name[k] for k in sorted(by_name)][:MAX_COMMANDS]
 
 

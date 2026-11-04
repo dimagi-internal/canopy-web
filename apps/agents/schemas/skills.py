@@ -34,6 +34,9 @@ class AgentSkillOut(StrictModel):
     improvement_note: str
     launchable: bool
     args_hint: str
+    # A real skill Claude loads, not offered as a `/` command. A catalog's count
+    # includes these; its usable commands are the rows without.
+    internal: bool
     updated_at: dt.datetime
 
 

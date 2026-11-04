@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import Client
 from django.utils import timezone
 
 from apps.agents import alerts_skill_catalog as src
@@ -77,6 +78,45 @@ def test_a_published_catalog_is_never_touched(w):
     _report(w["box"], [_cmd("trellis:turn")])
     assert skill_catalog.refresh(w["trellis"]) is None
     assert [s.name for s in w["trellis"].skills.all()] == ["mine"]
+
+
+def _catalog(user, agent):
+    c = Client()
+    c.force_login(user)
+    resp = c.get(f"/api/agents/{agent.slug}/skills/")
+    assert resp.status_code == 200, resp.content
+    return {s["name"]: s for s in resp.json()}
+
+
+def test_an_internal_skill_stays_in_the_catalog_marked(w):
+    _report(w["box"], [_cmd("trellis:turn"), {**_cmd("trellis:shipping"), "internal": True}])
+    assert skill_catalog.refresh(w["trellis"]) == 2
+    rows = _catalog(w["jj"], w["trellis"])
+    assert set(rows) == {"turn", "shipping"}
+    assert rows["shipping"]["internal"] is True and rows["turn"]["internal"] is False
+
+
+def test_the_mark_follows_the_report_and_a_report_without_it_means_not_internal(w):
+    _report(w["box"], [{**_cmd("trellis:shipping"), "internal": True}])
+    skill_catalog.refresh(w["trellis"])
+    _report(w["box"], [_cmd("trellis:shipping")])  # an older runner's report
+    skill_catalog.refresh(w["trellis"])
+    assert _catalog(w["jj"], w["trellis"])["shipping"]["internal"] is False
+
+
+def test_a_published_catalog_keeps_its_rows_and_takes_only_the_mark(w):
+    # A publish cannot say a skill is internal, so only a report can mark it. ACE's
+    # catalog is published and goes stale: rows the report does not name are left be.
+    AgentSkill.objects.create(agent=w["trellis"], name="shipping", description="published words")
+    AgentSkill.objects.create(agent=w["trellis"], name="turn", launchable=True)
+    AgentSkill.objects.create(agent=w["trellis"], name="gone-from-the-repo")
+    _report(w["box"], [{**_cmd("trellis:shipping", "reported words"), "internal": True},
+                       _cmd("trellis:turn"), _cmd("trellis:not-published")])
+    assert skill_catalog.refresh(w["trellis"]) is None
+    rows = _catalog(w["jj"], w["trellis"])
+    assert set(rows) == {"shipping", "turn", "gone-from-the-repo"}
+    assert rows["shipping"]["internal"] is True and rows["shipping"]["description"] == "published words"
+    assert rows["turn"]["internal"] is False and rows["turn"]["launchable"] is True
 
 
 def test_a_box_that_may_not_hold_the_agent_is_not_believed(w):

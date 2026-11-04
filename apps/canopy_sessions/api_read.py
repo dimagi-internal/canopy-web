@@ -353,7 +353,8 @@ def _github_identity(session) -> dict:
 @gate("session-acl")  # can_write: only someone who can send gets the list
 def list_slash_commands(request: HttpRequest, session_id: uuid.UUID):
     """What `/` offers in this session's composer: the agent's launchable skills
-    and what the session's runner reported it can run. Empty for someone who can
+    and what the session's runner reported it can run, leaving out internal skills
+    (`user-invocable: false`), which stay in the agent's catalog. Empty for someone who can
     read the session but not send to it."""
     session = _session_or_404(request, session_id)
     if not access.can_write(request.user, session):

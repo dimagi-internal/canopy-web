@@ -249,7 +249,12 @@ export function SkillCard({ skill }: { skill: AgentSkillOut }) {
     <div className="bg-card border border-border rounded-xl p-4">
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-[14px] font-semibold text-foreground leading-snug min-w-0">{skill.name}</h3>
-        <OpenDocChip url={skill.url} label="SKILL.md" />
+        <div className="flex items-center gap-2 shrink-0">
+          {skill.internal && (
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Internal</span>
+          )}
+          <OpenDocChip url={skill.url} label="SKILL.md" />
+        </div>
       </div>
       {skill.description && (
         <p className="text-[12px] text-muted-foreground leading-relaxed mt-2">{skill.description}</p>

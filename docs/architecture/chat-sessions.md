@@ -527,6 +527,14 @@ written — when no runner has reported it within `SESSION_LIVE_WINDOW`
   table of its own: the list is ~120 KB per box and must never ride on the `Runner` row,
   which every poll and every `select_related` loads).
   A session not yet on a runner offers only the agent's skills.
+- An internal skill is never offered, from either source. Internal is Claude Code's own
+  marker, `user-invocable: false` in the skill's frontmatter (a trailing `# comment` included):
+  Claude may load it, a person is not offered it. Not a list of names, and not
+  `disable-model-invocation`, which is the opposite (a person starts it, Claude may not).
+  The runner reports the skill with `internal: true` and the catalog keeps it as a row
+  (`AgentSkill.internal`, set by `apps/agents/skill_catalog.py`, on a published catalog too),
+  so the catalog's count includes it and the Skills page says how many are usable commands.
+  A report without the field, from an older runner, means not internal.
 - Each runner reports what its sessions can run (`canopy_runner/slash_commands.py`, shared by
   the cloud runner), and sends it only when the list changes: `~/.claude/skills`,
   `~/.claude/commands`, enabled plugins as `plugin:name`, plus whatever ACP sessions announced

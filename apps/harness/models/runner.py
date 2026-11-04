@@ -644,9 +644,11 @@ class Runner(models.Model):
 class RunnerSlashCommands(models.Model):
     """The slash commands a Claude session on this box can run (its account's
     skills and commands, its enabled plugins', and what ACP announced), as
-    [{name, description, args_hint, source}] — REPORTED by the box when the list
-    changes (`canopy_runner.slash_commands`), never typed. Feeds the chat
-    composer's `/` autocomplete. No row = never reported (an older runner).
+    [{name, description, args_hint, source, internal}] — REPORTED by the box when
+    the list changes (`canopy_runner.slash_commands`), never typed. Feeds the chat
+    composer's `/` autocomplete, which leaves out `internal` entries, and the skill
+    catalog, which keeps them. No row = never reported (an older runner); no
+    `internal` key = an older runner's report, and not internal.
 
     A table of its own, never a column on Runner: one list runs to ~460 rows and
     ~120 KB, and a Runner row is loaded on every poll a box makes and by every
