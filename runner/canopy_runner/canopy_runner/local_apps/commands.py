@@ -99,7 +99,7 @@ def _published_plan(entry: dict, by_key: dict, srv: server.RunnerServer) -> Plan
         raise Refusal(f"the package for {entry.get('key')} says it is "
                       f"{manifest['key']} {manifest['version']}; refusing it")
     plan = Plan(key=manifest["key"], version=manifest["version"], manifest=manifest, cwd=cwd,
-                settings=entry.get("settings") or {}, unpublished=False,
+                settings=entry.get("settings") or {}, unpublished=False, agent=entry.get("agent") or "",
                 needs_acceptance=bool(entry.get("needs_acceptance")),
                 changes=list(entry.get("changes") or []))
     source_key = entry.get("source_key")
@@ -206,7 +206,7 @@ def _print_failed(failed: list) -> None:
 
 
 def _notice_text(plan: Plan) -> str:
-    lines = []
+    lines = [f"Goes to: {plan.agent}"] if plan.agent else []
     for each in filter(None, (plan, plan.source)):
         manifest = each.manifest
         if manifest["notice"]:
@@ -286,7 +286,11 @@ def _cmd_start(args) -> int:
     if srv is None:
         run_id = f"dev-{uuid.uuid4()}"
     else:
-        run_id = srv.start_run(key, plan.version)
+        # Checks and a prompt can take a while, and the server ends any earlier run when this
+        # one starts: a second Start in that gap would stop a live meeting and then itself.
+        if state.host_alive(key):
+            raise Refusal(f"{key} is already running")
+        run_id = srv.start_run(key, plan.version, plan.source.version if plan.source else "")
     spec = RunSpec(key=key, version=plan.version, run_id=run_id,
                    max_minutes=plan.manifest["max_minutes"], canopy=list(plan.manifest["canopy"]),
                    sensitive=_is_sensitive(plan), unpublished=plan.unpublished, app=_child_spec(plan),
@@ -322,6 +326,34 @@ def _list_entry_from_dev(key: str, record: dict) -> dict:
             "needs_acceptance": False, "changes": [], "refusal": None, "source_key": None}
 
 
+def _entry_notice(entry: dict, by_key: dict) -> str:
+    """What a person agrees to at Start, from the list alone: the menu shows this before it
+    has downloaded anything, and it has to cover the source as well."""
+    lines = [f"Goes to: {entry['agent']}"] if entry.get("agent") else []
+    for each in filter(None, (entry, by_key.get(entry.get("source_key")))):
+        if each.get("notice"):
+            lines.append(each["notice"])
+        disclosure = each.get("disclosure") or {}
+        lines.extend(f"Reads: {text}" for text in disclosure.get("reads") or [])
+        lines.extend(f"Sends: {text}" for text in disclosure.get("sends") or [])
+    return "\n".join(lines)
+
+
+def _prune(apps: list, dev: dict) -> None:
+    """Removed or withdrawn code doesn't stay on this computer: keep only the version each
+    installed app would run. Only on a good answer from the server, and never a running app."""
+    wanted = {a.get("key"): a.get("version") for a in apps}
+    for key in state.installed_keys():
+        if key in dev or state.host_alive(key):
+            continue
+        versions = state.versions_dir(key)
+        if not versions.is_dir():
+            continue
+        for folder in versions.iterdir():
+            if folder.name != wanted.get(key):
+                shutil.rmtree(folder, ignore_errors=True)
+
+
 def _cmd_list(args) -> int:
     offline = ""
     apps: list = []
@@ -330,6 +362,11 @@ def _cmd_list(args) -> int:
     except (server.Unreachable, Refusal) as exc:
         offline = str(exc)
     dev = _dev_entries()
+    if not offline:
+        _prune(apps, dev)
+    by_key = {a.get("key"): a for a in apps}
+    for app in apps:
+        app["full_notice"] = _entry_notice(app, by_key)
     apps = [a for a in apps if a.get("key") not in dev]
     apps += [_list_entry_from_dev(key, record) for key, record in sorted(dev.items())]
     for app in apps:
@@ -424,12 +461,25 @@ def _force_kill(key: str) -> None:
     state.write_json(state.run_file(key), record)
 
 
+def _kill_leftovers(key: str) -> None:
+    record = state.read_json(state.run_file(key))
+    if record.get("stopped_at"):
+        return
+    for pid in record.get("children") or []:
+        try:
+            os.killpg(int(pid), signal.SIGKILL)
+        except (OSError, ValueError, TypeError):
+            pass
+
+
 def stop_apps(keys: list, *, wait: float = STOP_WAIT_SECONDS) -> dict:
     """Signal every supervisor first and then wait, so a slow one can't delay the others."""
     outcome = {}
     waiting = []
     for key in keys:
         if not state.host_alive(key):
+            # A supervisor that died mid-run left its children. Stop means stop.
+            _kill_leftovers(key)
             outcome[key] = "not running"
             continue
         try:

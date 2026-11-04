@@ -92,6 +92,9 @@ class LocalAppRun(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     installation = models.ForeignKey(LocalAppInstallation, on_delete=models.CASCADE, related_name="runs")
     version = models.ForeignKey(LocalAppSubmission, on_delete=models.PROTECT, related_name="+")
+    #: The source it listens to, so that revoking the source reaches this run too.
+    source_version = models.ForeignKey(LocalAppSubmission, null=True, blank=True, on_delete=models.PROTECT,
+                                       related_name="+")
     started_at = models.DateTimeField(auto_now_add=True)
     last_beat_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)

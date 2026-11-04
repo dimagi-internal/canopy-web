@@ -17,7 +17,8 @@ from pathlib import Path, PurePosixPath
 
 from . import manifest as manifest_mod
 
-MAX_PACKED = 5 * 1024 * 1024
+#: The server's limit: a package travels base64-encoded in a JSON body.
+MAX_PACKED = int(1.5 * 1024 * 1024)
 MAX_UNPACKED = 20 * 1024 * 1024
 MAX_FILES = 200
 MANIFEST = "manifest.json"
@@ -108,7 +109,7 @@ def pack(folder: Path) -> tuple[dict, bytes]:
             archive.writestr(info, data)
     packed = buffer.getvalue()
     if len(packed) > MAX_PACKED:
-        raise PackageError(f"package is over {MAX_PACKED // (1024 * 1024)} MB")
+        raise PackageError(f"package is over {MAX_PACKED / (1024 * 1024)} MB")
     return manifest, packed
 
 
@@ -124,7 +125,7 @@ def _safe_name(name: str) -> PurePosixPath:
 def _extract(data: bytes, dest: Path) -> list[tuple[Path, bool]]:
     """Writes the files into dest, which must exist and be empty."""
     if len(data) > MAX_PACKED:
-        raise PackageError(f"package is over {MAX_PACKED // (1024 * 1024)} MB")
+        raise PackageError(f"package is over {MAX_PACKED / (1024 * 1024)} MB")
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:

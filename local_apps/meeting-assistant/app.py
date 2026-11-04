@@ -38,6 +38,8 @@ UTTERANCE_GAP_SECONDS = 20.0
 POLL_SECONDS = 3.0
 INTERVAL_SECONDS = 45.0
 MIN_WORDS = 8
+#: Under the server's limit for one message, leaving room for the notes around the text.
+MAX_BATCH_CHARS = 50_000
 IDLE_STOP_SECONDS = 600.0
 CALL_TIMEOUT_SECONDS = 90.0
 
@@ -171,9 +173,17 @@ class Feed:
         return None
 
     def _freeze(self) -> None:
-        runs = utterances(self.buffer)
+        # Text held behind a slow agent can outgrow one message. What doesn't fit waits for the
+        # next batch, because the server would refuse the whole thing and it'd all be lost.
+        taken, chars = 0, 0
+        for segment in self.buffer:
+            chars += len(str(segment.get("text") or "")) + 1
+            if chars > MAX_BATCH_CHARS and taken:
+                break
+            taken += 1
+        runs = utterances(self.buffer[:taken])
         words = sum(len(text.split()) for _, _, text in runs)
-        self.buffer = []
+        self.buffer = self.buffer[taken:]
         if not runs:
             return
         self.sequence += 1
@@ -214,6 +224,8 @@ class Feed:
         if final:
             if self.pending and self.pending.attempts < FINAL_SEND_ATTEMPTS:
                 return  # the last batch hasn't landed; the next tick retries it
+            if self.pending is None and self.buffer and final != "meeting_gone":
+                return  # more than one message's worth was held; the next tick sends the rest
             if self.pending:
                 self.log("dropped_unsent", words=self.pending.words)
                 self.pending = None

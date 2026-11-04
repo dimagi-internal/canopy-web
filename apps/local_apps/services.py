@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime as dt
+import hashlib
 import uuid
 
 from django.db import transaction
@@ -20,6 +21,7 @@ from apps.agents import access as agent_access
 from apps.agents.models import Agent
 from apps.approvals import services as approvals
 from apps.approvals.models import ApprovalRequest
+from apps.canopy_sessions import access as session_access
 from apps.canopy_sessions import attachment_storage, doors
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session
@@ -27,6 +29,7 @@ from apps.harness import initiator as who
 from apps.harness.models import Runner, Turn
 from apps.workspace_apps.models import AppTemplate, AppTemplateVersion
 from apps.workspace_apps.services import _version_key
+from apps.workspaces import permissions as perms
 from apps.workspaces.links import scoped_url
 from apps.workspaces.models import Workspace
 
@@ -154,6 +157,10 @@ def submit(*, package_b64: str, note: str, workspace: Workspace, user) -> tuple[
     top = latest(m["key"])
     if top is not None and _version_key(m["version"]) <= _version_key(top.version):
         raise Refused(f"version {m['version']} isn't newer than the released {top.version}", 409)
+    # Review is the protection, so what can't all be read on the review page can't be submitted.
+    before = pkg.read(package_bytes(top)).files if top else None
+    if pkg.diff_lines(before, package.files) > pkg.MAX_DIFF_LINES:
+        raise Refused(f"this changes over {pkg.MAX_DIFF_LINES} lines, more than a reviewer can read. Split it up.", 422)
     storage_key = ""
     local = None
     if attachment_storage.is_configured():
@@ -262,7 +269,9 @@ def _clean_settings(manifest: dict, values: dict, workspace: Workspace, user, *,
 
 def _usable_agent(slug: str, workspace: Workspace, user) -> Agent:
     agent = Agent.objects.filter(slug=slug, workspace=workspace).first()
-    if agent is None or agent_access.decide(agent, user, verified=True).access == "none":
+    # verified=False because that's how a run's turn is judged (its assurance is the runner's
+    # key), so this answers the same as the turn will rather than promising more.
+    if agent is None or agent_access.decide(agent, user, verified=False).access == "none":
         raise Refused(f"you can't use the agent '{slug}' in this workspace", 403)
     return agent
 
@@ -280,36 +289,42 @@ def install(
     sub = latest(key)
     if sub is None:
         raise Refused(f"there is no released app '{key}'", 404)
-    if trust.digest(sub.manifest) != accept_digest:
-        raise Refused("this app changed while you were reading. Read it again.", 409)
     sources = []
     for stream in sub.manifest["consumes"]:
         source = provider_of(stream)
         if source is None:
             raise Refused(f"no single app provides '{stream}' yet", 409)
         sources.append(source)
+    if install_digest(sub, sources) != accept_digest:
+        raise Refused("this app changed while you were reading. Read it again.", 409)
     clean = _clean_settings(sub.manifest, settings or {}, workspace, user)
     with transaction.atomic():
-        inst = _install_one(sub, user, runner, workspace, clean)
+        inst = _install_one(sub, user, runner, workspace, clean, accepting=True)
         for source in sources:
-            _install_one(source, user, runner, workspace, {})
+            # A source already here keeps what was accepted for it. A newer promise of
+            # its own is accepted on its own row, not in passing by installing something else.
+            _install_one(source, user, runner, workspace, {}, accepting=False)
     return inst
 
 
-def _install_one(sub, user, runner, workspace, settings) -> LocalAppInstallation:
+def install_digest(sub: LocalAppSubmission, sources: list[LocalAppSubmission]) -> str:
+    """Everything a person accepts by installing: the app and the source that comes with it."""
+    if not sources:
+        return trust.digest(sub.manifest)
+    return hashlib.sha256("".join(trust.digest(s.manifest) for s in (sub, *sources)).encode()).hexdigest()
+
+
+def sources_of(sub: LocalAppSubmission) -> list[LocalAppSubmission]:
+    return [s for s in (provider_of(stream) for stream in sub.manifest["consumes"]) if s is not None]
+
+
+def _install_one(sub, user, runner, workspace, settings, *, accepting: bool) -> LocalAppInstallation:
     template = sub.release.template
     inst, created = LocalAppInstallation.objects.get_or_create(
-        user=user,
-        runner=runner,
-        template=template,
-        defaults={
-            "workspace": workspace,
-            "settings": settings,
-            "accepted": sub,
-            "accepted_digest": trust.digest(sub.manifest),
-        },
-    )
-    if not created:
+        user=user, runner=runner, template=template,
+        defaults={"workspace": workspace, "settings": settings, "accepted": sub,
+                  "accepted_digest": trust.digest(sub.manifest)})
+    if not created and accepting:
         inst.workspace, inst.accepted, inst.accepted_digest = workspace, sub, trust.digest(sub.manifest)
         inst.settings = {**inst.settings, **settings}
         inst.save()
@@ -356,6 +371,8 @@ def resolve(inst: LocalAppInstallation) -> dict:
             version = inst.accepted
     if refusal is None and not switched_on(inst.workspace):
         refusal = "Apps that run on your computer are switched off in this workspace."
+    if refusal is None and not perms.can(inst.user, inst.workspace, perms.READ):
+        refusal = "You're no longer in this app's workspace."
     if refusal is None and version is not None:
         settings_spec = version.manifest["settings"]
         for name, field in settings_spec.items():
@@ -393,28 +410,53 @@ def live_run(inst: LocalAppInstallation) -> LocalAppRun | None:
 # --- runs -------------------------------------------------------------------------------
 
 
-def start_run(inst: LocalAppInstallation, version: str) -> LocalAppRun:
+def start_run(inst: LocalAppInstallation, version: str, source_version: str = "") -> LocalAppRun:
     state = resolve(inst)
     if state["refusal"]:
         raise Refused(state["refusal"], 403)
     if state["version"].version != version:
         raise Refused(f"run version {state['version'].version}, not {version}", 409)
+    source = _source_for_run(inst, state["version"], source_version)
     # A run that never reported its end (a Mac that slept and never woke it) ends here.
     inst.runs.filter(finished_at__isnull=True).update(finished_at=timezone.now(), stop_reason="replaced")
-    return LocalAppRun.objects.create(installation=inst, version=state["version"])
+    return LocalAppRun.objects.create(installation=inst, version=state["version"], source_version=source)
+
+
+def _source_for_run(inst, version: LocalAppSubmission, source_version: str) -> LocalAppSubmission | None:
+    key = source_key_of(version, inst)
+    if key is None:
+        if version.manifest["consumes"]:
+            raise Refused(f"nothing installed here provides {version.manifest['consumes'][0]}", 409)
+        return None
+    source_inst = LocalAppInstallation.objects.get(user=inst.user, runner=inst.runner, template__key=key)
+    state = resolve(source_inst)
+    if state["refusal"]:
+        raise Refused(f"{source_inst.template.name}: {state['refusal']}", 403)
+    if state["version"].version != source_version:
+        raise Refused(f"run {key} {state['version'].version}, not {source_version or 'nothing'}", 409)
+    return state["version"]
 
 
 def stop_wanted(run: LocalAppRun) -> str:
     """Why this run must stop, or "" if it may go on. Read at each heartbeat and each
-    Canopy call, which is what makes revoking and the workspace switch reach running copies."""
+    Canopy call, so a decision made after Start reaches running copies: revoking, the
+    workspace switch, and the person losing their access."""
     if run.finished_at:
         return "finished"
-    if run.version.revoked_at:
+    if run.version.revoked_at or (run.source_version and run.source_version.revoked_at):
         return "revoked"
     if run.stop_requested:
         return "stopped_from_website"
-    if not switched_on(run.installation.workspace):
+    inst = run.installation
+    if not switched_on(inst.workspace):
         return "switched_off"
+    if not perms.can(inst.user, inst.workspace, perms.READ):
+        return "no_longer_in_workspace"
+    if slug := agent_slug(inst, run.version):
+        try:
+            _usable_agent(slug, inst.workspace, inst.user)
+        except Refused:
+            return "no_longer_allowed_to_use_agent"
     return ""
 
 
@@ -467,6 +509,10 @@ def _session_of(run: LocalAppRun, raw) -> Session:
     session = Session.objects.filter(pk=session_id).first()
     if session is None:
         raise Refused("that session is gone", 404)
+    # Having opened it isn't standing: every door into a chat asks the one ACL, so
+    # someone removed from this session stops being able to send here too.
+    if not session_access.can_write(run.installation.user, session):
+        raise Refused("you can no longer write in that session", 403)
     return session
 
 
@@ -507,6 +553,10 @@ def _send(run: LocalAppRun, args: dict) -> dict:
         )
     except ValueError as exc:
         raise Refused(str(exc), 422) from exc
+    # A refused turn is written as cancelled with the text kept on it. Say so, or the app
+    # would count it as sent and go on sending a conversation nobody is reading.
+    if turn is not None and turn.status == Turn.CANCELLED:
+        raise Refused("your agent didn't accept that", 403)
     return {"turn_id": str(turn.pk) if turn else None}
 
 

@@ -87,11 +87,11 @@ class RunnerServer:
             raise package.PackageError("the download is larger than a package may be")
         return data
 
-    def start_run(self, key: str, version: str) -> str:
+    def start_run(self, key: str, version: str, source_version: str = "") -> str:
         # Not re-sent: a retry after the server made the run would make a second one.
         try:
             _, body = self.client._call("POST", f"{self.prefix}/{_quoted(key)}/runs/",
-                                        {"version": version}, retry=False)
+                                        {"version": version, "source_version": source_version}, retry=False)
         except ClientError as exc:
             if exc.status and exc.status < 500:
                 raise Refused(_detail(exc) or f"canopy refused (HTTP {exc.status})") from exc

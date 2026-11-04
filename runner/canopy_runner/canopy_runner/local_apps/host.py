@@ -313,7 +313,7 @@ class Host:
             kind = message["type"]
             if not isinstance(kind, str):
                 raise TypeError
-        except (ValueError, TypeError, KeyError, UnicodeDecodeError):
+        except (ValueError, TypeError, KeyError, UnicodeDecodeError, RecursionError):
             self._note_bad()
             return
         if role == "source":
@@ -588,11 +588,14 @@ class Host:
                     self._handle(*self.inbox.get_nowait())
             except queue.Empty:
                 pass
+            except Exception:  # noqa: BLE001 — nothing an app sends, nor a full disk, may end the supervisor
+                self._note_bad()
         return self._wrap_up()
 
     def _wrap_up(self) -> str:
         self.done.set()
         self.calls.put(None)
+        self._kill_groups()
         for child in (self.app, self.source):
             if child:
                 try:
@@ -606,6 +609,15 @@ class Host:
         self.lock.release()
         self._finish_server(self.stop_reason)
         return self.stop_reason
+
+    def _kill_groups(self) -> None:
+        """A child's own helpers, such as a recorder it started, outlive it unless told."""
+        for child in (self.app, self.source):
+            if child and child.proc is not None:
+                try:
+                    os.killpg(child.proc.pid, signal.SIGKILL)
+                except (OSError, ValueError):
+                    pass
 
     def _finish_server(self, reason: str) -> None:
         try:
@@ -641,7 +653,10 @@ def main(argv=None) -> int:
     host = Host(spec, _link_for(spec))
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: host.request_stop(STOPPED_BY_YOU))
-    host.run()
+    try:
+        host.run()
+    finally:
+        host._kill_groups()
     return 0
 
 

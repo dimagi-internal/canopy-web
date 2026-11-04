@@ -18,7 +18,8 @@ from dataclasses import dataclass
 
 from . import manifest as mf
 
-MAX_PACKED = 5 * 1024 * 1024
+#: A package arrives base64-encoded in JSON, and Django caps a request body at 2.5 MB.
+MAX_PACKED = int(1.5 * 1024 * 1024)
 MAX_UNPACKED = 20 * 1024 * 1024
 MAX_FILES = 200
 MAX_DIFF_LINES = 4000
@@ -58,7 +59,7 @@ class Package:
 def _safe_name(info: zipfile.ZipInfo) -> str:
     name = info.filename
     parts = name.split("/")
-    if name.startswith("/") or "\\" in name or ".." in parts or not all(parts):
+    if name.startswith("/") or "\\" in name or ".." in parts or "." in parts or not all(parts):
         raise BadPackage(f"'{name}' is not a plain path inside the package")
     if stat.S_ISLNK(info.external_attr >> 16):
         raise BadPackage(f"'{name}' is a symlink")
@@ -68,7 +69,7 @@ def _safe_name(info: zipfile.ZipInfo) -> str:
 def read(data: bytes) -> Package:
     """Check a package's bytes and return what's in it, or raise BadPackage."""
     if len(data) > MAX_PACKED:
-        raise BadPackage(f"the package is over {MAX_PACKED // (1024 * 1024)} MB")
+        raise BadPackage(f"the package is over {MAX_PACKED / (1024 * 1024)} MB")
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -82,7 +83,8 @@ def read(data: bytes) -> Package:
     files: dict[str, bytes] = {}
     for info in infos:
         name = _safe_name(info)
-        if name in files:
+        # Casefolded because macOS would write both names to one file.
+        if name.casefold() in {n.casefold() for n in files}:
             raise BadPackage(f"'{name}' appears twice")
         with archive.open(info) as handle:
             body = handle.read(MAX_UNPACKED + 1)
@@ -158,6 +160,17 @@ def facts(pkg: Package) -> dict:
         "risky": risky,
         "unparsed": unparsed,
     }
+
+
+def diff_lines(old: dict[str, bytes] | None, new: dict[str, bytes]) -> int:
+    """How many lines a reviewer would have to read, counted without any cap."""
+    old = old or {}
+    total = 0
+    for name in set(old) | set(new):
+        if old.get(name) != new.get(name):
+            total += sum(1 for _ in difflib.unified_diff(
+                (old.get(name) or b"").decode().splitlines(), (new.get(name) or b"").decode().splitlines(), n=3))
+    return total
 
 
 def diff(old: dict[str, bytes] | None, new: dict[str, bytes]) -> list[dict]:

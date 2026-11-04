@@ -20,7 +20,9 @@ from apps.agents import access as agent_access
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.contacts import people
 from apps.harness.runner_queries import runner_or_404
+from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_url
@@ -69,8 +71,15 @@ def _usable_agents(workspace: Workspace, user) -> list[dict[str, str]]:
     return [
         {"slug": a.slug, "name": a.name or a.slug}
         for a in rows
-        if agent_access.decide(a, user, verified=True, standing=standings.of(user, a)).access != "none"
+        if agent_access.decide(a, user, verified=False, standing=standings.of(user, a)).access != "none"
     ]
+
+
+def _the_person_themself(request: HttpRequest) -> None:
+    """These decide what a person agreed to and where their conversation goes. An agent
+    acting for them could otherwise accept a wider disclosure or redirect the transcript."""
+    if kinds.speaks_for_a_turn(request) or people.agent_of_login(request.user) is not None:
+        raise HttpError(403, "Only the person may do this")
 
 
 def _refused(exc: services.Refused) -> HttpError:
@@ -131,11 +140,7 @@ def get_local_app(request: HttpRequest, workspace: str, key: str) -> LocalAppDet
     if sub is None or not services.switched_on(ws):
         raise HttpError(404, "no such app")
     m = sub.manifest
-    with_it = []
-    for stream in m["consumes"]:
-        source = services.provider_of(stream)
-        if source is not None:
-            with_it.append(source.manifest["name"])
+    sources = services.sources_of(sub)
     versions = LocalAppSubmission.objects.filter(key=key, released_at__isnull=False)
     return LocalAppDetailOut(
         key=sub.key,
@@ -146,8 +151,10 @@ def get_local_app(request: HttpRequest, workspace: str, key: str) -> LocalAppDet
         notice=m["notice"],
         disclosure=m["disclosure"],
         settings=m["settings"],
-        digest=trust.digest(m),
-        installs_with=with_it,
+        digest=services.install_digest(sub, sources),
+        installs_with=[x.manifest["name"] for x in sources],
+        source_disclosures=[{"name": x.manifest["name"], "notice": x.manifest["notice"],
+                             "disclosure": x.manifest["disclosure"]} for x in sources],
         agents=_usable_agents(ws, request.user),
         computers=[{"id": str(r.pk), "name": r.name} for r in services.computers_of(request.user)],
         versions=[
@@ -224,6 +231,7 @@ def _my_installation(request: HttpRequest, installation_id: int) -> LocalAppInst
 def install_local_app(request: HttpRequest, workspace: str, key: str, payload: LocalAppInstallIn):
     """Send back the `digest` you were shown. A web page can install and configure an
     app, but only the person at the computer can start one."""
+    _the_person_themself(request)
     ws = _workspace_or_404(request, workspace)
     try:
         inst = services.install(
@@ -264,6 +272,7 @@ def list_my_local_apps(request: HttpRequest) -> list[LocalAppInstallationOut]:
 def configure_local_app(
     request: HttpRequest, installation_id: int, payload: LocalAppConfigureIn
 ) -> LocalAppInstallationOut:
+    _the_person_themself(request)
     inst = _my_installation(request, installation_id)
     try:
         return _installation_out(services.configure(inst, payload.settings, request.user), request.user)
@@ -280,6 +289,7 @@ def configure_local_app(
 def accept_local_app_changes(
     request: HttpRequest, installation_id: int, payload: LocalAppAcceptIn
 ) -> LocalAppInstallationOut:
+    _the_person_themself(request)
     inst = _my_installation(request, installation_id)
     try:
         return _installation_out(services.accept(inst, payload.digest), request.user)
@@ -430,6 +440,14 @@ def _own_runner(request: HttpRequest, runner_id: uuid.UUID):
     return runner
 
 
+def _agent_name(inst: LocalAppInstallation, version: LocalAppSubmission) -> str | None:
+    slug = services.agent_slug(inst, version)
+    if not slug:
+        return None
+    agent = Agent.objects.filter(slug=slug).first()
+    return (agent.name or agent.slug) if agent else slug
+
+
 def _runner_installations(runner):
     return LocalAppInstallation.objects.filter(runner=runner, user_id=runner.owner_id).select_related(
         "template", "accepted", "workspace", "user", "runner"
@@ -485,6 +503,7 @@ def list_runner_local_apps(request: HttpRequest, runner_id: uuid.UUID) -> Runner
                 "refusal": state["refusal"],
                 "running": services.live_run(inst) is not None,
                 "source_key": services.source_key_of(version, inst) if version else None,
+                "agent": _agent_name(inst, version) if version else None,
                 "consumes": m["consumes"],
                 "provides": m["provides"],
                 "checks": m["checks"],
@@ -516,7 +535,7 @@ def start_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, key: str,
     agent the person can no longer use are all refused here."""
     runner = _own_runner(request, runner_id)
     try:
-        run = services.start_run(_runner_installation(runner, key), payload.version)
+        run = services.start_run(_runner_installation(runner, key), payload.version, payload.source_version)
     except services.Refused as exc:
         raise _refused(exc) from exc
     return Status(201, LocalAppStartRunOut(run_id=str(run.pk)))
