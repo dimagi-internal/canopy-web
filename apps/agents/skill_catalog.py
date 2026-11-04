@@ -12,10 +12,14 @@ Every runner already reports the slash commands its sessions can run
 agent's own repo as a box installed it. This module turns those entries into
 catalog rows, from the runners the agent may run on (`runner_may_hold_agent`).
 
-A catalog the agent PUBLISHED is never touched: it carries notes and flags the
-report does not. A catalog this module wrote is replaced as the reports change
-(a skill added, renamed or removed in the repo follows within minutes of a box
-picking the commit up). Rows keep their `launchable` / note by name.
+A catalog the agent PUBLISHED keeps its rows: it carries notes and flags the report
+does not. A catalog this module wrote is replaced as the reports change (a skill
+added, renamed or removed in the repo follows within minutes of a box picking the
+commit up). Rows keep their `launchable` / note by name.
+
+`internal` (`user-invocable: false` in the file) is the one thing only a report
+knows, so it is kept current on both kinds of catalog. An internal skill stays a
+catalog row; only the `/` menu leaves it out (`canopy_sessions.slash_commands`).
 """
 from __future__ import annotations
 
@@ -59,31 +63,37 @@ def reported_skills(agent: Agent) -> list[dict] | None:
         if not found or not runner_may_hold_agent(row.runner, agent):
             continue
         return [{"name": c["name"].split(":", 1)[1], "description": c.get("description") or "",
-                 "args_hint": c.get("args_hint") or ""} for c in found]
+                 "args_hint": c.get("args_hint") or "", "internal": bool(c.get("internal"))} for c in found]
     return None
 
 
 def refresh(agent: Agent) -> int | None:
     """Bring the catalog in line with what runners report. Returns the new count,
-    or None when it left the catalog alone (nothing reported, or the agent's own
-    published catalog stands)."""
+    or None when the rows stand (nothing reported, or the agent's own published
+    catalog, where only `internal` follows the report)."""
     items = reported_skills(agent)
     if items is None:
         return None
     with transaction.atomic():
         existing = {s.name: s for s in agent.skills.select_for_update()}
-        if any(s.source != AgentSkill.FROM_RUNNER for s in existing.values()):
-            return None
         wanted = {i["name"]: i for i in items}
+        if any(s.source != AgentSkill.FROM_RUNNER for s in existing.values()):
+            for name, i in wanted.items():
+                row = existing.get(name)
+                if row is not None and row.internal != i["internal"]:
+                    row.internal = i["internal"]
+                    row.save(update_fields=["internal", "updated_at"])
+            return None
         agent.skills.exclude(name__in=wanted).delete()
         for name, i in wanted.items():
             row = existing.get(name)
             if row is None:
                 AgentSkill.objects.create(agent=agent, name=name, description=i["description"],
-                                          args_hint=i["args_hint"], source=AgentSkill.FROM_RUNNER)
-            elif (row.description, row.args_hint) != (i["description"], i["args_hint"]):
-                row.description, row.args_hint = i["description"], i["args_hint"]
-                row.save(update_fields=["description", "args_hint", "updated_at"])
+                                          args_hint=i["args_hint"], internal=i["internal"],
+                                          source=AgentSkill.FROM_RUNNER)
+            elif (row.description, row.args_hint, row.internal) != (i["description"], i["args_hint"], i["internal"]):
+                row.description, row.args_hint, row.internal = i["description"], i["args_hint"], i["internal"]
+                row.save(update_fields=["description", "args_hint", "internal", "updated_at"])
         return len(wanted)
 
 

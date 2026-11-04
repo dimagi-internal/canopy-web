@@ -679,6 +679,13 @@ class AgentSkill(models.Model):
         max_length=120, blank=True, default="",
         help_text='What the command takes, e.g. "topic (optional)". Renders as the input placeholder.',
     )
+    # `user-invocable: false` in the skill's file, as a runner reports it
+    # (`skill_catalog`): a real skill Claude loads, never offered as a `/` command.
+    # Counted in the catalog, so nothing appears to have vanished. Set only from a
+    # report, on a published catalog too, since a publish does not say it.
+    internal = models.BooleanField(
+        default=False, help_text="Claude loads this skill; a person is not offered it as a command."
+    )
     # Who wrote the row: the agent itself (`PUT …/skills/`, authoritative) or
     # canopy-web from what a runner reports it can run (`skill_catalog`, a
     # fallback that never overwrites a published catalog).

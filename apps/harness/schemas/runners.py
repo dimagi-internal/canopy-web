@@ -90,6 +90,9 @@ class SlashCommandIn(Schema):
     args_hint: str = Field(default="", max_length=120)
     # Where the box found it: user (its account's own), plugin, acp (announced).
     source: str = Field(default="", max_length=16)
+    # `user-invocable: false` in its file: a real skill Claude may load, not one to
+    # offer a person. A report from an older runner lacks it, which means not internal.
+    internal: bool = False
 
 
 class SlashCommandsIn(Schema):

@@ -9,6 +9,10 @@ Two sources, merged by name:
   Code names a plugin's skill (`<slug>:<name>`). These are offered even before
   a runner holds the session, and on a runner that has never reported.
 
+An internal skill (`user-invocable: false` in its file, marked on the report and on
+`AgentSkill.internal`) is never offered, whichever source names it: Claude loads it,
+a person does not launch it.
+
 Ordered for the composer, which keeps the order of whatever matches what was
 typed: the agent's launchable skills, then the rest of its namespace, then
 everything else by name.
@@ -30,8 +34,12 @@ def for_session(session: Session) -> list[dict]:
         reported = (RunnerSlashCommands.objects.filter(runner_id=runner_id)
                     .values_list("commands", flat=True).first()) or []
     by_name: dict[str, dict] = {}
+    internal: set[str] = set()
     for c in reported:
         if isinstance(c, dict) and c.get("name"):
+            if c.get("internal"):
+                internal.add(c["name"])
+                continue
             by_name[c["name"]] = {
                 "name": c["name"],
                 "description": c.get("description") or "",
@@ -42,8 +50,10 @@ def for_session(session: Session) -> list[dict]:
     slug = session.agent.slug if session.agent_id else ""
     launchable: list[str] = []
     if slug:
-        for skill in session.agent.skills.filter(launchable=True):
+        for skill in session.agent.skills.filter(launchable=True, internal=False):
             name = f"{slug}:{skill.name}"
+            if name in internal:
+                continue
             row = by_name.get(name) or {"name": name, "description": skill.description}
             by_name[name] = {**row, "description": row.get("description") or skill.description,
                              "args_hint": skill.args_hint or row.get("args_hint") or "",

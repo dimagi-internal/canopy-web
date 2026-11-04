@@ -20,9 +20,17 @@ export function AgentSkillsSection() {
     }
   }, [agent.slug])
 
+  const internal = skills?.filter((sk) => sk.internal).length ?? 0
+
   return (
     <div className="max-w-4xl px-6 py-8">
       <WorkbenchSubHeader title="Skills" count={skills?.length} />
+      {skills && internal > 0 && (
+        <p className="text-[12px] text-muted-foreground mb-3">
+          {skills.length - internal} you can start with <code>/</code> in chat. {internal} internal: the agent
+          loads {internal === 1 ? 'it' : 'them'} itself.
+        </p>
+      )}
       {skills === null ? (
         <WorkbenchSkeleton />
       ) : skills.length === 0 ? (

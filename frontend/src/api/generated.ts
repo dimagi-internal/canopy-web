@@ -16876,7 +16876,8 @@ export interface paths {
         /**
          * The slash commands the composer offers
          * @description What `/` offers in this session's composer: the agent's launchable skills
-         *     and what the session's runner reported it can run. Empty for someone who can
+         *     and what the session's runner reported it can run, leaving out internal skills
+         *     (`user-invocable: false`), which stay in the agent's catalog. Empty for someone who can
          *     read the session but not send to it.
          */
         readonly get: operations["list_slash_commands"];
@@ -29296,6 +29297,8 @@ export interface components {
             readonly launchable: boolean;
             /** Args Hint */
             readonly args_hint: string;
+            /** Internal */
+            readonly internal: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -40415,6 +40418,11 @@ export interface components {
              * @default
              */
             readonly source: string;
+            /**
+             * Internal
+             * @default false
+             */
+            readonly internal: boolean;
         };
         /** SlashCommandsIn */
         readonly SlashCommandsIn: {
