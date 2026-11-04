@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { getInstalledApp, type InstalledApp } from '@/api/workspaceApps'
 import { useAuth } from '@/auth/AuthProvider'
+import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
+import { DeclaredConnections } from '@/dynamicViews/DeclaredConnections'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { AppFrame } from '@/workspaceApps/AppFrame'
 import { SetupList } from '@/workspaceApps/SetupList'
@@ -100,6 +102,9 @@ export default function WorkspaceAppPage() {
       {!app.enabled && (
         <div className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">This app is switched off: only those who manage apps can open it.</div>
       )}
+      {page?.audience === 'member' && !draft && (
+        <DeclaredConnections connections={app.connections as unknown as DeclaredConnection[] | undefined} className="mb-3" />
+      )}
       {page ? (
         <AppFrame
           key={`${draft}:${page.slug}?${search.toString()}`}
@@ -112,6 +117,7 @@ export default function WorkspaceAppPage() {
           draft={draft}
           dataModel={app.data_model as Record<string, unknown>}
           settings={app.settings as Record<string, unknown>}
+          connections={app.connections as unknown as DeclaredConnection[] | undefined}
           viewer={{ email: user?.email ?? '', name: (user as { display_name?: string } | null)?.display_name ?? '' }}
           onGo={go}
         />

@@ -8,6 +8,7 @@ from __future__ import annotations
 import inspect
 import logging
 
+from django.core.exceptions import RequestDataTooBig
 from django.http import Http404, HttpRequest, HttpResponse
 from ninja import NinjaAPI
 from ninja.errors import AuthenticationError, HttpError, ValidationError
@@ -19,6 +20,7 @@ from .errors import (
     TYPE_AUTH,
     TYPE_INTERNAL,
     TYPE_NOT_FOUND,
+    TYPE_PAYLOAD_TOO_LARGE,
     TYPE_VALIDATION,
     Problem,
     ProblemError,
@@ -208,6 +210,19 @@ def _on_http404(request: HttpRequest, exc: Http404) -> HttpResponse:
         title="Not found",
         status=404,
         detail=str(exc) if str(exc) else None,
+        instance=request.path,
+    )
+    return _problem_response(request, problem)
+
+
+@api.exception_handler(RequestDataTooBig)
+def _on_too_big(request: HttpRequest, exc: RequestDataTooBig) -> HttpResponse:
+    """A body past `DATA_UPLOAD_MAX_MEMORY_SIZE`, found when the payload is parsed: the caller's, not a 500."""
+    problem = Problem(
+        type=TYPE_PAYLOAD_TOO_LARGE,
+        title="Payload too large",
+        status=413,
+        detail="That is too much to send in one request.",
         instance=request.path,
     )
     return _problem_response(request, problem)

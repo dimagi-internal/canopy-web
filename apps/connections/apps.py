@@ -21,3 +21,8 @@ class ConnectionsConfig(AppConfig):
         from . import scheduler  # noqa: PLC0415 - same
 
         scheduler.register()
+
+        # A project or app gone for good takes what was approved for it.
+        from . import declarations, services  # noqa: PLC0415 - same
+
+        declarations.on_share_target_removed(services.surface_removed)

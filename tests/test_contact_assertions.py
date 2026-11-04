@@ -472,7 +472,7 @@ def test_the_client_budget_is_generous_by_default():
     partner rather than an attacker — the per-issuer limit is the real bound."""
     from apps.embedding import rate_limit
 
-    assert rate_limit._over.__doc__  # the shared counter, not a third copy
+    assert rate_limit.over.__doc__  # the shared counter, not a third copy
     from django.conf import settings as s
 
     assert int(getattr(s, "CONTACT_TOKEN_CLIENT_LIMIT", 300)) >= 120

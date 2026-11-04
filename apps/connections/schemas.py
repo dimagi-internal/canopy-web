@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
@@ -457,3 +457,97 @@ class ResealOut(StrictModel):
 class RevokedIn(StrictModel):
     revoked: bool = Field(description="Revoked at the provider (or told not to); false when that failed.")
     error: str = Field(default="", max_length=100, description="The provider's error code, when it failed.")
+
+
+class ViewSurfaceIn(StrictModel):
+    kind: Literal["view"]
+    id: int = Field(description="The dynamic view.")
+    version: int = Field(description="The revision the page drew. What that revision declares is what is checked, "
+                                     "not the view's latest.")
+
+
+class AppSurfaceIn(StrictModel):
+    kind: Literal["app"]
+    workspace: str = Field(description="The workspace the app is installed in.")
+    key: str = Field(description="The installed app's key.")
+
+
+class ConnectionCallIn(StrictModel):
+    method: str = Field(description="`GET`, `POST`, `PATCH` or `DELETE`.")
+    path: str = Field(description="Relative to Salesforce's API root, for example `query` or `sobjects/Lead/00Q…`. "
+                                  "Plain names and slashes only.")
+    query: dict[str, str | list[str]] | None = Field(default=None, description="The query string, as names and text.")
+    body: Any = Field(default=None, description="The JSON body to send, on a `POST` or `PATCH`.")
+    surface: Annotated[ViewSurfaceIn | AppSurfaceIn, Field(discriminator="kind")] = Field(
+        description="The screen making the call: its own workspace's connection is the one used.")
+    as_: Literal["viewer", "shared"] = Field(
+        default="viewer", alias="as", description="Whose connection: the viewer's own, or one an agent shared.")
+    agent: str | None = Field(default=None, description="With `as: shared`, the agent whose connection it is.")
+    operation_id: str | None = Field(default=None, max_length=100, description="The click a write belongs to.")
+
+
+class ConnectionOperationIn(StrictModel):
+    surface: Annotated[ViewSurfaceIn | AppSurfaceIn, Field(discriminator="kind")] = Field(
+        description="The screen the writes will come from, at the revision the page drew.")
+
+
+class OperationWriteOut(StrictModel):
+    provider: str
+    method: str
+    path: str = Field(description="A declared pattern: `*` stands for one segment.")
+
+
+class ConnectionOperationOut(StrictModel):
+    operation_id: uuid.UUID = Field(description="Send this with each write.")
+    expires_at: datetime = Field(description="When it ends unless a write comes first: each write moves this to 120 "
+                                             "seconds from then.")
+    hard_limit_at: datetime = Field(description="When it ends whatever is written: 10 minutes from the click.")
+    writes: list[OperationWriteOut] = Field(description="What this screen may write. Each write is still checked.")
+
+
+class SurfaceLineOut(StrictModel):
+    method: str
+    path: str
+
+
+class SurfaceLineIn(StrictModel):
+    method: str = Field(max_length=10)
+    path: str = Field(max_length=2000)
+
+
+class SurfaceSharePreviewOut(StrictModel):
+    kind: str
+    ref: str = Field(description="The canonical spelling: send this one.")
+    title: str
+    reads: list[SurfaceLineOut] = Field(description="What it declares of this agent now. Send back as `expected_reads`.")
+    writes: list[SurfaceLineOut] = Field(description="Likewise, as `expected_writes`.")
+
+
+class SurfaceShareIn(StrictModel):
+    kind: Literal["project", "app"]
+    ref: str = Field(max_length=200, description="A project's id, or an app's `<workspace>/<key>`.")
+    expected_reads: list[SurfaceLineIn] = Field(description="The reads the person saw in the preview.")
+    expected_writes: list[SurfaceLineIn] = Field(description="The writes the person saw in the preview.")
+
+
+class SurfaceShareOut(StrictModel):
+    id: int
+    kind: str
+    ref: str
+    title: str | None = Field(description="The project's or app's name. Null when it no longer exists.")
+    account_label: str = Field(description="The account this shares. Its admins' to see: a screen's refusal never says.")
+    approved_reads: list[SurfaceLineOut]
+    approved_writes: list[SurfaceLineOut]
+    pending_reads: list[SurfaceLineOut] = Field(description="Declared now and not approved.")
+    pending_writes: list[SurfaceLineOut] = Field(description="Declared now and not approved.")
+    needs_approval: bool = Field(description="Something is pending, so the screens that declare it have stopped.")
+
+
+class SurfaceSharesOut(StrictModel):
+    shares: list[SurfaceShareOut]
+
+
+class ConnectionCallOut(StrictModel):
+    status: int = Field(description="The provider's own status, also when it refused the call.")
+    body: Any = Field(default=None, description="The provider's JSON answer. Null when it sent none, or not JSON.")
+    text: str | None = Field(default=None, description="The start of an answer that was not JSON. Absent otherwise.")

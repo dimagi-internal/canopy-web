@@ -81,3 +81,53 @@ def test_the_real_hiring_updates_are_judged_as_they_should_be():
     older["roles"]["recruiter"]["capability"] = "content.write"
     assert template_diff.changes(older, m)
     assert template_diff.changes(m, copy.deepcopy(m)) == []
+
+
+# --- connections: Salesforce calls a template declares -----------------------------------
+
+_SF_WRITE = {"provider": "salesforce", "as": "viewer", "reads": [{"method": "GET", "path": "query"}],
+             "writes": [{"method": "PATCH", "path": "sobjects/Lead/*"}]}
+
+
+def _with_connections(m, connections):
+    out = copy.deepcopy(m)
+    out["connections"] = connections
+    return mf.validate(out)
+
+
+def test_an_update_that_widens_the_salesforce_calls_is_flagged():
+    old = _with_connections(_hiring(), [])
+    for new in (
+        _with_connections(old, [_SF_WRITE]),
+        _with_connections(old, [{**_SF_WRITE, "writes": []}]),  # even a new read
+    ):
+        found = template_diff.changes(old, new)
+        assert any("Salesforce" in f for f in found), found
+    wider = _with_connections(old, [{**_SF_WRITE, "writes": [*_SF_WRITE["writes"],
+                                                            {"method": "POST", "path": "sobjects/Contact"}]}])
+    assert any("Salesforce" in f for f in template_diff.changes(_with_connections(old, [_SF_WRITE]), wider))
+
+
+def test_an_update_that_narrows_the_salesforce_calls_is_flagged_too():
+    old = _with_connections(_hiring(), [_SF_WRITE])
+    found = template_diff.changes(old, _with_connections(old, []))
+    assert any("Salesforce" in f for f in found), found
+    # Unchanged is not a finding.
+    assert template_diff.changes(old, copy.deepcopy(old)) == []
+
+
+def test_an_overlay_cannot_add_a_connections_line_and_compose_validates():
+    from apps.workspace_apps import overlay
+
+    with pytest.raises(overlay.OpError):
+        overlay.new_op({"op": "set_connections", "connections": [_SF_WRITE]})
+    base = _with_connections(_hiring(), [])
+    # A stored op of that kind (hand-edited data) changes nothing.
+    effective, _ = overlay.compose(base, [{"op": "set_connections", "connections": [_SF_WRITE]}])
+    assert effective["connections"] == []
+    # Compose validates the whole manifest: a template whose declaration is not allowed cannot run an op.
+    bad = copy.deepcopy(base)
+    bad["connections"] = [{**_SF_WRITE, "writes": [{"method": "PATCH", "path": "sobjects/User/*"}]}]
+    op = {"op": "add_role", "key": "x_helper"}
+    _, quarantined = overlay.compose(bad, [op])
+    assert quarantined and "connections" in quarantined[0]["reason"]

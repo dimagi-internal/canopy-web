@@ -42,6 +42,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from apps.connections import declarations
 from apps.dynamic_views import catalog as dv_catalog
 from apps.dynamic_views import services as dv_services
 from apps.workspaces import permissions as perms
@@ -929,6 +930,16 @@ def _validate_setup(raw, settings: dict, roles: set[str], collections: dict, pag
     return out
 
 
+def _validate_connections(raw) -> list:
+    """The Salesforce calls the app's pages may make (`apps.connections.declarations`).
+    An agent named for a shared connection is checked for shape only: the app has
+    no workspace yet, and a call resolves it."""
+    try:
+        return declarations.validate(raw)
+    except ValueError as exc:
+        _fail("connections", str(exc))
+
+
 def validate(raw) -> dict:
     """A normalised copy of `raw`, or ValueError naming what is wrong."""
     if not isinstance(raw, dict):
@@ -964,7 +975,8 @@ def validate(raw) -> dict:
         "key": key, "name": name[:120], "description": str(raw.get("description") or "")[:2000],
         "version": str(raw.get("version") or "")[:40], "changelog": str(raw.get("changelog") or "")[:5000],
         "roles": roles, "settings": settings, "collections": collections, "actions": actions, "pages": pages,
-        "links": links, "retention": _validate_retention(raw.get("retention"), collections, settings),
+        "links": links, "connections": _validate_connections(raw.get("connections")),
+        "retention": _validate_retention(raw.get("retention"), collections, settings),
         "listing": _validate_listing(raw.get("listing")),
         "setup": _validate_setup(raw.get("setup"), settings, set(roles) | {"maintainer"}, collections, pages),
         "fixtures": _validate_fixtures(raw.get("fixtures"), collections),
