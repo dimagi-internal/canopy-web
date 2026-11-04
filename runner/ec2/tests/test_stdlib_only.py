@@ -37,6 +37,10 @@ _LAZY_NON_STDLIB = {
     "canopy_runner": "canopy-web checkout (runner/canopy_runner)",
     # Optional: run_over_ws() falls back to REST on ImportError.
     "websocket": "apt python3-websocket (runner.cfn.yaml UserData)",
+    # Plain jobs: `_job_spec` parses .canopy/jobs.yaml with yaml.safe_load. Imported
+    # inside the function; python3-yaml is on Ubuntu cloud images and is named in the
+    # UserData apt line so a rebuilt box has it too.
+    "yaml": "apt python3-yaml (runner.cfn.yaml UserData)",
 }
 
 

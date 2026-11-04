@@ -69,6 +69,7 @@ import contextlib
 import datetime
 import hashlib
 import hmac
+import io
 import json
 import os
 import fcntl
@@ -85,11 +86,13 @@ import socket
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import termios
 import threading
 import unicodedata
 import time
+import typing
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1474,6 +1477,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
 
 def pair_or_load() -> str:
+    _apply_job_cap()
     if RUNNER_INSTANCE and not STATE_FILE.exists():
         # A runner sharing its machine never pairs itself: root's canopy-pair pairs
         # every runner on the machine at once.
@@ -6844,6 +6848,234 @@ def _repo_worktree_key(turn: dict, turn_id: str) -> str:
 def _repo_worktree_env(turn: dict, turn_id: str) -> dict:
     """What `canopy-repo-worktree` reads to know whose checkout to hand out."""
     return {"CANOPY_REPO_WORKTREE_KEY": _repo_worktree_key(turn, turn_id)}
+
+
+# ── plain jobs: read a job's definition, export its repo (Part 3, Tasks 2-3) ──
+# A job is a command named in a repo's own `.canopy/jobs.yaml`. canopy-web says only the
+# job's name and the repo's name; everything below happens on this box. This section
+# prepares a job (reads its definition, exports the repo's `main`) and says whether the
+# box can run one at all. It runs nothing.
+
+#: Whether this box says it can run plain jobs. OFF until the code that runs a job
+#: exists (Task 3 turns it on with that code): an old box must never report a capability
+#: before it can honour it, or canopy-web would hand it a job and it would run an empty
+#: prompt through a model.
+JOBS_ENABLED = False
+#: The Unix user a job runs as, and where its exports live (owned by that user, 0700).
+JOB_USER = "canopy-job"
+JOBS_ROOT = pathlib.Path("/var/lib/canopy-jobs")
+JOBS_YAML_MAX_BYTES = 64 * 1024
+#: A repo export bigger than this is refused (the archive is held in memory once).
+JOB_EXPORT_MAX_BYTES = 256 * 1024 * 1024
+JOB_TIMEOUT_DEFAULT, JOB_TIMEOUT_MAX = 15, 120
+_JOB_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_JOB_TURN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+class JobRefused(Exception):
+    """A job that cannot run, with the plain sentence a person reads on the failed turn."""
+
+
+class JobSpec(typing.NamedTuple):
+    run: list
+    timeout_minutes: int
+
+
+def _job_spec(text: str, name: str) -> JobSpec:
+    """The job `name` from the text of `.canopy/jobs.yaml`, or `JobRefused`.
+
+    Shape: `version: 1` and `jobs: {name: {run: [argv...], timeout_minutes: n}}`, nothing
+    else. `run` is an argv list, never a string: there is no shell. The file is size-capped
+    before it is parsed; `safe_load` builds an alias as a shared reference, so what a
+    capped file can expand to is bounded too."""
+    import yaml   # lazy: apt python3-yaml (runner.cfn.yaml); ships with Ubuntu cloud images
+
+    where = ".canopy/jobs.yaml"
+    if not _JOB_NAME.match(name or ""):
+        raise JobRefused(f"The job name {name!r} isn't a valid job name.")
+    if len(text.encode("utf-8", "replace")) > JOBS_YAML_MAX_BYTES:
+        raise JobRefused(f"{where} is bigger than {JOBS_YAML_MAX_BYTES // 1024} KB, so it wasn't read.")
+    try:
+        doc = yaml.safe_load(text)
+    except (yaml.YAMLError, RecursionError, ValueError):
+        raise JobRefused(f"{where} isn't valid YAML.") from None
+    if not isinstance(doc, dict):
+        raise JobRefused(f"{where} isn't a jobs file: it should hold `version: 1` and a `jobs:` list.")
+    if set(doc) - {"version", "jobs"}:
+        extra = sorted(str(k) for k in set(doc) - {"version", "jobs"})
+        raise JobRefused(f"{where} has a key the box doesn't know: {', '.join(extra)}.")
+    if doc.get("version") != 1 or isinstance(doc.get("version"), bool):
+        raise JobRefused(f"{where} must say `version: 1`.")
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict):
+        raise JobRefused(f"{where} must have a `jobs:` section naming each job.")
+    if name not in jobs:
+        have = ", ".join(sorted(str(k) for k in jobs)[:20]) or "none"
+        raise JobRefused(f"{where} has no job named {name!r} (it has: {have}).")
+    entry = jobs[name]
+    if not isinstance(entry, dict):
+        raise JobRefused(f"The job {name!r} in {where} must have a `run:` list.")
+    if set(entry) - {"run", "timeout_minutes"}:
+        extra = sorted(str(k) for k in set(entry) - {"run", "timeout_minutes"})
+        raise JobRefused(f"The job {name!r} has a key the box doesn't know: {', '.join(extra)}.")
+    run = entry.get("run")
+    if isinstance(run, str):
+        raise JobRefused(f"The job {name!r}: `run` must be a list of words, not one string "
+                         "(there is no shell, so it can't be a command line).")
+    if (not isinstance(run, list) or not run
+            or not all(isinstance(a, str) and a and "\0" not in a for a in run)):
+        raise JobRefused(f"The job {name!r}: `run` must be a non-empty list of words.")
+    first = run[0]
+    if first.startswith(("/", "-")) or ".." in first.split("/"):
+        raise JobRefused(f"The job {name!r}: the program to run must be a bare name or a path "
+                         "inside the repo, with no `..` and not absolute.")
+    minutes = entry.get("timeout_minutes", JOB_TIMEOUT_DEFAULT)
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= JOB_TIMEOUT_MAX:
+        raise JobRefused(f"The job {name!r}: `timeout_minutes` must be a whole number "
+                         f"from 1 to {JOB_TIMEOUT_MAX}.")
+    return JobSpec(run=list(run), timeout_minutes=minutes)
+
+
+def _as_job_user(args, input=None):
+    """Run `args` as the job user and return the CompletedProcess (bytes). The ONE seam
+    between this code and `sudo`: tests replace it."""
+    return subprocess.run(["sudo", "-n", "-u", JOB_USER, *args], input=input,
+                          capture_output=True, timeout=300)
+
+
+def _job_user_exists() -> bool:
+    import pwd
+    try:
+        pwd.getpwnam(JOB_USER)
+        return True
+    except KeyError:
+        return False
+
+
+def _job_can_run() -> bool:
+    """Whether this box could run a job: the job user exists, `sudo -n -u canopy-job true`
+    works, and it is not a sensitive-data box (those never take a job)."""
+    if SENSITIVE_DATA_MODE or RUNNER_DATA_MODE:
+        return False
+    try:
+        return _job_user_exists() and _as_job_user(["true"]).returncode == 0
+    except Exception:  # noqa: BLE001 - no sudo, a timeout: it cannot
+        return False
+
+
+def _apply_job_cap() -> None:
+    """Set `RUNNER_CAPS["jobs"]` for this start. Reported only through the box's own
+    device-key token (canopy-web drops `jobs` from any other credential), so this runs
+    before the capabilities PATCH in `pair_or_load`. Absent while `JOBS_ENABLED` is off."""
+    if JOBS_ENABLED:
+        RUNNER_CAPS["jobs"] = _job_can_run()
+    else:
+        RUNNER_CAPS.pop("jobs", None)
+
+
+def _check_job_archive(data: bytes) -> None:
+    """Refuse an archive that could write outside its directory, before it is unpacked.
+
+    Refused: an absolute or `..` member name, a `.git` entry, any device/fifo, and any
+    symlink or hard link whose target is absolute or contains `..`. A link may only point
+    downward or sideways inside the checkout, so it cannot leave it however links chain.
+    (Judging a `..` target lexically is not enough: `a -> .` makes `a/a/l -> ../../x`
+    look inside while resolving outside.) GNU tar stores a link's target verbatim and does
+    not judge it, so this check, not tar, is the rule."""
+    try:
+        tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
+        members = tar.getmembers()
+    except (tarfile.TarError, EOFError, OSError):
+        raise JobRefused("The repo's files couldn't be read as an archive.") from None
+    for m in members:
+        parts = m.name.split("/")
+        if m.name.startswith("/") or ".." in parts or "\0" in m.name:
+            raise JobRefused(f"The repo has a file path that leaves its folder ({m.name!r}), "
+                             "so the job didn't run.")
+        if parts[0] == ".git":
+            raise JobRefused("The repo's files include a .git entry, so the job didn't run.")
+        if m.issym() or m.islnk():
+            target = m.linkname
+            if target.startswith("/") or ".." in target.split("/") or "\0" in target:
+                raise JobRefused(f"The repo has a link ({m.name!r}) that points outside the "
+                                 "checkout, so the job didn't run.")
+        elif not (m.isreg() or m.isdir()):
+            raise JobRefused(f"The repo has a special file ({m.name!r}), so the job didn't run.")
+
+
+def _job_export(repo: str, turn_id: str, env) -> pathlib.Path:
+    """`repo`'s `main`, exactly as the remote has it now, unpacked with no `.git` into
+    JOBS_ROOT/<turn_id>/repo by the job user. Returns that path; `JobRefused` otherwise.
+
+    `main` is fetched by explicit refspec into a ref private to this job, and that sha is
+    archived: the bare clone's HEAD or `origin/main` may be stale or point at another
+    branch. A fetch that fails fails the job; stale code never runs. A `repo` that fails
+    the name rule raises before any git call or path is built."""
+    if (not _REPO_NAME.match(repo or "") or repo.endswith(".git") or ".." in repo):
+        raise JobRefused(f"{repo!r} isn't a repo name the box will fetch.")
+    if not _JOB_TURN_ID.match(turn_id or ""):
+        raise JobRefused("This job's id isn't one the box will use as a folder name.")
+    try:
+        clone = _repo_clone(repo, env=env)
+    except Exception:  # noqa: BLE001
+        raise JobRefused(f"Couldn't get the {repo} repo onto the box, so the job didn't run.") from None
+    ref = f"refs/jobs/{turn_id}"
+    sha = ""
+    try:
+        fetch = subprocess.run(
+            ["git", "-C", str(clone), "fetch", "--quiet", "--no-tags", "origin",
+             f"+refs/heads/main:{ref}"], capture_output=True, timeout=300, env=env)
+        if fetch.returncode != 0:
+            raise JobRefused(f"Couldn't fetch the latest main of {repo}, so the job didn't run "
+                             "(it never runs old code).")
+        rev = subprocess.run(["git", "-C", str(clone), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                             capture_output=True, text=True, timeout=60, env=env)
+        sha = rev.stdout.strip()
+        if rev.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", sha):
+            raise JobRefused(f"Couldn't read the latest main of {repo}, so the job didn't run.")
+        arc = subprocess.run(["git", "-C", str(clone), "archive", "--format=tar", sha],
+                             capture_output=True, timeout=600, env=env)
+    except subprocess.TimeoutExpired:
+        raise JobRefused(f"Fetching {repo} took too long, so the job didn't run.") from None
+    finally:
+        subprocess.run(["git", "-C", str(clone), "update-ref", "-d", ref],
+                       capture_output=True, timeout=60, env=env)
+    if arc.returncode != 0 or not arc.stdout:
+        raise JobRefused(f"Couldn't read the files of {repo}'s main, so the job didn't run.")
+    if len(arc.stdout) > JOB_EXPORT_MAX_BYTES:
+        raise JobRefused(f"{repo} is too large to run a job from.")
+    _check_job_archive(arc.stdout)
+    parent = JOBS_ROOT / turn_id
+    dest = parent / "repo"
+    try:
+        for args in (["mkdir", "-p", "-m", "700", str(parent)], ["mkdir", "-m", "700", str(dest)]):
+            if _as_job_user(args).returncode != 0:
+                raise JobRefused("Couldn't make the job's folder, so the job didn't run.")
+        untar = _as_job_user(["tar", "-x", "--no-same-owner", "--no-same-permissions",
+                              "-C", str(dest)], input=arc.stdout)
+        if untar.returncode != 0:
+            raise JobRefused(f"Couldn't unpack {repo}'s files, so the job didn't run.")
+    except BaseException:
+        with contextlib.suppress(Exception):
+            _as_job_user(["rm", "-rf", str(parent)])
+        raise
+    _log(f"job export: {repo}@{sha[:10]} -> {dest}")
+    return dest
+
+
+def _job_spec_for(export: pathlib.Path, name: str) -> JobSpec:
+    """The job `name` from `<export>/.canopy/jobs.yaml`. The export belongs to the job
+    user, so it is read as that user, capped one byte past the limit so a huge file is
+    refused rather than loaded."""
+    path = export / ".canopy" / "jobs.yaml"
+    got = _as_job_user(["head", "-c", str(JOBS_YAML_MAX_BYTES + 1), str(path)])
+    if got.returncode != 0:
+        raise JobRefused("The repo has no .canopy/jobs.yaml on main, so there is no job to run.")
+    try:
+        text = got.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        raise JobRefused(".canopy/jobs.yaml isn't valid YAML.") from None
+    return _job_spec(text, name)
 
 
 def _repo_worktree_cli(argv: list[str]) -> int:

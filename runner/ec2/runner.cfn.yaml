@@ -375,7 +375,7 @@ Resources:
             # succeeded, the executor worked, and only the absent capability in
             # `initialize` gave it away.
             - [ bash, -c, "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -" ]
-            - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs unzip gnupg python3-websocket" ]
+            - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs unzip gnupg python3-websocket python3-yaml" ]
             - [ bash, -c, "npm i -g @anthropic-ai/claude-code" ]
             - [ bash, -c, "curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && cd /tmp && unzip -q awscliv2.zip && ./aws/install" ]
             # gh (GitHub CLI) — drill doctors flagged it as
