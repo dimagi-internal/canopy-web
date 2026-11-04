@@ -8,6 +8,7 @@ still gets 404. REST and MCP are one route.
 """
 from __future__ import annotations
 
+import contextlib
 from unittest import mock
 
 import pytest
@@ -15,17 +16,29 @@ from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.test import Client
 from fastmcp.exceptions import ToolError
+from fastmcp.server.auth import AccessToken
+from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
 from apps.agents import roles, skill_history
 from apps.agents.models import Agent, AgentGrant, AgentAdmin, AgentSkill
 from apps.mcp.server import mcp
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_mcp_api_tools import as_user
 
 pytestmark = pytest.mark.django_db
 M, G = WorkspaceMembership, AgentGrant
 
 SKILLS = {"skills": [{"name": "setup", "description": "once"}]}
+
+
+@contextlib.contextmanager
+def as_user(user):
+    claims = {"sub": str(user.pk), "user_id": user.pk, "auth_method": "pat"}
+    access = AccessToken(token="t", client_id="c", scopes=["canopy:user"], claims=claims)
+    tok = auth_context_var.set(AuthenticatedUser(access))
+    try:
+        yield
+    finally:
+        auth_context_var.reset(tok)
 
 
 @pytest.fixture()
