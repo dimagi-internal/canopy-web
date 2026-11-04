@@ -178,7 +178,7 @@ export function ConnectedPage(): JSX.Element | null {
   const lentBefore = (before?.agents?.length ?? 0) + (before?.my_computers?.length ?? 0)
   const reconnect = copy?.action === 'person' && state?.state === 'unshared' && lentBefore > 0
   let text = 'Connected.'
-  if (reconnect && copy) text = `Connected as ${copy.account} and stored in your vault. ${lentBefore} agents or computers that used it need it shared again.`
+  if (reconnect && copy) text = `Connected as ${copy.account} and stored in your vault. ${lentBefore === 1 ? 'The agent or computer that used it needs' : 'The agents or computers that used it need'} it shared again.`
   else if (copy?.action === 'person') text = copy.text
   else if (copy) {
     const lead = `Connected ${agent} as ${copy.account}.`

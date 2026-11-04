@@ -369,7 +369,7 @@ describe('ConnectedPage, a person reconnecting', () => {
     getShareState.mockResolvedValue({ ...STATE, statement: { agents: ['12'], my_computers: ['x'], version: 2 } })
     open()
     expect(await screen.findByText(
-      'Connected as jj@dimagi.com and stored in your vault. 2 agents or computers that used it need it shared again.',
+      'Connected as jj@dimagi.com and stored in your vault. The agents or computers that used it need it shared again.',
     )).toBeTruthy()
     expect(href('Share again')).toBe('/w/dimagi/connections/c1/share?return_to=%2Fsettings%2Fconnections')
     expect(href('Later')).toBe('/settings/connections')
