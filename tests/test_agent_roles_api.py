@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import access, roles
+from apps.agents import access
 from apps.agents.models import Agent, AgentGrant, AgentRole
 from apps.events.models import SettingChange
 from apps.passkeys.testing import grant_step_up
