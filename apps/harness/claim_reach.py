@@ -29,8 +29,10 @@ from .routing import (
     assignment_rows_for,
     blocking_turn,
     cannot_serve,
+    is_job_gated,
     is_project_session_turn,
     is_repo_turn,
+    job_refusal,
     load_assignment_rows,
     load_workspace_orders,
     prime_machine_runners,
@@ -98,6 +100,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
     if not rr.runner_satisfies(r, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
+    if job_refusal(r, t) is not None:
+        return False  # a job: only a cloud box that runs them, pin or no pin
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
     if not ignore_serve and turn_serves_refusal(r, t):
@@ -562,6 +566,11 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         elif t.pk in blocked_by_cli:
             kind = "config"
             reason = clis.blocker(t, [r for r, pks in by_cli.items() if t.pk in pks])
+        elif is_job_gated(t) and t.pk not in claimable_ever:
+            kind = "config"
+            reason = ("this runs a scheduled job, and only a cloud machine set up to run jobs "
+                      "takes one — none is paired to this workspace, so it will wait until "
+                      "one is set up (or the schedule is changed)")
         elif t.capability and t.pk not in claimable_ever:
             kind = "config"
             reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "

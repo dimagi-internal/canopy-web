@@ -121,6 +121,17 @@ def _record_refusal(schedule, reason: str, *, slot=None) -> None:
         logger.exception("could not record refusal of trigger %s", schedule.pk)
 
 
+def _job_fields(schedule) -> dict:
+    """A job schedule's turn carries the job's name and repo, and no prompt: what the
+    command is, only the repo says. Blank for an ordinary schedule."""
+    return {"job": schedule.job, "job_repo": schedule.job_repo} if schedule.job else {}
+
+
+def _turn_routing(schedule) -> str:
+    """A job's turn goes only to a cloud box that can run it, whatever the row says."""
+    return Turn.CLOUD_ONLY if schedule.job else schedule.routing
+
+
 class OneOffSlotMismatch(Exception):
     """A runner reported a slot for a one-off schedule other than its one instant."""
 
@@ -161,14 +172,15 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
             agent=schedule.agent,
             origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=key,
-            prompt=schedule.prompt,
+            prompt="" if schedule.job else schedule.prompt,
             # `schedule_name` is carried for the emdash session NAME. Without it the
             # runner names a cron turn after the prompt's slash command, so every
             # schedule an agent has reads `c-turn-<disc>` in the sidebar; with it
             # they read `c-weekly-manager-report`, which is what the human called it.
             origin_ref={"schedule_id": schedule.id, "slot": slot.isoformat(),
                         "schedule_name": schedule.name},
-            routing=schedule.routing,
+            routing=_turn_routing(schedule),
+            **_job_fields(schedule),
             requested_cli=schedule.cli,
             # canopy fired it; the schedule's creator is the person accountable
             # for it (spec D3), recorded so a later phase can bound the turn.
@@ -215,10 +227,11 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
             agent=schedule.agent,
             origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=f"sched:{schedule.id}:manual:{uuid.uuid4()}",
-            prompt=schedule.prompt,
+            prompt="" if schedule.job else schedule.prompt,
             origin_ref={"schedule_id": schedule.id, "manual": True,
                         "schedule_name": schedule.name},
-            routing=schedule.routing,
+            routing=_turn_routing(schedule),
+            **_job_fields(schedule),
             requested_cli=schedule.cli,
             initiator=schedule_initiator(schedule, manual=True),
             # The schedule's creator is who it is FOR; this is who pressed the
@@ -376,6 +389,10 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
     materializes this task; a schedule that opts out raises nothing.
     """
     if "inbox" not in (schedule.notify or []):
+        return
+    if schedule.job:
+        # Approving a nag re-runs it as an ordinary turn with the schedule's prompt, which
+        # for a job is empty. "Run now" on the schedule is how a job is run again.
         return
     from apps.agents import services as agent_services
 

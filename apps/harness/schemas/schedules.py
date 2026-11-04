@@ -17,7 +17,13 @@ class ScheduleIn(Schema):
     failure mode a scheduler has."""
 
     name: str
-    prompt: str
+    # Blank only for a job (below); an ordinary schedule needs one.
+    prompt: str = ""
+    # A PLAIN JOB instead of a prompt: the name of a command in the repo's
+    # `.canopy/jobs.yaml` and the repo's name — both or neither. It runs on a cloud
+    # machine, with no model, from the repo's main.
+    job: str = ""
+    job_repo: str = ""
     # WHEN — exactly one. `cron` is a recurring schedule; `run_once_at` is a
     # one-off that fires at that instant and then disables itself (its cron is
     # derived server-side).
@@ -49,12 +55,23 @@ class ScheduleIn(Schema):
     def _check_tz(cls, v: str) -> str:
         return validate_timezone(v)
 
-    @field_validator("name", "prompt")
+    @field_validator("name")
     @classmethod
     def _non_blank(cls, v: str) -> str:
         if not (v or "").strip():
             raise ValueError("must not be blank")
         return v.strip()
+
+    @field_validator("prompt")
+    @classmethod
+    def _strip_prompt(cls, v: str) -> str:
+        return (v or "").strip()
+
+    @model_validator(mode="after")
+    def _prompt_or_job(self):
+        if not self.prompt and not (self.job or self.job_repo):
+            raise ValueError("must not be blank")
+        return self
 
 
 class SchedulePatch(Schema):
@@ -63,6 +80,8 @@ class SchedulePatch(Schema):
 
     name: str | None = None
     prompt: str | None = None
+    job: str | None = None
+    job_repo: str | None = None
     # Setting `cron` makes the schedule recurring; setting `run_once_at` makes it
     # a one-off (and re-arms one that already fired). Not both.
     cron: str | None = None
@@ -91,6 +110,9 @@ class ScheduleOut(Schema):
     agent_slug: str
     name: str
     prompt: str
+    # A plain job's name and repo (both blank for an ordinary schedule).
+    job: str = ""
+    job_repo: str = ""
     cron: str
     # Set for a one-off: it fires once, at this instant, then `enabled` goes false.
     # `cron` is then derived from it and is shown only for runner compatibility.
@@ -128,6 +150,9 @@ class TriggerIn(Schema):
     kind: Literal["cron", "inbound_mail"] = "cron"
     name: str
     prompt: str = ""
+    # A cron trigger's plain job instead of a prompt (see ScheduleIn).
+    job: str = ""
+    job_repo: str = ""
     cron: str | None = None
     run_once_at: dt.datetime | None = None
     timezone: str = "UTC"
@@ -168,7 +193,7 @@ class TriggerIn(Schema):
             if bool(self.cron) == bool(self.run_once_at):
                 raise ValueError("a cron trigger needs exactly one of cron (recurring) or "
                                  "run_once_at (one-off)")
-            if not self.prompt.strip():
+            if not self.prompt.strip() and not (self.job or self.job_repo):
                 raise ValueError("a cron trigger needs a prompt")
         elif not self.sender_address.strip():
             raise ValueError("an inbound_mail trigger needs a sender_address")

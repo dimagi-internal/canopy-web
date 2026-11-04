@@ -314,6 +314,11 @@ class ClaimedTurnOut(TurnOut):
     person, which a turn LISTING has no reason to spread."""
 
     caller_context: dict
+    # A PLAIN JOB: the name of a command in the repo's `.canopy/jobs.yaml`, and the repo's
+    # name. Blank for every other turn. The command itself is never sent: the box reads it
+    # from the repo.
+    job: str = ""
+    job_repo: str = ""
     # For a CONFINED turn only: the token the session uses for canopy's MCP in
     # place of the runner owner's PAT (harness.models.CallerToken). Null otherwise.
     mcp_token: str | None = None

@@ -32038,6 +32038,16 @@ export interface components {
             readonly name: string;
             /** Prompt */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron: string;
             /** Run Once At */
@@ -32130,8 +32140,21 @@ export interface components {
         readonly ScheduleIn: {
             /** Name */
             readonly name: string;
-            /** Prompt */
+            /**
+             * Prompt
+             * @default
+             */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -32203,6 +32226,10 @@ export interface components {
             readonly name?: string | null;
             /** Prompt */
             readonly prompt?: string | null;
+            /** Job */
+            readonly job?: string | null;
+            /** Job Repo */
+            readonly job_repo?: string | null;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -32243,6 +32270,16 @@ export interface components {
             readonly name: string;
             /** Prompt */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron: string;
             /** Run Once At */
@@ -32343,6 +32380,16 @@ export interface components {
              * @default
              */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -32417,6 +32464,10 @@ export interface components {
             readonly name?: string | null;
             /** Prompt */
             readonly prompt?: string | null;
+            /** Job */
+            readonly job?: string | null;
+            /** Job Repo */
+            readonly job_repo?: string | null;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -40612,6 +40663,16 @@ export interface components {
             readonly caller_context: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Mcp Token */
             readonly mcp_token?: string | null;
             /** Chat Key */

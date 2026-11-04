@@ -57,8 +57,10 @@ from .routing import (
     assignment_allows,
     assignment_allows_for_agent,
     busy_session_ids,
+    holds_a_job,
     is_project_session_turn,
     is_repo_turn,
+    job_refusal,
     kind_allows,
     load_assignment_rows,
     profile_q,
@@ -281,6 +283,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])
     if runner.kind == Runner.CLOUD:
         routing_q = Q(routing=Turn.ANY) | Q(routing=Turn.PREFER_LOCAL)
+        # A cloud box takes a `cloud_only` turn (a job, or a turn that must not meet an
+        # older box) only when it says it can: `job_refusal` below, which a pin does
+        # not get past. The coarse query here only has to let it through to be judged.
+        routing_q |= Q(routing=Turn.CLOUD_ONLY)
         # prefer_local turns fall to cloud only via the Phase 2 router policy;
         # Phase 0 has no cloud runners, so keep the simple rule: cloud never
         # takes local_only.
@@ -380,6 +386,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     admins: dict = {}
     now = timezone.now()
     my_flags = rr.in_force(runner)
+    # At most one job at a time per box (they share a Unix user): asked once, if a job
+    # turn is among the candidates.
+    job_busy = None
     trusted: dict[int, bool] = {}
     # Why each candidate this box passed over was passed over, said on the turn
     # (`_note_skips`) so "queued, no runner has claimed it" never again has to be
@@ -391,6 +400,20 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         if not rr.satisfies(my_flags, rr.requirements_of(turn)):
             skips[turn.pk] = "its conversation needs runner flags this box does not have"
             continue
+        # A JOB (or any `cloud_only` turn) has an empty prompt that a box not built for
+        # it would give to a model. Only a cloud box that reports `jobs` takes one, and
+        # above the pin, the binding and the order like the checks around it: a pin
+        # places work, it does not make a box able. Every claim comes through here —
+        # REST and the socket — so this is the only door.
+        if (why := job_refusal(runner, turn)) is not None:
+            skips[turn.pk] = why
+            continue
+        if turn.job:
+            if job_busy is None:
+                job_busy = holds_a_job(runner)
+            if job_busy:
+                skips[turn.pk] = "this box is already running a job, and takes one at a time"
+                continue
         # An agent turn runs AS the agent: its prompt, its caller's token, its
         # owner's GitHub identity. Only a box whose owner is one of the agent's
         # admins may take one — also above the pin, since pinning is open to the

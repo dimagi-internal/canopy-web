@@ -13,6 +13,7 @@ Reuses apps.harness.services for the turn-lifecycle operations
 from __future__ import annotations
 
 import datetime as dt
+import re
 from zoneinfo import ZoneInfo
 
 from canopy_cron import next_slots, slots_between, validate_timezone
@@ -24,7 +25,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import clis, schedule_turns, triggers
-from .models import AgentSchedule
+from .models import AgentSchedule, Turn
 from .schedule_turns import fire_after_of
 
 
@@ -82,6 +83,63 @@ def one_off_cron(when: dt.datetime, tz_name: str) -> str:
     (services.fire_schedule) — the next year's slot is never due before then."""
     local = when.astimezone(ZoneInfo(tz_name))
     return f"{local.minute} {local.hour} {local.day} {local.month} *"
+
+
+#: A job's name: a key of the repo's `.canopy/jobs.yaml`. The box that runs it checks the same shape.
+JOB_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+#: The repo it lives in: a bare name, never a path or URL (the box builds the URL itself).
+JOB_REPO = re.compile(r"[A-Za-z0-9._-]{1,100}")
+#: A job may run up to 120 minutes; a shorter grace would release it as missed while it runs.
+JOB_MIN_GRACE_MINUTES = 125
+
+
+def validate_job(job: str, job_repo: str) -> tuple[str, str]:
+    """A schedule's plain job: both a name and a repo, or neither. Returns them stripped.
+
+    canopy-web only ever stores these two names; the command comes from the repo, read by
+    the box. So the shapes are the whole defence against a name meaning more than it
+    says: no `/`, no `..`, no URL."""
+    job, job_repo = (job or "").strip(), (job_repo or "").strip()
+    if not job and not job_repo:
+        return "", ""
+    if not job or not job_repo:
+        raise InvalidSchedule("a job needs both its name and the repo it lives in, or neither")
+    if not JOB_NAME.fullmatch(job):
+        raise InvalidSchedule(
+            "a job's name is lower-case letters, digits, '-' and '_' (up to 64), "
+            "starting with a letter or digit")
+    if job_repo in (".", "..") or not JOB_REPO.fullmatch(job_repo):
+        raise InvalidSchedule(
+            "a job's repo is just the repo's name (letters, digits, '.', '-' and '_'), "
+            "not a path or a link")
+    return job, job_repo
+
+
+def _apply_job(fields: dict, *, current: AgentSchedule | None) -> dict:
+    """Reconcile a payload's job fields with the schedule's. A job schedule needs no
+    prompt, only runs from a cron trigger, always routes `cloud_only`, and has a grace
+    long enough that a 120-minute job is not released as missed while it runs."""
+    fields = dict(fields)
+    kind = fields.get("kind") or (current.kind if current else AgentSchedule.CRON)
+    job, job_repo = validate_job(
+        fields.get("job", current.job if current else ""),
+        fields.get("job_repo", current.job_repo if current else ""))
+    if not job:
+        if "job" in fields or "job_repo" in fields:
+            fields["job"], fields["job_repo"] = "", ""
+            if current is not None and current.job and current.routing == Turn.CLOUD_ONLY \
+                    and "routing" not in fields:
+                # It was a job; as an ordinary schedule it goes where the person says.
+                fields["routing"] = Turn.PREFER_LOCAL
+        return fields
+    if kind != AgentSchedule.CRON:
+        raise InvalidSchedule("only a scheduled (cron) trigger can run a job")
+    fields.update(job=job, job_repo=job_repo, routing=Turn.CLOUD_ONLY)
+    fields.setdefault("prompt", current.prompt if current else "")
+    fields["grace_minutes"] = max(
+        int(fields.get("grace_minutes", current.grace_minutes if current else 0) or 0),
+        JOB_MIN_GRACE_MINUTES)
+    return fields
 
 
 def _apply_timing(fields: dict, *, current: AgentSchedule | None = None) -> dict:
@@ -166,9 +224,12 @@ def _apply_kind(fields: dict, *, current: AgentSchedule | None = None) -> dict:
         fields.pop("sender_address", None)
         fields.pop("subject_pattern", None)
         fields.pop("mail_quiet_minutes", None)
+        fields = _apply_job(fields, current=current)
         prompt = fields.get("prompt", current.prompt if current else "")
-        if not (prompt or "").strip():
+        if not (prompt or "").strip() and not fields.get("job", current.job if current else ""):
             raise InvalidSchedule("a cron trigger needs a prompt")
+    elif fields.get("job") or fields.get("job_repo"):
+        raise InvalidSchedule("only a scheduled (cron) trigger can run a job")
     return _apply_timing(fields, current=current)
 
 
@@ -290,6 +351,8 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
         "agent_slug": schedule.agent_slug,
         "name": schedule.name,
         "prompt": schedule.prompt,
+        "job": schedule.job,
+        "job_repo": schedule.job_repo,
         "cron": schedule.cron,
         "run_once_at": schedule.run_once_at,
         "timezone": schedule.timezone,
