@@ -574,6 +574,38 @@ def test_a_late_skipped_job_raises_a_review_with_the_reason_and_the_row_says_it(
     assert serialize_trigger(AgentSchedule.objects.get(pk=sched.pk))["missed_reason"] == ""
 
 
+def test_an_outage_keeps_one_open_review_per_schedule(w):
+    from apps.agents import services as agent_services
+
+    sched = _job_schedule(w)
+    other = _job_schedule(w, "other")
+    for day in range(3):
+        at = SLOT + dt.timedelta(days=day)
+        schedule_turns.fire_schedule(sched, at)
+        schedule_turns.fire_schedule(other, at)
+        schedule_turns.skip_late_scheduled_turns(now=at + WINDOW + dt.timedelta(minutes=1))
+    nags = _job_nag(sched)
+    assert len(nags) == 1                  # however many slots went by
+    assert len(_job_nag(other)) == 1       # and one schedule's review doesn't hide another's
+    # Closed, the next missed slot may ask again.
+    agent_services.act(nags[0], action="decline", by="system:test", actor_workspace_ids=set())
+    at = SLOT + dt.timedelta(days=3)
+    schedule_turns.fire_schedule(sched, at)
+    schedule_turns.skip_late_scheduled_turns(now=at + WINDOW + dt.timedelta(minutes=1))
+    assert len(_job_nag(sched)) == 2
+
+
+def test_a_failure_during_an_open_review_opens_no_second_one(w):
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    sched = _job_schedule(w)
+    schedule_turns.fire_schedule(sched, SLOT)
+    schedule_turns.skip_late_scheduled_turns(now=_past_the_window())
+    schedule_turns.fire_schedule(sched, SLOT + dt.timedelta(days=1))
+    Turn.objects.filter(status=Turn.QUEUED).update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    harness.finish_turn(claim.claim_next_turn(new), status=Turn.FAILED, result_note="boom")
+    assert len(_job_nag(sched)) == 1
+
+
 def test_a_late_skipped_job_opted_out_of_the_inbox_raises_nothing(w):
     sched = _job_schedule(w, notify=[])
     schedule_turns.fire_schedule(sched, SLOT)

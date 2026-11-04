@@ -520,6 +520,65 @@ def test_the_tick_sends_nothing_without_the_boxs_own_token(ticking, monkeypatch)
     assert ticking.RUNNER_CAPS["jobs"] is False
 
 
+def _said(mod, monkeypatch):
+    lines = []
+    mod._JOB_CAP_SAID.clear()
+    monkeypatch.setattr(mod, "_log", lambda m, *a, **k: lines.append(m))
+    monkeypatch.setattr(mod, "JOB_BROKER_START_WAIT", ())
+    return lines
+
+
+def test_no_broker_is_logged_once_per_change_not_each_tick(ticking, monkeypatch):
+    lines = _said(ticking, monkeypatch)
+    answer = {}
+
+    def broker(op, *a, **k):
+        if answer.get("up"):
+            return dict(STATUS)
+        raise ticking.JobRefused("not answering")
+
+    monkeypatch.setattr(ticking, "_job_broker", broker)
+    for _ in range(3):
+        _tick_due(ticking)
+    refused = [m for m in lines if "can't run them" in m]
+    assert len(refused) == 1 and "not answering" in refused[0]
+    answer["up"] = True
+    _tick_due(ticking)
+    answer["up"] = False                   # gone again: that's a change, so it is said again
+    _tick_due(ticking)
+    _tick_due(ticking)
+    assert len([m for m in lines if "can't run them" in m]) == 2
+
+
+def test_a_changed_reason_is_logged(ticking, monkeypatch):
+    lines = _said(ticking, monkeypatch)
+    monkeypatch.setattr(ticking, "_job_broker", lambda op, *a, **k: {**STATUS, "locked": True})
+    _tick_due(ticking)
+    _tick_due(ticking)
+    monkeypatch.setattr(ticking, "_job_broker", lambda op, *a, **k: {**STATUS, "supported": False})
+    _tick_due(ticking)
+    assert len([m for m in lines if "can't run them" in m]) == 2
+
+
+def test_device_key_off_is_logged_once_per_change_not_each_tick(ticking, monkeypatch):
+    lines = _said(ticking, monkeypatch)
+    monkeypatch.setenv("CANOPY_DEVICE_KEY", "0")
+    monkeypatch.setattr(ticking, "_job_user_exists", lambda: False)
+    monkeypatch.setattr(ticking, "TOKEN", "a-persons-pat")
+    for _ in range(3):
+        _tick_due(ticking)
+    assert ticking._test_patched == []
+    assert len([m for m in lines if "own token" in m]) == 1
+    # Back on its own token: the owed PATCH goes, and a later loss is news again.
+    monkeypatch.setenv("CANOPY_DEVICE_KEY", "1")
+    _tick_due(ticking)
+    assert len(ticking._test_patched) == 1
+    monkeypatch.setattr(ticking, "_job_user_exists", lambda: True)
+    monkeypatch.setenv("CANOPY_DEVICE_KEY", "0")
+    _tick_due(ticking)
+    assert len([m for m in lines if "own token" in m]) == 2
+
+
 def test_the_tick_is_off_while_the_switch_is_off(ticking, monkeypatch):
     monkeypatch.setattr(ticking, "JOBS_ENABLED", False)
     ticking._JOB_CAP_TICK_AT = 0.0

@@ -7187,6 +7187,20 @@ def _job_user_exists() -> bool:
         return False
 
 
+#: What `_job_cap_say` last logged, per topic. A box in a steady state is asked every few minutes
+#: for as long as it runs, and one line per change is what a person can read.
+_JOB_CAP_SAID: dict[str, str] = {}
+
+
+def _job_cap_say(topic: str, line: str) -> None:
+    """Log `line` only if it isn't what this topic last said. "" means the topic is over, so the
+    same line coming back is news."""
+    if _JOB_CAP_SAID.get(topic, "") != line:
+        _JOB_CAP_SAID[topic] = line
+        if line:
+            _log(line)
+
+
 def _job_can_run() -> bool:
     """Whether this box could run a job, each step failing closed: PyYAML is there, it is
     not a sensitive-data box (those never take a job), this runner isn't egress-locked, the
@@ -7211,7 +7225,7 @@ def _job_can_run() -> bool:
             break
         except JobRefused as exc:
             if wait is None:
-                _log(f"jobs: this box can't run them: {exc}")
+                _job_cap_say("why", f"jobs: this box can't run them: {exc}")
                 return False
             time.sleep(wait)
     for key, want, why in (("job_user", True, f"the broker doesn't see {JOB_USER}"),
@@ -7219,8 +7233,9 @@ def _job_can_run() -> bool:
                            ("locked", False, "a runner on this box is egress-locked"),
                            ("wedged", False, f"a process of {JOB_USER} couldn't be stopped")):
         if status.get(key) is not want:
-            _log(f"jobs: this box can't run them: {why}")
+            _job_cap_say("why", f"jobs: this box can't run them: {why}")
             return False
+    _job_cap_say("why", "")
     return True
 
 
@@ -7266,8 +7281,9 @@ def _job_cap_refresh() -> None:
         _log(f"jobs: this box {'can run them now' if can else 'stops reporting them'}")
     RUNNER_CAPS["jobs"] = can
     if not _RUNNER_ID or not _RUNNER_TOKEN["raw"] or _bearer() != _RUNNER_TOKEN["raw"]:
-        _log("jobs: can't say so without this box's own token; trying again next tick")
+        _job_cap_say("token", "jobs: can't say so without this box's own token; trying again each tick")
         return
+    _job_cap_say("token", "")
     _send_job_cap()
 
 

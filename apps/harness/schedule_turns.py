@@ -484,9 +484,16 @@ def _raise_job_nag(schedule, turn: Turn) -> None:
     lines it printed, and where to run it again. NO `on_approve`: approving a nag
     re-runs a schedule as an ordinary turn with its prompt, which for a job would be an
     empty prompt handed to a model. "Run now" on the schedule is how a job runs again;
-    a later DONE occurrence closes the nag like any other (`resolve_schedule_nags`)."""
+    a later DONE occurrence closes the nag like any other (`resolve_schedule_nags`).
+
+    One open review per schedule: through an outage every slot ends the same way, and what
+    the person has to do about the second is what they already have to do about the first.
+    One they closed may be raised again by the next bad ending."""
     from apps.agents import services as agent_services  # noqa: PLC0415 — agents.services reaches harness
 
+    if AgentTask.objects.filter(ask_closed_at__isnull=True, origin_ref__schedule_id=schedule.id,
+                                origin_ref__kind="schedule_nag").exclude(ask_kind="").exists():
+        return
     ended = _JOB_ENDINGS.get(turn.status, turn.status)
     lines = [ln for ln in (turn.result_note or "").strip().splitlines() if ln.strip()][-8:]
     tail = "\n".join(lines)[-800:]

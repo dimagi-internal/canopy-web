@@ -235,7 +235,8 @@ this machine." and touches nothing.
 **How long a job waits.** A slot waits in the queue ("Waiting for a cloud machine that can run
 jobs." on its schedule) for **up to 30 minutes** past its slot, for a box that takes jobs to be
 free. Then it is skipped as `MISSED` with the reason "No cloud machine that can run jobs took it in
-time.", which its row shows and a review task on **Waiting on you** repeats (if the schedule
+time.", which its row shows and a review task on **Waiting on you** repeats (one open review per
+schedule, however many slots an outage takes; if the schedule
 notifies the inbox); the next slot fires as usual. An `always_run` schedule doesn't skip, and waits
 until its next slot replaces it; so does a slot whose next one comes within the 30 minutes. A
 one-off, or a **Run now**, has no next slot and waits until a box takes it.
