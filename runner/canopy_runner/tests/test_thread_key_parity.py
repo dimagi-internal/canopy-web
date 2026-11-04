@@ -22,6 +22,9 @@ _CLOUD = pathlib.Path(__file__).resolve().parents[2] / "ec2" / "cloud_runner.py"
 
 @pytest.fixture(scope="module")
 def cloud_runner():
+    # The cloud runner only runs on Linux boxes and imports fcntl at top level.
+    # This pin still runs on the Linux and macOS jobs; Windows cannot load it.
+    pytest.importorskip("fcntl", reason="the cloud runner is Linux-only")
     spec = importlib.util.spec_from_file_location("cloud_runner_parity", _CLOUD)
     module = importlib.util.module_from_spec(spec)
     sys.modules["cloud_runner_parity"] = module
