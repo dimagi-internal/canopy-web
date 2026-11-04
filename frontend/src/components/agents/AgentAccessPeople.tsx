@@ -1,13 +1,13 @@
 import { useState } from 'react'
 
-import type { AgentAccessRowOut } from '@/api/agents'
+import type { AccessRoleOut, AgentAccessRowOut } from '@/api/agents'
 import { PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleWord, sourceWords } from './accessWords'
 
 // "WHAT EACH PERSON GETS NOW": the one question only the full roster answers. The server
 // composes each person's result with the same rules a turn is decided by; this draws it —
 // their role, and in words where it comes from. Read-only: change it on the list above.
-export function AgentAccessPeople({ members }: { members: readonly AgentAccessRowOut[] }) {
+export function AgentAccessPeople({ members, roles }: { members: readonly AgentAccessRowOut[]; roles?: readonly AccessRoleOut[] }) {
   const [open, setOpen] = useState(false)
   const count = members.length
   const people = `${count} ${count === 1 ? 'person' : 'people'}`
@@ -36,7 +36,7 @@ export function AgentAccessPeople({ members }: { members: readonly AgentAccessRo
               email: r.email,
               detail: <span className="capitalize">workspace {r.workspace_role}</span>,
               role: r.role ?? 'none',
-              roleLabel: r.role ? roleWord(r.role) : r.capabilities.length > 0 ? `Uses ${r.capabilities.join(', ')}` : roleWord(r.role),
+              roleLabel: r.role ? roleWord(r.role, roles) : r.capabilities.length > 0 ? `Uses ${r.capabilities.join(', ')}` : roleWord(r.role),
               options: [],
               editable: false,
               extra: [

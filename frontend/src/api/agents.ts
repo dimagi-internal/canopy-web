@@ -810,6 +810,41 @@ export async function removeAgentDefault(workspace: string, id: number): Promise
   ensureOk(res, 'removeAgentDefault')
 }
 
+export type AgentRoleOut = Schemas['AgentRoleOut']
+export type AgentRolesOut = Schemas['AgentRolesOut']
+export type AgentRoleIn = Schemas['AgentRoleIn']
+export type AgentRolePatch = Schemas['AgentRolePatch']
+
+// The roles a workspace gives out (apps/agents/api_roles.py). A write takes a passkey step-up, which
+// the API client answers with Touch ID and a retry.
+export async function listAgentRoles(workspace: string): Promise<AgentRolesOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/agent-roles', { params: { path: { slug: workspace } } })
+  return unwrap(res, 'listAgentRoles') as unknown as AgentRolesOut
+}
+
+export async function createAgentRole(workspace: string, role: AgentRoleIn): Promise<AgentRoleOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/agent-roles', { params: { path: { slug: workspace } }, body: role })
+  return unwrap(res, 'createAgentRole') as unknown as AgentRoleOut
+}
+
+export async function changeAgentRole(workspace: string, key: string, patch: AgentRolePatch): Promise<AgentRoleOut> {
+  const res = await apiV2.PATCH('/api/workspaces/{slug}/agent-roles/{key}', {
+    params: { path: { slug: workspace, key } }, body: patch })
+  return unwrap(res, 'changeAgentRole') as unknown as AgentRoleOut
+}
+
+export async function resetAgentRole(workspace: string, key: string): Promise<AgentRoleOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/agent-roles/{key}/reset', {
+    params: { path: { slug: workspace, key } } })
+  return unwrap(res, 'resetAgentRole') as unknown as AgentRoleOut
+}
+
+export async function deleteAgentRole(workspace: string, key: string, reassignTo = ''): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/agent-roles/{key}', {
+    params: { path: { slug: workspace, key }, query: { reassign_to: reassignTo } } })
+  ensureOk(res, 'deleteAgentRole')
+}
+
 export type AgentInterfaceOut = Schemas['AgentInterfaceOut']
 
 // The capabilities this agent offers viewers and users, each with its lowest role.

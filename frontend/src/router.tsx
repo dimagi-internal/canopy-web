@@ -25,6 +25,7 @@ import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
 import { WorkspaceTaskSettingsPage } from './pages/WorkspaceTaskSettingsPage'
 import { WorkspaceAdmissionRulesPage } from './pages/WorkspaceAdmissionRulesPage'
+import { WorkspaceAgentRolesPage } from './pages/WorkspaceAgentRolesPage'
 import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
 import { TopologyMapPage } from './pages/topology/TopologyMapPage'
@@ -387,6 +388,7 @@ export const routeTable: RouteObject[] = [
           { path: 'retention', element: <WorkspaceRetentionPage /> },
           { path: 'tasks', element: <WorkspaceTaskSettingsPage /> },
           { path: 'admission-rules', element: <WorkspaceAdmissionRulesPage /> },
+          { path: 'roles', element: <WorkspaceAgentRolesPage /> },
           { path: 'topology', element: <TopologyMapPage /> },
           { path: 'topology/runners', element: <WorkspaceRunnersPage /> },
           { path: 'topology/agents', element: <WorkspaceAgentAccessPage /> },

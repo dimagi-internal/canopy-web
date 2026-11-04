@@ -347,6 +347,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     cadence, and the labels (`WorkspaceTaskSettingsPage.tsx`). Editors change it.
   - **retention** — content-retention rules.
   - **admission-rules** — turns the workspace refuses before they run.
+  - **roles** — the agent roles a line can give, in words: the built-ins (editable, never deletable) and the ones this workspace defines; owner and agent admin read-only.
   - **topology** — the fleet map (`frontend/src/pages/topology/`): this
     workspace and every one below as nested, collapsible boxes, a lane per
     owner with their runners and agents. Select an agent for its runners in

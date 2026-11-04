@@ -9,14 +9,14 @@ import {
   removeAccessLine,
   setInheritWorkspaceDefaults,
   type AccessLineOut,
+  type AccessRoleOut,
   type AccessListOut,
   type AgentAccessOut,
 } from '@/api/agents'
 import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { AccessLineForm } from './AccessLineForm'
-import type { AddableRole } from './accessWords'
-import { ADDABLE_ROLES, ADDRESS_ONLY_KINDS, WRITE_ROLES, ascending, canText, lineWhat, roleWord } from './accessWords'
+import { ADDRESS_ONLY_KINDS, assignable, canText, lineWhat, roleWord } from './accessWords'
 import { AgentAccessPeople } from './AgentAccessPeople'
 import { AgentAdmins } from './AgentAdmins'
 import { Td, Tr } from '@/components/DataTable'
@@ -96,10 +96,13 @@ export function AgentAccessList({
   return (
     <div className="flex flex-col gap-5" data-testid="agent-access-list">
       <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-0.5 text-[12px]" data-testid="access-legend">
-        {ascending(data.roles).map((r) => (
+        {[...data.roles].reverse().map((r) => (
           <div key={r.role} className="contents">
-            <dt className="font-medium text-foreground">{roleWord(r.role)}</dt>
-            <dd className="m-0 text-foreground-secondary">{canText(r.role, data.roles)}</dd>
+            <dt className="font-medium text-foreground">{roleWord(r.role, data.roles)}</dt>
+            <dd className="m-0 text-foreground-secondary">
+              {canText(r.role, data.roles)}
+              {r.description ? ` · ${r.description}` : ''}
+            </dd>
           </div>
         ))}
       </dl>
@@ -111,7 +114,7 @@ export function AgentAccessList({
             {data.implicit.map((i) => (
               <Tr rule="bottom-soft" key={`${i.role}:${i.who}`} data-testid="access-line-implicit">
                 <Td density="compact-gap" tone="foreground">{i.who}</Td>
-                <Td density="compact-gap" tone="foreground">{roleWord(i.role)}</Td>
+                <Td density="compact-gap" tone="foreground">{roleWord(i.role, data.roles)}</Td>
                 <Td tone="muted">{i.why} · not a line, cannot be removed here</Td>
               </Tr>
             ))}
@@ -119,6 +122,7 @@ export function AgentAccessList({
               <OwnLine
                 key={l.id}
                 line={l}
+                roles={data.roles}
                 editable={data.can_edit}
                 busy={busy}
                 onPatch={(patch) => void act(() => changeAccessLine(agentSlug, l.id, patch))}
@@ -128,7 +132,7 @@ export function AgentAccessList({
             {inherited.map((l) => (
               <Tr rule="bottom-soft" key={`ws-${l.id}`} data-testid="access-line-inherited">
                 <Td density="compact-gap" tone="foreground">{l.who}</Td>
-                <Td density="compact-gap" tone="foreground">{lineWhat(l)}</Td>
+                <Td density="compact-gap" tone="foreground">{lineWhat(l, data.roles)}</Td>
                 <Td tone="muted">
                   set on {l.scope_workspace}
                   {l.manual_only ? ' · needs approval before anything goes out' : ''}
@@ -197,22 +201,24 @@ export function AgentAccessList({
         onChanged={load}
       />
 
-      <AgentAccessPeople members={roster.members} />
+      <AgentAccessPeople members={roster.members} roles={data.roles} />
     </div>
   )
 }
 
 function OwnLine({
   line,
+  roles,
   editable,
   busy,
   onPatch,
   onRemove,
 }: {
   line: AccessLineOut
+  roles: readonly AccessRoleOut[]
   editable: boolean
   busy: boolean
-  onPatch: (patch: { role?: AddableRole; manual_only?: boolean }) => void
+  onPatch: (patch: { role?: string; manual_only?: boolean }) => void
   onRemove: () => void
 }) {
   const addressOnly = ADDRESS_ONLY_KINDS.includes(line.kind as never)
@@ -225,17 +231,17 @@ function OwnLine({
             value={line.role}
             disabled={busy}
             aria-label={`Role for ${line.who}`}
-            onChange={(e) => onPatch({ role: e.target.value as AddableRole })}
+            onChange={(e) => onPatch({ role: e.target.value })}
             className="rounded-md border border-input bg-input px-1.5 py-0.5 text-[12px] text-foreground"
           >
-            {ADDABLE_ROLES.map((r) => (
-              <option key={r} value={r} disabled={WRITE_ROLES.includes(r) && addressOnly}>
-                {roleWord(r)}
+            {assignable(roles).map((r) => (
+              <option key={r.role} value={r.role} disabled={r.contains_write && addressOnly}>
+                {roleWord(r.role, roles)}
               </option>
             ))}
           </select>
         ) : (
-          <span className="text-foreground">{lineWhat(line)}</span>
+          <span className="text-foreground">{lineWhat(line, roles)}</span>
         )}
       </Td>
       <Td tone="muted">

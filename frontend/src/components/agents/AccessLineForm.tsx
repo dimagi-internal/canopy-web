@@ -2,14 +2,13 @@ import { useState, type FormEvent } from 'react'
 
 import type { AccessLineIn, AccessRoleOut } from '@/api/agents'
 import {
-  ADDABLE_ROLES,
   ADDRESS_ONLY_KINDS,
   AT_LEAST_OPTIONS,
   KIND_OPTIONS,
-  WRITE_ROLES,
+  assignable,
   canText,
+  drives,
   roleWord,
-  type AddableRole,
   type LineKind,
 } from './accessWords'
 
@@ -44,7 +43,7 @@ export function AccessLineForm({
 }) {
   const [kind, setKind] = useState<LineKind>('person')
   // '' = nothing chosen yet; 'capability' = one named capability instead of a role.
-  const [choice, setChoice] = useState<AddableRole | 'capability' | ''>('')
+  const [choice, setChoice] = useState<string>('')
   const [capability, setCapability] = useState('')
   const [includeBelow, setIncludeBelow] = useState(false)
   const [email, setEmail] = useState('')
@@ -63,7 +62,7 @@ export function AccessLineForm({
     setKind(next)
     // A role that drives the whole agent is never offered for the address-only kinds: clear it
     // rather than leave a refused choice.
-    if (ADDRESS_ONLY_KINDS.includes(next) && choice !== 'capability' && WRITE_ROLES.includes(choice as AddableRole)) {
+    if (ADDRESS_ONLY_KINDS.includes(next) && choice !== 'capability' && drives(choice, roles)) {
       setChoice('')
     }
   }
@@ -161,14 +160,16 @@ export function AccessLineForm({
 
       <fieldset className="m-0 flex flex-col gap-0.5 border-0 p-0">
         <legend className="mb-0.5 p-0 text-[11px] text-muted-foreground">What they get</legend>
-        {ADDABLE_ROLES.map((r) => {
-          const disabled = WRITE_ROLES.includes(r) && writeOff
+        {assignable(roles).map((role) => {
+          const r = role.role
+          const disabled = role.contains_write && writeOff
           return (
             <label key={r} className={`flex items-baseline gap-2 text-[12px] ${disabled ? 'text-muted-foreground' : 'text-foreground'}`}>
               <input type="radio" name="access-role" value={r} checked={choice === r} disabled={disabled} onChange={() => setChoice(r)} />
-              <span>{roleWord(r)}</span>
+              <span>{roleWord(r, roles)}</span>
               <span className="text-muted-foreground">
                 {canText(r, roles)}
+                {role.description ? ` · ${role.description}` : ''}
                 {disabled && addressOnly ? ' (not for people known only by address)' : ''}
               </span>
             </label>

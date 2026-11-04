@@ -88,3 +88,11 @@ The rows are append-only. No route edits or deletes them.
 - `MCPAuditLog`: one row per MCP tool call, including failed and rate-limited ones.
   It is a call log, not a change log.
 - `Event` (`GET /api/events/`): operational events and faults.
+
+## Agent roles
+
+Defining, editing, resetting and deleting an agent role (`apps/agents/api_roles.py`) are settings
+changes like any other: `@gate("members.manage", setting=True, step_up=True)`, one `SettingChange` per
+call, scope `agent-roles:<workspace>:<key>`, before and after the role's closed permission set, and a
+summary that ends with the blast radius (how many lines, agents and workspace defaults hold the role).
+The migration that linked the lines wrote one `configurable_roles_migration` row per tree.

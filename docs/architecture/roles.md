@@ -19,7 +19,7 @@ There are six tiers. Each contains the one below it.
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
 (`apps/workspaces/models.py`) is `{viewer: 0, editor: 1, admin: 2, owner: 3, superuser: 4}`.
 
-**Agent roles and workspace roles share one engine, not one vocabulary.**
+**Agent roles and workspace roles share one engine, not one vocabulary.** Agent roles are rows a workspace defines (`AgentRole`, [access.md § Configurable roles](access.md#configurable-roles)); workspace roles (viewer / editor / admin / owner) stay fixed in code.
 `apps/common/rolesets.py` (`RoleSet`) holds the mechanism both use: a vocabulary of permissions, a
 table of named roles, an implication rule closed when the table is built, `allows(role,
 permission)`, `holds(permissions, permission)` and rank. `apps/agents/roles.py` declares agent
