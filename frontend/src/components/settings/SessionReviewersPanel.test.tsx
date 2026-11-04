@@ -28,13 +28,26 @@ describe('SessionReviewersPanel', () => {
     const box = (await screen.findByRole('checkbox', { name: /Have Trellis coach me/ })) as HTMLInputElement
     expect(box.checked).toBe(false)
     // Says what turning it on does on the person's own machine.
-    expect(screen.getByText(/Your computer will upload your synced Claude Code sessions to canopy so Trellis can read them; turning coaching off stops the upload\./)).toBeTruthy()
+    expect(screen.getByText(/upload those sessions in full/)).toBeTruthy()
+    // Says who else can read it (the mailbox, the logs), and what cannot be undone.
+    expect(screen.getByText(/any member of its workspace can open it/)).toBeTruthy()
+    expect(screen.getByText(/You cannot delete one yourself today/)).toBeTruthy()
     fireEvent.click(box)
     await waitFor(() => expect(addMySessionReviewer).toHaveBeenCalledWith('trellis'))
     await waitFor(() => expect(box.checked).toBe(true))
     fireEvent.click(box)
     await waitFor(() => expect(removeMySessionReviewer).toHaveBeenCalledWith('trellis'))
     await waitFor(() => expect(box.checked).toBe(false))
+  })
+
+  it('makes no claims about a coach the detailed copy was not checked for', async () => {
+    listMySessionReviewers.mockResolvedValue({
+      reviewers: [], agents: [], coach: { ...coach, agent: 'other', name: 'Other' },
+    })
+    render(<SessionReviewersPanel />)
+    await screen.findByRole('checkbox', { name: /Have Other coach me/ })
+    expect(screen.queryByText('What does this mean?')).toBeNull()
+    expect(screen.queryByText(/emails me/)).toBeNull()
   })
 
   it('lists another reviewer with a Stop', async () => {

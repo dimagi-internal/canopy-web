@@ -145,7 +145,14 @@ agent's or a contact's session, never a sensitive one (any runner requirement),
 never another person's box, nothing from a sensitive-data box, and only repos the
 owner opted in to (the server's `_is_canopys`, and the runner again off its
 heartbeat's `report_projects`). Revoking the last grant drops them from the next
-poll; rows already uploaded stay until the person deletes the session.
+poll; ACTIVE sessions keep shipping. Rows already uploaded stay: no route deletes a
+session's messages (`reset` re-ships them, `archive` keeps them), only a retention rule.
+The set has no workspace filter, so a session filed where the coach is not a member is
+uploaded and still unreadable to it.
+
+What a person is told when they tick the box is `CoachConsentDetails`
+(`frontend/src/components/settings/SessionReviewersPanel.tsx`), whose comment names the
+code each paragraph rests on: change them together.
 
 ### A session's worktree project is not its `project`
 
