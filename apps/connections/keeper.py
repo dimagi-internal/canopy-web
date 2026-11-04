@@ -34,7 +34,7 @@ from apps.harness.models import Runner, RunnerDeviceKey
 
 from . import recipients as rcpt
 from . import server_key, server_tokens, services, tokens, wire
-from .models import Connection, ConnectionApp
+from .models import Connection, ConnectionApp, ConnectionOperation
 from .wire import WireError
 
 #: How long a `revoking` row waits for a holder to confirm before the sweep deletes it.
@@ -43,6 +43,8 @@ REVOKE_GRACE = timedelta(days=7)
 #: can cost KMS and provider timeouts, and the tick is shared.
 SERVER_REVOKES_PER_TICK = 25
 SERVER_REVOKE_EVERY_S = 60 * 60
+#: Expired operation leases deleted in one sweep. They are many and worth nothing, and the tick is shared.
+OPERATIONS_PER_TICK = 1000
 
 
 def _keeps(runner: Runner) -> bool:
@@ -180,9 +182,11 @@ def sweep(now: datetime | None = None) -> dict:
     disconnecting any still live there (one that slipped past `remove_app`), so a
     removal always finishes. First, every lend whose time has run out is disconnected, so a
     holder revokes it at the provider, or canopy-web does: many at once, so with no revoke in that
-    call, and `_server_revokes` below takes it this same tick and retries it on later ones. Returns the counts `{lapsed, revoke_unconfirmed,
-    apps_deleted}`."""
+    call, and `_server_revokes` below takes it this same tick and retries it on later ones. Expired
+    operation leases go too, up to `OPERATIONS_PER_TICK`. Returns the counts `{lapsed, revoke_unconfirmed,
+    apps_deleted, operations_expired}`."""
     now = now or timezone.now()
+    operations = _expired_operations(now)
     lapsed = 0
     for conn in (Connection.objects.filter(expires_at__lte=now).exclude(state=Connection.REVOKING)
                  .select_related("app__workspace", "agent__workspace").order_by("pk")):
@@ -207,7 +211,14 @@ def sweep(now: datetime | None = None) -> dict:
                                 + ("no machine confirmed revoking it" if stale else "no machine holds it any more"))
     apps = sum(_finish_removal(app)
                for app in list(ConnectionApp.objects.filter(removed_at__isnull=False).order_by("pk")))
-    return {"lapsed": lapsed, "revoke_unconfirmed": gone, "apps_deleted": apps}
+    return {"lapsed": lapsed, "revoke_unconfirmed": gone, "apps_deleted": apps, "operations_expired": operations}
+
+
+def _expired_operations(now: datetime) -> int:
+    pks = list(ConnectionOperation.objects.filter(expires_at__lte=now).order_by("expires_at")
+               .values_list("pk", flat=True)[:OPERATIONS_PER_TICK])
+    deleted, _ = ConnectionOperation.objects.filter(pk__in=pks).delete()
+    return deleted
 
 
 def _server_revokes() -> None:

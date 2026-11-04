@@ -267,3 +267,55 @@ class ConnectionGrant(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["connection", "agent"], name="connectiongrant_unique"),
         ]
+
+
+class ConnectionOperation(models.Model):
+    """A lease on writing from one screen, opened by one person (`call_service`).
+
+    canopy-web can't tell a click from a script; the page around the screen decides that before it
+    asks for one. What a row does is limit how far a write can go: this person, this screen, this
+    revision, until `expires_at`, at most `call_service.OPERATION_MAX_WRITES` writes. It slides:
+    each write moves `expires_at` to `call_service.OPERATION_SECONDS` from then, never past
+    `hard_limit_at`, so a long run of writes isn't cut off midway and one click still has an end.
+    Expired rows are deleted by `keeper.sweep`."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    # `declarations.Surface.kind` and `.full_ref`: "view" and its id, "app" and "<workspace>/<key>".
+    surface_kind = models.CharField(max_length=20)
+    surface_ref = models.CharField(max_length=200)
+    # `declarations.Surface.revision`: a view's version, an app's live version id.
+    revision = models.BigIntegerField(null=True, blank=True)
+    writes_used = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(db_index=True)
+    hard_limit_at = models.DateTimeField()
+
+
+class ConnectionSurfaceShare(models.Model):
+    """An agent's connection serving one project's or app's screens, as its admin approved.
+
+    `approved_reads` and `approved_writes` are the declared lines the admin approved, read from the
+    surface when they did so (`services.share_with_surface`), never from what a client sent. A
+    screen's call stops when its declaration holds a line they don't cover. An agent's connection
+    only: a person's own account is never used by someone else."""
+
+    PROJECT = "project"
+    APP = "app"
+    KINDS = [(PROJECT, "Project"), (APP, "App")]
+
+    connection = models.ForeignKey(Connection, on_delete=models.CASCADE, related_name="surface_shares")
+    kind = models.CharField(max_length=10, choices=KINDS)
+    # `declarations.Surface.share_key`: a project's id, or an app's "<workspace>/<key>".
+    ref = models.CharField(max_length=200)
+    approved_reads = models.JSONField(default=list, blank=True)
+    approved_writes = models.JSONField(default=list, blank=True)
+    # SET_NULL for the same reason as `ConnectionGrant.granted_by`.
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["connection", "kind", "ref"], name="connectionsurfaceshare_unique"),
+        ]

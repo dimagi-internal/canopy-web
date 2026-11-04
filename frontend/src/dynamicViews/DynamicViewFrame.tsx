@@ -17,6 +17,8 @@ import { cancelAgentTask, createAgentTask, getAgentTask, type AgentTask } from '
 import { apiUrl } from '@/api/base'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
+import { connectionClient } from '@/api/connectionCalls'
+import { ConnectionCalls, pageClickedFrame, refusalMembers, type DeclaredConnection } from './connectionCalls'
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
@@ -37,6 +39,10 @@ export interface FrameView {
   sources: DynamicViewSource[]
   /** The agent tasks the code may start (the view's `agent_tasks`); none when absent. */
   agent_tasks?: readonly DeclaredTask[]
+  /** The calls the code may make on a connected account (the view's `connections`). */
+  connections?: readonly DeclaredConnection[]
+  /** Drawn from unsaved edits: there is no revision to call as. */
+  preview?: boolean
 }
 
 /** What the frame is told about a task: its progress, not the request it was sent. */
@@ -70,6 +76,10 @@ interface Props {
     go: (page: string, params: Record<string, string>) => void
     /** May the page use canopy.read (the dynamic-view catalog)? Never on the public door. */
     canopyReads: boolean
+    /** May the page use connections? Only a signed-in member's door. */
+    canConnect?: boolean
+    /** The app's declared connections, if known here; the server decides when not. */
+    connections?: readonly DeclaredConnection[]
   }
 }
 
@@ -134,8 +144,34 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
       () => declared.current,
     )
   }
+  // Calls to a connected account: what the screen is, read fresh on each call.
+  const screen = useRef({ view, scope, app })
+  screen.current = { view, scope, app }
+  const connectionCalls = useRef<ConnectionCalls | null>(null)
+  if (connectionCalls.current === null) {
+    connectionCalls.current = new ConnectionCalls(connectionClient, () => {
+      const { view: v, scope: sc, app: a } = screen.current
+      if (a) {
+        return {
+          surface: { kind: 'app', workspace: sc.workspace.slug, key: a.context.key },
+          declared: a.connections,
+          canConnect: a.canConnect === true,
+          draft: a.context.draft,
+        }
+      }
+      const saved = !v.preview && sc.view.id > 0 && sc.view.version > 0
+      return {
+        surface: saved ? { kind: 'view', id: sc.view.id, version: sc.view.version } : null,
+        declared: v.connections ?? [],
+        canConnect: true,
+      }
+    }, { isActive: () => pageClickedFrame(frame.current) })
+  }
   // Leaving the page (or the frame) cancels whatever the view is still waiting on.
-  useEffect(() => () => tasks.current?.cancelAll(), [])
+  useEffect(() => () => {
+    tasks.current?.cancelAll()
+    connectionCalls.current?.closeAll()
+  }, [])
 
   const post = useCallback((msg: HostMessage) => {
     // An opaque-origin frame can only be addressed as "*"; the window we post to
@@ -261,6 +297,22 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
           window.location.assign(lendStartPath(ask, ctx.workspace, window.location.pathname))
           return
         }
+        case 'connection-call': {
+          const id = msg.id
+          // Read the page's own activation NOW, in the message event: handle() does it before any await.
+          connectionCalls.current!.handle(msg.request)
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e), ...refusalMembers(e) }))
+          return
+        }
+        case 'connection-begin': {
+          const id = msg.id
+          // As above: begin() reads the activation before any await.
+          connectionCalls.current!.begin()
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e), ...refusalMembers(e) }))
+          return
+        }
         case 'navigate': {
           const to = resolveNavigation(ctx.workspace, msg.path)
           if (to.kind === 'app') navigate(to.to)
@@ -330,6 +382,7 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
         // replaced the document. Stop answering it.
         if (loads.current > 1) {
           tasks.current?.cancelAll()
+          connectionCalls.current?.closeAll()
           setGone(true)
         }
       }}

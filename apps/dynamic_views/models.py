@@ -34,6 +34,10 @@ class DynamicView(models.Model):
     #: The agent tasks the code may start, as the viewer: [{"agent", "name"}]
     #: (`declared_tasks.py`). Empty for a view that only reads.
     agent_tasks = models.JSONField(default=list, blank=True)
+    #: The Salesforce calls the code may make, as the viewer or through an agent's
+    #: shared connection (`apps/connections/declarations.py`). Empty for a view that
+    #: calls nothing.
+    connections = models.JSONField(default=list, db_default=[], blank=True)
     version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="dynamic_views_created")
@@ -62,6 +66,7 @@ class DynamicViewRevision(models.Model):
     code = models.TextField()
     sources = models.JSONField(default=list, blank=True)
     agent_tasks = models.JSONField(default=list, blank=True)
+    connections = models.JSONField(default=list, db_default=[], blank=True)
     note = models.CharField(max_length=300, blank=True, default="")
     changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")

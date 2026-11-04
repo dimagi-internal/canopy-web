@@ -20,6 +20,8 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.cache import cache
 
+from apps.common.rate_limit import over
+
 
 def _mint_limit() -> int:
     return int(getattr(settings, "EMBED_MINT_LIMIT", 30))
@@ -88,7 +90,7 @@ def check_contact_token_client(client_ip) -> None:
     """
     limit = int(getattr(settings, "CONTACT_TOKEN_CLIENT_LIMIT", 300))
     window = int(getattr(settings, "CONTACT_TOKEN_WINDOW_SECONDS", 60))
-    if _over(f"tokens:contact:ip:{client_ip or 'unknown'}", limit, window):
+    if over(f"tokens:contact:ip:{client_ip or 'unknown'}", limit, window):
         raise ContactTokenRateLimitError(
             f"too many contact-token requests ({limit} per {window}s)"
         )
@@ -102,23 +104,10 @@ def check_contact_token_issuer(name: str) -> None:
     """
     limit = int(getattr(settings, "CONTACT_TOKEN_ISSUER_LIMIT", 120))
     window = int(getattr(settings, "CONTACT_TOKEN_WINDOW_SECONDS", 60))
-    if _over(f"tokens:contact:iss:{name}", limit, window):
+    if over(f"tokens:contact:iss:{name}", limit, window):
         raise ContactTokenRateLimitError(
             f"too many contact tokens for this site ({limit} per {window}s)"
         )
-
-
-def _over(key: str, limit: int, window: int) -> bool:
-    """Fixed-window counter. True when this request is over budget."""
-    if cache.add(key, 1, timeout=window):
-        return False
-    try:
-        count = cache.incr(key)
-    except ValueError:
-        # Expired between add() and incr(); this request starts a fresh window.
-        cache.add(key, 1, timeout=window)
-        return False
-    return count > limit
 
 
 # --- the site agents API ----------------------------------------------------
@@ -135,14 +124,14 @@ class SiteAgentsRateLimitError(Exception):
 def check_site_agents_client(client_ip) -> None:
     limit = int(getattr(settings, "SITE_AGENTS_CLIENT_LIMIT", 120))
     window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
-    if _over(f"tokens:site-agents:ip:{client_ip or 'unknown'}", limit, window):
+    if over(f"tokens:site-agents:ip:{client_ip or 'unknown'}", limit, window):
         raise SiteAgentsRateLimitError(f"too many site agents requests ({limit} per {window}s)")
 
 
 def check_site_agents_issuer(name: str) -> None:
     limit = int(getattr(settings, "SITE_AGENTS_ISSUER_LIMIT", 60))
     window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
-    if _over(f"tokens:site-agents:iss:{name}", limit, window):
+    if over(f"tokens:site-agents:iss:{name}", limit, window):
         raise SiteAgentsRateLimitError(f"too many site agents requests for this site ({limit} per {window}s)")
 
 
@@ -155,5 +144,5 @@ def check_resources_updated(client_ip, issuer: str = "") -> None:
     window = int(getattr(settings, "RESOURCES_UPDATED_WINDOW_SECONDS", 60))
     key = f"tokens:resources-updated:iss:{issuer}" if issuer else \
         f"tokens:resources-updated:ip:{client_ip or 'unknown'}"
-    if _over(key, limit, window):
+    if over(key, limit, window):
         raise SiteAgentsRateLimitError(f"too many resource notifications ({limit} per {window}s)")

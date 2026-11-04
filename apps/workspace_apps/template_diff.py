@@ -11,6 +11,7 @@ the surfaces where a mistake exposes data or hands out power:
   link actions (what a visitor can submit), private links;
 * acting — an action's role;
 * email — who an email goes to;
+* Salesforce — the calls an app's pages may make, and as whom (`connections`);
 * retention — what is anonymized or deleted, and when.
 
 Each finding is a sentence a non-developer can act on. Any finding means a
@@ -106,10 +107,30 @@ def changes(old: dict, new: dict) -> list[str]:
     # Private links.
     if (old.get("links") or {}) != (new.get("links") or {}):
         out.append("changes the private links the app sends (what their holders see or do)")
+    # Salesforce calls the app's pages may make: any change either way is for an admin to see.
+    if (old.get("connections") or []) != (new.get("connections") or []):
+        out.append(_connection_change(old.get("connections") or [], new.get("connections") or []))
     # Retention.
     if (old.get("retention") or []) != (new.get("retention") or []):
         out.append("changes what candidate data is anonymized or deleted, and when")
     return out
+
+
+def _calls(connections: list) -> set[tuple]:
+    return {(e.get("provider"), e.get("as"), e.get("agent"), kind, ln["method"], ln["path"])
+            for e in connections for kind in ("reads", "writes") for ln in e.get(kind) or []}
+
+
+def _connection_change(old: list, new: list) -> str:
+    a, b = _calls(old), _calls(new)
+    wrote = any(c[3] == "writes" for c in b - a)
+    if b - a and wrote:
+        return "lets the app's pages change records in Salesforce that they could not before"
+    if b - a:
+        return "lets the app's pages read more from Salesforce than before"
+    if a - b:
+        return "takes away some of the Salesforce calls the app's pages could make"
+    return "changes whose Salesforce connection the app's pages use"
 
 
 def _readers(c: dict) -> str:

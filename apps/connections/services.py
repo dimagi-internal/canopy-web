@@ -85,9 +85,9 @@ from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as workspaces
 
-from . import providers, server_key, wire
+from . import declarations, providers, server_key, wire
 from . import recipients as rcpt
-from .models import Connection, ConnectionApp
+from .models import Connection, ConnectionApp, ConnectionSurfaceShare
 
 logger = logging.getLogger(__name__)
 
@@ -365,7 +365,7 @@ AUDITED = frozenset({"connected", "disconnected", "shared", "granted", "grant_re
                      "refreshed", "server_refreshed", "server_write_failed", "server_use_on", "server_use_off",
                      "lease_expired_unwritten",
                      "reconnect_required", "resealed", "revoked", "revoke_unconfirmed", "app_configured",
-                     "app_removed"})
+                     "app_removed", "connection_call", "surface_shared", "surface_unshared"})
 
 
 @dataclass(frozen=True)
@@ -994,6 +994,86 @@ def connection_for_agent(agent, provider: str, *, turn=None) -> Connection:
     if len(granted) > 1:
         raise ConnectionError("ambiguous", f"{agent.slug} is granted more than one {provider} connection")
     raise NotConnected(f"{agent.slug} has no {provider} connection")
+
+
+# ---- an agent's connection serving a project's or an app's screens ---------------
+
+def surface_share_target(conn: Connection, kind: str, ref: str) -> declarations.ShareTarget:
+    """What `conn` could be shared with under this name. `ValueError`, a sentence, when it can't be:
+    a person's connection, a lend with limits, or a surface outside the agent's workspace, said alike
+    for one that doesn't exist so that ids can't be probed."""
+    if conn.agent_id is None:
+        raise ValueError("A person's own connection can't serve other people's screens; only an agent's can.")
+    if conn.limited:
+        raise ValueError("This connection was lent with limits, so screens can't use it.")
+    if conn.state == Connection.REVOKING:
+        raise ConnectionError("revoking", "This connection is being disconnected.")
+    agent = conn.agent
+    target = declarations.share_target(kind, ref)
+    if target is None or target.workspace != agent.workspace_id:
+        raise ValueError(f"There is no such project or app in {agent.slug}'s workspace.")
+    if conn.app.workspace_id != target.workspace:
+        raise ValueError(f"This connection was made in another workspace; connect {agent.slug}'s account again here.")
+    return target
+
+
+def surface_share_preview(conn: Connection, kind: str, ref: str) -> dict:
+    """What approving would approve, for the person to look at and send back."""
+    target = surface_share_target(conn, kind, ref)
+    reads, writes = declarations.shared_lines(target.declared, conn.provider, conn.agent.slug)
+    return {"kind": kind, "ref": target.ref, "title": target.title, "reads": reads, "writes": writes}
+
+
+def share_with_surface(conn: Connection, kind: str, ref: str, *, expected_reads: list[dict],
+                       expected_writes: list[dict], by) -> ConnectionSurfaceShare:
+    """Let every screen of this project or app that can be opened use `conn`, for what it declares
+    of the agent now. `expected_*` are the lines the person saw: what is stored is read here and must
+    be those, or `declaration_changed`, so nobody approves what they never looked at, and what is
+    approved is never a client's list. Again on the same surface replaces what was approved.
+    Refused as `surface_share_target` says. Records `surface_shared`."""
+    target = surface_share_target(conn, kind, ref)
+    reads, writes = declarations.shared_lines(target.declared, conn.provider, conn.agent.slug)
+    if not (declarations.same_lines(reads, expected_reads) and declarations.same_lines(writes, expected_writes)):
+        raise ConnectionError("declaration_changed", "What these screens ask for has changed since you looked. Look "
+                                                     "again, then approve what is there now.")
+    share, _ = ConnectionSurfaceShare.objects.update_or_create(
+        connection=conn, kind=kind, ref=target.ref,
+        defaults={"approved_reads": reads, "approved_writes": writes, "approved_by": by})
+    record(Subject.of(conn), "surface_shared", by=by, surface=f"{kind}:{target.ref}", approved_reads=reads,
+           approved_writes=writes, summary=f"{conn.owner_label}'s {conn.provider} shared with {kind} {target.title}")
+    return share
+
+
+def stop_surface_share(share: ConnectionSurfaceShare, *, by) -> None:
+    """Those screens stop using the connection at once. Records `surface_unshared`."""
+    conn, surface = share.connection, f"{share.kind}:{share.ref}"
+    share.delete()
+    record(Subject.of(conn), "surface_unshared", by=by, surface=surface,
+           summary=f"{conn.owner_label}'s {conn.provider} no longer shared with {surface}")
+
+
+def surface_removed(kind: str, ref: str) -> None:
+    """A project or app is gone for good (`declarations.on_share_target_removed`): what was approved
+    for it must not pass to the next thing of that name."""
+    for share in (ConnectionSurfaceShare.objects.filter(kind=kind, ref=ref)
+                  .select_related("connection__agent__workspace")):
+        stop_surface_share(share, by=None)
+
+
+def surface_share_state(share: ConnectionSurfaceShare) -> dict:
+    """A share as it stands: what was approved against what is declared now. A surface that no
+    longer exists has no title and nothing waiting."""
+    conn = share.connection
+    target = declarations.share_target(share.kind, share.ref)
+    reads, writes = (declarations.shared_lines(target.declared, conn.provider, conn.agent.slug) if target is not None
+                     else ([], []))
+    pending_reads = declarations.not_covered(reads, share.approved_reads)
+    pending_writes = declarations.not_covered(writes, share.approved_writes)
+    return {"id": share.pk, "kind": share.kind, "ref": share.ref, "title": target.title if target is not None else None,
+            "account_label": conn.account_label,
+            "approved_reads": share.approved_reads, "approved_writes": share.approved_writes,
+            "pending_reads": pending_reads, "pending_writes": pending_writes,
+            "needs_approval": bool(pending_reads or pending_writes)}
 
 
 def person_connections(user, provider: str, *, workspace: str | None = None) -> list[Connection]:

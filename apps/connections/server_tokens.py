@@ -40,8 +40,10 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import NamedTuple
 from urllib.parse import quote, quote_plus
 
+from django.core.cache import cache
 from django.db import Error as DatabaseFailure
 from django.db import connection, transaction
 from django.utils import timezone
@@ -64,6 +66,8 @@ WAIT_SECONDS, POLL_SECONDS = 30, 1
 #: How long a write keeps trying when it holds the only copy of a rotated token, and its pauses:
 #: the CLI's budget (`orchestrator/connections/access.py`).
 ROTATED_WRITE_SECONDS, RETRY_SECONDS, RETRY_MAX_SECONDS = 90, 2, 15
+#: How often a provider's refusal of a token may force a refresh, per connection.
+FORCED_REFRESH_SECONDS = 60
 _KV = 0
 _REFRESH_KEYS = frozenset({"v", "provider", "refresh_token", "client_id", "login_host", "instance_url", "account_id",
                            "owner_key", "issued_at", "scopes", "statement_floor"})
@@ -84,15 +88,25 @@ _monotonic = time.monotonic
 logger = logging.getLogger(__name__)
 
 
+class Access(NamedTuple):
+    """A usable token, where to use it, and the digest of the access envelope it came from."""
+
+    token: str
+    instance_url: str
+    digest: str
+
+
 class ServerUseOff(services.ConnectionError):  # noqa: N818 — the name is the interface
     """canopy-web may not use this connection: the switch is off, its key isn't set up, or what is
     stored isn't sealed to it."""
 
     code = "server_use_off"
 
-    def __init__(self, message: str = "") -> None:
-        super().__init__("", message or "canopy-web isn't allowed to use this connection; its owner can turn that "
-                                        "on in Settings → Connections.")
+    def __init__(self, message: str = "", *, why: str = "off") -> None:
+        super().__init__("", message or "canopy-web isn't allowed to use this connection.")
+        #: "off", "limited", "no_key" or "not_sealed". Who can fix each depends on who is asking, so
+        #: the sentence for a person is `call_service`'s; there is no switch on the last three.
+        self.why = why
 
 
 class Waiting(services.ConnectionError):  # noqa: N818 — the name is the interface
@@ -111,8 +125,7 @@ class Refused(services.ConnectionError):  # noqa: N818 — a kind of ConnectionE
     code = "server_refused"
 
     def __init__(self, message: str = "") -> None:
-        super().__init__("", message or "canopy-web could not trust what it holds for this connection; its owner "
-                                        "should connect it again.")
+        super().__init__("", message or "canopy-web could not trust what it holds for this connection.")
 
 
 # ---- the cache ---------------------------------------------------------------------------
@@ -132,6 +145,30 @@ def _forget(connection_id) -> None:
         _cache.pop(connection_id, None)
 
 
+def forget(conn: Connection, digest: str) -> bool:
+    """The provider refused the token whose access envelope has `digest` (`Access.digest`): its
+    session ended before its stored expiry said it would. True when it is worth asking `access` again.
+
+    If something newer is stored, another request or a machine already refreshed: that one is left
+    alone, and no refresh is spent. Otherwise this forces one, at most once a minute per connection, by
+    marking what is stored as spent, or `access` would open the same dead token from the envelope. A
+    machine reading this row sees the expiry too. False when this minute's refresh has been used: the
+    provider refused a token it was just given, and asking it again would only repeat that."""
+    with _cache_lock:
+        hit = _cache.get(conn.pk)
+        if hit is not None and hit[0] == digest:
+            del _cache[conn.pk]
+    stored = Connection.objects.filter(pk=conn.pk).values_list("access_sealed", flat=True).first()
+    if stored is None or vault_engine.value_digest(stored) != digest:
+        return True
+    if not cache.add(f"connections:forced_refresh:{conn.pk}", 1, timeout=FORCED_REFRESH_SECONDS):
+        return False
+    now = timezone.now()
+    Connection.objects.filter(pk=conn.pk, access_sealed=stored, access_expires_at__gt=now).update(
+        access_expires_at=now)
+    return True
+
+
 def _remember(connection_id, digest: str, token: str, instance_url: str, expires_at: float) -> None:
     now = _now()
     with _cache_lock:
@@ -143,7 +180,7 @@ def _remember(connection_id, digest: str, token: str, instance_url: str, expires
             _cache.popitem(last=False)
 
 
-def _cached(conn: Connection) -> tuple[str, str] | None:
+def _cached(conn: Connection) -> Access | None:
     digest = vault_engine.value_digest(conn.access_sealed)
     now = _now()
     with _cache_lock:
@@ -154,7 +191,7 @@ def _cached(conn: Connection) -> tuple[str, str] | None:
             del _cache[conn.pk]
             return None
         _cache.move_to_end(conn.pk)
-        return hit[1], hit[2]
+        return Access(hit[1], hit[2], hit[0])
 
 
 # ---- what is opened is checked -----------------------------------------------------------
@@ -167,10 +204,18 @@ def _row(pk) -> Connection:
     return row
 
 
+def _connect_again(kind, what: str):
+    """An error whose cure is connecting again. `what` says what is wrong and no more, because who can
+    connect it depends on who is asking: `call_service` adds that for a person at a screen."""
+    exc = kind(f"{what} Whoever holds it must connect it again.")
+    exc.what = what
+    return exc
+
+
 def _refused(row: Connection, reason: str) -> Refused:
     """`reason` is a fixed phrase of this module's, never a value out of an envelope."""
     services.record(services.Subject.of(row), "server_refused", warn=True, reason=reason)
-    return Refused()
+    return _connect_again(Refused, "canopy-web could not trust what it holds for this connection.")
 
 
 def _writer_accepted(row: Connection, by: dict, me: str) -> bool:
@@ -258,18 +303,22 @@ def _usable(row: Connection) -> None:
         raise services.NotConnected("This connection is being disconnected.")
     if row.needs_reconnect:
         title = tokens._title(row)
-        raise services.NotConnected(f"This {title} connection no longer works; its owner must connect it again.")
-    if row.limited or not row.server_use or not server_key.available():
+        raise _connect_again(services.NotConnected, f"This {title} connection no longer works.")
+    if not server_key.available():
+        raise ServerUseOff(why="no_key")
+    if row.limited:
+        raise ServerUseOff(why="limited")
+    if not row.server_use:
         raise ServerUseOff()
 
 
 def _sealed_to_me(row: Connection, me: str) -> None:
     if ("device", me) not in zk_seal.sealed_targets(row.sealed) or rcpt.server_recipient(row) is None:
-        raise ServerUseOff("What is stored for this connection isn't sealed so that canopy-web can open it; its owner "
-                           "can connect it again to fix that.")
+        raise ServerUseOff("What is stored for this connection isn't sealed so that canopy-web can open it.",
+                           why="not_sealed")
 
 
-def _live_access(row: Connection, me: str) -> tuple[str, str] | None:
+def _live_access(row: Connection, me: str) -> Access | None:
     """The stored access token when it is worth opening: sealed to canopy-web, a minute left."""
     if (not row.access_sealed or row.access_expires_at is None
             or ("device", me) not in zk_seal.sealed_targets(row.access_sealed)
@@ -278,9 +327,9 @@ def _live_access(row: Connection, me: str) -> tuple[str, str] | None:
     plain = _open_access(row, me)
     if plain["expires_at"] - _now() <= MIN_LIFE_SECONDS:
         return None
-    answer = plain["access_token"], plain["instance_url"]
-    _remember(row.pk, vault_engine.value_digest(row.access_sealed), *answer, plain["expires_at"])
-    return answer
+    digest = vault_engine.value_digest(row.access_sealed)
+    _remember(row.pk, digest, plain["access_token"], plain["instance_url"], plain["expires_at"])
+    return Access(plain["access_token"], plain["instance_url"], digest)
 
 
 def _lease_is_live(row: Connection) -> bool:
@@ -289,7 +338,13 @@ def _lease_is_live(row: Connection) -> bool:
 
 
 def access_token(conn: Connection, *, sleep=None) -> tuple[str, str]:
-    """`(access token, instance_url)` for `conn`, with at least a minute left.
+    """`(access token, instance_url)` for `conn`: `access`, for a caller who won't need `forget`."""
+    got = access(conn, sleep=sleep)
+    return got.token, got.instance_url
+
+
+def access(conn: Connection, *, sleep=None) -> Access:
+    """The token for `conn`, with at least a minute left, and which envelope it came from.
 
     Raises `services.NotConnected` (gone, being disconnected, or a refresh was refused for good),
     `ServerUseOff`, `Waiting` (another holder's lease outlasted 30 s), `server_key.Unavailable`, or
@@ -326,7 +381,7 @@ class _Lease:
     id: object
 
 
-def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> tuple[str, str] | None:
+def _refreshed(row: Connection, writer: tokens.Writer, sleep) -> Access | None:
     """Take the lease and refresh. None when another holder got there first, or took over since:
     wait for its write. A rotated refresh token exists only here until it is stored, so if that fails
     the lease stays held, and its expiry says what may be lost (`lease_expired_unwritten`); if the
@@ -421,8 +476,7 @@ def _refresh_refused(row: Connection, writer: tokens.Writer, lease_id, refresh_t
     if isinstance(e, providers.ProviderUnavailable):
         return services.ConnectionError("provider_unavailable", f"{title} could not be reached; try again.")
     if code == tokens.INVALID_GRANT:
-        return services.NotConnected(f"{title} refused this connection's refresh token; its owner must connect it "
-                                     "again.")
+        return _connect_again(services.NotConnected, f"{title} refused this connection's refresh token.")
     return services.ConnectionError("provider_error", f"{title} refused the refresh.")
 
 
@@ -498,8 +552,8 @@ def _attempts(rotated: bool, sleep):
 
 
 def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, rotated: bool, writer: tokens.Writer,
-                  lease: _Lease, sleep) -> tuple[str, str] | None:
-    """`(token, instance_url)` once stored, keeping `lease` renewed. A row that moved is read again
+                  lease: _Lease, sleep) -> Access | None:
+    """`Access` once stored, keeping `lease` renewed. A row that moved is read again
     and sealed again: only the floor and recipients change. With a rotated token in hand, a KMS or
     database failure or a lease someone else holds is tried again too. None when this write no longer
     applies: without a rotation the lease went elsewhere; or a reconnect replaced the refresh token this
@@ -547,8 +601,8 @@ def _written_back(row: Connection, plain: dict, token: providers.TokenResponse, 
                         error=last,
                         summary=f"{row.owner_label}'s {tokens._title(row)} refresh token rotated on {NAME} and "
                                 "could not be stored; it may have to be connected again")
-        raise Refused("canopy-web could not store this connection's new token; if it does not work again soon, its "
-                      "owner should connect it again.")
+        raise _connect_again(Refused, "canopy-web could not store this connection's new token, so it may stop "
+                                      "working.")
     raise _refused(row, f"the write-back was refused: {last}")
 
 
@@ -581,14 +635,14 @@ def _no_longer_a_recipient(row: Connection, writer: tokens.Writer, lease: _Lease
                     summary=f"{row.owner_label}'s {title} refresh token rotated on {NAME} just as its owner took "
                             "canopy-web off it, so canopy-web couldn't store the new one. What is stored may have "
                             "stopped working; if so, connect it again")
-    raise Refused(f"Who can use this {title} connection changed while canopy-web was refreshing it, so canopy-web "
-                  "couldn't store the new sign-in. If it stops working, its owner should connect it again.")
+    raise _connect_again(Refused, f"Who can use this {title} connection changed while canopy-web was refreshing it, "
+                                  "so canopy-web couldn't store the new sign-in.")
 
 
 def _stored(row: Connection, token: providers.TokenResponse, plain: dict, digest: str,
-            expires_at: int) -> tuple[str, str]:
+            expires_at: int) -> Access:
     _remember(row.pk, digest, token.access_token, plain["instance_url"], expires_at)
-    return token.access_token, plain["instance_url"]
+    return Access(token.access_token, plain["instance_url"], digest)
 
 
 # ---- revoking --------------------------------------------------------------------------------

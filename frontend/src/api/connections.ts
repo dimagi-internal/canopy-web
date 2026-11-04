@@ -132,3 +132,41 @@ export async function removeConnectionApp(workspace: string, provider: string): 
   })
   ensureOk(res, 'Could not remove the app.')
 }
+
+// ---- Screens that may use an agent's connection (project and app shares) ----
+export type SurfaceShare = components['schemas']['SurfaceShareOut']
+export type SurfaceSharePreview = components['schemas']['SurfaceSharePreviewOut']
+export type SurfaceKind = 'project' | 'app'
+export type SurfaceLine = { method: string; path: string }
+
+export async function listSurfaceShares(id: string): Promise<SurfaceShare[]> {
+  const res = await apiV2.GET('/api/connections/{connection_id}/surface-shares', {
+    params: { path: { connection_id: id } },
+  })
+  return Array.from(unwrap(res, 'Could not read which screens use this.').shares) as SurfaceShare[]
+}
+
+export async function previewSurfaceShare(id: string, kind: SurfaceKind, ref: string): Promise<SurfaceSharePreview> {
+  const res = await apiV2.GET('/api/connections/{connection_id}/surface-shares/preview', {
+    params: { path: { connection_id: id }, query: { kind, ref } },
+  })
+  return unwrap(res, 'Could not read what that screen asks for.') as unknown as SurfaceSharePreview
+}
+
+/** Needs a fresh passkey; the step-up middleware asks for it. 409 `declaration_changed` if the screen changed. */
+export async function approveSurfaceShare(
+  id: string, kind: SurfaceKind, ref: string, expected: { reads: readonly SurfaceLine[]; writes: readonly SurfaceLine[] },
+): Promise<SurfaceShare> {
+  const res = await apiV2.POST('/api/connections/{connection_id}/surface-shares', {
+    params: { path: { connection_id: id } },
+    body: { kind, ref, expected_reads: [...expected.reads], expected_writes: [...expected.writes] },
+  })
+  return unwrap(res, 'Could not approve that.') as unknown as SurfaceShare
+}
+
+export async function stopSurfaceShare(id: string, shareId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/connections/{connection_id}/surface-shares/{share_id}', {
+    params: { path: { connection_id: id, share_id: shareId } },
+  })
+  ensureOk(res, 'Could not stop that.')
+}

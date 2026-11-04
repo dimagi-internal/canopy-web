@@ -5,6 +5,9 @@ import re
 
 from django.db import transaction
 
+from apps.agents.models import Agent
+from apps.connections import declarations
+
 from . import catalog, declared_tasks
 from .models import DynamicView, DynamicViewRevision
 
@@ -12,7 +15,7 @@ from .models import DynamicView, DynamicViewRevision
 MAX_CODE_BYTES = 200_000
 _DEFINES_VIEW = re.compile(r"\bfunction\s+View\s*\(|\b(?:const|let|var)\s+View\s*=")
 
-EDITABLE = ("title", "description", "code", "sources", "agent_tasks", "slug", "project")
+EDITABLE = ("title", "description", "code", "sources", "agent_tasks", "connections", "slug", "project")
 
 
 def validate_code(code: str) -> str:
@@ -52,9 +55,17 @@ def unique_slug(workspace_id: str, wanted: str, *, exclude_pk: int | None = None
 def _snapshot(view: DynamicView, user, note: str) -> DynamicViewRevision:
     return DynamicViewRevision.objects.create(
         view=view, version=view.version, title=view.title, description=view.description,
-        code=view.code, sources=view.sources, agent_tasks=view.agent_tasks, note=note[:300],
+        code=view.code, sources=view.sources, agent_tasks=view.agent_tasks,
+        connections=view.connections, note=note[:300],
         changed_by=user if getattr(user, "is_authenticated", False) else None,
     )
+
+
+def _validate_connections(workspace_id: str, declared) -> list[dict]:
+    """The view's `connections`, with each shared agent resolved in its workspace.
+    Whether that agent shared anything is for a call to find out."""
+    return declarations.validate(
+        declared, agent_exists=lambda slug: Agent.objects.filter(workspace_id=workspace_id, slug=slug).exists())
 
 
 @transaction.atomic
@@ -71,7 +82,8 @@ def create(*, workspace_id: str, project, data: dict, user) -> DynamicView:
         workspace_id=workspace_id, project=project, slug=slug, title=title[:200],
         description=data.get("description") or "", code=validate_code(data.get("code") or ""),
         sources=catalog.validate_sources(data.get("sources")),
-        agent_tasks=declared_tasks.validate(workspace_id, data.get("agent_tasks"), user), version=1,
+        agent_tasks=declared_tasks.validate(workspace_id, data.get("agent_tasks"), user),
+        connections=_validate_connections(workspace_id, data.get("connections")), version=1,
         created_by=who, updated_by=who,
     )
     _snapshot(view, user, data.get("note") or "created")
@@ -112,6 +124,11 @@ def update(view: DynamicView, *, data: dict, user, project=None, project_given: 
         # New code calls the tasks already declared, so whoever writes it must be
         # able to dispatch to those agents too — not only whoever declared them.
         declared_tasks.validate(view.workspace_id, view.agent_tasks, user)
+    given = data.get("connections")
+    if given is not None and given != view.connections:
+        declared = _validate_connections(view.workspace_id, given)
+        changed |= declared != view.connections
+        view.connections = declared
     if "slug" in data and data["slug"]:
         slug = validate_slug(data["slug"])
         if slug != view.slug and DynamicView.objects.filter(workspace_id=view.workspace_id, slug=slug).exists():
@@ -132,12 +149,13 @@ def update(view: DynamicView, *, data: dict, user, project=None, project_given: 
 
 @transaction.atomic
 def rollback(view: DynamicView, *, version: int, user) -> DynamicView:
-    """Restore an earlier version's title, description, code, sources and agent
-    tasks as a NEW version — history only grows, so a rollback can itself be undone."""
+    """Restore an earlier version's title, description, code, sources, agent
+    tasks and connections as a NEW version — history only grows, so a rollback can itself be undone."""
     rev = view.revisions.filter(version=version).first()
     if rev is None:
         raise LookupError(f"version {version} not found")
     return update(view, user=user, data={
         "title": rev.title, "description": rev.description, "code": rev.code,
-        "sources": rev.sources, "agent_tasks": rev.agent_tasks or [], "note": f"restored version {version}",
+        "sources": rev.sources, "agent_tasks": rev.agent_tasks or [],
+        "connections": rev.connections or [], "note": f"restored version {version}",
     })

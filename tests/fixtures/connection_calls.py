@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
+from unittest import mock
 
 from canopy_sdk.jose import make_dpop_proof
+from django.db import connection as db_connection
 from django.test import Client
 from django.utils import timezone
 
@@ -131,3 +133,56 @@ def reseal_body(world, conn, name, *, to=None):
             "sealed_sig": conn_ref.writer_sig(conn.binding, "refresh", conn.sealed_digest, sealed, ecdh, "device",
                                               key.ecdh_jkt, pubs),
             "access_sealed": "", "access_sig": None, "expect": conn.sealed_digest}
+
+
+# ---- Salesforce's API, at the `requests` boundary of a screen's call -------------------------
+
+class Answer:
+    """A streamed `requests` response, as far as the route may look at one."""
+
+    def __init__(self, status=200, body=None, raw=None, headers=None):
+        self.status_code = status
+        self.headers = {"Content-Type": "application/json", "Sforce-Limit-Info": "api-usage=1/15000", **(headers or {})}
+        self.raw_bytes = raw if raw is not None else json.dumps({} if body is None else body).encode()
+        self.closed = False
+
+    @property
+    def raw(self):
+        return self
+
+    def read1(self, amt=None, decode_content=None):
+        chunk, self.raw_bytes = self.raw_bytes[:amt], self.raw_bytes[amt:]
+        return chunk
+
+    def close(self):
+        self.closed = True
+
+
+class Salesforce:
+    """`requests.request`, for the API: answers in turn, the last repeating; records every call."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers) or [Answer(body={"totalSize": 1, "records": []})]
+        self.calls: list[dict] = []
+        self.in_atomic: list[bool] = []
+
+    def __call__(self, method, url, **kw):
+        self.calls.append({"method": method, "url": url, **kw})
+        self.in_atomic.append(db_connection.in_atomic_block)
+        what = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if callable(what):
+            what = what()
+        if isinstance(what, Exception):
+            raise what
+        return what
+
+    def __enter__(self):
+        self._p = mock.patch("apps.connections.call_service.requests.request", self)
+        self._p.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._p.stop()
+
+    def bearer(self, i=0) -> str:
+        return self.calls[i]["headers"]["Authorization"]

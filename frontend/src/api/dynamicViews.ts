@@ -8,6 +8,14 @@ export type DynamicViewSummary = components["schemas"]["DynamicViewSummaryOut"];
 export type DynamicView = components["schemas"]["DynamicViewOut"];
 export type DynamicViewRevision = components["schemas"]["DynamicViewRevisionOut"];
 export type DynamicViewGuide = Omit<components["schemas"]["DynamicViewGuideOut"], "catalog"> & { catalog: CatalogModel[] };
+/** A Salesforce call a view declares it may make (`connections` on the view). */
+export type DynamicViewConnection = {
+  provider: string;
+  as: "viewer" | "shared";
+  agent?: string;
+  reads: { method: string; path: string }[];
+  writes: { method: string; path: string }[];
+};
 export type DynamicViewSource = { alias: string; model: string; params?: Record<string, unknown>; path?: Record<string, unknown> };
 
 export async function listDynamicViews(project?: string): Promise<DynamicViewSummary[]> {
@@ -41,6 +49,7 @@ export async function createDynamicView(body: {
   code: string;
   sources: DynamicViewSource[];
   agent_tasks?: { agent: string; name: string }[];
+  connections?: DynamicViewConnection[];
 }): Promise<DynamicView> {
   const res = await apiV2.POST("/api/dynamic-views/", {
     body: {
@@ -55,7 +64,7 @@ export async function updateDynamicView(
   id: number,
   patch: {
     title?: string; description?: string; code?: string; sources?: DynamicViewSource[];
-    agent_tasks?: { agent: string; name: string }[]; note?: string;
+    agent_tasks?: { agent: string; name: string }[]; connections?: DynamicViewConnection[]; note?: string;
   },
 ): Promise<DynamicView> {
   const res = await apiV2.PATCH("/api/dynamic-views/{view_id}", {
