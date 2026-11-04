@@ -204,7 +204,9 @@ def _stamp(d: Decision) -> Decision:
     if d.relationship == SYSTEM:
         return replace(d, agent_role=roles.SYSTEM, source="system")
     if d.access == FULL:
-        return replace(d, agent_role=roles.EDITOR, source="session")
+        # A session writer drives this conversation; nothing gives them the agent itself, so their
+        # `permissions` (what the envelope and the own-repo rail read) stop at `write`.
+        return replace(d, agent_role=roles.EDITOR, source="session", permissions=roles.ROLES.close({roles.WRITE}))
     return d
 
 
