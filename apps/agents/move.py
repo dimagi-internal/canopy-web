@@ -69,6 +69,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import roles
 from .agent_login import follow_agent
 from .models import (
     Agent,
@@ -434,6 +435,35 @@ def _people(p: Plan, apply: bool) -> None:
                  f"and stop applying; each person grants again in '{p.dest.slug}'")
 
 
+def _carry_roles(p: Plan, own, apply: bool) -> None:
+    """A line holds its role's ROW. A row defined outside the destination's chain would go on being
+    edited by another workspace's admins, so each such line is re-pointed to the destination's role of the
+    same key when it allows exactly the same, and otherwise the move is refused (naming the lines)."""
+    from . import rolecatalog  # noqa: PLC0415 — the catalog reads agent models
+
+    chain = set(rolecatalog.chain_of(p.dest.slug))
+    stranded, repoint = [], []
+    for line in own.exclude(role_def__isnull=True).select_related("role_def"):
+        if line.role_def.workspace_id in chain:
+            continue
+        there = rolecatalog.find(p.dest.slug, line.role)
+        if there is not None and roles.ROLES.close(there.permissions) == roles.ROLES.close(line.role_def.permissions):
+            repoint.append((line, there))
+        else:
+            stranded.append(line)
+    if stranded:
+        keys = sorted({ln.role for ln in stranded})
+        detail = (f"{len(stranded)} access-list line(s) hold the role(s) {', '.join(keys)}, which '{p.dest.slug}' "
+                  "does not have (or has with a different meaning); give the line(s) a role it has first")
+        p.breaks("access_list_roles", detail)
+        if apply:
+            raise MoveError(f"cannot move {p.agent.slug}: {detail}", status=409)
+    if apply:
+        for line, there in repoint:
+            line.role_def = there
+            line.save(update_fields=["role_def"])
+
+
 @register
 def _access_list(p: Plan, apply: bool) -> None:
     """The agent's access list. Its own lines are keyed by the agent, so they go with it
@@ -444,6 +474,7 @@ def _access_list(p: Plan, apply: bool) -> None:
     p.moves("agents.AgentGrant", own.count(),
             "the agent's own access-list lines stay on the agent; the workspace defaults it "
             "inherits are the destination's from now on")
+    _carry_roles(p, own, apply)
     naming_source = own.filter(kind=AgentGrant.WORKSPACE, subject_workspace=p.source).count()
     if naming_source:
         p.breaks("access_list",

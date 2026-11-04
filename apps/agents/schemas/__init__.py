@@ -6,6 +6,14 @@ OpenAPI component names) are unchanged.
 """
 from __future__ import annotations
 
+from .roles import (
+    AgentRoleIn,
+    AgentRoleOut,
+    AgentRolePatch,
+    AgentRolesOut,
+    AgentRoleUseOut,
+    FixedRoleOut,
+)
 from .access_list import (
     AccessImplicitOut,
     AccessInheritIn,
@@ -306,6 +314,12 @@ from .vault import (
 )
 
 __all__ = [
+    "AgentRoleIn",
+    "AgentRoleOut",
+    "AgentRolePatch",
+    "AgentRolesOut",
+    "AgentRoleUseOut",
+    "FixedRoleOut",
     "A2AAPIKeySecurityScheme",
     "A2AAgentCapabilities",
     "A2AAgentCardOut",

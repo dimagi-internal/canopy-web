@@ -5905,9 +5905,10 @@ export interface paths {
          * Add a line to this agent's access list (an agent admin)
          * @description A line says who has what: a person, everyone in a workspace (optionally also any workspace
          *     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
-         *     (read_only, read_write, editor) or, rarely, one door (a named capability the agent published).
-         *     read_only gives read mode, which every agent has. A line that names people only by address
-         *     (domain, contact) can give read_only or a door, never a role that drives the whole agent.
+         *     (a key from `GET /api/workspaces/{ws}/agent-roles`: the built-ins read_only, read_write and editor,
+         *     and any a workspace defined) or, rarely, one door (a named capability the agent published).
+         *     A line that names people only by address (domain, contact) can give a role that only reads or opens
+         *     doors, never one that drives or changes the agent.
          */
         readonly post: operations["add_access_line"];
         readonly delete?: never;
@@ -5985,6 +5986,59 @@ export interface paths {
         readonly post?: never;
         /** Take a default line away */
         readonly delete: operations["remove_agent_default"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/agent-roles": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The roles an access-list line in this workspace may give: its own and those above, with what each can do */
+        readonly get: operations["list_agent_roles"];
+        readonly put?: never;
+        /** Define a role: a name and what it allows (a workspace admin; the owner for one that drives or changes the agent) */
+        readonly post: operations["create_agent_role"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/agent-roles/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete a role nobody holds, or move its holders to another role in the same step (reassign_to) */
+        readonly delete: operations["delete_agent_role"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change a role's name, description or what it allows; its holders change from the next request */
+        readonly patch: operations["change_agent_role"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/agent-roles/{key}/reset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Put a built-in role back to its defaults */
+        readonly post: operations["reset_agent_role"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -27992,7 +28046,7 @@ export interface components {
              */
             readonly may_request_auto: boolean;
             /** Role */
-            readonly role?: ("owner" | "admin" | "editor" | "read_write" | "read_only" | "system") | null;
+            readonly role?: string | null;
             /**
              * Source
              * @default
@@ -28733,6 +28787,31 @@ export interface components {
             readonly can: readonly string[];
             /** Permissions */
             readonly permissions?: readonly string[];
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Contains Write
+             * @default false
+             */
+            readonly contains_write: boolean;
+            /**
+             * Defined On
+             * @default
+             */
+            readonly defined_on: string;
+            /**
+             * Fixed
+             * @default false
+             */
+            readonly fixed: boolean;
         };
         /**
          * AccessLineIn
@@ -28745,7 +28824,7 @@ export interface components {
              */
             readonly kind: "person" | "workspace" | "domain" | "contact";
             /** Role */
-            readonly role?: ("read_only" | "read_write" | "editor") | null;
+            readonly role?: string | null;
             /**
              * Capability
              * @default
@@ -28794,7 +28873,7 @@ export interface components {
         /** AccessLinePatch */
         readonly AccessLinePatch: {
             /** Role */
-            readonly role?: ("read_only" | "read_write" | "editor") | null;
+            readonly role?: string | null;
             /** Manual Only */
             readonly manual_only?: boolean | null;
             /** Note */
@@ -28824,6 +28903,103 @@ export interface components {
              * @default false
              */
             readonly can_give_write: boolean;
+        };
+        /** AgentRoleOut */
+        readonly AgentRoleOut: {
+            /** Key */
+            readonly key: string;
+            /** Label */
+            readonly label: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Permissions */
+            readonly permissions: readonly string[];
+            /** Can */
+            readonly can: readonly string[];
+            /** Defined On */
+            readonly defined_on: string;
+            /**
+             * Builtin
+             * @default false
+             */
+            readonly builtin: boolean;
+            /**
+             * Contains Write
+             * @default false
+             */
+            readonly contains_write: boolean;
+            readonly in_use: components["schemas"]["AgentRoleUseOut"];
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+        };
+        /** AgentRoleUseOut */
+        readonly AgentRoleUseOut: {
+            /** Lines */
+            readonly lines: number;
+            /** Agents */
+            readonly agents: number;
+            /** Defaults */
+            readonly defaults: number;
+        };
+        /** AgentRolesOut */
+        readonly AgentRolesOut: {
+            /** Roles */
+            readonly roles: readonly components["schemas"]["AgentRoleOut"][];
+            /** Fixed */
+            readonly fixed: readonly components["schemas"]["FixedRoleOut"][];
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+            /**
+             * Can Give Write
+             * @default false
+             */
+            readonly can_give_write: boolean;
+        };
+        /** FixedRoleOut */
+        readonly FixedRoleOut: {
+            /** Key */
+            readonly key: string;
+            /** Label */
+            readonly label: string;
+            /** Can */
+            readonly can: readonly string[];
+            /** Why */
+            readonly why: string;
+        };
+        /**
+         * AgentRoleIn
+         * @description A role to define: a name and what it allows, chosen from read, write, agent_edit and use:<door>.
+         */
+        readonly AgentRoleIn: {
+            /** Key */
+            readonly key: string;
+            /** Label */
+            readonly label: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Permissions */
+            readonly permissions: readonly string[];
+        };
+        /** AgentRolePatch */
+        readonly AgentRolePatch: {
+            /** Label */
+            readonly label?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Permissions */
+            readonly permissions?: readonly string[] | null;
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
@@ -56149,6 +56325,127 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly list_agent_roles: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentRolesOut"];
+                };
+            };
+        };
+    };
+    readonly create_agent_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentRoleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentRoleOut"];
+                };
+            };
+        };
+    };
+    readonly delete_agent_role: {
+        readonly parameters: {
+            readonly query?: {
+                readonly reassign_to?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly change_agent_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentRolePatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentRoleOut"];
+                };
+            };
+        };
+    };
+    readonly reset_agent_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentRoleOut"];
+                };
             };
         };
     };

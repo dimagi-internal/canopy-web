@@ -264,6 +264,7 @@ from apps.agents.api_vault_zk import router as agent_vault_zk_router  # noqa: E4
 from apps.agents.api_readiness import router as agent_readiness_router  # noqa: E402
 from apps.agents.api_access_list import defaults_router as agent_defaults_router  # noqa: E402
 from apps.agents.api_access_list import router as agent_access_list_router  # noqa: E402
+from apps.agents.api_roles import router as agent_roles_router  # noqa: E402
 from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.api_vault_keeper import router as vault_keeper_router  # noqa: E402
@@ -425,6 +426,7 @@ api.add_router("/agents", agents_router)
 api.add_router("/agents", agent_routing_router)
 api.add_router("/agents", agent_access_list_router)
 api.add_router("/workspaces", agent_defaults_router)
+api.add_router("/workspaces", agent_roles_router)
 api.add_router("/agents", agent_turns_router)
 api.add_router("/agents", agent_skills_router)
 api.add_router("/agents", agent_board_router)

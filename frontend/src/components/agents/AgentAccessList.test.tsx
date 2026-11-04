@@ -55,11 +55,11 @@ const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
     { who: 'boss@dimagi.com', role: 'admin', why: 'Owns the workspace' },
   ],
   roles: [
-    { role: 'owner', can: ['ask', 'drive the whole agent', 'transfer or delete it'], permissions: [] },
-    { role: 'admin', can: ['ask', 'drive the whole agent', 'configure it'], permissions: [] },
-    { role: 'editor', can: ['ask', 'drive the whole agent', 'change its skills'], permissions: [] },
-    { role: 'read_write', can: ['ask', 'drive the whole agent'], permissions: [] },
-    { role: 'read_only', can: ['ask'], permissions: [] },
+    { role: 'owner', can: ['ask', 'drive the whole agent', 'transfer or delete it'], permissions: [], label: '', description: '', contains_write: false, defined_on: '', fixed: false },
+    { role: 'admin', can: ['ask', 'drive the whole agent', 'configure it'], permissions: [], label: '', description: '', contains_write: false, defined_on: '', fixed: false },
+    { role: 'editor', can: ['ask', 'drive the whole agent', 'change its skills'], permissions: [], label: '', description: '', contains_write: false, defined_on: '', fixed: false },
+    { role: 'read_write', can: ['ask', 'drive the whole agent'], permissions: [], label: '', description: '', contains_write: false, defined_on: '', fixed: false },
+    { role: 'read_only', can: ['ask'], permissions: [], label: '', description: '', contains_write: false, defined_on: '', fixed: false },
   ],
   ...o,
 })

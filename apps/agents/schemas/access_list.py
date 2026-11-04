@@ -12,7 +12,7 @@ class AccessLineIn(StrictModel):
     """One line to add: who, and what they get: ONE role, or (rarely) ONE named capability."""
 
     kind: Literal["person", "workspace", "domain", "contact"]
-    role: Literal["read_only", "read_write", "editor"] | None = None
+    role: str | None = None             # a role key from `GET .../agent-roles`; validated against the roles available here
     capability: str = ""                # instead of a role: open just this capability
     user_id: int | None = None
     email: str | None = None            # a person, by the address on their canopy account
@@ -26,7 +26,7 @@ class AccessLineIn(StrictModel):
 
 
 class AccessLinePatch(StrictModel):
-    role: Literal["read_only", "read_write", "editor"] | None = None
+    role: str | None = None
     manual_only: bool | None = None
     note: str | None = Field(default=None, max_length=300)
 
@@ -67,10 +67,21 @@ class AccessImplicitOut(StrictModel):
 
 
 class AccessRoleOut(StrictModel):
+    #: The role's key (what a line stores and the envelope carries).
     role: str
     can: list[str]
-    #: The permissions the role is made of (`read`, `write`, `agent_edit`, `admin`, `own`).
+    #: The permissions the role is made of (`read`, `write`, `agent_edit`, `use:<door>`; `admin`, `own` on the fixed roles).
     permissions: list[str] = Field(default_factory=list)
+    #: The name a person sees; the key when the role is fixed in code.
+    label: str = ""
+    description: str = ""
+    #: Does it let its holder drive or change the agent? The form disables it for lines that name people only
+    #: by address, and for non-owners on a workspace default.
+    contains_write: bool = False
+    #: The workspace that defines it ("" for the roles fixed in code).
+    defined_on: str = ""
+    #: Fixed in code: `owner` and `admin` come with the agent, never from a line.
+    fixed: bool = False
 
 
 class AccessListOut(StrictModel):
