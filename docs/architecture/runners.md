@@ -243,6 +243,16 @@ labs-observe` (the AWS CLI's `credential_process`), falling back to canopy-web's
 `POST /api/agents/{slug}/aws-credentials` (`apps/agents/api_aws.py`, canopy-web's task
 role assuming the same role) off the box.
 
+### The job broker (`canopy-job-broker`)
+
+A runner runs under `NoNewPrivileges`, so it can't become `canopy-job` to run a plain job, and
+loosening that would loosen every model turn. `runner/ec2/job_broker.py` (root,
+`/run/canopy-jobs/sock`, uid from `SO_PEERCRED`, like the other two) does only `status`, `export`,
+`write_token`, `start`, `stop` and `cleanup`; no request can name a path, a user or a property.
+`start` is one sandboxed `systemd-run` unit. `cloud_runner.py --setup-runners` copies it to
+`/opt/canopy-runner/job-broker/` and runs `job_broker.py --install`. What it isolates, and what
+it doesn't, is in `runner/ec2/README.md` § Plain jobs.
+
 ## Opted-in projects (`ProjectOptIn`)
 
 Canopy is opt-in per repo, and the choice is part of the person's account

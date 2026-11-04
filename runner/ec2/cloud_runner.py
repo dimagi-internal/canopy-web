@@ -3040,16 +3040,15 @@ def setup_runners(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
     return runners
 
 
-# ── The box's half of a plain job (Part 3): the user, the sudo rule, the network ──
+# ── The box's half of a plain job (Part 3): the user, its root, the network ──
 #
 # `canopy-job` runs a job's code, code that any repo's `main` may hold: it must not reach
-# another agent's secrets. It is a system user with no login and no sudo of its own. Files:
-# runner homes are 0700 (`setup_runners`), so nothing in them can be read. Brokers: both
-# sockets are 0666 and answer only a uid in runners.json, which this one never is. Network:
-# the rules below, in their own chain, by uid.
+# another agent's secrets. It is a system user with no login. Almost all of what keeps a job
+# in is the sandboxed unit `job_broker.py` starts. What's here: the user, its root, the lock,
+# and the rules below, in their own chain, by uid, for what the unit's IPAddressDeny can't say:
+# the stub's other ports, the box's own addresses, and a lock arriving while a job runs. And if
+# cgroup BPF ever isn't there, IPAddressDeny doesn't apply, and these still do.
 JOB_CHAIN = "CANOPY-JOB"
-JOB_SUDOERS = pathlib.Path("/etc/sudoers.d/canopy-jobs")
-JOB_DENY_FILES = (pathlib.Path("/etc/cron.deny"), pathlib.Path("/etc/at.deny"))
 #: systemd-resolved's stub, which is what /etc/resolv.conf names on the box's Ubuntu: a
 #: lookup is a loopback connection, and a job's only one.
 JOB_DNS_STUB = "127.0.0.53"
@@ -3103,27 +3102,17 @@ def job_rules(uid: int, *, locked: bool, run=subprocess.run) -> list[str]:
     return done
 
 
-def _job_sudoers_text(runners: list[dict]) -> str:
-    lines = [f"{user} ALL=({JOB_USER}) NOPASSWD: ALL" for user in (u["user"] for u in runners)]
-    return "# Each runner may run a plain job as canopy-job, and nothing else (cloud_runner.py).\n" \
-           + "\n".join(lines) + "\n"
-
-
-def setup_jobs(box: dict, runners: list[dict], *, locked: bool, run=subprocess.run, chown=os.chown,
-               uid_of=None, sudoers: pathlib.Path | None = None, root: pathlib.Path | None = None,
-               lock: pathlib.Path | None = None, deny=None) -> bool:
-    """ROOT, on every start (`--setup-runners`): the job user, its jobs root (0700), the lock,
-    the network rules, then the sudo rule. The rule goes last and only if everything before
-    it held, so a box that isn't closed can't run a job (`_job_can_run` then says no).
-    A sensitive-data box gets none of it. Idempotent. Never raises: a box that can't run jobs
-    still runs turns. True when the box is set up."""
+def setup_jobs(box: dict, *, locked: bool, run=subprocess.run, chown=os.chown, uid_of=None,
+               root: pathlib.Path | None = None, lock: pathlib.Path | None = None) -> bool:
+    """ROOT, on every start (`--setup-runners`): the job user, its jobs root (0700), the lock
+    and the network rules. A sensitive-data box gets none of it, and a False here means the
+    caller doesn't start the broker, so a box that isn't closed can't run a job. Idempotent.
+    Never raises: a box that can't run jobs still runs turns."""
     import pwd  # noqa: PLC0415
 
-    sudoers = sudoers or JOB_SUDOERS
     root = root or JOBS_ROOT
     lock = lock or JOB_LOCK_FILE
     if str(box.get("RUNNER_DATA_MODE", "")).strip():
-        sudoers.unlink(missing_ok=True)
         return False
     try:
         if run(["id", "-u", JOB_USER], capture_output=True).returncode != 0:
@@ -3136,24 +3125,9 @@ def setup_jobs(box: dict, runners: list[dict], *, locked: bool, run=subprocess.r
         _mkdir_owned(root, uid=pw.pw_uid, gid=pw.pw_gid, mode=0o700, chown=chown)
         if not lock.exists():   # never replaced: a held flock is on the inode
             _write_owned(lock, b"", uid=0, gid=0, mode=0o644, chown=chown)
-        for path in (JOB_DENY_FILES if deny is None else deny):
-            # A cron or at entry would outlive the job's end, and run as the next agent's job.
-            have = path.read_text().splitlines() if path.exists() else []
-            if JOB_USER not in have:
-                path.write_text("".join(f"{ln}\n" for ln in [*have, JOB_USER]))
         job_rules(pw.pw_uid, locked=locked, run=run)
-        tmp = sudoers.with_name(sudoers.name + ".tmp")   # a `.` in the name: sudo ignores it
-        _write_owned(tmp, _job_sudoers_text(runners).encode(), uid=0, gid=0, mode=0o440, chown=chown)
-        try:
-            if run(["visudo", "-c", "-f", str(tmp)], capture_output=True).returncode != 0:
-                raise RuntimeError("visudo refused the job rule")
-            os.replace(tmp, sudoers)
-        finally:
-            tmp.unlink(missing_ok=True)
     except Exception as exc:  # noqa: BLE001
         _log(f"setup-runners: this box won't run jobs: {exc}")
-        with contextlib.suppress(OSError):
-            sudoers.unlink(missing_ok=True)
         return False
     return True
 
@@ -3488,6 +3462,32 @@ def install_broker(*, run=subprocess.run) -> bool:
             return True
     return False
 
+
+
+#: Where the job broker lives. Its own directory, like the AWS broker's.
+JOB_BROKER_DIR = RUNNER_HOME / "job-broker"
+
+
+def install_job_broker(*, run=subprocess.run) -> bool:
+    """ROOT: `runner/ec2/job_broker.py` at this runner's sha into JOB_BROKER_DIR, then
+    `job_broker.py --install` (its own unit). Never raises: a box without it just reports no
+    jobs."""
+    try:
+        if not (pathlib.Path(CANOPY_WEB_REPO_DIR) / ".git").is_dir():
+            return False
+        sha = build_info().get("sha") or ""
+        for ref in ([sha] if sha else []) + ["origin/main"]:
+            got = _git_root("show", f"{ref}:runner/ec2/job_broker.py", run=run)
+            if got.returncode == 0 and got.stdout.strip():
+                JOB_BROKER_DIR.mkdir(mode=0o755, exist_ok=True)
+                (JOB_BROKER_DIR / "job_broker.py").write_text(got.stdout)
+                os.chmod(JOB_BROKER_DIR / "job_broker.py", 0o755)
+                res = run(["/usr/bin/python3", str(JOB_BROKER_DIR / "job_broker.py"), "--install"],
+                          capture_output=True, text=True, timeout=120)
+                return res.returncode == 0
+    except Exception as exc:  # noqa: BLE001 — never block a box's setup on the broker
+        _log(f"job broker: not installed ({exc})")
+    return False
 
 
 #: Where the AWS broker lives: its own directory, with the kms_broker.py it imports
@@ -6988,15 +6988,17 @@ def _repo_worktree_env(turn: dict, turn_id: str) -> dict:
 # ── plain jobs: read a job's definition, export its repo (Part 3, Tasks 2-3) ──
 # A job is a command named in a repo's own `.canopy/jobs.yaml`. canopy-web says only the
 # job's name and the repo's name; everything below happens on this box. It reads a job's
-# definition, exports the repo's `main`, says whether the box can run a job at all, and
-# runs one as `canopy-job` (`_run_job`). The box's half (the user, sudo rule and network
-# rules) is `setup_jobs`; `job_self_check.sh` proves it on a real box.
+# definition, fetches the repo's `main`, says whether the box can run a job at all, and
+# runs one (`_run_job`). This process can't become another user (the runner's unit has
+# NoNewPrivileges): the root broker, `job_broker.py`, unpacks and starts it as `canopy-job`
+# in a sandboxed unit. The rest of the box's half is `setup_jobs`; `job_self_check.sh`
+# proves all of it on a real box.
 
 #: Whether this box says it can run plain jobs. An old box must never report a capability
 #: before it can honour it, or canopy-web would hand it a job and it would run an empty
 #: prompt through a model.
 JOBS_ENABLED = True
-#: The Unix user a job runs as, and where its exports live (owned by that user, 0700).
+#: The Unix user a job runs as, and where its folders live (owned by that user, 0700).
 JOB_USER = "canopy-job"
 JOBS_ROOT = pathlib.Path("/var/lib/canopy-jobs")
 JOBS_YAML_MAX_BYTES = 64 * 1024
@@ -7013,12 +7015,13 @@ JOB_LOCK_FILE = TURN_ENV_BASE / "job.lock"
 _JOB_LOCK = threading.Lock()
 JOB_BUSY_NOTE = "Another job is running on this machine."
 JOB_RESTARTED_NOTE = "This machine restarted during the job."
-#: The six, and nothing else a job's environment holds, come from `_job_env`.
-JOB_PATH = "/usr/local/bin:/usr/bin:/bin"
+#: The ONE seam between this code and the box's root: the job broker's socket.
+JOB_BROKER_SOCKET = os.environ.get("CANOPY_JOB_BROKER_SOCKET", "/run/canopy-jobs/sock")
+#: On top of the unit's own RuntimeMaxSec: what stops a job if that somehow didn't.
+JOB_DEADLINE_SLACK_SECONDS = 60
 JOB_POLL_SECONDS = 0.5
 JOB_BATCH_SECONDS = 5.0
 JOB_TOKEN_TICK_SECONDS = 60.0
-JOB_KILL_GRACE_SECONDS = 10.0
 JOB_OUTPUT_CAP_BYTES = 1024 * 1024
 #: One POST's worth of a job's output, well under the events route's request limit.
 JOB_EVENT_CHUNK = 128 * 1024
@@ -7027,9 +7030,6 @@ JOB_NOTE_CHARS = 1500
 #: The job is stopped when the disk it writes to has less than this free. Nothing else
 #: bounds what it writes, and a full disk would take every runner on the box with it.
 JOB_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
-#: What any local user can write to. Emptied of the job user's files after each job, so
-#: nothing one agent's job writes is there for the next agent's.
-JOB_WORLD_DIRS = ("/tmp", "/var/tmp", "/dev/shm")
 _JOB_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")   # all three by fullmatch: `$` would pass "x\n"
 #: A turn's id is a uuid as canopy-web writes it; it becomes a folder name.
 _JOB_TURN_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -7100,17 +7100,35 @@ def _job_spec(text: str, name: str) -> JobSpec:
     return JobSpec(run=list(run), timeout_minutes=minutes)
 
 
-def _job_user_cmd(args) -> list:
-    """`args` as a command running as the job user. The ONE seam between this code and
-    `sudo`: tests replace it. No `-E`, no `-H`: sudo resets the environment, and a job's
-    own is built by `env -i` behind it."""
-    return ["sudo", "-n", "-u", JOB_USER, *args]
+def _job_broker_connect(op: str, body: bytes = b"", **fields) -> socket.socket:
+    """A connection to the job broker with one request sent. Raises OSError if it's not there."""
+    conn = socket.socket(socket.AF_UNIX)
+    try:
+        conn.settimeout(600)
+        conn.connect(JOB_BROKER_SOCKET)
+        conn.sendall(json.dumps({"op": op, **fields}).encode() + b"\n" + body)
+    except OSError:
+        conn.close()
+        raise
+    return conn
 
 
-def _as_job_user(args, input=None):
-    """Run `args` as the job user and return the CompletedProcess (bytes). From `/`: this
-    process's own directory is the runner's home, which that user may not enter."""
-    return subprocess.run(_job_user_cmd(args), input=input, capture_output=True, timeout=300, cwd="/")
+def _job_broker(op: str, body: bytes = b"", **fields) -> dict:
+    """One request and its reply. A refusal, or a broker that can't be reached, is `JobRefused`."""
+    try:
+        with _job_broker_connect(op, body, **fields) as conn:
+            buf = b""
+            while b"\n" not in buf:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+        reply = json.loads(buf)
+    except (OSError, ValueError):
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    if not isinstance(reply, dict) or reply.get("error") or not reply.get("ok"):
+        raise JobRefused(str((reply or {}).get("error") or "This machine's job service refused that."))
+    return reply
 
 
 def _job_user_exists() -> bool:
@@ -7122,26 +7140,13 @@ def _job_user_exists() -> bool:
         return False
 
 
-def _no_new_privs() -> bool:
-    """Whether this process runs under NoNewPrivileges, where sudo's setuid bit is ignored."""
-    try:
-        return "NoNewPrivs:\t1" in pathlib.Path("/proc/self/status").read_text()
-    except OSError:
-        return False
-
-
-#: Exit 0 only when connecting is refused at once: what the owner rule answers.
-_JOB_METADATA_PROBE = ("import socket,sys\ns=socket.socket();s.settimeout(3)\n"
-                       "try:\n s.connect((sys.argv[1],80))\nexcept ConnectionError:\n sys.exit(0)\n"
-                       "except OSError as e:\n sys.exit(0 if e.errno in (13,101,111,113) else 1)\nsys.exit(1)\n")
-
-
 def _job_can_run() -> bool:
     """Whether this box could run a job, each step failing closed: PyYAML is there, it is
-    not a sensitive-data box (those never take a job), this runner's egress isn't locked (a
-    job can't use its proxy, and must not leave its lock), the job user exists, the box's
-    setup made the lock, `sudo -n -u canopy-job true` works, that user owns the jobs root,
-    and it is refused the metadata address. The rest is `job_self_check.sh`."""
+    not a sensitive-data box (those never take a job), this runner isn't egress-locked, the
+    job user exists, the box's setup made the lock, and the broker answers `status`, saying
+    its systemd can run the unit and that no runner on the box is locked: a job can't use a
+    runner's proxy, so anywhere a lock holds it would only fail on its first network call.
+    The rest is `job_self_check.sh`."""
     try:
         import yaml  # noqa: F401, PLC0415
     except ImportError:
@@ -7151,23 +7156,17 @@ def _job_can_run() -> bool:
     try:
         if not _job_user_exists() or not JOB_LOCK_FILE.is_file():
             return False
-        sudo = _as_job_user(["true"])
-        if sudo.returncode != 0:
-            why = (sudo.stderr or b"").decode("utf-8", "replace").strip()[-200:]
-            _log(f"jobs: this box can't run them: sudo to {JOB_USER} failed ({why})"
-                 + (". This runner's unit has NoNewPrivileges, under which sudo cannot work"
-                    if _no_new_privs() else ""))
-            return False
-        root = str(JOBS_ROOT)
-        if _as_job_user(["test", "-d", root, "-a", "-w", root]).returncode != 0:
-            _log(f"jobs: this box can't run them: {JOB_USER} can't write to {root}")
-            return False
-        if _as_job_user(["python3", "-c", _JOB_METADATA_PROBE, IMDS_V4]).returncode != 0:
-            _log(f"jobs: this box can't run them: {JOB_USER} can reach the metadata address")
-            return False
-        return True
-    except Exception:  # noqa: BLE001 - no sudo, a timeout: it cannot
+        status = _job_broker("status")
+    except (JobRefused, OSError) as exc:
+        _log(f"jobs: this box can't run them: {exc}")
         return False
+    for key, want, why in (("job_user", True, f"the broker doesn't see {JOB_USER}"),
+                           ("supported", True, f"systemd {status.get('systemd')} can't run the unit"),
+                           ("locked", False, "a runner on this box is egress-locked")):
+        if status.get(key) is not want:
+            _log(f"jobs: this box can't run them: {why}")
+            return False
+    return True
 
 
 def _apply_job_cap() -> None:
@@ -7182,6 +7181,7 @@ def _apply_job_cap() -> None:
 
 def _check_job_archive(data: bytes) -> None:
     """Refuse an archive that could write outside its directory, before it is unpacked.
+    (Unpacked as the job user, so it could only reach what that user can.)
 
     Refused: an absolute or `..` member name, a `.git` entry, any device/fifo, and any
     symlink or hard link whose target is absolute or contains `..`. A link may only point
@@ -7210,9 +7210,9 @@ def _check_job_archive(data: bytes) -> None:
             raise JobRefused(f"The repo has a special file ({m.name!r}), so the job didn't run.")
 
 
-def _job_export(repo: str, turn_id: str, env) -> pathlib.Path:
-    """`repo`'s `main`, exactly as the remote has it now, unpacked with no `.git` into
-    JOBS_ROOT/<turn_id>/repo by the job user. Returns that path; `JobRefused` otherwise.
+def _job_fetch_archive(repo: str, turn_id: str, env) -> bytes:
+    """`repo`'s `main`, exactly as the remote has it now, as a checked tar with no `.git`.
+    `JobRefused` otherwise.
 
     `main` is fetched by explicit refspec into a ref private to this job, and that sha is
     archived: the bare clone's HEAD or `origin/main` may be stale or point at another
@@ -7252,34 +7252,23 @@ def _job_export(repo: str, turn_id: str, env) -> pathlib.Path:
     if len(arc.stdout) > JOB_EXPORT_MAX_BYTES:
         raise JobRefused(f"{repo} is too large to run a job from.")
     _check_job_archive(arc.stdout)
-    parent = JOBS_ROOT / turn_id
-    dest = parent / "repo"
-    try:
-        for args in (["mkdir", "-p", "-m", "700", str(parent)], ["mkdir", "-m", "700", str(dest)]):
-            if _as_job_user(args).returncode != 0:
-                raise JobRefused("Couldn't make the job's folder, so the job didn't run.")
-        untar = _as_job_user(["tar", "-x", "--no-same-owner", "--no-same-permissions",
-                              "-C", str(dest)], input=arc.stdout)
-        if untar.returncode != 0:
-            raise JobRefused(f"Couldn't unpack {repo}'s files, so the job didn't run.")
-    except BaseException:
-        with contextlib.suppress(Exception):
-            _as_job_user(["rm", "-rf", str(parent)])
-        raise
-    _log(f"job export: {repo}@{sha[:10]} -> {dest}")
-    return dest
+    _log(f"job fetch: {repo}@{sha[:10]} for {turn_id[:8]}")
+    return arc.stdout
 
 
-def _job_spec_for(export: pathlib.Path, name: str) -> JobSpec:
-    """The job `name` from `<export>/.canopy/jobs.yaml`. The export belongs to the job
-    user, so it is read as that user, capped one byte past the limit so a huge file is
-    refused rather than loaded."""
-    path = export / ".canopy" / "jobs.yaml"
-    got = _as_job_user(["head", "-c", str(JOBS_YAML_MAX_BYTES + 1), str(path)])
-    if got.returncode != 0:
-        raise JobRefused("The repo has no .canopy/jobs.yaml on main, so there is no job to run.")
+def _job_spec_from_archive(data: bytes, name: str) -> JobSpec:
+    """The job `name` from the archive's `.canopy/jobs.yaml`, read before anything is unpacked.
+    A link there is refused: this file decides what runs, so it is a real file on `main`."""
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+        try:
+            member = tar.getmember(".canopy/jobs.yaml")
+        except KeyError:
+            raise JobRefused("The repo has no .canopy/jobs.yaml on main, so there is no job to run.") from None
+        if not member.isreg():
+            raise JobRefused(".canopy/jobs.yaml must be a file, not a link, so the job didn't run.")
+        raw = tar.extractfile(member).read(JOBS_YAML_MAX_BYTES + 1)
     try:
-        text = got.stdout.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise JobRefused(".canopy/jobs.yaml isn't valid YAML.") from None
     return _job_spec(text, name)
@@ -7310,36 +7299,6 @@ def _job_unlock(fd: int) -> None:
     _JOB_LOCK.release()
 
 
-def _job_kill_all() -> bool:
-    """SIGKILL every process of the job user, until none is left: a fork between `pkill`'s
-    listing and its signal survives one pass. Only ever called holding the lock. True when
-    none remains."""
-    for _ in range(10):
-        with contextlib.suppress(Exception):
-            _as_job_user(["pkill", "-KILL", "-u", JOB_USER])
-        try:
-            if _as_job_user(["pgrep", "-u", JOB_USER]).returncode == 1:   # 1: none matched
-                return True
-        except Exception as exc:  # noqa: BLE001
-            _log(f"warn: could not list {JOB_USER}'s processes: {exc}")
-        time.sleep(0.2)
-    return False
-
-
-def _job_clear_files() -> None:
-    """Remove everything the job user left: all of the jobs root (a job can write anywhere
-    in it), and its files in what any user can write to. `chmod` first: a directory it made
-    read-only would otherwise stay. Only ever called holding the lock."""
-    root = str(JOBS_ROOT)
-    for args in (["chmod", "-R", "u+rwx", root],
-                 ["find", root, "-mindepth", "1", "-delete"],
-                 *(["find", d, "-xdev", "-user", JOB_USER, "-delete"] for d in JOB_WORLD_DIRS)):
-        try:
-            _as_job_user(args)
-        except Exception as exc:  # noqa: BLE001 - the next job's start tries again
-            _log(f"warn: job cleanup {args[0]} failed: {exc}")
-
-
 def _job_restart_sweep() -> None:
     """Daemon start: whatever a previous daemon's job left is nobody's, so it goes, before
     any held job turn is reported (`_adopt_one`). If another runner's job holds the lock,
@@ -7354,9 +7313,9 @@ def _job_restart_sweep() -> None:
         _log("jobs: another runner's job is running; leaving it alone")
         return
     try:
-        if not _job_kill_all():
-            _log(f"warn: could not stop what {JOB_USER} left running")
-        _job_clear_files()
+        _job_broker("cleanup")
+    except JobRefused as exc:
+        _log(f"jobs: could not clear what the last daemon left: {exc}")
     finally:
         _job_unlock(fd)
 
@@ -7462,42 +7421,32 @@ class _JobOutput:
         return "\n".join(lines)[-JOB_NOTE_CHARS:]
 
 
-def _job_copy_tokens(turn_id: str, slug: str, tokens: pathlib.Path, copied: dict, output: _JobOutput) -> None:
+def _job_copy_tokens(turn_id: str, slug: str, copied: dict, output: _JobOutput) -> None:
     """Bring the job's copies in line with this turn's staged files: same format, written by
-    the job user with umask 077, swapped in by `mv`. A value goes on the scrub list BEFORE
+    the broker as the job user, swapped in atomically. A value goes on the scrub list BEFORE
     the job can read it. A staged file that has gone (revoked, no longer for this box) takes
     the job's copy with it. A failed copy is a log line: the next tick tries again."""
-    for provider in _held_connections(turn_id):
-        dest = tokens / f"{provider}.json"
+    held = _held_connections(turn_id)
+    for provider in held:
         try:
             data = _connection_token_path(slug, provider).read_bytes()
         except OSError:
             data = None
         try:
-            if data is None:
-                if provider in copied and _as_job_user(["rm", "-f", str(dest)]).returncode == 0:
+            if not data:
+                if provider in copied:
+                    _job_broker("write_token", turn=turn_id, provider=provider, size=0)
                     copied.pop(provider, None)
             elif copied.get(provider) != data:
                 output.add_tokens(_job_token_values(data))
-                res = _as_job_user(["sh", "-c", 'umask 077; cat > "$1.tmp" && mv -f "$1.tmp" "$1"',
-                                    "sh", str(dest)], input=data)
-                if res.returncode == 0:
-                    copied[provider] = data
-                else:
-                    _log(f"warn: could not copy {provider}'s token for job {turn_id[:8]}")
-        except Exception as exc:  # noqa: BLE001 - the job goes on; a token never in the message
-            _log(f"warn: could not copy {provider}'s token for job {turn_id[:8]}: {type(exc).__name__}")
-    for provider in set(copied) - set(_held_connections(turn_id)):
-        with contextlib.suppress(Exception):
-            if _as_job_user(["rm", "-f", str(tokens / f"{provider}.json")]).returncode == 0:
-                copied.pop(provider, None)
-
-
-def _job_env(turn_id: str, slug: str, parent: pathlib.Path) -> dict:
-    """A job's whole environment: these six. Never built from this process's own."""
-    return {"PATH": JOB_PATH, "HOME": str(parent / "home"), "LANG": "C.UTF-8",
-            "CANOPY_AGENT_SLUG": slug, "CANOPY_TURN_ID": turn_id,
-            "CANOPY_JOB_TOKENS": str(parent / "tokens")}
+                _job_broker("write_token", data, turn=turn_id, provider=provider, size=len(data))
+                copied[provider] = data
+        except JobRefused as exc:   # the broker's sentence: never a token in it
+            _log(f"warn: could not copy {provider}'s token for job {turn_id[:8]}: {exc}")
+    for provider in set(copied) - set(held):
+        with contextlib.suppress(JobRefused):
+            _job_broker("write_token", turn=turn_id, provider=provider, size=0)
+            copied.pop(provider, None)
 
 
 def _job_low_disk() -> bool:
@@ -7514,100 +7463,108 @@ def _job_stop_reason(turn_id: str, deadline: float, spec: JobSpec) -> str | None
     if _stop:
         return JOB_RESTARTED_NOTE
     if time.monotonic() >= deadline:
-        return f"The job ran past its {spec.timeout_minutes}-minute limit and was stopped."
+        return _job_limit_note(spec)
     if _job_low_disk():
         return "The job was stopped because the machine's disk was almost full."
     return None
 
 
-def _job_read_output(proc, output: _JobOutput) -> None:
-    """Drain the job's pipe, always: past the cap too, so a loud job can't block on a full
-    pipe and hold on to its time limit."""
-    fd = proc.stdout.fileno()
-    while True:
-        try:
-            chunk = os.read(fd, 65536)
-        except OSError:
-            return
-        if not chunk:
-            return
-        output.feed(chunk)
+def _job_limit_note(spec: JobSpec) -> str:
+    return f"The job ran past its {spec.timeout_minutes}-minute limit and was stopped."
 
 
-def _job_supervise(turn_id: str, slug: str, export: pathlib.Path, spec: JobSpec,
-                   output: _JobOutput) -> tuple[bool, str]:
-    """Run the job, stream it, refresh its tokens, and end it. By the time this returns,
-    normally or raising, nothing of the job user is running."""
-    parent = export.parent
-    tokens, home = parent / "tokens", parent / "home"
-    for path in (tokens, home):
-        if _as_job_user(["mkdir", "-m", "700", str(path)]).returncode != 0:
-            raise JobRefused("Couldn't make the job's folder, so the job didn't run.")
+def _job_read_frames(conn, output: _JobOutput, result: dict, done: threading.Event) -> None:
+    """Drain the broker's frames, always: past the cap too, so a loud job can't block on a
+    full pipe. `X` is the job's exit, and only the broker can write one."""
+    buf = b""
+    try:
+        while True:
+            while len(buf) >= 5:
+                size = struct.unpack(">I", buf[1:5])[0]
+                if len(buf) < 5 + size:
+                    break
+                kind, data, buf = buf[:1], buf[5:5 + size], buf[5 + size:]
+                if kind == b"O":
+                    output.feed(data)
+                elif kind == b"X":
+                    with contextlib.suppress(ValueError):
+                        result.update(json.loads(data))
+                    return
+            chunk = conn.recv(1 << 20)
+            if not chunk:
+                return
+            buf += chunk
+    except OSError:
+        return
+    finally:
+        done.set()
+
+
+def _job_supervise(turn_id: str, slug: str, spec: JobSpec, output: _JobOutput) -> tuple[bool, str]:
+    """Start the unit, stream it, refresh its tokens, and end it. Closing the connection, any
+    way this ends, is itself a stop: the broker stops a job whose runner has gone."""
     copied: dict = {}
-    _job_copy_tokens(turn_id, slug, tokens, copied, output)
-    env = _job_env(turn_id, slug, parent)
-    # `env -C`, not this Popen's cwd: only the job user may enter the export. argv all the
-    # way, no shell. New session: the job's group isn't this daemon's.
-    proc = subprocess.Popen(
-        _job_user_cmd(["env", "-i", "-C", str(export), *[f"{k}={v}" for k, v in env.items()], *spec.run]),
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        start_new_session=True, cwd="/")
-    reader = threading.Thread(target=_job_read_output, args=(proc, output), daemon=True,
+    _job_copy_tokens(turn_id, slug, copied, output)
+    seconds = spec.timeout_minutes * JOB_SECONDS_PER_MINUTE
+    try:
+        conn = _job_broker_connect("start", turn=turn_id, slug=slug, run=spec.run, timeout_seconds=seconds)
+    except OSError:
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    conn.settimeout(None)
+    result: dict = {}
+    done = threading.Event()
+    reader = threading.Thread(target=_job_read_frames, args=(conn, output, result, done), daemon=True,
                               name=f"job-output-{turn_id[:8]}")
     reader.start()
+    reason = None
     try:
-        deadline = time.monotonic() + spec.timeout_minutes * JOB_SECONDS_PER_MINUTE
+        deadline = time.monotonic() + seconds + JOB_DEADLINE_SLACK_SECONDS
         next_batch = time.monotonic() + JOB_BATCH_SECONDS
         next_tick = time.monotonic() + JOB_TOKEN_TICK_SECONDS
-        reason = None
-        grace_until = None
-        while proc.poll() is None:
+        while not done.wait(JOB_POLL_SECONDS):
             now = time.monotonic()
             if reason is None and (reason := _job_stop_reason(turn_id, deadline, spec)) is not None:
                 _log(f"job {turn_id[:8]}: {reason}")
-                with contextlib.suppress(Exception):
-                    _as_job_user(["pkill", "-TERM", "-u", JOB_USER])
-                grace_until = now + JOB_KILL_GRACE_SECONDS
-            elif grace_until is not None and now >= grace_until:
-                break   # ignored the TERM: the KILL below
+                with contextlib.suppress(JobRefused):
+                    _job_broker("stop", turn=turn_id)
             if now >= next_batch:
                 output.flush()
                 next_batch = now + JOB_BATCH_SECONDS
             if now >= next_tick and reason is None:
-                _job_copy_tokens(turn_id, slug, tokens, copied, output)
+                _job_copy_tokens(turn_id, slug, copied, output)
                 next_tick = now + JOB_TOKEN_TICK_SECONDS
-            time.sleep(JOB_POLL_SECONDS)
     finally:
-        # Every way out. The pipe stays open for as long as a process left behind holds it,
-        # so the kill comes first and the drain after it.
-        gone = _job_kill_all()
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=15)
-        reader.join(timeout=10)
-        if not reader.is_alive():
-            proc.stdout.close()
+        with contextlib.suppress(OSError):
+            conn.shutdown(socket.SHUT_WR)   # if a raise brought us here: the broker stops the job
+        done.wait(timeout=30)
+        conn.close()
+        reader.join(timeout=5)
         output.close()
         output.flush()
-    if not gone:
-        _log(f"warn: job {turn_id[:8]}: {JOB_USER} still has processes after the kill")
+    if result.get("error"):
+        raise JobRefused(str(result["error"]))
     last = output.last_lines()
-    if reason is not None:
-        return False, f"{reason}\nLast lines:\n{last}" if last else reason
-    code = proc.returncode
-    if code == 0:
-        return True, f"The job finished (exit code 0).\nLast lines:\n{last}" if last else \
-            "The job finished (exit code 0)."
-    return False, f"The job failed with exit code {code}.\nLast lines:\n{last}" if last else \
-        f"The job failed with exit code {code}."
+    code = result.get("rc")
+    if reason is None:
+        if result.get("timed_out"):
+            reason = _job_limit_note(spec)
+        elif code is None:
+            reason = "This machine's job service stopped answering, so the job was ended."
+        elif code == 0:
+            return True, f"The job finished (exit code 0).\nLast lines:\n{last}" if last else \
+                "The job finished (exit code 0)."
+        else:
+            reason = f"The job failed with exit code {code}."
+    return False, f"{reason}\nLast lines:\n{last}" if last else reason
 
 
 def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
     """Run the job `turn` names, in place of `execute_prompt`: (ok, the result note).
 
     The lock comes first, before anything that could touch a running job. Then whatever a
-    previous job left goes, the repo's `main` is exported, and the job runs as the job user.
-    However that ends, a refusal, a raise, a kill, nothing stays: no process, no file.
-    `_run_turn`'s `finally` unstages the runner's own copy of the tokens."""
+    previous job left goes, the repo's `main` is fetched, and the broker runs it. However that
+    ends, a refusal, a raise, a kill, nothing stays: the unit's cgroup is gone and the broker
+    empties the jobs root. `_run_turn`'s `finally` unstages the runner's own copy of the tokens."""
     turn_id, slug = str(turn["id"]), _turn_agent_slug(turn) or ""
     try:
         fd = _job_lock()
@@ -7616,20 +7573,20 @@ def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
     if fd is None:
         return False, JOB_BUSY_NOTE
     try:
-        if not _job_kill_all():
-            return False, "A process from an earlier job couldn't be stopped, so this job didn't run."
-        _job_clear_files()
         try:
+            _job_broker("cleanup")
             # Agentless: this turn's GitHub identity and no more. The agent's own env would
             # resolve and stage credentials that only this fetch would ever see.
-            export = _job_export(str(turn.get("job_repo") or ""), turn_id, _agent_env(None))
-            spec = _job_spec_for(export, str(turn.get("job") or ""))
-            return _job_supervise(turn_id, slug, export, spec, _JobOutput(emit))
+            data = _job_fetch_archive(str(turn.get("job_repo") or ""), turn_id, _agent_env(None))
+            spec = _job_spec_from_archive(data, str(turn.get("job") or ""))
+            _job_broker("export", data, turn=turn_id, size=len(data))
+            del data
+            return _job_supervise(turn_id, slug, spec, _JobOutput(emit))
         except JobRefused as exc:
             return False, str(exc)
         finally:
-            _job_kill_all()
-            _job_clear_files()
+            with contextlib.suppress(JobRefused):
+                _job_broker("cleanup")
     finally:
         _job_unlock(fd)
 
@@ -14893,7 +14850,10 @@ def _runners_cli(argv: list[str]) -> int:
         runners = setup_runners(box, role_name=_role_name())
         imds_rules()
         applied = apply_egress(box, runners, boot=True)
-        setup_jobs(box, runners, locked=any(applied.values()))
+        if setup_jobs(box, locked=any(applied.values())):
+            install_job_broker()
+        else:
+            subprocess.run(["systemctl", "disable", "--now", "canopy-job-broker.service"], capture_output=True)
         changed = [_install_unit_file(n, run=subprocess.run)
                    for n in ("canopy-egress-sync.service", "canopy-egress-sync.timer")]
         if any(changed):
