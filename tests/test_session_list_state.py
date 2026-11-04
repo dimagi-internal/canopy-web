@@ -183,3 +183,14 @@ def test_limit_applies_after_the_running_first_sort():
 
     rows = c.get("/api/canopy-sessions/?limit=1").json()
     assert [r["id"] for r in rows] == [str(live.id)]
+
+
+def test_the_open_rule_stays_a_small_query():
+    """`state=active` runs on every read of the session list, so a new rule should reuse
+    the lookups of a session's turns already here. At 26 lookups the list took 9 s in the
+    browser suite, with almost no data, and that suite's running-session test failed."""
+    from apps.canopy_sessions import staleness
+    from apps.canopy_sessions.models import Session
+
+    sql = str(staleness.active(Session.objects.all()).values("pk").query)
+    assert sql.count('FROM "harness_turn"') <= 16

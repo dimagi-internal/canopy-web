@@ -209,7 +209,10 @@ def unseen_q() -> Q:
     the failure is a live chat vanishing from the list, so the gates above are real.
     """
     p = _predicates()
-    return (p.runner_unseen | p.web_unseen) & ~p.transferring
+    # `p.cloud_retired` once, not once per leg: it carries most of this query's
+    # subqueries, and the list runs it on every read. Only a held session can be
+    # `unobserved`, so every origin reaches that rule and it needs no origin of its own.
+    return (p.runner_quiet | p.web_quiet | p.cloud_retired) & ~p.transferring
 
 
 class _Predicates:
@@ -271,22 +274,19 @@ def _predicates() -> _Predicates:
     cloud_finished = (ran_on_its_own | chat_idle) & ~Q(in_flight) & no_dialog
     cloud_done = cloud_gone | cloud_finished
 
-    runner_unseen = Q(origin="runner") & (
-        (~unobserved & quiet) | (unobserved & cloud_done)
-    )
+    runner_quiet = Q(origin="runner") & ~unobserved & quiet
+    cloud_retired = unobserved & cloud_done
 
     # A web chat once a runner holds it: going quiet means the same thing as for a
     # runner-discovered session, but only on a box that posts wholesale reports
     # (`sessions_reported_at` set — see Runner for why it is `isnull` rather than a
     # freshness window). On the cloud runner `live_seen_at` is a per-turn stamp and
     # its age is not evidence, so the cloud rule (`cloud_done`) applies instead.
-    web_unseen = (
+    web_quiet = (
         ~Q(origin="runner")
         & Q(runner_binding__isnull=False)
-        & (
-            (Q(runner_binding__runner__sessions_reported_at__isnull=False) & quiet)
-            | (unobserved & cloud_done)
-        )
+        & Q(runner_binding__runner__sessions_reported_at__isnull=False)
+        & quiet
     )
 
     # A session mid-transfer is unseen by design (see TRANSFER_WINDOW), not gone.
@@ -294,7 +294,7 @@ def _predicates() -> _Predicates:
     p.first_mode, p.first_origin = first("turn_mode"), first("origin")
     p.slack_thread, p.person_mail = slack_thread, person_mail
     p.in_flight, p.no_dialog = in_flight, no_dialog
-    p.runner_unseen, p.web_unseen = runner_unseen, web_unseen
+    p.runner_quiet, p.web_quiet, p.cloud_retired = runner_quiet, web_quiet, cloud_retired
     p.transferring = transferring_q()
     return p
 
