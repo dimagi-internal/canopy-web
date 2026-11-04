@@ -37,7 +37,7 @@ Slack threads, what agents know about a person); the HCP service is [hcp-service
 |---|---|---|
 | **workspace role** | What a person may do in a workspace: viewer < editor < admin < owner < superuser. Each role holds a set of workspace *permissions* (`content.write`, `logs.read`, …), not to be confused with the agent permissions below. Built on the same role engine as agent roles (`apps/common/rolesets.py`), with its own vocabulary. | `apps/workspaces/permissions.py`, `WorkspaceMembership.ROLE_RANK` |
 | **permission** | What a person may do with ONE agent: `read` (be answered in read mode), `write` (drive the whole agent), `agent_edit` (change the agent itself), `admin` (configure it), `own`. `agent_edit` implies `write` implies `read`; `admin` implies all but `own`. A line may also grant the scoped `use:<capability>`, which opens that one capability. | `apps/agents/roles.py` |
-| **agent role** | A named bundle of permissions, in one table, strongest first: **owner** > **admin** > **editor** (read + write + agent_edit) > **read_write** (read + write) > **read_only** (read). Never "member", "contact", "viewer" or "user": the first two describe how canopy knows someone, the last two are gone. | `apps/agents/roles.py`, the only place that names them |
+| **agent role** | A named bundle of permissions, **defined by a workspace** (`AgentRole`) and usable below it. Three come built in as the defaults: **editor** (read + write + agent_edit), **read_write** (read + write), **read_only** (read); they are editable, cloneable and never deletable. A workspace adds its own ("read + use the connect door"). **owner** and **admin** are fixed in code: they are `Agent.owner` and `Agent.is_admin`, never a line. Never "member", "contact", "viewer" or "user". | `apps/agents/roles.py` (vocabulary, the built-ins' seed, the fixed roles), `rolecatalog.py` (the catalog), `roleadmin.py` (editing it) |
 | **system** | Not a person and not in the table: canopy itself (a schedule, a drill), the agent's OWN canopy login, an approved task's dispatch. It may do what an agent admin may. | `roles.SYSTEM` |
 | **access list** | The one list per agent that says who has what: lines of `(who, role)` or, rarely, `(who, one named capability)`. | `AgentGrant`, `apps/agents/grants.py` |
 | **line** | One entry of an access list. `who` is a person, everyone in a workspace (optionally also every workspace below it), anyone at a domain, or a known visitor or sender. | "The access list" below |
@@ -233,7 +233,9 @@ change. The domains themselves are server-set, never client input.
 ## Agent roles
 
 What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** is one thing; a
-**role** is a named bundle of them, declared once in a table, strongest first:
+**role** is a named bundle of them. The vocabulary is fixed (`read`, `write`, `agent_edit`, `admin`,
+`own`, and `use:<door>`); the bundles are **configurable** (next section); these are the built-ins
+and the two fixed roles, strongest first:
 
 | Agent role | Holds | In plain words |
 |---|---|---|
@@ -292,11 +294,41 @@ What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** i
   never grant a role that contains `write`; a workspace default whose role contains `write` is the
   workspace owner's call. See "The access list".
 
+### Configurable roles
+
+**The roles a line can give are rows, defined by the people who run a workspace**
+(`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`; the Roles page, Settings → Agent
+roles; `GET|POST /api/workspaces/{slug}/agent-roles`, `PATCH|DELETE …/{key}`, `POST …/{key}/reset`).
+
+* A role is a key (immutable, stored on its lines and sent in the envelope), a name, a sentence and a
+  set of permissions chosen from `read`, `write`, `agent_edit` and `use:<door>`. It is stored **closed**
+  (write carries read and every door, agent_edit carries write). A custom role can **never** hold
+  `admin` or `own`: those come from who the agent belongs to, not from a line.
+* A role is defined on a workspace and usable by it and every workspace below; its key means one thing
+  everywhere it is visible (a clash along a chain is refused, both ways), so nothing is overridden.
+  `read_only`, `read_write` and `editor` are seeded on every root workspace (`rolecatalog.ensure_seeded`).
+* A line holds its role's **row** (`AgentGrant.role_def`): what it grants is the row's permissions, read
+  with the line (`grants.lines_for*`: no query per pair), so **editing a role changes everyone holding it
+  from the next request**, and a role in use cannot be deleted (`PROTECT`; the API names the lines, or
+  moves them in the same step with `reassign_to`). Nothing branches on a role's name: `permissions` is
+  the contract in the caller envelope, `role` is the key for display.
+* **Who may:** a workspace admin (`members.manage`) defines roles that cannot drive or change an agent;
+  anything that does (`write`, which `agent_edit` carries), before or after an edit, is the workspace
+  owner's. Every write is a settings change (`agent-roles:<workspace>:<key>`, with how many lines it
+  reaches), takes a passkey step-up from a browser, and a token may write a role that only reads or opens
+  doors but never one that drives or changes the agent.
+* **The rails follow the role's contents, by permission:** a `domain` or `contact` line can never give a
+  role that holds `write`, and an edit that would make a role drive is refused while such a line holds
+  it (`roleadmin`). Moving an agent into another tree re-points its lines to the destination's identical
+  role, or refuses (`move._carry_roles`).
+* `manage.py check_agent_roles` proves every role line is linked to the row of its own tree and grants
+  what the code table gave it.
+
 ## The access list
 
 An agent's **access list** (`AgentGrant`, `apps/agents/grants.py`) is the one place that says
 who has what on it. A **line** is `(who, what)`, with a `manual_only` flag and a free-text note.
-`what` is ONE role (read_only, read_write, editor) or, instead and rarely, ONE named capability (the
+`what` is ONE role (a key from the workspace's roles: read_only, read_write, editor, or its own) or, instead and rarely, ONE named capability (the
 scoped permission `use:<capability>`, which opens that capability and nothing else: no `read`, no
 `ask`). `who` is one of four kinds (the API's `kind`):
 
@@ -320,8 +352,8 @@ scoped permission `use:<capability>`, which opens that capability and nothing el
   capability line is confined, whose turns follow the routing ladder). A person is manual only when
   EVERY line that gives them `write` says so: one line without the flag frees the person. Dropping the
   gate is one visible edit to one line, never a code change.
-* **Which lines you can write** (`grants.check_line`): exactly one of a role (`read_only`,
-  `read_write` or `editor`) and a capability name; a `person` line names a canopy user in a
+* **Which lines you can write** (`grants.check_line`): exactly one of a role (a key visible from the
+  line's workspace, `grants.check_role`) and a capability name; a `person` line names a canopy user in a
   workspace you can see (`no such person…` otherwise); a `workspace` line names a workspace you are
   in, and `at_least` must be a workspace role; a `domain` or `contact` line can give `read_only` or
   a named capability but **never a role that contains `write`** (`grants.check_role`), because an
@@ -356,7 +388,7 @@ else.
 
 Defaults are changed on the workspace (`GET|POST /api/workspaces/{slug}/agent-defaults`,
 `DELETE …/{line_id}`, the Members page): by a **workspace admin** (`members.manage`), except that
-a default whose role contains `write` (`read_write` or `editor`: the whole of every agent) is the
+a default whose role contains `write` (`read_write`, `editor` or any role that drives: the whole of every agent) is the
 **workspace owner's** call, decided by that permission, not by the role's name. Each
 change is audited as `agent-defaults:<workspace>`. A default line shows on each agent's list
 marked `scope: workspace`, and is removed there only by going to the workspace.

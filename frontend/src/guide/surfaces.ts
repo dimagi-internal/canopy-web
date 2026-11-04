@@ -386,6 +386,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add, edit or remove a rule', 'Switch a rule on or off', "See which rules are firing", 'Exempt one agent with an allow rule'],
   },
   {
+    path: '/w/:workspace/settings/roles',
+    title: 'Agent roles',
+    audience: 'Workspace admin deciding what people may do with the workspace\'s agents',
+    what: "The roles an access-list line can give, in words: read only, read and write and editor (built in: rename or reshape them, reset them, never delete them) and any this workspace defines, such as \"read + use the Connect door\". A role is a name and a choice from what canopy can enforce: be answered in read mode, drive the whole agent, change its skills and capabilities, and use named doors. Roles defined here are available to every agent in this workspace and below. Owner and agent admin are listed read-only: they come from who the agent belongs to, never from a line. Editing a role changes what everyone holding it can do from their next request and is recorded in the settings log with how many lines it reaches; a role in use cannot be deleted, only its holders moved. Any member can read the roles; a workspace admin defines those that cannot drive or change an agent, the owner those that can, and each change takes a passkey touch.",
+    actions: ['Define a role', 'Copy a role and change it', 'Edit or reset a built-in role', 'Delete a role (moving the people who hold it)', 'See how many lines hold each role'],
+  },
+  {
     path: '/w/:workspace/settings/inbound',
     title: 'Inbound push',
     audience: 'Workspace owner setting up email-triggered agents',

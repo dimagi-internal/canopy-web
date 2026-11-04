@@ -46,6 +46,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'tasks', label: 'Tasks' },
   { segment: 'retention', label: 'Retention' },
   { segment: 'admission-rules', label: 'Admission rules' },
+  { segment: 'roles', label: 'Agent roles' },
   { segment: 'topology', label: 'Topology' },
 ]
 

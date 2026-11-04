@@ -56,7 +56,7 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
             {data.lines.map((l) => (
               <Tr rule="bottom-soft" key={l.id} data-testid="agent-default">
                 <Td density="compact-gap" tone="foreground">{l.who}</Td>
-                <Td density="compact-gap" tone="foreground">{lineWhat(l)}</Td>
+                <Td density="compact-gap" tone="foreground">{lineWhat(l, data?.roles)}</Td>
                 <Td tone="muted">
                   {l.manual_only ? 'needs approval before anything goes out' : ''}
                 </Td>
@@ -105,7 +105,7 @@ export function WorkspaceAgentDefaults({ workspace }: { workspace: string }) {
       )}
       {data?.can_edit && !data.can_give_write && (
         <p className="m-0 mt-2 text-[11px] text-muted-foreground">
-          Only a workspace owner can give read & write or editor to everyone as a default.
+          Only a workspace owner can give a role that drives or changes the agent to everyone as a default.
         </p>
       )}
     </div>
