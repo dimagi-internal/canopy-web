@@ -161,3 +161,17 @@ def test_the_mcp_tool_is_gated_the_same_way(w):
     assert "editor role on hal" in str(e.value)
     with pytest.raises(ToolError):
         _mcp_replace_skills(w["line_rw"])
+
+
+def test_agent_edit_is_enough_to_change_the_agent_whatever_the_workspace_role(w):
+    """A workspace viewer with an editor line may rename it; without one, or for a new agent, they may not."""
+    c = Client()
+    c.force_login(w["viewer"])
+    body = {"slug": "hal", "name": "Hal the second"}
+    assert c.post("/api/agents/", body, content_type="application/json").status_code == 403
+    G.objects.create(agent=w["agent"], kind=G.PERSON, user=w["viewer"], role=roles.EDITOR)
+    assert c.post("/api/agents/", body, content_type="application/json").status_code in (200, 201)
+    w["agent"].refresh_from_db()
+    assert w["agent"].name == "Hal the second"
+    new = {"slug": "newbie", "name": "New", "workspace": "connect"}
+    assert c.post("/api/agents/", new, content_type="application/json").status_code == 403

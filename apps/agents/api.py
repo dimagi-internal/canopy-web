@@ -236,7 +236,10 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # there is nothing to leak, and 404-ing a create would be a lie about
         # the only fact the caller already knows.
         raise HttpError(404, f"agent '{payload.slug}' not found")
-    if not perms.role_allows(role, perms.AGENT_WORK):
+    # Creating an agent is the workspace editor's. Changing one is also open to whoever holds
+    # `agent_edit` on it, whatever their workspace role: the checks below still limit what they change.
+    if not perms.role_allows(role, perms.AGENT_WORK) and not (
+            existing is not None and access.may_edit_agent(request.user, existing)):
         raise HttpError(403, "creating or editing an agent requires the editor role or above")
     # A MOVE also requires admin of the agent where it is — checked before
     # anything is written. Moving re-decides every gate that hangs off its
