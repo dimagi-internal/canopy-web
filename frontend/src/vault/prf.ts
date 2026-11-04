@@ -42,6 +42,9 @@ export const PRF_UNSUPPORTED =
 /** What a person is told when their passkey can't hold the vault key — the
  *  common case with a password-manager passkey, so plain words, not the
  *  browser-support list above. */
+/** Replaces the browser's own wording, which ends in a link to a web standard. */
+export const PASSKEY_UNSUCCESSFUL = 'The passkey step was unsuccessful. Nothing was changed. Try again.'
+
 export const USE_A_PASSPHRASE =
   "Your passkey app can't unlock a vault key, so use a passphrase — save it and the Secret Key in your password manager."
 
@@ -103,7 +106,10 @@ export async function assertWithPrf(prfInputB64u: string, opts: { allow?: string
     extensions: { ...(options.extensions ?? {}), prf: { eval: { first: unb64u(prfInputB64u) } } } as AuthenticationExtensionsClientInputs,
   }
   requirePasskeysHere()
-  const asserted = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null
+  const asserted = (await navigator.credentials.get({ publicKey }).catch((e: unknown) => {
+    // Still a NotAllowedError, which callers read as "the person did not finish it".
+    throw e instanceof DOMException && e.name === 'NotAllowedError' ? new DOMException(PASSKEY_UNSUCCESSFUL, e.name) : e
+  })) as PublicKeyCredential | null
   if (!asserted) throw new Error('No passkey was used')
   const ext = asserted.getClientExtensionResults() as { prf?: { results?: { first?: BufferSource } } }
   const first = ext.prf?.results?.first

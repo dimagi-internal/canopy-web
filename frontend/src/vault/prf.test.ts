@@ -24,6 +24,15 @@ function fakeCredential(prf: Uint8Array | null) {
 afterEach(() => vi.clearAllMocks())
 
 describe('assertWithPrf', () => {
+  it("replaces the browser's wording when a passkey is refused, and it stays a refusal", async () => {
+    POST.mockResolvedValue({ data: { options: { challenge: 'AAAA', allowCredentials: [] } } })
+    const refused = new DOMException('The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/', 'NotAllowedError')
+    Object.defineProperty(navigator, 'credentials', { value: { get: vi.fn().mockRejectedValue(refused) }, configurable: true })
+    const e = await assertWithPrf(b64u(new Uint8Array(32).fill(1))).catch((x: unknown) => x as DOMException)
+    expect((e as DOMException).name).toBe('NotAllowedError')
+    expect((e as DOMException).message).toBe('The passkey step was unsuccessful. Nothing was changed. Try again.')
+  })
+
   it('evaluates prf_input, keeps the output, and strips it from what the server gets', async () => {
     const prfOut = new Uint8Array(32).fill(7)
     POST.mockImplementation(async (path: string) =>

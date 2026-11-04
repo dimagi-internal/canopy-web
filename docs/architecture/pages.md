@@ -625,9 +625,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     show "Used by canopy-web" for those providers: a plain switch to turn off an unshared
     connection (`POST /api/connections/{id}/server-use`), a link to Share for anything else.
 - **`/w/:workspace/connections/:id/share`** — "Share this connection": where Connected and
-  Settings' Share on a not-shared connection lead. On load it tries to open the connection
-  with your passkey (`useVaultUnlock`, passkey only), headed "Who can use <account>"; only if
-  the browser needs a click does it show "Continue with your passkey". Opened, it shows
+  Settings' Share on a not-shared connection lead. It loads with no prompt, headed "Who can use <account>",
+  and says what happens next; "Unlock with your passkey" is the only prompt on the way to the
+  choice (`useVaultUnlock`). Opened, it shows
   the account from the opened envelope; the owner then ticks agents they administer
   and their own computers (name plus fingerprint) and shares
   (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the

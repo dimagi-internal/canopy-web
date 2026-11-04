@@ -207,9 +207,9 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/settings/connections',
     title: 'Share this connection',
     audience: 'The person who just connected Salesforce or Google and went on to share it, or who is finishing a share from Settings',
-    what: "Where the Connected screen and Settings lead, and where a sign-in lands that lends with limits or names an agent. Your passkey opens the connection in your browser (on arrival where the browser allows it, otherwise with one Continue with your passkey button), which shows which account was connected; you then choose which agents and which of your own computers (by name and fingerprint) may use it, and share. With the Project screens and apps box unticked, canopy-web never reads the token; ticked, it can use the account with nobody present. A connection lent for a while or for your own work only has no such box. Not now leaves it unshared, so no agent or computer can use it. A connection that cannot be opened safely says so and offers Reconnect.",
+    what: "Where the Connected screen and Settings lead, and where a sign-in lands that lends with limits or names an agent. Unlock with your passkey opens the connection in your browser, the only passkey prompt on the way to the choice, which shows which account was connected; you then choose which agents and which of your own computers (by name and fingerprint) may use it, and share. With the Project screens and apps box unticked, canopy-web never reads the token; ticked, it can use the account with nobody present. A connection lent for a while or for your own work only has no such box. Not now leaves it unshared, so no agent or computer can use it. A connection that cannot be opened safely says so and offers Reconnect.",
     needsFirst: 'A connection you just made (or one marked not shared yet in Settings), a passkey on this device, and your vault key set up.',
-    actions: ['Continue with your passkey', 'Choose agents and your computers', 'Share', 'Not now', 'Reconnect'],
+    actions: ['Unlock with your passkey', 'Choose agents and your computers', 'Share', 'Not now', 'Reconnect'],
   },
   {
     path: '/w/:workspace/review/:id',
