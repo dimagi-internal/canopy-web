@@ -134,20 +134,28 @@ def test_process_account_on_posix_comes_from_the_uid(on_posix, monkeypatch):
     assert platform_jobs.process_account() == "u501"
 
 
-def test_every_runner_module_imports_without_pwd():
+def test_every_runner_module_imports_without_posix_only_modules():
     """Every canopy-runner command died on Windows with `No module named 'pwd'`
     because two modules imported it at top level (#1008). Import the whole
-    package in a fresh interpreter with `pwd` unavailable, so a POSIX-only
-    top-level import fails here, in CI on Linux, not on someone's Windows box."""
+    package in a fresh interpreter with `pwd` and `fcntl` unavailable, so a
+    POSIX-only top-level import fails here, in CI on Linux, not on someone's
+    Windows box.
+
+    `local_apps` is the one exemption: it is macOS-only and uses `fcntl` at top
+    level, and `main.py` refuses `app` on win32 before importing it. Skipping it
+    by name still fails this test if anything else imports it at top level,
+    which is the Windows break that would matter."""
     import subprocess
     import sys
 
     code = (
         "import sys, pkgutil, importlib\n"
         "sys.modules['pwd'] = None\n"
+        "sys.modules['fcntl'] = None\n"
         "import canopy_runner\n"
         "for m in pkgutil.walk_packages(canopy_runner.__path__, 'canopy_runner.'):\n"
-        "    importlib.import_module(m.name)\n"
+        "    if not m.name.startswith('canopy_runner.local_apps.'):\n"
+        "        importlib.import_module(m.name)\n"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
