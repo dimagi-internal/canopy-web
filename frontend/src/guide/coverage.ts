@@ -33,6 +33,7 @@ export const NOT_PAGES: Record<string, string> = {
   '/*': 'the not-found catch-all',
   '/': 'redirect: to the active workspace',
   '/app': 'redirect: the server-loadable door into the app, to the active workspace',
+  '/apps': "redirect: the runner menu bar's door, which knows no workspace, → /w/:workspace/apps?tab=personal",
   '/timeline': 'redirect: legacy flat path → /w/:workspace/timeline',
   '/shareouts/*': 'redirect: legacy flat path → /w/:workspace/shareouts',
   '/walkthroughs': 'redirect: legacy flat path → /w/:workspace/walkthroughs',

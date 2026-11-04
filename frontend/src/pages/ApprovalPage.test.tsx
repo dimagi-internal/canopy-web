@@ -55,7 +55,7 @@ describe('ApprovalPage', () => {
   })
 
   it("links this Canopy's own address in a plan, and never one a submitter wrote", async () => {
-    const review = `${window.location.origin}/w/connect/apps/local/review/9`
+    const review = `${window.location.origin}/w/connect/apps/personal/review/9`
     get.mockResolvedValue({
       ...CARD,
       plan: ['Says it sends: text to https://evil.example/page', `Read the code and the changes: ${review}`],

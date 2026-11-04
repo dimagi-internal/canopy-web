@@ -6,7 +6,7 @@ A local app is a `manifest.json` plus a program, run as its own process on a per
 
 **Keep logs clean.** Event and status fields are numbers or short identifiers; the host replaces anything longer with its length. The one named exception is `session_url`.
 
-**A source** declares `provides` and writes `segment`, then `ended` or `gone`. It owns its own cursor and quirks. An app declares `consumes` and must drop anything unsent on `gone`.
+**Where its stream comes from.** A person installs one app. If it listens to something, the manifest's `source` names a second program in the same package, which the host starts and relays: it writes `segment`, then `ended` or `gone`, and owns its own cursor and quirks. The app must drop anything unsent on `gone`. Keeping the two programs separate is what lets a different source replace this one with no change to the app.
 
 **Try it.** `canopy-runner app dev-install <folder>`, then `canopy-runner app start <key>`. Nothing leaves the computer: Canopy calls go to a local stub and what would have been sent lands in `~/.canopy/apps/<key>/would-send.jsonl`.
 

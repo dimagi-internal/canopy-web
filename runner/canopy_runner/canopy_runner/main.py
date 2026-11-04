@@ -1019,7 +1019,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # too, never imports app code.
     app_parser = subparsers.add_parser(
         "app",
-        help="experimental: list, check, start, stop and build local apps, the small "
+        help="unreleased: list, check, start, stop and build user apps, the small "
              "programs a person runs on this computer. The daemon never starts one",
     )
     app_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))

@@ -14,7 +14,6 @@ import re
 
 KEY = re.compile(r"^[a-z][a-z0-9-]{1,38}[a-z0-9]$")
 VERSION = re.compile(r"^\d{1,6}(\.\d{1,6}){0,3}$")
-_WORD = re.compile(r"^[a-z][a-z0-9_.-]{0,39}$")
 PLATFORMS = ("macos",)
 SETTING_TYPES = ("agent", "text", "longtext", "bool")
 CANOPY_OPS = ("sessions.create", "sessions.send", "turns.status")
@@ -26,8 +25,7 @@ TOP_LEVEL = {
     "changelog",
     "entry",
     "platforms",
-    "consumes",
-    "provides",
+    "source",
     "max_minutes",
     "notice",
     "disclosure",
@@ -59,14 +57,6 @@ def _strings(where: str, value, *, limit: int = 300, max_items: int = 20) -> lis
     if not all(isinstance(v, str) and v.strip() and len(v) <= limit for v in value):
         _fail(where, f"each must be non-empty text of at most {limit} characters")
     return [v.strip() for v in value]
-
-
-def _words(where: str, value) -> list[str]:
-    out = _strings(where, value, limit=40)
-    for word in out:
-        if not _WORD.match(word):
-            _fail(where, f"'{word}' must be a short lowercase name")
-    return out
 
 
 def _settings(raw) -> dict:
@@ -141,9 +131,9 @@ def validate(raw: dict) -> dict:
     platforms = _strings("platforms", raw.get("platforms"), limit=20)
     if not platforms or set(platforms) - set(PLATFORMS):
         _fail("platforms", f"must list at least one of: {', '.join(PLATFORMS)}")
-    consumes, provides = _words("consumes", raw.get("consumes")), _words("provides", raw.get("provides"))
-    if len(consumes) > 1:
-        _fail("consumes", "an app consumes at most one stream")
+    source = _strings("source", raw.get("source"), limit=200)
+    if "{python}" in source[1:] or any(".." in part.split("/") for part in source):
+        _fail("source", "{python} may only come first, and no part may climb out of the package")
     minutes = raw.get("max_minutes")
     if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= MAX_MINUTES:
         _fail("max_minutes", f"must be a whole number from 1 to {MAX_MINUTES}")
@@ -170,10 +160,9 @@ def validate(raw: dict) -> dict:
         "changelog": _text(raw, "changelog", 4000),
         "entry": entry,
         "platforms": platforms,
-        "consumes": consumes,
-        "provides": provides,
+        "source": source,
         "max_minutes": minutes,
-        "notice": _text(raw, "notice", 1000, required=bool(consumes)),
+        "notice": _text(raw, "notice", 1000, required=bool(source)),
         "disclosure": {"reads": reads, "sends": sends},
         "settings": settings,
         "checks": _checks(raw.get("checks")),

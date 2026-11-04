@@ -326,6 +326,8 @@ export const routeTable: RouteObject[] = [
       { path: '/hcp-clients', element: <HcpClientsPage /> },
       // What is waiting on you, across every workspace — the app's front door.
       { path: '/home', element: <HomePage /> },
+      // What the runner's menu bar opens: it knows no workspace.
+      { path: '/apps', element: <TenantRedirect to="apps?tab=personal" /> },
       { path: '/supervisor', element: <SupervisorPage /> },
       { path: '/ide', element: <LazySection><IdePage /></LazySection> },
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
@@ -429,9 +431,9 @@ export const routeTable: RouteObject[] = [
       // Self-contained apps the workspace runs (apps/workspace_apps), drawn in the same sandbox.
       { path: '/w/:workspace/apps', element: <LazySection><WorkspaceAppsPage /></LazySection> },
       { path: '/w/:workspace/apps/store', element: <LazySection><WorkspaceAppStoreDetailPage /></LazySection> },
-      // Programs that run on a person's own computer (apps/local_apps); a separate install from the web apps above.
-      { path: '/w/:workspace/apps/local/review/:id', element: <LazySection><LocalAppReviewPage /></LazySection> },
-      { path: '/w/:workspace/apps/local/:key', element: <LazySection><LocalAppDetailPage /></LazySection> },
+      // Apps a person installs for themselves, the page's Personal tab (apps/local_apps).
+      { path: '/w/:workspace/apps/personal/review/:id', element: <LazySection><LocalAppReviewPage /></LazySection> },
+      { path: '/w/:workspace/apps/personal/:key', element: <LazySection><LocalAppDetailPage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/customize', element: <LazySection><WorkspaceAppCustomizePage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/:page?', element: <LazySection><WorkspaceAppPage /></LazySection> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },

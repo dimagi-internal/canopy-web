@@ -331,7 +331,7 @@ def test_as_a_program_a_refused_create_stops_with_a_reason():
 
 def test_the_manifest_declares_what_the_app_calls():
     manifest = json.loads((APP.parent / "manifest.json").read_text())
-    assert manifest["consumes"] == ["transcript"]
+    assert manifest["source"] == ["{python}", "source.py"]
     assert set(manifest["canopy"]) == {"sessions.create", "sessions.send", "turns.status"}
 
 
