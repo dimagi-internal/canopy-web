@@ -36,6 +36,7 @@ from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 
 from . import initiator as who
+from . import sensitivity
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
@@ -696,8 +697,6 @@ def _profile(agent, capability: str, turn=None):
     if agent is None or not capability:
         return None
     from apps.agents.interface import profile
-
-    from . import sensitivity
 
     got = profile(agent, capability)
     if "default_profile_version" in got and turn is not None and sensitivity.is_sensitive(turn):
