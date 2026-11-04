@@ -41,6 +41,12 @@ class AppTemplate(models.Model):
                               related_name="app_templates")
     #: Shown in the store. An unlisted template installs only where it is owned.
     listed = models.BooleanField(default=True)
+    #: Where it runs: `web` is a manifest served here, `local` is real code run on a
+    #: person's computer (`apps/local_apps`). One catalog, so one store and one way of
+    #: versioning; everything here that reads `collections` or `pages` filters to web.
+    WEB, LOCAL = "web", "local"
+    RUNTIMES = [(WEB, "On Canopy"), (LOCAL, "On your computer")]
+    runtime = models.CharField(max_length=8, choices=RUNTIMES, default=WEB)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

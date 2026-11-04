@@ -98,6 +98,7 @@ INSTALLED_APPS = [
     "apps.shareouts",
     "apps.dynamic_views",
     "apps.workspace_apps",
+    "apps.local_apps",
     "apps.mcp",
     "apps.session_sharing",
     "apps.push",
