@@ -589,18 +589,31 @@ Every browser-facing address canopy-web serves. The SPA route table is
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
 - **`/w/:workspace/connections/:id/connected`** — "Connected": where the OAuth callback
-  lands. Reads the share state (facts and ciphertext) but never unlocks the vault: no
-  passkey. One sentence says which account was connected and, only when
-  `server.reachable` and the provider is one canopy-web calls, that project screens and apps
-  can use it now (Done goes back to `return_to`; "Also let agents or my computers use it"
-  goes to Share). An agent's connection offers "Turn on for <agent>'s machines" instead of
-  Done. Otherwise it says one step is left and offers Choose (Share); a switch left on
-  with nothing sealed to canopy-web says canopy-web couldn't be reached. The lists show
-  "Used by canopy-web" for those providers: a plain switch to turn off an unshared
-  connection (`POST /api/connections/{id}/server-use`), a link to Share for anything else.
+  lands (`?just_connected=1` is added, and this page strips it once read, so a reload or a
+  shared link never prompts). It reads the share state, then:
+  - *A person's connection* (the callback already sealed it to their vault key): no prompt.
+    "Connected as X and stored in your vault", then either "Nothing uses it yet" or, when
+    `server.reachable` and canopy-web calls the provider, that project screens and apps can
+    use it now; Done goes to `return_to`, a quiet link goes to Share. A reconnect over an
+    earlier share says how many agents or computers need it shared again ("Share again"
+    goes to Share with the earlier choices ticked, or Later).
+  - *An agent's unshared connection*: on arrival it opens the owner's vault key (passkey
+    only, never the passphrase dialog) and stores it for that agent with the same
+    functions as Share (`vault/ownerShare.ts`), with no chooser. It signs what the owner
+    signed before (same agents, computers, canopy-web) and the owner agent alone on a first
+    connect. It does not sign, and links to Share, when something earlier is no longer
+    choosable, canopy-web is on but can't be named, a key changed, a reconnect would sign
+    something different, or a voucher is undecided. With no machine ready it says so and
+    offers Try again. If the browser needs a click, or it fails, "Store in <agent>'s vault"
+    and Later do the same on press, reading the row again first; a stale statement is read
+    again and retried once.
+  - A reload, or an agent row that is already shared, says "<agent> can use it." The lists
+    show "Used by canopy-web" for those providers: a plain switch to turn off an unshared
+    connection (`POST /api/connections/{id}/server-use`), a link to Share for anything else.
 - **`/w/:workspace/connections/:id/share`** — "Share this connection": where Connected and
-  Settings' Share on a not-shared connection lead. Your
-  passkey (`useVaultUnlock`) opens the connection in this browser and shows
+  Settings' Share on a not-shared connection lead. On load it tries to open the connection
+  with your passkey (`useVaultUnlock`, passkey only), headed "Who can use <account>"; only if
+  the browser needs a click does it show "Continue with your passkey". Opened, it shows
   the account from the opened envelope; the owner then ticks agents they administer
   and their own computers (name plus fingerprint) and shares
   (`vault/connectionShare.ts` signs the statement and re-seals). Agent-owned: the

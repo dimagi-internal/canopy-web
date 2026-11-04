@@ -7,7 +7,7 @@ import {
   changedEndorser, leftOut as leftOutOf, ShareRefused, trustFor, vouchersToDecide,
   type OpenedAccount, type ShareChoice, type Trust,
 } from '@/vault/connectionShare'
-import { openOwned, promptDismissed, putOwnerShare } from '@/vault/ownerShare'
+import { canopyWebKeyChanged, openOwned, promptDismissed, putOwnerShare, wasReconnected } from '@/vault/ownerShare'
 import { pinPerson, type Endorser } from '@/vault/trust'
 import type { Unlocked } from '@/vault/userKey'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
@@ -186,7 +186,7 @@ export function ShareConnectionPage(): JSX.Element | null {
     setNotice('')
     setUnsafe(false)
     try {
-      const key = await vault.unlock()
+      const key = await vault.unlock({ passkeyOnly: auto })
       try {
         await openWith(s, key)
       } catch (e) {
@@ -262,9 +262,8 @@ export function ShareConnectionPage(): JSX.Element | null {
     && !choice.canopyWeb
   // A reconnect clears the writer's signature; canopy-web may then write its own (a device) while
   // the row is still unshared, which must not hide the warning.
-  const writerKind = (state.sealed_sig as { by?: { kind?: string } } | null | undefined)?.by?.kind
-  const reconnected = !!opened?.statement && state.state === 'unshared' && (state.sealed_sig == null || writerKind === 'device')
-  const keyChanged = !!opened?.statement?.canopy_web && choice.canopyWeb && !!state.server?.thumbprint && state.server.thumbprint !== opened.statement.canopy_web
+  const reconnected = !!opened && wasReconnected(state, opened.statement)
+  const keyChanged = !!opened && canopyWebKeyChanged(state, opened.statement, choice)
   const unreachableOn = !!server && !server.available && !!server.on
 
   return (

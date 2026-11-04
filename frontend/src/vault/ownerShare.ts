@@ -30,24 +30,62 @@ export async function putOwnerShare(state: ShareStateOut, key: Unlocked, choice:
   await putShare(state.id, share)
 }
 
-/** An agent's own connection shared with that agent alone: no computers, and canopy-web only
- *  when the row has it on and this deployment accepts a share that names it. Null for a
- *  connection with no owner agent. */
-export function agentOnlyChoice(state: ShareStateOut): ShareChoice | null {
-  const agent = state.owner_agent?.id
-  if (!agent) return null
+type Signed = { agents: string[]; my_computers: string[]; canopy_web?: string } | null | undefined
+
+/** The share the Connected screen may store without asking: what the owner last signed (a
+ *  reconnect must not narrow it), or on a first connect the owner agent alone. canopy-web is
+ *  named when the row has it on or the earlier statement did, and only if it can be named now
+ *  (never quietly dropped, which would turn project screens off). `ask` means a person has to
+ *  look: something earlier is no longer choosable, or canopy-web can't be named. */
+export type AutoChoice = { kind: 'ready'; choice: ShareChoice } | { kind: 'ask' }
+
+export function autoChoice(state: ShareStateOut, before: Signed): AutoChoice {
+  const owner = state.owner_agent?.id
+  if (!owner) return { kind: 'ask' }
+  const listedAgents = new Set(state.agents.map((a) => a.id))
+  const listedMachines = new Set(state.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
+  const agents = [...new Set([owner, ...(before?.agents ?? [])])].sort()
+  const computers = [...(before?.my_computers ?? [])].sort()
+  if (!agents.every((a) => listedAgents.has(a) || a === owner) || !computers.every((c) => listedMachines.has(c))) {
+    return { kind: 'ask' }
+  }
   const server = state.server
-  const web = !!server?.available && !!server.provider_calls && !!server.statements_enabled && !!server.on
-  return { agents: [agent], myComputers: [], canopyWeb: web }
+  const want = !!server?.on || !!before?.canopy_web
+  const canName = !!server?.available && !!server.provider_calls && !!server.statements_enabled
+  if (want && !canName) return { kind: 'ask' }
+  return { kind: 'ready', choice: { agents, myComputers: computers, canopyWeb: want } }
 }
 
-/** Whether `choice` can be stored without asking the owner anything: a changed key, a person
- *  vouching who is yet to be trusted, or no machine to seal to are for a person to decide. */
-export function needsAPerson(state: ShareStateOut, choice: ShareChoice, trust: Trust): boolean {
-  return !!changedEndorser(trust, choice)
-    || vouchersToDecide(trust, choice).length > 0
-    || leftOut(state, choice, trust).length > 0
-    || chooseRecipients(state, choice, trust).length <= 1
+/** The earlier statement's key for canopy-web is not the one the row reports now. */
+export function canopyWebKeyChanged(state: ShareStateOut, before: Signed, choice: ShareChoice): boolean {
+  return !!before?.canopy_web && !!choice.canopyWeb && !!state.server?.thumbprint && state.server.thumbprint !== before.canopy_web
+}
+
+/** The row was reconnected since the owner last signed: a reconnect clears the writer's signature
+ *  (canopy-web may then write its own while it is unshared). */
+export function wasReconnected(state: ShareStateOut, before: Signed): boolean {
+  const kind = (state.sealed_sig as { by?: { kind?: string } } | null | undefined)?.by?.kind
+  return !!before && state.state === 'unshared' && (state.sealed_sig == null || kind === 'device')
+}
+
+function sameAsBefore(choice: ShareChoice, before: Signed): boolean {
+  if (!before) return true
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+  return same(choice.agents, [...before.agents].sort()) && same(choice.myComputers, [...before.my_computers].sort())
+    && !!choice.canopyWeb === !!before.canopy_web
+}
+
+/** Why `choice` cannot be stored without a person: `ask` for a decision only they can make (a
+ *  changed key, a voucher to decide, a reconnect that would sign something different), `none`
+ *  when there is no machine to seal to yet. `ready` otherwise. */
+export type Review = 'ready' | 'ask' | 'none'
+
+export function reviewShare(state: ShareStateOut, choice: ShareChoice, trust: Trust, before: Signed): Review {
+  if (changedEndorser(trust, choice) || vouchersToDecide(trust, choice).length > 0 || leftOut(state, choice, trust).length > 0) return 'ask'
+  if (canopyWebKeyChanged(state, before, choice)) return 'ask'
+  if (wasReconnected(state, before) && !sameAsBefore(choice, before)) return 'ask'
+  if (chooseRecipients(state, choice, trust).length <= 1) return 'none'
+  return 'ready'
 }
 
 /** A person closing the passkey prompt (or the browser refusing it without a click) is not a

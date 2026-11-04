@@ -5,7 +5,7 @@ import { ApiError } from '@/api/problem'
 import { scopedPath } from '@/lib/scopedLinks'
 import { Button } from 'canopy-ui/ui'
 import { ShareRefused } from '@/vault/connectionShare'
-import { agentOnlyChoice, needsAPerson, openOwned, promptDismissed, putOwnerShare } from '@/vault/ownerShare'
+import { autoChoice, openOwned, promptDismissed, putOwnerShare, reviewShare } from '@/vault/ownerShare'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { safeReturnTo } from './ShareConnectionPage'
 
@@ -72,7 +72,9 @@ export function ConnectedPage(): JSX.Element | null {
   const [unreadable, setUnreadable] = useState(false)
   const [notYours, setNotYours] = useState(false)
   const [loadError, setLoadError] = useState('')
-  const [phase, setPhase] = useState<'idle' | 'storing' | 'stored' | 'click' | 'ask'>('idle')
+  const [phase, setPhase] = useState<'idle' | 'storing' | 'stored' | 'click' | 'ask' | 'none'>('idle')
+  // canopy-web was named in what was just stored, so a stale "couldn't be reached" no longer applies.
+  const [webSealed, setWebSealed] = useState(false)
   const [error, setError] = useState('')
 
   // Read once, then taken off the address: only the sign-in's own landing may prompt.
@@ -96,25 +98,47 @@ export function ConnectedPage(): JSX.Element | null {
     return () => { cancelled = true }
   }, [id])
 
-  async function store(s: ShareStateOut) {
-    const choice = agentOnlyChoice(s)
-    if (!choice) return
+  /** Open the connection and store it for the agent. `auto` is the arrival try: it never opens the
+   *  passphrase dialog by itself. The button reads the row again first, so a retry never reuses a
+   *  stale one; a stale statement is read again and tried once more on its own. */
+  async function store(first: ShareStateOut, auto: boolean) {
     setPhase('storing')
     setError('')
     try {
-      const key = await vault.unlock()
-      const opened = await openOwned(s, key)
-      if (needsAPerson(s, choice, opened.trust)) {
-        setPhase('ask')
-        return
+      let s = first
+      if (!auto) {
+        s = await getShareState(id)
+        setState(s)
       }
-      await putOwnerShare(s, key, choice, opened.trust)
+      const key = await vault.unlock({ passkeyOnly: auto })
+      let retried = false
+      let choice
+      for (;;) {
+        try {
+          const opened = await openOwned(s, key)
+          const picked = autoChoice(s, opened.statement)
+          if (picked.kind === 'ask') return setPhase('ask')
+          choice = picked.choice
+          const verdict = reviewShare(s, choice, opened.trust, opened.statement)
+          if (verdict !== 'ready') return setPhase(verdict)
+          await putOwnerShare(s, key, choice, opened.trust)
+          break
+        } catch (e) {
+          if (retried || !(e instanceof ApiError && (e.code === 'statement_stale' || e.code === 'zk_value_changed'))) throw e
+          retried = true
+          s = await getShareState(id)
+          setState(s)
+        }
+      }
+      setWebSealed(!!choice.canopyWeb)
+      try {
+        setState(await getShareState(id))
+      } catch {
+        // what was stored stands; the sentence below only loses its latest facts
+      }
       setPhase('stored')
     } catch (e) {
-      if (e instanceof ShareRefused) {
-        setPhase('ask')
-        return
-      }
+      if (e instanceof ShareRefused) return setPhase('ask')
       setPhase('click')
       if (!promptDismissed(e)) setError(e instanceof Error ? e.message : 'Could not store it.')
     }
@@ -124,7 +148,7 @@ export function ConnectedPage(): JSX.Element | null {
   useEffect(() => {
     if (!state || !waiting || !justConnected.current || started.current) return
     started.current = true
-    void store(state)
+    void store(state, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, waiting])
 
@@ -149,14 +173,20 @@ export function ConnectedPage(): JSX.Element | null {
   const agent = copy?.agent ?? ''
   const where = phase === 'idle' ? (waiting && justConnected.current ? 'storing' : waiting ? 'click' : 'plain') : phase
   const withExtra = (lead: string) => (copy?.extra ? `${lead} ${copy.extra}` : lead)
+  // A person's reconnect: what they had lent from the earlier connection stopped with it.
+  const before = state?.statement as { agents?: unknown[]; my_computers?: unknown[] } | null | undefined
+  const lentBefore = (before?.agents?.length ?? 0) + (before?.my_computers?.length ?? 0)
+  const reconnect = copy?.action === 'person' && state?.state === 'unshared' && lentBefore > 0
   let text = 'Connected.'
-  if (copy?.action === 'person') text = copy.text
+  if (reconnect && copy) text = `Connected as ${copy.account} and stored in your vault. ${lentBefore} agents or computers that used it need it shared again.`
+  else if (copy?.action === 'person') text = copy.text
   else if (copy) {
     const lead = `Connected ${agent} as ${copy.account}.`
     text = where === 'storing' ? `${lead} Storing it in ${agent}'s vault…`
-      : where === 'stored' ? withExtra(`Connected ${agent} as ${copy.account} and stored in ${agent}'s vault. ${agent} can use it now.`)
+      : where === 'stored' ? `Connected ${agent} as ${copy.account} and stored in ${agent}'s vault. ${agent} can use it now.${!webSealed && copy.extra ? ` ${copy.extra}` : ''}`
         : where === 'plain' ? withExtra(`${agent} can use it.`)
           : where === 'ask' ? `${lead} ${agent} needs a decision from you before it can use this.`
+            : where === 'none' ? `None of ${agent}'s machines are ready yet. Try again once one is online.`
             : lead
   }
   const done = <Link to={returnTo} className={linkButton}>Done</Link>
@@ -168,7 +198,13 @@ export function ConnectedPage(): JSX.Element | null {
       </div>
       {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {(!copy || copy.action === 'person') && (
+        {reconnect && (
+          <>
+            <Link to={share} className={linkButton}>Share again</Link>
+            <Link to={returnTo} className={quietLink}>Later</Link>
+          </>
+        )}
+        {!reconnect && (!copy || copy.action === 'person') && (
           <>
             {done}
             {copy && <Link to={share} className={quietLink}>Share it with agents or your computers</Link>}
@@ -177,8 +213,14 @@ export function ConnectedPage(): JSX.Element | null {
         {copy?.action === 'agent' && (where === 'plain' || where === 'stored') && done}
         {copy?.action === 'agent' && where === 'click' && state && (
           <>
-            <Button onClick={() => void store(state)}>{`Store in ${agent}'s vault`}</Button>
+            <Button onClick={() => void store(state, false)}>{`Store in ${agent}'s vault`}</Button>
             <Link to={returnTo} className={quietLink}>Later</Link>
+          </>
+        )}
+        {copy?.action === 'agent' && where === 'none' && state && (
+          <>
+            <Button onClick={() => void store(state, false)}>Try again</Button>
+            <Link to={share} className={quietLink}>Open the Share screen</Link>
           </>
         )}
         {copy?.action === 'agent' && where === 'ask' && (

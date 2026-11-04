@@ -142,6 +142,7 @@ export function AgentGitHubSection({ slug }: { slug: string }) {
             On that page, pick {gh.repo ? <span className="font-mono">{gh.repo}</span> : 'this agent’s repo'} and any
             other repo it ships to, then generate it and paste it here.
           </p>
+          <p>Check that Resource owner reads {gh.repo ? <span className="font-mono">{gh.repo.split('/')[0]}</span> : 'the repo’s org'}.</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
               type="password"
@@ -166,6 +167,7 @@ export function AgentGitHubSection({ slug }: { slug: string }) {
               </Button>
             )}
           </div>
+          <p>Whoever runs a machine that uses this token could extract it.</p>
           {eligible.length === 0 && (
             <p data-testid="github-who-can-open">
               No machine that runs {slug} can open a delegated token yet: a runner that serves it, owned by one of

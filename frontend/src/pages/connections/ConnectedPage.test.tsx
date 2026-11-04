@@ -35,7 +35,7 @@ const SERVER = {
 const EVA = { id: '12', slug: 'eva', name: 'Eva' }
 const STATE = {
   id: 'c1', provider: 'salesforce', account_label: 'jj@dimagi.com', state: 'unshared', owner_agent: null, server: SERVER,
-  agents: [EVA],
+  agents: [EVA, { id: '40', slug: 'hal', name: 'Hal' }],
   candidates: [{ kind: 'device', target: T, agent_id: '12', runner_name: 'eva-cloud', mine: false, public_jwk: {} }],
 }
 const AGENT_STATE = { ...STATE, owner_agent: EVA }
@@ -263,7 +263,9 @@ describe('ConnectedPage, an agent’s connection', () => {
     getShareState.mockResolvedValue({ ...AGENT_STATE, candidates: [] })
     trustFor.mockResolvedValue({ ...READY_TRUST, assessments: new Map([['12', { endorsers: [], sealTo: [] }]]) })
     arrive()
-    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(await screen.findByText("None of Eva's machines are ready yet. Try again once one is online.")).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+    expect(href('Open the Share screen')).toContain('/connections/c1/share')
     expect(buildShare).not.toHaveBeenCalled()
   })
 
@@ -280,5 +282,97 @@ describe('ConnectedPage, an agent’s connection', () => {
     open()
     expect(await screen.findByText(/canopy-web couldn't be reached to turn on project screens and apps\./)).toBeTruthy()
     expect(screen.queryByText(/choose/i)).toBeNull()
+  })
+
+  it('a reconnect keeps what was signed before: the same agents and canopy-web', async () => {
+    openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['12', '40'], my_computers: [], canopy_web: 'T' } })
+    arrive()
+    await screen.findByText(STORED)
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12', '40'], myComputers: [], canopyWeb: true })
+  })
+
+  it('an earlier choice that is no longer choosable goes to Share instead of narrowing it', async () => {
+    openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['99'], my_computers: [], canopy_web: 'T' } })
+    arrive()
+    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(buildShare).not.toHaveBeenCalled()
+    expect(href('Open the Share screen')).toContain('/connections/c1/share')
+  })
+
+  it('project screens on but not nameable goes to Share, never turning them off silently', async () => {
+    getShareState.mockResolvedValue({ ...AGENT_STATE, server: { ...SERVER, statements_enabled: false } })
+    arrive()
+    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(buildShare).not.toHaveBeenCalled()
+  })
+
+  it('a row with project screens off still stores with no key at all', async () => {
+    getShareState.mockResolvedValue({ ...AGENT_STATE, server: { available: false, provider_calls: false, on: false, reachable: false } })
+    arrive()
+    await screen.findByText(/stored in Eva's vault/)
+    expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [], canopyWeb: false })
+  })
+
+  it("a changed canopy-web key goes to Share rather than being signed", async () => {
+    openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['12'], my_computers: [], canopy_web: 'OLD' } })
+    arrive()
+    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(buildShare).not.toHaveBeenCalled()
+  })
+
+  it('a reconnect that would sign something different goes to Share', async () => {
+    // Before: no canopy-web. Now the row has it on, so the share would differ from what was signed.
+    openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['12'], my_computers: [] } })
+    arrive()
+    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(buildShare).not.toHaveBeenCalled()
+  })
+
+  it('the arrival try never opens the passphrase dialog; the button may', async () => {
+    unlock.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
+    arrive()
+    fireEvent.click(await screen.findByRole('button', { name: "Store in Eva's vault" }))
+    await screen.findByText(STORED)
+    expect(unlock.mock.calls[0][0]).toEqual({ passkeyOnly: true })
+    expect(unlock.mock.calls[1][0]).toEqual({ passkeyOnly: false })
+  })
+
+  it('the button reads the connection again before it tries', async () => {
+    putShare.mockRejectedValueOnce(new Error('The server said no.'))
+    arrive()
+    await screen.findByText('The server said no.')
+    const before = getShareState.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: "Store in Eva's vault" }))
+    await screen.findByText(STORED)
+    expect(getShareState.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('a stale statement reads again and tries once more by itself', async () => {
+    putShare.mockRejectedValueOnce(new ApiError(409, 'x', { status: 409, code: 'statement_stale', error: 'statement_stale' }))
+    arrive()
+    await screen.findByText(STORED)
+    expect(putShare).toHaveBeenCalledTimes(2)
+    expect(unlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not say canopy-web could not be reached once the share sealed to it', async () => {
+    getShareState.mockResolvedValueOnce({ ...AGENT_STATE, server: { ...SERVER, reachable: false } })
+    getShareState.mockResolvedValue(AGENT_STATE)
+    arrive()
+    expect(await screen.findByText(STORED)).toBeTruthy()
+    expect(screen.queryByText(/couldn't be reached/)).toBeNull()
+  })
+})
+
+describe('ConnectedPage, a person reconnecting', () => {
+  it('says what stopped, and offers Share again with Later', async () => {
+    getShareState.mockResolvedValue({ ...STATE, statement: { agents: ['12'], my_computers: ['x'], version: 2 } })
+    open()
+    expect(await screen.findByText(
+      'Connected as jj@dimagi.com and stored in your vault. 2 agents or computers that used it need it shared again.',
+    )).toBeTruthy()
+    expect(href('Share again')).toBe('/w/dimagi/connections/c1/share?return_to=%2Fsettings%2Fconnections')
+    expect(href('Later')).toBe('/settings/connections')
+    expect(screen.queryByRole('link', { name: 'Done' })).toBeNull()
   })
 })
