@@ -3907,10 +3907,17 @@ def note_off_disk_success(slug: str) -> None:
     remove_legacy_secret_files([slug])
 
 
-def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
+def _turn_values(slug: str, *, now: float | None = None, outside_turn: bool = False) -> dict | None:
     """`slug`'s env values, resolved in memory by the canopy CLI as this runner, cached
     for `_AGENT_ENV_TTL_SECONDS`. On a failed refresh the last good values are kept
-    (the vault, not this box, is the source; a blip must not cost the turn)."""
+    (the vault, not this box, is the source; a blip must not cost the turn).
+
+    `outside_turn`: the box's own housekeeping (`_clone_refresh_env`), not the turn's
+    read — it names no turn. A turn id on the request makes canopy-web cap the runner's
+    owner to that turn's `acts_as` when they started it (an owner testing an agent as an
+    editor): the cap makes them no admin of the agent and the resolve a 403 "does not
+    run <agent>", so a box whose owner chats with their own agent could never read the
+    delegation it refreshes the clone with (trellis on cloud-ec2-live, 2026-11-04)."""
     now = time.time() if now is None else now
     with _TURN_VALUES_LOCK:
         hit = _TURN_VALUES.get(slug)
@@ -3919,6 +3926,9 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
     env = _child_safe_env()
     env.update(CANOPY_TOKEN=_bearer(min_life=300), **_cli_base_env(), AGENT_ROOT=AGENT_ROOT)
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
+    if outside_turn:
+        turn_id = ""
+        env.pop("CANOPY_TURN_ID", None)
     if turn_id:
         env["CANOPY_TURN_ID"] = turn_id
     try:
@@ -6852,6 +6862,19 @@ def _clone_age(clone: pathlib.Path, now: float) -> float:
     return now - ok_at if ok_at else float("inf")
 
 
+def _clone_refresh_blocker(slug: str) -> str:
+    """Why the runner's own fetch of `slug`'s clone ran WITHOUT the agent owner's GitHub
+    delegation, for the `clones` check — "" when nothing here kept it from using one."""
+    if SENSITIVE_DATA_MODE:
+        return "this is a sensitive-data box: it never borrows a GitHub token, so a private repo cannot be fetched here"
+    err = _TURN_ENV_ERRORS.get(slug)
+    if err:
+        return f"this box could not read {slug}'s credentials, where the GitHub delegation is ({err[:160]})"
+    if not _AGENT_DELEGATED.get(slug, {}).get("github-token"):
+        return f"this box's resolve lists no GitHub delegation for {slug} (not lent, not sealed to this machine, or withdrawn)"
+    return ""
+
+
 def _clones_check(now: float | None = None) -> None:
     """The `clones` health check: amber when a clone whose fetch is FAILING is older than
     CLONE_STALE_SECONDS. Silent (ok) otherwise — a clone nobody has tried to update lately
@@ -6859,16 +6882,19 @@ def _clones_check(now: float | None = None) -> None:
     now = time.time() if now is None else now
     with _CLONE_FETCH_LOCK:
         failing = {k: dict(v) for k, v in _CLONE_FETCH.items() if v.get("error")}
-    stale = []
+    stale, blocked = [], []
     for key, rec in sorted(failing.items()):
         age = _clone_age(pathlib.Path(key), now)
         if age > CLONE_STALE_SECONDS:
             how = "never fetched" if age == float("inf") else f"last fetched {int(age // 60)} min ago"
             stale.append(f"{pathlib.Path(key).name} ({how}): {rec['error']}")
+            blocked.append(pathlib.Path(key).name)
     if stale:
+        why = [f"{name}: {r}" for name in blocked if (r := _clone_refresh_blocker(name))]
         _set_check("clones", "warn", "new sessions run STALE skills and rails — " + "; ".join(stale) +
-                   ". A private repo needs the agent's GitHub token (its owner lends one at the "
-                   "agent's Settings → External accounts → GitHub).")
+                   ". A private repo needs the agent's GitHub token, which its owner lends at the "
+                   "agent's Settings → External accounts → GitHub" +
+                   (" — " + "; ".join(why) if why else "; one is lent and this box holds it, so the fetch itself failed") + ".")
     else:
         _set_check("clones", "ok", "")
 
@@ -6890,7 +6916,7 @@ def _clone_refresh_env(slug: str, env: dict | None) -> dict | None:
     # once the delegation is withdrawn or its person stops being an admin) is not asked
     # here, so this box's own resolve (at most `_AGENT_ENV_TTL_SECONDS` old; a failed one
     # counts as no answer) is the only proof the delegation still serves.
-    if _turn_values(slug) is None or _TURN_ENV_ERRORS.get(slug):
+    if _turn_values(slug, outside_turn=True) is None or _TURN_ENV_ERRORS.get(slug):
         return env
     token = _AGENT_DELEGATED.get(slug, {}).get("github-token", "")
     if not token:
