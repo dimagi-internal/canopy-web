@@ -261,7 +261,7 @@ def test_unpublishing_a_capability_denies_everything_to_turns_already_queued(w):
     # Stamped `ask` is read mode: with no override left it runs canopy's default read profile,
     # never the full one.
     assert env["capability"]["name"] == "ask" and env["capability"]["write_paths"] == ["{cwd}/.ace-read/*"]
-    assert env["capability"]["default_profile_version"] == 1
+    assert env["capability"]["default_profile_version"] == 2
     # A retired DOOR, though, yields the empty deny-all profile.
     t.capability = "retired-door"
     env = caller_context.build(t)
