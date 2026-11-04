@@ -508,11 +508,24 @@ class SurfaceLineOut(StrictModel):
     path: str
 
 
+class SurfaceLineIn(StrictModel):
+    method: str = Field(max_length=10)
+    path: str = Field(max_length=2000)
+
+
+class SurfaceSharePreviewOut(StrictModel):
+    kind: str
+    ref: str = Field(description="The canonical spelling: send this one.")
+    title: str
+    reads: list[SurfaceLineOut] = Field(description="What it declares of this agent now. Send back as `expected_reads`.")
+    writes: list[SurfaceLineOut] = Field(description="Likewise, as `expected_writes`.")
+
+
 class SurfaceShareIn(StrictModel):
     kind: Literal["project", "app"]
     ref: str = Field(max_length=200, description="A project's id, or an app's `<workspace>/<key>`.")
-    approve: Literal["current"] = Field(description="What to approve: what the surface declares of this agent now. "
-                                                    "It is read here; no list of lines is accepted.")
+    expected_reads: list[SurfaceLineIn] = Field(description="The reads the person saw in the preview.")
+    expected_writes: list[SurfaceLineIn] = Field(description="The writes the person saw in the preview.")
 
 
 class SurfaceShareOut(StrictModel):
@@ -520,6 +533,7 @@ class SurfaceShareOut(StrictModel):
     kind: str
     ref: str
     title: str | None = Field(description="The project's or app's name. Null when it no longer exists.")
+    account_label: str = Field(description="The account this shares. Its admins' to see: a screen's refusal never says.")
     approved_reads: list[SurfaceLineOut]
     approved_writes: list[SurfaceLineOut]
     pending_reads: list[SurfaceLineOut] = Field(description="Declared now and not approved.")

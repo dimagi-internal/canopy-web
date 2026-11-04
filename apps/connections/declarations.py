@@ -85,17 +85,14 @@ class Surface:
         return self.declared if self.current is None else self.current
 
     def write_lines(self) -> list[dict]:
-        """The writes this screen may ask for: on an older revision, those both declarations hold."""
+        """The writes this screen declares, each with whose connection it asks: on an older revision,
+        those both declarations hold. Declared is not usable: an `as: shared` line needs its admin's
+        approval too, which `call_service` knows and this doesn't."""
         lines = _writes(self.declared)
-        if self.current is not None:
-            now = _writes(self.current)
-            lines = [line for line in lines if line in now]
-        out: list[dict] = []
-        for line in lines:
-            shown = {"provider": line["provider"], "method": line["method"], "path": line["path"]}
-            if shown not in out:
-                out.append(shown)
-        return out
+        if self.current is None:
+            return lines
+        now = _writes(self.current)
+        return [line for line in lines if line in now]
 
 
 @dataclass(frozen=True)
@@ -110,6 +107,7 @@ class ShareTarget:
 
 _surfaces: dict[str, Callable[..., Surface]] = {}
 _share_targets: dict[str, Callable[[str], ShareTarget | None]] = {}
+_removal_listeners: list[Callable[[str, str], None]] = []
 
 
 def register_surface(kind: str, resolve: Callable[..., Surface]) -> None:
@@ -132,6 +130,17 @@ def share_target(kind: str, ref: str) -> ShareTarget | None:
     return _share_targets[kind](ref)
 
 
+def on_share_target_removed(listener: Callable[[str, str], None]) -> None:
+    """`listener(kind, ref)` hears that a share target is gone for good. A ref is only a string, so
+    without this the next thing to take its name would inherit what was approved for the last."""
+    _removal_listeners.append(listener)
+
+
+def share_target_removed(kind: str, ref: str) -> None:
+    for listener in _removal_listeners:
+        listener(kind, ref)
+
+
 def _writes(declared: list[dict]) -> list[dict]:
     return [{"provider": e.get("provider"), "as": e.get("as"), "agent": e.get("agent"),
              "method": line.get("method"), "path": line.get("path")}
@@ -148,6 +157,11 @@ def shared_lines(declared: list[dict], provider: str, agent_slug: str) -> tuple[
         for lines, found in ((e.get("reads") or [], reads), (e.get("writes") or [], writes)):
             found.extend(line for line in lines if line not in found)
     return reads, writes
+
+
+def same_lines(one: list[dict], other: list[dict]) -> bool:
+    """The same lines, in whatever order."""
+    return not not_covered(one, other) and not not_covered(other, one)
 
 
 def not_covered(lines: list[dict], approved: list[dict]) -> list[dict]:

@@ -998,12 +998,10 @@ def connection_for_agent(agent, provider: str, *, turn=None) -> Connection:
 
 # ---- an agent's connection serving a project's or an app's screens ---------------
 
-def share_with_surface(conn: Connection, kind: str, ref: str, *, by) -> ConnectionSurfaceShare:
-    """Let every screen of this project or app that can be opened use `conn`, for what it declares
-    of the agent now: read here, so what is approved is what is there, never a client's list. Again
-    on the same surface replaces what was approved. `ValueError`, a sentence, when it can't be: a
-    person's connection, a lend with limits, or a surface outside the agent's workspace, said alike
-    for one that doesn't exist so that ids can't be probed. Records `surface_shared`."""
+def surface_share_target(conn: Connection, kind: str, ref: str) -> declarations.ShareTarget:
+    """What `conn` could be shared with under this name. `ValueError`, a sentence, when it can't be:
+    a person's connection, a lend with limits, or a surface outside the agent's workspace, said alike
+    for one that doesn't exist so that ids can't be probed."""
     if conn.agent_id is None:
         raise ValueError("A person's own connection can't serve other people's screens; only an agent's can.")
     if conn.limited:
@@ -1016,7 +1014,28 @@ def share_with_surface(conn: Connection, kind: str, ref: str, *, by) -> Connecti
         raise ValueError(f"There is no such project or app in {agent.slug}'s workspace.")
     if conn.app.workspace_id != target.workspace:
         raise ValueError(f"This connection was made in another workspace; connect {agent.slug}'s account again here.")
-    reads, writes = declarations.shared_lines(target.declared, conn.provider, agent.slug)
+    return target
+
+
+def surface_share_preview(conn: Connection, kind: str, ref: str) -> dict:
+    """What approving would approve, for the person to look at and send back."""
+    target = surface_share_target(conn, kind, ref)
+    reads, writes = declarations.shared_lines(target.declared, conn.provider, conn.agent.slug)
+    return {"kind": kind, "ref": target.ref, "title": target.title, "reads": reads, "writes": writes}
+
+
+def share_with_surface(conn: Connection, kind: str, ref: str, *, expected_reads: list[dict],
+                       expected_writes: list[dict], by) -> ConnectionSurfaceShare:
+    """Let every screen of this project or app that can be opened use `conn`, for what it declares
+    of the agent now. `expected_*` are the lines the person saw: what is stored is read here and must
+    be those, or `declaration_changed`, so nobody approves what they never looked at, and what is
+    approved is never a client's list. Again on the same surface replaces what was approved.
+    Refused as `surface_share_target` says. Records `surface_shared`."""
+    target = surface_share_target(conn, kind, ref)
+    reads, writes = declarations.shared_lines(target.declared, conn.provider, conn.agent.slug)
+    if not (declarations.same_lines(reads, expected_reads) and declarations.same_lines(writes, expected_writes)):
+        raise ConnectionError("declaration_changed", "What these screens ask for has changed since you looked. Look "
+                                                     "again, then approve what is there now.")
     share, _ = ConnectionSurfaceShare.objects.update_or_create(
         connection=conn, kind=kind, ref=target.ref,
         defaults={"approved_reads": reads, "approved_writes": writes, "approved_by": by})
@@ -1033,6 +1052,14 @@ def stop_surface_share(share: ConnectionSurfaceShare, *, by) -> None:
            summary=f"{conn.owner_label}'s {conn.provider} no longer shared with {surface}")
 
 
+def surface_removed(kind: str, ref: str) -> None:
+    """A project or app is gone for good (`declarations.on_share_target_removed`): what was approved
+    for it must not pass to the next thing of that name."""
+    for share in (ConnectionSurfaceShare.objects.filter(kind=kind, ref=ref)
+                  .select_related("connection__agent__workspace")):
+        stop_surface_share(share, by=None)
+
+
 def surface_share_state(share: ConnectionSurfaceShare) -> dict:
     """A share as it stands: what was approved against what is declared now. A surface that no
     longer exists has no title and nothing waiting."""
@@ -1043,6 +1070,7 @@ def surface_share_state(share: ConnectionSurfaceShare) -> dict:
     pending_reads = declarations.not_covered(reads, share.approved_reads)
     pending_writes = declarations.not_covered(writes, share.approved_writes)
     return {"id": share.pk, "kind": share.kind, "ref": share.ref, "title": target.title if target is not None else None,
+            "account_label": conn.account_label,
             "approved_reads": share.approved_reads, "approved_writes": share.approved_writes,
             "pending_reads": pending_reads, "pending_writes": pending_writes,
             "needs_approval": bool(pending_reads or pending_writes)}

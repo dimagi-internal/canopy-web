@@ -71,6 +71,7 @@ _CALL_PROBLEMS: dict[str, tuple[int, str]] = {
     "provider_not_supported": (409, "Not available yet"),
     "needs_approval": (409, "Needs an admin's approval"),
     "needs_operation": (409, "Needs a click"),
+    "declaration_changed": (409, "Changed since you looked"),
     "rate_limited": (429, "Too many calls"),
     "session_ended": (409, "Connection needs connecting again"),
     "response_too_large": (502, "Answer too large"),

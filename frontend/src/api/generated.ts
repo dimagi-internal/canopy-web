@@ -454,8 +454,11 @@ export interface paths {
          *     behind the screen's latest revision it must fit both, and `writes` lists only what both hold.
          *
          *     Only a person signed in here: a personal access token or OAuth token is refused 403
-         *     `session_required`. 403 `not_declared` when there is nothing this screen may write; 429 `rate_limited`
-         *     past 60 in a minute. Whoever can't open the screen gets its own 404.
+         *     `session_required`. `writes` lists only what can be written now: an `as: shared` line appears only while
+         *     its agent's admin has approved all that entry asks and the account can be used. 403 `not_declared` when
+         *     the screen declares no writes; when none can be made yet, the refusal saying why (`needs_approval`,
+         *     `server_use_off`, `ambiguous`, `not_connected`); 429 `rate_limited` past 60 in a minute. Whoever can't
+         *     open the screen gets its own 404.
          */
         readonly post: operations["open_connection_operation"];
         readonly delete?: never;
@@ -482,19 +485,46 @@ export interface paths {
         readonly put?: never;
         /**
          * Let a project's or app's screens use an agent's connection
-         * @description Approve what this project or app declares of the agent now, and let its screens use this connection:
-         *     anyone who can open one of them then acts as the agent's account, within what was approved. Approving
-         *     what a screen declares is the only way to approve it: canopy-web reads it here and takes no list.
-         *     Sharing again approves what is declared by then. A screen that later declares more stops until
-         *     someone does; one that declares less goes on working.
+         * @description Approve what this project or app declares of the agent, and let its screens use this connection: anyone
+         *     who can open one of them then acts as the agent's account, within what was approved. Send back the
+         *     lines the preview showed as `expected_reads` and `expected_writes`. canopy-web reads the declaration
+         *     here and stores that; if it is not what was seen, 409 `declaration_changed` and nothing changes.
+         *     Approving again replaces what was approved. A screen that later declares more stops until someone
+         *     does; one that declares less goes on working.
          *
          *     `ref` is a project's id (each of its views is covered) or an app's `<workspace>/<key>`. A view in no
          *     project can't be covered. The share does nothing until the connection's own switch for canopy-web is
          *     on. 422 `not_shareable` for a person's connection, a lend with limits, or a project or app outside
-         *     the agent's workspace; 409 `revoking` while it is being disconnected. From a browser this needs a
-         *     fresh passkey check. Only the agent's admins: anyone else's id is a 404.
+         *     the agent's workspace; 409 `revoking` while it is being disconnected.
+         *
+         *     Always needs a fresh passkey check at a browser: a token is refused 403 `browser_session_required`,
+         *     since whoever wrote a screen must not be able to approve it with a token alone. Only the agent's
+         *     admins: anyone else's id is a 404.
          */
         readonly post: operations["approve_surface_share"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/connections/{connection_id}/surface-shares/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What approving a project's or app's screens would approve
+         * @description The project's or app's name, and every line its screens declare of this agent now: what to show the
+         *     person, and what they send back to approve. `ref` is a project's id or an app's `<workspace>/<key>`. A
+         *     project covers all its views. 422 `not_shareable` as for approving. Only the agent's admins: anyone
+         *     else's id is a 404.
+         */
+        readonly get: operations["preview_surface_share"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -513,8 +543,8 @@ export interface paths {
         readonly post?: never;
         /**
          * Stop a project's or app's screens using an agent's connection
-         * @description Those screens stop using this connection at once. From a browser this needs a fresh passkey check.
-         *     Only the agent's admins: anyone else's id is a 404.
+         * @description Those screens stop using this connection at once. No passkey: giving up access is always easy. Only
+         *     the agent's admins: anyone else's id is a 404.
          */
         readonly delete: operations["stop_surface_share"];
         readonly options?: never;
@@ -19227,6 +19257,11 @@ export interface components {
              * @description The project's or app's name. Null when it no longer exists.
              */
             readonly title: string | null;
+            /**
+             * Account Label
+             * @description The account this shares. Its admins' to see: a screen's refusal never says.
+             */
+            readonly account_label: string;
             /** Approved Reads */
             readonly approved_reads: readonly components["schemas"]["SurfaceLineOut"][];
             /** Approved Writes */
@@ -19252,6 +19287,13 @@ export interface components {
             /** Shares */
             readonly shares: readonly components["schemas"]["SurfaceShareOut"][];
         };
+        /** SurfaceLineIn */
+        readonly SurfaceLineIn: {
+            /** Method */
+            readonly method: string;
+            /** Path */
+            readonly path: string;
+        };
         /** SurfaceShareIn */
         readonly SurfaceShareIn: {
             /**
@@ -19265,11 +19307,37 @@ export interface components {
              */
             readonly ref: string;
             /**
-             * Approve
-             * @description What to approve: what the surface declares of this agent now. It is read here; no list of lines is accepted.
-             * @constant
+             * Expected Reads
+             * @description The reads the person saw in the preview.
              */
-            readonly approve: "current";
+            readonly expected_reads: readonly components["schemas"]["SurfaceLineIn"][];
+            /**
+             * Expected Writes
+             * @description The writes the person saw in the preview.
+             */
+            readonly expected_writes: readonly components["schemas"]["SurfaceLineIn"][];
+        };
+        /** SurfaceSharePreviewOut */
+        readonly SurfaceSharePreviewOut: {
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Ref
+             * @description The canonical spelling: send this one.
+             */
+            readonly ref: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Reads
+             * @description What it declares of this agent now. Send back as `expected_reads`.
+             */
+            readonly reads: readonly components["schemas"]["SurfaceLineOut"][];
+            /**
+             * Writes
+             * @description Likewise, as `expected_writes`.
+             */
+            readonly writes: readonly components["schemas"]["SurfaceLineOut"][];
         };
         /** ShareAgentOut */
         readonly ShareAgentOut: {
@@ -47469,6 +47537,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SurfaceShareOut"];
+                };
+            };
+        };
+    };
+    readonly preview_surface_share: {
+        readonly parameters: {
+            readonly query: {
+                readonly kind: "project" | "app";
+                readonly ref: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly connection_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SurfaceSharePreviewOut"];
                 };
             };
         };

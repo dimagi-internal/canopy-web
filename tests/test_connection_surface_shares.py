@@ -87,9 +87,19 @@ def shares_url(conn) -> str:
     return f"/api/connections/{conn.pk}/surface-shares"
 
 
-def approve(world, kind="project", ref=None, conn=None, client=None):
-    body = {"kind": kind, "ref": str(world.project.pk) if ref is None else ref, "approve": "current"}
-    return (client or world.admin).post(shares_url(conn or world.conn), json.dumps(body), content_type=J)
+def preview(world, kind="project", ref=None, conn=None, client=None):
+    return (client or world.admin).get(f"{shares_url(conn or world.conn)}/preview",
+                                       {"kind": kind, "ref": str(world.project.pk) if ref is None else ref})
+
+
+def approve(world, kind="project", ref=None, conn=None, client=None, **over):
+    """As the tab does: look, then approve what was seen."""
+    client = client or world.admin
+    seen = preview(world, kind, ref, conn, client)
+    lines = seen.json() if seen.status_code == 200 else {"reads": [], "writes": []}
+    body = {"kind": kind, "ref": str(world.project.pk) if ref is None else ref,
+            "expected_reads": lines["reads"], "expected_writes": lines["writes"], **over}
+    return client.post(shares_url(conn or world.conn), json.dumps(body), content_type=J)
 
 
 def approved(world, **kw) -> dict:
@@ -128,11 +138,68 @@ def test_approving_stores_what_the_project_really_declares(w):
     assert row.connection == w.conn and row.approved_by == w.person and row.approved_reads == [READ_QUERY]
 
 
-def test_a_client_cannot_name_what_is_approved(w):
-    body = {"kind": "project", "ref": str(w.project.pk), "approve": "current", "approved_reads": [READ_LIMITS]}
+def test_the_old_blind_approval_is_gone(w):
+    body = {"kind": "project", "ref": str(w.project.pk), "approve": "current"}
     r = w.admin.post(shares_url(w.conn), json.dumps(body), content_type=J)
     assert r.status_code == 422
     assert not ConnectionSurfaceShare.objects.exists()
+
+
+def test_the_preview_shows_what_would_be_approved_and_changes_nothing(w):
+    change(w.view, w.person, [entry(writes=[WRITE_LEAD])])
+    r = preview(w, ref=f"00{w.project.pk}")
+    assert r.status_code == 200, r.content
+    assert r.json() == {"kind": "project", "ref": str(w.project.pk), "title": "Sales",
+                        "reads": [READ_QUERY], "writes": [WRITE_LEAD]}
+    assert not ConnectionSurfaceShare.objects.exists()
+
+
+def test_the_preview_is_for_the_agents_admin(w):
+    assert preview(w, client=w.viewer).status_code == 404
+    assert preview(w, ref="999999").status_code == 422
+    mine = w.shared(sealed_to_owner({"user": w.person}, w.person, app=w.app, server_use=True),
+                    canopy_web=server_key.thumbprint())
+    assert preview(w, conn=mine).status_code == 422
+
+
+def test_a_declaration_changed_since_the_preview_is_refused(w):
+    """The race: the admin looks, someone saves a wider view, the admin clicks approve."""
+    seen = preview(w).json()
+    change(w.view, w.person, [entry(reads=[READ_QUERY, READ_LIMITS])])
+    r = approve(w, expected_reads=seen["reads"], expected_writes=seen["writes"])
+    assert r.status_code == 409 and error_of(r) == "declaration_changed"
+    assert "changed" in r.json()["detail"]
+    assert not ConnectionSurfaceShare.objects.exists()
+    assert not Event.objects.filter(kind="connections.surface_shared").exists()
+
+
+def test_the_race_on_a_reapproval_leaves_what_was_approved(w):
+    approved(w)
+    seen = preview(w).json()
+    change(w.view, w.person, [entry(reads=[READ_LIMITS])])
+    r = approve(w, expected_reads=seen["reads"], expected_writes=seen["writes"])
+    assert r.status_code == 409 and error_of(r) == "declaration_changed"
+    assert ConnectionSurfaceShare.objects.get().approved_reads == [READ_QUERY]
+
+
+@pytest.mark.parametrize("over", [{"expected_reads": []},
+                                  {"expected_reads": [READ_QUERY, READ_LIMITS]},
+                                  {"expected_writes": [WRITE_LEAD]}])
+def test_any_mismatch_is_refused(w, over):
+    r = approve(w, **over)
+    assert r.status_code == 409 and error_of(r) == "declaration_changed"
+    assert not ConnectionSurfaceShare.objects.exists()
+
+
+def test_expected_lines_are_required(w):
+    body = {"kind": "project", "ref": str(w.project.pk), "expected_reads": [READ_QUERY]}
+    assert w.admin.post(shares_url(w.conn), json.dumps(body), content_type=J).status_code == 422
+    assert not ConnectionSurfaceShare.objects.exists()
+
+
+def test_the_same_lines_in_another_order_are_no_change(w):
+    change(w.view, w.person, [entry(reads=[READ_QUERY, READ_LIMITS])])
+    assert approve(w, expected_reads=[READ_LIMITS, READ_QUERY]).status_code == 200
 
 
 def test_person_connection_cannot_be_shared(w):
@@ -142,7 +209,8 @@ def test_person_connection_cannot_be_shared(w):
     assert r.status_code == 422
     assert "person" in r.json()["detail"] or "agent" in r.json()["detail"]
     with pytest.raises(ValueError):
-        services.share_with_surface(mine, "project", str(w.project.pk), by=w.person)
+        services.share_with_surface(mine, "project", str(w.project.pk), expected_reads=[], expected_writes=[],
+                                    by=w.person)
     assert not ConnectionSurfaceShare.objects.exists()
     # Someone else's is not even there to refuse.
     assert approve(w, conn=mine, client=w.viewer).status_code == 404
@@ -156,15 +224,42 @@ def test_non_admin_cannot_share(w):
     assert ConnectionSurfaceShare.objects.count() == 1
 
 
-def test_sharing_needs_a_passkey_at_a_browser(w):
+def test_a_token_alone_cannot_approve(w):
+    seen = preview(w).json()
+    raw, _ = PersonalToken.create_for_user(user=w.person, label="cli")
+    body = {"kind": "project", "ref": str(w.project.pk), "expected_reads": seen["reads"],
+            "expected_writes": seen["writes"]}
+    r = Client().post(shares_url(w.conn), json.dumps(body), content_type=J, HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 403 and error_of(r) == "browser_session_required"
+    assert not ConnectionSurfaceShare.objects.exists()
+
+
+def test_a_session_with_no_recent_touch_cannot_approve_or_reapprove(w):
     fresh = Client()
     fresh.force_login(w.person)
     r = approve(w, client=fresh)
     assert r.status_code == 403 and error_of(r) == "step_up_required"
     assert not ConnectionSurfaceShare.objects.exists()
-    share = approved(w)
-    r = fresh.delete(f"{shares_url(w.conn)}/{share['id']}")
+    approved(w)
+    change(w.view, w.person, [entry(reads=[READ_LIMITS])])
+    r = approve(w, client=fresh)
     assert r.status_code == 403 and error_of(r) == "step_up_required"
+    assert ConnectionSurfaceShare.objects.get().approved_reads == [READ_QUERY]
+
+
+def test_a_recent_touch_approves(w):
+    assert approve(w).status_code == 200  # `w.admin` has touched their passkey
+
+
+def test_stopping_needs_no_passkey(w):
+    """Giving up access is always easy: at a browser with no recent touch, or with a token."""
+    fresh = Client()
+    fresh.force_login(w.person)
+    assert fresh.delete(f"{shares_url(w.conn)}/{approved(w)['id']}").status_code == 204
+    raw, _ = PersonalToken.create_for_user(user=w.person, label="cli")
+    assert Client().delete(f"{shares_url(w.conn)}/{approved(w)['id']}",
+                           HTTP_AUTHORIZATION=f"Bearer {raw}").status_code == 204
+    assert not ConnectionSurfaceShare.objects.exists()
 
 
 @pytest.mark.parametrize("limit", [{"owner_turns_only": True},
@@ -384,20 +479,72 @@ def test_an_app_page_is_covered_by_its_own_share(w):
         assert call(w, surface=APP).status_code == 200
 
 
+def open_lease(world, view=None):
+    return world.viewer.post("/api/connections/operations", json.dumps({"surface": surface_of(view or world.view)}),
+                             content_type=J)
+
+
 def test_a_shared_write_needs_approval_and_an_operation(w):
     write = {"method": "PATCH", "path": f"sobjects/Lead/{LEAD}", "query": None, "body": {"Status": "Open"}}
     change(w.view, w.person, [entry(writes=[WRITE_LEAD])])
-    opened = w.viewer.post("/api/connections/operations", json.dumps({"surface": surface_of(w.view)}),
-                           content_type=J).json()
+    held = ConnectionOperation.objects.create(user=w.viewer_user, surface_kind="view", surface_ref=str(w.view.pk),
+                                              revision=w.view.version,
+                                              expires_at=timezone.now() + timedelta(seconds=60))
     with Salesforce() as sf:
-        assert error_of(call(w, **write, operation_id=opened["operation_id"])) == "needs_approval"
-    assert sf.calls == [] and ConnectionOperation.objects.get(pk=opened["operation_id"]).writes_used == 0
+        assert error_of(call(w, **write, operation_id=str(held.pk))) == "needs_approval"
+    assert sf.calls == []
+    held.refresh_from_db()
+    assert held.writes_used == 0, "a refused write spends nothing"
     approved(w)
     with FakeSF(), Salesforce(Answer(status=204, raw=b"")) as sf:
         assert error_of(call(w, **write)) == "needs_operation"
         assert sf.calls == []
-        r = call(w, **write, operation_id=opened["operation_id"])
+        r = call(w, **write, operation_id=open_lease(w).json()["operation_id"])
     assert r.status_code == 200, r.content
+
+
+# ---- what a lease says it covers ----------------------------------------------------------------
+
+LEASED_LEAD = {"provider": "salesforce", "method": "PATCH", "path": "sobjects/Lead/*"}
+LEASED_TASK = {"provider": "salesforce", "method": "POST", "path": "sobjects/Task"}
+WRITE_TASK = {"method": "POST", "path": "sobjects/Task"}
+VIEWER_TASK = {"provider": "salesforce", "as": "viewer", "reads": [], "writes": [WRITE_TASK]}
+
+
+def test_a_lease_lists_shared_writes_once_they_are_approved(w):
+    change(w.view, w.person, [entry(writes=[WRITE_LEAD])])
+    approved(w)
+    assert open_lease(w).json()["writes"] == [LEASED_LEAD]
+
+
+def test_a_lease_leaves_out_shared_writes_not_approved(w):
+    change(w.view, w.person, [entry(writes=[WRITE_LEAD]), VIEWER_TASK])
+    r = open_lease(w)
+    assert r.status_code == 200, r.content
+    assert r.json()["writes"] == [LEASED_TASK]
+
+
+def test_a_lease_leaves_out_a_shared_entry_stopped_by_a_new_line(w):
+    """Approved writes of an entry with an uncovered line anywhere can't be made, so aren't offered."""
+    change(w.view, w.person, [entry(writes=[WRITE_LEAD]), VIEWER_TASK])
+    approved(w)
+    assert open_lease(w).json()["writes"] == [LEASED_LEAD, LEASED_TASK]
+    change(w.view, w.person, [entry(reads=[READ_QUERY, READ_LIMITS], writes=[WRITE_LEAD]), VIEWER_TASK])
+    assert open_lease(w).json()["writes"] == [LEASED_TASK]
+
+
+def test_a_lease_says_why_when_only_unapproved_writes_are_declared(w):
+    change(w.view, w.person, [entry(writes=[WRITE_LEAD])])
+    r = open_lease(w)
+    assert r.status_code == 409 and error_of(r) == "needs_approval"
+    assert not ConnectionOperation.objects.exists()
+
+
+def test_a_lease_leaves_out_a_shared_account_switched_off(w):
+    change(w.view, w.person, [entry(writes=[WRITE_LEAD]), VIEWER_TASK])
+    approved(w)
+    Connection.objects.filter(pk=w.conn.pk).update(server_use=False)
+    assert open_lease(w).json()["writes"] == [LEASED_TASK]
 
 
 def test_the_audit_line_has_viewer_connection_and_as_shared(w):
@@ -411,6 +558,40 @@ def test_the_audit_line_has_viewer_connection_and_as_shared(w):
     p = Event.objects.get(kind="connections.connection_call").payload
     assert p["by"] == w.viewer_user.email and p["connection"] == str(w.conn.pk) and p["as"] == "shared"
     assert p["owner"] == "agent:eva" and p["surface"] == f"view:{w.view.pk}"
+
+
+# ---- an app removed --------------------------------------------------------------------------
+
+def test_a_reinstalled_app_does_not_inherit_a_share(w):
+    inst = _install(w, [entry()])
+    approved(w, kind="app", ref="w/crm")
+    with FakeSF(), Salesforce():
+        assert call(w, surface=APP).status_code == 200
+    w.admin.force_login(w.person)
+    WorkspaceMembership.objects.filter(workspace=w.ws, user=w.person).update(role=WorkspaceMembership.OWNER)
+    assert w.admin.delete("/api/workspace-apps/w/crm").status_code == 204
+    assert not AppInstallation.objects.filter(pk=inst.pk).exists()
+    assert not ConnectionSurfaceShare.objects.exists()
+    event = Event.objects.get(kind="connections.surface_unshared")
+    assert event.payload["surface"] == "app:w/crm"
+    AppInstallation.objects.create(workspace=w.ws, key="crm", name="Someone else's CRM", template=inst.template,
+                                   manifest=inst.manifest)
+    with Salesforce() as sf:
+        r = call(w, surface=APP)
+    assert r.status_code == 409 and error_of(r) == "needs_approval"
+    assert sf.calls == []
+
+
+def test_removing_an_app_leaves_a_project_and_other_apps_shares(w):
+    other = AppTemplate.objects.create(key="other", name="Other")
+    AppInstallation.objects.create(workspace=w.ws, key="other", name="Other", template=other,
+                                   manifest={"pages": [], "collections": {}, "connections": [entry()]})
+    inst = _install(w, [entry()])
+    approved(w)
+    approved(w, kind="app", ref="w/other")
+    approved(w, kind="app", ref="w/crm")
+    inst.delete()
+    assert sorted(ConnectionSurfaceShare.objects.values_list("ref", flat=True)) == sorted([str(w.project.pk), "w/other"])
 
 
 # ---- what stops a share working ----------------------------------------------------------------
@@ -443,6 +624,12 @@ def test_two_usable_shares_are_ambiguous(w):
     assert r.status_code == 409 and error_of(r) == "ambiguous"
     assert "eva" in r.json()["detail"]
     assert sf.calls == []
+    # Which accounts Eva holds is her admins' to see, not a viewer's.
+    for conn in (w.conn, second):
+        assert conn.account_label and conn.account_label not in r.content.decode()
+        assert conn.account_id not in r.content.decode()
+    rows = w.admin.get(shares_url(second)).json()["shares"]
+    assert rows[0]["account_label"] == "00D/second"
 
 
 def test_a_second_account_not_shared_with_this_screen_is_no_ambiguity(w):

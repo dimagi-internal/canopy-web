@@ -122,9 +122,7 @@ def open_operation(request, surface_ref: dict) -> dict:
     does is limit how far a script that gets one can go."""
     _require_session(request)
     surface = declarations.resolve_surface(request, surface_ref)
-    writes = surface.write_lines()
-    if not writes:
-        raise services.ConnectionError("not_declared", "This screen didn't declare any changes it can make.")
+    writes = _lease_writes(request.user, surface)
     if over(f"connections:operations:{request.user.pk}", OPERATIONS_PER_MINUTE, RATE_WINDOW_SECONDS):
         raise services.ConnectionError("rate_limited", "Too many clicks in the last minute; wait a moment and try "
                                                        "again.")
@@ -161,6 +159,34 @@ def _mark_used(conn: Connection) -> None:
     """What Settings shows as last used, at most once a minute per connection."""
     if cache.add(f"connections:last_used:{conn.pk}", 1, timeout=LAST_USED_EVERY_SECONDS):
         Connection.objects.filter(pk=conn.pk).update(last_used_at=timezone.now())
+
+
+def _lease_writes(user, surface: declarations.Surface) -> list[dict]:
+    """What this screen can really write now: what it declares, less `as: shared` lines that
+    `_shared_connection` would stop, whether by a missing approval, a new line elsewhere in the entry
+    or a switch turned off. When that leaves nothing, says why rather than leasing nothing."""
+    declared = surface.write_lines()
+    if not declared:
+        raise services.ConnectionError("not_declared", "This screen didn't declare any changes it can make.")
+    stopped: dict[tuple[str, str], services.ConnectionError | None] = {}
+    out: list[dict] = []
+    for line in declared:
+        if line["as"] == "shared":
+            key = (line["provider"], line["agent"])
+            if key not in stopped:
+                try:
+                    _shared_connection(user, key[0], surface, key[1])
+                    stopped[key] = None
+                except services.ConnectionError as exc:
+                    stopped[key] = exc
+            if stopped[key] is not None:
+                continue
+        shown = {"provider": line["provider"], "method": line["method"], "path": line["path"]}
+        if shown not in out:
+            out.append(shown)
+    if not out:
+        raise next(exc for exc in stopped.values() if exc is not None)
+    return out
 
 
 def _require_session(request) -> None:
@@ -228,10 +254,9 @@ def _shared_connection(user, provider: str, surface: declarations.Surface, agent
         raise services.ConnectionError("server_use_off", f"canopy-web isn't allowed to use the {title} account {agent} "
                                                          f"shared with this screen. An admin of {agent} can turn that "
                                                          f"on in {agent}'s accounts.")
-    if len(usable) > 1:
-        labels = ", ".join(sorted(s.connection.account_label for s in usable))
+    if len(usable) > 1:  # no account names: which accounts an agent holds is for its admins, on its accounts tab
         raise services.ConnectionError("ambiguous", f"{agent} has shared more than one {title} account with this "
-                                                    f"screen ({labels}). An admin of {agent} can stop all but one.")
+                                                    f"screen. An admin of {agent} can stop all but one.")
     share = usable[0]
     reads, writes = declarations.shared_lines(surface.current_declared, provider, agent)
     if (declarations.not_covered(reads, share.approved_reads)
