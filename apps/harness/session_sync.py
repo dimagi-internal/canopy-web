@@ -440,6 +440,7 @@ def record_session(
         turn = turn or _mail_turn_on_thread(agent, thread_key, runner)
         link_turn_session(turn, binding.session)
         _reopen_for_mail(turn, binding.session)
+        _admit_mail_people(turn, binding.session)
         # A session now exists in some CLI's store: hold the conversation to it.
         if (cli := _reported_cli(turn, binding.session, runner)):
             clis.pin_conversation([binding.session_id], cli)
@@ -508,6 +509,20 @@ def _reopen_for_mail(turn, session) -> None:
     from apps.canopy_sessions import control  # noqa: PLC0415 — cycle: control -> session_sync
 
     control.unarchive_session(session, reason="new mail on the thread")
+
+
+def _admit_mail_people(turn, session) -> None:
+    """The people a mail turn's message was addressed to may read the session it ran
+    in. Never fatal, and in its own savepoint: recording the session is what the
+    runner came for."""
+    from .channels import email as email_channel  # noqa: PLC0415 — cycle: email -> session_sync
+
+    try:
+        with transaction.atomic():
+            email_channel.admit_mail_people_to_work(session, turn)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not admit the people on mail turn %s to its work session",
+                         getattr(turn, "pk", None))
 
 
 def link_turn_session(turn, session) -> bool:

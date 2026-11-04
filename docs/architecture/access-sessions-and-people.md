@@ -64,7 +64,13 @@ or an agent's login, and never into a sensitive conversation.
   members among the From, To and Cc of each inbound message whose From is aligned (DMARC,
   or DKIM signed by the From: domain), joined as each message arrives; an unaligned
   message admits nobody, so a forged From cannot Cc someone into a thread's history. The
-  agent's own replies admit their To/Cc (`mail.agent_mail._admit_recipients`).
+  agent's own replies admit their To/Cc (`mail.agent_mail._admit_recipients`). Those rows
+  are on the thread's anchor, which holds nothing to read. The WORK session a message ran
+  in takes that one message's members as VIEWERS when the runner records it
+  (`email.admit_mail_people_to_work`), so a person sees the agent's whole transcript for
+  mail addressed to them and cannot type into it. Only that message's people: a confined
+  caller's Cc never opens an admin's session on the same thread. Someone Cc'd only on the
+  agent's own reply gets it from the next inbound message that names them.
 * **Slack: everyone in the channel, full access — as in Slack** (`apps/slack/audience.py`) —
   every linked canopy member (`SlackUserLink`, or auto-linked by verified email) in the
   conversation the session lives in (channel members; a DM's or group DM's people) is an
