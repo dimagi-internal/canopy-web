@@ -1070,7 +1070,7 @@ def list_session_granters(request: HttpRequest) -> dict:
     return {"people": [{"user_id": g.user_id, "username": g.user.username, "email": g.user.email or "",
                         "display_name": g.user.get_full_name() or g.user.username,
                         "granted_at": g.created_at}
-                       for g in session_reviewers.granted_to(agent)]}
+                       for g in session_reviewers.granted_to(agent, request.user)]}
 
 
 def _page_of(request: HttpRequest, person_id: int) -> Person:

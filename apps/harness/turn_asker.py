@@ -281,6 +281,8 @@ def note(ob: OnBehalf, decision: str) -> None:
 #: door (`remember`) so `standing` can be worked out lazily, only by a read that asks.
 CREDENTIAL_ATTR = "_canopy_turn_credential"
 STANDING_ATTR = "_canopy_turn_standing"
+#: On a turn's `origin_ref`: set by the server when an agent turn nobody asked for starts it.
+UNATTENDED_DISPATCH = "unattended_dispatch"
 
 
 @dataclass(frozen=True)
@@ -333,15 +335,34 @@ def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
         person = _principal(turn)
     except Refused:
         return None  # a human asked, and canopy cannot vouch for them
+    if person is None and turn.initiator_kind == who.SYSTEM and turn.initiator_user_id:
+        # Canopy started it ON A PERSON'S ACCOUNT (a schedule an editor made, an agent task's
+        # follow-up): whoever may create one chose its prompt, so it answers to them as if they
+        # asked. An agent's login or a deactivated account as the owner proves no person.
+        if not _is_person(turn.initiator_user):
+            return None
+        person = turn.initiator_user
     if person is not None:
         acting_cap(turn)  # their `acts_as` lowers their administering too, as on their turn
         return Standing(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person))
     if turn.initiator_kind in (who.SYSTEM, who.AGENT):
         return Standing(str(turn.pk), unattended=True)
-    if turn.initiator_kind == who.USER and _agent_login(turn.initiator_user):
-        # Another agent's dispatch with no person stamped: nobody is behind it.
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    if (turn.initiator_kind == who.USER and _agent_login(turn.initiator_user)
+            and ref.get(UNATTENDED_DISPATCH) is True):
+        # Another agent's dispatch, from a turn nobody asked for (`dispatch_stamp`).
         return Standing(str(turn.pk), unattended=True)
-    return None  # a contact, or nobody established
+    return None  # a contact, an unvouched chain, or nobody established
+
+
+def dispatch_stamp(user) -> dict:
+    """What `enqueue_turn` adds to the origin_ref of a turn started by `user`, an agent's
+    login, when no person is behind it: `unattended_dispatch`, only if `user`'s own request
+    runs inside a turn nobody asked for. A dispatch from anything else (a contact's or an
+    unverified user's turn, a stored token) is NOT nobody-asked: it carries no stamp and
+    its standing is None. Server-only: `enqueue_turn` drops a client's copy."""
+    stand = standing(user)
+    return {UNATTENDED_DISPATCH: True} if stand is not None and stand.unattended else {}
 
 
 def _agent_login(user) -> bool:
