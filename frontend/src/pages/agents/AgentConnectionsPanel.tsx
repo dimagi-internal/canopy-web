@@ -13,6 +13,7 @@ import { Button } from 'canopy-ui/ui'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
 import { useAuth } from '@/auth/AuthProvider'
+import { AgentScreenShares } from './AgentScreenShares'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 /**
@@ -96,6 +97,8 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 start={{ ...start, action: connectionStartAction(c.provider, c.workspace ?? '') }}
                 busy={busy === c.id}
                 returnTo={pathname}
+                agent={agent}
+                screensAdmin={canSetUp}
                 canChange={!!email && !!c.connected_by_email && c.connected_by_email.toLowerCase() === email.toLowerCase()}
                 onChanged={load}
                 onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id), c.owner_key_replaced))}
@@ -145,8 +148,10 @@ function ConnectForm({ label, action, returnTo, agent }: { label: string } & Sta
 }
 
 function Row({
-  c, start, busy, returnTo, canChange, onDisconnect, onChanged,
+  c, start, busy, returnTo, canChange, agent, screensAdmin, onDisconnect, onChanged,
 }: {
+  agent: { slug: string; name?: string }
+  screensAdmin: boolean
   c: ConnectionOut
   start: StartForm
   busy: boolean
@@ -195,6 +200,16 @@ function Row({
           </div>
         )}
       </div>
+      {!lent && c.usable && c.provider_calls && (
+        <AgentScreenShares
+          connectionId={c.id}
+          agentSlug={agent.slug}
+          agentName={agent.name || agent.slug}
+          workspace={c.workspace ?? ''}
+          serverUse={!!c.server_use}
+          canChange={screensAdmin}
+        />
+      )}
     </div>
   )
 }

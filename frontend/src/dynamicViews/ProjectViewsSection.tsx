@@ -12,6 +12,7 @@ import { scopedPath } from '@/lib/scopedLinks'
 import { useCanEditViews } from '@/pages/DynamicViewsPage'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
 import { DeclaredTasks } from './DeclaredTasks'
+import { DeclaredConnections } from './DeclaredConnections'
 import type { DeclaredConnection } from './connectionCalls'
 import { DynamicViewFrame } from './DynamicViewFrame'
 import type { DynamicViewSource } from '@/api/dynamicViews'
@@ -66,6 +67,7 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
                 <span className="text-[11.5px] text-muted-foreground">v{v.version}</span>
               </div>
               <DeclaredTasks tasks={v.agent_tasks} className="mb-1" />
+              <DeclaredConnections connections={v.connections as DeclaredConnection[] | undefined} className="mb-1" />
               <DynamicViewFrame
                 view={{ code: v.code, sources: v.sources as DynamicViewSource[], agent_tasks: v.agent_tasks, connections: v.connections as DeclaredConnection[] | undefined }}
                 scope={{

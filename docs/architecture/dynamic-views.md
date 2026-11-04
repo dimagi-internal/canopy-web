@@ -99,6 +99,10 @@ project (`agents.gates.may_edit_project`). Moving a view needs those rights wher
 well, so a project lead cannot put a view on the workspace. Every save is a new version; a restore is a new
 version too, so history only grows.
 
+## Declared connections (Salesforce calls)
+
+A view may call Salesforce through canopy-web, only as it declared. `connections` on the view (snapshotted on every revision, restored with the code): `[{provider: "salesforce", as: "viewer"|"shared", agent?: slug, reads: [{method, path}], writes: [{method, path}]}]`, at most 5 entries and 50 lines each, validated on save by `apps/connections/declarations.py` against the allowlist (write lines name exact object types, no wildcards; `as: "shared"` needs `agent`). Code calls `canopy.connection.request(...)`; the page refuses anything undeclared and the server checks again against the revision the page drew. Writes need a click and an operation lease; `as: "shared"` needs the agent's admin to have approved the project's declared lines. Readers see the declaration beside the declared tasks ("This page can use Salesforce as you"). The trade and its limits: [`vault.md`](vault.md) § Calls from screens.
+
 ## Writing one (usually an agent)
 
 `get_dynamic_view_guide` returns the contract, the catalog and an example; `create_dynamic_view`
