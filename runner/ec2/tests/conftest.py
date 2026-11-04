@@ -8,13 +8,31 @@ packaging changes to the runner itself.
 """
 from __future__ import annotations
 
+import atexit
 import importlib.util
+import os
 import pathlib
+import shutil
 import sys
+import tempfile
 
 import pytest
 
 _MODULE_PATH = pathlib.Path(__file__).resolve().parent.parent / "cloud_runner.py"
+
+# The runner shells out to `canopy` for an agent's secrets. On a machine with the CLI
+# and a device key (a laptop; CI has neither), every test that drove a turn made a REAL
+# read of a real agent's vault: 30 of hal's per full run, plus trellis and scout, which
+# one evening reached hundreds of reads and two owner alerts (2026-11-03). So the name
+# `canopy` resolves to a stand-in that refuses, from before any test or collection runs,
+# in every xdist worker. A test wanting CLI behaviour fakes subprocess.run, as they do.
+_STANDIN_DIR = tempfile.mkdtemp(prefix="no-real-canopy-")
+atexit.register(shutil.rmtree, _STANDIN_DIR, ignore_errors=True)
+CANOPY_STANDIN = os.path.join(_STANDIN_DIR, "canopy")
+with open(CANOPY_STANDIN, "w") as _fh:
+    _fh.write('#!/bin/sh\necho "the real canopy CLI is not reachable from the runner tests" >&2\nexit 1\n')
+os.chmod(CANOPY_STANDIN, 0o755)
+os.environ["PATH"] = f"{_STANDIN_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
 def _load_cloud_runner():
@@ -26,6 +44,8 @@ def _load_cloud_runner():
     # would clone real private repos. Tests that exercise it set their own.
     module._LAZY_BOOTSTRAPPER = lambda slug, env=None: None
     module._LAZY_CLONER = lambda slug, env: None
+    # Also when a test replaces PATH: `_canopy_cli` falls back to ~/.local/bin.
+    module._canopy_cli = lambda: CANOPY_STANDIN
     return module
 
 

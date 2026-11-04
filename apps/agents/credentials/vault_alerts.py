@@ -455,8 +455,10 @@ _WHY = {
                      "was handed out. \"No device proof\" means the request carried none at "
                      "all: your token used away from a machine's device key — a script, a test "
                      "run, a fresh install — not a box waiting for approval. A proof from a key "
-                     "nobody approved means a machine to approve, if it is yours. If you do "
-                     "not recognise either, revoke the token. (A known box that simply does "
+                     "nobody approved means a machine to approve, if it is yours. A proof that is "
+                     "\"not fresh\" arrived too long after it was signed, usually a laptop that "
+                     "went to sleep mid-request. If you do "
+                     "not recognise any of these, revoke the token. (A known box that simply does "
                      "not run the agent is refused without this alert.)"),
     # The same refusal when the caller was a runner on its own token: the box's
     # software, not the person it signs in as (trellis on cloud-ec2-live, 2026-10-30).
@@ -592,8 +594,11 @@ def _record_event(agent, alert) -> None:
 
 
 def alerts_for(agent, *, limit: int = 50) -> list[dict]:
-
-    qs = (AgentCredentialAlert.objects.filter(agent=agent)
+    # Only kinds the API can describe: a row from a reverted feature (`github-expiry`,
+    # #2395/#2403) failed response validation and turned hal's whole list into a 500,
+    # the page every alert email links to (2026-11-03).
+    known = [kind for kind, _ in AgentCredentialAlert.KIND_CHOICES]
+    qs = (AgentCredentialAlert.objects.filter(agent=agent, kind__in=known)
           .select_related("user", "runner").order_by("-created_at")[:limit])
     return [{
         "id": a.pk, "kind": a.kind, "detail": a.detail, "refs": list(a.refs or []),
