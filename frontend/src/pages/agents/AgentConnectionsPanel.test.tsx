@@ -31,7 +31,18 @@ vi.mock('@/api/work', () => ({ listProjects: m.listWorkspaceProjects }))
 vi.mock('@/api/workspaceApps', () => ({ listInstalledApps: m.listInstalledApps }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => m.role.current }))
 
-import { AgentConnectionsPanel } from './AgentConnectionsPanel'
+import { ConnectionRows, ConnectionsBanner, useAgentConnections } from './AgentConnectionsPanel'
+
+/** The connection rows as the External accounts tab lays them out (no mailbox row). */
+function AgentConnectionsPanel({ agent = { slug: 'eva' } }: { agent?: { slug: string; workspace?: string } }) {
+  const conns = useAgentConnections(agent)
+  return (
+    <>
+      <ConnectionsBanner conns={conns} />
+      <ConnectionRows agent={agent} conns={conns} mailboxShown={false} />
+    </>
+  )
+}
 
 const PROVIDER = { name: 'salesforce', title: 'Salesforce', workspace: 'w', workspace_name: 'W', configured: true }
 function conn(over: Record<string, unknown> = {}) {
@@ -47,7 +58,7 @@ const me = { current: 'jj@dimagi.com' }
 const show = () =>
   render(
     <AuthContext.Provider value={{ status: 'authenticated', user: { email: me.current } as never }}>
-      <MemoryRouter initialEntries={['/agents/eva/settings/accounts']}><AgentConnectionsPanel agent={{ slug: 'eva' }} /></MemoryRouter>
+      <MemoryRouter initialEntries={['/agents/eva/settings/accounts']}><AgentConnectionsPanel /></MemoryRouter>
     </AuthContext.Provider>,
   )
 
@@ -99,14 +110,15 @@ describe('AgentConnectionsPanel', () => {
     expect(await screen.findByText('Disconnected. A machine will revoke it shortly.')).toBeTruthy()
   })
 
-  it('shows Reconnect, and a not-configured provider disabled', async () => {
+  it('shows Reconnect, and a not-configured provider as Not set up', async () => {
     m.listAgentConnections.mockResolvedValue({
       providers: [PROVIDER, { name: 'other', title: 'Other', configured: false }],
       connections: [conn({ needs_reconnect: true })],
     })
     show()
     expect((await screen.findByRole('button', { name: 'Reconnect' })).closest('form')).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Connect Other' }) as HTMLButtonElement).disabled).toBe(true)
+    // No disabled button: a provider nobody set up is a pill, and a link for those who may.
+    expect(screen.queryByRole('button', { name: 'Connect Other' })).toBeNull()
     expect(screen.getByText('Not set up for this workspace')).toBeTruthy()
     // Not an admin of the workspace: no link to a settings page they cannot use.
     expect(screen.queryByRole('link', { name: 'Set it up' })).toBeNull()
@@ -225,7 +237,7 @@ describe('AgentConnectionsPanel', () => {
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     render(
       <MemoryRouter initialEntries={['/x?connection=%3Cb%3Eevil&status=error&reason=Send%20money']}>
-        <AgentConnectionsPanel agent={{ slug: 'eva' }} />
+        <AgentConnectionsPanel />
       </MemoryRouter>,
     )
     expect(await screen.findByText('Connecting the service failed. Try again.')).toBeTruthy()
@@ -236,7 +248,7 @@ describe('AgentConnectionsPanel', () => {
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
     render(
       <MemoryRouter initialEntries={['/x?connection=salesforce&status=error&reason=wrong_account']}>
-        <AgentConnectionsPanel agent={{ slug: 'eva' }} />
+        <AgentConnectionsPanel />
       </MemoryRouter>,
     )
     expect(await screen.findByText(/^Salesforce was signed in with an account this connection may not use — sign in as the agent’s own account/)).toBeTruthy()
@@ -440,7 +452,7 @@ describe('AgentConnectionsPanel', () => {
         approved_reads: [line('GET', 'query')], approved_writes: [line('DELETE', 'sobjects/Lead/*'), line('POST', 'apexrest/Thing')],
       })])
       await open()
-      const items = (await screen.findAllByRole('listitem')).map((li) => li.textContent)
+      const items = (await screen.findAllByRole('listitem')).filter((li) => !li.hasAttribute('data-testid')).map((li) => li.textContent)
       expect(items).toEqual(['Delete Leads', 'Run the Salesforce action Thing', 'Search any record eva can see'])
     })
 

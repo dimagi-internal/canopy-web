@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
-import { connectionStartPath, getShareState, putShare, type ShareStateOut } from '@/api/connections'
+import { connectionStartPath, getShareState, type ShareStateOut } from '@/api/connections'
 import { ApiError } from '@/api/problem'
 import {
-  buildShare, changedEndorser, leftOut as leftOutOf, openForOwner, ShareRefused, trustFor, vouchersToDecide,
+  changedEndorser, leftOut as leftOutOf, ShareRefused, trustFor, vouchersToDecide,
   type OpenedAccount, type ShareChoice, type Trust,
 } from '@/vault/connectionShare'
+import { canopyWebKeyChanged, openOwned, promptDismissed, putOwnerShare, wasReconnected } from '@/vault/ownerShare'
 import { pinPerson, type Endorser } from '@/vault/trust'
 import type { Unlocked } from '@/vault/userKey'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
@@ -26,6 +27,7 @@ export function safeReturnTo(given: string | null | undefined): string {
 }
 
 const NOT_SHARED = 'Not shared yet: no agent or computer can use it.'
+const LOCKED = 'This account is locked in your vault. Your passkey opens it here so you can choose.'
 const RECONNECTED = 'This connection was reconnected. If you did not just do that, stop and tell an admin.'
 const CHANGED = 'This connection changed in another tab or computer. Loading it again.'
 const RELOCK = 'Unlock your vault key and try again.'
@@ -39,13 +41,6 @@ const CANOPY_WEB_NOT_YET = "This isn't available yet."
 const CANOPY_WEB_CHANGED = "canopy-web's lock has changed. Turn this off, or check with your administrator before keeping it on."
 const CANOPY_WEB_UNREACHABLE = "Sharing now turns off project screens and apps, because canopy-web can't be reached right now."
 const UNSAFE = "This connection can't be opened safely. Reconnect it."
-
-/** What canopy can read, true for this row: the claim holds only with the switch off. */
-function whoCanRead(server: ShareStateOut['server'] | undefined): string {
-  if (server?.on) return 'canopy-web can also use this sign-in, because Project screens and apps is on.'
-  if (server?.available && server.provider_calls) return 'canopy never sees the sign-in it holds while Project screens and apps is off.'
-  return 'canopy never sees the sign-in it holds.'
-}
 
 interface Opened {
   account: OpenedAccount
@@ -86,6 +81,9 @@ export function ShareConnectionPage(): JSX.Element | null {
   const [notYours, setNotYours] = useState(false)
   const [notOwnerKey, setNotOwnerKey] = useState('')
   const [busy, setBusy] = useState(false)
+  // The first try to open it, made on arrival without a click; only a refusal shows the button.
+  const [tried, setTried] = useState(false)
+  const arrived = useRef(false)
   const [agents, setAgents] = useState<Set<string>>(new Set())
   const [computers, setComputers] = useState<Set<string>>(new Set())
   const [canopyWebTicked, setCanopyWebTicked] = useState(false)
@@ -124,6 +122,14 @@ export function ShareConnectionPage(): JSX.Element | null {
   const changed = useMemo(() => (opened ? changedEndorser(opened.trust, choice) : undefined), [opened, choice])
   const vouchers = useMemo(() => (opened ? vouchersToDecide(opened.trust, choice) : []), [opened, choice])
 
+  // Hooks before any return: open it on arrival when the browser lets it without a click.
+  useEffect(() => {
+    if (!state || arrived.current) return
+    arrived.current = true
+    void unlock(state, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state])
+
   if (notYours) {
     return (
       <div className="max-w-2xl space-y-2">
@@ -153,8 +159,7 @@ export function ShareConnectionPage(): JSX.Element | null {
   /** Open `s` with `key` and seed the choices: `keep` (what is ticked now) or else what the
    *  verified statement last named, cut down to the agents and computers listed below. */
   async function openWith(s: ShareStateOut, key: Unlocked, keep?: ShareChoice) {
-    const { account, statement } = await openForOwner(s, key)
-    const trust = await trustFor(s, key, { accept: accepted.current })
+    const { account, statement, trust } = await openOwned(s, key, accepted.current)
     const listedAgents = new Set(s.agents.map((a) => a.id))
     const listedMachines = new Set(s.candidates.filter((c) => c.kind === 'device' && !c.agent_id && c.mine).map((c) => c.target))
     // The box starts from what the owner signed, never from the row's served `on`. Only an
@@ -175,13 +180,13 @@ export function ShareConnectionPage(): JSX.Element | null {
     setOpened({ account, statement, trust })
   }
 
-  async function unlock(s: ShareStateOut) {
+  async function unlock(s: ShareStateOut, auto = false) {
     setBusy(true)
     setError('')
     setNotice('')
     setUnsafe(false)
     try {
-      const key = await vault.unlock()
+      const key = await vault.unlock({ passkeyOnly: auto })
       try {
         await openWith(s, key)
       } catch (e) {
@@ -189,9 +194,11 @@ export function ShareConnectionPage(): JSX.Element | null {
         else throw e
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not unlock your vault key.')
+      // On arrival a refused prompt is not an error: the button below asks again.
+      if (!(auto && promptDismissed(e))) setError(e instanceof Error ? e.message : 'Could not unlock your vault key.')
     } finally {
       setBusy(false)
+      if (auto) setTried(true)
     }
   }
 
@@ -202,8 +209,7 @@ export function ShareConnectionPage(): JSX.Element | null {
     setError('')
     setNotice('')
     try {
-      const { share: body } = await buildShare(s, key, choice, o.trust)
-      await putShare(s.id, body)
+      await putOwnerShare(s, key, choice, o.trust)
       me.current = null
       navigate(returnTo)
     } catch (e) {
@@ -256,14 +262,15 @@ export function ShareConnectionPage(): JSX.Element | null {
     && !choice.canopyWeb
   // A reconnect clears the writer's signature; canopy-web may then write its own (a device) while
   // the row is still unshared, which must not hide the warning.
-  const writerKind = (state.sealed_sig as { by?: { kind?: string } } | null | undefined)?.by?.kind
-  const reconnected = !!opened?.statement && state.state === 'unshared' && (state.sealed_sig == null || writerKind === 'device')
-  const keyChanged = !!opened?.statement?.canopy_web && choice.canopyWeb && !!state.server?.thumbprint && state.server.thumbprint !== opened.statement.canopy_web
+  const reconnected = !!opened && wasReconnected(state, opened.statement)
+  const keyChanged = !!opened && canopyWebKeyChanged(state, opened.statement, choice)
   const unreachableOn = !!server && !server.available && !!server.on
 
   return (
     <div className="max-w-2xl space-y-4" data-testid="share-connection">
-      <h1 className="text-lg font-semibold text-foreground">Share this connection</h1>
+      <h1 className="text-lg font-semibold text-foreground">
+        {opened || unsafe ? 'Share this connection' : `Who can use ${state.account_label || 'this connection'}`}
+      </h1>
 
       {unsafe ? (
         <div role="alert" className="space-y-2 rounded border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive">
@@ -273,15 +280,19 @@ export function ShareConnectionPage(): JSX.Element | null {
           </a>
         </div>
       ) : !opened ? (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Touch your passkey to open it here. {whoCanRead(state.server)}
-          </p>
-          {state.state === 'unshared' && <p className="text-[13px] text-muted-foreground">{NOT_SHARED}</p>}
-          <Button onClick={() => void unlock(state)} disabled={busy}>Unlock with your passkey</Button>
-          {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
-          {vault.element}
-        </div>
+        !tried ? (
+          <>
+            <div className="h-16 animate-pulse rounded-lg bg-muted" />
+            {vault.element}
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{LOCKED}</p>
+            <Button onClick={() => void unlock(state)} disabled={busy}>Continue with your passkey</Button>
+            {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
+            {vault.element}
+          </div>
+        )
       ) : (
         <div className="space-y-4">
           <div>

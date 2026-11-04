@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartAction,
@@ -11,6 +11,7 @@ import { getCsrfToken } from '@/api/base'
 import { ApiError } from '@/api/problem'
 import { ConnectOutcome, Scopes, SharingStatus, detailLine, disconnected, listed, missingScopes } from '@/components/settings/ConnectionsPanel'
 import { Button } from 'canopy-ui/ui'
+import { AccountRow } from '@/pages/agents/AccountRow'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
 import { useAuth } from '@/auth/AuthProvider'
@@ -24,7 +25,9 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
  * Disconnecting asks for a fresh passkey; the API client's step-up middleware
  * prompts and retries, so this just calls DELETE.
  *
- * One section per provider the API lists; nothing provider-specific here.
+ * One row per connection (and one per provider with nothing connected) in the
+ * accounts list, using AccountRow; nothing provider-specific here except that
+ * Google folds into the mailbox row (see ConnectionRows).
  *
  * Connecting is a form POST (CSRF-checked), never a link: the server refuses a
  * GET that names an agent, and asks the provider for a fresh login where it
@@ -39,7 +42,11 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
  * Reconnect goes to the connection's own workspace (`c.workspace`), never the
  * provider row's: after a move those differ, and the server refuses the other.
  */
-export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?: string; workspace?: string | null } }) {
+type Agent = { slug: string; name?: string; workspace?: string | null }
+
+/** Everything the connection rows and their banner share: one fetch, one place for the
+ *  busy/notice/error state. Pass `enabled: false` for someone who may not see them. */
+export function useAgentConnections(agent: Agent, enabled = true) {
   const [data, setData] = useState<ConnectionsView | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -49,16 +56,15 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
   const outcome = params.get('connection') ? params : null
   // The agent's workspace: the API names it on every provider row.
   const workspace = data?.providers.find((p) => p.workspace)?.workspace || agent.workspace || ''
-  const email = useAuth().user?.email ?? ''
-  const canSetUp = roleAllows(useWorkspaceRole(workspace), 'integrations')
 
   const load = useCallback(() => {
+    if (!enabled) return
     listAgentConnections(agent.slug).then((d) => { setData(d); setError('') }).catch((e) => {
       // Its admins' alone, whatever the workspace role: for anyone else there is nothing to show.
       if (e instanceof ApiError && (e.status === 403 || e.status === 404)) setError('')
       else setError('Could not read the agent’s connections.')
     })
-  }, [agent.slug])
+  }, [agent.slug, enabled])
   useEffect(load, [load, outcome?.get('status')])
   function dismiss() {
     const next = new URLSearchParams(params)
@@ -79,25 +85,58 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
       setBusy(null)
     }
   }
+  return { data, error, busy, notice, pathname, outcome, workspace, load, dismiss, run }
+}
+export type AgentConnections = ReturnType<typeof useAgentConnections>
 
-  if (data === null) return error ? <p className="text-[13px] text-destructive">{error}</p> : null
-
+/** The result banner after a sign-in, and any error or notice: sits at the top of the tab. */
+export function ConnectionsBanner({ conns }: { conns: AgentConnections }) {
+  const { data, error, notice, outcome, dismiss } = conns
   return (
-    <div className="space-y-4" data-testid="agent-connections">
-      <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />
-      {error && <p className="text-[13px] text-destructive">{error}</p>}
-      {notice && <p role="status" className="text-[13px] text-success">{notice}</p>}
-      {data.providers.map((p) => {
+    <>
+      {data && <ConnectOutcome params={outcome} onDismiss={dismiss} knownProviders={data.providers} />}
+      {error && <p className="mb-3 text-[13px] text-destructive">{error}</p>}
+      {notice && <p role="status" className="mb-3 text-[13px] text-success">{notice}</p>}
+    </>
+  )
+}
+
+/** Google is two paths today: the agent's mailbox sign-in, and a Connections google
+ *  provider. They fold together later (2026-10-31 spec, "Existing Google paths"). Until
+ *  then the list shows ONE Google row: the mailbox row when the agent has a mailbox, else
+ *  this provider's. When the mailbox row shows, the provider is hidden unless the agent
+ *  already has a Connections google connection, which must stay visible so it can be
+ *  disconnected: that one reads "Google (other account)". */
+const MAILBOX_GOOGLE = 'google'
+
+function rank(name: string): number {
+  return name === 'google' ? 0 : name === 'salesforce' ? 1 : 2
+}
+
+export function ConnectionRows({ agent, conns, mailboxShown }: { agent: Agent; conns: AgentConnections; mailboxShown: boolean }) {
+  const { data, busy, pathname, workspace, load, run } = conns
+  const email = useAuth().user?.email ?? ''
+  const canSetUp = roleAllows(useWorkspaceRole(workspace), 'integrations')
+  if (data === null) return null
+  const providers = [...data.providers].sort(
+    (a, b) => rank(a.name) - rank(b.name) || a.title.localeCompare(b.title),
+  )
+  return (
+    <>
+      {providers.map((p) => {
         const rows = listed(data.connections).filter((c) => c.provider === p.name)
+        const folded = p.name === MAILBOX_GOOGLE && mailboxShown
+        if (folded && rows.length === 0) return null
+        const title = folded ? 'Google (other account)' : p.title
         // A connection left behind by a move does not count: connect again here.
         const own = rows.filter((c) => !c.granted_from && c.usable)
         const start = { action: connectionStartAction(p.name, p.workspace || workspace), returnTo: pathname, agent: agent.slug }
         return (
-          <div key={p.name} className="space-y-2" data-testid={`agent-connection-provider-${p.name}`}>
-            <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">{p.title}</p>
+          <Fragment key={p.name}>
             {rows.map((c) => (
-              <Row
+              <ConnectionRow
                 key={c.id}
+                title={title}
                 c={c}
                 start={{ ...start, action: connectionStartAction(c.provider, c.workspace ?? '') }}
                 busy={busy === c.id}
@@ -108,28 +147,32 @@ export function AgentConnectionsPanel({ agent }: { agent: { slug: string; name?:
                 onDisconnect={() => run(c.id, async () => disconnected(await disconnectAgentConnection(agent.slug, c.id), c.owner_key_replaced))}
               />
             ))}
-            {!p.configured ? (
-              <div>
-                <Button size="sm" disabled>Connect {p.title}</Button>
-                <p className="mt-1 text-[12px] text-muted-foreground">
-                  Not set up for this workspace
-                  {canSetUp && workspace && (
-                    <>
-                      {' · '}
-                      <Link to={scopedPath(workspace, '/settings/connections')} className="text-primary hover:underline">
-                        Set it up
-                      </Link>
-                    </>
-                  )}
-                </p>
-              </div>
+            {folded ? null : !p.configured ? (
+              <AccountRow
+                testId={`agent-connection-provider-${p.name}`}
+                name={title}
+                pill={{ label: 'Not set up', tone: 'neutral' }}
+                detail="Not set up for this workspace"
+                action={
+                  canSetUp && workspace ? (
+                    <Link to={scopedPath(workspace, '/settings/connections')} className="text-[12px] text-primary hover:underline">
+                      Set it up
+                    </Link>
+                  ) : null
+                }
+              />
             ) : own.length === 0 ? (
-              <ConnectForm label={`Connect ${p.title}`} {...start} />
+              <AccountRow
+                testId={`agent-connection-provider-${p.name}`}
+                name={title}
+                pill={{ label: 'Not connected', tone: 'neutral' }}
+                action={<ConnectForm label={`Connect ${p.title}`} primary {...start} />}
+              />
             ) : null}
-          </div>
+          </Fragment>
         )
       })}
-    </div>
+    </>
   )
 }
 
@@ -140,20 +183,21 @@ interface StartForm {
 }
 
 /** Starts an agent's connect: a full-page form POST carrying the CSRF token. */
-function ConnectForm({ label, action, returnTo, agent }: { label: string } & StartForm) {
+function ConnectForm({ label, action, returnTo, agent, primary = false }: { label: string; primary?: boolean } & StartForm) {
   return (
     <form method="post" action={action} className="inline-block">
       <input type="hidden" name="csrfmiddlewaretoken" value={getCsrfToken()} />
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="agent" value={agent} />
-      <Button type="submit" size="sm">{label}</Button>
+      <Button type="submit" size="sm" variant={primary ? 'default' : 'outline'}>{label}</Button>
     </form>
   )
 }
 
-function Row({
-  c, start, busy, returnTo, canChange, agent, onDisconnect, onChanged,
+function ConnectionRow({
+  title, c, start, busy, returnTo, canChange, agent, onDisconnect, onChanged,
 }: {
+  title: string
   agent: { slug: string; name?: string }
   c: ConnectionOut
   start: StartForm
@@ -167,42 +211,52 @@ function Row({
   const lent = !!c.granted_from
   const where = c.workspace_name || c.workspace
   const missing = c.usable ? missingScopes(c) : ''
+  const needsReconnect = c.usable && (c.needs_reconnect || missing !== '')
+  const pill: { label: string; tone: 'success' | 'warning' } = !c.usable
+    ? { label: 'Not working', tone: 'warning' }
+    : needsReconnect
+      ? { label: 'Reconnect needed', tone: 'warning' }
+      : lent && c.state === 'unshared'
+        ? { label: 'Not shared yet', tone: 'warning' }
+        : { label: 'Connected', tone: 'success' }
   return (
-    <div className="space-y-2 rounded border border-border bg-muted/40 p-2.5" data-testid={`agent-connection-${c.id}`}>
-      <div className="flex items-center justify-between gap-4">
-        <div className="text-[13px]">
-          <p className="font-medium text-foreground">{c.account_label}</p>
-          <p className="text-[12px] text-muted-foreground">
-            {detailLine(c)}
-            {lent && <> · Lent by {c.granted_from}</>}
-          </p>
-          <Scopes c={c} />
-          {!c.usable ? (
-            <p className="text-[12px] text-warning">
-              {lent
-                ? `${c.granted_from} is no longer in ${where}, where this was made, so it no longer works.`
-                : `Made in ${where} before the move — disconnect it and connect here.`}
-            </p>
-          ) : lent ? (
-            c.needs_reconnect ? <p className="text-[12px] text-warning">Reconnect required: its owner must reconnect it.</p>
-              : c.state === 'unshared' ? <p className="text-[12px] text-warning">Not shared yet: its owner must share it again before this agent can use it.</p>
-              : missing ? <p className="text-[12px] text-warning">Its owner must reconnect to allow: {missing}</p> : null
-          ) : (
-            <>
-              <SharingStatus c={c} returnTo={returnTo} canChange={canChange} onChanged={onChanged} />
-              {!c.needs_reconnect && missing && <p className="text-[12px] text-warning">Reconnect to allow: {missing}</p>}
-            </>
-          )}
-        </div>
-        {!lent && (
-          <div className="flex shrink-0 items-center gap-2">
-            {c.usable && (c.needs_reconnect || missing !== '') && <ConnectForm label="Reconnect" {...start} />}
+    <AccountRow
+      testId={`agent-connection-${c.id}`}
+      name={title}
+      pill={pill}
+      detail={c.account_label}
+      action={
+        !lent ? (
+          <>
+            {needsReconnect && <ConnectForm label="Reconnect" {...start} />}
             <Button size="sm" variant="outline" disabled={busy} onClick={onDisconnect}>
               {busy ? 'Working…' : 'Disconnect'}
             </Button>
-          </div>
-        )}
-      </div>
+          </>
+        ) : null
+      }
+    >
+      <p>
+        {detailLine(c)}
+        {lent && <> · Lent by {c.granted_from}</>}
+      </p>
+      <Scopes c={c} />
+      {!c.usable ? (
+        <p className="text-warning">
+          {lent
+            ? `${c.granted_from} is no longer in ${where}, where this was made, so it no longer works.`
+            : `Made in ${where} before the move — disconnect it and connect here.`}
+        </p>
+      ) : lent ? (
+        c.needs_reconnect ? <p className="text-warning">Reconnect required: its owner must reconnect it.</p>
+          : c.state === 'unshared' ? <p className="text-warning">Not shared yet: its owner must share it again before this agent can use it.</p>
+          : missing ? <p className="text-warning">Its owner must reconnect to allow: {missing}</p> : null
+      ) : (
+        <>
+          <SharingStatus c={c} returnTo={returnTo} canChange={canChange} onChanged={onChanged} />
+          {!c.needs_reconnect && missing && <p className="text-warning">Reconnect to allow: {missing}</p>}
+        </>
+      )}
       {!lent && c.usable && c.provider_calls && (
         <AgentScreenShares
           connectionId={c.id}
@@ -211,6 +265,6 @@ function Row({
           serverUse={!!c.server_use}
         />
       )}
-    </div>
+    </AccountRow>
   )
 }

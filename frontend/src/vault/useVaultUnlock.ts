@@ -7,6 +7,9 @@ import { useUnlockPrompt } from './UnlockPrompt'
 const hasSeal = (ks: { seals?: unknown }, alg: string) =>
   ((ks.seals ?? []) as { alg?: string }[]).some((s) => s.alg === alg)
 
+/** `passkeyOnly`: never fall through to the passphrase dialog (a page opening it with no click). */
+export interface UnlockOptions { passkeyOnly?: boolean }
+
 /**
  * My vault key, unlocked, for a flow that needs it: one passkey touch both steps up
  * and opens it — straight from the click, no second "use my passkey" step; a
@@ -14,10 +17,10 @@ const hasSeal = (ks: { seals?: unknown }, alg: string) =>
  * `element` for that prompt). The one way a page asks — a runner's credentials, a
  * vault's own page, a sensitive conversation.
  */
-export function useVaultUnlock(): { unlock: () => Promise<Unlocked>; element: ReactNode } {
+export function useVaultUnlock(): { unlock: (opts?: UnlockOptions) => Promise<Unlocked>; element: ReactNode } {
   const unlocker = useUnlockPrompt()
-  const unlock = async (): Promise<Unlocked> => remembered(await open())
-  const open = async (): Promise<Unlocked> => {
+  const unlock = async (opts: UnlockOptions = {}): Promise<Unlocked> => remembered(await open(opts))
+  const open = async ({ passkeyOnly = false }: UnlockOptions): Promise<Unlocked> => {
     const ks = await getKeyset()
     let failed: unknown = null
     try {
@@ -25,6 +28,11 @@ export function useVaultUnlock(): { unlock: () => Promise<Unlocked>; element: Re
       if (me) return me
     } catch (e) {
       failed = e
+    }
+    // On arrival nothing may open the passphrase dialog by itself: a refused or dismissed passkey, or a
+    // key with no passkey seal, is a click away instead (a NotAllowedError, which callers read as "ask again").
+    if (passkeyOnly && (failed || !hasSeal(ks, 'prf'))) {
+      throw failed ?? new DOMException('Your vault key needs a click to open.', 'NotAllowedError')
     }
     // No passkey seal: the person chooses (a passphrase). A passkey tried that did not
     // open it: offer the passphrase, never the passkey a second time.

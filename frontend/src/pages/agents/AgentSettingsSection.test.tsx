@@ -24,8 +24,12 @@ vi.mock('@/components/agents/AgentSetupChecklist', () => ({ AgentSetupChecklist:
 const { getAgentSetup } = vi.hoisted(() => ({ getAgentSetup: vi.fn() }))
 vi.mock('@/api/agentCreation', () => ({ getAgentSetup }))
 vi.mock('@/pages/agents/AgentSecurityPanel', () => ({ AgentSecurityPanel: () => <div>security-panel</div> }))
-vi.mock('@/pages/agents/AgentAccountsPanel', () => ({ AgentAccountsPanel: () => <div id="cred-github">accounts-panel</div> }))
-vi.mock('@/pages/agents/AgentConnectionsPanel', () => ({ AgentConnectionsPanel: () => <div>connections-panel</div> }))
+// The accounts list shows its Connections rows to an admin only; it is told which this is.
+vi.mock('@/pages/agents/AgentAccountsPanel', () => ({
+  AgentAccountsPanel: ({ isAdmin }: { isAdmin?: boolean }) => (
+    <div id="cred-github">accounts-panel{isAdmin ? ' connections-panel' : ''}</div>
+  ),
+}))
 vi.mock('@/components/agents/AgentHowItRuns', () => ({ AgentHowItRuns: () => <div>how-it-runs</div> }))
 let agentOverride: Record<string, unknown> = {}
 vi.mock('react-router-dom', async (orig) => ({
@@ -194,12 +198,12 @@ describe('AgentSettingsSection', () => {
 
   it('shows the connections panel to an admin only', () => {
     at(`${BASE}/accounts`)
-    expect(screen.queryByText('connections-panel')).toBeNull()
+    expect(screen.queryByText(/connections-panel/)).toBeNull()
     cleanup()
     agentOverride = { is_admin: true }
     try {
       at(`${BASE}/accounts`)
-      expect(screen.getByText('connections-panel')).toBeTruthy()
+      expect(screen.getByText(/connections-panel/)).toBeTruthy()
     } finally {
       agentOverride = {}
     }
