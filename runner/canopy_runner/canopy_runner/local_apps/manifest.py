@@ -1,7 +1,8 @@
 """Validate a local app's manifest.json.
 
-Self-contained and stdlib-only: the server keeps its own copy, and a test pins the two
-equal, because a package the server approves must be one every runner accepts.
+Self-contained and stdlib-only. The server has its own, stricter validator, and
+`tests/test_local_apps_end_to_end.py` pins that whatever it approves every runner accepts.
+This one is looser so a dev-installed app can be tried before it's finished.
 """
 from __future__ import annotations
 

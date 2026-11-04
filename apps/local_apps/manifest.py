@@ -3,8 +3,9 @@
 Unlike a workspace app's manifest this describes real code, so nothing here can
 be enforced against that code. `disclosure` is the author's statement for a
 person and a reviewer to read; `canopy` is the only part with teeth, limiting
-what the server will do for a run. Stdlib only, because the runner carries a copy
-(`runner/canopy_runner/canopy_runner/local_apps/manifest.py`).
+what the server will do for a run. The runner has its own looser validator
+(`runner/canopy_runner/canopy_runner/local_apps/manifest.py`), and
+`tests/test_local_apps_end_to_end.py` pins that whatever this approves, it accepts.
 """
 
 from __future__ import annotations

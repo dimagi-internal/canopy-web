@@ -125,7 +125,7 @@ The store lists local apps beside web apps, with a detail page showing the discl
 
 ## Manifest
 
-`manifest.json`, like a bundled workspace app, validated by one module on the server and a copy in the runner, kept equal by a test.
+`manifest.json`, like a bundled workspace app. The server's validator is the stricter one, and a test pins that whatever it approves every runner accepts.
 
 ```json
 {

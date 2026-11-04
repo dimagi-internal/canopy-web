@@ -1046,6 +1046,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "submit", help="submit a folder for review; needs CANOPY_WEB_PAT, not the runner's token")
     app_submit.add_argument("folder")
     app_submit.add_argument("--note", default="")
+    app_submit.add_argument("--workspace", default="",
+                            help="the workspace it's submitted from; needed if you're in more than one")
     app_dev = app_commands.add_parser(
         "dev-install", help="run a folder from disk, unpublished; nothing it calls leaves this computer")
     app_dev.add_argument("folder")

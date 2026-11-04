@@ -489,7 +489,7 @@ def _base_url(args) -> str:
 def _cmd_submit(args) -> int:
     token = server.person_token()
     manifest, packed = package.pack(Path(args.folder))
-    answer = server.submit(_base_url(args), token, packed, args.note or "")
+    answer = server.submit(_base_url(args), token, packed, args.note or "", workspace=getattr(args, "workspace", ""))
     print(f"{manifest['key']} {manifest['version']}: {answer.get('status')}")
     if answer.get("review_url"):
         print(f"review: {answer['review_url']}")

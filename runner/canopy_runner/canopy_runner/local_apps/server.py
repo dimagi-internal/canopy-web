@@ -187,9 +187,12 @@ def person_token() -> str:
     return token
 
 
-def submit(base_url: str, token: str, packed: bytes, note: str = "") -> dict:
+def submit(base_url: str, token: str, packed: bytes, note: str = "", *, workspace: str = "") -> dict:
     url = f"{base_url.rstrip('/')}/api/local-apps/submissions/"
-    data = json.dumps({"package_b64": base64.b64encode(packed).decode("ascii"), "note": note}).encode()
+    body = {"package_b64": base64.b64encode(packed).decode("ascii"), "note": note}
+    if workspace:
+        body["workspace"] = workspace
+    data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Content-Type", "application/json")
