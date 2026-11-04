@@ -262,7 +262,7 @@ and the two fixed roles, strongest first:
   (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens `<name>`; `use:ask` and `use:read` are read-mode lines). What each change to
   an agent needs is the table below.
 * **What changes the agent itself (`agent_edit`).** `access.may_edit_agent(user, agent)` is the
-  one predicate: the owner, an admin and the agent's own login always may; anyone else only through
+  one predicate, asked by `@gate("agent-edit")` routes (`gates.agent_for_edit`): the owner, an admin and the agent's own login always may; anyone else only through
   an access-list line whose role holds `agent_edit` (an `editor` line or workspace default). Being an
   editor of the agent's workspace gives nothing by itself; the default editor line every workspace
   editor was given keeps today's editors able. An agent acting for its asker is judged as the asker
@@ -272,7 +272,7 @@ and the two fixed roles, strongest first:
   | Change | Class | Why |
   |---|---|---|
   | Publish skills (`PUT /agents/{slug}/skills`), re-read skill history (`POST …/skill-history/sync`) | **agent_edit** | the agent's own definition of how it works |
-  | Edit display name, description, persona (`POST /agents/` on an existing agent) | **agent_edit** | what the agent says about itself |
+  | Edit display name, description, persona, email, google account, avatar, runner-kind preference (`POST /agents/` on an existing agent; creating one is a workspace editor's) | **agent_edit** | what the agent says about itself |
   | The code in the agent's own repo (commits, merges to its default branch) | **agent_edit** | the agent's `permissions` in the caller envelope are its cue; the runner-side rail (canopy plugin) refuses a push or merge from a turn whose asker lacks it |
   | Where the repo points and what boxes install (`repo_url`, `repo_ref`, `runtime_secrets`, `runtime_sources`, `clis`, `cli_models`; `PATCH …/repository`, `PATCH …/clis`) | **admin** | whoever names the repo writes code that runs with the agent's credentials |
   | Published interface: `PUT`/`DELETE …/interface`, read-mode override, the `sensitive` switch | **admin** | decides who may reach what, and how sensitive data is handled |

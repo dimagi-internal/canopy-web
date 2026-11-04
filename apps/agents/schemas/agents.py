@@ -614,6 +614,9 @@ class AgentDetailOut(AgentOut):
     # and whether they may grant/revoke admins (the agent's owner or a
     # workspace owner — granting admin hands over the agent's credentials).
     is_admin: bool = False
+    # Whether the CALLER holds `agent_edit` on this agent: may publish its skills and change what it
+    # says about itself. Drives whether the UI offers those controls.
+    can_edit_agent: bool = False
     can_manage_admins: bool = False
     sync_count: int = 0
     skill_count: int = 0

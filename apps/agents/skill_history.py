@@ -43,7 +43,6 @@ from django.utils import timezone
 
 from apps.canopy_sessions.invalidation import mark_dirty
 from apps.github_connect import github_app
-from apps.workspaces import permissions as perms
 
 from .models import Agent, SkillHistoryCommit, SkillHistorySync, SkillRevision
 from .skill_history_parse import LOG_FORMAT, build_groups, parse_log
@@ -413,6 +412,12 @@ def _display_name(user) -> str:
     return (user.get_full_name() or "").strip() or user.email or ""
 
 
+def _may_edit(viewer, agent: Agent) -> bool:
+    from . import access  # noqa: PLC0415 — access imports the harness, which imports this module
+
+    return access.may_edit_agent(viewer, agent)
+
+
 def history_payload(agent: Agent, viewer) -> dict:
     """The compact page payload: commits once, revisions as index tuples.
 
@@ -442,7 +447,7 @@ def history_payload(agent: Agent, viewer) -> dict:
         "credential_state": credential_state(agent),
         "owner_name": _display_name(agent.owner),
         "viewer_is_owner": agent.owner_id is not None and agent.owner_id == getattr(viewer, "pk", None),
-        "viewer_can_sync": perms.can(viewer, agent.workspace_id, perms.AGENT_WORK),
+        "viewer_can_sync": _may_edit(viewer, agent),
         "install_url": github_app.install_url() if github_app.is_configured() else "",
         "groups": row.groups if row else [],
         "checks": row.checks if row else {},

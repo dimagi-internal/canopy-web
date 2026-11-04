@@ -27766,6 +27766,11 @@ export interface components {
              */
             readonly is_admin: boolean;
             /**
+             * Can Edit Agent
+             * @default false
+             */
+            readonly can_edit_agent: boolean;
+            /**
              * Can Manage Admins
              * @default false
              */

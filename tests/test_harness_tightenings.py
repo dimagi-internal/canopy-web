@@ -19,7 +19,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.models import Agent, AgentAdmin
+from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -285,6 +285,7 @@ def test_an_editor_cannot_change_what_an_existing_agent_runs(world, field, value
 
 def test_an_editor_may_resend_the_stored_definition_and_edit_the_rest(world):
     _o, editor, _ws, agent = world
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=editor, role="editor")
     r = _upsert(_as(editor), description="new words", repo_url=agent.repo_url,
                 repo_ref=agent.repo_ref, runtime_secrets=agent.runtime_secrets)
     assert r.status_code == 201, r.content

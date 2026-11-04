@@ -17,7 +17,7 @@ from . import services
 from . import skill_history as history
 from .gates import (
     agent_for_read,
-    agent_for_work,
+    agent_for_edit,
 )
 from .schemas import (
     AgentSkillCatalogIn,
@@ -40,9 +40,9 @@ def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
 
 
 @router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",)
-@gate("agent.work", kind="content")
+@gate("agent-edit", kind="content")
 def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn) -> CountOut:
-    agent = agent_for_work(request, slug)
+    agent = agent_for_edit(request, slug)
     count = services.replace_skills(agent, payload.skills)
     return CountOut(count=count)
 
@@ -73,9 +73,9 @@ def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
 
 @router.post("/{slug}/skill-history/sync", response=SkillHistoryOut,
              summary="Re-read the agent's skill history from its repository now")
-@gate("agent.work", kind="content")
+@gate("agent-edit", kind="content")
 def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
-    agent = agent_for_work(request, slug)
+    agent = agent_for_edit(request, slug)
     history.sync(agent, force=True)
     return SkillHistoryOut(**history.history_payload(agent, request.user))
 
