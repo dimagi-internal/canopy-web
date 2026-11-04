@@ -144,6 +144,15 @@ describe('LocalAppDetailPage', () => {
     expect(screen.getByText('Install on another computer')).toBeTruthy()
   })
 
+  it('says so when installing here would move a copy from another workspace', async () => {
+    getApp.mockResolvedValue(APP)
+    listMine.mockResolvedValue([{ ...INSTALL, workspace: 'elsewhere' }])
+    open()
+    const picker = (await screen.findByLabelText('Computer')) as HTMLSelectElement
+    expect(picker.options[0].text).toBe('Jon laptop (moves it here from elsewhere)')
+    expect(screen.queryByTestId('local-app-installed')).toBeNull()
+  })
+
   it('accepting a new version sends the digest it was shown, after showing what changed', async () => {
     getApp.mockResolvedValue(APP)
     listMine.mockResolvedValueOnce([{
