@@ -5,6 +5,16 @@ import json
 from canopy_runner import emdash, transcript
 from canopy_runner import sessions as sessions_mod
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_closes_left_by_another_test():
+    """`_PENDING_CLOSED` is module state; a close queued by another test would be reported here."""
+    sessions_mod._PENDING_CLOSED.clear()
+    yield
+    sessions_mod._PENDING_CLOSED.clear()
+
 
 class _Cfg:
     session_tail_count = 30
