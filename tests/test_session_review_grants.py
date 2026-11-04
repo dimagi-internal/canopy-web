@@ -119,9 +119,9 @@ def test_only_the_person_grants_and_only_an_agent_of_their_workspaces(w):
 
 def test_the_agent_enumerates_only_its_own_granters(w):
     _let_in(w)
-    people = _as(w["trellis"].user).get("/api/people/session-reviewers/granted-to-me/").json()["people"]
+    people = _sweep(w["trellis"]).get("/api/people/session-reviewers/granted-to-me/").json()["people"]
     assert [(p["user_id"], p["email"]) for p in people] == [(w["lili"].pk, "lili@dimagi.com")]
-    assert _as(w["hal"].user).get("/api/people/session-reviewers/granted-to-me/").json() == {"people": []}
+    assert _sweep(w["hal"]).get("/api/people/session-reviewers/granted-to-me/").json() == {"people": []}
     assert _as(w["bo"]).get("/api/people/session-reviewers/granted-to-me/").json() == {"people": []}
 
 

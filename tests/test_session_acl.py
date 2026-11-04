@@ -136,7 +136,7 @@ def test_a_laptop_session_is_its_box_owner_s_alone():
 
 def test_a_coach_and_a_runner_admin_read_what_was_sent_and_nothing_more():
     people, s, _ws = _world()
-    # The coach's login reads inside a turn nobody asked for (a sweep): `_review_grantors`.
+    # The coach's login reads inside a turn nobody asked for (a sweep): `review_grantors`.
     setattr(people["coach"], "_canopy_turn_standing", turn_asker.Standing("t", unattended=True))
     for who in ("coach", "box_admin"):
         user = people[who]
