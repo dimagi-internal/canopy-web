@@ -178,7 +178,7 @@ function TurnRow({ turn, now, open, onToggle }: {
             ) : turn.job ? (
               <>
                 <p className="mb-1 text-xs text-muted-foreground">Job: {turn.job} from {turn.job_repo}</p>
-                <JobLog turnId={turn.id} resultNote={turn.result_note} />
+                <JobLog turnId={turn.id} resultNote={turn.result_note} status={turn.status} />
               </>
             ) : (
               <EventLedger turnId={turn.id} />

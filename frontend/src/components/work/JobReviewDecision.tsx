@@ -6,10 +6,11 @@ import { Markdown } from '@/components/Markdown'
 import type { TaskActionName } from '@/api/work'
 
 /**
- * The decision on the review a FAILED PLAIN JOB raises. There is no Start now: approving a
- * task starts a model turn on the agent, and a job runs no model — the server refuses it. What
- * you can do is run the job again (Run now on its schedule, reachable from here), or set the
- * review aside; a later good run closes it by itself.
+ * The decision on the review a PLAIN JOB that failed, was lost or was missed raises. There is no
+ * Start now: approving a task starts a model turn on the agent, and a job runs no model — the
+ * server refuses it. What you can do is run the job (Run now on its schedule, reachable from
+ * here), or set the review aside; a later good run closes it by itself. Run now on a job still
+ * running is refused in a sentence ("This job is still running."), shown here, and queues nothing.
  */
 export function JobReviewDecision({
   agentSlug,
@@ -81,7 +82,7 @@ export function JobReviewDecision({
       )}
       {started && (
         <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-          The job is queued to run again. A good run closes this on its own.
+          The job is queued. A good run closes this on its own.
         </p>
       )}
       {error && <p className="mt-1.5 text-[11.5px] text-destructive">{error}</p>}

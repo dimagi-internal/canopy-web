@@ -3476,7 +3476,8 @@ JOB_BROKER_DIR = RUNNER_HOME / "job-broker"
 
 def install_job_broker(*, run=subprocess.run) -> bool:
     """ROOT: `runner/ec2/job_broker.py` at this runner's sha into JOB_BROKER_DIR, then
-    `job_broker.py --install` (its own unit). Never raises: a box without it just reports no
+    `job_broker.py --install` (its own unit). `job_self_check.sh` goes beside it from the same
+    sha, for an operator to run as root. Never raises: a box without it just reports no
     jobs."""
     try:
         if not (pathlib.Path(CANOPY_WEB_REPO_DIR) / ".git").is_dir():
@@ -3488,6 +3489,12 @@ def install_job_broker(*, run=subprocess.run) -> bool:
                 JOB_BROKER_DIR.mkdir(mode=0o755, exist_ok=True)
                 (JOB_BROKER_DIR / "job_broker.py").write_text(got.stdout)
                 os.chmod(JOB_BROKER_DIR / "job_broker.py", 0o755)
+                check = _git_root("show", f"{ref}:runner/ec2/job_self_check.sh", run=run)
+                if check.returncode == 0 and check.stdout.strip():
+                    (JOB_BROKER_DIR / "job_self_check.sh").write_text(check.stdout)
+                    os.chmod(JOB_BROKER_DIR / "job_self_check.sh", 0o755)
+                else:
+                    _log(f"job broker: {ref} has no job_self_check.sh")
                 res = run(["/usr/bin/python3", str(JOB_BROKER_DIR / "job_broker.py"), "--install"],
                           capture_output=True, text=True, timeout=120)
                 return res.returncode == 0
@@ -7217,14 +7224,68 @@ def _job_can_run() -> bool:
     return True
 
 
+#: How often a running daemon asks `_job_can_run` again. Short of five minutes by the main
+#: loop's own POLL_SECONDS, so `--setup-runners` by hand or a stopped broker is believed within
+#: five minutes of happening, with no restart.
+JOB_CAP_TICK_SECONDS = 270
+_JOB_CAP_TICK_AT = 0.0
+#: What canopy-web last accepted from this daemon, so a refused PATCH is sent again.
+_JOB_CAP_REPORTED: bool | None = None
+
+
 def _apply_job_cap() -> None:
     """Set `RUNNER_CAPS["jobs"]` for this start. Reported only through the box's own
     device-key token (canopy-web drops `jobs` from any other credential), so this runs
     before the capabilities PATCH in `pair_or_load`. Absent while `JOBS_ENABLED` is off."""
+    global _JOB_CAP_REPORTED, _JOB_CAP_TICK_AT
     if JOBS_ENABLED:
-        RUNNER_CAPS["jobs"] = _job_can_run()
+        RUNNER_CAPS["jobs"] = _JOB_CAP_REPORTED = _job_can_run()
     else:
         RUNNER_CAPS.pop("jobs", None)
+    _JOB_CAP_TICK_AT = time.monotonic()
+
+
+def _send_job_cap() -> None:
+    """PATCH the capabilities as they stand, and remember what was accepted."""
+    global _JOB_CAP_REPORTED
+    said = RUNNER_CAPS.get("jobs")
+    status, _ = _api("PATCH", f"/runners/{_RUNNER_ID}",
+                     {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
+    if status == 200:
+        _JOB_CAP_REPORTED = said
+
+
+def _job_cap_refresh() -> None:
+    """Ask `_job_can_run` again, and tell canopy-web only if the answer changed. Only the box's
+    own device-key token is believed about `jobs`: with any other credential a PATCH would
+    change nothing and look as if it had, so the next tick tries again instead."""
+    can = _job_can_run()
+    if can == RUNNER_CAPS.get("jobs") and can == _JOB_CAP_REPORTED:
+        return
+    if can != RUNNER_CAPS.get("jobs"):
+        _log(f"jobs: this box {'can run them now' if can else 'stops reporting them'}")
+    RUNNER_CAPS["jobs"] = can
+    if not _RUNNER_ID or not _RUNNER_TOKEN["raw"] or _bearer() != _RUNNER_TOKEN["raw"]:
+        _log("jobs: can't say so without this box's own token; trying again next tick")
+        return
+    _send_job_cap()
+
+
+def _job_cap_tick() -> threading.Thread | None:
+    """The main loop's capability step, at most once per JOB_CAP_TICK_SECONDS. Its own thread:
+    a broker that doesn't answer can hold a call for minutes, and this thread is the heartbeat."""
+    global _JOB_CAP_TICK_AT
+    now = time.monotonic()
+    if not JOBS_ENABLED or (_JOB_CAP_TICK_AT and now - _JOB_CAP_TICK_AT < JOB_CAP_TICK_SECONDS):
+        return None
+    _JOB_CAP_TICK_AT = now
+    thread = threading.Thread(target=_job_cap_refresh, daemon=True, name="job-cap")
+    try:
+        thread.start()
+    except RuntimeError as exc:  # no thread to be had: the next tick tries again
+        _log(f"warn: could not check whether this box can run jobs: {exc}")
+        return None
+    return thread
 
 
 def _check_job_archive(data: bytes) -> None:
@@ -7348,16 +7409,16 @@ def _job_unlock(fd: int) -> None:
 
 
 def _job_drop_capability(why: str) -> None:
-    """A process of the job user survived: say so now. The capability is otherwise read only at this
-    runner's start, and canopy-web would go on handing it jobs that can only fail."""
+    """A process of the job user survived: say so now, rather than at the next `_job_cap_tick`,
+    or canopy-web would go on handing it jobs that can only fail. The broker says `wedged` until
+    the process has gone; then that tick reports jobs again."""
     if RUNNER_CAPS.get("jobs") is False:
         return
     _log(f"jobs: this box stops reporting them: {why}")
     RUNNER_CAPS["jobs"] = False
     if _RUNNER_ID:
         with contextlib.suppress(Exception):
-            _api("PATCH", f"/runners/{_RUNNER_ID}",
-                 {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
+            _send_job_cap()
 
 
 def _job_restart_sweep() -> None:
@@ -14522,6 +14583,7 @@ def run_over_rest(runner_id: str) -> None:
         _drain_mint(runner_id)
         _maybe_reread_credentials()
         _credential_tick()
+        _job_cap_tick()
         _drain_inbox(runner_id)
         if not claim_gate()[0]:
             time.sleep(POLL_SECONDS)
@@ -14758,6 +14820,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _drain_mint(runner_id)
                     _maybe_reread_credentials()
                     _credential_tick()
+                    _job_cap_tick()
                     _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()

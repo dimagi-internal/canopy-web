@@ -357,9 +357,12 @@ def job_refusal(runner: Runner, turn: Turn) -> str | None:
 
 
 def holds_a_job(runner: Runner) -> bool:
-    """Whether `runner` is executing a job now. Jobs share one Unix user on the box, so
-    it takes at most one at a time."""
-    return Turn.objects.filter(claimed_by=runner, status__in=EXECUTING).exclude(job="").exists()
+    """Whether `runner`'s machine is executing a job now. Jobs share one Unix user on the
+    box, so the MACHINE takes at most one at a time, whichever of its runners claimed it: a
+    second claim would only be refused by the broker, and fail with a review. A runner with
+    no `machine_id` ("not known", not "the same machine") answers for itself."""
+    held = Q(claimed_by__machine_id=runner.machine_id) if runner.machine_id else Q(claimed_by=runner)
+    return Turn.objects.filter(held, status__in=EXECUTING).exclude(job="").exists()
 
 
 # Rank = availability cascade (spec 2026-07-24-directed-runner-routing). A lower

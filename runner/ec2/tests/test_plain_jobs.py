@@ -421,6 +421,117 @@ def test_a_locked_runner_never_reports_jobs(can, monkeypatch):
     assert can._job_can_run() is False
 
 
+# ── the capability, after the start ─────────────────────────────────────────
+
+@pytest.fixture
+def ticking(can, monkeypatch, tmp_path):
+    """A started box signed in with its own device key, every PATCH recorded."""
+    (tmp_path / "job.lock").write_text("")
+    monkeypatch.setattr(can, "JOB_LOCK_FILE", tmp_path / "job.lock")
+    can._apply_job_cap()
+    assert can.RUNNER_CAPS["jobs"] is True
+    patched = []
+    monkeypatch.setattr(can, "_RUNNER_ID", "r1")
+    monkeypatch.setitem(can._RUNNER_TOKEN, "raw", "box-token")
+    monkeypatch.setitem(can._RUNNER_TOKEN, "exp", time.time() + 3600)
+    monkeypatch.setenv("CANOPY_DEVICE_KEY", "1")
+
+    def api(method, path, body=None, **kw):
+        patched.append((method, path, body))
+        return can._test_patch_status, {}
+
+    can._test_patch_status = 200
+    monkeypatch.setattr(can, "_api", api)
+    can._test_patched = patched
+    return can
+
+
+def _tick_due(mod):
+    mod._JOB_CAP_TICK_AT = 0.0
+    thread = mod._job_cap_tick()
+    assert thread is not None
+    thread.join(5)
+    assert not thread.is_alive()
+
+
+def test_a_stopped_broker_stops_reporting_jobs_on_the_tick(ticking, monkeypatch):
+    def gone(op, *a, **k):
+        raise ticking.JobRefused("not answering")
+
+    monkeypatch.setattr(ticking, "JOB_BROKER_START_WAIT", ())
+    monkeypatch.setattr(ticking, "_job_broker", gone)
+    _tick_due(ticking)
+    assert ticking.RUNNER_CAPS["jobs"] is False
+    assert [(m, p, b["capabilities"]["jobs"]) for m, p, b in ticking._test_patched] == [("PATCH", "/runners/r1", False)]
+
+
+def test_setup_by_hand_starts_reporting_jobs_on_the_tick_with_no_restart(ticking, monkeypatch):
+    ready = {"ok": False}
+    monkeypatch.setattr(ticking, "_job_user_exists", lambda: ready["ok"])
+    _tick_due(ticking)
+    assert ticking.RUNNER_CAPS["jobs"] is False and len(ticking._test_patched) == 1
+    ready["ok"] = True                 # `--setup-runners`, by hand
+    _tick_due(ticking)
+    assert ticking.RUNNER_CAPS["jobs"] is True
+    assert ticking._test_patched[-1][2]["capabilities"]["jobs"] is True
+
+
+def test_the_tick_patches_only_when_it_changed(ticking):
+    _tick_due(ticking)
+    _tick_due(ticking)
+    assert ticking._test_patched == []
+
+
+def test_the_tick_keeps_to_its_period(ticking, monkeypatch):
+    """Under five minutes end to end: the tick is checked every POLL_SECONDS."""
+    assert ticking.JOB_CAP_TICK_SECONDS + ticking.POLL_SECONDS <= 300
+    monkeypatch.setattr(ticking, "_job_can_run", lambda: pytest.fail("not due yet"))
+    ticking._JOB_CAP_TICK_AT = time.monotonic()
+    assert ticking._job_cap_tick() is None
+
+
+def test_a_refused_patch_is_sent_again_on_the_next_tick(ticking, monkeypatch):
+    monkeypatch.setattr(ticking, "_job_user_exists", lambda: False)
+    ticking._test_patch_status = 503
+    _tick_due(ticking)
+    ticking._test_patch_status = 200
+    _tick_due(ticking)
+    assert len(ticking._test_patched) == 2
+    _tick_due(ticking)
+    assert len(ticking._test_patched) == 2
+
+
+def test_a_drop_whose_patch_failed_is_sent_again_on_the_tick(ticking, monkeypatch):
+    monkeypatch.setattr(ticking, "_job_user_exists", lambda: False)
+    ticking._test_patch_status = 503
+    ticking._job_drop_capability("a process survived")
+    ticking._test_patch_status = 200
+    _tick_due(ticking)
+    assert len(ticking._test_patched) == 2 and ticking._test_patched[-1][2]["capabilities"]["jobs"] is False
+
+
+def test_the_tick_sends_nothing_without_the_boxs_own_token(ticking, monkeypatch):
+    """canopy-web believes `jobs` only from the box's device-key token: a person's PAT would be
+    a PATCH that changes nothing and looks as if it had."""
+    monkeypatch.setattr(ticking, "_bearer", lambda *a, **k: "a-persons-pat")
+    monkeypatch.setattr(ticking, "_job_user_exists", lambda: False)
+    _tick_due(ticking)
+    assert ticking._test_patched == []
+    assert ticking.RUNNER_CAPS["jobs"] is False
+
+
+def test_the_tick_is_off_while_the_switch_is_off(ticking, monkeypatch):
+    monkeypatch.setattr(ticking, "JOBS_ENABLED", False)
+    ticking._JOB_CAP_TICK_AT = 0.0
+    assert ticking._job_cap_tick() is None
+
+
+def test_both_main_loops_run_the_tick():
+    source = (EC2 / "cloud_runner.py").read_text()
+    main = source[source.index("def run_over_rest("):]
+    assert main.count("_credential_tick()\n") == main.count("_job_cap_tick()\n") >= 2
+
+
 def test_a_box_not_provisioned_never_reports_jobs(can, monkeypatch, tmp_path):
     (tmp_path / "job.lock").unlink()
     assert can._job_can_run() is False
@@ -1222,6 +1333,63 @@ def test_no_sudo_left_in_the_job_path():
 def test_runner_units_keep_no_new_privileges(cloud_runner):
     """The reason there is a broker at all: model turns stay unable to gain privilege."""
     assert "NoNewPrivileges=yes" in cloud_runner.SYSTEMD_UNITS["canopy-runner@.service"]
+
+
+SELF_CHECK_ON_A_BOX = "/opt/canopy-runner/job-broker/job_self_check.sh"
+
+
+def test_the_self_check_is_in_every_sha_path_list():
+    """A check that changes alone must reach a box, like the broker it checks."""
+    root = EC2.parent.parent
+    assert '"runner/ec2/job_self_check.sh"' in (EC2 / "update_runner.sh").read_text().split("SHA_PATHS=(", 1)[1].split(")", 1)[0]
+    assert " job_self_check.sh " in (EC2 / "up.sh").read_text().split("SHA_PATHS=(", 1)[1].split(")", 1)[0] + " "
+    workflow = (root / ".github" / "workflows" / "deploy-labs.yml").read_text()
+    paths = next(ln for ln in workflow.splitlines() if ln.strip().startswith('PATHS="'))
+    assert "runner/ec2/job_self_check.sh" in paths
+
+
+def test_every_doc_runs_the_self_check_where_it_is_installed():
+    root = EC2.parent.parent
+    for doc in (root / "docs/architecture/deploy.md", EC2 / "README.md", EC2 / "job_self_check.sh"):
+        text = doc.read_text()
+        assert f"sudo bash {SELF_CHECK_ON_A_BOX}" in text, doc
+        assert "/opt/canopy-web/runner/ec2/job_self_check.sh" not in text, doc
+
+
+def test_the_broker_install_puts_the_self_check_beside_it(runner, monkeypatch, tmp_path):
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    monkeypatch.setattr(runner, "CANOPY_WEB_REPO_DIR", str(tmp_path / "repo"))
+    monkeypatch.setattr(runner, "JOB_BROKER_DIR", tmp_path / "job-broker")
+    monkeypatch.setattr(runner, "build_info", lambda: {"sha": "abc"})
+    shown = []
+
+    def run(argv, **kw):
+        if "show" in argv:
+            shown.append(argv[-1])
+            return subprocess.CompletedProcess(argv, 0, stdout=f"# {argv[-1]}\n", stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    assert runner.install_job_broker(run=run) is True
+    # The same sha as the broker, never whatever the clone has checked out.
+    assert shown == ["abc:runner/ec2/job_broker.py", "abc:runner/ec2/job_self_check.sh"]
+    check = tmp_path / "job-broker" / "job_self_check.sh"
+    assert check.read_text() == "# abc:runner/ec2/job_self_check.sh\n"
+    assert check.stat().st_mode & 0o777 == 0o755
+
+
+def test_a_sha_without_the_self_check_still_installs_the_broker(runner, monkeypatch, tmp_path):
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    monkeypatch.setattr(runner, "CANOPY_WEB_REPO_DIR", str(tmp_path / "repo"))
+    monkeypatch.setattr(runner, "JOB_BROKER_DIR", tmp_path / "job-broker")
+    monkeypatch.setattr(runner, "build_info", lambda: {"sha": "abc"})
+    monkeypatch.setattr(runner, "_log", lambda *a, **k: None)
+
+    def run(argv, **kw):
+        missing = "show" in argv and argv[-1].endswith("job_self_check.sh")
+        return subprocess.CompletedProcess(argv, 128 if missing else 0, stdout="" if missing else "# x\n", stderr="")
+
+    assert runner.install_job_broker(run=run) is True
+    assert (tmp_path / "job-broker" / "job_broker.py").exists()
 
 
 def test_the_broker_ships_as_the_runner_does():

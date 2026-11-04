@@ -207,3 +207,22 @@ def test_an_admin_can_run_a_job_now_and_an_editor_an_ordinary_schedule(w):
     plain = AgentSchedule.objects.create(agent=w["agent"], name="plain", prompt="/hal:turn",
                                          cron="0 9 * * 5", created_by=w["ed"])
     assert _c(w["ed"]).post(f"/api/agents/hal/triggers/{plain.pk}/run-now").status_code in (200, 202)
+
+
+@pytest.mark.parametrize("route", ["triggers", "schedules"])
+def test_run_now_while_the_job_runs_is_refused_in_a_sentence(w, route):
+    runner = Runner.objects.create(
+        name="c1", kind=Runner.CLOUD, host="c1", owner=w["boss"], workspace_id=w["ws"].pk,
+        status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={"sessions": True, "jobs": True})
+    RunnerAssignment.objects.create(agent=w["agent"], runner=runner, rank=0)
+    sched = AgentSchedule.objects.create(agent=w["agent"], name="N", prompt="", cron="0 9 * * *",
+                                         job="sync", job_repo="hal-jobs", routing=Turn.CLOUD_ONLY,
+                                         grace_minutes=125, created_by=w["boss"])
+    schedule_turns.fire_schedule(sched, SLOT)
+    Turn.objects.update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    assert claim.claim_next_turn(runner) is not None
+    count = Turn.objects.count()
+    r = _c(w["boss"]).post(f"/api/agents/hal/{route}/{sched.pk}/run-now")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "This job is still running."
+    assert Turn.objects.count() == count and not Turn.objects.filter(status=Turn.MISSED).exists()

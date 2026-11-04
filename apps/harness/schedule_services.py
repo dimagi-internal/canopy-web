@@ -61,6 +61,10 @@ class DuplicateScheduleName(Exception):
         self.name = name
 
 
+#: Run now on a job whose last run is still going; `run_schedule_now` lets it through.
+JobStillRunning = schedule_turns.JobStillRunning
+
+
 class TriggerStopped(Exception):
     """Run now on a trigger whose creator lost the right to it (`triggers.refusal`)."""
 
@@ -372,6 +376,10 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
         "fire_after": fire_after,
         "next_runs": next_runs,
         "last_status": latest.status if latest else "",
+        # Only this sentence, never `result_note`: a job's note holds what it printed.
+        "missed_reason": (schedule_turns.JOB_NOT_TAKEN_NOTE
+                          if latest and latest.job and latest.status == Turn.MISSED
+                          and latest.result_note == schedule_turns.JOB_NOT_TAKEN_NOTE else ""),
         "created_by_email": schedule.created_by.email if schedule.created_by_id else None,
         "created_at": schedule.created_at,
         "updated_at": schedule.updated_at,

@@ -141,6 +141,9 @@ export function TriggersSection(): JSX.Element {
                         Waiting for a cloud machine that can run jobs.
                       </span>
                     )}
+                    {row.job && row.missed_reason && (
+                      <span className="block text-[11px] text-warning">{row.missed_reason}</span>
+                    )}
                     {row.created_by_email && (
                       <span className="block text-[11px] text-muted-foreground">set up by {row.created_by_email}</span>
                     )}

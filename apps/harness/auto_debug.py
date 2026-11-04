@@ -222,14 +222,16 @@ def on_turn_failed(turn: Turn) -> None:
 def _on_turn_failed(turn: Turn) -> None:
     if not getattr(settings, "CANOPY_AUTO_DEBUG", False):
         return
+    if turn.job:
+        # A job failing, lost or missed is told to the schedule's people by its nag, and
+        # no debugger turn is started: exiting non-zero is the job's own answer, and a job
+        # has no model and no transcript for a debugger to read, whatever
+        # CANOPY_AUTO_DEBUG_LOST says about turns.
+        return
     if turn.status == Turn.LOST:
         if not getattr(settings, "CANOPY_AUTO_DEBUG_LOST", False):
             return
     elif turn.status != Turn.FAILED:
-        return
-    if turn.job and turn.status == Turn.FAILED:
-        # A job exiting non-zero is the job's own answer, not a fault in canopy: the
-        # schedule's people are told by its nag, and no debugger turn is started.
         return
     if is_debug_turn(turn):
         # The debugger's own turn failed. Record it; NEVER start another.

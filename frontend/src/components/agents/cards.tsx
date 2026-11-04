@@ -211,7 +211,7 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
         )}
         {open && (
           <div className="mt-4 space-y-3 border-t border-border pt-3">
-            {isJob && <JobLog turnId={turn.id} resultNote={turn.result_note ?? ''} />}
+            {isJob && <JobLog turnId={turn.id} resultNote={turn.result_note ?? ''} status={turn.status} />}
             {!isJob && promptHasMore(turn) && (
               <div>
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Prompt</p>

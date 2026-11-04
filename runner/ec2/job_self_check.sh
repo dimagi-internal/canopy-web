@@ -2,7 +2,7 @@
 # Prove, on a real box, what the tests can't: that a plain job's unit is refused everything
 # it must not reach. Run once as root, after the box's setup has run:
 #
-#   sudo bash /opt/canopy-web/runner/ec2/job_self_check.sh
+#   sudo bash /opt/canopy-runner/job-broker/job_self_check.sh
 #
 # It starts real units through the job broker, as a runner's uid, and what's inside them
 # reports what it could reach. It reads no secret's content (a refused read is the pass) and

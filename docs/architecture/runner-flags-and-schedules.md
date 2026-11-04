@@ -205,11 +205,12 @@ print(json.load(urllib.request.urlopen(req))["records"])
 An agent with no such connection has no file; a job should say so plainly and exit non-zero.
 
 **Output and ending.** What the job prints streams to its turn as `status` events
-(`{source: "job", text}`), and the turn's page shows it as a plain log, with the exit and the last
+(`{source: "job", text}`), and the turn's page shows it as a plain log, refreshed while the job runs, with the exit and the last
 lines under it (`result_note`); there is no chat and no transcript. Output is scrubbed of the
 exact token values and capped at 1 MB. A non-zero exit is `FAILED` and is **never retried** (a job
 may have written); so is a timeout, which kills everything of its user. A failed, lost or
-released job raises a review task on **Waiting on you** with the last lines it printed. It has no
+missed job raises a review task on **Waiting on you**, with the last lines it printed if it failed
+and canopy's reason otherwise. None of them starts a debugger turn. It has no
 Start now (that would start a model turn): the task offers **Run now**, and a later good run
 closes it.
 
@@ -226,14 +227,27 @@ repo's packages. The job's own script installs what it needs into its `HOME` (fo
 download time counts against `timeout_minutes`, and nothing persists between runs.
 
 **One job per machine at a time.** Jobs share one Unix user, so a box never starts a second beside
-the first. A job turn waits in the queue ("Waiting for a cloud machine that can run jobs." on its
-schedule) until a box that takes jobs is free. The box backs this up: in the rare race where two
-runners claim at once, the second fails with "Another job is running on this machine." and
-touches nothing.
+the first, whichever of its runners would claim it: canopy-web compares machines (`machine_id`;
+each fleet member is its own, and a runner with none answers for itself). The box backs this up: in
+the rare race where two runners claim at once, the second fails with "Another job is running on
+this machine." and touches nothing.
+
+**How long a job waits.** A slot waits in the queue ("Waiting for a cloud machine that can run
+jobs." on its schedule) for **up to 30 minutes** past its slot, for a box that takes jobs to be
+free. Then it is skipped as `MISSED` with the reason "No cloud machine that can run jobs took it in
+time.", which its row shows and a review task on **Waiting on you** repeats (if the schedule
+notifies the inbox); the next slot fires as usual. An `always_run` schedule doesn't skip, and waits
+until its next slot replaces it; so does a slot whose next one comes within the 30 minutes. A
+one-off, or a **Run now**, has no next slot and waits until a box takes it.
+
+**Run now while the job runs** is refused (409, "This job is still running."): nothing is queued
+and nothing is recorded. A new SLOT in that time is recorded as `MISSED`, with no review, and the
+running job carries on.
 
 **Boxes that don't take jobs.** A **sensitive-data** runner never reports `jobs`, and nor does a
 box with **any egress-locked runner**, from any of its runners, so a job never fails on its first
 network call. Nor does a box that predates jobs or lacks the `canopy-job` user and its broker
-(`--setup-runners` makes them). If no box can take a job, the turn is listed as a queued turn no
-runner can claim, with that reason, and the schedule says "Waiting for a cloud machine that can
-run jobs."
+(`--setup-runners` makes them). A runner asks again every few minutes, so a change to any of these
+takes effect within 5 minutes with no restart. If no box can take a job, the turn is listed as a
+queued turn no runner can claim, with that reason, and the schedule says "Waiting for a cloud
+machine that can run jobs." for as long as it waits (§ How long a job waits, above).

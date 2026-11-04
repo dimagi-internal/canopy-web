@@ -74,6 +74,11 @@ def _stopped(exc: ss.TriggerStopped) -> ProblemError:
                         detail=f"this trigger may not fire: {exc.reason}")
 
 
+def _job_running(exc: ss.JobStillRunning) -> ProblemError:
+    """Run now on a job still running -> 409, in the sentence the person reads."""
+    return ProblemError(409, "Job still running", type_=TYPE_CONFLICT, detail=str(exc))
+
+
 def _duplicate_name(name: str) -> ProblemError:
     """uniq_agent_schedule_name -> 409, the repo's convention for a uniqueness
     violation (apps/projects/api.py, apps/workspaces/api.py)."""
@@ -220,6 +225,8 @@ def run_schedule_now(request: HttpRequest, slug: str, schedule_id: int) -> Statu
         raise _forbidden(exc) from None
     except ss.TriggerStopped as exc:
         raise _stopped(exc) from None
+    except ss.JobStillRunning as exc:
+        raise _job_running(exc) from None
     return Status(202, ScheduleOut(**ss.serialize_schedule(schedule)))
 
 
@@ -303,7 +310,7 @@ def delete_trigger(request: HttpRequest, slug: str, trigger_id: int) -> Status:
 @gate("agent.work", "agent-admin", kind="action")
 def run_trigger_now(request: HttpRequest, slug: str, trigger_id: int) -> Status:
     """Cron triggers only — mail is what fires an inbound_mail trigger (404 here).
-    409 when its creator lost the right to it."""
+    409 when its creator lost the right to it, or when it is a job still running."""
     try:
         trigger = ss.run_schedule_now(request.user, slug, trigger_id, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
@@ -312,4 +319,6 @@ def run_trigger_now(request: HttpRequest, slug: str, trigger_id: int) -> Status:
         raise _forbidden(exc) from None
     except ss.TriggerStopped as exc:
         raise _stopped(exc) from None
+    except ss.JobStillRunning as exc:
+        raise _job_running(exc) from None
     return Status(202, TriggerOut(**ss.serialize_trigger(trigger)))

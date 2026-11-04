@@ -24,7 +24,7 @@ describe('JobReviewDecision', () => {
     expect(screen.getByText('The job failed.')).toBeTruthy()
     fireEvent.click(await screen.findByText('Run now'))
     await waitFor(() => expect(runTriggerNow).toHaveBeenCalledWith('hal', 7))
-    expect(await screen.findByText(/queued to run again/i)).toBeTruthy()
+    expect(await screen.findByText('The job is queued. A good run closes this on its own.')).toBeTruthy()
     fireEvent.click(screen.getByText('Decline'))
     expect(onAct).toHaveBeenCalledWith('decline')
   })
@@ -34,6 +34,16 @@ describe('JobReviewDecision', () => {
     render(<JobReviewDecision agentSlug="hal" scheduleId={7} askBody="" onAct={vi.fn()} />)
     fireEvent.click(await screen.findByText('Run now'))
     expect(await screen.findByText('Only an admin of hal can change a job.')).toBeTruthy()
+  })
+
+  it('says the job is still running when Run now is refused for that, and not that it queued', async () => {
+    runTriggerNow.mockRejectedValueOnce(new Error('This job is still running.'))
+    render(<JobReviewDecision agentSlug="hal" scheduleId={7} askBody="" onAct={vi.fn()} />)
+    fireEvent.click(await screen.findByText('Run now'))
+    expect(await screen.findByText('This job is still running.')).toBeTruthy()
+    expect(screen.queryByText(/queued/i)).toBeNull()
+    // It can be pressed again once the run has finished.
+    expect((screen.getByText('Run now') as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('does not offer Run now to someone who is not an admin, and says why', async () => {

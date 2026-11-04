@@ -249,7 +249,7 @@ A runner runs under `NoNewPrivileges`, so it can't become `canopy-job` to run a 
 loosening that would loosen every model turn. `runner/ec2/job_broker.py` (root,
 `/run/canopy-jobs/sock`, uid from `SO_PEERCRED`, like the other two) does only `status`, `export`,
 `write_token`, `start`, `stop` and `cleanup`; no request can name a path, a user or a property.
-`start` is one sandboxed `systemd-run` unit. `cloud_runner.py --setup-runners` copies it to
+`start` is one sandboxed `systemd-run` unit. `cloud_runner.py --setup-runners` copies it and `job_self_check.sh` to
 `/opt/canopy-runner/job-broker/` and runs `job_broker.py --install`. What it isolates, and what
 it doesn't, is in `runner/ec2/README.md` § Plain jobs. How a job is written, set up on a schedule and
 read by its author is in [runner-flags-and-schedules.md](runner-flags-and-schedules.md) § Plain jobs; the

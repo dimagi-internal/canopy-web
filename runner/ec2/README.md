@@ -857,7 +857,7 @@ ever not apply):
 without systemd). Run this once as root on a new box, and after any change to its setup:
 
 ```bash
-sudo bash /opt/canopy-web/runner/ec2/job_self_check.sh
+sudo bash /opt/canopy-runner/job-broker/job_self_check.sh
 ```
 
 It starts real units through the broker, as a runner's uid, and prints PASS or FAIL per line for

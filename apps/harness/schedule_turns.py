@@ -136,8 +136,16 @@ STILL_RUNNING_NOTE = "the previous run was still going, so this one was not star
 def _job_running(schedule) -> bool:
     """A job schedule whose last run is still executing. A new slot must not retire it:
     its box would read as free, take another job, and the first's cleanup would kill the
-    second (jobs share one Unix user). The new slot is recorded as missed instead."""
+    second (jobs share one Unix user). A new slot is recorded as missed instead, and Run now
+    is refused."""
     return bool(schedule.job) and _occurrences(schedule).filter(status__in=EXECUTING).exists()
+
+
+class JobStillRunning(Exception):
+    """Run now on a job whose last run is still going. Nothing was queued or retired."""
+
+    def __init__(self) -> None:
+        super().__init__("This job is still running.")
 
 
 def _skip_if_running(turn: Turn, was_running: bool) -> Turn:
@@ -239,6 +247,9 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
 
     A project check-in's schedule announces now instead (returns None) —
     pressing Run now never reads the channel; the lead's Confirm does.
+
+    A job whose last run is still going is refused (`JobStillRunning`): it can't be
+    retired (`_job_running`), and a press of the button is not a slot to record as missed.
     """
     from .services import enqueue_turn  # services.py imports this module
 
@@ -248,10 +259,10 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
         return None
 
     with transaction.atomic():
-        running = _job_running(schedule)
-        supersede_open_turns(schedule, reason="superseded by a manual run",
-                             spare_executing=running)
-        turn, created = enqueue_turn(
+        if _job_running(schedule):
+            raise JobStillRunning()
+        supersede_open_turns(schedule, reason="superseded by a manual run")
+        turn, _created = enqueue_turn(
             agent=schedule.agent,
             origin=Turn.ORIGIN_CANOPY_SCHEDULER,
             idempotency_key=f"sched:{schedule.id}:manual:{uuid.uuid4()}",
@@ -266,8 +277,6 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
             # button, which is the reason it ran now.
             provenance_extra={"clicked_by": getattr(clicked_by, "email", "") or ""},
         )
-        if created:
-            turn = _skip_if_running(turn, running)
     return turn
 
 
@@ -312,6 +321,9 @@ def release_stale_occurrence_turns(schedule, *, now: dt.datetime | None = None) 
 #: is skipped as MISSED rather than run, unless its schedule is `always_run`.
 LATE_SLOT_WINDOW_MINUTES = 30
 
+#: Why a job's slot was skipped as late: its review says it, and its row (`missed_reason`).
+JOB_NOT_TAKEN_NOTE = "No cloud machine that can run jobs took it in time."
+
 
 def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
     """Retire QUEUED slot turns that could not start within LATE_SLOT_WINDOW_MINUTES
@@ -328,6 +340,10 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
     Manual "Run now" turns carry no slot and are never touched; `always_run`
     schedules opt out. MISSED with no nag: skipping is the designed outcome, not
     an unattended turn that needs a human.
+
+    A JOB is the exception, because a person chose it to run unattended and its slot
+    not running says something is wrong: nothing that can run jobs took it. It raises
+    the review any missed job does, saying so (`JOB_NOT_TAKEN_NOTE`).
     """
     from .services import finish_turn  # services.py imports this module
 
@@ -339,7 +355,7 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
     queued = [
         t for t in Turn.objects.filter(
             status=Turn.QUEUED, origin=Turn.ORIGIN_CANOPY_SCHEDULER
-        ).only("id", "origin_ref", "status")
+        ).only("id", "origin_ref", "status", "job")
         # A check-in run's turn is queued when the lead confirms, hours after
         # its slot by design — the slot dates the announcement, not the turn.
         if not t.origin_ref.get("manual") and t.origin_ref.get("kind") not in ("checkin_run", "huddle_group_run")
@@ -367,6 +383,11 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
         if slot >= cutoff:
             continue
         late = int((now - slot).total_seconds() // 60)
+        if turn.job:
+            finish_turn(turn, status=Turn.MISSED, allow_queued=True, result_note=JOB_NOT_TAKEN_NOTE)
+            job_ended_badly(turn)
+            count += 1
+            continue
         finish_turn(
             turn, status=Turn.MISSED, allow_queued=True,
             result_note=f"skipped: not started within {LATE_SLOT_WINDOW_MINUTES}m of "
@@ -471,8 +492,11 @@ def _raise_job_nag(schedule, turn: Turn) -> None:
     tail = "\n".join(lines)[-800:]
     body = (f"The job “{schedule.job}” from {schedule.job_repo}, run by “{schedule.name}”, "
             f"{ended}.")
-    if tail:
+    if tail and turn.status == Turn.FAILED:
         body += f"\n\nThe last lines it printed:\n{tail}"
+    elif tail:
+        # A lost or missed job's note is canopy's own sentence: nothing the job printed.
+        body += f"\n\n{tail}"
     body += ("\n\nOpen the schedule and press Run now to try it again once it is fixed; "
              "a later successful run closes this.")
     agent_services.create_tasks(schedule.agent, [{
@@ -487,8 +511,9 @@ def _raise_job_nag(schedule, turn: Turn) -> None:
 
 
 def job_ended_badly(turn: Turn) -> None:
-    """Called when a job turn ends FAILED or LOST (a grace release calls the nag
-    itself): tell the people who own the schedule. Never raises into a close."""
+    """Called when a job turn ends FAILED or LOST, or its slot is skipped as late (a grace
+    release calls the nag itself): tell the people who own the schedule. Never raises into a
+    close."""
     sid = (turn.origin_ref or {}).get("schedule_id")
     schedule = AgentSchedule.objects.filter(pk=sid).select_related("agent").first() if sid else None
     if schedule is None or not schedule.job:

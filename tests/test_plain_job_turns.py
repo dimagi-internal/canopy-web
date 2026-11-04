@@ -286,6 +286,41 @@ def test_one_job_at_a_time_per_box(w):
     assert claim.claim_next_turn(new) == third
 
 
+def _on_machine(runner, machine):
+    Runner.objects.filter(pk=runner.pk).update(machine_id=machine)
+    runner.refresh_from_db()
+    return runner
+
+
+def test_one_job_at_a_time_per_machine_not_per_runner(w):
+    """Runners on one box share `canopy-job`, so the rule is the machine's: the second runner
+    must not claim a job only for the broker to fail it with a review."""
+    one = _on_machine(_box(w, "box-1", caps={"jobs": True}), "role/i-1")
+    two = _on_machine(_box(w, "box-2", caps={"jobs": True}), "role/i-1")
+    elsewhere = _on_machine(_box(w, "fleet-member", caps={"jobs": True}), "role/i-2")
+    first = _job_turn(w, "a")
+    second = _job_turn(w, "b")
+    assert claim.claim_next_turn(one) == first
+    assert claim.claim_next_turn(two) is None
+    # A fleet member is its own machine.
+    assert claim.claim_next_turn(elsewhere) == second
+    harness.finish_turn(Turn.objects.get(pk=first.pk), status=Turn.DONE)
+    third = _job_turn(w, "c")
+    assert claim.claim_next_turn(two) == third
+
+
+def test_a_runner_with_no_machine_id_answers_only_for_itself(w):
+    """"" means "not known", not "the same machine": two of them are not one box."""
+    one = _box(w, "unknown-1", caps={"jobs": True})
+    two = _box(w, "unknown-2", caps={"jobs": True})
+    first = _job_turn(w, "a")
+    second = _job_turn(w, "b")
+    assert (one.machine_id, two.machine_id) == ("", "")
+    assert claim.claim_next_turn(one) == first
+    assert claim.claim_next_turn(one) is None
+    assert claim.claim_next_turn(two) == second
+
+
 def test_a_box_running_a_job_still_takes_ordinary_turns(w):
     new = _box(w, "new-cloud", caps={"jobs": True})
     job = _job_turn(w)
@@ -511,6 +546,70 @@ def test_a_lost_job_and_a_grace_released_job_raise_a_review(w):
     assert len(nags) == 1 and not nags[0].on_approve
 
 
+NO_MACHINE = "No cloud machine that can run jobs took it in time."
+
+
+def _past_the_window():
+    return SLOT + WINDOW + dt.timedelta(minutes=1)
+
+
+def test_a_late_skipped_job_raises_a_review_with_the_reason_and_the_row_says_it(w):
+    from apps.harness.schedule_services import serialize_trigger
+
+    sched = _job_schedule(w)
+    turn, _ = schedule_turns.fire_schedule(sched, SLOT)
+    assert serialize_trigger(sched)["missed_reason"] == ""
+    assert schedule_turns.skip_late_scheduled_turns(now=_past_the_window()) == 1
+    turn.refresh_from_db()
+    assert turn.status == Turn.MISSED and turn.result_note == NO_MACHINE
+    nags = _job_nag(sched)
+    assert len(nags) == 1 and not nags[0].on_approve
+    assert NO_MACHINE in nags[0].ask_body and "Run now" in nags[0].ask_body
+    # Canopy's own sentence is not something the job printed.
+    assert "last lines it printed" not in nags[0].ask_body
+    row = serialize_trigger(AgentSchedule.objects.get(pk=sched.pk))
+    assert row["last_status"] == Turn.MISSED and row["missed_reason"] == NO_MACHINE
+    # The next occurrence replaces the reason.
+    schedule_turns.fire_schedule(sched, SLOT + dt.timedelta(days=1))
+    assert serialize_trigger(AgentSchedule.objects.get(pk=sched.pk))["missed_reason"] == ""
+
+
+def test_a_late_skipped_job_opted_out_of_the_inbox_raises_nothing(w):
+    sched = _job_schedule(w, notify=[])
+    schedule_turns.fire_schedule(sched, SLOT)
+    assert schedule_turns.skip_late_scheduled_turns(now=_past_the_window()) == 1
+    assert _job_nag(sched) == []
+
+
+def test_an_always_run_job_keeps_waiting_past_the_window(w):
+    sched = _job_schedule(w, always_run=True)
+    turn, _ = schedule_turns.fire_schedule(sched, SLOT)
+    assert schedule_turns.skip_late_scheduled_turns(now=_past_the_window()) == 0
+    turn.refresh_from_db()
+    assert turn.status == Turn.QUEUED and _job_nag(sched) == []
+
+
+def test_a_late_skipped_ordinary_slot_still_raises_nothing(w):
+    """Skipping stays the designed outcome for a turn; only a job's owner is told."""
+    sched = AgentSchedule.objects.create(agent=w["agent"], name="brief", prompt="/hal:turn",
+                                         cron="0 9 * * *", created_by=w["user"])
+    schedule_turns.fire_schedule(sched, SLOT)
+    assert schedule_turns.skip_late_scheduled_turns(now=_past_the_window()) == 1
+    assert _job_nag(sched) == []
+
+
+def test_a_grace_released_jobs_note_is_not_called_its_output(w):
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    sched = _job_schedule(w)
+    schedule_turns.fire_schedule(sched, SLOT)
+    Turn.objects.update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    got = claim.claim_next_turn(new)
+    schedule_turns.release_stale_occurrence_turns(
+        sched, now=got.claimed_at + dt.timedelta(minutes=sched.grace_minutes + 1))
+    body = _job_nag(sched)[0].ask_body
+    assert "released after 125m unattended" in body and "last lines it printed" not in body
+
+
 def test_a_job_that_opts_out_of_the_inbox_raises_no_review(w):
     new = _box(w, "new-cloud", caps={"jobs": True})
     sched = _job_schedule(w, notify=[])
@@ -544,6 +643,33 @@ def test_a_failing_job_starts_no_debugger_turn(w, settings):
     assert looked.called
 
 
+@pytest.mark.parametrize("ending", [Turn.LOST, Turn.MISSED])
+def test_a_lost_or_missed_job_starts_no_debugger_turn_with_lost_on(w, settings, ending):
+    """A job's ending is told by its review; `CANOPY_AUTO_DEBUG_LOST` is for turns, which a
+    debugger can read. (A job has no transcript and runs no model.)"""
+    from unittest import mock
+
+    from apps.harness import auto_debug, turn_close
+
+    settings.CANOPY_AUTO_DEBUG = True
+    settings.CANOPY_AUTO_DEBUG_LOST = True
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    _job_turn(w)
+    got = claim.claim_next_turn(new)
+    with mock.patch.object(auto_debug, "_note_for", return_value="box gone") as looked:
+        turn_close.close_turn(got, ending, "box gone", from_states=Turn.NON_TERMINAL)
+        auto_debug._on_turn_failed(Turn.objects.get(pk=got.pk))
+    looked.assert_not_called()
+    # Control: the same ending of an ordinary turn does reach it, when it is LOST.
+    if ending == Turn.LOST:
+        ordinary = _ordinary_turn(w)
+        again = claim.claim_next_turn(new)
+        assert again.pk == ordinary.pk
+        with mock.patch.object(auto_debug, "_note_for", return_value="box gone") as looked:
+            turn_close.close_turn(again, Turn.LOST, "box gone", from_states=Turn.NON_TERMINAL)
+        assert looked.called
+
+
 def test_a_new_slot_never_supersedes_a_running_job(w):
     new = _box(w, "new-cloud", caps={"jobs": True})
     sched = _job_schedule(w)
@@ -554,8 +680,13 @@ def test_a_new_slot_never_supersedes_a_running_job(w):
     running.refresh_from_db()
     assert running.status == Turn.CLAIMED                    # the job carries on
     assert second.status == Turn.MISSED and "still going" in second.result_note
-    manual = schedule_turns.run_schedule_now(sched)
-    assert manual.status == Turn.MISSED and "still going" in manual.result_note
+    # Run now is refused outright: pressing it must not leave a MISSED turn behind.
+    before = Turn.objects.count()
+    with pytest.raises(schedule_turns.JobStillRunning, match="This job is still running."):
+        schedule_turns.run_schedule_now(sched)
+    assert Turn.objects.count() == before
+    running.refresh_from_db()
+    assert running.status == Turn.CLAIMED
     # The box still counts as busy, so it takes no other job.
     _job_turn(w, "other")
     assert claim.claim_next_turn(new) is None

@@ -45,6 +45,15 @@ describe('TriggersSection plain jobs', () => {
     expect(await screen.findByText('Job: sync-leads from hal-jobs')).toBeTruthy()
   })
 
+  it("shows why a job's slot was missed", async () => {
+    const why = 'No cloud machine that can run jobs took it in time.'
+    listTriggers.mockResolvedValueOnce([
+      row({ job: 'sync-leads', job_repo: 'hal-jobs', last_status: 'missed', missed_reason: why }),
+    ])
+    render(<TriggersSection />)
+    expect(await screen.findByText(why)).toBeTruthy()
+  })
+
   it('says a job is waiting for a machine that can run jobs when it is queued', async () => {
     listTriggers.mockResolvedValueOnce([row({ job: 'sync-leads', job_repo: 'hal-jobs', last_status: 'queued' })])
     render(<TriggersSection />)

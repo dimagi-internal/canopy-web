@@ -7724,7 +7724,7 @@ export interface paths {
         /**
          * Fire a cron trigger off-cycle, now
          * @description Cron triggers only — mail is what fires an inbound_mail trigger (404 here).
-         *     409 when its creator lost the right to it.
+         *     409 when its creator lost the right to it, or when it is a job still running.
          */
         readonly post: operations["run_trigger_now"];
         readonly delete?: never;
@@ -32958,6 +32958,11 @@ export interface components {
              * @default
              */
             readonly last_status: string;
+            /**
+             * Missed Reason
+             * @default
+             */
+            readonly missed_reason: string;
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**
@@ -33190,6 +33195,11 @@ export interface components {
              * @default
              */
             readonly last_status: string;
+            /**
+             * Missed Reason
+             * @default
+             */
+            readonly missed_reason: string;
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**

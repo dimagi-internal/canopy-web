@@ -134,6 +134,8 @@ class ScheduleOut(Schema):
     fire_after: dt.datetime
     next_runs: list[dt.datetime] = []
     last_status: str = ""
+    # Why a job's last slot didn't run, when that's known ("" otherwise).
+    missed_reason: str = ""
     created_by_email: str | None = None  # who set it up (null for pre-attribution rows)
     created_at: dt.datetime
     updated_at: dt.datetime
