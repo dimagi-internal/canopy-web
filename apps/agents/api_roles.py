@@ -56,15 +56,22 @@ def _role_or_404(ws: Workspace, key: str) -> AgentRole:
     return row
 
 
-def _out(row: AgentRole, request: HttpRequest, use: dict | None = None) -> AgentRoleOut:
+def _out(row: AgentRole, request: HttpRequest, use: dict | None = None, *,
+         editable: set[str] | None = None) -> AgentRoleOut:
     base = api_access_list.role_out(row)
     use = use if use is not None else roleadmin.usage(row)
+    if editable is None:
+        editable = _editable(request)
     return AgentRoleOut(
         key=row.key, label=row.label, description=row.description, permissions=base.permissions,
         can=base.can, defined_on=row.workspace_id, builtin=row.builtin, contains_write=base.contains_write,
         in_use=AgentRoleUseOut(**use),
-        can_edit=perms.can(request.user, row.workspace_id, perms.MEMBERS_MANAGE)
-        if row.workspace_id in wsvc.request_member_slugs(request) else False)
+        can_edit=row.workspace_id in editable)
+
+
+def _editable(request: HttpRequest) -> set[str]:
+    """The workspaces, of those this request may act in, whose roles the caller may define."""
+    return perms.slugs_with(request.user, perms.MEMBERS_MANAGE, within=set(wsvc.request_member_slugs(request)))
 
 
 def _need_rights(request: HttpRequest, ws: Workspace, *, before=None, after=None) -> bool:
@@ -111,9 +118,11 @@ def list_agent_roles(request: HttpRequest, slug: str) -> AgentRolesOut:
         n_defaults=Count("lines", filter=Q(lines__agent__isnull=True))).values(
         "pk", "n_lines", "n_agents", "n_defaults")}
     out = []
+    editable = _editable(request)
     for row in visible:
         c = counts[row.pk]
-        out.append(_out(row, request, {"lines": c["n_lines"], "agents": c["n_agents"], "defaults": c["n_defaults"]}))
+        out.append(_out(row, request, {"lines": c["n_lines"], "agents": c["n_agents"], "defaults": c["n_defaults"]},
+                        editable=editable))
     return AgentRolesOut(
         roles=out,
         fixed=[FixedRoleOut(key=r, label=r.title(), can=api_access_list.role_can(r), why=_FIXED_WHY[r])
@@ -206,18 +215,21 @@ def delete_agent_role(request: HttpRequest, slug: str, key: str, reassign_to: st
     ws = _workspace_or_404(request, slug)
     row = _role_or_404(ws, key)
     driving = _need_rights(request, ws, before=_closed(row))
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-    else:
-        _machine_may_not(request, driving)
     target = None
     if reassign_to:
         target = rolecatalog.find(ws.slug, reassign_to)
         if target is None:
             raise HttpError(404, f"no role called {reassign_to!r} to move its holders to")
-        if roles.drives(_closed(target)) and not perms.can(request.user, ws, perms.OWN):
-            raise HttpError(403, "moving people to a role that drives or changes the agent is the workspace "
-                                 "owner's to do")
+        if roles.drives(_closed(target)):
+            if not perms.can(request.user, ws, perms.OWN):
+                raise HttpError(403, "moving people to a role that drives or changes the agent is the workspace "
+                                     "owner's to do")
+            # Moving holders onto a driving role hands them what it gives, so the passkey rule covers it.
+            driving = True
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    else:
+        _machine_may_not(request, driving)
     before, use = roleadmin.snapshot(row), roleadmin.usage(row)
     try:
         moved = roleadmin.delete(row, reassign_to=target)

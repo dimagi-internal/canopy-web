@@ -119,7 +119,8 @@ def _address_only_holders(row: AgentRole) -> list[AgentGrant]:
 
 
 def _refuse_if_address_lines_would_drive(row: AgentRole, new: frozenset[str]) -> None:
-    if roles.drives(new) and not drives(row):
+    gained = ({roles.WRITE, roles.AGENT_EDIT} & set(new)) - set(closed(row))
+    if gained:
         holders = _address_only_holders(row)
         if holders:
             raise RoleError(

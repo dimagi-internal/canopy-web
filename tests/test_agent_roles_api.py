@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import access
+from apps.agents import access, interface
 from apps.agents.models import Agent, AgentGrant, AgentRole
 from apps.events.models import SettingChange
 from apps.passkeys.testing import grant_step_up
@@ -266,3 +266,36 @@ def test_a_move_inside_one_tree_leaves_every_line_where_it_is(w):
     move.move(w["agent"], w["root"], by=w["boss"])
     line.refresh_from_db()
     assert line.role_def.workspace_id == "dimagi"
+
+
+def test_a_token_cannot_move_holders_onto_a_role_that_drives(w):
+    """Deleting a harmless role is token-safe; moving its holders onto `editor` hands them `agent_edit`."""
+    make_role(w["root"], "connector", {"read", "use:connect"})
+    line = AgentGrant.objects.create(agent=w["agent"], kind=G.PERSON, user=w["ed"], role="connector")
+    raw, _ = PersonalToken.create_for_user(user=w["boss"], label="t")
+    c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    r = c.delete(f"{BASE}/connector?reassign_to=editor")
+    assert r.status_code == 403 and "passkey" in r.json()["detail"]
+    line.refresh_from_db()
+    assert line.role == "connector"
+    assert c.delete(f"{BASE}/connector?reassign_to=read_only").status_code == 204
+
+
+def test_adding_agent_edit_to_a_write_role_is_refused_while_an_address_line_holds_it(w):
+    """`read_write` already drives, so the rail must ask what the edit adds, not only whether it drives."""
+    make_role(w["root"], "pilot", {"read", "write"})
+    line = AgentGrant.objects.create(agent=w["agent"], kind=G.DOMAIN, domain="dimagi.com", role="pilot")
+    r = _json(_c(w["boss"]), "patch", f"{BASE}/pilot", {"permissions": ["read", "write", "agent_edit"]})
+    assert r.status_code == 422 and "address" in r.json()["detail"]
+    assert "agent_edit" not in AgentRole.objects.get(key="pilot").permissions
+    assert _json(_c(w["boss"]), "patch", f"{BASE}/pilot", {"label": "Pilot"}).status_code == 200
+    line.delete()
+    assert _json(_c(w["boss"]), "patch", f"{BASE}/pilot", {"permissions": ["agent_edit"]}).status_code == 200
+
+
+def test_a_session_writers_envelope_stops_at_write():
+    """They drive this conversation, not the agent: the own-repo rail reads `agent_edit` from this list."""
+    d = access.Decision(relationship="member", access=access.FULL, capability=None, may_request_auto=False,
+                        may_pin_runner=False, manual_only=False, basis="session:writer")
+    held = interface._held_permissions(access._stamp(d), None)
+    assert "write" in held and "agent_edit" not in held
