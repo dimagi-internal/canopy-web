@@ -240,7 +240,7 @@ describe('ShareConnectionPage', () => {
 
   it('keeps the plaintext out of the page', async () => {
     const { container } = open()
-    const { container } = fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
+    fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
     await screen.findByText(/Connected as/)
     expect(container.innerHTML).not.toMatch(/refresh_token|access_token/)
   })
