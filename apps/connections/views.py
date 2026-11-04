@@ -38,7 +38,7 @@ with no limit) and `owner_turns_only=1` (`Connection`). `for_agent=<slug>` only 
 that agent on the share screen; it grants nothing.
 
 A connect that succeeds lands on the success screen,
-`/w/<workspace>/connections/<id>/connected?return_to=<return_to>`, which says plainly
+`/w/<workspace>/connections/<id>/connected?return_to=<return_to>&just_connected=1`, which says plainly
 what was connected and who can use it now, and links on to the share screen for the
 rest. One that names limits or `for_agent` exists to be shared, so it lands straight on
 the share screen, `/w/<workspace>/connections/<id>/share?return_to=<return_to>` (plus
@@ -223,7 +223,13 @@ def _connected(request: HttpRequest, workspace: str, conn, return_to: str, *, fo
     connect named limits or an agent, carrying `return_to` for where the browser goes after it and
     `agent` to tick on the share screen."""
     screen = "share" if for_agent or conn.limited else "connected"
-    query = urlencode({"return_to": _safe_return_to(return_to), **({"agent": for_agent} if for_agent else {})})
+    # `just_connected=1` lets the success screen store an agent's connection in its vault once,
+    # right on arrival; the page strips it, so a reload or a shared link never prompts.
+    query = urlencode({
+        "return_to": _safe_return_to(return_to),
+        **({"agent": for_agent} if for_agent else {}),
+        **({"just_connected": "1"} if screen == "connected" else {}),
+    })
     url = f"{request.META.get('SCRIPT_NAME', '')}/w/{quote(workspace, safe='')}/connections/{conn.pk}/{screen}?{query}"
     if not url_has_allowed_host_and_scheme(url, allowed_hosts=set(), require_https=True):
         url = DEFAULT_RETURN

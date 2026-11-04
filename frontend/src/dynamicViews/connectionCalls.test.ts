@@ -198,7 +198,7 @@ describe('the lease slides', () => {
     const { calls, client, state } = setup({ active: true })
     await calls.handle(WRITE)
     state.active = false
-    for (const _ of [1, 2, 3, 4]) {
+    for (let i = 0; i < 4; i++) {
       state.now += 100_000
       await calls.handle(WRITE)
     }

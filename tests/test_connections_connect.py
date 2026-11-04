@@ -380,7 +380,8 @@ def test_callback_lands_on_connected(world, fake_provider):
     landed = urlparse(resp["Location"])
     assert resp.status_code == 302
     assert landed.path == f"/w/w/connections/{conn.pk}/connected"
-    assert parse_qs(landed.query) == {"return_to": ["/settings?tab=x"]}
+    # `just_connected` is what lets the screen store an agent's connection on arrival, once.
+    assert parse_qs(landed.query) == {"return_to": ["/settings?tab=x"], "just_connected": ["1"]}
 
 
 def test_an_agents_callback_lands_on_its_connected_screen(world, fake_provider):
@@ -391,6 +392,7 @@ def test_an_agents_callback_lands_on_its_connected_screen(world, fake_provider):
     resp = client.get(reverse("connections_callback", args=["salesforce", "w"]), {"code": "c0de", "state": state})
     conn = Connection.objects.get(agent=world.eva)
     assert urlparse(resp["Location"]).path == f"/w/w/connections/{conn.pk}/connected"
+    assert parse_qs(urlparse(resp["Location"]).query)["just_connected"] == ["1"]
 
 
 def test_unshared_connection_is_listed_as_not_shared_yet(world, fake_provider):
