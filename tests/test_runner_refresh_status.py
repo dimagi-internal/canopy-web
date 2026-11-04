@@ -18,6 +18,7 @@ from django.utils import timezone
 
 from apps.attention import alerts
 from apps.attention.models import Alert
+from apps.events.models import SettingChange
 from apps.harness.alerts import runner_refresh as src
 from apps.harness import runner_refresh, runners
 from apps.harness.models import Runner, Turn
@@ -177,6 +178,36 @@ def test_a_refresh_canopy_asked_for_tells_no_one(box):
     with box["commits"]():
         _beat(box["client"], box["runner"], health=_health(bootstrapped_at=timezone.now().timestamp() + 5))
     assert mail.outbox == []
+
+
+def test_a_program_using_a_persons_login_tells_no_one_but_is_on_the_record(box):
+    """An AI session calling the route with someone's login is not that person
+    asking, so "you asked for this refresh" would be false; the audit row says how."""
+    runners.request_refresh(box["runner"], by=box["jj"], via="mcp")
+    mail.outbox.clear()
+    with box["commits"]():
+        out = _beat(box["client"], box["runner"], health=_health(bootstrapped_at=timezone.now().timestamp() + 5))
+    assert out["refresh"]["state"] == "done"
+    assert mail.outbox == [] and box["pushes"] == []
+
+
+def test_the_request_is_audited_with_who_and_through_what(box):
+    _refresh(box)
+    row = SettingChange.objects.get(operation="refresh_runner")
+    assert row.actor_email == "jj@dimagi.com"
+    assert row.via == "ui"
+    assert row.target == str(box["runner"].pk)
+    assert row.workspace is not None and row.workspace.slug == "dimagi"
+
+
+def test_an_update_after_the_finish_is_not_this_refreshs_change(box):
+    _refresh(box)
+    with box["commits"]():
+        _beat(box["client"], box["runner"], health=_health(bootstrapped_at=timezone.now().timestamp() + 5))
+    out = _beat(box["client"], box["runner"], code_version="0.4.1", code_sha="b" * 40,
+                health=_health(bootstrapped_at=timezone.now().timestamp() + 5))
+    assert out["code_sha"] == "b" * 40
+    assert out["refresh"]["state"] == "done" and out["refresh"]["changes"] == []
 
 
 def test_stuck_after_half_an_hour_is_an_alert_handed_to_the_asker(box):

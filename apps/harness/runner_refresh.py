@@ -118,7 +118,7 @@ def problems(runner) -> list[str]:
 
 
 def changes(runner) -> list[Change]:
-    before, after = runner.refresh_before or {}, versions(runner)
+    before, after = runner.refresh_before or {}, runner.refresh_after or versions(runner)
     return [Change(name, before.get(name, ""), after.get(name, ""))
             for name in dict.fromkeys([*before, *after]) if before.get(name, "") != after.get(name, "")]
 
@@ -164,15 +164,18 @@ def snapshot(runner) -> dict[str, str]:
 def finished(runner, now) -> None:
     """Called after a beat discharges the request. Claims the finish with a
     conditional update — two beats can arrive together — and the one that wins
-    tells the asker, after the commit."""
+    tells the asker, after the commit, if a person asked at the page. Empty `via` is a
+    request older than the field."""
     if runner.refresh_requested_at is None or runner.refresh_finished_at is not None:
         return
+    after = versions(runner)
     won = Runner.objects.filter(pk=runner.pk, refresh_requested_at=runner.refresh_requested_at,
-                                refresh_finished_at__isnull=True).update(refresh_finished_at=now)
+                                refresh_finished_at__isnull=True).update(refresh_finished_at=now, refresh_after=after)
     if not won:
         return
     runner.refresh_finished_at = now
-    if runner.refresh_requested_by_id:
+    runner.refresh_after = after
+    if runner.refresh_requested_by_id and runner.refresh_requested_via in ("", "ui"):
         pk = runner.pk
         transaction.on_commit(lambda: _notify(pk))
 

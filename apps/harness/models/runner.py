@@ -292,7 +292,13 @@ class Runner(models.Model):
     refresh_requested_by = models.ForeignKey(
         "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
+    # Through what they asked (`audit.request_via`): an AI session calling with a
+    # person's login is that person's `by` but not their request, so only `ui` is told.
+    refresh_requested_via = models.CharField(max_length=16, blank=True, default="")
     refresh_before = models.JSONField(default=dict, blank=True)
+    # What the box was on when the refresh finished: an update landing later is not
+    # something this refresh changed.
+    refresh_after = models.JSONField(default=dict, blank=True)
     refresh_finished_at = models.DateTimeField(null=True, blank=True)
     # When the box last posted its usage report (`apps/harness/usage.py`).
     usage_reported_at = models.DateTimeField(null=True, blank=True)
