@@ -12,6 +12,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Markdown } from '@/components/Markdown'
 import { EventLedger } from '@/components/activity/EventLedger'
+import { JobLog } from '@/components/activity/JobLog'
 import { TurnTranscript } from '@/components/activity/TurnTranscript'
 import { statusToken } from '@/components/activity/turnLog'
 import { promptHasMore, turnBody, turnDuration, turnHeadline, turnTrigger } from './turnText'
@@ -122,7 +123,9 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   const chatHref =
     turn.chat_session_id && workspace ? scopedPath(workspace, `/sessions/${turn.chat_session_id}`) : ''
   const showTranscript = !turn.chat_session_id && !!turn.has_transcript
-  const body = turnBody(turn)
+  // A plain job: no prompt, no transcript, no report. Its page is its output as a log.
+  const isJob = Boolean(turn.job)
+  const body = isJob ? '' : turnBody(turn)
   const duration = turnDuration(turn)
   return (
     <div id={turn.id} className="scroll-mt-6 bg-card border border-border rounded-xl hover:border-primary/40 transition-colors">
@@ -142,7 +145,7 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
             )}
             <span>{turnTrigger(turn)}</span>
             {duration && <span>· {duration}</span>}
-            {!turn.reported_at && (
+            {!turn.reported_at && !isJob && (
               <span title="The agent did not file a close-out report for this turn">· no report</span>
             )}
           </div>
@@ -165,6 +168,11 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
         </div>
       </div>
       <div className="px-5 pb-5">
+        {isJob && !open && (turn.result_note ?? '').trim() && (
+          <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words font-mono text-[12px] text-muted-foreground">
+            {turn.result_note}
+          </p>
+        )}
         {body && (
           <Markdown
             className={`text-[13px] text-muted-foreground leading-relaxed mt-2 ${open ? '' : 'line-clamp-3'}`}
@@ -203,7 +211,8 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
         )}
         {open && (
           <div className="mt-4 space-y-3 border-t border-border pt-3">
-            {promptHasMore(turn) && (
+            {isJob && <JobLog turnId={turn.id} resultNote={turn.result_note ?? ''} />}
+            {!isJob && promptHasMore(turn) && (
               <div>
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Prompt</p>
                 <pre className="whitespace-pre-wrap break-words text-[12px] text-foreground-secondary font-sans max-h-80 overflow-y-auto">
@@ -211,21 +220,23 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
                 </pre>
               </div>
             )}
-            {turn.session_key && (
+            {!isJob && turn.session_key && (
               <p className="text-[11px] text-muted-foreground">
                 Session <code className="text-foreground-secondary">{turn.session_key}</code>
               </p>
             )}
-            {showTranscript && (
+            {showTranscript && !isJob && (
               <div>
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Transcript</p>
                 <TurnTranscript turnId={turn.id} />
               </div>
             )}
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Events</p>
-              <EventLedger turnId={turn.id} />
-            </div>
+            {!isJob && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Events</p>
+                <EventLedger turnId={turn.id} />
+              </div>
+            )}
           </div>
         )}
       </div>

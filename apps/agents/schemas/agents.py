@@ -912,6 +912,9 @@ class AgentTurnOut(StrictModel):
     # `origin_ref` carries the scheduler slot / manual flag the origin label uses.
     prompt: str = ""
     result_note: str = ""
+    # A PLAIN JOB's name and repo (blank for every other turn): its page shows the output as a log.
+    job: str = ""
+    job_repo: str = ""
     # The closeout verdict lifted off `result_note` (see harness TurnOut.closeout_verdict).
     closeout_verdict: str = ""
     closeout_line: str = ""

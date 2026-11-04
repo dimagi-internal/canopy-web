@@ -133,6 +133,14 @@ export function TriggersSection(): JSX.Element {
                 <Tr rule="bottom-soft" key={row.id} className="last:border-0">
                   <Td density="roomy">
                     <span className={row.enabled ? 'text-foreground' : 'text-foreground-subtle'}>{row.name}</span>
+                    {row.job && (
+                      <span className="block text-[11px] text-muted-foreground">Job: {row.job} from {row.job_repo}</span>
+                    )}
+                    {row.job && row.enabled && row.last_status === 'queued' && (
+                      <span className="block text-[11px] text-warning">
+                        Waiting for a cloud machine that can run jobs.
+                      </span>
+                    )}
                     {row.created_by_email && (
                       <span className="block text-[11px] text-muted-foreground">set up by {row.created_by_email}</span>
                     )}
@@ -191,6 +199,8 @@ export function TriggersSection(): JSX.Element {
       {editing && (
         <TriggerEditor
           agentSlug={agent.slug}
+          agentName={agent.name}
+          canSetJob={agent.is_admin}
           agentClis={agent.clis}
           trigger={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}

@@ -132,6 +132,12 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     # A proposed project's decision card: who may start or decline it is narrower
     # than who may act on a card (decision 4(b)) — `proposals.before_act`.
     proposals.before_act(task, action, by_user)
+    if action == AgentTaskAction.APPROVE and task.job_schedule_id is not None:
+        # A failed job's review has nothing to approve: with no `on_approve` an approve
+        # starts a model turn on the agent, and a job runs no model. Refused before
+        # anything is written, so the ask stays open for the other decisions.
+        raise ValueError("A job does not start from a review. Press Run now on its schedule "
+                         "to run it again, or decline this once it no longer matters.")
     if action == AgentTaskAction.NUDGE and task.status != AgentTask.IN_PROGRESS:
         # A suggested task is started by approving it; nudging it would start
         # work nobody approved. A finished one has nothing to nudge.

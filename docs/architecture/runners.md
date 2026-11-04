@@ -251,7 +251,9 @@ loosening that would loosen every model turn. `runner/ec2/job_broker.py` (root,
 `write_token`, `start`, `stop` and `cleanup`; no request can name a path, a user or a property.
 `start` is one sandboxed `systemd-run` unit. `cloud_runner.py --setup-runners` copies it to
 `/opt/canopy-runner/job-broker/` and runs `job_broker.py --install`. What it isolates, and what
-it doesn't, is in `runner/ec2/README.md` § Plain jobs.
+it doesn't, is in `runner/ec2/README.md` § Plain jobs. How a job is written, set up on a schedule and
+read by its author is in [runner-flags-and-schedules.md](runner-flags-and-schedules.md) § Plain jobs; the
+rollout, and the self check that must print PASS on a real box first, in [deploy.md](deploy.md).
 
 ## Opted-in projects (`ProjectOptIn`)
 

@@ -23159,6 +23159,16 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
+            /**
              * Closeout Verdict
              * @default
              */
@@ -28189,6 +28199,16 @@ export interface components {
              */
             readonly result_note: string;
             /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
+            /**
              * Closeout Verdict
              * @default
              */
@@ -28931,6 +28951,8 @@ export interface components {
             readonly on_approve?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
             /** Dispatched At */
             readonly dispatched_at?: string | null;
             /**
@@ -29642,6 +29664,8 @@ export interface components {
             readonly on_approve?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
             /** Dispatched At */
             readonly dispatched_at?: string | null;
             /**
@@ -34279,6 +34303,8 @@ export interface components {
             readonly on_approve?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
             /** Dispatched At */
             readonly dispatched_at?: string | null;
             /**
@@ -40632,6 +40658,16 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
+            /**
              * Closeout Verdict
              * @default
              */
@@ -40663,16 +40699,6 @@ export interface components {
             readonly caller_context: {
                 readonly [key: string]: unknown;
             };
-            /**
-             * Job
-             * @default
-             */
-            readonly job: string;
-            /**
-             * Job Repo
-             * @default
-             */
-            readonly job_repo: string;
             /** Mcp Token */
             readonly mcp_token?: string | null;
             /** Chat Key */

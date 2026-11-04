@@ -546,6 +546,9 @@ class AgentTaskOut(StrictModel):
                            validation_alias=AliasChoices("ask_is_open", "ask_open"))
     ask_closed_at: dt.datetime | None = None
     on_approve: list[dict] = Field(default_factory=list)
+    #: Set on the review a FAILED PLAIN JOB raises: the schedule that runs it again. Such a
+    #: task has no approve action (it would start a model turn); its screen offers "Run now".
+    job_schedule_id: int | None = None
     dispatched_at: dt.datetime | None = None
     batch_key: str = ""
     #: The producer's key, echoed so an agent can match the tasks it published.

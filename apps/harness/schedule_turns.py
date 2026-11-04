@@ -481,7 +481,7 @@ def _raise_job_nag(schedule, turn: Turn) -> None:
         "ask_body": body,
         "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
         "origin_ref": {"schedule_id": schedule.id, "turn_id": str(turn.id),
-                       "kind": "schedule_nag"},
+                       "kind": "schedule_nag", "job": schedule.job},
         "idempotency_key": f"sched-nag:{schedule.id}:{turn.id}",
     }])
 

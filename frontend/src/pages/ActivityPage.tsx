@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { WorkspaceBadge } from "@/components/WorkspaceBadge";
 import { listTurns } from "@/api/turns";
 import { EventLedger } from "@/components/activity/EventLedger";
+import { JobLog } from "@/components/activity/JobLog";
 import { EventLogTable, McpCallsTable } from "@/components/activity/WorkspaceLogs";
 import { relativeAge } from "@/lib/relativeAge";
 import { Td, Th, Tr } from '@/components/DataTable'
@@ -174,6 +175,11 @@ function TurnRow({ turn, now, open, onToggle }: {
               <p className="text-xs text-muted-foreground">
                 This turn's details are visible to whoever started it, the agent's admins, and workspace admins.
               </p>
+            ) : turn.job ? (
+              <>
+                <p className="mb-1 text-xs text-muted-foreground">Job: {turn.job} from {turn.job_repo}</p>
+                <JobLog turnId={turn.id} resultNote={turn.result_note} />
+              </>
             ) : (
               <EventLedger turnId={turn.id} />
             )}

@@ -55,6 +55,8 @@ def _not_found(exc: ss.ScheduleNotFound) -> HttpError:
 def _forbidden(exc: ss.ScheduleForbidden) -> HttpError:
     """A member holding too low a role. 403, and it says which role is needed —
     a refusal a viewer cannot act on is a refusal they will report as a bug."""
+    if exc.job:
+        return HttpError(403, f"Only an admin of {exc.agent_slug} can change a job.")
     if exc.required == "agent admin":
         return HttpError(403, "this action requires the agent's owner or an admin")
     return HttpError(403, f"this action requires the {exc.required} or owner role")

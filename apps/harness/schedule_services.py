@@ -45,10 +45,12 @@ class ScheduleForbidden(Exception):
     the person most likely to hit one — a viewer on their own team.
     """
 
-    def __init__(self, agent_slug: str, *, required: str) -> None:
+    def __init__(self, agent_slug: str, *, required: str, job: bool = False) -> None:
         super().__init__(agent_slug)
         self.agent_slug = agent_slug
         self.required = required
+        #: The refusal is about a plain job, which only an agent admin sets or changes.
+        self.job = job
 
 
 class DuplicateScheduleName(Exception):
@@ -242,7 +244,7 @@ def _check_may_set_up(user, agent, *, kind: str, turn_mode: str, job: bool = Fal
     cron trigger, an agent admin for an inbound_mail trigger or an auto one."""
     needed = triggers.may_set_up(user, agent, kind=kind, turn_mode=turn_mode, job=job)
     if needed is not None:
-        raise ScheduleForbidden(agent.slug, required=needed)
+        raise ScheduleForbidden(agent.slug, required=needed, job=job and needed == "agent admin")
 
 
 # Every trigger WRITE is gated by `triggers.may_set_up` (`_check_may_set_up`): a
