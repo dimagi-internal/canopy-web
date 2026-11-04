@@ -7724,7 +7724,7 @@ export interface paths {
         /**
          * Fire a cron trigger off-cycle, now
          * @description Cron triggers only — mail is what fires an inbound_mail trigger (404 here).
-         *     409 when its creator lost the right to it.
+         *     409 when its creator lost the right to it, or when it is a job still running.
          */
         readonly post: operations["run_trigger_now"];
         readonly delete?: never;
@@ -23500,6 +23500,16 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
+            /**
              * Closeout Verdict
              * @default
              */
@@ -29039,6 +29049,16 @@ export interface components {
              */
             readonly result_note: string;
             /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
+            /**
              * Closeout Verdict
              * @default
              */
@@ -29781,6 +29801,8 @@ export interface components {
             readonly on_approve?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
             /** Dispatched At */
             readonly dispatched_at?: string | null;
             /**
@@ -30492,6 +30514,8 @@ export interface components {
             readonly on_approve?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
             /** Dispatched At */
             readonly dispatched_at?: string | null;
             /**
@@ -32888,6 +32912,16 @@ export interface components {
             readonly name: string;
             /** Prompt */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron: string;
             /** Run Once At */
@@ -32929,6 +32963,11 @@ export interface components {
              * @default
              */
             readonly last_status: string;
+            /**
+             * Missed Reason
+             * @default
+             */
+            readonly missed_reason: string;
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**
@@ -32980,8 +33019,21 @@ export interface components {
         readonly ScheduleIn: {
             /** Name */
             readonly name: string;
-            /** Prompt */
+            /**
+             * Prompt
+             * @default
+             */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -33053,6 +33105,10 @@ export interface components {
             readonly name?: string | null;
             /** Prompt */
             readonly prompt?: string | null;
+            /** Job */
+            readonly job?: string | null;
+            /** Job Repo */
+            readonly job_repo?: string | null;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -33093,6 +33149,16 @@ export interface components {
             readonly name: string;
             /** Prompt */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron: string;
             /** Run Once At */
@@ -33134,6 +33200,11 @@ export interface components {
              * @default
              */
             readonly last_status: string;
+            /**
+             * Missed Reason
+             * @default
+             */
+            readonly missed_reason: string;
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**
@@ -33193,6 +33264,16 @@ export interface components {
              * @default
              */
             readonly prompt: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -33267,6 +33348,10 @@ export interface components {
             readonly name?: string | null;
             /** Prompt */
             readonly prompt?: string | null;
+            /** Job */
+            readonly job?: string | null;
+            /** Job Repo */
+            readonly job_repo?: string | null;
             /** Cron */
             readonly cron?: string | null;
             /** Run Once At */
@@ -35078,6 +35163,8 @@ export interface components {
             readonly on_approve?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
             /** Dispatched At */
             readonly dispatched_at?: string | null;
             /**
@@ -41430,6 +41517,16 @@ export interface components {
             readonly canopy_session_url?: string | null;
             /** Result Note */
             readonly result_note: string;
+            /**
+             * Job
+             * @default
+             */
+            readonly job: string;
+            /**
+             * Job Repo
+             * @default
+             */
+            readonly job_repo: string;
             /**
              * Closeout Verdict
              * @default

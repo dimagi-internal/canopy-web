@@ -57,6 +57,44 @@ The workflow hard-fails on any ref other than `main`, and deploys main's tip as 
 
 Pipeline: build → push to ECR (`labs-jj-canopy-web`) → **migrate** on a throwaway task def → create a CloudFormation change set (`aws cloudformation deploy --no-execute-changeset --parameter-overrides ImageTag=<sha>`) → **preflight** → `aws cloudformation execute-change-set`, which registers the real task definition and rolls the ECS service.
 
+### Rolling out plain jobs to the cloud boxes
+
+**Not run on a real box yet.** The job broker, the `canopy-job` user, the sandbox and the network
+rules are tested against stubs (a fake iptables, a fake `systemd-run`, a job run as the test
+user); nothing has started a real unit. Until the self check below has passed on a real box, do not
+rely on jobs, and do not turn one on for anything that matters. Needs Jonathan's approval, like any
+deploy or fleet change.
+
+1. **Deploy canopy-web** as above (the schedule and claim changes, which also stop an older box
+   being given a job: a box that doesn't report `jobs` is never offered one).
+2. **Roll the new runner bytes to the boxes.** Run `update_runner.sh` on a box (or let its timer
+   find the deployed sha, which now includes `job_broker.py` and `job_self_check.sh`), or use the fleet's own flow
+   (`runner-fleets.md`). Then run `python3 /opt/canopy-runner/cloud_runner.py --setup-runners` as
+   root: it makes the `canopy-job` user, `/var/lib/canopy-jobs`, the lock, the `CANOPY-JOB` iptables
+   chain and the `canopy-job-broker` service. (The boot service and an idle update re-run it, but
+   do it once by hand so you can see it finish.) A sensitive-data box gets none of it and takes no
+   jobs.
+3. **Run the self check on one box, as root:**
+   `sudo bash /opt/canopy-runner/job-broker/job_self_check.sh` (`--setup-runners` puts it beside the
+   broker, at the runner's sha). It starts real units through the
+   broker and prints one PASS or FAIL per thing a job must not reach (the home directories, every
+   token path, a sibling job's token, the metadata address, localhost and the box's own addresses,
+   each proxy port, the brokers' sockets, the memory and task limits, the environment, a background
+   process outliving the job). **Every line must print PASS, or SKIP for a path or feature that
+   doesn't exist on that box.** A SKIP names what is absent (a missing path such as a broker's
+   socket, "IPv6 localhost: this box has none", "IMDSv6: not answering even for root here", or a locked
+   runner that already stops jobs); read each one and confirm it really is absent. **Any FAIL means
+   don't rely on jobs on that box**: leave them off and fix it first. The script ends with
+   "All checks passed, N skipped." (exit 0) or "N check(s) FAILED" (exit 1); fewer verdicts than it
+   expects, or a client that crashed, is a FAIL.
+4. **Only then rely on jobs.** A runner asks the broker again every few minutes and tells
+   canopy-web when the answer changes, so a box starts reporting `jobs` within 5 minutes of
+   `--setup-runners`, with no restart. The schedule screen's "Waiting for a cloud machine that can
+   run jobs." clears when a job is claimed.
+
+Rolling back: schedules with a job can be paused from Triggers; a box whose `canopy-job-broker`
+is stopped stops reporting `jobs` within 5 minutes and takes none after that.
+
 ### CloudFormation owns the task definition and service
 
 - One writer per resource: the pipeline only passes `ImageTag`; CFN registers the task definition and rolls the service. Never register task-definition revisions or call `ecs update-service` outside CFN — the stack's `ImageTag` would go stale and the next plain `cloudformation deploy` would silently roll prod back.

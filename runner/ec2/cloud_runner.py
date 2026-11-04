@@ -65,10 +65,12 @@ from __future__ import annotations
 
 import abc
 import base64
+import codecs
 import contextlib
 import datetime
 import hashlib
 import hmac
+import io
 import json
 import os
 import fcntl
@@ -85,11 +87,13 @@ import socket
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import termios
 import threading
 import unicodedata
 import time
+import typing
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1474,6 +1478,7 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
 
 def pair_or_load() -> str:
+    _apply_job_cap()
     if RUNNER_INSTANCE and not STATE_FILE.exists():
         # A runner sharing its machine never pairs itself: root's canopy-pair pairs
         # every runner on the machine at once.
@@ -2869,6 +2874,7 @@ def apply_egress(box: dict, runners: list[dict], *, boot: bool, run=subprocess.r
     # Rules after the proxy is asked up, and before any restarted runner starts
     # sending: a runner just locked never has a moment open.
     egress_rules(runners, locked=locked_ids, run=run)
+    _sync_job_rules(bool(locked_ids), run)
     if not locked_ids:
         run(["systemctl", "disable", "--now", "canopy-egress.service"], capture_output=True)
     for runner in restart:
@@ -3032,6 +3038,119 @@ def setup_runners(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
     _write_owned(etc / "runners.json", json.dumps(doc, indent=1).encode(), uid=0, gid=0, mode=0o644,
                  chown=chown)
     return runners
+
+
+# ── The box's half of a plain job (Part 3): the user, its root, the network ──
+#
+# `canopy-job` runs a job's code, code that any repo's `main` may hold: it must not reach
+# another agent's secrets. It is a system user with no login. Almost all of what keeps a job
+# in is the sandboxed unit `job_broker.py` starts. What's here: the user, its root, the lock,
+# and the rules below, in their own chain, by uid, for what the unit's IPAddressDeny can't say:
+# the stub's other ports, the box's own addresses, and a lock arriving while a job runs. And if
+# cgroup BPF ever isn't there, IPAddressDeny doesn't apply, and these still do.
+JOB_CHAIN = "CANOPY-JOB"
+#: systemd-resolved's stub, which is what /etc/resolv.conf names on the box's Ubuntu: a
+#: lookup is a loopback connection, and a job's only one.
+JOB_DNS_STUB = "127.0.0.53"
+
+
+def job_rules(uid: int, *, locked: bool, run=subprocess.run) -> list[str]:
+    """ROOT: the job user is refused the metadata address and all of loopback (the egress
+    proxy's ports, anything a turn listens on, and the box's own addresses, which route over
+    `lo`), bar the DNS stub. `locked`, because a runner on this box is locked: refused
+    everything, DNS too, as `egress_rules` does for a runner: that chain names runners' uids
+    and this user is not one, so without this a job would walk past the lock.
+
+    Never flushed, since this runs every minute beside a running job: each rule is checked
+    (`-C`) and added if missing, and the lock's rule goes first or comes out on its own.
+    Raises when a rule can't go in. Returns the tools it wrote."""
+    own = ["-m", "owner", "--uid-owner", str(uid)]
+    done = []
+    for tool, metadata in (("iptables", IMDS_V4), ("ip6tables", IMDS_V6)):
+        if tool == "ip6tables" and not shutil.which(tool):
+            continue
+
+        def ipt(*args, _tool=tool):
+            return run([_tool, *args], capture_output=True)
+
+        def must(*args, _tool=tool):
+            res = ipt(*args)
+            if res.returncode != 0:
+                raise RuntimeError(f"{_tool} {args[0]}: {res.stderr!r}")
+
+        try:
+            ipt("-N", JOB_CHAIN)      # exists already: harmless
+            if ipt("-C", "OUTPUT", "-j", JOB_CHAIN).returncode != 0:
+                must("-I", "OUTPUT", "1", "-j", JOB_CHAIN)
+            lock = [JOB_CHAIN, *own, "-j", "REJECT"]
+            has_lock = ipt("-C", *lock).returncode == 0
+            if locked and not has_lock:
+                must("-I", JOB_CHAIN, "1", *own, "-j", "REJECT")
+            rules = [[*own, "-d", metadata, "-j", "REJECT"]]
+            if tool == "iptables":
+                rules += [[*own, "-o", "lo", "-d", JOB_DNS_STUB, "-p", proto, "--dport", "53", "-j", "RETURN"]
+                          for proto in ("udp", "tcp")]
+            rules += [[*own, "-o", "lo", "-j", "REJECT"]]
+            for rule in rules:
+                if ipt("-C", JOB_CHAIN, *rule).returncode != 0:
+                    must("-A", JOB_CHAIN, *rule)
+            if has_lock and not locked:
+                must("-D", *lock)
+        except OSError as exc:
+            raise RuntimeError(f"cannot install the job rules: {exc}") from exc
+        done.append(tool)
+    return done
+
+
+def setup_jobs(box: dict, *, locked: bool, run=subprocess.run, chown=os.chown, uid_of=None,
+               root: pathlib.Path | None = None, lock: pathlib.Path | None = None) -> bool:
+    """ROOT, on every start (`--setup-runners`): the job user, its jobs root (0700), the lock
+    and the network rules. A sensitive-data box gets none of it, and a False here means the
+    caller doesn't start the broker, so a box that isn't closed can't run a job. Idempotent.
+    Never raises: a box that can't run jobs still runs turns."""
+    import pwd  # noqa: PLC0415
+
+    root = root or JOBS_ROOT
+    lock = lock or JOB_LOCK_FILE
+    if str(box.get("RUNNER_DATA_MODE", "")).strip():
+        return False
+    try:
+        if run(["id", "-u", JOB_USER], capture_output=True).returncode != 0:
+            # No home. It used to be the jobs root, where a planted user-site ran in the next helper.
+            res = run(["useradd", "--system", "--no-create-home", "--home-dir", "/nonexistent",
+                       "--shell", "/usr/sbin/nologin", "--comment", "canopy plain jobs", JOB_USER],
+                      capture_output=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"useradd {JOB_USER} failed: {res.stderr!r}")
+        pw = (uid_of or pwd.getpwnam)(JOB_USER)
+        if getattr(pw, "pw_dir", "/nonexistent") != "/nonexistent":
+            res = run(["usermod", "--home", "/nonexistent", JOB_USER], capture_output=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"usermod {JOB_USER} failed: {res.stderr!r}")
+        # Root's, not the job user's: a unit is only ever given its own folder inside it.
+        _mkdir_owned(root, uid=0, gid=0, mode=0o700, chown=chown)
+        if not lock.exists():   # never replaced: a held flock is on the inode
+            _write_owned(lock, b"", uid=0, gid=0, mode=0o644, chown=chown)
+        job_rules(pw.pw_uid, locked=locked, run=run)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"setup-runners: this box won't run jobs: {exc}")
+        return False
+    return True
+
+
+def _sync_job_rules(locked: bool, run=subprocess.run) -> None:
+    """ROOT, every minute (`apply_egress`): carry a lock to the job user the moment it is
+    applied to a runner. On a box without that user, nothing."""
+    import pwd  # noqa: PLC0415
+
+    try:
+        uid = pwd.getpwnam(JOB_USER).pw_uid
+    except KeyError:
+        return
+    try:
+        job_rules(uid, locked=locked, run=run)
+    except RuntimeError as exc:
+        _log(f"egress-sync: could not apply the job rules: {exc}")
 
 
 def load_runners(path: pathlib.Path | None = None) -> dict:
@@ -3293,7 +3412,7 @@ WantedBy=timers.target
     # root's), its own /tmp.
     "canopy-runner@.service": f"""[Unit]
 Description=Canopy runner for %i
-After=network-online.target canopy-runners.service canopy-kms-broker.service canopy-egress.service
+After=network-online.target canopy-runners.service canopy-kms-broker.service canopy-egress.service canopy-job-broker.service
 Wants=network-online.target
 Requires=canopy-runners.service
 [Service]
@@ -3349,6 +3468,39 @@ def install_broker(*, run=subprocess.run) -> bool:
             return True
     return False
 
+
+
+#: Where the job broker lives. Its own directory, like the AWS broker's.
+JOB_BROKER_DIR = RUNNER_HOME / "job-broker"
+
+
+def install_job_broker(*, run=subprocess.run) -> bool:
+    """ROOT: `runner/ec2/job_broker.py` at this runner's sha into JOB_BROKER_DIR, then
+    `job_broker.py --install` (its own unit). `job_self_check.sh` goes beside it from the same
+    sha, for an operator to run as root. Never raises: a box without it just reports no
+    jobs."""
+    try:
+        if not (pathlib.Path(CANOPY_WEB_REPO_DIR) / ".git").is_dir():
+            return False
+        sha = build_info().get("sha") or ""
+        for ref in ([sha] if sha else []) + ["origin/main"]:
+            got = _git_root("show", f"{ref}:runner/ec2/job_broker.py", run=run)
+            if got.returncode == 0 and got.stdout.strip():
+                JOB_BROKER_DIR.mkdir(mode=0o755, exist_ok=True)
+                (JOB_BROKER_DIR / "job_broker.py").write_text(got.stdout)
+                os.chmod(JOB_BROKER_DIR / "job_broker.py", 0o755)
+                check = _git_root("show", f"{ref}:runner/ec2/job_self_check.sh", run=run)
+                if check.returncode == 0 and check.stdout.strip():
+                    (JOB_BROKER_DIR / "job_self_check.sh").write_text(check.stdout)
+                    os.chmod(JOB_BROKER_DIR / "job_self_check.sh", 0o755)
+                else:
+                    _log(f"job broker: {ref} has no job_self_check.sh")
+                res = run(["/usr/bin/python3", str(JOB_BROKER_DIR / "job_broker.py"), "--install"],
+                          capture_output=True, text=True, timeout=120)
+                return res.returncode == 0
+    except Exception as exc:  # noqa: BLE001 — never block a box's setup on the broker
+        _log(f"job broker: not installed ({exc})")
+    return False
 
 
 #: Where the AWS broker lives: its own directory, with the kms_broker.py it imports
@@ -6797,7 +6949,7 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
 #: Where a repo name is fetched from. `{repo}` is the bare name (canopy-web).
 REPO_URL_TEMPLATE = os.environ.get("REPO_URL_TEMPLATE",
                                    "https://github.com/dimagi-internal/{repo}.git")
-_REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")  # fullmatch: `$` would pass "repo\n"
 
 
 def _repos_root() -> pathlib.Path:
@@ -6808,7 +6960,7 @@ def _repo_clone(repo: str, env: dict | None = None) -> pathlib.Path:
     """The shared bare clone every worktree of `repo` hangs off, created on first
     use and fetched on every call. Locked with flock, not a thread lock: the
     `canopy-repo-worktree` helper runs in a turn's own process."""
-    if not _REPO_NAME.match(repo) or repo.endswith(".git") or ".." in repo:
+    if not _REPO_NAME.fullmatch(repo) or repo.endswith(".git") or ".." in repo:
         raise ValueError(f"not a repo name: {repo!r}")
     clones = _repos_root() / ".clones"
     clones.mkdir(parents=True, exist_ok=True)
@@ -6844,6 +6996,749 @@ def _repo_worktree_key(turn: dict, turn_id: str) -> str:
 def _repo_worktree_env(turn: dict, turn_id: str) -> dict:
     """What `canopy-repo-worktree` reads to know whose checkout to hand out."""
     return {"CANOPY_REPO_WORKTREE_KEY": _repo_worktree_key(turn, turn_id)}
+
+
+# ── plain jobs: read a job's definition, export its repo (Part 3, Tasks 2-3) ──
+# A job is a command named in a repo's own `.canopy/jobs.yaml`. canopy-web says only the
+# job's name and the repo's name; everything below happens on this box. It reads a job's
+# definition, fetches the repo's `main`, says whether the box can run a job at all, and
+# runs one (`_run_job`). This process can't become another user (the runner's unit has
+# NoNewPrivileges): the root broker, `job_broker.py`, unpacks and starts it as `canopy-job`
+# in a sandboxed unit. The rest of the box's half is `setup_jobs`; `job_self_check.sh`
+# proves all of it on a real box.
+
+#: Whether this box says it can run plain jobs. An old box must never report a capability
+#: before it can honour it, or canopy-web would hand it a job and it would run an empty
+#: prompt through a model.
+JOBS_ENABLED = True
+#: The Unix user a job runs as, and where its folders live (owned by that user, 0700).
+JOB_USER = "canopy-job"
+JOBS_ROOT = pathlib.Path("/var/lib/canopy-jobs")
+JOBS_YAML_MAX_BYTES = 64 * 1024
+#: A repo export bigger than this is refused (the archive is held in memory once).
+JOB_EXPORT_MAX_BYTES = 256 * 1024 * 1024
+JOB_TIMEOUT_DEFAULT, JOB_TIMEOUT_MAX = 15, 120
+JOB_SECONDS_PER_MINUTE = 60
+#: "A job is running on this box". A flock, because a box of several runners runs one
+#: process per runner and they share one `canopy-job`: without it one runner's end-of-job
+#: kill would take another's job. Root's and world-readable (`setup_jobs`); the kernel
+#: drops it however the holder dies.
+JOB_LOCK_FILE = TURN_ENV_BASE / "job.lock"
+#: Between processes the flock decides; this keeps two threads of one daemon apart too.
+_JOB_LOCK = threading.Lock()
+JOB_BUSY_NOTE = "Another job is running on this machine."
+JOB_RESTARTED_NOTE = "This machine restarted during the job."
+#: The ONE seam between this code and the box's root: the job broker's socket.
+JOB_BROKER_SOCKET = os.environ.get("CANOPY_JOB_BROKER_SOCKET", "/run/canopy-jobs/sock")
+#: The broker starts with --no-block at boot, so a runner can get there just before its socket.
+JOB_BROKER_START_WAIT = (2, 4)
+#: On top of the unit's own RuntimeMaxSec: what stops a job if that somehow didn't.
+JOB_DEADLINE_SLACK_SECONDS = 60
+JOB_POLL_SECONDS = 0.5
+JOB_BATCH_SECONDS = 5.0
+JOB_TOKEN_TICK_SECONDS = 60.0
+JOB_OUTPUT_CAP_BYTES = 1024 * 1024
+#: One POST's worth of a job's output, well under the events route's request limit.
+JOB_EVENT_CHUNK = 128 * 1024
+JOB_NOTE_LINES = 20
+JOB_NOTE_CHARS = 1500
+#: The job is stopped when the disk it writes to has less than this free. Nothing else
+#: bounds what it writes, and a full disk would take every runner on the box with it.
+JOB_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+_JOB_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")   # all three by fullmatch: `$` would pass "x\n"
+#: A turn's id is a uuid as canopy-web writes it; it becomes a folder name.
+_JOB_TURN_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+class JobRefused(Exception):
+    """A job that cannot run, with the plain sentence a person reads on the failed turn."""
+
+
+class JobWedged(JobRefused):
+    """The broker couldn't confirm a job's processes are gone: this box runs no more jobs."""
+
+
+class JobSpec(typing.NamedTuple):
+    run: list
+    timeout_minutes: int
+
+
+def _job_spec(text: str, name: str) -> JobSpec:
+    """The job `name` from the text of `.canopy/jobs.yaml`, or `JobRefused`.
+
+    Shape: `version: 1` and `jobs: {name: {run: [argv...], timeout_minutes: n}}`, nothing
+    else. `run` is an argv list, never a string: there is no shell. The file is size-capped
+    before it is parsed; `safe_load` builds an alias as a shared reference, so what a
+    capped file can expand to is bounded too."""
+    import yaml   # lazy: apt python3-yaml (runner.cfn.yaml); ships with Ubuntu cloud images
+
+    where = ".canopy/jobs.yaml"
+    if not _JOB_NAME.fullmatch(name or ""):
+        raise JobRefused(f"The job name {name!r} isn't a valid job name.")
+    if len(text.encode("utf-8", "replace")) > JOBS_YAML_MAX_BYTES:
+        raise JobRefused(f"{where} is bigger than {JOBS_YAML_MAX_BYTES // 1024} KB, so it wasn't read.")
+    try:
+        doc = yaml.safe_load(text)
+    except (yaml.YAMLError, RecursionError, ValueError):
+        raise JobRefused(f"{where} isn't valid YAML.") from None
+    if not isinstance(doc, dict):
+        raise JobRefused(f"{where} isn't a jobs file: it should hold `version: 1` and a `jobs:` list.")
+    if set(doc) - {"version", "jobs"}:
+        extra = sorted(str(k) for k in set(doc) - {"version", "jobs"})
+        raise JobRefused(f"{where} has a key the box doesn't know: {', '.join(extra)}.")
+    if type(doc.get("version")) is not int or doc["version"] != 1:
+        raise JobRefused(f"{where} must say `version: 1`.")
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict):
+        raise JobRefused(f"{where} must have a `jobs:` section naming each job.")
+    if name not in jobs:
+        have = ", ".join(sorted(str(k) for k in jobs)[:20]) or "none"
+        raise JobRefused(f"{where} has no job named {name!r} (it has: {have}).")
+    entry = jobs[name]
+    if not isinstance(entry, dict):
+        raise JobRefused(f"The job {name!r} in {where} must have a `run:` list.")
+    if set(entry) - {"run", "timeout_minutes"}:
+        extra = sorted(str(k) for k in set(entry) - {"run", "timeout_minutes"})
+        raise JobRefused(f"The job {name!r} has a key the box doesn't know: {', '.join(extra)}.")
+    run = entry.get("run")
+    if isinstance(run, str):
+        raise JobRefused(f"The job {name!r}: `run` must be a list of words, not one string "
+                         "(there is no shell, so it can't be a command line).")
+    if (not isinstance(run, list) or not run
+            or not all(isinstance(a, str) and a and "\0" not in a for a in run)):
+        raise JobRefused(f"The job {name!r}: `run` must be a non-empty list of words.")
+    first = run[0]
+    if first.startswith(("/", "-")) or ".." in first.split("/") or "=" in first:
+        # `=`: `env` would read `LD_PRELOAD=x` as a variable, past the six-variable rule.
+        raise JobRefused(f"The job {name!r}: the program to run must be a bare name or a path "
+                         "inside the repo, with no `..` or `=` and not absolute.")
+    minutes = entry.get("timeout_minutes", JOB_TIMEOUT_DEFAULT)
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= JOB_TIMEOUT_MAX:
+        raise JobRefused(f"The job {name!r}: `timeout_minutes` must be a whole number "
+                         f"from 1 to {JOB_TIMEOUT_MAX}.")
+    return JobSpec(run=list(run), timeout_minutes=minutes)
+
+
+def _job_broker_connect(op: str, body: bytes = b"", **fields) -> socket.socket:
+    """A connection to the job broker with one request sent. Raises OSError if it's not there."""
+    conn = socket.socket(socket.AF_UNIX)
+    try:
+        conn.settimeout(600)
+        conn.connect(JOB_BROKER_SOCKET)
+    except OSError:
+        conn.close()
+        raise
+    # A refused export closes without reading its body: then its reply still says why.
+    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+        conn.sendall(json.dumps({"op": op, **fields}).encode() + b"\n" + body)
+    return conn
+
+
+def _job_broker_reply(conn: socket.socket) -> dict:
+    """The reply on `conn`. A refusal, or a broker that can't be reached, is `JobRefused`."""
+    try:
+        buf = b""
+        while b"\n" not in buf:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        reply = json.loads(buf)
+    except (OSError, ValueError):
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    if isinstance(reply, dict) and reply.get("wedged"):
+        raise JobWedged(str(reply.get("error")))
+    if not isinstance(reply, dict) or reply.get("error") or not reply.get("ok"):
+        raise JobRefused(str((reply or {}).get("error") or "This machine's job service refused that."))
+    return reply
+
+
+def _job_broker(op: str, body: bytes = b"", **fields) -> dict:
+    """One request and its reply."""
+    try:
+        conn = _job_broker_connect(op, body, **fields)
+    except OSError:
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    with conn:
+        return _job_broker_reply(conn)
+
+
+def _job_broker_hold(data: bytes, turn_id: str) -> socket.socket:
+    """Take the box's one slot and unpack the repo. The connection stays open and IS the hold:
+    if this process dies the kernel closes it, and the broker stops the job and clears up."""
+    try:
+        conn = _job_broker_connect("export", data, turn=turn_id, size=len(data))
+    except OSError:
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    try:
+        _job_broker_reply(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+def _job_user_exists() -> bool:
+    import pwd
+    try:
+        pwd.getpwnam(JOB_USER)
+        return True
+    except KeyError:
+        return False
+
+
+#: What `_job_cap_say` last logged, per topic. A box in a steady state is asked every few minutes
+#: for as long as it runs, and one line per change is what a person can read.
+_JOB_CAP_SAID: dict[str, str] = {}
+
+
+def _job_cap_say(topic: str, line: str) -> None:
+    """Log `line` only if it isn't what this topic last said. "" means the topic is over, so the
+    same line coming back is news."""
+    if _JOB_CAP_SAID.get(topic, "") != line:
+        _JOB_CAP_SAID[topic] = line
+        if line:
+            _log(line)
+
+
+def _job_can_run() -> bool:
+    """Whether this box could run a job, each step failing closed: PyYAML is there, it is
+    not a sensitive-data box (those never take a job), this runner isn't egress-locked, the
+    job user exists, the box's setup made the lock, and the broker answers `status`, saying
+    its systemd can run the unit and that no runner on the box is locked: a job can't use a
+    runner's proxy, so anywhere a lock holds it would only fail on its first network call.
+    The rest is `job_self_check.sh`."""
+    try:
+        import yaml  # noqa: F401, PLC0415
+    except ImportError:
+        return False
+    if SENSITIVE_DATA_MODE or RUNNER_DATA_MODE or EGRESS_LOCKED:
+        return False
+    try:
+        if not _job_user_exists() or not JOB_LOCK_FILE.is_file():
+            return False
+    except OSError:
+        return False
+    for wait in (*JOB_BROKER_START_WAIT, None):
+        try:
+            status = _job_broker("status")
+            break
+        except JobRefused as exc:
+            if wait is None:
+                _job_cap_say("why", f"jobs: this box can't run them: {exc}")
+                return False
+            time.sleep(wait)
+    for key, want, why in (("job_user", True, f"the broker doesn't see {JOB_USER}"),
+                           ("supported", True, f"systemd {status.get('systemd')} can't run the unit"),
+                           ("locked", False, "a runner on this box is egress-locked"),
+                           ("wedged", False, f"a process of {JOB_USER} couldn't be stopped")):
+        if status.get(key) is not want:
+            _job_cap_say("why", f"jobs: this box can't run them: {why}")
+            return False
+    _job_cap_say("why", "")
+    return True
+
+
+#: How often a running daemon asks `_job_can_run` again. Short of five minutes by the main
+#: loop's own POLL_SECONDS, so `--setup-runners` by hand or a stopped broker is believed within
+#: five minutes of happening, with no restart.
+JOB_CAP_TICK_SECONDS = 270
+_JOB_CAP_TICK_AT = 0.0
+#: What canopy-web last accepted from this daemon, so a refused PATCH is sent again.
+_JOB_CAP_REPORTED: bool | None = None
+
+
+def _apply_job_cap() -> None:
+    """Set `RUNNER_CAPS["jobs"]` for this start. Reported only through the box's own
+    device-key token (canopy-web drops `jobs` from any other credential), so this runs
+    before the capabilities PATCH in `pair_or_load`. Absent while `JOBS_ENABLED` is off."""
+    global _JOB_CAP_REPORTED, _JOB_CAP_TICK_AT
+    if JOBS_ENABLED:
+        RUNNER_CAPS["jobs"] = _JOB_CAP_REPORTED = _job_can_run()
+    else:
+        RUNNER_CAPS.pop("jobs", None)
+    _JOB_CAP_TICK_AT = time.monotonic()
+
+
+def _send_job_cap() -> None:
+    """PATCH the capabilities as they stand, and remember what was accepted."""
+    global _JOB_CAP_REPORTED
+    said = RUNNER_CAPS.get("jobs")
+    status, _ = _api("PATCH", f"/runners/{_RUNNER_ID}",
+                     {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
+    if status == 200:
+        _JOB_CAP_REPORTED = said
+
+
+def _job_cap_refresh() -> None:
+    """Ask `_job_can_run` again, and tell canopy-web only if the answer changed. Only the box's
+    own device-key token is believed about `jobs`: with any other credential a PATCH would
+    change nothing and look as if it had, so the next tick tries again instead."""
+    can = _job_can_run()
+    if can == RUNNER_CAPS.get("jobs") and can == _JOB_CAP_REPORTED:
+        return
+    if can != RUNNER_CAPS.get("jobs"):
+        _log(f"jobs: this box {'can run them now' if can else 'stops reporting them'}")
+    RUNNER_CAPS["jobs"] = can
+    if not _RUNNER_ID or not _RUNNER_TOKEN["raw"] or _bearer() != _RUNNER_TOKEN["raw"]:
+        _job_cap_say("token", "jobs: can't say so without this box's own token; trying again each tick")
+        return
+    _job_cap_say("token", "")
+    _send_job_cap()
+
+
+def _job_cap_tick() -> threading.Thread | None:
+    """The main loop's capability step, at most once per JOB_CAP_TICK_SECONDS. Its own thread:
+    a broker that doesn't answer can hold a call for minutes, and this thread is the heartbeat."""
+    global _JOB_CAP_TICK_AT
+    now = time.monotonic()
+    if not JOBS_ENABLED or (_JOB_CAP_TICK_AT and now - _JOB_CAP_TICK_AT < JOB_CAP_TICK_SECONDS):
+        return None
+    _JOB_CAP_TICK_AT = now
+    thread = threading.Thread(target=_job_cap_refresh, daemon=True, name="job-cap")
+    try:
+        thread.start()
+    except RuntimeError as exc:  # no thread to be had: the next tick tries again
+        _log(f"warn: could not check whether this box can run jobs: {exc}")
+        return None
+    return thread
+
+
+def _check_job_archive(data: bytes) -> None:
+    """Refuse an archive that could write outside its directory, before it is unpacked.
+    (Unpacked as the job user, so it could only reach what that user can.)
+
+    Refused: an absolute or `..` member name, a `.git` entry, any device/fifo, and any
+    symlink or hard link whose target is absolute or contains `..`. A link may only point
+    downward or sideways inside the checkout, so it cannot leave it however links chain.
+    (Judging a `..` target lexically is not enough: `a -> .` makes `a/a/l -> ../../x`
+    look inside while resolving outside.) GNU tar stores a link's target verbatim and does
+    not judge it, so this check, not tar, is the rule."""
+    try:
+        tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
+        members = tar.getmembers()
+    except (tarfile.TarError, EOFError, OSError):
+        raise JobRefused("The repo's files couldn't be read as an archive.") from None
+    for m in members:
+        parts = m.name.split("/")
+        if m.name.startswith("/") or ".." in parts or "\0" in m.name:
+            raise JobRefused(f"The repo has a file path that leaves its folder ({m.name!r}), "
+                             "so the job didn't run.")
+        if parts[0] == ".git":
+            raise JobRefused("The repo's files include a .git entry, so the job didn't run.")
+        if m.issym() or m.islnk():
+            target = m.linkname
+            if target.startswith("/") or ".." in target.split("/") or "\0" in target:
+                raise JobRefused(f"The repo has a link ({m.name!r}) that points outside the "
+                                 "checkout, so the job didn't run.")
+        elif not (m.isreg() or m.isdir()):
+            raise JobRefused(f"The repo has a special file ({m.name!r}), so the job didn't run.")
+
+
+def _job_fetch_archive(repo: str, turn_id: str, env) -> bytes:
+    """`repo`'s `main`, exactly as the remote has it now, as a checked tar with no `.git`.
+    `JobRefused` otherwise.
+
+    `main` is fetched by explicit refspec into a ref private to this job, and that sha is
+    archived: the bare clone's HEAD or `origin/main` may be stale or point at another
+    branch. A fetch that fails fails the job; stale code never runs. A `repo` that fails
+    the name rule raises before any git call or path is built."""
+    if not _REPO_NAME.fullmatch(repo or "") or repo.endswith(".git") or ".." in repo:
+        raise JobRefused(f"{repo!r} isn't a repo name the box will fetch.")
+    if not _JOB_TURN_ID.fullmatch(turn_id or ""):
+        raise JobRefused("This job's id isn't one the box will use as a folder name.")
+    try:
+        clone = _repo_clone(repo, env=env)
+    except Exception:  # noqa: BLE001
+        raise JobRefused(f"Couldn't get the {repo} repo onto the box, so the job didn't run.") from None
+    ref = f"refs/jobs/{turn_id}"
+    sha = ""
+    try:
+        fetch = subprocess.run(
+            ["git", "-C", str(clone), "fetch", "--quiet", "--no-tags", "origin",
+             f"+refs/heads/main:{ref}"], capture_output=True, timeout=300, env=env)
+        if fetch.returncode != 0:
+            raise JobRefused(f"Couldn't fetch the latest main of {repo}, so the job didn't run "
+                             "(it never runs old code).")
+        rev = subprocess.run(["git", "-C", str(clone), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                             capture_output=True, text=True, timeout=60, env=env)
+        sha = rev.stdout.strip()
+        if rev.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", sha):
+            raise JobRefused(f"Couldn't read the latest main of {repo}, so the job didn't run.")
+        arc = subprocess.run(["git", "-C", str(clone), "archive", "--format=tar", sha],
+                             capture_output=True, timeout=600, env=env)
+    except subprocess.TimeoutExpired:
+        raise JobRefused(f"Fetching {repo} took too long, so the job didn't run.") from None
+    finally:
+        subprocess.run(["git", "-C", str(clone), "update-ref", "-d", ref],
+                       capture_output=True, timeout=60, env=env)
+    if arc.returncode != 0 or not arc.stdout:
+        raise JobRefused(f"Couldn't read the files of {repo}'s main, so the job didn't run.")
+    if len(arc.stdout) > JOB_EXPORT_MAX_BYTES:
+        raise JobRefused(f"{repo} is too large to run a job from.")
+    _check_job_archive(arc.stdout)
+    _log(f"job fetch: {repo}@{sha[:10]} for {turn_id[:8]}")
+    return arc.stdout
+
+
+def _job_spec_from_archive(data: bytes, name: str) -> JobSpec:
+    """The job `name` from the archive's `.canopy/jobs.yaml`, read before anything is unpacked.
+    A link there is refused: this file decides what runs, so it is a real file on `main`."""
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+        try:
+            member = tar.getmember(".canopy/jobs.yaml")
+        except KeyError:
+            raise JobRefused("The repo has no .canopy/jobs.yaml on main, so there is no job to run.") from None
+        if not member.isreg():
+            raise JobRefused(".canopy/jobs.yaml must be a file, not a link, so the job didn't run.")
+        raw = tar.extractfile(member).read(JOBS_YAML_MAX_BYTES + 1)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise JobRefused(".canopy/jobs.yaml isn't valid YAML.") from None
+    return _job_spec(text, name)
+
+
+def _job_lock() -> int | None:
+    """Take "a job is running on this box": a held file descriptor, or None if another job
+    holds it. A missing lock file is a box its setup hasn't reached: JobRefused."""
+    if not _JOB_LOCK.acquire(blocking=False):
+        return None
+    try:
+        # Not inherited (PEP 446), so a job's background process can't keep it.
+        fd = os.open(JOB_LOCK_FILE, os.O_RDONLY)
+    except OSError:
+        _JOB_LOCK.release()
+        raise JobRefused("This machine isn't set up to run jobs.") from None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        _JOB_LOCK.release()
+        return None
+    return fd
+
+
+def _job_unlock(fd: int) -> None:
+    os.close(fd)
+    _JOB_LOCK.release()
+
+
+def _job_drop_capability(why: str) -> None:
+    """A process of the job user survived: say so now, rather than at the next `_job_cap_tick`,
+    or canopy-web would go on handing it jobs that can only fail. The broker says `wedged` until
+    the process has gone; then that tick reports jobs again."""
+    if RUNNER_CAPS.get("jobs") is False:
+        return
+    _log(f"jobs: this box stops reporting them: {why}")
+    RUNNER_CAPS["jobs"] = False
+    if _RUNNER_ID:
+        with contextlib.suppress(Exception):
+            _send_job_cap()
+
+
+def _job_restart_sweep() -> None:
+    """Daemon start: whatever a previous daemon's job left is nobody's, so it goes, before
+    any held job turn is reported (`_adopt_one`). If another runner's job holds the lock,
+    nothing of this runner's can be running and nothing here may touch it."""
+    if SENSITIVE_DATA_MODE or RUNNER_DATA_MODE or not _job_user_exists():
+        return
+    try:
+        fd = _job_lock()
+    except JobRefused:
+        return
+    if fd is None:
+        _log("jobs: another runner's job is running; leaving it alone")
+        return
+    try:
+        _job_broker("cleanup")
+    except JobWedged as exc:
+        _job_drop_capability(str(exc))
+    except JobRefused as exc:
+        _log(f"jobs: could not clear what the last daemon left: {exc}")
+    finally:
+        _job_unlock(fd)
+
+
+def _job_token_values(data: bytes) -> list:
+    """The secret values in a staged token file, to scrub from a job's output. Anything
+    unreadable as JSON is treated as one secret."""
+    try:
+        doc = json.loads(data)
+    except ValueError:
+        return [data.strip()] if data.strip() else []
+    found = []
+
+    def walk(value, key=""):
+        if isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, str(k).lower())
+        elif isinstance(value, list):
+            for v in value:
+                walk(v, key)
+        elif isinstance(value, str) and len(value) >= 8 and any(p in key for p in _SECRET_KEY_PARTS):
+            found.append(value.encode())
+    walk(doc)
+    return found
+
+
+class _JobOutput:
+    """A job's output, on its way out of the box: exact token values replaced, 1 MB at most
+    with one line saying so, the last lines kept for the result note whatever the cap cut.
+
+    A value split across two reads is caught by holding back a tail one byte shorter than
+    the longest token. Only exact values: a job that encodes a token first (base64, say) is
+    printing something this can't recognise, and a job can print anything it can read."""
+
+    _CUT_LINE = "\n[the job's output was cut at 1 MB here; the job kept running]\n"
+
+    def __init__(self, emit):
+        self._emit = emit
+        self._lock = threading.Lock()
+        self._tokens: list = []
+        self._held = b""
+        self._decode = codecs.getincrementaldecoder("utf-8")("replace")
+        self._pending: list = []
+        self._sent = 0
+        self._cut = False
+        self.tail = ""
+
+    def add_tokens(self, values) -> None:
+        with self._lock:
+            self._tokens = sorted({*self._tokens, *values}, key=len, reverse=True)
+
+    def _accept(self, text: str) -> None:
+        if not text:
+            return
+        self.tail = (self.tail + text)[-8 * JOB_NOTE_CHARS:]
+        if self._cut:
+            return
+        data = text.encode("utf-8", "replace")
+        room = JOB_OUTPUT_CAP_BYTES - self._sent
+        if len(data) > room:
+            self._pending.append(data[:room].decode("utf-8", "ignore") + self._CUT_LINE)
+            self._sent, self._cut = JOB_OUTPUT_CAP_BYTES, True
+            return
+        self._sent += len(data)
+        self._pending.append(text)
+
+    def feed(self, chunk: bytes) -> None:
+        with self._lock:
+            buf = self._held + chunk
+            for token in self._tokens:
+                buf = buf.replace(token, b"[token]")
+            keep = max((len(t) for t in self._tokens), default=1) - 1
+            cut = max(len(buf) - keep, 0)
+            self._held = buf[cut:]
+            self._accept(self._decode.decode(buf[:cut]))
+
+    def close(self) -> None:
+        with self._lock:
+            buf = self._held
+            for token in self._tokens:
+                buf = buf.replace(token, b"[token]")
+            self._held = b""
+            self._accept(self._decode.decode(buf, final=True))
+
+    def take(self) -> str:
+        with self._lock:
+            text, self._pending = "".join(self._pending), []
+        return text
+
+    def flush(self) -> None:
+        """Send what has gathered. A canopy-web that can't be reached never costs the job."""
+        text = self.take()
+        for at in range(0, len(text), JOB_EVENT_CHUNK):
+            try:
+                self._emit([{"kind": "status",
+                             "payload": {"source": "job", "text": text[at:at + JOB_EVENT_CHUNK]}}])
+            except Exception as exc:  # noqa: BLE001
+                _log(f"warn: could not send a job's output: {exc}")
+                return
+
+    def last_lines(self) -> str:
+        lines = self.tail.rstrip("\n").split("\n")[-JOB_NOTE_LINES:]
+        return "\n".join(lines)[-JOB_NOTE_CHARS:]
+
+
+def _job_copy_tokens(turn_id: str, slug: str, copied: dict, output: _JobOutput) -> None:
+    """Bring the job's copies in line with this turn's staged files: same format, written by
+    the broker as the job user, swapped in atomically, refusing a link at any step. A value goes on the scrub list BEFORE
+    the job can read it. A staged file that has gone (revoked, no longer for this box) takes
+    the job's copy with it. A failed copy is a log line: the next tick tries again."""
+    held = _held_connections(turn_id)
+    for provider in held:
+        try:
+            data = _connection_token_path(slug, provider).read_bytes()
+        except OSError:
+            data = None
+        try:
+            if not data:
+                if provider in copied:
+                    _job_broker("write_token", turn=turn_id, provider=provider, size=0)
+                    copied.pop(provider, None)
+            elif copied.get(provider) != data:
+                output.add_tokens(_job_token_values(data))
+                _job_broker("write_token", data, turn=turn_id, provider=provider, size=len(data))
+                copied[provider] = data
+        except JobRefused as exc:   # the broker's sentence: never a token in it
+            _log(f"warn: could not copy {provider}'s token for job {turn_id[:8]}: {exc}")
+    for provider in set(copied) - set(held):
+        with contextlib.suppress(JobRefused):
+            _job_broker("write_token", turn=turn_id, provider=provider, size=0)
+            copied.pop(provider, None)
+
+
+def _job_low_disk() -> bool:
+    try:
+        return shutil.disk_usage(JOBS_ROOT).free < JOB_MIN_FREE_BYTES
+    except OSError:
+        return False
+
+
+def _job_stop_reason(turn_id: str, deadline: float, spec: JobSpec) -> str | None:
+    """Why a running job must end now, as the sentence its turn says; None to let it run."""
+    if stop_requested(turn_id):
+        return "The job was stopped."
+    if _stop:
+        return JOB_RESTARTED_NOTE
+    if time.monotonic() >= deadline:
+        return _job_limit_note(spec)
+    if _job_low_disk():
+        return "The job was stopped because the machine's disk was almost full."
+    return None
+
+
+def _job_limit_note(spec: JobSpec) -> str:
+    return f"The job ran past its {spec.timeout_minutes}-minute limit and was stopped."
+
+
+def _job_read_frames(conn, output: _JobOutput, result: dict, done: threading.Event) -> None:
+    """Drain the broker's frames, always: past the cap too, so a loud job can't block on a
+    full pipe. `X` is the job's exit, and only the broker can write one."""
+    buf = b""
+    try:
+        while True:
+            while len(buf) >= 5:
+                size = struct.unpack(">I", buf[1:5])[0]
+                if len(buf) < 5 + size:
+                    break
+                kind, data, buf = buf[:1], buf[5:5 + size], buf[5 + size:]
+                if kind == b"O":
+                    output.feed(data)
+                elif kind == b"X":
+                    with contextlib.suppress(ValueError):
+                        result.update(json.loads(data))
+                    return
+            chunk = conn.recv(1 << 20)
+            if not chunk:
+                return
+            buf += chunk
+    except OSError:
+        return
+    finally:
+        done.set()
+
+
+def _job_supervise(turn_id: str, slug: str, spec: JobSpec, output: _JobOutput) -> tuple[bool, str]:
+    """Start the unit, stream it, refresh its tokens, and end it. Closing the connection, any
+    way this ends, is itself a stop: the broker stops a job whose runner has gone."""
+    copied: dict = {}
+    _job_copy_tokens(turn_id, slug, copied, output)
+    seconds = spec.timeout_minutes * JOB_SECONDS_PER_MINUTE
+    try:
+        conn = _job_broker_connect("start", turn=turn_id, slug=slug, run=spec.run, timeout_seconds=seconds)
+    except OSError:
+        raise JobRefused("This machine's job service isn't answering, so the job didn't run.") from None
+    conn.settimeout(None)
+    result: dict = {}
+    done = threading.Event()
+    reader = threading.Thread(target=_job_read_frames, args=(conn, output, result, done), daemon=True,
+                              name=f"job-output-{turn_id[:8]}")
+    reader.start()
+    reason = None
+    try:
+        deadline = time.monotonic() + seconds + JOB_DEADLINE_SLACK_SECONDS
+        next_batch = time.monotonic() + JOB_BATCH_SECONDS
+        next_tick = time.monotonic() + JOB_TOKEN_TICK_SECONDS
+        while not done.wait(JOB_POLL_SECONDS):
+            now = time.monotonic()
+            if reason is None and (reason := _job_stop_reason(turn_id, deadline, spec)) is not None:
+                _log(f"job {turn_id[:8]}: {reason}")
+                with contextlib.suppress(JobRefused):
+                    _job_broker("stop", turn=turn_id)
+            if now >= next_batch:
+                output.flush()
+                next_batch = now + JOB_BATCH_SECONDS
+            if now >= next_tick and reason is None:
+                _job_copy_tokens(turn_id, slug, copied, output)
+                next_tick = now + JOB_TOKEN_TICK_SECONDS
+    finally:
+        with contextlib.suppress(OSError):
+            conn.shutdown(socket.SHUT_WR)   # if a raise brought us here: the broker stops the job
+        done.wait(timeout=30)
+        conn.close()
+        reader.join(timeout=5)
+        output.close()
+        output.flush()
+    if result.get("error"):
+        raise JobRefused(str(result["error"]))
+    last = output.last_lines()
+    code = result.get("rc")
+    if reason is None:
+        if result.get("timed_out"):
+            reason = _job_limit_note(spec)
+        elif code is None:
+            reason = "This machine's job service stopped answering, so the job was ended."
+        elif code == 0:
+            return True, f"The job finished (exit code 0).\nLast lines:\n{last}" if last else \
+                "The job finished (exit code 0)."
+        else:
+            reason = f"The job failed with exit code {code}."
+    return False, f"{reason}\nLast lines:\n{last}" if last else reason
+
+
+def _run_job(runner_id: str, turn: dict, emit) -> tuple[bool, str]:
+    """Run the job `turn` names, in place of `execute_prompt`: (ok, the result note).
+
+    The lock comes first, before anything that could touch a running job. Then whatever a
+    previous job left goes, the repo's `main` is fetched, and the broker runs it. However that
+    ends, a refusal, a raise, a kill, nothing stays: the unit's cgroup is gone and the broker
+    empties the jobs root. `_run_turn`'s `finally` unstages the runner's own copy of the tokens."""
+    turn_id, slug = str(turn["id"]), _turn_agent_slug(turn) or ""
+    try:
+        fd = _job_lock()
+    except JobRefused as exc:
+        return False, str(exc)
+    if fd is None:
+        return False, JOB_BUSY_NOTE
+    holder = None
+    try:
+        try:
+            _job_broker("cleanup")
+            # Agentless: this turn's GitHub identity and no more. The agent's own env would
+            # resolve and stage credentials that only this fetch would ever see.
+            data = _job_fetch_archive(str(turn.get("job_repo") or ""), turn_id, _agent_env(None))
+            spec = _job_spec_from_archive(data, str(turn.get("job") or ""))
+            holder = _job_broker_hold(data, turn_id)
+            del data
+            return _job_supervise(turn_id, slug, spec, _JobOutput(emit))
+        except JobWedged as exc:
+            _job_drop_capability(str(exc))
+            return False, str(exc)
+        except JobRefused as exc:
+            return False, str(exc)
+        finally:
+            try:
+                _job_broker("cleanup")
+            except JobWedged as exc:   # the job's own verdict stands; closing the hold can't free this
+                _job_drop_capability(str(exc))
+            except JobRefused as exc:
+                _log(f"warn: job {turn_id[:8]}'s cleanup was refused: {exc}")
+            if holder is not None:
+                holder.close()
+    finally:
+        _job_unlock(fd)
 
 
 def _repo_worktree_cli(argv: list[str]) -> int:
@@ -12116,9 +13011,10 @@ def _supervised() -> bool:
 
 
 def adoptable_turn(turn: dict) -> bool:
-    """Will this turn run under a relay, so a new daemon can adopt it?"""
+    """Will this turn run under a relay, so a new daemon can adopt it? Never a plain job:
+    it has no relay, and a new daemon must not run it again or give it to a model."""
     return (ADOPT_TURNS and _supervised() and not SENSITIVE_DATA_MODE
-            and _capability(turn) is None)
+            and _capability(turn) is None and not turn.get("job"))
 
 
 def _lifecycle(turn_id: str, event: str, *, post: bool = True, **fields) -> None:
@@ -12865,6 +13761,16 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
         summary["swept"].append(f"{turn_id[:8]} (already reported)")
         _lifecycle(turn_id, "swept", post=False, why="finish already reported")
         return
+    if turn.get("job"):
+        # A job the last daemon held: `_job_restart_sweep` has already stopped whatever it
+        # left. It may have written, so it is reported, and never run again.
+        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish",
+                          {"status": "failed", "result_note": JOB_RESTARTED_NOTE})
+        _lifecycle(turn_id, "lost", reason="restarted during a job", agent=state.get("slug"), http=fstatus)
+        _unstage_connections(turn_id)
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (job)")
+        return
     attempt = d / state["attempt"] if state.get("attempt") else None
     if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
         note = ("[runner] the runner restarted while this turn was being set up; "
@@ -13184,10 +14090,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     _TURN_ENV.fresh_start = None
     _TURN_ENV.model = _turn_model(turn)
     _TURN_ENV.relay_turn = turn_id if adoptable_turn(turn) else ""
+    # A plain job: no model, no CLI, no session, no agent checkout. It branches at each of
+    # those below and takes `execute_prompt`'s place (`_run_job`).
+    job = bool(turn.get("job"))
     # A turn claimed for an agent CLI this box's executor does not drive is never
     # run on another: canopy-web picked that CLI (`apps/harness/clis.py`), and its
     # conversation's history lives there. Refused before anything is built.
-    if (refused := _cli_refusal(turn)) is not None:
+    if not job and (refused := _cli_refusal(turn)) is not None:
         _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": refused})
         _log(f"turn {turn_id[:8]} NOT run — {refused}")
         _TURN_ENV.model = None
@@ -13198,6 +14107,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     try:
         confined = _capability(turn) is not None
         forget["confined"] = confined
+        if job and confined:
+            # canopy-web never sends one (a job starts only from a schedule); nor would
+            # this box run a caller's turn as one.
+            _api("POST", f"/turns/{turn_id}/finish",
+                 {"status": "failed", "result_note": "A caller's turn can't run a job."})
+            _log(f"turn {turn_id[:8]} NOT run — a confined turn named a job")
+            return
         # Decided FIRST, before any environment is built: a confined (caller's)
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
@@ -13246,7 +14162,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.chat_session = "" if confined else _chat_session_id(turn)
         slug = _turn_agent_slug(turn)
         off_disk_env = False
-        if not confined and slug and secrets_off_disk():
+        if not job and not confined and slug and secrets_off_disk():
             # This turn's secrets, on tmpfs, for this turn only (spec §4). Removed in
             # the `finally` below however the turn ends, and swept at start. A turn
             # whose env cannot be had is NOT run without one: it fails with the
@@ -13275,7 +14191,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             off_disk_env = True
-        cwd = _turn_cwd(turn, turn_id, env=_agent_env(slug))
+        cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
         forget["cwd"] = cwd
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
@@ -13435,10 +14351,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             try:
                 if tail is not None:
                     tail.start()
-                ok, text, cli_session_id = execute_prompt(
-                    prompt, turn_id, emit, cwd=cwd,
-                    agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
-                )
+                if job:
+                    ok, text = _run_job(runner_id, turn, emit)
+                    cli_session_id = ""
+                else:
+                    ok, text, cli_session_id = execute_prompt(
+                        prompt, turn_id, emit, cwd=cwd,
+                        agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
+                    )
             except Exception as exc:  # never let one turn kill the runner
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
@@ -13490,7 +14410,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # died mid-turn and the finish frame raised; the worker never touches the
         # socket at all, so that failure class is now structurally impossible
         # here rather than merely handled.
-        if _killed_by_shutdown(ok, turn_id):
+        if not job and _killed_by_shutdown(ok, turn_id):   # a job may have written: never again
             # Left running: canopy-web queues it again for another box. Here, not in
             # the old WS `_finish_turn`, which nothing called — so #2148's guard never
             # ran, and turn 2087c077 (canopy-web on demo-0fc9c7b1efb87c5c3, 2026-10-26,
@@ -13595,11 +14515,12 @@ def _start_turn(runner_id: str, turn: dict) -> bool:
             return False
         _IN_FLIGHT[turn_id] = None
     adoptable = adoptable_turn(turn)
-    if adoptable:
+    if adoptable or turn.get("job"):
         # Before anything is built: a restart during the setup is then reported
-        # (`adopt_turns`), never left to the lease sweep.
+        # (`adopt_turns`), never left to the lease sweep. A job writes this too, marked not
+        # adoptable: a restart reports it failed, and the updater waits for it to end.
         _update_turn_state(turn_id, turn=_without_secrets(turn), runner_id=_RUNNER_ID,
-                           phase="setup", adoptable=True, claimed_at=time.time())
+                           phase="setup", adoptable=adoptable, claimed_at=time.time())
     _lifecycle(turn_id, "claimed", agent=_turn_agent_slug(turn) or "", target=turn.get("target"),
                adoptable=adoptable)
     thread = threading.Thread(
@@ -13678,6 +14599,7 @@ def run_over_rest(runner_id: str) -> None:
         _drain_mint(runner_id)
         _maybe_reread_credentials()
         _credential_tick()
+        _job_cap_tick()
         _drain_inbox(runner_id)
         if not claim_gate()[0]:
             time.sleep(POLL_SECONDS)
@@ -13914,6 +14836,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _drain_mint(runner_id)
                     _maybe_reread_credentials()
                     _credential_tick()
+                    _job_cap_tick()
                     _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()
@@ -13953,6 +14876,10 @@ def main() -> None:
     # The clone's packages go on sys.path for them (canopy_acp, canopy_transcript).
     if (pathlib.Path(RUNNER_SRC_DIR) / ".git").is_dir():
         _expose_repo_packages(pathlib.Path(RUNNER_SRC_DIR))
+    try:
+        _job_restart_sweep()
+    except Exception as exc:  # noqa: BLE001 — a job's next start clears the same again
+        _log(f"jobs: could not clear what the last daemon left: {exc}")
     try:
         adopt_turns(runner_id)
     except Exception as exc:  # noqa: BLE001 — never cost the start; the lease sweep still notes them
@@ -14061,7 +14988,7 @@ def _finish_stop(*, drain_seconds: float | None = None) -> None:
 def _runners_cli(argv: list[str]) -> int:
     """Root's box-wide steps for a machine of several runners (systemd runs them; see runner.cfn.yaml):
     `--install-runners` (the systemd units, once — cloud-init, or an operator moving a
-    live box), `--setup-runners` (users, env files, secrets, the IMDS rule; every
+    live box), `--setup-runners` (users, env files, secrets, the IMDS and job rules; every
     start) and `--pair-runners` (canopy-pair: every runner in one pair-by-role call)."""
     if os.geteuid() != 0:
         print("--install-runners / --setup-runners / --pair-runners run as root", file=sys.stderr)
@@ -14075,6 +15002,10 @@ def _runners_cli(argv: list[str]) -> int:
         runners = setup_runners(box, role_name=_role_name())
         imds_rules()
         applied = apply_egress(box, runners, boot=True)
+        if setup_jobs(box, locked=any(applied.values())):
+            install_job_broker()
+        else:
+            subprocess.run(["systemctl", "disable", "--now", "canopy-job-broker.service"], capture_output=True)
         changed = [_install_unit_file(n, run=subprocess.run)
                    for n in ("canopy-egress-sync.service", "canopy-egress-sync.timer")]
         if any(changed):

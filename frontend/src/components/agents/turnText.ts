@@ -13,12 +13,18 @@ const HEADLINE_MAX = 140
  * (markdown heading/list markers stripped), else what triggered the turn. */
 export function turnHeadline(turn: AgentTurnOut): string {
   if (turn.title.trim()) return turn.title.trim()
+  if (turn.job) return turnJobLabel(turn)
   const line = (turn.prompt ?? '')
     .split('\n')
     .map((l) => l.replace(/^\s*(#{1,6}|[-*>]|\d+\.)\s+/, '').trim())
     .find((l) => l.length > 0)
   if (line) return line.length > HEADLINE_MAX ? `${line.slice(0, HEADLINE_MAX - 1)}…` : line
   return `${turnTrigger(turn)} turn`
+}
+
+/** "Job: {name} from {repo}" — what a plain job's turn is, in place of a prompt. */
+export function turnJobLabel(turn: Pick<AgentTurnOut, 'job' | 'job_repo'>): string {
+  return `Job: ${turn.job} from ${turn.job_repo}`
 }
 
 /** The card's body text: the reported summary, else the runner's result note. */

@@ -317,7 +317,52 @@ def labelled_assignment_rows(
 def kind_allows(runner: Runner, routing: str) -> bool:
     if routing == Turn.LOCAL_ONLY:
         return runner.kind in (Runner.EMDASH, Runner.REMOTE)
+    if routing == Turn.CLOUD_ONLY:
+        return runner.kind == Runner.CLOUD
     return True
+
+
+def runs_jobs(runner: Runner) -> bool:
+    """Whether this box can run a plain job: a cloud box that SAID so (`capabilities.jobs`
+    is exactly True) and is not set up for sensitive data. An older box reports nothing,
+    so it is read as unable; a truthy-but-not-True value is not a yes either."""
+    from apps.harness import runner_requirements as rr  # noqa: PLC0415 — as the claim's own import
+
+    return (runner.kind == Runner.CLOUD
+            and (runner.capabilities or {}).get("jobs") is True
+            and rr.SENSITIVE_DATA not in rr.in_force(runner))
+
+
+def is_job_gated(turn: Turn) -> bool:
+    """Whether only a box that runs jobs may take this turn: a job, or any `cloud_only`
+    turn (whose box must read the new fields to be trusted with it)."""
+    return bool(turn.job) or turn.routing == Turn.CLOUD_ONLY
+
+
+def job_refusal(runner: Runner, turn: Turn) -> str | None:
+    """Why `runner` may never take `turn` because of what it is, or None.
+
+    A job turn (and any `cloud_only` turn) has an EMPTY prompt that an older box would
+    hand to a model; so it reaches only a cloud box that reports `jobs`. Asked above the
+    pin and the session binding, like `profile_q`: a pin is a placement, never a way
+    past what the box can do. Not about load — `holds_a_job` is."""
+    if not is_job_gated(turn):
+        return None
+    if turn.chat_session_id or turn.project:
+        # A conversation or a repo's turn is never a job; the database refuses one too.
+        return "a job belongs to an agent's schedule, not to a conversation or a repo"
+    if not runs_jobs(runner):
+        return "only a cloud machine set up to run jobs takes a job"
+    return None
+
+
+def holds_a_job(runner: Runner) -> bool:
+    """Whether `runner`'s machine is executing a job now. Jobs share one Unix user on the
+    box, so the MACHINE takes at most one at a time, whichever of its runners claimed it: a
+    second claim would only be refused by the broker, and fail with a review. A runner with
+    no `machine_id` ("not known", not "the same machine") answers for itself."""
+    held = Q(claimed_by__machine_id=runner.machine_id) if runner.machine_id else Q(claimed_by=runner)
+    return Turn.objects.filter(held, status__in=EXECUTING).exclude(job="").exists()
 
 
 # Rank = availability cascade (spec 2026-07-24-directed-runner-routing). A lower

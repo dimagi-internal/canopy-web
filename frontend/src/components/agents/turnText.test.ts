@@ -21,6 +21,8 @@ function unreported(over: Partial<AgentTurnOut> = {}): AgentTurnOut {
     status: 'done',
     origin: 'api',
     session_key: 'c-fix-brief-61bb',
+    job: '',
+    job_repo: '',
     emdash_task_id: 'c-fix-brief-61bb',
     reported_at: null,
     prompt: '',
@@ -92,5 +94,12 @@ describe('promptHasMore', () => {
   it('is false when the headline already is the whole prompt', () => {
     expect(promptHasMore(unreported({ prompt: 'just this' }))).toBe(false)
     expect(promptHasMore(unreported({ prompt: 'line one\nline two' }))).toBe(true)
+  })
+})
+
+describe('turnHeadline for a plain job', () => {
+  it('names the job and its repo, since it has no prompt', () => {
+    expect(turnHeadline(unreported({ prompt: '', job: 'sync-leads', job_repo: 'hal-jobs' })))
+      .toBe('Job: sync-leads from hal-jobs')
   })
 })

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Schedule, ScheduleWeekItem } from "@/api/schedules";
 import { getScheduleWeek } from "@/api/schedules";
+import { getAgent } from "@/api/agents";
 import { TriggerEditor } from "@/components/agents/TriggerEditor";
 import { bucketByDay, matchesFilters, type Filters } from "./calendarGrid";
 
@@ -27,7 +28,16 @@ export function ScheduleCalendar({ showWorkspaceFilter }: { showWorkspaceFilter:
   const [items, setItems] = useState<ScheduleWeekItem[] | null>(null);
   const [error, setError] = useState("");
   const [filters, setFilters] = useState<Filters>({ agent: null, workspace: null });
-  const [editing, setEditing] = useState<{ agentSlug: string; schedule: Schedule } | null>(null);
+  const [editing, setEditing] = useState<{ agentSlug: string; schedule: Schedule; isAdmin: boolean } | null>(null);
+  const lastOpened = useRef(0);
+
+  // This page has no agent to hand, so it asks: the editor gets what the Triggers tab gives
+  // it (`agent.is_admin`), and read-only is what it shows when that can't be told.
+  async function openEditor(schedule: Schedule) {
+    const opened = ++lastOpened.current;
+    const isAdmin = await getAgent(schedule.agent_slug).then((a) => Boolean(a.is_admin), () => false);
+    if (opened === lastOpened.current) setEditing({ agentSlug: schedule.agent_slug, schedule, isAdmin });
+  }
 
   const load = useCallback(async () => {
     setItems(null);
@@ -104,7 +114,7 @@ export function ScheduleCalendar({ showWorkspaceFilter }: { showWorkspaceFilter:
                 {col.fires.map((f, i) => (
                   <li key={i}>
                     <button type="button"
-                      onClick={() => setEditing({ agentSlug: f.item.schedule.agent_slug, schedule: f.item.schedule })}
+                      onClick={() => void openEditor(f.item.schedule)}
                       className="min-h-11 w-full rounded bg-muted px-1.5 py-1 text-left text-xs hover:bg-primary/10 sm:min-h-0">
                       <span className="font-medium text-foreground">{timeLabel(f.when)}</span>{" "}
                       <span className="text-foreground-secondary">{f.item.schedule.agent_slug}</span>
@@ -122,6 +132,7 @@ export function ScheduleCalendar({ showWorkspaceFilter }: { showWorkspaceFilter:
       {editing && (
         <TriggerEditor
           agentSlug={editing.agentSlug}
+          canSetJob={editing.isAdmin}
           trigger={editing.schedule}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void load(); }}

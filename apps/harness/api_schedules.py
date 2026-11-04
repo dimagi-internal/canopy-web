@@ -55,6 +55,8 @@ def _not_found(exc: ss.ScheduleNotFound) -> HttpError:
 def _forbidden(exc: ss.ScheduleForbidden) -> HttpError:
     """A member holding too low a role. 403, and it says which role is needed —
     a refusal a viewer cannot act on is a refusal they will report as a bug."""
+    if exc.job:
+        return HttpError(403, f"Only an admin of {exc.agent_slug} can change a job.")
     if exc.required == "agent admin":
         return HttpError(403, "this action requires the agent's owner or an admin")
     return HttpError(403, f"this action requires the {exc.required} or owner role")
@@ -70,6 +72,11 @@ def _stopped(exc: ss.TriggerStopped) -> ProblemError:
     """Run now on a trigger whose creator lost the right to it -> 409, saying why."""
     return ProblemError(409, "Trigger stopped", type_=TYPE_CONFLICT,
                         detail=f"this trigger may not fire: {exc.reason}")
+
+
+def _job_running(exc: ss.JobStillRunning) -> ProblemError:
+    """Run now on a job still running -> 409, in the sentence the person reads."""
+    return ProblemError(409, "Job still running", type_=TYPE_CONFLICT, detail=str(exc))
 
 
 def _duplicate_name(name: str) -> ProblemError:
@@ -218,6 +225,8 @@ def run_schedule_now(request: HttpRequest, slug: str, schedule_id: int) -> Statu
         raise _forbidden(exc) from None
     except ss.TriggerStopped as exc:
         raise _stopped(exc) from None
+    except ss.JobStillRunning as exc:
+        raise _job_running(exc) from None
     return Status(202, ScheduleOut(**ss.serialize_schedule(schedule)))
 
 
@@ -301,7 +310,7 @@ def delete_trigger(request: HttpRequest, slug: str, trigger_id: int) -> Status:
 @gate("agent.work", "agent-admin", kind="action")
 def run_trigger_now(request: HttpRequest, slug: str, trigger_id: int) -> Status:
     """Cron triggers only — mail is what fires an inbound_mail trigger (404 here).
-    409 when its creator lost the right to it."""
+    409 when its creator lost the right to it, or when it is a job still running."""
     try:
         trigger = ss.run_schedule_now(request.user, slug, trigger_id, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
@@ -310,4 +319,6 @@ def run_trigger_now(request: HttpRequest, slug: str, trigger_id: int) -> Status:
         raise _forbidden(exc) from None
     except ss.TriggerStopped as exc:
         raise _stopped(exc) from None
+    except ss.JobStillRunning as exc:
+        raise _job_running(exc) from None
     return Status(202, TriggerOut(**ss.serialize_trigger(trigger)))

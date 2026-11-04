@@ -37,6 +37,7 @@ import {
   priorityLabel,
   statusName,
 } from './meta'
+import { JobReviewDecision } from './JobReviewDecision'
 import { TaskTable } from './TaskTable'
 import { invalidateDirectory, useDirectory } from './useDirectory'
 
@@ -440,6 +441,13 @@ function Decision({ task, onAct }: { task: TaskDetail; onAct: (a: TaskActionName
   const triage = task.status === 'suggested'
   const asking = Boolean(task.ask_kind && task.ask_open)
   if (!triage && !asking) return null
+  // A failed job's review has no approve action; its way forward is Run now on its schedule.
+  if (asking && task.job_schedule_id && task.agent_slug) {
+    return (
+      <JobReviewDecision agentSlug={task.agent_slug} scheduleId={task.job_schedule_id}
+                         askBody={task.ask_body} onAct={onAct} />
+    )
+  }
   const run = async (a: TaskActionName, c = '') => {
     setBusy(true)
     try {

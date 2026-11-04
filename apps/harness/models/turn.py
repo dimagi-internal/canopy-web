@@ -82,7 +82,13 @@ class Turn(models.Model):
     ]
 
     PREFER_LOCAL, LOCAL_ONLY, ANY = "prefer_local", "local_only", "any"
-    ROUTING_CHOICES = [(PREFER_LOCAL, "Prefer local"), (LOCAL_ONLY, "Local only"), (ANY, "Any")]
+    # Only a cloud machine that reports it can run jobs (`capabilities.jobs`) takes
+    # one: the turn of a plain scheduled job, which an older box would read as an empty
+    # prompt and hand to a model. Not offered to a request (`schemas.common.Routing`
+    # is its own list); a schedule with a job sets it, and nothing else does.
+    CLOUD_ONLY = "cloud_only"
+    ROUTING_CHOICES = [(PREFER_LOCAL, "Prefer local"), (LOCAL_ONLY, "Local only"), (ANY, "Any"),
+                       (CLOUD_ONLY, "Cloud only")]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # A turn targets EITHER an agent or a repo — exactly one (see the
@@ -141,6 +147,13 @@ class Turn(models.Model):
     origin = models.CharField(max_length=32, choices=ORIGIN_CHOICES)
     origin_ref = models.JSONField(default=dict, blank=True)
     prompt = models.TextField(blank=True, default="")
+    # A PLAIN JOB (Part 3 of the connections spec): the name of a command in
+    # `.canopy/jobs.yaml` of the repo named by `job_repo`. Both blank on every ordinary
+    # turn. canopy-web says only these two names; the command is read from the repo
+    # by the box that runs it, and no payload carries one. Set by the schedule's fire
+    # and "Run now", nowhere else.
+    job = models.CharField(max_length=64, blank=True, default="", db_default="")
+    job_repo = models.CharField(max_length=100, blank=True, default="", db_default="")
     routing = models.CharField(max_length=15, choices=ROUTING_CHOICES, default=PREFER_LOCAL)
     # Unique per WORKSPACE, never globally (`uniq_turn_idempotency_key_per_scope`):
     # the keys canopy mints are guessable (`sched:<id>:<slot>`, `task-<pk>-<i>`),
@@ -403,6 +416,16 @@ class Turn(models.Model):
                     | models.Q(agent__isnull=True, project="", chat_session__isnull=False)
                 ),
                 name="turn_targets_agent_xor_project_xor_session",
+            ),
+            # A job names its repo and belongs to an agent's schedule: never a chat
+            # session's or a repo's turn, so a conversation cannot become a job.
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(job="", job_repo="")
+                     | (~models.Q(job="") & ~models.Q(job_repo="")
+                        & models.Q(agent__isnull=False, chat_session__isnull=True)))
+                ),
+                name="turn_job_shape",
             ),
         ]
 

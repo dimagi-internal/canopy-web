@@ -332,9 +332,11 @@ def install(*, run=subprocess.run, unit_path: pathlib.Path | None = None) -> boo
     if changed:
         unit_path.write_text(text)
         run(["systemctl", "daemon-reload"], capture_output=True)
-    run(["systemctl", "enable", "--now", "canopy-aws-broker.service"], capture_output=True)
+    # --no-block: `--setup-runners` runs this inside canopy-runners.service, which the unit is
+    # After=, so waiting for it would be waiting for our own caller to finish.
+    run(["systemctl", "enable", "--now", "--no-block", "canopy-aws-broker.service"], capture_output=True)
     if changed:
-        run(["systemctl", "restart", "canopy-aws-broker.service"], capture_output=True)
+        run(["systemctl", "restart", "--no-block", "canopy-aws-broker.service"], capture_output=True)
     return changed
 
 
