@@ -39,7 +39,14 @@ PROOF_HEADER = "HTTP_DPOP"
 
 
 class ProofError(ValueError):
-    """The proof is missing, malformed, stale, replayed, or for another request."""
+    """The proof is missing, malformed, stale, replayed, or for another request.
+
+    `jkt`: the key that signed it, when the signature held and something else refused
+    it (a stale proof), so the refusal can say whose it was."""
+
+    def __init__(self, message: str, *, jkt: str = ""):
+        super().__init__(message)
+        self.jkt = jkt
 
 
 class KeyError_(ValueError):
@@ -134,9 +141,13 @@ def verify_proof(request, *, now: float | None = None) -> str:
         raise ProofError("the proof is for a different URL")
     iat = claims.get("iat")
     current = time.time() if now is None else now
-    if not isinstance(iat, (int, float)) or isinstance(iat, bool) \
-            or abs(current - iat) > IAT_WINDOW_SECONDS:
+    if not isinstance(iat, (int, float)) or isinstance(iat, bool):
         raise ProofError("the proof is not fresh")
+    age = int(current - iat)
+    if abs(current - iat) > IAT_WINDOW_SECONDS:
+        when = f"signed {age}s before it arrived" if age > 0 else f"dated {-age}s in the future"
+        raise ProofError(f"the proof is not fresh: {when} (limit {IAT_WINDOW_SECONDS}s)",
+                         jkt=thumbprint(jwk))
     jkt = thumbprint(jwk)
     # add() is atomic: False means the jti was already seen — a replay.
     if not cache.add(f"dpop-jti:{jkt}:{jti}", 1, timeout=JTI_TTL_SECONDS):
