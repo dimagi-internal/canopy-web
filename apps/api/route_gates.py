@@ -70,6 +70,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
   ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
   ``admission.manage``, ``projects.decide``, ``own``, ``control``.
+* ``agent-edit`` — ``access.may_edit_agent``: the ``agent_edit`` permission on THIS agent (its
+  owner, an admin, its own login, or an access-list line whose role holds it); being an editor of its
+  workspace is not enough.
 * ``agent-admin`` — ``Agent.is_admin`` (its owner, a workspace owner, an
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
@@ -155,7 +158,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
     "admission.manage", "projects.decide", "own", "control",
-    "agent-admin", "agent-owner", "vault-admin", "agent-login", "session-acl", "turn-content",
+    "agent-edit", "agent-admin", "agent-owner", "vault-admin", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",

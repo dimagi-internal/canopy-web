@@ -14,6 +14,7 @@ the same 404 as a missing agent and never a 403 (no existence leak):
 
 * `agent_for_read`  — membership: may see and talk to the agent.
 * `agent_for_work`  — `perms.AGENT_WORK` (editor and up): may reshape or drive it.
+* `agent_for_edit`  — `access.may_edit_agent` (`agent_edit` on this agent): may change the agent itself.
 * `agent_for_admin` — `Agent.is_admin`: may change its secrets / identity.
 
 Who may make an agent DO what is `apps.agents.access.decide`, not this module;
@@ -89,6 +90,20 @@ def agent_for_work(
         return agent
     if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
         raise HttpError(403, forbidden)
+    return agent
+
+
+def agent_for_edit(request: HttpRequest, slug: str, *, honor_pin: bool = True) -> Agent:
+    """An agent the caller may CHANGE ITSELF (its skills, persona, repo work): `agent_edit` on it.
+
+    `agent_for_read` runs first, so a non-member gets 404, never 403. The 403 names who can
+    give the caller the editor role (`access.edit_refusal`).
+    """
+    from . import access  # noqa: PLC0415 — access imports the harness, which imports this module
+
+    agent = agent_for_read(request, slug, honor_pin=honor_pin)
+    if not access.may_edit_agent(request.user, agent):
+        raise HttpError(403, access.edit_refusal(agent))
     return agent
 
 

@@ -170,6 +170,10 @@ def _creating_owner(request: HttpRequest, home):
     return person
 
 
+#: What an agent says about itself: changing one of these on an existing agent needs `agent_edit`.
+SELF_FIELDS = ("name", "description", "persona", "email", "google_account", "avatar_url", "runner_preference")
+
+
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)
 @gate("agent.work", "agent-admin", setting=True)  # editor in target ws; a MOVE also needs agent admin
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
@@ -258,6 +262,15 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
                 f"changing {', '.join(changed)} on {existing.slug} requires being its "
                 "owner or one of its admins",
             )
+
+    # Changing what the agent says about itself (its name, description, persona, address, avatar,
+    # runner-kind preference) is changing the agent itself: `agent_edit` on it, not merely being an
+    # editor of its workspace. Creating one stays the workspace editor's (above).
+    if existing is not None:
+        self_changed = [f for f in SELF_FIELDS
+                        if getattr(payload, f, None) is not None and getattr(payload, f) != getattr(existing, f)]
+        if self_changed and not access.may_edit_agent(request.user, existing):
+            raise HttpError(403, access.edit_refusal(existing))
 
     # Whoever registers a NEW agent owns it — from the create wizard and from a terminal's
     # `/canopy:create-agent` alike; from inside an agent's turn, the person who asked for
@@ -496,6 +509,7 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
         "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
+        "can_edit_agent": access.may_edit_agent(request.user, agent),
         "can_manage_admins": _may_manage_admins(request, agent),
         "plugin": plugin_services.plugin_ref(agent, plugin_services.plugin_refs(request.user)),
     })

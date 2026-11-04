@@ -43,7 +43,9 @@ enforces, e.g. `@gate("agent.work", setting=True)`; `tests/test_every_route_decl
 fails on an operation in the OpenAPI schema whose view has none — so a new route is a decision
 about who may call it, made when it is written, not discovered by an audit. A write a VIEWER may
 make must also give its reason (`viewer_write="..."`). Hand-written MCP tools, which are not
-routes, declare theirs in `route_gates.HAND_TOOL_GATES`.
+routes, declare theirs in `route_gates.HAND_TOOL_GATES`. A route that changes the agent itself
+declares `@gate("agent-edit")` and asks `gates.agent_for_edit` (→ `access.may_edit_agent`): the agent's own
+`agent_edit` permission, not the workspace's `agent.work` (`access.md` § Agent roles).
 
 A workspace admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
 they invite, re-role and remove viewers and editors, see invite links only for those roles,
