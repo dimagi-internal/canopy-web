@@ -56,6 +56,8 @@ Existing web store queries filter to `runtime="web"`, so a local app can't reach
 
 ## Publish, approve, release
 
+**For now, no approval.** Jonathan, 2026-11-03: "anyone should be able to publish without approval for now while we practice and get the framework, solid, we'll enforce approval later." `LOCAL_APPS_REQUIRE_APPROVAL` is off, so a submission from anyone who can write content in a workspace with local apps switched on is released at once and shown as unreviewed. The steps below are what switching it on restores.
+
 ```
 author                 canopy-web                     reviewer                 people
 pack + submit  ──────► validate, store, compute facts

@@ -8,6 +8,8 @@ The catalog: an approved version is an `AppTemplateVersion` of an `AppTemplate` 
 
 ## Publishing
 
+**Right now no approval is needed** (`LOCAL_APPS_REQUIRE_APPROVAL` is off, while the framework is being practised on). A submission from anyone who can write content in a workspace with local apps switched on is released at once and shown as unreviewed, and it reaches people at their next Start. Everything below about approval applies once that setting is on.
+
 1. `canopy-runner app pack` makes a deterministic zip; `app submit` (or `POST /api/local-apps/submissions/`) sends it. The server never runs it: `package.read` checks limits, paths and the manifest, and `package.facts` lists what reaches the network or starts processes.
 2. Submitting files the approval. Its snapshot names the sha256. The review page (`/w/<ws>/apps/local/review/<id>`) shows the diff from the last release. Approving needs a superuser who didn't submit it. A lone superuser can't submit, since nobody could approve, so an agent or another person does.
 3. Approving creates the immutable catalog version, and the app lists for every workspace with local apps switched on.

@@ -30,6 +30,11 @@ pytestmark = pytest.mark.django_db
 J = "application/json"
 
 
+@pytest.fixture(autouse=True)
+def _approval_is_on(settings):
+    settings.LOCAL_APPS_REQUIRE_APPROVAL = True
+
+
 def manifest(**over) -> dict:
     return {
         "key": "meeting-assistant",
@@ -747,3 +752,38 @@ def test_a_package_fits_in_a_request_body():
 def test_settings_remember_the_authors_order_through_jsonb():
     from apps.local_apps import manifest as mf
     assert [s["order"] for s in mf.validate(manifest())["settings"].values()] == [0, 1]
+
+
+# --- publishing with no approval, while the framework is practised on --------------------
+
+
+def test_with_approval_off_a_submission_is_live_at_once_and_says_nobody_reviewed_it(world, settings):
+    settings.LOCAL_APPS_REQUIRE_APPROVAL = False
+    sub = submit(world)
+    assert sub.status == "released" and sub.approval_id is None and not sub.reviewed
+    assert not ApprovalRequest.objects.exists()
+    detail = client(world["person"]).get("/api/local-apps/store/dimagi/apps/meeting-assistant").json()
+    assert detail["reviewed"] is False and detail["version"] == "0.1.0"
+
+
+def test_an_approved_version_says_it_was_reviewed(world):
+    released(world)
+    detail = client(world["person"]).get("/api/local-apps/store/dimagi/apps/meeting-assistant").json()
+    assert detail["reviewed"] is True
+
+
+def test_with_approval_off_a_workspace_not_offering_local_apps_cant_publish(world, settings):
+    settings.LOCAL_APPS_REQUIRE_APPROVAL = False
+    Workspace.objects.filter(slug="dimagi").update(settings={})
+    r = client(world["author"]).post("/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"},
+                                     content_type=J)
+    assert r.status_code == 403 and not LocalAppSubmission.objects.exists()
+
+
+def test_with_approval_off_a_viewer_still_cant_publish(world, settings):
+    settings.LOCAL_APPS_REQUIRE_APPROVAL = False
+    viewer = User.objects.create_user("viewer2", "viewer2@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=viewer, workspace=world["ws"], role=WorkspaceMembership.VIEWER)
+    r = client(viewer).post("/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"},
+                            content_type=J)
+    assert r.status_code == 403
