@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents import skill_history
-from apps.agents.models import Agent, SkillHistoryCommit, SkillHistorySync, SkillRevision
+from apps.agents.models import Agent, AgentGrant, SkillHistoryCommit, SkillHistorySync, SkillRevision
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -133,6 +133,7 @@ def test_the_payload_says_who_must_act(client, ws_and_users, agent, settings):
 
 
 def test_an_editor_can_sync_but_is_not_the_owner(client, agent, editor):
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=editor, role="editor")
     client.force_login(editor)
     body = client.get("/api/agents/ace/skill-history/").json()
     assert body["viewer_can_sync"] is True
