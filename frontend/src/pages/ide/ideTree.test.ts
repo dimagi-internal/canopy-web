@@ -9,6 +9,7 @@ import {
   linkKind,
   matches,
   sessionMode,
+  sessionBelow,
   sessionReference,
   sessionState,
   shortAge,
@@ -25,6 +26,24 @@ const s = (over: Partial<IdeSession>): IdeSession => ({
 })
 
 const with_ = (over: Partial<IdeFilters>): IdeFilters => ({ ...DEFAULT_FILTERS, ...over })
+
+describe('sessionBelow', () => {
+  const rows = [s({ id: 'a' }), s({ id: 'b' }), s({ id: 'c' })]
+
+  it('is the next row down', () => {
+    expect(sessionBelow(rows, 'a')?.id).toBe('b')
+  })
+
+  it('skips a row already being deleted', () => {
+    expect(sessionBelow(rows, 'a', { b: 1 })?.id).toBe('c')
+  })
+
+  it('is nothing at the bottom, or for a row the tree does not show', () => {
+    expect(sessionBelow(rows, 'c')).toBeNull()
+    expect(sessionBelow(rows, 'b', { c: 1 })).toBeNull()
+    expect(sessionBelow(rows, 'gone')).toBeNull()
+  })
+})
 
 describe('sessionState', () => {
   it('reads a pending question as input, even while the runner says running', () => {

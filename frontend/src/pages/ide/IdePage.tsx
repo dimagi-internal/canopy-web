@@ -46,6 +46,7 @@ import {
   childLinks,
   deleteConsequence,
   runnerKey,
+  sessionBelow,
   type IdeMode,
   type IdeState,
 } from './ideTree'
@@ -232,10 +233,12 @@ export function IdePage() {
   const allCollapsed = tree.length > 0 && tree.every((f) => collapsed.has(f.key))
   const setAllCollapsed = (on: boolean) => setCollapsed(on ? new Set(tree.map((f) => f.key)) : new Set())
 
+  const visibleRows = () => tree.flatMap((f) => (collapsed.has(f.key) ? [] : f.sessions))
+
   // Up/down walks the visible rows while focus is in the tree.
   const onTreeKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    const visible = tree.flatMap((f) => (collapsed.has(f.key) ? [] : f.sessions))
+    const visible = visibleRows()
     if (!visible.length) return
     e.preventDefault()
     const i = visible.findIndex((s) => s.id === id)
@@ -264,6 +267,18 @@ export function IdePage() {
   const label = sessionLabel
   const failed = (e: unknown, fallback: string) =>
     setNote({ text: e instanceof Error ? e.message : fallback, error: true })
+
+  // A close was accepted: say so, and if it was the open session, leave it now.
+  // A relayed one is not finished until its runner reports, but the row says
+  // that (marked, then gone, or an error in the note), so the transcript of a
+  // session you just closed has no reason to stay up.
+  const afterClose = (s: ChatSession, relayed: boolean) => {
+    if (relayed) trackClose(s.id, `Deleting “${label(s)}” on ${s.runner_name ?? 'its runner'}…`, `Deleted “${label(s)}”`)
+    else setNote({ text: `Deleted “${label(s)}”`, error: false })
+    if (s.id !== id) return
+    const below = sessionBelow(visibleRows(), s.id, closing)
+    navigate(below ? `/ide/${below.id}` : '/ide', { replace: true })
+  }
 
   const runAction = async (s: ChatSession, a: IdeAction) => {
     setMenu(null)
@@ -330,9 +345,7 @@ export function IdePage() {
             setNote({ text: message, error: true })
             return
           }
-          if (r.closing) trackClose(s.id, `Deleting “${label(s)}” on ${s.runner_name ?? 'its runner'}…`, `Deleted “${label(s)}”`)
-          else setNote({ text: `Deleted “${label(s)}”`, error: false })
-          if (s.id === id && !r.closing) navigate('/ide', { replace: true })
+          afterClose(s, r.closing)
           break
         }
       }
@@ -608,7 +621,12 @@ export function IdePage() {
             compact
             editTitle={id === justCreated}
             onTitleChange={() => void refresh()}
-            onLeave={() => navigate('/ide', { replace: true })}
+            onLeave={(relayed) => {
+              const open = sessions.find((s) => s.id === id)
+              if (open) afterClose(open, relayed)
+              else navigate('/ide', { replace: true })
+              void refresh()
+            }}
             sessionPath={(s) => `/ide/${encodeURIComponent(s.id)}`}
           />
         ) : (

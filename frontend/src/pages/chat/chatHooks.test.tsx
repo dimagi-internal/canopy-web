@@ -348,7 +348,32 @@ describe('useSessionActions', () => {
     )
     await act(async () => { await result.current.closeThisSession() })
     expect(chat.closeSession).toHaveBeenCalledWith('s1')
-    expect(onLeave).toHaveBeenCalled()
+    expect(onLeave).toHaveBeenCalledWith(false)
+  })
+
+  it('tells onLeave of a relayed close at once, without polling the session', async () => {
+    chat.closeSession.mockResolvedValue({ ok: true, closing: true })
+    chat.getSession.mockClear()
+    const onLeave = vi.fn()
+    const { result } = renderHook(
+      () => useSessionActions({ sessionId: 's1', meta: meta(), setMeta: vi.fn(), onLeave }),
+      { wrapper },
+    )
+    await act(async () => { await result.current.closeThisSession() })
+    expect(onLeave).toHaveBeenCalledWith(true)
+    expect(chat.getSession).not.toHaveBeenCalled()
+  })
+
+  it('does not leave when the close is refused', async () => {
+    chat.closeSession.mockResolvedValue({ ok: false, closing: false, reason: 'unavailable' })
+    const onLeave = vi.fn()
+    const { result } = renderHook(
+      () => useSessionActions({ sessionId: 's1', meta: meta(), setMeta: vi.fn(), onLeave }),
+      { wrapper },
+    )
+    await act(async () => { await result.current.closeThisSession() })
+    expect(onLeave).not.toHaveBeenCalled()
+    expect(result.current.closeNote).toMatch(/Could not close/)
   })
 
   it('describes a reset the runner could not do', async () => {
