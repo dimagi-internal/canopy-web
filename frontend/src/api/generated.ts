@@ -25706,6 +25706,11 @@ export interface components {
             readonly version: string;
             /** Publisher */
             readonly publisher: string;
+            /**
+             * Reviewed
+             * @default false
+             */
+            readonly reviewed: boolean;
             /** Notice */
             readonly notice: string;
             /** Disclosure */

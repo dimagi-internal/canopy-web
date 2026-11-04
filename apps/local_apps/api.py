@@ -148,6 +148,7 @@ def get_local_app(request: HttpRequest, workspace: str, key: str) -> LocalAppDet
         description=m["description"],
         version=sub.version,
         publisher="canopy",
+        reviewed=sub.reviewed,
         notice=m["notice"],
         disclosure=m["disclosure"],
         settings=m["settings"],

@@ -48,6 +48,8 @@ class LocalAppDetailOut(Schema):
     description: str
     version: str
     publisher: str
+    #: False when it was published with no approval. The page must not claim a review then.
+    reviewed: bool = False
     notice: str
     disclosure: dict[str, list[str]]
     settings: dict[str, Any]

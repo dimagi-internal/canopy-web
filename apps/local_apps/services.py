@@ -14,6 +14,7 @@ import datetime as dt
 import hashlib
 import uuid
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -154,6 +155,10 @@ def submit(*, package_b64: str, note: str, workspace: Workspace, user) -> tuple[
             )
             _file_approval(existing, user, attempt)
         return existing, False
+    # Publishing has no reviewer while approval is off, so at least it comes from somewhere
+    # that chose to offer these apps, not from any Canopy account in any workspace.
+    if not settings.LOCAL_APPS_REQUIRE_APPROVAL and not switched_on(workspace):
+        raise Refused("Apps that run on your computer are switched off in this workspace", 403)
     top = latest(m["key"])
     if top is not None and _version_key(m["version"]) <= _version_key(top.version):
         raise Refused(f"version {m['version']} isn't newer than the released {top.version}", 409)
@@ -182,15 +187,18 @@ def submit(*, package_b64: str, note: str, workspace: Workspace, user) -> tuple[
             workspace=workspace,
             submitted_by=user,
         )
-        try:
-            _file_approval(sub, user, 0)
-        except approvals.ApprovalError as exc:
-            raise Refused(str(exc), exc.status) from exc
+        if settings.LOCAL_APPS_REQUIRE_APPROVAL:
+            try:
+                _file_approval(sub, user, 0)
+            except approvals.ApprovalError as exc:
+                raise Refused(str(exc), exc.status) from exc
+        else:
+            release(sub)
     return sub, True
 
 
 def release(sub: LocalAppSubmission) -> LocalAppSubmission:
-    """Run by the approval's handler, and nothing else."""
+    """Run by the approval's handler, or by `submit` while approval is off. Nothing else."""
     if sub.released_at or sub.revoked_at:
         raise Refused("this version was already decided")
     m = sub.manifest
