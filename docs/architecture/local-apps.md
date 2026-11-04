@@ -1,6 +1,6 @@
 # Local apps
 
-A **local app** is a real program from Canopy's app store that runs on a person's own computer, started by them, with its agentic work done through normal Canopy sessions. The first is Meeting assistant: it reads a running meeting's transcript and sends batches to an agent's session. Design and reasons: `docs/superpowers/specs/2026-11-03-local-apps-design.md`. Writing an app: `local_apps/README.md`.
+A **local app** (in the product, a **user app**, labelled **Unreleased apps** for now) is a real program from Canopy's app store that a person installs for themselves, not for a workspace. It runs on their own computer, started by them, with its agentic work done through normal Canopy sessions. The first is Meeting assistant: it reads a running meeting's transcript and sends batches to an agent's session. Design and reasons: `docs/superpowers/specs/2026-11-03-local-apps-design.md`. Writing an app: `local_apps/README.md`.
 
 ## What it shares with workspace apps
 
@@ -8,11 +8,11 @@ The catalog: an approved version is an `AppTemplateVersion` of an `AppTemplate` 
 
 ## Publishing
 
-**Right now no approval is needed** (`LOCAL_APPS_REQUIRE_APPROVAL` is off, while the framework is being practised on). A submission from anyone who can write content in a workspace with local apps switched on is released at once and shown as unreviewed, and it reaches people at their next Start. Everything below about approval applies once that setting is on.
+**Right now no approval is needed** (`LOCAL_APPS_REQUIRE_APPROVAL` is off, while the framework is being practised on). A submission from anyone who can write content in any workspace is released at once and shown as unreviewed, and it reaches people at their next Start. An app's key stays with the workspace that first released it, so only that workspace's people can change an app others already run. Everything below about approval applies once that setting is on.
 
 1. `canopy-runner app pack` makes a deterministic zip; `app submit` (or `POST /api/local-apps/submissions/`) sends it. The server never runs it: `package.read` checks limits, paths and the manifest, and `package.facts` lists what reaches the network or starts processes.
-2. Submitting files the approval. Its snapshot names the sha256. The review page (`/w/<ws>/apps/local/review/<id>`) shows the diff from the last release. Approving needs a superuser who didn't submit it. A lone superuser can't submit, since nobody could approve, so an agent or another person does.
-3. Approving creates the immutable catalog version, and the app lists for every workspace with local apps switched on.
+2. Submitting files the approval. Its snapshot names the sha256. The review page (`/apps/local/review/<id>`) shows the diff from the last release. Approving needs a superuser who didn't submit it. A lone superuser can't submit, since nobody could approve, so an agent or another person does.
+3. Approving creates the immutable catalog version, and the app lists for everyone.
 4. Revoking (`POST …/submissions/<id>/revoke`) refuses Start and Canopy calls at once, and running copies stop at their next heartbeat.
 
 ## Updates
@@ -21,7 +21,7 @@ At each Start, the runner runs the newest good version if its **trust surface** 
 
 ## Who and what
 
-- `Workspace.settings.local_apps`, off by default, set by `integrations`. Off also stops running copies.
+- Any signed-in person can see and install one, for themselves. There's no workspace switch. The agent they choose decides which workspace its sessions land in, and it can be in any workspace they're in.
 - Only a person's own laptop runner (`kind=emdash`, their `owner`). `private` isn't the test, because most laptops also serve fleet work.
 - A web page can install, configure and stop an app, never start one.
 

@@ -78,8 +78,11 @@ class LocalAppSubmission(models.Model):
 class LocalAppInstallation(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     runner = models.ForeignKey("harness.Runner", on_delete=models.CASCADE, related_name="+")
-    #: Where its sessions land. Its agent must belong to this workspace.
-    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    #: Where its sessions land: the workspace of the agent the person chose. A user app
+    #: belongs to the person, not a workspace, so one with no agent (a source) has none.
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", null=True, blank=True, on_delete=models.CASCADE, related_name="+"
+    )
     template = models.ForeignKey("workspace_apps.AppTemplate", on_delete=models.PROTECT, related_name="+")
     settings = models.JSONField(default=dict, blank=True)
     #: The last version they read and agreed to, and that version's trust surface.
@@ -98,8 +101,9 @@ class LocalAppRun(models.Model):
     installation = models.ForeignKey(LocalAppInstallation, on_delete=models.CASCADE, related_name="runs")
     version = models.ForeignKey(LocalAppSubmission, on_delete=models.PROTECT, related_name="+")
     #: The source it listens to, so that revoking the source reaches this run too.
-    source_version = models.ForeignKey(LocalAppSubmission, null=True, blank=True, on_delete=models.PROTECT,
-                                       related_name="+")
+    source_version = models.ForeignKey(
+        LocalAppSubmission, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
     started_at = models.DateTimeField(auto_now_add=True)
     last_beat_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)

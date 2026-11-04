@@ -138,7 +138,6 @@ Every browser-facing address canopy-web serves. The SPA route table is
   [`dynamic-views.md`](dynamic-views.md)). The list (`?project=<handle>` narrows,
   `?new=1` opens New view); one view, with History (restore) and, for editors, the
   code and sources beside a live preview of the draft (`?edit=1`).
-- **`/apps/local/:key`**, **`/apps/local/review/:id`** — local apps ([`local-apps.md`](local-apps.md)): one app's disclosure, install and configure; a submission's code and facts for its reviewer.
 - **`/apps`** (+ `/store?app=<key>`, `/:appKey/:page?`, `/:appKey/customize`) — workspace apps
   (`apps/workspace_apps`; [`workspace-apps.md`](workspace-apps.md)): the installed list, one app of
   canopy's catalog before it is installed (screenshots, roles, records, public pages), an installed

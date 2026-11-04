@@ -111,7 +111,7 @@ def install(world) -> LocalAppSubmission:
     sub = publish(world, "meeting-assistant")
     web = Client()
     web.force_login(world["person"])
-    r = web.post("/api/local-apps/store/dimagi/apps/meeting-assistant/install",
+    r = web.post("/api/local-apps/store/apps/meeting-assistant/install",
                  {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper", "brief": "Be blunt"},
                   "accept_digest": services.install_digest(sub, services.sources_of(sub))}, content_type=J)
     assert r.status_code == 201, r.content

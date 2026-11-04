@@ -5,14 +5,6 @@ from typing import Any
 from ninja import Schema
 
 
-class LocalAppSwitchIn(Schema):
-    enabled: bool
-
-
-class LocalAppSwitchOut(Schema):
-    enabled: bool
-
-
 class LocalAppComputerOut(Schema):
     id: str
     name: str
@@ -37,8 +29,6 @@ class LocalAppListingOut(Schema):
 
 
 class LocalAppStoreOut(Schema):
-    enabled: bool
-    can_switch: bool
     apps: list[LocalAppListingOut]
 
 
@@ -59,11 +49,10 @@ class LocalAppDetailOut(Schema):
     installs_with: list[str] = []
     #: Each of those apps' own promise, because installing accepts it too.
     source_disclosures: list[dict[str, Any]] = []
-    #: Agents in this workspace the person may use, for a setting that picks one.
+    #: Agents the person may use, across their workspaces, for a setting that picks one.
     agents: list[dict[str, str]] = []
     computers: list[LocalAppComputerOut] = []
     versions: list[LocalAppVersionOut] = []
-    enabled: bool = False
 
 
 class LocalAppInstallIn(Schema):
@@ -88,7 +77,8 @@ class LocalAppInstallationOut(Schema):
     id: int
     key: str
     name: str
-    workspace: str
+    #: Where its sessions land: the chosen agent's workspace. None for a source.
+    workspace: str | None = None
     computer: LocalAppComputerOut
     settings: dict[str, Any]
     settings_spec: dict[str, Any]

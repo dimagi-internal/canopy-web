@@ -56,7 +56,9 @@ Existing web store queries filter to `runtime="web"`, so a local app can't reach
 
 ## Publish, approve, release
 
-**For now, no approval.** Jonathan, 2026-11-03: "anyone should be able to publish without approval for now while we practice and get the framework, solid, we'll enforce approval later." `LOCAL_APPS_REQUIRE_APPROVAL` is off, so a submission from anyone who can write content in a workspace with local apps switched on is released at once and shown as unreviewed. The steps below are what switching it on restores.
+**A user app, not a workspace app.** Jonathan, 2026-11-04: "get rid of the checkbox for now ... just label it clear as unreleased apps, not expiremental. also, the hiring is a workspace app, this is a user app (you install it for yourself, not the workspace)". So there's no workspace switch, the page is personal (`/apps`), and the agent a person chooses decides which workspace its sessions land in. Where this spec says "workspace switch" or "Experimental", this replaces it.
+
+**For now, no approval.** Jonathan, 2026-11-03: "anyone should be able to publish without approval for now while we practice and get the framework, solid, we'll enforce approval later." `LOCAL_APPS_REQUIRE_APPROVAL` is off, so a submission from anyone who can write content in any workspace is released at once and shown as unreviewed. An app's key stays with the workspace that first released it. The steps below are what switching it on restores.
 
 ```
 author                 canopy-web                     reviewer                 people

@@ -38,7 +38,6 @@ from . import package as pkg
 from . import trust
 from .models import LocalAppInstallation, LocalAppRun, LocalAppSubmission
 
-SWITCH = "local_apps"
 #: A run with no heartbeat for this long is no longer shown as running.
 RUN_STALE = dt.timedelta(minutes=6)
 MAX_SEND_CHARS = 64_000
@@ -51,17 +50,6 @@ class Refused(Exception):  # noqa: N818 — same name as workspace_apps.services
     def __init__(self, message: str, status: int = 409):
         super().__init__(message)
         self.status = status
-
-
-def switched_on(workspace: Workspace) -> bool:
-    return bool((workspace.settings or {}).get(SWITCH))
-
-
-def set_switch(workspace: Workspace, on: bool) -> None:
-    settings = dict(workspace.settings or {})
-    settings[SWITCH] = bool(on)
-    workspace.settings = settings
-    workspace.save(update_fields=["settings", "updated_at"])
 
 
 # --- the catalog ------------------------------------------------------------------------
@@ -155,10 +143,12 @@ def submit(*, package_b64: str, note: str, workspace: Workspace, user) -> tuple[
             )
             _file_approval(existing, user, attempt)
         return existing, False
-    # Publishing has no reviewer while approval is off, so at least it comes from somewhere
-    # that chose to offer these apps, not from any Canopy account in any workspace.
-    if not settings.LOCAL_APPS_REQUIRE_APPROVAL and not switched_on(workspace):
-        raise Refused("Apps that run on your computer are switched off in this workspace", 403)
+    # Publishing has no reviewer for now, and a new version reaches people at their next Start.
+    # So an app's name stays with the workspace that first released it: anyone can publish a
+    # new app, and only its own people can change one others already run.
+    first = LocalAppSubmission.objects.filter(key=m["key"], released_at__isnull=False).order_by("released_at").first()
+    if first is not None and first.workspace_id != workspace.pk:
+        raise Refused(f"'{m['key']}' is published from another workspace. Choose another key.", 403)
     top = latest(m["key"])
     if top is not None and _version_key(m["version"]) <= _version_key(top.version):
         raise Refused(f"version {m['version']} isn't newer than the released {top.version}", 409)
@@ -252,7 +242,7 @@ def provider_of(stream: str) -> LocalAppSubmission | None:
     return found[0] if len(found) == 1 else None
 
 
-def _clean_settings(manifest: dict, values: dict, workspace: Workspace, user, *, partial: bool = False) -> dict:
+def _clean_settings(manifest: dict, values: dict, user, *, partial: bool = False) -> dict:
     spec = manifest["settings"]
     unknown = set(values) - set(spec)
     if unknown:
@@ -270,27 +260,36 @@ def _clean_settings(manifest: dict, values: dict, workspace: Workspace, user, *,
         elif not isinstance(value, str) or len(value) > 4000:
             raise Refused(f"{field['label']} must be text of at most 4000 characters", 422)
         elif field["type"] == "agent":
-            _usable_agent(value, workspace, user)
+            _usable_agent(value, user)
         out[name] = value
     return out
 
 
-def _usable_agent(slug: str, workspace: Workspace, user) -> Agent:
-    agent = Agent.objects.filter(slug=slug, workspace=workspace).first()
+def _usable_agent(slug: str, user) -> Agent:
+    """An agent this person may use, in any workspace they're in."""
+    agent = Agent.objects.select_related("workspace").filter(slug=slug).first()
     # verified=False because that's how a run's turn is judged (its assurance is the runner's
     # key), so this answers the same as the turn will rather than promising more.
-    if agent is None or agent_access.decide(agent, user, verified=False).access == "none":
-        raise Refused(f"you can't use the agent '{slug}' in this workspace", 403)
+    if (
+        agent is None
+        or not perms.can(user, agent.workspace, perms.READ)
+        or agent_access.decide(agent, user, verified=False).access == "none"
+    ):
+        raise Refused(f"you can't use the agent '{slug}'", 403)
     return agent
 
 
-def install(
-    *, workspace: Workspace, key: str, user, runner_id, settings: dict, accept_digest: str
-) -> LocalAppInstallation:
-    """Install an app, and the source it listens to. `accept_digest` is the promise the
-    person was shown, so a version released while they read can't slip past them."""
-    if not switched_on(workspace):
-        raise Refused("Apps that run on your computer are switched off in this workspace", 403)
+def _workspace_for(manifest: dict, settings: dict, user):
+    """Sessions land where the chosen agent lives. A user app has no workspace of its own."""
+    for name, field in manifest["settings"].items():
+        if field["type"] == "agent" and settings.get(name):
+            return _usable_agent(settings[name], user).workspace
+    return None
+
+
+def install(*, key: str, user, runner_id, settings: dict, accept_digest: str) -> LocalAppInstallation:
+    """Install an app for this person, and the source it listens to. `accept_digest` is the
+    promise they were shown, so a version released while they read can't slip past them."""
     runner = computers_of(user).filter(pk=runner_id).first()
     if runner is None:
         raise Refused("that isn't one of your computers", 404)
@@ -305,13 +304,14 @@ def install(
         sources.append(source)
     if install_digest(sub, sources) != accept_digest:
         raise Refused("this app changed while you were reading. Read it again.", 409)
-    clean = _clean_settings(sub.manifest, settings or {}, workspace, user)
+    clean = _clean_settings(sub.manifest, settings or {}, user)
+    workspace = _workspace_for(sub.manifest, clean, user)
     with transaction.atomic():
         inst = _install_one(sub, user, runner, workspace, clean, accepting=True)
         for source in sources:
             # A source already here keeps what was accepted for it. A newer promise of
             # its own is accepted on its own row, not in passing by installing something else.
-            _install_one(source, user, runner, workspace, {}, accepting=False)
+            _install_one(source, user, runner, None, {}, accepting=False)
     return inst
 
 
@@ -329,9 +329,16 @@ def sources_of(sub: LocalAppSubmission) -> list[LocalAppSubmission]:
 def _install_one(sub, user, runner, workspace, settings, *, accepting: bool) -> LocalAppInstallation:
     template = sub.release.template
     inst, created = LocalAppInstallation.objects.get_or_create(
-        user=user, runner=runner, template=template,
-        defaults={"workspace": workspace, "settings": settings, "accepted": sub,
-                  "accepted_digest": trust.digest(sub.manifest)})
+        user=user,
+        runner=runner,
+        template=template,
+        defaults={
+            "workspace": workspace,
+            "settings": settings,
+            "accepted": sub,
+            "accepted_digest": trust.digest(sub.manifest),
+        },
+    )
     if not created and accepting:
         inst.workspace, inst.accepted, inst.accepted_digest = workspace, sub, trust.digest(sub.manifest)
         inst.settings = {**inst.settings, **settings}
@@ -341,8 +348,9 @@ def _install_one(sub, user, runner, workspace, settings, *, accepting: bool) -> 
 
 def configure(inst: LocalAppInstallation, values: dict, user) -> LocalAppInstallation:
     manifest = (latest(inst.template.key) or inst.accepted).manifest
-    inst.settings = {**inst.settings, **_clean_settings(manifest, values, inst.workspace, user, partial=True)}
-    inst.save(update_fields=["settings", "updated_at"])
+    inst.settings = {**inst.settings, **_clean_settings(manifest, values, user, partial=True)}
+    inst.workspace = _workspace_for(manifest, inst.settings, user)
+    inst.save(update_fields=["settings", "workspace", "updated_at"])
     return inst
 
 
@@ -377,10 +385,6 @@ def resolve(inst: LocalAppInstallation) -> dict:
             refusal = f"The version you have was withdrawn: {inst.accepted.revoked_reason}. Review the new one first."
         else:
             version = inst.accepted
-    if refusal is None and not switched_on(inst.workspace):
-        refusal = "Apps that run on your computer are switched off in this workspace."
-    if refusal is None and not perms.can(inst.user, inst.workspace, perms.READ):
-        refusal = "You're no longer in this app's workspace."
     if refusal is None and version is not None:
         settings_spec = version.manifest["settings"]
         for name, field in settings_spec.items():
@@ -389,7 +393,7 @@ def resolve(inst: LocalAppInstallation) -> dict:
                 break
     if refusal is None and version is not None and (slug := agent_slug(inst, version)):
         try:
-            _usable_agent(slug, inst.workspace, inst.user)
+            _usable_agent(slug, inst.user)
         except Refused as exc:
             refusal = str(exc)
     return {"version": version, "needs_acceptance": needs_acceptance, "changes": changes, "refusal": refusal}
@@ -448,7 +452,7 @@ def _source_for_run(inst, version: LocalAppSubmission, source_version: str) -> L
 def stop_wanted(run: LocalAppRun) -> str:
     """Why this run must stop, or "" if it may go on. Read at each heartbeat and each
     Canopy call, so a decision made after Start reaches running copies: revoking, the
-    workspace switch, and the person losing their access."""
+    and the person losing their access."""
     if run.finished_at:
         return "finished"
     if run.version.revoked_at or (run.source_version and run.source_version.revoked_at):
@@ -456,13 +460,9 @@ def stop_wanted(run: LocalAppRun) -> str:
     if run.stop_requested:
         return "stopped_from_website"
     inst = run.installation
-    if not switched_on(inst.workspace):
-        return "switched_off"
-    if not perms.can(inst.user, inst.workspace, perms.READ):
-        return "no_longer_in_workspace"
     if slug := agent_slug(inst, run.version):
         try:
-            _usable_agent(slug, inst.workspace, inst.user)
+            _usable_agent(slug, inst.user)
         except Refused:
             return "no_longer_allowed_to_use_agent"
     return ""
@@ -528,16 +528,16 @@ def _create_session(run: LocalAppRun, args: dict) -> dict:
     inst = run.installation
     if len(run.session_ids) >= MAX_SESSIONS_PER_RUN:
         raise Refused("this run has opened as many sessions as it may", 409)
-    agent = _usable_agent(agent_slug(inst, run.version), inst.workspace, inst.user)
+    agent = _usable_agent(agent_slug(inst, run.version), inst.user)
     session = session_services.create_session(
-        workspace=inst.workspace,
+        workspace=agent.workspace,
         created_by=inst.user,
         agent=agent,
         title=str(args.get("title") or run.version.manifest["name"])[:200],
     )
     run.session_ids = [*run.session_ids, str(session.pk)]
     run.save(update_fields=["session_ids"])
-    return {"id": str(session.pk), "url": scoped_url(inst.workspace, f"/sessions/{session.pk}")}
+    return {"id": str(session.pk), "url": scoped_url(agent.workspace, f"/sessions/{session.pk}")}
 
 
 def _send(run: LocalAppRun, args: dict) -> dict:

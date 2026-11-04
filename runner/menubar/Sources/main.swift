@@ -608,7 +608,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
                 tip = "Canopy Runner — approve this Mac in your browser (code \(pairing.code))"
             }
             if runningApps > 0 {
-                tip += "\n\(runningApps) experimental app\(runningApps == 1 ? "" : "s") running"
+                tip += "\n\(runningApps) unreleased app\(runningApps == 1 ? "" : "s") running"
             }
             btn.toolTip = tip
             applyBadge()
@@ -1025,9 +1025,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     let appStatusEveryTicks = 3
 
     func addExperimentalItem(to menu: NSMenu) {
-        let item = NSMenuItem(title: runningApps > 0 ? "Experimental — \(runningApps) running" : "Experimental",
+        let item = NSMenuItem(title: runningApps > 0 ? "Unreleased apps — \(runningApps) running" : "Unreleased apps",
                               action: nil, keyEquivalent: "")
-        let sub = NSMenu(title: "Experimental")
+        let sub = NSMenu(title: "Unreleased apps")
         sub.delegate = self
         experimentalMenu = sub
         item.submenu = sub
@@ -1180,7 +1180,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     }
 
     @objc func browseApps() {
-        if let url = URL(string: baseURL() + "/app") { NSWorkspace.shared.open(url) }
+        if let url = URL(string: baseURL() + "/apps") { NSWorkspace.shared.open(url) }
     }
 
     // The badge: an app that's listening should be obvious at a glance. No apps folder means

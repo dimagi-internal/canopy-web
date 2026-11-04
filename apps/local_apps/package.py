@@ -168,8 +168,12 @@ def diff_lines(old: dict[str, bytes] | None, new: dict[str, bytes]) -> int:
     total = 0
     for name in set(old) | set(new):
         if old.get(name) != new.get(name):
-            total += sum(1 for _ in difflib.unified_diff(
-                (old.get(name) or b"").decode().splitlines(), (new.get(name) or b"").decode().splitlines(), n=3))
+            total += sum(
+                1
+                for _ in difflib.unified_diff(
+                    (old.get(name) or b"").decode().splitlines(), (new.get(name) or b"").decode().splitlines(), n=3
+                )
+            )
     return total
 
 
