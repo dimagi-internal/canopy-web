@@ -44,7 +44,13 @@ logger = logging.getLogger("canopy_runner.hooks")
 # Notification is what makes "blocked on you" visible — a session waiting on a
 # permission dialog is otherwise indistinguishable from one that is working.
 # emdash also hooks Notification at PROJECT level for its own port; both run.
-HOOK_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification")
+#
+# PermissionRequest names the call a permission card is asking about, which is what
+# lets canopy-web offer Yes on it. Safe for the same reason as PreToolUse: the
+# listener answers with an empty body, so this hook never returns a decision.
+# PostToolUseFailure tells a menu that its call failed rather than leaving it up.
+HOOK_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop",
+               "Notification", "PermissionRequest")
 # Marks the entry as ours so install/remove are idempotent and we never touch
 # a hook somebody else put there.
 MARKER = "canopy-hook-listener"

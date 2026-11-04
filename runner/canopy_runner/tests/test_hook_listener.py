@@ -262,7 +262,8 @@ def test_install_covers_both_halves_of_the_lifecycle(tmp_path):
     hook_install.install(p, port=8787, nonce="a")
     hooks = json.loads(p.read_text())["hooks"]
     assert set(hook_install.HOOK_EVENTS) == {
-        "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification"}
+        "PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop",
+        "Notification", "PermissionRequest"}
     for event in hook_install.HOOK_EVENTS:
         assert any(hook_install.MARKER in h["command"]
                    for e in hooks[event] for h in e["hooks"]), event

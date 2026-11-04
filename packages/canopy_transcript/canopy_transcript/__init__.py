@@ -27,9 +27,12 @@ from .paths import (
 from .noise import SYSTEM_NOISE_PREFIXES, is_system_noise
 from .questions import (
     ASK_TOOL,
+    PERMISSION_YES,
     hook_retires_menu,
+    hook_settles_permission,
     marker_from_hook,
     menu_from_hook,
+    menu_from_permission_request,
     pending_question,
     stamp_observed,
     turn_ended_in_api_error,
@@ -77,7 +80,8 @@ __all__ = [
     "record_window",
     "ACTIVITY_EVENTS", "ASK_TOOL", "BLOCK_STRIDE", "FORWARDED_EVENTS",
     "STATUS_COMPLETE", "STATUS_PENDING", "pending_question", "hook_retires_menu",
-    "menu_from_hook", "marker_from_hook", "stamp_observed",
+    "PERMISSION_YES", "menu_from_hook", "menu_from_permission_request", "hook_settles_permission",
+    "marker_from_hook", "stamp_observed",
     "turn_ended_in_api_error", "turn_ended_in_interrupt", "turn_ended_without_stop",
     "read_tail_records",
     "SYSTEM_NOISE_PREFIXES", "is_system_noise",

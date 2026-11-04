@@ -38,8 +38,10 @@ from canopy_transcript import (
     activity_for_hook,
     events_for_hook,
     hook_retires_menu,
+    hook_settles_permission,
     marker_from_hook,
     menu_from_hook,
+    menu_from_permission_request,
     turn_ended_without_stop,
 )
 from canopy_transcript.signed_out import answered_at_transcript_end, signed_out_at_transcript_end
@@ -288,8 +290,16 @@ class HookListener:
             keys = self._resolve_task(payload.get("cwd") or "")
             if not keys:
                 return
-            menu = menu_from_hook(payload)
+            menu = menu_from_hook(payload) or menu_from_permission_request(payload)
             retire = menu is None and hook_retires_menu(payload)
+            # Only the call it asked about ends a permission menu: a sibling in
+            # the same batch can finish while the dialog is still up.
+            settled = [k for k in keys
+                       if hook_settles_permission(self._pending_menus.get(k), payload)]
+            if settled:
+                for key in settled:
+                    self._pending_menus.pop(key, None)
+                self._persist()
             # A `Notification` says a human is wanted but cannot say what is being
             # asked — no options, no command. It is recorded ONLY where nothing
             # better is already held: a real menu is strictly more useful, and

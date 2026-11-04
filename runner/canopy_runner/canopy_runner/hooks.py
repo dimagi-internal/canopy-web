@@ -380,6 +380,21 @@ def held_questions(session_key: str, project: str = "") -> list[dict]:
     return []
 
 
+def holds_permission_menu(session_key: str, project: str = "") -> bool:
+    """Whether what this session is blocked on came from `PermissionRequest`."""
+    listener = _hook_listener
+    if listener is None or not session_key:
+        return False
+    try:
+        for (_project, task), held in listener._pending_menus.items():
+            if task == session_key and (not project or _project == project) \
+                    and isinstance(held, dict):
+                return bool(held.get("permission_call"))
+    except Exception:  # noqa: BLE001 — never cost the wake listener its socket
+        logger.debug("could not read the held menu for %s", session_key, exc_info=True)
+    return False
+
+
 def _drive_selections(cdp, session_key, current, questions, selections, cdp_port,
                       texts=None, project=""):
     """Walk a tabbed / multi-select dialog to a complete, submitted answer.
@@ -477,6 +492,15 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=No
     if not current.allows(number):
         logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
                        number, session_key, len(current.options))
+        return NOT_ON_MENU, _menu_dict(current, source="screen")
+    # A permission menu's button was built without seeing the screen, so `allows`
+    # is not enough: option 1 of some other dialog is on the menu too. Pressing it
+    # would answer a question nobody read.
+    if number is not None and holds_permission_menu(session_key, project) and not any(
+            o.number == number and o.label.strip().lower() == transcript_core.PERMISSION_YES.lower()
+            for o in current.options):
+        logger.warning("Yes for %s refused: option %s on the dialog now showing is not Yes",
+                       session_key, number)
         return NOT_ON_MENU, _menu_dict(current, source="screen")
     cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port, **_scope(project))
     logger.info("answered the dialog on %s with %s", session_key,
