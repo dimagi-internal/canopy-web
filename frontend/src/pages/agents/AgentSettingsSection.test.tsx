@@ -99,7 +99,9 @@ describe('AgentSettingsSection', () => {
     for (const name of ['Read mode and doors', 'Slack', 'Email', 'Google account']) expect(control('Channels', name)).toBeTruthy()
     // Who may change each one is said to someone who cannot (this viewer is
     // not an admin), not discovered by an error.
-    expect(within(region('Channels')).getAllByText("Only Hal's admins can change this.")).toHaveLength(4)
+    expect(within(region('Channels')).getAllByText("Only Hal's admins can change this.")).toHaveLength(3)
+    // The Google account is changing the agent itself: its editors, not only its admins.
+    expect(within(region('Channels')).getByText('Only people with the editor role on Hal, and its admins can change this.')).toBeTruthy()
     cleanup()
 
     at(`${BASE}/overview`)
@@ -191,6 +193,17 @@ describe('AgentSettingsSection', () => {
       // one line per setting
       expect(screen.getByText('Runs Hal. GitHub features use their GitHub connection.')).toBeTruthy()
       expect(screen.getByText('The canopy account Hal signs in as.')).toBeTruthy()
+    } finally {
+      agentOverride = {}
+    }
+  })
+
+  it('offers the Google account to someone who holds agent_edit, though not an admin', () => {
+    agentOverride = { can_edit_agent: true }
+    try {
+      at(`${BASE}/channels`)
+      expect(screen.queryByText(/people with the editor role on Hal/)).toBeNull()
+      expect(screen.getByTestId('agent-google-account-edit')).toBeTruthy()
     } finally {
       agentOverride = {}
     }

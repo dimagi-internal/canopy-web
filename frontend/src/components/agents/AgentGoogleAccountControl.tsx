@@ -36,11 +36,15 @@ export function AgentGoogleAccountControl({ agent, canEdit }: {
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-foreground">{value || '—'}</span>
           {!value && <span className="text-[12px] text-muted-foreground">same as its mailbox, if that is Google</span>}
-          {canEdit && (
+          {canEdit ? (
             <Button size="sm" variant="outline" onClick={() => { setDraft(value); setEditing(true) }}
                     data-testid="agent-google-account-edit">
               {value ? 'Change' : 'Set one'}
             </Button>
+          ) : (
+            <span className="text-[12px] text-muted-foreground" data-testid="agent-google-account-why">
+              Ask {agent.owner?.email ?? 'its owner or an admin'} to give you the editor role on {agent.slug} to change it
+            </span>
           )}
         </div>
       ) : (

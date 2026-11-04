@@ -229,6 +229,7 @@ describe('the credential notice names who must act', () => {
     renderAt()
     await screen.findByText(/owner-gh/)
     expect(screen.queryByRole('button', { name: 'Sync from GitHub' })).toBeNull()
+    expect(screen.getByTestId('history-sync-why').textContent).toMatch(/Ask Olive Owner to give you the editor role on .* to sync\./)
   })
 
   it('shows Sync to an editor', async () => {

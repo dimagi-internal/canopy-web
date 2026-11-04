@@ -29,5 +29,7 @@ describe('AgentGoogleAccountControl', () => {
   it('is read-only to someone who may not change it', () => {
     render(<AgentGoogleAccountControl agent={agent} canEdit={false} />)
     expect(screen.queryByTestId('agent-google-account-edit')).toBeNull()
+    expect(screen.getByTestId('agent-google-account-why').textContent)
+      .toBe('Ask its owner or an admin to give you the editor role on scout to change it')
   })
 })

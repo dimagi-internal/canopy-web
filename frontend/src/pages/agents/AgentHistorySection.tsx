@@ -256,6 +256,11 @@ export function AgentHistorySection() {
                 </button>
               </>
             )}
+            {!data.viewer_can_sync && (
+              <span className="ml-2" data-testid="history-sync-why">
+                Ask {data.owner_name || 'its owner or an admin'} to give you the editor role on {agent.name} to sync.
+              </span>
+            )}
             {syncError && <span className="ml-2 text-[12px] text-destructive">{syncError}</span>}
           </p>
           <CredentialNotice h={data} />
