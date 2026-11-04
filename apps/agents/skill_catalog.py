@@ -32,6 +32,11 @@ from .models import Agent, AgentSkill
 logger = logging.getLogger(__name__)
 
 
+#: A box reports a plugin's skill as `plugin` when it read the file, and as `acp` once a session on it has
+#: announced that name, which wins the clash (`slash_commands.scan`). The `<plugin>:` prefix is what says whose.
+REPORTED_FROM_A_PLUGIN = ("plugin", "acp")
+
+
 def plugin_names(agent: Agent) -> list[str]:
     """The namespaces a box would report this agent's skills under: its slug, and
     its repo's name (a plugin is usually named after either)."""
@@ -49,7 +54,7 @@ def reported_skills(agent: Agent) -> list[dict] | None:
     rows = RunnerSlashCommands.objects.select_related("runner").order_by("-updated_at")
     for row in rows:
         found = [c for c in row.commands
-                 if isinstance(c, dict) and c.get("source") == "plugin"
+                 if isinstance(c, dict) and c.get("source") in REPORTED_FROM_A_PLUGIN
                  and str(c.get("name", "")).startswith(prefixes)]
         if not found or not runner_may_hold_agent(row.runner, agent):
             continue

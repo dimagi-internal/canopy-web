@@ -52,6 +52,14 @@ def test_an_empty_catalog_is_filled_from_the_runner_that_holds_the_agent(w):
     assert rows["coach"].args_hint == "person" and rows["turn"].source == "runner"
 
 
+def test_a_skill_a_session_has_announced_still_counts(w):
+    """A box marks a plugin's skill `acp` once a session has announced it; most of a live agent's skills are."""
+    _report(w["box"], [_cmd("trellis:coach", source="acp"), _cmd("trellis:shipping"),
+                          _cmd("compact", source="acp"), _cmd("ace:run", source="acp")])
+    assert skill_catalog.refresh(w["trellis"]) == 2
+    assert set(w["trellis"].skills.values_list("name", flat=True)) == {"coach", "shipping"}
+
+
 def test_it_follows_the_repo_and_keeps_what_a_row_already_says(w):
     _report(w["box"], [_cmd("trellis:turn"), _cmd("trellis:old")])
     skill_catalog.refresh(w["trellis"])
