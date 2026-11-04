@@ -12,6 +12,7 @@ import {
 } from '@/api/dynamicViews'
 import { useAuth } from '@/auth/AuthProvider'
 import type { DeclaredTask } from '@/dynamicViews/agentTasks'
+import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import { DeclaredTasks } from '@/dynamicViews/DeclaredTasks'
 import { DynamicViewFrame, type FrameView } from '@/dynamicViews/DynamicViewFrame'
 import type { ViewScope } from '@/dynamicViews/protocol'
@@ -68,9 +69,9 @@ export default function DynamicViewPage() {
   const live: FrameView | null = useMemo(() => {
     if (!view) return null
     if (draft && draftSources.ok && draftTasks.ok) {
-      return { code: draft.code, sources: draftSources.value, agent_tasks: draftTasks.value }
+      return { code: draft.code, sources: draftSources.value, agent_tasks: draftTasks.value, connections: view.connections as DeclaredConnection[] | undefined, preview: true }
     }
-    return { code: view.code, sources: view.sources as DynamicViewSource[], agent_tasks: view.agent_tasks ?? [] }
+    return { code: view.code, sources: view.sources as DynamicViewSource[], agent_tasks: view.agent_tasks ?? [], connections: view.connections as DeclaredConnection[] | undefined }
   }, [view, draft, draftSources, draftTasks])
   // The preview redraws (and re-reads its sources) once typing pauses, not per keystroke.
   const [shown, setShown] = useState<FrameView | null>(null)

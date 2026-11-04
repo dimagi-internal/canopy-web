@@ -104,6 +104,13 @@ const canopy = {
       return ask((id) => ({ channel: CHANNEL, type: 'connections', id, request: { action: 'outcome' } }))
     },
   },
+  /** Call a connected account the view declares (`connections`), through canopy: resolves {status, body}
+   * or rejects with a sentence. A write needs a real click on the page; a read does not. */
+  connection: {
+    request(req: { provider: string; method: string; path: string; query?: Record<string, unknown>; body?: unknown; as?: 'viewer' | 'shared'; agent?: string }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'connection-call', id, request: req }))
+    },
+  },
   /** Re-read a task this view started: its status, error and, once done, result. */
   agentTask(id: string): Promise<AgentTaskStatus> {
     return ask((n) => ({ channel: CHANNEL, type: 'agent-task-read', id: n, taskId: id })) as Promise<AgentTaskStatus>

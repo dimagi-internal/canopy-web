@@ -94,6 +94,9 @@ export type FrameMessage =
   // the viewer in its own dialog; the answer is a `read-result` with the same id.
   | { channel: typeof CHANNEL; type: 'google-access'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'connections'; id: number; request: unknown }
+  // A call to a connected account (Salesforce), answered by a `read-result`. It carries no claim about
+  // clicks: the page reads its own activation (connectionCalls.ts).
+  | { channel: typeof CHANNEL; type: 'connection-call'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }

@@ -59,6 +59,7 @@ export function AppFrame({ workspace, app, page, roles, params, door, draft, lin
       call,
       go: onGo,
       canopyReads: door === 'member',
+      canConnect: door === 'member',
       async load() {
         if (door === 'link') return { record: link?.record ?? {} }
         const sources = page.sources as Record<string, unknown>[]

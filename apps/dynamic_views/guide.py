@@ -25,6 +25,8 @@ PROPS
                                          give an agent a task the view DECLARES (AGENT TASKS below)
                                          and resolve with its result; rejects with the reason when
                                          it fails, is cancelled, times out or the viewer may not
+    canopy.connection.request({provider, method, path, query?, body?, as?, agent?}) -> Promise<{status, body}>
+                                         a Salesforce call the view declares (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
     canopy.googleAccess.start({agent, account?, services?: ["gmail"], minutes?: 60, purpose?})
                                          -> Promise<{ok, account, until}>  the VIEWER lends an agent
@@ -109,7 +111,7 @@ GLOBALS (no imports — the code is not a module)
   bg-card, bg-muted, text-foreground, text-muted-foreground, border, text-success,
   text-warning, text-destructive. Never raw palette colours (stone-*, red-*).
 
-SALESFORCE CALLS (declared now; the calling API follows)
+SALESFORCE CALLS
 - Declare the calls the code may make on the view: "connections": [{"provider": "salesforce",
   "as": "viewer", "reads": [{"method": "GET", "path": "query"}], "writes": [{"method": "PATCH",
   "path": "sobjects/Lead/*"}]}]. `as` is "viewer" (the viewer's own connection) or "shared" (an
@@ -121,12 +123,32 @@ SALESFORCE CALLS (declared now; the calling API follows)
   (POST analytics/reports/*) is a read.
 - Every line is checked on save against the allowlist and refused with a sentence naming it; at most
   5 entries and 50 lines each.
+- Call: canopy.connection.request({provider: "salesforce", method, path, query?, body?, as?, agent?})
+  -> Promise<{status, body}>. `status` is Salesforce's own, also when it refused the call (a 400 is a
+  resolved answer; look at it). canopy refuses in a sentence (not connected, not declared, over the
+  limit, ...) as a rejected promise: show its message. Query values are text.
+- A READ can run any time. A WRITE must come from a click: call it from an onClick (or something an
+  onClick started), never on load or on a timer. The page checks for the click itself and rejects
+  "This needs a click." otherwise; one click covers the writes it starts for a couple of minutes. A
+  view that has not been saved yet cannot call ("Save this view to use connections.").
+- Example, a read and a click-driven write:
+    const [leads, setLeads] = useState(null);
+    useEffect(() => {
+      canopy.connection.request({provider: "salesforce", method: "GET", path: "query",
+        query: {q: "SELECT Id, Name, Status FROM Lead WHERE OwnerId = '005...' LIMIT 20"}})
+        .then((r) => setLeads(r.body.records)).catch((e) => setError(e.message));
+    }, []);
+    <Button onClick={() => canopy.connection.request({provider: "salesforce", method: "PATCH",
+      path: "sobjects/Lead/" + lead.Id, body: {Status: "Contacted"}})
+        .then(() => canopy.refresh()).catch((e) => setError(e.message))}>Mark contacted</Button>
 
 RULES (the frame enforces them; breaking one fails, it is not "best effort")
 - No network: fetch, XHR, WebSocket and remote images are blocked by the frame's CSP.
-  Everything comes through props.data, canopy.read or canopy.runAgentTask.
-- No writes, except starting an agent task the view declares: the catalog is read-only, and
-  canopy.runAgentTask is refused for any {agent, name} not in the view's agent_tasks.
+  Everything comes through props.data, canopy.read, canopy.runAgentTask or canopy.connection.request.
+- No writes, except starting an agent task the view declares and the Salesforce writes it declares
+  (and only from a click): the catalog is read-only, canopy.runAgentTask is refused for any {agent,
+  name} not in the view's agent_tasks, and canopy.connection.request for any call not in its
+  connections.
 - No storage, cookies or access to the page around the frame.
 - What a view shows, its viewers may see — and so may its author. Read only what the view needs.
 
