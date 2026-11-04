@@ -142,13 +142,24 @@ describe('AgentConnectionsPanel', () => {
     expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
-  it('an unshared agent connection says so and Share goes to the share page', async () => {
+  it('an agent connection not stored yet offers Store for that agent, never a picker', async () => {
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
     show()
-    expect(await screen.findByText('Not shared yet: no agent or computer can use it.')).toBeTruthy()
-    const a = screen.getByRole('link', { name: 'Share' }) as HTMLAnchorElement
-    expect(a.getAttribute('href')).toBe('/w/w/connections/3/share?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
-    expect(screen.queryByLabelText('Share with')).toBeNull()
+    expect(await screen.findByText(/Not stored for eva yet, so eva can't use it\./)).toBeTruthy()
+    expect(screen.getByText('Not stored yet')).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Store for eva' }) as HTMLAnchorElement
+    expect(a.getAttribute('href')).toBe('/w/w/connections/3/connected?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
+    expect(screen.queryByRole('link', { name: 'Share' })).toBeNull()
+  })
+
+  it('never lists an agent as lent its own account', async () => {
+    m.listAgentConnections.mockResolvedValue({
+      providers: [PROVIDER],
+      connections: [conn({ statement: { version: 2, agents: ['eva'], my_computers: [], endorsers: [] }, holders: ['cloud-ec2-live'] })],
+    })
+    show()
+    expect(await screen.findByText('Held by: cloud-ec2-live')).toBeTruthy()
+    expect(screen.queryByText(/Lent to/)).toBeNull()
   })
 
   it('shows who it is lent to read-only, with one link to change it and waiting machines named', async () => {

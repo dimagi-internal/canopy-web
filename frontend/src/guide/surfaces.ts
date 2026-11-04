@@ -198,7 +198,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/settings/connections',
     title: 'Connected',
     audience: 'The person who just connected Salesforce or Google',
-    what: "Where a successful sign-in lands. It says which account was connected and that it is stored in your vault. A person's own connection needs nothing more: Done, or a quiet link to the Share screen to let agents or your own computers use it. An agent's connection is stored in that agent's vault right here as you arrive, using your passkey, with no list to pick from; if the browser needs a click for the passkey, a Store button does the same, and anything only you can decide (a changed key, no computer to store it for) goes to the Share screen.",
+    what: "Where a successful sign-in lands. It says which account was connected and that it is stored in your vault. A person's own connection needs nothing more: Done, or a quiet link to the Share screen to let agents or your own computers use it. An agent's connection is stored in that agent's vault right here as you arrive, using your passkey, with no list to pick from; if the browser needs a click for the passkey, a Store button does the same (the accounts page sends an account not stored yet to that button). It names the machines the account goes to, and anything only you can decide (a changed key, no computer to store it for) goes to the Share screen.",
     needsFirst: 'A connection you just made.',
     actions: ['Read which account was connected', 'Store an agent\'s connection in its vault', 'Share it with agents or your computers', 'Done'],
   },

@@ -211,12 +211,21 @@ export function sharePath(c: ConnectionOut, returnTo: string): string {
   return `${scopedPath(c.workspace, `/connections/${c.id}/share`)}?${new URLSearchParams({ return_to: returnTo })}`
 }
 
+/** An agent's own connection has no choosing to do: this screen stores it for that agent. */
+export function storePath(c: ConnectionOut, returnTo: string): string {
+  return `${scopedPath(c.workspace, `/connections/${c.id}/connected`)}?${new URLSearchParams({ return_to: returnTo })}`
+}
+
 /** A revoking connection is never listed (the server hides it; this is the second line). */
 export function listed(cs: readonly ConnectionOut[]): ConnectionOut[] {
   return cs.filter((c) => c.state !== 'revoking')
 }
 
 const shareLink = 'text-primary hover:underline'
+
+/** Set on an agent's own connection: connecting it means this agent has it, so there is nothing
+ *  to share with it and it is never listed as lent to itself. */
+type OwnerAgent = { slug: string; name?: string }
 
 /** Why no machine can receive a connection for an agent it is lent to (`unreachable`). */
 const NOT_REACHING: Record<string, string> = {
@@ -231,7 +240,7 @@ const NOT_REACHING: Record<string, string> = {
  * that are not recipients (nobody the owner listed vouched for them, or a listed endorser left)
  * are not in this view, so the share page explains them and this links to it.
  */
-export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void }) {
+export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void; owner?: OwnerAgent }) {
   const { c, canChange = true } = props
   return (
     <>
@@ -243,8 +252,8 @@ export function SharingStatus(props: { c: ConnectionOut; returnTo: string; canCh
   )
 }
 
-function Sharing({ c, returnTo, canChange = true, onChanged }: {
-  c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void
+function Sharing({ c, returnTo, canChange = true, onChanged, owner }: {
+  c: ConnectionOut; returnTo: string; canChange?: boolean; onChanged?: () => void; owner?: OwnerAgent
 }) {
   if (!c.usable) return null
   if (c.needs_reconnect) {
@@ -258,6 +267,21 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
     </span>
   )
   const href = sharePath(c, returnTo)
+  if (c.state === 'unshared' && owner) {
+    const name = owner.name || owner.slug
+    return (
+      <>
+        <p className={`text-[12px] ${c.server_use && c.server_reachable ? 'text-muted-foreground' : 'text-warning'}`}>
+          {c.server_use && c.server_reachable
+            ? `Project screens and apps can use it. ${name} can't until it is stored.`
+            : `Not stored for ${name} yet, so ${name} can't use it.`}{' '}
+          {canChange && <Link to={storePath(c, returnTo)} className={shareLink}>{`Store for ${name}`}</Link>}
+          {only}
+        </p>
+        <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
+      </>
+    )
+  }
   if (c.state === 'unshared') {
     return (
       <>
@@ -284,7 +308,7 @@ function Sharing({ c, returnTo, canChange = true, onChanged }: {
       </>
     )
   }
-  const agents = c.statement?.agents ?? []
+  const agents = (c.statement?.agents ?? []).filter((a) => a !== owner?.slug)
   const machines = c.my_machines ?? []
   const holders = c.holders ?? []
   const waiting = c.waiting ?? []

@@ -5,7 +5,7 @@ import { ApiError } from '@/api/problem'
 import { scopedPath } from '@/lib/scopedLinks'
 import { Button } from 'canopy-ui/ui'
 import { ShareRefused } from '@/vault/connectionShare'
-import { autoChoice, openOwned, promptDismissed, putOwnerShare, reviewShare } from '@/vault/ownerShare'
+import { autoChoice, openOwned, ownerAgentMachines, promptDismissed, putOwnerShare, reviewShare } from '@/vault/ownerShare'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { safeReturnTo } from './ShareConnectionPage'
 
@@ -190,11 +190,17 @@ export function ConnectedPage(): JSX.Element | null {
             : lead
   }
   const done = <Link to={returnTo} className={linkButton}>Done</Link>
+  const machines = state && copy?.action === 'agent' ? ownerAgentMachines(state).join(', ') : ''
+  const machineLine = !machines ? ''
+    : where === 'stored' ? `Stored on ${agent}'s machines: ${machines}.`
+      : where === 'storing' || where === 'click' ? `It goes to ${agent}'s approved machines: ${machines}.`
+        : ''
   return (
     <div className="max-w-2xl space-y-4" data-testid="connected">
       <h1 className="text-lg font-semibold text-foreground">Connected</h1>
       <div className="space-y-3 rounded border border-success/30 bg-success/10 p-3 text-[13px] text-success">
         <p role="status">{text}</p>
+        {machineLine && <p>{machineLine}</p>}
       </div>
       {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -213,7 +219,7 @@ export function ConnectedPage(): JSX.Element | null {
         {copy?.action === 'agent' && (where === 'plain' || where === 'stored') && done}
         {copy?.action === 'agent' && where === 'click' && state && (
           <>
-            <Button onClick={() => void store(state, false)}>{`Store in ${agent}'s vault`}</Button>
+            <Button onClick={() => void store(state, false)}>{`Store for ${agent}`}</Button>
             <Link to={returnTo} className={quietLink}>Later</Link>
           </>
         )}
