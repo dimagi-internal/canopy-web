@@ -10,7 +10,7 @@ import {
   type RequestableWorkspaceOut,
 } from '@/api/workspaces'
 import { addMySessionReviewer, listMySessionReviewers, type CoachOffer } from '@/api/people'
-import { coachLabel, coachUploadNote } from '@/components/settings/SessionReviewersPanel'
+import { CoachConsentDetails, coachLabel } from '@/components/settings/SessionReviewersPanel'
 import { scopedPath } from '@/lib/scopedLinks'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
@@ -230,18 +230,18 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
                   ) : (
                     <>
                     {coach && !coach.member && coach.workspace === ws.slug ? (
-                      <label className="mt-2 flex items-start gap-2 text-[12px] text-foreground-secondary">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={coachMe}
-                          onChange={(e) => setCoachMe(e.target.checked)}
-                        />
-                        <span>
-                          {coachLabel(coach.name)}
-                          <span className="block text-[11px] text-muted-foreground">{coachUploadNote(coach.name)}</span>
-                        </span>
-                      </label>
+                      <div className="mt-2 space-y-1">
+                        <label className="flex items-start gap-2 text-[12px] text-foreground-secondary">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={coachMe}
+                            onChange={(e) => setCoachMe(e.target.checked)}
+                          />
+                          <span>{coachLabel(coach)}</span>
+                        </label>
+                        <CoachConsentDetails {...coach} />
+                      </div>
                     ) : null}
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input

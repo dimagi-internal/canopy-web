@@ -7,8 +7,9 @@ ships every ACTIVE session it backs; this widens that, for a coached person, to
 the sessions that stopped being active before their history was all sent
 (`apps/harness/api_session_sync.list_streams`, the `ship_full` descriptor field).
 
-Revoking the last grant empties the set on the runner's next poll; what was
-already uploaded stays, deletable by the person as any session is.
+Revoking the last grant empties the set on the runner's next poll (ACTIVE sessions
+keep shipping, as they do for everyone). What was already uploaded stays: no route
+deletes a session's messages, `reset` re-ships them and `archive` keeps them.
 """
 from __future__ import annotations
 
