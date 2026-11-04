@@ -185,6 +185,8 @@ def test_a_drill_does_not_trigger(ada, ws, runner):
     "collision on session 'c-ace-1': cancelled by human; will retry",
     "cancelled by user (the agent had already stopped)",
     'You stopped the delivery: the emdash session "c-1" has unsent text sitting in its prompt, …',
+    "not delivered — the agent is waiting on Do you want to proceed?",
+    "not delivered — the agent is waiting on Which environment should I deploy to?",
 ])
 def test_a_humans_stop_or_collision_does_not_trigger(ada, ws, runner, note):
     _fail(_agent(ws, "ace"), runner, note)
