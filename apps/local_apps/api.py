@@ -7,6 +7,7 @@ what a runner asks for a run. Design: docs/architecture/local-apps.md.
 * A runner reaches only its owner's installations on itself, under the runner
   protocol's own path, so `runner_auth` needed no new door.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -28,27 +29,27 @@ from apps.workspaces.models import Workspace
 from . import services, trust
 from .models import LocalAppInstallation, LocalAppRun, LocalAppSubmission
 from .schemas import (
-    AcceptIn,
-    BeatIn,
-    BeatOut,
-    CanopyCallIn,
-    CanopyCallOut,
-    ConfigureIn,
-    FinishIn,
-    InstallationOut,
-    InstallIn,
-    ReviewOut,
-    RevokeIn,
-    RunnerAppsOut,
-    RunOut,
-    StartRunIn,
-    StartRunOut,
-    StoreDetailOut,
-    StoreOut,
-    SubmissionOut,
-    SubmitIn,
-    SwitchIn,
-    SwitchOut,
+    LocalAppAcceptIn,
+    LocalAppBeatIn,
+    LocalAppBeatOut,
+    LocalAppCanopyCallIn,
+    LocalAppCanopyCallOut,
+    LocalAppConfigureIn,
+    LocalAppDetailOut,
+    LocalAppFinishIn,
+    LocalAppInstallationOut,
+    LocalAppInstallIn,
+    LocalAppReviewOut,
+    LocalAppRevokeIn,
+    LocalAppRunOut,
+    LocalAppStartRunIn,
+    LocalAppStartRunOut,
+    LocalAppStoreOut,
+    LocalAppSubmissionOut,
+    LocalAppSubmitIn,
+    LocalAppSwitchIn,
+    LocalAppSwitchOut,
+    RunnerLocalAppsOut,
 )
 
 router = Router(auth=session_auth, tags=["local-apps"])
@@ -65,8 +66,11 @@ def _workspace_or_404(request: HttpRequest, slug: str) -> Workspace:
 def _usable_agents(workspace: Workspace, user) -> list[dict[str, str]]:
     rows = Agent.objects.filter(workspace=workspace, user__isnull=False).order_by("name", "slug")
     standings = agent_access.Standings([user], rows)
-    return [{"slug": a.slug, "name": a.name or a.slug} for a in rows
-            if agent_access.decide(a, user, verified=True, standing=standings.of(user, a)).access != "none"]
+    return [
+        {"slug": a.slug, "name": a.name or a.slug}
+        for a in rows
+        if agent_access.decide(a, user, verified=True, standing=standings.of(user, a)).access != "none"
+    ]
 
 
 def _refused(exc: services.Refused) -> HttpError:
@@ -76,37 +80,52 @@ def _refused(exc: services.Refused) -> HttpError:
 # --- the store --------------------------------------------------------------------------
 
 
-@router.get("/store/{workspace}/", response=StoreOut, summary="Apps that run on your computer")
+@router.get("/store/{workspace}/", response=LocalAppStoreOut, summary="Apps that run on your computer")
 @gate("member")
-def list_local_app_store(request: HttpRequest, workspace: str) -> StoreOut:
+def list_local_app_store(request: HttpRequest, workspace: str) -> LocalAppStoreOut:
     """Empty until a workspace admin switches local apps on. These apps can record
     conversations, so a workspace chooses to offer them."""
     ws = _workspace_or_404(request, workspace)
     can_switch = perms.can(request.user, ws, perms.INTEGRATIONS)
     enabled = services.switched_on(ws)
     if not enabled:
-        return StoreOut(enabled=False, can_switch=can_switch, apps=[])
+        return LocalAppStoreOut(enabled=False, can_switch=can_switch, apps=[])
     mine = set(LocalAppInstallation.objects.filter(user=request.user).values_list("template__key", flat=True))
-    apps = [{"key": s.key, "name": s.manifest["name"], "description": s.manifest["description"],
-             "version": s.version, "consumes": s.manifest["consumes"], "provides": s.manifest["provides"],
-             "installed": s.key in mine} for s in services.catalog()]
-    return StoreOut(enabled=True, can_switch=can_switch, apps=apps)
+    apps = [
+        {
+            "key": s.key,
+            "name": s.manifest["name"],
+            "description": s.manifest["description"],
+            "version": s.version,
+            "consumes": s.manifest["consumes"],
+            "provides": s.manifest["provides"],
+            "installed": s.key in mine,
+        }
+        for s in services.catalog()
+    ]
+    return LocalAppStoreOut(enabled=True, can_switch=can_switch, apps=apps)
 
 
-@router.put("/store/{workspace}/switch", response=SwitchOut, summary="Offer local apps in this workspace, or stop")
+@router.put(
+    "/store/{workspace}/switch", response=LocalAppSwitchOut, summary="Offer local apps in this workspace, or stop"
+)
 @gate("integrations", setting=True)
-def set_local_apps_switch(request: HttpRequest, workspace: str, payload: SwitchIn) -> SwitchOut:
+def set_local_apps_switch(request: HttpRequest, workspace: str, payload: LocalAppSwitchIn) -> LocalAppSwitchOut:
     """Turning this off also stops running copies at their next heartbeat."""
     ws = _workspace_or_404(request, workspace)
     if not perms.can(request.user, ws, perms.INTEGRATIONS):
         raise HttpError(403, "only a workspace admin can change this")
     services.set_switch(ws, payload.enabled)
-    return SwitchOut(enabled=payload.enabled)
+    return LocalAppSwitchOut(enabled=payload.enabled)
 
 
-@router.get("/store/{workspace}/apps/{key}", response=StoreDetailOut, summary="One local app, as someone deciding to install it")
+@router.get(
+    "/store/{workspace}/apps/{key}",
+    response=LocalAppDetailOut,
+    summary="One local app, as someone deciding to install it",
+)
 @gate("member")
-def get_local_app(request: HttpRequest, workspace: str, key: str) -> StoreDetailOut:
+def get_local_app(request: HttpRequest, workspace: str, key: str) -> LocalAppDetailOut:
     ws = _workspace_or_404(request, workspace)
     sub = services.latest(key)
     if sub is None or not services.switched_on(ws):
@@ -118,14 +137,30 @@ def get_local_app(request: HttpRequest, workspace: str, key: str) -> StoreDetail
         if source is not None:
             with_it.append(source.manifest["name"])
     versions = LocalAppSubmission.objects.filter(key=key, released_at__isnull=False)
-    return StoreDetailOut(
-        key=sub.key, name=m["name"], description=m["description"], version=sub.version, publisher="canopy",
-        notice=m["notice"], disclosure=m["disclosure"], settings=m["settings"], digest=trust.digest(m),
-        installs_with=with_it, agents=_usable_agents(ws, request.user),
+    return LocalAppDetailOut(
+        key=sub.key,
+        name=m["name"],
+        description=m["description"],
+        version=sub.version,
+        publisher="canopy",
+        notice=m["notice"],
+        disclosure=m["disclosure"],
+        settings=m["settings"],
+        digest=trust.digest(m),
+        installs_with=with_it,
+        agents=_usable_agents(ws, request.user),
         computers=[{"id": str(r.pk), "name": r.name} for r in services.computers_of(request.user)],
-        versions=[{"version": v.version, "released_at": v.released_at.isoformat(),
-                   "changelog": v.manifest["changelog"], "revoked": bool(v.revoked_at)} for v in versions[:10]],
-        enabled=True)
+        versions=[
+            {
+                "version": v.version,
+                "released_at": v.released_at.isoformat(),
+                "changelog": v.manifest["changelog"],
+                "revoked": bool(v.revoked_at),
+            }
+            for v in versions[:10]
+        ],
+        enabled=True,
+    )
 
 
 # --- installing -------------------------------------------------------------------------
@@ -134,43 +169,71 @@ def get_local_app(request: HttpRequest, workspace: str, key: str) -> StoreDetail
 def _run_out(run: LocalAppRun | None) -> dict | None:
     if run is None:
         return None
-    return {"id": str(run.pk), "version": run.version.version, "started_at": run.started_at.isoformat(),
-            "finished_at": run.finished_at.isoformat() if run.finished_at else None, "state": run.state,
-            "counts": run.counts, "stop_reason": run.stop_reason, "stop_requested": run.stop_requested,
-            "running": services.live_run(run.installation) is not None and run.finished_at is None}
+    return {
+        "id": str(run.pk),
+        "version": run.version.version,
+        "started_at": run.started_at.isoformat(),
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "state": run.state,
+        "counts": run.counts,
+        "stop_reason": run.stop_reason,
+        "stop_requested": run.stop_requested,
+        "running": services.live_run(run.installation) is not None and run.finished_at is None,
+    }
 
 
-def _installation_out(inst: LocalAppInstallation, user) -> InstallationOut:
+def _installation_out(inst: LocalAppInstallation, user) -> LocalAppInstallationOut:
     state = services.resolve(inst)
     top = services.latest(inst.template.key) or inst.accepted
     version = state["version"]
-    return InstallationOut(
-        id=inst.pk, key=inst.template.key, name=inst.template.name, workspace=inst.workspace_id,
-        computer={"id": str(inst.runner_id), "name": inst.runner.name}, settings=inst.settings,
-        settings_spec=top.manifest["settings"], agents=_usable_agents(inst.workspace, user),
-        version=version.version if version else None, needs_acceptance=state["needs_acceptance"],
-        changes=state["changes"], digest=trust.digest(top.manifest), refusal=state["refusal"],
-        last_run=_run_out(inst.runs.select_related("version", "installation").first()))
+    return LocalAppInstallationOut(
+        id=inst.pk,
+        key=inst.template.key,
+        name=inst.template.name,
+        workspace=inst.workspace_id,
+        computer={"id": str(inst.runner_id), "name": inst.runner.name},
+        settings=inst.settings,
+        settings_spec=top.manifest["settings"],
+        agents=_usable_agents(inst.workspace, user),
+        version=version.version if version else None,
+        needs_acceptance=state["needs_acceptance"],
+        changes=state["changes"],
+        digest=trust.digest(top.manifest),
+        refusal=state["refusal"],
+        last_run=_run_out(inst.runs.select_related("version", "installation").first()),
+    )
 
 
 def _my_installation(request: HttpRequest, installation_id: int) -> LocalAppInstallation:
-    inst = (LocalAppInstallation.objects.select_related("template", "runner", "workspace", "accepted")
-            .filter(pk=installation_id, user=request.user).first())
+    inst = (
+        LocalAppInstallation.objects.select_related("template", "runner", "workspace", "accepted")
+        .filter(pk=installation_id, user=request.user)
+        .first()
+    )
     if inst is None:
         raise HttpError(404, "no such installation")
     return inst
 
 
-@router.post("/store/{workspace}/apps/{key}/install", response={201: InstallationOut},
-             summary="Install a local app on one of your computers")
+@router.post(
+    "/store/{workspace}/apps/{key}/install",
+    response={201: LocalAppInstallationOut},
+    summary="Install a local app on one of your computers",
+)
 @gate("member", setting=True, viewer_write="an install is one person's own, on their own computer, and starts nothing")
-def install_local_app(request: HttpRequest, workspace: str, key: str, payload: InstallIn):
+def install_local_app(request: HttpRequest, workspace: str, key: str, payload: LocalAppInstallIn):
     """Send back the `digest` you were shown. A web page can install and configure an
     app, but only the person at the computer can start one."""
     ws = _workspace_or_404(request, workspace)
     try:
-        inst = services.install(workspace=ws, key=key, user=request.user, runner_id=_uuid(payload.runner_id),
-                                settings=payload.settings, accept_digest=payload.accept_digest)
+        inst = services.install(
+            workspace=ws,
+            key=key,
+            user=request.user,
+            runner_id=_uuid(payload.runner_id),
+            settings=payload.settings,
+            accept_digest=payload.accept_digest,
+        )
     except services.Refused as exc:
         raise _refused(exc) from exc
     return Status(201, _installation_out(inst, request.user))
@@ -183,17 +246,24 @@ def _uuid(raw: str) -> uuid.UUID:
         raise HttpError(422, "not an id") from exc
 
 
-@router.get("/installations/", response=list[InstallationOut], summary="Your installed local apps, on all your computers")
+@router.get(
+    "/installations/",
+    response=list[LocalAppInstallationOut],
+    summary="Your installed local apps, on all your computers",
+)
 @gate("self")
-def list_my_local_apps(request: HttpRequest) -> list[InstallationOut]:
+def list_my_local_apps(request: HttpRequest) -> list[LocalAppInstallationOut]:
     rows = LocalAppInstallation.objects.filter(user=request.user).select_related(
-        "template", "runner", "workspace", "accepted")
+        "template", "runner", "workspace", "accepted"
+    )
     return [_installation_out(i, request.user) for i in rows]
 
 
-@router.patch("/installations/{installation_id}", response=InstallationOut, summary="Configure a local app")
+@router.patch("/installations/{installation_id}", response=LocalAppInstallationOut, summary="Configure a local app")
 @gate("self", setting=True)
-def configure_local_app(request: HttpRequest, installation_id: int, payload: ConfigureIn) -> InstallationOut:
+def configure_local_app(
+    request: HttpRequest, installation_id: int, payload: LocalAppConfigureIn
+) -> LocalAppInstallationOut:
     inst = _my_installation(request, installation_id)
     try:
         return _installation_out(services.configure(inst, payload.settings, request.user), request.user)
@@ -201,10 +271,15 @@ def configure_local_app(request: HttpRequest, installation_id: int, payload: Con
         raise _refused(exc) from exc
 
 
-@router.post("/installations/{installation_id}/accept", response=InstallationOut,
-             summary="Accept what a new version of a local app reads and sends")
+@router.post(
+    "/installations/{installation_id}/accept",
+    response=LocalAppInstallationOut,
+    summary="Accept what a new version of a local app reads and sends",
+)
 @gate("self", setting=True)
-def accept_local_app_changes(request: HttpRequest, installation_id: int, payload: AcceptIn) -> InstallationOut:
+def accept_local_app_changes(
+    request: HttpRequest, installation_id: int, payload: LocalAppAcceptIn
+) -> LocalAppInstallationOut:
     inst = _my_installation(request, installation_id)
     try:
         return _installation_out(services.accept(inst, payload.digest), request.user)
@@ -221,33 +296,45 @@ def remove_local_app(request: HttpRequest, installation_id: int):
     return Status(204, None)
 
 
-@router.post("/runs/{run_id}/stop", response=RunOut, summary="Stop a running local app from the website")
+@router.post("/runs/{run_id}/stop", response=LocalAppRunOut, summary="Stop a running local app from the website")
 @gate("self", kind="action")
-def stop_local_app_run(request: HttpRequest, run_id: uuid.UUID) -> RunOut:
+def stop_local_app_run(request: HttpRequest, run_id: uuid.UUID) -> LocalAppRunOut:
     """Read at the app's next heartbeat, at most about 15 seconds later on a computer
     that's online. There is no way to start one from here."""
-    run = LocalAppRun.objects.select_related("installation", "version").filter(
-        pk=run_id, installation__user=request.user).first()
+    run = (
+        LocalAppRun.objects.select_related("installation", "version")
+        .filter(pk=run_id, installation__user=request.user)
+        .first()
+    )
     if run is None:
         raise HttpError(404, "no such run")
     run.stop_requested = True
     run.save(update_fields=["stop_requested"])
-    return RunOut(**_run_out(run))
+    return LocalAppRunOut(**_run_out(run))
 
 
 # --- publishing -------------------------------------------------------------------------
 
 
 def _submission_out(sub: LocalAppSubmission) -> dict:
-    return {"id": sub.pk, "key": sub.key, "version": sub.version, "sha256": sub.sha256, "status": sub.status,
-            "approval_id": sub.approval_id,
-            "review_url": scoped_url(sub.workspace, f"/apps/local/review/{sub.pk}")}
+    return {
+        "id": sub.pk,
+        "key": sub.key,
+        "version": sub.version,
+        "sha256": sub.sha256,
+        "status": sub.status,
+        "approval_id": sub.approval_id,
+        "review_url": scoped_url(sub.workspace, f"/apps/local/review/{sub.pk}"),
+    }
 
 
-@router.post("/submissions/", response={201: SubmissionOut, 200: SubmissionOut},
-             summary="Submit a local app version for review")
+@router.post(
+    "/submissions/",
+    response={201: LocalAppSubmissionOut, 200: LocalAppSubmissionOut},
+    summary="Submit a local app version for review",
+)
 @gate("content.write", kind="request")
-def submit_local_app(request: HttpRequest, payload: SubmitIn):
+def submit_local_app(request: HttpRequest, payload: LocalAppSubmitIn):
     """A package from `canopy-runner app pack`, base64-encoded. Nothing runs on the
     server. Files an approval for a superuser; nothing reaches anyone until it's
     approved. The same version with the same bytes returns the same submission."""
@@ -260,46 +347,61 @@ def submit_local_app(request: HttpRequest, payload: SubmitIn):
     if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise HttpError(403, "you can't submit from this workspace")
     try:
-        sub, created = services.submit(package_b64=payload.package_b64, note=payload.note, workspace=ws,
-                                       user=request.user)
+        sub, created = services.submit(
+            package_b64=payload.package_b64, note=payload.note, workspace=ws, user=request.user
+        )
     except services.Refused as exc:
         raise _refused(exc) from exc
-    return Status(201 if created else 200, SubmissionOut(**_submission_out(sub)))
+    return Status(201 if created else 200, LocalAppSubmissionOut(**_submission_out(sub)))
 
 
 def _may_read_submission(request: HttpRequest, sub: LocalAppSubmission) -> bool:
     return bool(request.user.is_superuser or sub.submitted_by_id == request.user.pk)
 
 
-@router.get("/submissions/", response=list[SubmissionOut], summary="Local app versions, newest first")
+@router.get("/submissions/", response=list[LocalAppSubmissionOut], summary="Local app versions, newest first")
 @gate("superuser", "self")
-def list_local_app_submissions(request: HttpRequest) -> list[SubmissionOut]:
+def list_local_app_submissions(request: HttpRequest) -> list[LocalAppSubmissionOut]:
     """Yours; a superuser sees all, to review and revoke."""
     rows = LocalAppSubmission.objects.select_related("workspace", "approval")
     if not request.user.is_superuser:
         rows = rows.filter(submitted_by=request.user)
-    return [SubmissionOut(**_submission_out(s)) for s in rows[:100]]
+    return [LocalAppSubmissionOut(**_submission_out(s)) for s in rows[:100]]
 
 
-@router.get("/submissions/{submission_id}", response=ReviewOut, summary="One submission: its code changes and facts")
+@router.get(
+    "/submissions/{submission_id}", response=LocalAppReviewOut, summary="One submission: its code changes and facts"
+)
 @gate("superuser", "self")
-def get_local_app_submission(request: HttpRequest, submission_id: int) -> ReviewOut:
+def get_local_app_submission(request: HttpRequest, submission_id: int) -> LocalAppReviewOut:
     """For its reviewer or its author. `diff` is against the last released version."""
-    sub = LocalAppSubmission.objects.select_related("workspace", "approval", "submitted_by").filter(
-        pk=submission_id).first()
+    sub = (
+        LocalAppSubmission.objects.select_related("workspace", "approval", "submitted_by")
+        .filter(pk=submission_id)
+        .first()
+    )
     if sub is None or not _may_read_submission(request, sub):
         raise HttpError(404, "no such submission")
-    return ReviewOut(**_submission_out(sub), name=sub.manifest["name"], size=sub.size, note=sub.note,
-                     submitted_by=sub.submitted_by.email if sub.submitted_by else "",
-                     submitted_at=sub.submitted_at.isoformat(), manifest=sub.manifest, facts=sub.facts,
-                     revoked_reason=sub.revoked_reason, can_revoke=bool(request.user.is_superuser and sub.released_at
-                                                                        and not sub.revoked_at),
-                     **services.review(sub))
+    return LocalAppReviewOut(
+        **_submission_out(sub),
+        name=sub.manifest["name"],
+        size=sub.size,
+        note=sub.note,
+        submitted_by=sub.submitted_by.email if sub.submitted_by else "",
+        submitted_at=sub.submitted_at.isoformat(),
+        manifest=sub.manifest,
+        facts=sub.facts,
+        revoked_reason=sub.revoked_reason,
+        can_revoke=bool(request.user.is_superuser and sub.released_at and not sub.revoked_at),
+        **services.review(sub),
+    )
 
 
-@router.post("/submissions/{submission_id}/revoke", response=SubmissionOut, summary="Stop a released version everywhere")
+@router.post(
+    "/submissions/{submission_id}/revoke", response=LocalAppSubmissionOut, summary="Stop a released version everywhere"
+)
 @gate("superuser", setting=True)
-def revoke_local_app(request: HttpRequest, submission_id: int, payload: RevokeIn) -> SubmissionOut:
+def revoke_local_app(request: HttpRequest, submission_id: int, payload: LocalAppRevokeIn) -> LocalAppSubmissionOut:
     """Start refuses it, Canopy calls for its runs are refused at once, and running
     copies are told to stop at their next heartbeat. The reason is shown to people."""
     if not request.user.is_superuser:
@@ -313,7 +415,7 @@ def revoke_local_app(request: HttpRequest, submission_id: int, payload: RevokeIn
         services.revoke(sub, reason=payload.reason.strip(), user=request.user)
     except services.Refused as exc:
         raise _refused(exc) from exc
-    return SubmissionOut(**_submission_out(sub))
+    return LocalAppSubmissionOut(**_submission_out(sub))
 
 
 # --- a runner's calls -------------------------------------------------------------------
@@ -330,7 +432,8 @@ def _own_runner(request: HttpRequest, runner_id: uuid.UUID):
 
 def _runner_installations(runner):
     return LocalAppInstallation.objects.filter(runner=runner, user_id=runner.owner_id).select_related(
-        "template", "accepted", "workspace", "user", "runner")
+        "template", "accepted", "workspace", "user", "runner"
+    )
 
 
 def _runner_installation(runner, key: str) -> LocalAppInstallation:
@@ -341,16 +444,23 @@ def _runner_installation(runner, key: str) -> LocalAppInstallation:
 
 
 def _runner_run(runner, run_id: uuid.UUID) -> LocalAppRun:
-    run = LocalAppRun.objects.select_related("installation__workspace", "installation__user", "installation__template",
-                                             "version").filter(pk=run_id, installation__runner=runner).first()
+    run = (
+        LocalAppRun.objects.select_related(
+            "installation__workspace", "installation__user", "installation__template", "version"
+        )
+        .filter(pk=run_id, installation__runner=runner)
+        .first()
+    )
     if run is None:
         raise HttpError(404, "no such run")
     return run
 
 
-@runner_router.get("/{runner_id}/local-apps/", response=RunnerAppsOut, summary="This computer's installed local apps")
+@runner_router.get(
+    "/{runner_id}/local-apps/", response=RunnerLocalAppsOut, summary="This computer's installed local apps"
+)
 @gate("runner")
-def list_runner_local_apps(request: HttpRequest, runner_id: uuid.UUID) -> RunnerAppsOut:
+def list_runner_local_apps(request: HttpRequest, runner_id: uuid.UUID) -> RunnerLocalAppsOut:
     """Each app's version to run at its next Start, and why it can't start if it can't."""
     runner = _own_runner(request, runner_id)
     apps = []
@@ -358,18 +468,34 @@ def list_runner_local_apps(request: HttpRequest, runner_id: uuid.UUID) -> Runner
         state = services.resolve(inst)
         version = state["version"]
         m = version.manifest if version else inst.accepted.manifest
-        apps.append({
-            "key": inst.template.key, "name": m["name"], "version": version.version if version else None,
-            "sha256": version.sha256 if version else None, "size": version.size if version else None,
-            "notice": m["notice"], "disclosure": m["disclosure"], "entry": m["entry"],
-            "max_minutes": m["max_minutes"], "settings": inst.settings, "needs_acceptance": state["needs_acceptance"],
-            "changes": state["changes"], "refusal": state["refusal"], "running": services.live_run(inst) is not None,
-            "source_key": services.source_key_of(version, inst) if version else None, "consumes": m["consumes"],
-            "provides": m["provides"], "checks": m["checks"]})
-    return RunnerAppsOut(apps=apps)
+        apps.append(
+            {
+                "key": inst.template.key,
+                "name": m["name"],
+                "version": version.version if version else None,
+                "sha256": version.sha256 if version else None,
+                "size": version.size if version else None,
+                "notice": m["notice"],
+                "disclosure": m["disclosure"],
+                "entry": m["entry"],
+                "max_minutes": m["max_minutes"],
+                "settings": inst.settings,
+                "needs_acceptance": state["needs_acceptance"],
+                "changes": state["changes"],
+                "refusal": state["refusal"],
+                "running": services.live_run(inst) is not None,
+                "source_key": services.source_key_of(version, inst) if version else None,
+                "consumes": m["consumes"],
+                "provides": m["provides"],
+                "checks": m["checks"],
+            }
+        )
+    return RunnerLocalAppsOut(apps=apps)
 
 
-@runner_router.get("/{runner_id}/local-apps/{key}/package", response={200: None}, summary="A local app version's package")
+@runner_router.get(
+    "/{runner_id}/local-apps/{key}/package", response={200: None}, summary="A local app version's package"
+)
 @gate("runner")
 def get_runner_local_app_package(request: HttpRequest, runner_id: uuid.UUID, key: str, version: str):
     """Only the version this installation would run now. The runner checks the bytes
@@ -381,9 +507,11 @@ def get_runner_local_app_package(request: HttpRequest, runner_id: uuid.UUID, key
     return HttpResponse(services.package_bytes(state["version"]), content_type="application/zip")
 
 
-@runner_router.post("/{runner_id}/local-apps/{key}/runs/", response={201: StartRunOut}, summary="Start a local app run")
+@runner_router.post(
+    "/{runner_id}/local-apps/{key}/runs/", response={201: LocalAppStartRunOut}, summary="Start a local app run"
+)
 @gate("runner", kind="runner-protocol")
-def start_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, key: str, payload: StartRunIn):
+def start_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, key: str, payload: LocalAppStartRunIn):
     """The last word on whether it may start: revoked, switched off, unaccepted and an
     agent the person can no longer use are all refused here."""
     runner = _own_runner(request, runner_id)
@@ -391,31 +519,43 @@ def start_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, key: str,
         run = services.start_run(_runner_installation(runner, key), payload.version)
     except services.Refused as exc:
         raise _refused(exc) from exc
-    return Status(201, StartRunOut(run_id=str(run.pk)))
+    return Status(201, LocalAppStartRunOut(run_id=str(run.pk)))
 
 
-@runner_router.post("/{runner_id}/local-apps/runs/{run_id}/heartbeat", response=BeatOut, summary="A running local app reports in")
+@runner_router.post(
+    "/{runner_id}/local-apps/runs/{run_id}/heartbeat",
+    response=LocalAppBeatOut,
+    summary="A running local app reports in",
+)
 @gate("runner", kind="runner-protocol")
-def beat_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, run_id: uuid.UUID, payload: BeatIn) -> BeatOut:
+def beat_runner_local_app(
+    request: HttpRequest, runner_id: uuid.UUID, run_id: uuid.UUID, payload: LocalAppBeatIn
+) -> LocalAppBeatOut:
     run = _runner_run(_own_runner(request, runner_id), run_id)
-    return BeatOut(**services.heartbeat(run, state=payload.state, counts=payload.counts))
+    return LocalAppBeatOut(**services.heartbeat(run, state=payload.state, counts=payload.counts))
 
 
-@runner_router.post("/{runner_id}/local-apps/runs/{run_id}/finish", response={204: None}, summary="A local app run ended")
+@runner_router.post(
+    "/{runner_id}/local-apps/runs/{run_id}/finish", response={204: None}, summary="A local app run ended"
+)
 @gate("runner", kind="runner-protocol")
-def finish_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, run_id: uuid.UUID, payload: FinishIn):
+def finish_runner_local_app(request: HttpRequest, runner_id: uuid.UUID, run_id: uuid.UUID, payload: LocalAppFinishIn):
     run = _runner_run(_own_runner(request, runner_id), run_id)
     services.finish(run, reason=payload.reason, counts=payload.counts)
     return Status(204, None)
 
 
-@runner_router.post("/{runner_id}/local-apps/runs/{run_id}/canopy", response=CanopyCallOut, summary="A Canopy call for a running local app")
+@runner_router.post(
+    "/{runner_id}/local-apps/runs/{run_id}/canopy",
+    response=LocalAppCanopyCallOut,
+    summary="A Canopy call for a running local app",
+)
 @gate("runner", kind="runner-protocol")
-def call_canopy_for_local_app(request: HttpRequest, runner_id: uuid.UUID, run_id: uuid.UUID,
-                              payload: CanopyCallIn) -> CanopyCallOut:
+def call_canopy_for_local_app(
+    request: HttpRequest, runner_id: uuid.UUID, run_id: uuid.UUID, payload: LocalAppCanopyCallIn
+) -> LocalAppCanopyCallOut:
     """Only ops the manifest declares. The agent comes from the person's installation,
     and a send reaches only a session this run opened. Refusals arrive as `status`, so
     an app handles them; they never become anything more than that."""
     run = _runner_run(_own_runner(request, runner_id), run_id)
-    return CanopyCallOut(**services.canopy_call(run, payload.op, payload.args))
-
+    return LocalAppCanopyCallOut(**services.canopy_call(run, payload.op, payload.args))

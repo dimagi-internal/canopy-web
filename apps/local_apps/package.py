@@ -4,6 +4,7 @@ The facts are hints for a person reviewing the code, not a verdict: a program ca
 hide an import from any scan. They exist so the reviewer's eye lands on the lines
 that decide whether the manifest's disclosure is honest.
 """
+
 from __future__ import annotations
 
 import ast
@@ -21,15 +22,28 @@ MAX_PACKED = 5 * 1024 * 1024
 MAX_UNPACKED = 20 * 1024 * 1024
 MAX_FILES = 200
 MAX_DIFF_LINES = 4000
-_NETWORK = {"socket", "ssl", "http", "urllib", "ftplib", "smtplib", "telnetlib", "imaplib", "poplib", "requests",
-            "httpx", "aiohttp", "websockets"}
+_NETWORK = {
+    "socket",
+    "ssl",
+    "http",
+    "urllib",
+    "ftplib",
+    "smtplib",
+    "telnetlib",
+    "imaplib",
+    "poplib",
+    "requests",
+    "httpx",
+    "aiohttp",
+    "websockets",
+}
 _PROCESS = {"subprocess", "multiprocessing", "pty", "pexpect"}
 _RISKY_MODULES = {"ctypes", "pickle", "marshal", "importlib", "runpy"}
 _RISKY_CALLS = {"eval", "exec", "compile", "__import__"}
 _OS_PROCESS = {"system", "popen", "spawnl", "spawnv", "execv", "execl", "fork"}
 
 
-class BadPackage(ValueError):
+class BadPackage(ValueError):  # noqa: N818 — reads as what it says
     """Why this package can't be accepted, in words for its author."""
 
 
@@ -107,8 +121,12 @@ def _imports_and_calls(source: str) -> tuple[set[str], set[str]]:
             func = node.func
             if isinstance(func, ast.Name) and func.id in _RISKY_CALLS:
                 calls.add(func.id)
-            elif (isinstance(func, ast.Attribute) and func.attr in _OS_PROCESS
-                  and isinstance(func.value, ast.Name) and func.value.id == "os"):
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr in _OS_PROCESS
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+            ):
                 calls.add(f"os.{func.attr}")
     return modules, calls
 
@@ -133,8 +151,13 @@ def facts(pkg: Package) -> dict:
                     target.setdefault(module, []).append(name)
         for call in sorted(calls):
             (process if call.startswith("os.") else risky).setdefault(call, []).append(name)
-    return {"files": [{"path": n, "size": len(b)} for n, b in sorted(pkg.files.items())],
-            "network": network, "process": process, "risky": risky, "unparsed": unparsed}
+    return {
+        "files": [{"path": n, "size": len(b)} for n, b in sorted(pkg.files.items())],
+        "network": network,
+        "process": process,
+        "risky": risky,
+        "unparsed": unparsed,
+    }
 
 
 def diff(old: dict[str, bytes] | None, new: dict[str, bytes]) -> list[dict]:
@@ -147,8 +170,16 @@ def diff(old: dict[str, bytes] | None, new: dict[str, bytes]) -> list[dict]:
         before, after = old.get(name), new.get(name)
         if before == after:
             continue
-        lines = list(difflib.unified_diff((before or b"").decode().splitlines(), (after or b"").decode().splitlines(),
-                                          fromfile=name, tofile=name, lineterm="", n=3))
+        lines = list(
+            difflib.unified_diff(
+                (before or b"").decode().splitlines(),
+                (after or b"").decode().splitlines(),
+                fromfile=name,
+                tofile=name,
+                lineterm="",
+                n=3,
+            )
+        )
         status = "added" if before is None else "removed" if after is None else "changed"
         truncated = len(lines) > budget
         out.append({"path": name, "status": status, "lines": lines[:budget], "truncated": truncated})

@@ -6,6 +6,7 @@ person and a reviewer to read; `canopy` is the only part with teeth, limiting
 what the server will do for a run. Stdlib only, because the runner carries a copy
 (`runner/canopy_runner/canopy_runner/local_apps/manifest.py`).
 """
+
 from __future__ import annotations
 
 import re
@@ -16,8 +17,23 @@ _WORD = re.compile(r"^[a-z][a-z0-9_.-]{0,39}$")
 PLATFORMS = ("macos",)
 SETTING_TYPES = ("agent", "text", "longtext", "bool")
 CANOPY_OPS = ("sessions.create", "sessions.send", "turns.status")
-TOP_LEVEL = {"key", "name", "description", "version", "changelog", "entry", "platforms", "consumes", "provides",
-             "max_minutes", "notice", "disclosure", "settings", "checks", "canopy"}
+TOP_LEVEL = {
+    "key",
+    "name",
+    "description",
+    "version",
+    "changelog",
+    "entry",
+    "platforms",
+    "consumes",
+    "provides",
+    "max_minutes",
+    "notice",
+    "disclosure",
+    "settings",
+    "checks",
+    "canopy",
+}
 MAX_MINUTES = 480
 
 
@@ -66,8 +82,12 @@ def _settings(raw) -> dict:
         unknown = set(spec) - {"type", "label", "help", "required", "default"}
         if unknown:
             _fail(f"settings.{name}", f"unknown keys: {', '.join(sorted(unknown))}")
-        out[name] = {"type": spec["type"], "label": str(spec.get("label") or name)[:200],
-                     "help": str(spec.get("help") or "")[:500], "required": bool(spec.get("required", False))}
+        out[name] = {
+            "type": spec["type"],
+            "label": str(spec.get("label") or name)[:200],
+            "help": str(spec.get("help") or "")[:500],
+            "required": bool(spec.get("required", False)),
+        }
         if "default" in spec:
             out[name]["default"] = spec["default"]
     if sum(1 for s in out.values() if s["type"] == "agent") > 1:
@@ -87,8 +107,13 @@ def _checks(raw) -> list[dict]:
         run = _strings(f"checks[{i}].run", check.get("run"), limit=200)
         if not run:
             _fail(f"checks[{i}].run", "must name a command")
-        out.append({"label": _text(check, "label", 200, required=True), "run": run,
-                    "fix": _text(check, "fix", 500, required=True)})
+        out.append(
+            {
+                "label": _text(check, "label", 200, required=True),
+                "run": run,
+                "fix": _text(check, "fix", 500, required=True),
+            }
+        )
     return out
 
 
@@ -122,7 +147,10 @@ def validate(raw: dict) -> dict:
     disclosure = raw.get("disclosure")
     if not isinstance(disclosure, dict) or set(disclosure) - {"reads", "sends"}:
         _fail("disclosure", "must be {reads, sends}")
-    reads, sends = _strings("disclosure.reads", disclosure.get("reads")), _strings("disclosure.sends", disclosure.get("sends"))
+    reads, sends = (
+        _strings("disclosure.reads", disclosure.get("reads")),
+        _strings("disclosure.sends", disclosure.get("sends")),
+    )
     if not reads and not sends:
         _fail("disclosure", "must say what the app reads or sends")
     canopy = _strings("canopy", raw.get("canopy"), limit=40)
@@ -131,10 +159,20 @@ def validate(raw: dict) -> dict:
     settings = _settings(raw.get("settings"))
     if canopy and "sessions.create" in canopy and not any(s["type"] == "agent" for s in settings.values()):
         _fail("settings", "an app that opens sessions needs a setting that chooses the agent")
-    return {"key": key, "name": _text(raw, "name", 120, required=True),
-            "description": _text(raw, "description", 2000), "version": version,
-            "changelog": _text(raw, "changelog", 4000), "entry": entry, "platforms": platforms,
-            "consumes": consumes, "provides": provides, "max_minutes": minutes,
-            "notice": _text(raw, "notice", 1000, required=bool(consumes)),
-            "disclosure": {"reads": reads, "sends": sends}, "settings": settings,
-            "checks": _checks(raw.get("checks")), "canopy": canopy}
+    return {
+        "key": key,
+        "name": _text(raw, "name", 120, required=True),
+        "description": _text(raw, "description", 2000),
+        "version": version,
+        "changelog": _text(raw, "changelog", 4000),
+        "entry": entry,
+        "platforms": platforms,
+        "consumes": consumes,
+        "provides": provides,
+        "max_minutes": minutes,
+        "notice": _text(raw, "notice", 1000, required=bool(consumes)),
+        "disclosure": {"reads": reads, "sends": sends},
+        "settings": settings,
+        "checks": _checks(raw.get("checks")),
+        "canopy": canopy,
+    }

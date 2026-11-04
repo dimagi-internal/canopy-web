@@ -13,6 +13,7 @@ what's different because this is real code running as a person:
 * `LocalAppRun` — one Start, from its first heartbeat to its stop reason. It holds
   counts and ids, never anything said.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -38,16 +39,23 @@ class LocalAppSubmission(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.PROTECT, related_name="+")
     submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     submitted_at = models.DateTimeField(auto_now_add=True)
-    approval = models.ForeignKey("approvals.ApprovalRequest", null=True, blank=True, on_delete=models.SET_NULL,
-                                 related_name="+")
+    approval = models.ForeignKey(
+        "approvals.ApprovalRequest", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
     #: Set by the approval's handler, and only there.
-    release = models.OneToOneField("workspace_apps.AppTemplateVersion", null=True, blank=True,
-                                   on_delete=models.PROTECT, related_name="local_submission")
+    release = models.OneToOneField(
+        "workspace_apps.AppTemplateVersion",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="local_submission",
+    )
     released_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_reason = models.CharField(max_length=500, blank=True, default="")
-    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-                                   related_name="+")
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         ordering = ["-submitted_at", "-id"]

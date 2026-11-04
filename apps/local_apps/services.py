@@ -5,6 +5,7 @@ act as its owner. Each Canopy call here is allowed by an installation the person
 made while signed in, names its agent through that row, and reaches only sessions
 the run itself opened.
 """
+
 from __future__ import annotations
 
 import base64
@@ -40,7 +41,7 @@ MAX_SEND_CHARS = 64_000
 MAX_SESSIONS_PER_RUN = 5
 
 
-class Refused(Exception):
+class Refused(Exception):  # noqa: N818 — same name as workspace_apps.services.Refused
     """Refused, in words for the person. `status` is the HTTP answer."""
 
     def __init__(self, message: str, status: int = 409):
@@ -76,7 +77,8 @@ def latest(key: str) -> LocalAppSubmission | None:
 def catalog() -> list[LocalAppSubmission]:
     """The latest good version of each listed local app."""
     keys = AppTemplate.objects.filter(runtime=AppTemplate.LOCAL, listed=True, owner__isnull=True).values_list(
-        "key", flat=True)
+        "key", flat=True
+    )
     return [s for s in (latest(k) for k in keys) if s is not None]
 
 
@@ -87,8 +89,11 @@ def package_bytes(sub: LocalAppSubmission) -> bytes:
 
 
 def _prior_release(sub: LocalAppSubmission) -> LocalAppSubmission | None:
-    earlier = [s for s in LocalAppSubmission.objects.filter(key=sub.key, released_at__isnull=False).exclude(pk=sub.pk)
-               if _version_key(s.version) < _version_key(sub.version)]
+    earlier = [
+        s
+        for s in LocalAppSubmission.objects.filter(key=sub.key, released_at__isnull=False).exclude(pk=sub.pk)
+        if _version_key(s.version) < _version_key(sub.version)
+    ]
     return max(earlier, key=lambda s: _version_key(s.version), default=None)
 
 
@@ -97,18 +102,24 @@ def review(sub: LocalAppSubmission) -> dict:
     prior = _prior_release(sub)
     new = pkg.read(package_bytes(sub))
     old = pkg.read(package_bytes(prior)) if prior else None
-    return {"prior_version": prior.version if prior else None,
-            "trust_changes": trust.changes(prior.manifest if prior else None, sub.manifest),
-            "diff": pkg.diff(old.files if old else None, new.files)}
+    return {
+        "prior_version": prior.version if prior else None,
+        "trust_changes": trust.changes(prior.manifest if prior else None, sub.manifest),
+        "diff": pkg.diff(old.files if old else None, new.files),
+    }
 
 
 # --- submit, release, revoke ------------------------------------------------------------
 
 
 def _file_approval(sub: LocalAppSubmission, user, attempt: int) -> None:
-    req, _ = approvals.create(kind="local_app.release", params={"submission": sub.pk, "sha256": sub.sha256},
-                              requested_by_user=user, reason=sub.note,
-                              idempotency_key=f"local-app-release-{sub.pk}-{attempt}")
+    req, _ = approvals.create(
+        kind="local_app.release",
+        params={"submission": sub.pk, "sha256": sub.sha256},
+        requested_by_user=user,
+        reason=sub.note,
+        idempotency_key=f"local-app-release-{sub.pk}-{attempt}",
+    )
     sub.approval = req
     sub.save(update_fields=["approval"])
 
@@ -129,11 +140,15 @@ def submit(*, package_b64: str, note: str, workspace: Workspace, user) -> tuple[
     existing = LocalAppSubmission.objects.filter(key=m["key"], version=m["version"]).first()
     if existing is not None:
         if existing.sha256 != package.sha256:
-            raise Refused(f"{m['key']} {m['version']} was already submitted with different code. Versions never "
-                          "change: raise the version.", 409)
+            raise Refused(
+                f"{m['key']} {m['version']} was already submitted with different code. Versions never "
+                "change: raise the version.",
+                409,
+            )
         if existing.approval and existing.approval.status == ApprovalRequest.EXPIRED:
-            attempt = 1 + sum(1 for _ in ApprovalRequest.objects.filter(
-                kind="local_app.release", params__submission=existing.pk))
+            attempt = 1 + sum(
+                1 for _ in ApprovalRequest.objects.filter(kind="local_app.release", params__submission=existing.pk)
+            )
             _file_approval(existing, user, attempt)
         return existing, False
     top = latest(m["key"])
@@ -148,9 +163,18 @@ def submit(*, package_b64: str, note: str, workspace: Workspace, user) -> tuple[
         local = data
     with transaction.atomic():
         sub = LocalAppSubmission.objects.create(
-            key=m["key"], version=m["version"], manifest=m, sha256=package.sha256, size=package.size,
-            storage_key=storage_key, local=local, facts=pkg.facts(package), note=(note or "").strip()[:4000],
-            workspace=workspace, submitted_by=user)
+            key=m["key"],
+            version=m["version"],
+            manifest=m,
+            sha256=package.sha256,
+            size=package.size,
+            storage_key=storage_key,
+            local=local,
+            facts=pkg.facts(package),
+            note=(note or "").strip()[:4000],
+            workspace=workspace,
+            submitted_by=user,
+        )
         try:
             _file_approval(sub, user, 0)
         except approvals.ApprovalError as exc:
@@ -167,13 +191,20 @@ def release(sub: LocalAppSubmission) -> LocalAppSubmission:
     if tmpl is not None and tmpl.runtime != AppTemplate.LOCAL:
         raise Refused(f"'{m['key']}' is already the name of an app that runs on Canopy")
     if tmpl is None:
-        tmpl = AppTemplate.objects.create(key=m["key"], name=m["name"], description=m["description"], owner=None,
-                                          listed=True, runtime=AppTemplate.LOCAL)
+        tmpl = AppTemplate.objects.create(
+            key=m["key"],
+            name=m["name"],
+            description=m["description"],
+            owner=None,
+            listed=True,
+            runtime=AppTemplate.LOCAL,
+        )
     else:
         tmpl.name, tmpl.description, tmpl.listed = m["name"], m["description"], True
         tmpl.save(update_fields=["name", "description", "listed"])
-    version = AppTemplateVersion.objects.create(template=tmpl, version=sub.version, manifest=m,
-                                                changelog=m["changelog"])
+    version = AppTemplateVersion.objects.create(
+        template=tmpl, version=sub.version, manifest=m, changelog=m["changelog"]
+    )
     sub.release = version
     sub.released_at = timezone.now()
     sub.save(update_fields=["release", "released_at"])
@@ -236,8 +267,9 @@ def _usable_agent(slug: str, workspace: Workspace, user) -> Agent:
     return agent
 
 
-def install(*, workspace: Workspace, key: str, user, runner_id, settings: dict, accept_digest: str
-            ) -> LocalAppInstallation:
+def install(
+    *, workspace: Workspace, key: str, user, runner_id, settings: dict, accept_digest: str
+) -> LocalAppInstallation:
     """Install an app, and the source it listens to. `accept_digest` is the promise the
     person was shown, so a version released while they read can't slip past them."""
     if not switched_on(workspace):
@@ -267,9 +299,16 @@ def install(*, workspace: Workspace, key: str, user, runner_id, settings: dict, 
 def _install_one(sub, user, runner, workspace, settings) -> LocalAppInstallation:
     template = sub.release.template
     inst, created = LocalAppInstallation.objects.get_or_create(
-        user=user, runner=runner, template=template,
-        defaults={"workspace": workspace, "settings": settings, "accepted": sub,
-                  "accepted_digest": trust.digest(sub.manifest)})
+        user=user,
+        runner=runner,
+        template=template,
+        defaults={
+            "workspace": workspace,
+            "settings": settings,
+            "accepted": sub,
+            "accepted_digest": trust.digest(sub.manifest),
+        },
+    )
     if not created:
         inst.workspace, inst.accepted, inst.accepted_digest = workspace, sub, trust.digest(sub.manifest)
         inst.settings = {**inst.settings, **settings}
@@ -388,8 +427,11 @@ def heartbeat(run: LocalAppRun, *, state: str, counts: dict) -> dict:
 
 def _counts(counts: dict) -> dict:
     # Numbers only: a heartbeat is no way for anything said to reach the server's rows.
-    return {str(k)[:40]: v for k, v in list((counts or {}).items())[:20]
-            if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    return {
+        str(k)[:40]: v
+        for k, v in list((counts or {}).items())[:20]
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
 
 
 def finish(run: LocalAppRun, *, reason: str, counts: dict) -> None:
@@ -433,8 +475,12 @@ def _create_session(run: LocalAppRun, args: dict) -> dict:
     if len(run.session_ids) >= MAX_SESSIONS_PER_RUN:
         raise Refused("this run has opened as many sessions as it may", 409)
     agent = _usable_agent(agent_slug(inst, run.version), inst.workspace, inst.user)
-    session = session_services.create_session(workspace=inst.workspace, created_by=inst.user, agent=agent,
-                                              title=str(args.get("title") or run.version.manifest["name"])[:200])
+    session = session_services.create_session(
+        workspace=inst.workspace,
+        created_by=inst.user,
+        agent=agent,
+        title=str(args.get("title") or run.version.manifest["name"])[:200],
+    )
     run.session_ids = [*run.session_ids, str(session.pk)]
     run.save(update_fields=["session_ids"])
     return {"id": str(session.pk), "url": scoped_url(inst.workspace, f"/sessions/{session.pk}")}
@@ -449,9 +495,16 @@ def _send(run: LocalAppRun, args: dict) -> dict:
     inst = run.installation
     try:
         _message, turn = doors.send_from(
-            "rest", session=session, text=text, user=inst.user, client_id=client_id, runner_requirements=(),
-            chat_surface=False, origin="api",
-            initiator=who.for_user(inst.user, via=f"local-app:{inst.template.key}", assurance=who.RUNNER_KEY))
+            "rest",
+            session=session,
+            text=text,
+            user=inst.user,
+            client_id=client_id,
+            runner_requirements=(),
+            chat_surface=False,
+            origin="api",
+            initiator=who.for_user(inst.user, via=f"local-app:{inst.template.key}", assurance=who.RUNNER_KEY),
+        )
     except ValueError as exc:
         raise Refused(str(exc), 422) from exc
     return {"turn_id": str(turn.pk) if turn else None}

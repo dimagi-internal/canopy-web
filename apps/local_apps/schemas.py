@@ -5,27 +5,27 @@ from typing import Any
 from ninja import Schema
 
 
-class SwitchIn(Schema):
+class LocalAppSwitchIn(Schema):
     enabled: bool
 
 
-class SwitchOut(Schema):
+class LocalAppSwitchOut(Schema):
     enabled: bool
 
 
-class ComputerOut(Schema):
+class LocalAppComputerOut(Schema):
     id: str
     name: str
 
 
-class VersionOut(Schema):
+class LocalAppVersionOut(Schema):
     version: str
     released_at: str | None = None
     changelog: str = ""
     revoked: bool = False
 
 
-class StoreItemOut(Schema):
+class LocalAppListingOut(Schema):
     key: str
     name: str
     description: str
@@ -36,13 +36,13 @@ class StoreItemOut(Schema):
     installed: bool = False
 
 
-class StoreOut(Schema):
+class LocalAppStoreOut(Schema):
     enabled: bool
     can_switch: bool
-    apps: list[StoreItemOut]
+    apps: list[LocalAppListingOut]
 
 
-class StoreDetailOut(Schema):
+class LocalAppDetailOut(Schema):
     key: str
     name: str
     description: str
@@ -57,18 +57,18 @@ class StoreDetailOut(Schema):
     installs_with: list[str] = []
     #: Agents in this workspace the person may use, for a setting that picks one.
     agents: list[dict[str, str]] = []
-    computers: list[ComputerOut] = []
-    versions: list[VersionOut] = []
+    computers: list[LocalAppComputerOut] = []
+    versions: list[LocalAppVersionOut] = []
     enabled: bool = False
 
 
-class InstallIn(Schema):
+class LocalAppInstallIn(Schema):
     runner_id: str
     settings: dict[str, Any] = {}
     accept_digest: str
 
 
-class RunOut(Schema):
+class LocalAppRunOut(Schema):
     id: str
     version: str
     started_at: str
@@ -80,12 +80,12 @@ class RunOut(Schema):
     running: bool = False
 
 
-class InstallationOut(Schema):
+class LocalAppInstallationOut(Schema):
     id: int
     key: str
     name: str
     workspace: str
-    computer: ComputerOut
+    computer: LocalAppComputerOut
     settings: dict[str, Any]
     settings_spec: dict[str, Any]
     agents: list[dict[str, str]] = []
@@ -94,25 +94,25 @@ class InstallationOut(Schema):
     changes: list[str] = []
     digest: str = ""
     refusal: str | None = None
-    last_run: RunOut | None = None
+    last_run: LocalAppRunOut | None = None
 
 
-class ConfigureIn(Schema):
+class LocalAppConfigureIn(Schema):
     settings: dict[str, Any]
 
 
-class AcceptIn(Schema):
+class LocalAppAcceptIn(Schema):
     digest: str
 
 
-class SubmitIn(Schema):
+class LocalAppSubmitIn(Schema):
     package_b64: str
     note: str = ""
     #: The workspace it's submitted from; else your pinned or only workspace.
     workspace: str | None = None
 
 
-class SubmissionOut(Schema):
+class LocalAppSubmissionOut(Schema):
     id: int
     key: str
     version: str
@@ -122,7 +122,7 @@ class SubmissionOut(Schema):
     review_url: str
 
 
-class ReviewOut(SubmissionOut):
+class LocalAppReviewOut(LocalAppSubmissionOut):
     name: str
     size: int
     note: str = ""
@@ -137,11 +137,11 @@ class ReviewOut(SubmissionOut):
     can_revoke: bool = False
 
 
-class RevokeIn(Schema):
+class LocalAppRevokeIn(Schema):
     reason: str
 
 
-class RunnerAppOut(Schema):
+class RunnerLocalAppOut(Schema):
     key: str
     name: str
     version: str | None = None
@@ -162,38 +162,38 @@ class RunnerAppOut(Schema):
     checks: list[dict[str, Any]] = []
 
 
-class RunnerAppsOut(Schema):
-    apps: list[RunnerAppOut]
+class RunnerLocalAppsOut(Schema):
+    apps: list[RunnerLocalAppOut]
 
 
-class StartRunIn(Schema):
+class LocalAppStartRunIn(Schema):
     version: str
 
 
-class StartRunOut(Schema):
+class LocalAppStartRunOut(Schema):
     run_id: str
 
 
-class BeatIn(Schema):
+class LocalAppBeatIn(Schema):
     state: str = ""
     counts: dict[str, Any] = {}
 
 
-class BeatOut(Schema):
+class LocalAppBeatOut(Schema):
     stop: bool
     reason: str = ""
 
 
-class FinishIn(Schema):
+class LocalAppFinishIn(Schema):
     reason: str = ""
     counts: dict[str, Any] = {}
 
 
-class CanopyCallIn(Schema):
+class LocalAppCanopyCallIn(Schema):
     op: str
     args: dict[str, Any] = {}
 
 
-class CanopyCallOut(Schema):
+class LocalAppCanopyCallOut(Schema):
     status: int
     body: dict[str, Any]

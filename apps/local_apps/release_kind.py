@@ -4,6 +4,7 @@ The approval names exact bytes by sha256, so what is approved is what ships. It
 needs a superuser because the catalog is Canopy's and Canopy is vouching for code
 that runs as the people who install it; opening this up needs a reviewer role.
 """
+
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
@@ -22,8 +23,11 @@ class Params(StrictModel):
 
 def _facts_lines(facts: dict) -> list[str]:
     out = [f"{len(facts.get('files') or [])} files"]
-    for label, name in (("Reaches the network", "network"), ("Starts processes", "process"),
-                        ("Uses risky features", "risky")):
+    for label, name in (
+        ("Reaches the network", "network"),
+        ("Starts processes", "process"),
+        ("Uses risky features", "risky"),
+    ):
         if facts.get(name):
             out.append(f"{label}: {', '.join(sorted(facts[name]))}")
     if facts.get("unparsed"):
@@ -37,11 +41,14 @@ class LocalAppRelease(Kind):
     label = "Release an app that runs on people's computers"
     params_model = Params
     needs = "a Canopy superuser, who did not submit it"
-    does = ("Lists this exact version in Canopy's store. People who have the app get it at their next Start, "
-            "unless what it reads or sends changed, when they're asked first.")
+    does = (
+        "Lists this exact version in Canopy's store. People who have the app get it at their next Start, "
+        "unless what it reads or sends changed, when they're asked first."
+    )
 
     def _submission(self, p: Params):
         from .models import LocalAppSubmission  # noqa: PLC0415 — loaded from AppConfig.ready's import chain
+
         sub = LocalAppSubmission.objects.select_related("workspace", "submitted_by").filter(pk=p.submission).first()
         if sub is None or sub.sha256 != p.sha256:
             raise KindError("that submission is not there")
@@ -54,9 +61,14 @@ class LocalAppRelease(Kind):
         plan += [f"Says it reads: {r}" for r in m["disclosure"]["reads"]]
         plan += [f"Says it sends: {s}" for s in m["disclosure"]["sends"]]
         plan.append(f"Read the code and the changes: {scoped_url(sub.workspace, f'/apps/local/review/{sub.pk}')}")
-        return Described(workspace=sub.workspace_id, title=f"Release {m['name']} {sub.version} to Canopy's app store",
-                         summary=m["description"] or m["name"], plan=plan, scopes=[f"workspace:{sub.workspace_id}"],
-                         about_email=(sub.submitted_by.email if sub.submitted_by else ""))
+        return Described(
+            workspace=sub.workspace_id,
+            title=f"Release {m['name']} {sub.version} to Canopy's app store",
+            summary=m["description"] or m["name"],
+            plan=plan,
+            scopes=[f"workspace:{sub.workspace_id}"],
+            about_email=(sub.submitted_by.email if sub.submitted_by else ""),
+        )
 
     def may_approve(self, user, p: Params, d: Described) -> bool:
         if not user.is_superuser:
@@ -74,6 +86,7 @@ class LocalAppRelease(Kind):
 
     def execute(self, user, p: Params, request) -> dict:
         from . import services  # noqa: PLC0415 — services imports approvals, which holds this registry
+
         try:
             sub = services.release(self._submission(p))
         except services.Refused as exc:

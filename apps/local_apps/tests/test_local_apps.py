@@ -1,6 +1,7 @@
 """The promises local apps make: nothing runs on the server; nothing reaches anyone
 unreviewed; a revoked version stops everywhere; and the runner's token gains no general
 way to act as its owner."""
+
 from __future__ import annotations
 
 import base64
@@ -30,13 +31,27 @@ J = "application/json"
 
 
 def manifest(**over) -> dict:
-    return {"key": "meeting-assistant", "name": "Meeting assistant", "description": "Feedback in a meeting.",
-            "version": "0.1.0", "changelog": "First.", "entry": ["{python}", "app.py"], "platforms": ["macos"],
-            "consumes": [], "provides": [], "max_minutes": 120, "notice": "It leaves your Mac.",
-            "disclosure": {"reads": ["a transcript"], "sends": ["text to a session"]},
-            "settings": {"agent": {"type": "agent", "label": "Agent", "required": True},
-                         "brief": {"type": "longtext", "label": "Brief"}},
-            "checks": [], "canopy": ["sessions.create", "sessions.send", "turns.status"], **over}
+    return {
+        "key": "meeting-assistant",
+        "name": "Meeting assistant",
+        "description": "Feedback in a meeting.",
+        "version": "0.1.0",
+        "changelog": "First.",
+        "entry": ["{python}", "app.py"],
+        "platforms": ["macos"],
+        "consumes": [],
+        "provides": [],
+        "max_minutes": 120,
+        "notice": "It leaves your Mac.",
+        "disclosure": {"reads": ["a transcript"], "sends": ["text to a session"]},
+        "settings": {
+            "agent": {"type": "agent", "label": "Agent", "required": True},
+            "brief": {"type": "longtext", "label": "Brief"},
+        },
+        "checks": [],
+        "canopy": ["sessions.create", "sessions.send", "turns.status"],
+        **over,
+    }
 
 
 def package(m: dict | None = None, *, files: dict | None = None) -> bytes:
@@ -69,16 +84,23 @@ def world():
     WorkspaceMembership.objects.create(user=author, workspace=ws, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(user=person, workspace=ws, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(user=other, workspace=ws, role=WorkspaceMembership.EDITOR)
-    agent = Agent.objects.create(slug="helper", name="Helper", workspace=ws, owner=person,
-                                 user=User.objects.create_user("helper-bot", "helper@dimagi-ai.com", "pw"))
+    agent = Agent.objects.create(
+        slug="helper",
+        name="Helper",
+        workspace=ws,
+        owner=person,
+        user=User.objects.create_user("helper-bot", "helper@dimagi-ai.com", "pw"),
+    )
     laptop = Runner.objects.create(name="laptop", kind=Runner.EMDASH, owner=person)
     return dict(ws=ws, root=root, author=author, person=person, other=other, agent=agent, laptop=laptop)
 
 
 def submit(world, m=None, *, files=None, user=None) -> LocalAppSubmission:
     r = client(user or world["author"]).post(
-        "/api/local-apps/submissions/", {"package_b64": b64(package(m, files=files)), "workspace": "dimagi"},
-        content_type=J)
+        "/api/local-apps/submissions/",
+        {"package_b64": b64(package(m, files=files)), "workspace": "dimagi"},
+        content_type=J,
+    )
     assert r.status_code in (200, 201), r.content
     return LocalAppSubmission.objects.get(pk=r.json()["id"])
 
@@ -98,8 +120,13 @@ def install(world, sub=None, settings=None) -> LocalAppInstallation:
     sub = sub or LocalAppSubmission.objects.get(key="meeting-assistant", version="0.1.0")
     r = client(world["person"]).post(
         "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
-        {"runner_id": str(world["laptop"].pk), "settings": settings or {"agent": "helper"},
-         "accept_digest": trust.digest(sub.manifest)}, content_type=J)
+        {
+            "runner_id": str(world["laptop"].pk),
+            "settings": settings or {"agent": "helper"},
+            "accept_digest": trust.digest(sub.manifest),
+        },
+        content_type=J,
+    )
     assert r.status_code == 201, r.content
     return LocalAppInstallation.objects.get(pk=r.json()["id"])
 
@@ -109,22 +136,29 @@ def runner_base(world) -> str:
 
 
 def start(world, version="0.1.0") -> str:
-    r = client(world["person"]).post(f"{runner_base(world)}/meeting-assistant/runs/", {"version": version},
-                                     content_type=J)
+    r = client(world["person"]).post(
+        f"{runner_base(world)}/meeting-assistant/runs/", {"version": version}, content_type=J
+    )
     assert r.status_code == 201, r.content
     return r.json()["run_id"]
 
 
 def call(world, run, op, args=None) -> dict:
-    r = client(world["person"]).post(f"{runner_base(world)}/runs/{run}/canopy", {"op": op, "args": args or {}},
-                                     content_type=J)
+    r = client(world["person"]).post(
+        f"{runner_base(world)}/runs/{run}/canopy", {"op": op, "args": args or {}}, content_type=J
+    )
     assert r.status_code == 200, r.content
     return r.json()
 
 
 def beat(world, run) -> dict:
-    return client(world["person"]).post(f"{runner_base(world)}/runs/{run}/heartbeat",
-                                        {"state": "listening", "counts": {"sent": 1}}, content_type=J).json()
+    return (
+        client(world["person"])
+        .post(
+            f"{runner_base(world)}/runs/{run}/heartbeat", {"state": "listening", "counts": {"sent": 1}}, content_type=J
+        )
+        .json()
+    )
 
 
 # --- packages: never run, only read ------------------------------------------------------
@@ -187,7 +221,8 @@ def test_a_submission_reaches_nobody_until_approved(world):
     assert client(world["person"]).get("/api/local-apps/store/dimagi/").json()["apps"] == []
     approve(world, sub)
     assert [a["key"] for a in client(world["person"]).get("/api/local-apps/store/dimagi/").json()["apps"]] == [
-        "meeting-assistant"]
+        "meeting-assistant"
+    ]
 
 
 def test_nobody_approves_their_own_submission(world):
@@ -198,8 +233,9 @@ def test_nobody_approves_their_own_submission(world):
 
 
 def test_a_lone_superuser_cant_submit_since_nobody_could_approve_it(world):
-    r = client(world["root"]).post("/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"},
-                                   content_type=J)
+    r = client(world["root"]).post(
+        "/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"}, content_type=J
+    )
     assert r.status_code == 422 and "nobody can approve" in r.json()["detail"]
     assert not LocalAppSubmission.objects.exists()
 
@@ -224,9 +260,11 @@ def test_the_approval_preview_names_the_exact_bytes_and_the_code(world):
 
 def test_a_version_never_changes(world):
     submit(world)
-    r = client(world["author"]).post("/api/local-apps/submissions/",
-                                     {"package_b64": b64(package(files={"app.py": "other\n"})), "workspace": "dimagi"},
-                                     content_type=J)
+    r = client(world["author"]).post(
+        "/api/local-apps/submissions/",
+        {"package_b64": b64(package(files={"app.py": "other\n"})), "workspace": "dimagi"},
+        content_type=J,
+    )
     assert r.status_code == 409 and "Versions never" in r.json()["detail"]
 
 
@@ -237,24 +275,30 @@ def test_resubmitting_the_same_bytes_returns_the_same_submission(world):
 
 def test_a_version_must_be_newer_than_the_release(world):
     released(world)
-    r = client(world["author"]).post("/api/local-apps/submissions/",
-                                     {"package_b64": b64(package(manifest(version="0.0.9"))), "workspace": "dimagi"},
-                                     content_type=J)
+    r = client(world["author"]).post(
+        "/api/local-apps/submissions/",
+        {"package_b64": b64(package(manifest(version="0.0.9"))), "workspace": "dimagi"},
+        content_type=J,
+    )
     assert r.status_code == 409 and "isn't newer" in r.json()["detail"]
 
 
 def test_a_viewer_cant_submit(world):
     viewer = User.objects.create_user("viewer", "viewer@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=viewer, workspace=world["ws"], role=WorkspaceMembership.VIEWER)
-    r = client(viewer).post("/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"},
-                            content_type=J)
+    r = client(viewer).post(
+        "/api/local-apps/submissions/", {"package_b64": b64(package()), "workspace": "dimagi"}, content_type=J
+    )
     assert r.status_code == 403
 
 
 def test_a_review_shows_the_diff_and_what_changed_in_the_promise(world):
     released(world)
-    sub = submit(world, manifest(version="0.2.0", disclosure={"reads": ["a transcript", "your calendar"], "sends": []}),
-                 files={"app.py": "print('changed')\n"})
+    sub = submit(
+        world,
+        manifest(version="0.2.0", disclosure={"reads": ["a transcript", "your calendar"], "sends": []}),
+        files={"app.py": "print('changed')\n"},
+    )
     review = client(world["root"]).get(f"/api/local-apps/submissions/{sub.pk}").json()
     assert review["prior_version"] == "0.1.0"
     assert "Now reads: your calendar" in review["trust_changes"]
@@ -281,8 +325,9 @@ def test_the_web_store_never_sees_a_local_app(world):
 def test_a_local_app_cant_take_a_web_apps_name(world):
     web_store.sync_bundled()
     m = manifest(key="hiring")
-    r = client(world["author"]).post("/api/local-apps/submissions/", {"package_b64": b64(package(m)), "workspace": "dimagi"},
-                                     content_type=J)
+    r = client(world["author"]).post(
+        "/api/local-apps/submissions/", {"package_b64": b64(package(m)), "workspace": "dimagi"}, content_type=J
+    )
     assert r.status_code == 409
 
 
@@ -300,9 +345,14 @@ def test_off_by_default_and_only_an_admin_turns_it_on(world):
     WorkspaceMembership.objects.create(user=world["person"], workspace=ws, role=WorkspaceMembership.EDITOR)
     released(world)
     assert client(world["person"]).get("/api/local-apps/store/fresh/").json() == {
-        "enabled": False, "can_switch": False, "apps": []}
-    assert client(world["person"]).put("/api/local-apps/store/fresh/switch", {"enabled": True},
-                                       content_type=J).status_code == 403
+        "enabled": False,
+        "can_switch": False,
+        "apps": [],
+    }
+    assert (
+        client(world["person"]).put("/api/local-apps/store/fresh/switch", {"enabled": True}, content_type=J).status_code
+        == 403
+    )
 
 
 def test_a_stranger_gets_404_not_a_list(world):
@@ -318,7 +368,8 @@ def test_only_your_own_laptop_can_take_an_install(world):
         r = client(world["person"]).post(
             "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
             {"runner_id": str(runner.pk), "settings": {"agent": "helper"}, "accept_digest": trust.digest(sub.manifest)},
-            content_type=J)
+            content_type=J,
+        )
         assert r.status_code == 404
 
 
@@ -327,7 +378,8 @@ def test_install_needs_the_promise_they_actually_read(world):
     r = client(world["person"]).post(
         "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
         {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper"}, "accept_digest": "0" * 64},
-        content_type=J)
+        content_type=J,
+    )
     assert r.status_code == 409 and "changed while you were reading" in r.json()["detail"]
 
 
@@ -336,25 +388,46 @@ def test_a_required_setting_is_required(world):
     r = client(world["person"]).post(
         "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
         {"runner_id": str(world["laptop"].pk), "settings": {}, "accept_digest": trust.digest(sub.manifest)},
-        content_type=J)
+        content_type=J,
+    )
     assert r.status_code == 422
 
 
 def test_cant_pick_an_agent_from_another_workspace(world):
     sub = released(world)
     elsewhere = Workspace.objects.create(slug="elsewhere", display_name="E", created_by=world["root"])
-    Agent.objects.create(slug="alien", name="Alien", workspace=elsewhere, owner=world["person"],
-                         user=User.objects.create_user("alien-bot", "alien@dimagi-ai.com", "pw"))
+    Agent.objects.create(
+        slug="alien",
+        name="Alien",
+        workspace=elsewhere,
+        owner=world["person"],
+        user=User.objects.create_user("alien-bot", "alien@dimagi-ai.com", "pw"),
+    )
     r = client(world["person"]).post(
         "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
-        {"runner_id": str(world["laptop"].pk), "settings": {"agent": "alien"},
-         "accept_digest": trust.digest(sub.manifest)}, content_type=J)
+        {
+            "runner_id": str(world["laptop"].pk),
+            "settings": {"agent": "alien"},
+            "accept_digest": trust.digest(sub.manifest),
+        },
+        content_type=J,
+    )
     assert r.status_code == 403
 
 
 def test_installing_a_consumer_also_installs_its_source(world):
-    released(world, manifest(key="whisper-source", name="Whisper", provides=["transcript"], consumes=[], settings={},
-                             canopy=[], notice=""))
+    released(
+        world,
+        manifest(
+            key="whisper-source",
+            name="Whisper",
+            provides=["transcript"],
+            consumes=[],
+            settings={},
+            canopy=[],
+            notice="",
+        ),
+    )
     sub = released(world, manifest(consumes=["transcript"]))
     install(world, sub)
     keys = set(LocalAppInstallation.objects.filter(user=world["person"]).values_list("template__key", flat=True))
@@ -367,8 +440,13 @@ def test_a_consumer_with_no_source_cant_install(world):
     sub = released(world, manifest(consumes=["transcript"]))
     r = client(world["person"]).post(
         "/api/local-apps/store/dimagi/apps/meeting-assistant/install",
-        {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper"},
-         "accept_digest": trust.digest(sub.manifest)}, content_type=J)
+        {
+            "runner_id": str(world["laptop"].pk),
+            "settings": {"agent": "helper"},
+            "accept_digest": trust.digest(sub.manifest),
+        },
+        content_type=J,
+    )
     assert r.status_code == 409 and "provides" in r.json()["detail"]
 
 
@@ -393,8 +471,9 @@ def test_a_changed_promise_waits_for_acceptance_on_the_old_version(world):
     assert app["version"] == "0.1.0" and app["needs_acceptance"] is True
     assert "Now reads: your calendar" in app["changes"]
     inst = LocalAppInstallation.objects.get(user=world["person"])
-    r = client(world["person"]).post(f"/api/local-apps/installations/{inst.pk}/accept",
-                                     {"digest": trust.digest(new.manifest)}, content_type=J)
+    r = client(world["person"]).post(
+        f"/api/local-apps/installations/{inst.pk}/accept", {"digest": trust.digest(new.manifest)}, content_type=J
+    )
     assert r.status_code == 200
     assert _listed(world)["version"] == "0.2.0"
 
@@ -408,21 +487,33 @@ def test_revoking_stops_every_door(world):
     run = start(world)
     assert beat(world, run)["stop"] is False
     session = call(world, run, "sessions.create", {"title": "t"})["body"]["id"]
-    r = client(world["root"]).post(f"/api/local-apps/submissions/{sub.pk}/revoke", {"reason": "it was bad"}, content_type=J)
+    r = client(world["root"]).post(
+        f"/api/local-apps/submissions/{sub.pk}/revoke", {"reason": "it was bad"}, content_type=J
+    )
     assert r.status_code == 200
     assert beat(world, run) == {"stop": True, "reason": "revoked"}
     assert call(world, run, "sessions.send", {"session_id": session, "text": "hi", "client_id": "a"})["status"] == 410
     assert _listed(world)["refusal"]
-    assert client(world["person"]).post(f"{runner_base(world)}/meeting-assistant/runs/", {"version": "0.1.0"},
-                                        content_type=J).status_code == 403
-    assert client(world["person"]).get(
-        f"{runner_base(world)}/meeting-assistant/package", {"version": "0.1.0"}).status_code == 404
+    assert (
+        client(world["person"])
+        .post(f"{runner_base(world)}/meeting-assistant/runs/", {"version": "0.1.0"}, content_type=J)
+        .status_code
+        == 403
+    )
+    assert (
+        client(world["person"]).get(f"{runner_base(world)}/meeting-assistant/package", {"version": "0.1.0"}).status_code
+        == 404
+    )
 
 
 def test_only_a_superuser_revokes(world):
     sub = released(world)
-    assert client(world["author"]).post(f"/api/local-apps/submissions/{sub.pk}/revoke", {"reason": "x"},
-                                        content_type=J).status_code == 403
+    assert (
+        client(world["author"])
+        .post(f"/api/local-apps/submissions/{sub.pk}/revoke", {"reason": "x"}, content_type=J)
+        .status_code
+        == 403
+    )
 
 
 def test_revoking_the_newest_falls_back_to_the_last_good_version(world):
@@ -444,8 +535,10 @@ def test_stop_from_the_website_reaches_the_next_heartbeat_and_it_can_never_start
 def test_switching_a_workspace_off_stops_running_copies(world):
     install(world, released(world))
     run = start(world)
-    assert client(world["root"]).put("/api/local-apps/store/dimagi/switch", {"enabled": False},
-                                     content_type=J).status_code == 200
+    assert (
+        client(world["root"]).put("/api/local-apps/store/dimagi/switch", {"enabled": False}, content_type=J).status_code
+        == 200
+    )
     assert beat(world, run) == {"stop": True, "reason": "switched_off"}
 
 
@@ -460,8 +553,11 @@ def test_removing_an_app_answers_the_next_heartbeat_404(world):
 def test_a_heartbeat_keeps_numbers_only(world):
     install(world, released(world))
     run = start(world)
-    client(world["person"]).post(f"{runner_base(world)}/runs/{run}/heartbeat",
-                                 {"state": "x", "counts": {"sent": 3, "said": "the salary is 90k"}}, content_type=J)
+    client(world["person"]).post(
+        f"{runner_base(world)}/runs/{run}/heartbeat",
+        {"state": "x", "counts": {"sent": 3, "said": "the salary is 90k"}},
+        content_type=J,
+    )
     assert LocalAppRun.objects.get(pk=run).counts == {"sent": 3}
 
 
@@ -520,6 +616,7 @@ def test_losing_access_to_the_agent_stops_the_next_start(world, monkeypatch):
 def test_a_real_runner_token_reaches_its_routes(world):
     """Through `runner_auth`, not a person's login. No new door was needed."""
     from apps.harness.runner_auth import reaches
+
     rid = world["laptop"].pk
     assert reaches("GET", f"/api/harness/runners/{rid}/local-apps", rid)
     assert reaches("POST", f"/api/harness/runners/{rid}/local-apps/runs/{uuid.uuid4()}/canopy", rid)
