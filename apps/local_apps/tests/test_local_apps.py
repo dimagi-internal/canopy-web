@@ -62,7 +62,9 @@ def package(m: dict | None = None, *, files: dict | None = None) -> bytes:
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as z:
         for name, text in body.items():
-            z.writestr(name, text)
+            # A fixed entry time: writestr(name, ...) stamps "now" at 2-second resolution, so two
+            # packages of the same files built across a tick differ in bytes (and in sha256).
+            z.writestr(zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0)), text)
     return out.getvalue()
 
 

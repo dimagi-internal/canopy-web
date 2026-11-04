@@ -57,7 +57,7 @@ def accountable(trigger: AgentSchedule):
     return trigger.created_by if trigger.created_by_id is not None else None
 
 
-def may_set_up(user, agent, *, kind: str, turn_mode: str = "") -> str | None:
+def may_set_up(user, agent, *, kind: str, turn_mode: str = "", job: bool = False) -> str | None:
     """None when `user` may create or change a trigger of `kind` (and `turn_mode`)
     on `agent`, else the role it needs. The same rule `refusal` applies to a
     trigger's creator later, so what may be set up is exactly what may fire.
@@ -65,11 +65,13 @@ def may_set_up(user, agent, *, kind: str, turn_mode: str = "") -> str | None:
     * cron: `agent.work` (an editor; its turns are bounded by them anyway);
     * inbound_mail: an agent admin — it admits an outside sender to make the agent
       work, the tier of `SenderTrust` and the agent's interface;
-    * turn_mode auto: an agent admin, as for a dispatch that asks for auto.
+    * turn_mode auto: an agent admin, as for a dispatch that asks for auto;
+    * a plain job (`job`): an agent admin — it runs a command from a repo with the
+      agent's connections and no model to read it first, so it is not an editor's.
 
     The agent's own login holds its workspace role like anyone; `refusal` alone
     lets it stand for itself on a cron trigger it already set up."""
-    if kind == INBOUND_MAIL or turn_mode == "auto":
+    if kind == INBOUND_MAIL or turn_mode == "auto" or job:
         return None if agent.is_admin(user) else "agent admin"
     if not perms.can(user, agent.workspace_id, perms.AGENT_WORK):
         return perms.MINIMUM_ROLE[perms.AGENT_WORK]
@@ -90,11 +92,13 @@ def refusal(trigger: AgentSchedule) -> str | None:
         return "nobody is recorded as having set it up"
     if not person.is_active:
         return f"{person.email}, who set it up, has been deactivated"
-    if agent.is_own_login(person) and trigger.kind == CRON and trigger.turn_mode != "auto":
+    if (agent.is_own_login(person) and trigger.kind == CRON and trigger.turn_mode != "auto"
+            and not trigger.job):
         return None
     if not wsvc.is_member(person, agent.workspace_id):
         return f"{person.email}, who set it up, is no longer a member of {agent.workspace_id}"
-    needed = may_set_up(person, agent, kind=trigger.kind, turn_mode=trigger.turn_mode)
+    needed = may_set_up(person, agent, kind=trigger.kind, turn_mode=trigger.turn_mode,
+                        job=bool(trigger.job))
     if needed == "agent admin":
         return f"{person.email}, who set it up, is no longer an admin of {agent.slug}"
     if needed is not None:

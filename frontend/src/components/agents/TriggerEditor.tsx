@@ -26,15 +26,23 @@ const TURN_MODES: { value: '' | 'manual' | 'auto'; label: string }[] = [
  */
 export function TriggerEditor({
   agentSlug,
+  agentName,
   agentClis,
+  canSetJob = false,
   trigger,
   onClose,
   onSaved,
 }: {
   agentSlug: string
+  // The agent's display name, for the sentences that name it; the slug when absent.
+  agentName?: string
   // The CLIs the agent is set up for, its default first. A choice is offered only
   // when there are several; without them the trigger's own CLI is left as it is.
   agentClis?: readonly string[]
+  // Whether the person is an admin of the agent. Setting a plain job needs that (the
+  // server refuses anyone else in a sentence); without it the job choice is not offered
+  // and a job schedule opens read-only.
+  canSetJob?: boolean
   // A trigger, or a schedule as the calendar lists it (always kind cron).
   trigger: Trigger | Schedule | null
   onClose: () => void
@@ -53,6 +61,12 @@ export function TriggerEditor({
   const [cli, setCli] = useState<'' | Cli>((schedule?.cli ?? '') as '' | Cli)
   const [name, setName] = useState(schedule?.name ?? '')
   const [prompt, setPrompt] = useState(schedule?.prompt ?? '')
+  // A plain job instead of a prompt: a command in a repo's .canopy/jobs.yaml, no model.
+  const wasJob = Boolean(schedule?.job)
+  const [jobMode, setJobMode] = useState(wasJob)
+  const [jobName, setJobName] = useState(schedule?.job ?? '')
+  const [jobRepo, setJobRepo] = useState(schedule?.job_repo ?? '')
+  const who = agentName || agentSlug
   const [cron, setCron] = useState(schedule?.cron ?? '0 9 * * 5')
   const [tz, setTz] = useState(schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
   const [once, setOnce] = useState(Boolean(schedule?.run_once_at))
@@ -100,15 +114,20 @@ export function TriggerEditor({
       ? { sender_address: sender.trim(), subject_pattern: subjectPattern }
       : { ...(once ? { run_once_at: runOnceAt } : { cron }), timezone: tz }
     const onCli = cliChoices.length > 0 ? { cli } : {}
+    // A job sends its name and repo and no prompt; turning a job back into an ordinary
+    // schedule clears them. An ordinary schedule sends neither.
+    const what = !mail && jobMode
+      ? { job: jobName.trim(), job_repo: jobRepo.trim() }
+      : { prompt, ...(wasJob ? { job: '', job_repo: '' } : {}) }
     try {
       if (schedule) {
-        await updateTrigger(agentSlug, schedule.id, { name, prompt, ...fields, turn_mode: turnMode, ...onCli })
+        await updateTrigger(agentSlug, schedule.id, { name, ...what, ...fields, turn_mode: turnMode, ...onCli })
       } else {
         // enabled / routing / grace_minutes / notify are omitted deliberately:
         // the server's schema owns those defaults, and restating them here would
         // fork them. Not exposed as knobs yet — a trigger you can't reason
         // about is worse than one with fewer knobs.
-        await createTrigger(agentSlug, { kind, name, prompt, ...fields, turn_mode: turnMode, ...onCli })
+        await createTrigger(agentSlug, { kind, name, ...what, ...fields, turn_mode: turnMode, ...onCli })
       }
       onSaved()
     } catch (err) {
@@ -137,6 +156,35 @@ export function TriggerEditor({
       setError(err instanceof Error ? err.message : 'Could not delete the trigger.')
       setSaving(false)
     }
+  }
+
+  // Someone who is not an admin of the agent may look at a job, not change it.
+  if (wasJob && !canSetJob) {
+    return (
+      <Dialog open onOpenChange={(o: boolean) => { if (!o) onClose() }}>
+        <DialogContent aria-modal="true" className="block w-[calc(100%-2rem)] max-w-lg bg-card p-4 shadow-xl">
+          <DialogTitle className="mb-3 text-sm font-medium leading-normal tracking-normal text-foreground">
+            {name}
+          </DialogTitle>
+          <dl className="mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
+            <dt className="text-[11px] text-muted-foreground">Repo</dt>
+            <dd className="font-mono text-foreground">{jobRepo}</dd>
+            <dt className="text-[11px] text-muted-foreground">Job</dt>
+            <dd className="font-mono text-foreground">{jobName}</dd>
+          </dl>
+          <p className="mb-3 text-[12px] text-muted-foreground">Only an admin of {agentSlug} can change a job.</p>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-input px-3 py-1 text-[11px] text-foreground-secondary hover:bg-muted"
+            >
+              Close
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   // The shared Dialog owns Escape, the scrim click and the focus trap, so a modal you can't
@@ -183,15 +231,70 @@ export function TriggerEditor({
           className="mb-3 w-full rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground"
         />
 
-        <label className="mb-1 block text-[11px] text-muted-foreground">
-          {mail ? 'Prompt (optional — leads the mail turn’s own)' : 'Prompt'}
-        </label>
-        <input
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder={mail ? '/hal:labs-perf' : '/echo:manager-report'}
-          className="mb-3 w-full rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
-        />
+        {!mail && canSetJob && (
+          <>
+            <label className="mb-1 block text-[11px] text-muted-foreground">What it does</label>
+            <div className="mb-3 flex gap-1" role="group" aria-label="What it does">
+              {[
+                { label: `Run ${who}`, job: false },
+                { label: 'Run a job (no AI)', job: true },
+              ].map((c) => (
+                <button
+                  key={c.label}
+                  type="button"
+                  aria-pressed={jobMode === c.job}
+                  onClick={() => setJobMode(c.job)}
+                  className={`rounded border px-2 py-0.5 text-[11px] ${
+                    jobMode === c.job
+                      ? 'border-primary text-primary'
+                      : 'border-input text-foreground-secondary hover:bg-muted'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {!mail && jobMode ? (
+          <>
+            <label htmlFor="trigger-job-repo" className="mb-1 block text-[11px] text-muted-foreground">Which repo</label>
+            <input
+              id="trigger-job-repo"
+              value={jobRepo}
+              onChange={(e) => setJobRepo(e.target.value)}
+              placeholder="canopy-salesforce"
+              className="mb-3 w-full rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
+            />
+            <label htmlFor="trigger-job-name" className="mb-1 block text-[11px] text-muted-foreground">Which job</label>
+            <input
+              id="trigger-job-name"
+              value={jobName}
+              onChange={(e) => setJobName(e.target.value)}
+              placeholder="sync-leads"
+              className="mb-2 w-full rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
+            />
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              {`Runs the job of that name from the repo's .canopy/jobs.yaml on main, on a cloud machine, using ${who}'s connections.`}
+            </p>
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              Jobs can reach the public internet, but not private addresses inside our network.
+            </p>
+          </>
+        ) : (
+          <>
+            <label className="mb-1 block text-[11px] text-muted-foreground">
+              {mail ? 'Prompt (optional — leads the mail turn’s own)' : 'Prompt'}
+            </label>
+            <input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={mail ? '/hal:labs-perf' : '/echo:manager-report'}
+              className="mb-3 w-full rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
+            />
+          </>
+        )}
 
         {cliChoices.length > 0 && (
           <>
@@ -259,7 +362,11 @@ export function TriggerEditor({
             <button
               type="button"
               disabled={
-                saving || !name.trim() || (mail ? !sender.trim() : !prompt.trim() || (once && !runOnceAt))
+                saving ||
+                !name.trim() ||
+                (mail
+                  ? !sender.trim()
+                  : (jobMode ? !jobName.trim() || !jobRepo.trim() : !prompt.trim()) || (once && !runOnceAt))
               }
               onClick={() => void onSave()}
               className="rounded bg-primary px-3 py-1 text-[11px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50"

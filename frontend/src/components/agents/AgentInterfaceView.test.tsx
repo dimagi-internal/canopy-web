@@ -44,7 +44,7 @@ const DEFAULT_PROFILE = {
   read_paths: ['{cwd}/**'],
   write_paths: ['{cwd}/.echo-read/*'],
 }
-const READ_DEFAULT = { source: 'default', override: null, default_profile: DEFAULT_PROFILE, default_profile_version: 1 }
+const READ_DEFAULT = { source: 'default', override: null, default_profile: DEFAULT_PROFILE, default_profile_version: 2 }
 const READ_OVERRIDE = { ...READ_DEFAULT, source: 'override', override: 'ask' }
 
 const PUBLISHED = {

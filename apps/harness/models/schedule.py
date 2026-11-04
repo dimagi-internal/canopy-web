@@ -72,6 +72,11 @@ class AgentSchedule(models.Model):
         blank=True,
         help_text="What the turn is seeded with, e.g. /echo:manager-report. Optional for "
         "inbound_mail: when set it leads the mail turn's own prompt.")
+    # A PLAIN JOB: run this named command of the repo's `.canopy/jobs.yaml` on a cloud
+    # box, with no model, instead of seeding a prompt. Both or neither. The turn it
+    # fires carries both and an empty prompt, and goes only to a box that can run it.
+    job = models.CharField(max_length=64, blank=True, default="", db_default="")
+    job_repo = models.CharField(max_length=100, blank=True, default="", db_default="")
     cron = models.CharField(max_length=120, blank=True,
                             help_text="5-field cron expression, e.g. '0 9 * * 5' (cron kind only)")
     # inbound_mail only: the sender this trigger answers to. Mail from it fires the
@@ -145,6 +150,14 @@ class AgentSchedule(models.Model):
                        & ~models.Q(sender_address=""))
                 ),
                 name="agent_trigger_kind_shape",
+            ),
+            # Both or neither, and only a cron trigger runs one.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(job="", job_repo="")
+                    | (~models.Q(job="") & ~models.Q(job_repo="") & models.Q(kind="cron"))
+                ),
+                name="agent_trigger_job_shape",
             ),
         ]
 

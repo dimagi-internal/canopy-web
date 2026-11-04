@@ -799,6 +799,20 @@ class AgentTask(models.Model):
         super().save(*args, **kwargs)
 
     @property
+    def job_schedule_id(self) -> int | None:
+        """The schedule of the FAILED PLAIN JOB this review is about, else None.
+
+        A job's review (`schedule_turns._raise_job_nag`) carries no `on_approve`, and
+        approving a task without one starts a model turn on the agent: for a job, the
+        empty-prompt mistake. So it has no approve action; "Run now" on its schedule is
+        how a job runs again."""
+        ref = self.origin_ref or {}
+        if ref.get("kind") != "schedule_nag" or not ref.get("job"):
+            return None
+        sid = ref.get("schedule_id")
+        return sid if isinstance(sid, int) else None
+
+    @property
     def ref(self) -> str:
         """What an agent's route names it by: its alias where it has one, else its key."""
         return self.ext_id or self.key

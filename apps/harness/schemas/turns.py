@@ -171,6 +171,11 @@ class TurnOut(Schema):
     # That conversation's page on canopy-web; null when it has no workspace.
     canopy_session_url: str | None = None
     result_note: str
+    # A PLAIN JOB: the name of a command in the repo's `.canopy/jobs.yaml`, and the repo's
+    # name. Blank for every other turn; such a turn has no prompt and no transcript, and its
+    # page shows its output and `result_note` as a log.
+    job: str = ""
+    job_repo: str = ""
     # The closeout verdict an unattended incident turn ENDED on, lifted off
     # `result_note`'s `[closeout: <VERDICT>]` status line (canopy_transcript.closeout):
     # CLOSED | MONITORING | NEEDS_YOU | INCOMPLETE, "" when the turn printed none.
@@ -314,6 +319,8 @@ class ClaimedTurnOut(TurnOut):
     person, which a turn LISTING has no reason to spread."""
 
     caller_context: dict
+    # (`job` / `job_repo` are on `TurnOut`. The command itself is never sent: the box
+    # reads it from the repo.)
     # For a CONFINED turn only: the token the session uses for canopy's MCP in
     # place of the runner owner's PAT (harness.models.CallerToken). Null otherwise.
     mcp_token: str | None = None

@@ -176,7 +176,7 @@ def test_the_interface_route_says_which_read_mode_the_agent_has(w):
     got = c.get("/api/agents/hal/interface").json()
     assert got["read_mode"]["source"] == "default" and got["read_mode"]["override"] is None
     assert got["read_mode"]["default_profile"]["write_paths"] == ["{cwd}/.hal-read/*"]
-    assert got["read_mode"]["default_profile_version"] == 1
+    assert got["read_mode"]["default_profile_version"] == 2
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}}})
     w["agent"].save(update_fields=["interface"])
     got = c.get("/api/agents/hal/interface").json()

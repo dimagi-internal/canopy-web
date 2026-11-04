@@ -128,6 +128,13 @@ def close_turn(
 
             schedule_turns.resolve_schedule_nags(sid)
 
+    # A job that failed or was lost is the schedule's people's to hear about: a nag with
+    # no re-run on approval (`schedule_turns._raise_job_nag`).
+    if turn.job and status in (Turn.FAILED, Turn.LOST):
+        from . import schedule_turns  # noqa: PLC0415 — schedule_turns reaches services, which imports this
+
+        schedule_turns.job_ended_badly(turn)
+
     # A drill is identified by its RunnerDrill FK, not its origin (drills are
     # ordinary `api` turns that name a runner); the filter no-ops otherwise.
     # Scoped to OUTCOME_PENDING so a drill its agent already reported on is

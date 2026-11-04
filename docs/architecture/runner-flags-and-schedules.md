@@ -135,8 +135,120 @@ right to it (`triggers.refusal`) is not fired — it is consumed (`last_slot`), 
   (`_raise_schedule_nag`, only when the schedule's `notify` includes `inbox`);
   approving re-runs the prompt, and a later DONE occurrence closes open nags
   (`resolve_schedule_nags`). It reaches **Waiting on you** as an ordinary ask.
+- **A schedule can be a job** (`job`, `job_repo`): a command from a repo's `main` run with no model
+  on a cloud box. Its fire is the same, its claim and its run are not, and its nag has no re-run
+  (approving would start a model turn): see § Plain jobs.
 - An occurrence runs as `system` with the schedule's creator as the accountable
   person (`turn_mode._accountable_cap`, `access.md` → "The rule").
 
 Specs: `docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md`,
 `2026-07-21-supervisor-inbox-items-only-design.md`.
+
+## Plain jobs
+
+A schedule can run a **job** instead of a prompt: a command from a repo's `main`, on a cloud
+machine, with no model, using the agent's connections. Set it in **Triggers** (New trigger →
+**Run a job (no AI)** → *Which repo*, *Which job*); only an admin of the agent can set or change one
+(anyone else sees the job read-only: "Only an admin of {agent} can change a job."). It fires on its
+cron, or on **Run now**, as any schedule does, and runs on `routing = cloud_only`; `grace_minutes`
+is at least 125 so a 120-minute job is not released as missed while it runs.
+
+**The file.** canopy-web says only the job's name, the agent and the repo's name (a bare
+`[A-Za-z0-9._-]` name, no `/`); the box builds the address from its own `REPO_URL_TEMPLATE`, so it
+reaches only the org's repos, and **the command always comes from that repo's `main`**. A failed
+fetch fails the job: it never runs stale code.
+
+```yaml
+# .canopy/jobs.yaml
+version: 1
+jobs:
+  sync-leads:                      # [a-z0-9][a-z0-9_-]{0,63}
+    run: [python3, scripts/sync_leads.py]   # an argv list: no shell, no $VARIABLE expansion
+    timeout_minutes: 15            # 1 to 120, default 15
+```
+
+Unknown keys are an error. The job runs from the root of the checkout (an export of `main`, so no
+`.git` and no git credentials).
+
+**The six environment variables** are all it gets (`env -i`; no model key, no MCP token, no runner
+token, nothing of the runner's):
+
+| | |
+|---|---|
+| `PATH` | the box's system path |
+| `HOME` | the job's own folder, writable |
+| `LANG` | `C.UTF-8` |
+| `CANOPY_AGENT_SLUG` | the agent the job runs as |
+| `CANOPY_TURN_ID` | this run's turn (its page on canopy-web) |
+| `CANOPY_JOB_TOKENS` | a folder of the agent's connection tokens, one `<provider>.json` each |
+
+**Reading a connection.** Each connection the agent can use is copied to
+`$CANOPY_JOB_TOKENS/<provider>.json` (0600, the job's own copy, refreshed about every minute and
+removed when the job ends). The file is the one the agent's turns read: `access_token`,
+`instance_url`, `expires_at` (epoch seconds) and `account_label`. It holds an ACCESS token, never the
+refresh token. For Salesforce:
+
+```python
+import json, os, urllib.parse, urllib.request
+
+with open(os.path.join(os.environ["CANOPY_JOB_TOKENS"], "salesforce.json")) as fh:
+    sf = json.load(fh)          # re-read it in a long job: it is refreshed under you
+
+query = urllib.parse.urlencode({"q": "SELECT Id, Name FROM Lead LIMIT 5"})
+req = urllib.request.Request(
+    f"{sf['instance_url']}/services/data/v62.0/query?{query}",
+    headers={"Authorization": f"Bearer {sf['access_token']}"},
+)
+print(json.load(urllib.request.urlopen(req))["records"])
+```
+
+An agent with no such connection has no file; a job should say so plainly and exit non-zero.
+
+**Output and ending.** What the job prints streams to its turn as `status` events
+(`{source: "job", text}`), and the turn's page shows it as a plain log, refreshed while the job runs, with the exit and the last
+lines under it (`result_note`); there is no chat and no transcript. Output is scrubbed of the
+exact token values and capped at 1 MB. A non-zero exit is `FAILED` and is **never retried** (a job
+may have written); so is a timeout, which kills everything of its user. A failed, lost or
+missed job raises a review task on **Waiting on you**, with the last lines it printed if it failed
+and canopy's reason otherwise. None of them starts a debugger turn. It has no
+Start now (that would start a model turn): the task offers **Run now**, and a later good run
+closes it.
+
+**What a job can't reach.** Jobs can reach the public internet, but not private addresses inside
+our network. Not the instance metadata address (so no AWS role), not `localhost` or the box's own
+addresses, not any private range (the VPC included), not a Unix socket (the brokers'
+included), not another runner's or agent's files, tokens or `.env`, and not the runner's login. No
+`/proc/meminfo` either. It sees only its own folder. The sandbox and its limits are in
+`runner/ec2/README.md` § Plain jobs.
+
+**Dependencies are the job's to install.** The box carries Python and the usual system tools, not a
+repo's packages. The job's own script installs what it needs into its `HOME` (for example
+`pip install --user -r requirements.txt` before it imports them) or vendors them in the repo;
+download time counts against `timeout_minutes`, and nothing persists between runs.
+
+**One job per machine at a time.** Jobs share one Unix user, so a box never starts a second beside
+the first, whichever of its runners would claim it: canopy-web compares machines (`machine_id`;
+each fleet member is its own, and a runner with none answers for itself). The box backs this up: in
+the rare race where two runners claim at once, the second fails with "Another job is running on
+this machine." and touches nothing.
+
+**How long a job waits.** A slot waits in the queue ("Waiting for a cloud machine that can run
+jobs." on its schedule) for **up to 30 minutes** past its slot, for a box that takes jobs to be
+free. Then it is skipped as `MISSED` with the reason "No cloud machine that can run jobs took it in
+time.", which its row shows and a review task on **Waiting on you** repeats (one open review per
+schedule, however many slots an outage takes; if the schedule
+notifies the inbox); the next slot fires as usual. An `always_run` schedule doesn't skip, and waits
+until its next slot replaces it; so does a slot whose next one comes within the 30 minutes. A
+one-off, or a **Run now**, has no next slot and waits until a box takes it.
+
+**Run now while the job runs** is refused (409, "This job is still running."): nothing is queued
+and nothing is recorded. A new SLOT in that time is recorded as `MISSED`, with no review, and the
+running job carries on.
+
+**Boxes that don't take jobs.** A **sensitive-data** runner never reports `jobs`, and nor does a
+box with **any egress-locked runner**, from any of its runners, so a job never fails on its first
+network call. Nor does a box that predates jobs or lacks the `canopy-job` user and its broker
+(`--setup-runners` makes them). A runner asks again every few minutes, so a change to any of these
+takes effect within 5 minutes with no restart. If no box can take a job, the turn is listed as a
+queued turn no runner can claim, with that reason, and the schedule says "Waiting for a cloud
+machine that can run jobs." for as long as it waits (§ How long a job waits, above).

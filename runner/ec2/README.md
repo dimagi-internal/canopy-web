@@ -739,6 +739,137 @@ all at boot, and the auto-updater re-runs it after an update. The runner page's 
 check says whether a locked runner's lock holds: its proxy answers, and a direct
 connection out is refused.
 
+## Plain jobs: a command from a repo's `main`, with no model
+
+A job is a command named in a repo's own `.canopy/jobs.yaml`. canopy-web says only the job's
+name, the agent and a repo name; the box fetches that repo's `main` and runs it (`_run_job` in
+`cloud_runner.py`).
+
+**A job runs as `canopy-job`, a separate Unix user, in a sandboxed unit**, because a runner's
+user can read its own login and every agent's token files. A runner can't start that itself:
+its unit has `NoNewPrivileges`, which protects every model turn it runs. So
+**`job_broker.py`**, a root service like the KMS and AWS brokers, does it: `/run/canopy-jobs/sock`,
+for a uid in `runners.json` only (`SO_PEERCRED`), and only `status`, `export`, `write_token`,
+`start`, `stop` and `cleanup`. No request can name a path, a user, a property or an environment,
+so a caller with a runner's uid gains nothing beyond running code as `canopy-job`, which has
+less than that runner has.
+
+**One slot per box, from `export` to `cleanup`, not just while the process runs.** Jobs share a
+uid, so one must never exist beside another's tokens. Only the slot's holder can use or clean it;
+another runner's `export` is refused, "Another job is running on this machine." The connection
+`export` came in on stays open and is the hold: if the runner dies, the kernel closes it, and the
+broker stops the job, clears its files and frees the slot. A slot ends at 121 minutes whatever
+happens. Files that can't be removed refuse the next `export` until they can.
+
+**No slot is freed while a process of that uid remains.** Before any slot ends, and at the broker's
+start, it stops the unit, runs `pkill -KILL -U canopy-job` and confirms with `pgrep`. If one remains,
+the slot stays held, the box stops reporting `jobs`, the log says why, and each later request tries
+again. Nothing runs as `canopy-job` outside a unit: the tar, each token write and each clear get
+the job's own confinement, because a job can open `/proc/<pid>/root` of any process of its uid and
+`ProtectProc` doesn't hide those. A helper that can't start fails closed. Python helpers run with
+`-I -S`. `canopy-job` has no home (`/nonexistent`); a job's `HOME` is its own folder. The jobs root
+is root's.
+
+`start` is one `systemd-run --wait --pipe --collect`, built by `systemd_run_argv`: its properties
+are the isolation (Ubuntu 24.04's systemd 255 has them all; the broker reports an older one as
+unsupported, and the box reports no jobs):
+
+| | |
+|---|---|
+| Files | `ProtectHome=yes` (every runner home, so `WORK_DIR`, `~/.canopy`, `~/.<slug>/.env`, `runner-token.json`), `ProtectSystem=strict`, `TemporaryFileSystem=/var/lib/canopy-jobs` with `BindPaths=<its folder>` (it sees only its own job), `PrivateTmp=yes`, `InaccessiblePaths=` `/etc/canopy-runner`, `/run/canopy`, each broker's `/run` folder, `/opt/agents`, `/opt/canopy-runner`, `/opt/canopy-web`, `/dev/shm`, `/dev/mqueue` |
+| Other processes | `ProtectProc=invisible`, `ProcSubset=pid`, `PrivateDevices=yes`, `PrivateIPC=yes`, `RemoveIPC=yes` |
+| Privilege | `--uid`/`--gid=canopy-job`, `NoNewPrivileges=yes`, `CapabilityBoundingSet=`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `LockPersonality=yes`, `SystemCallArchitectures=native`, `ProtectKernelTunables=`, `ProtectKernelModules=`, `ProtectKernelLogs=`, `ProtectControlGroups=`, `ProtectClock=`, `ProtectHostname=yes` |
+| Network | `RestrictAddressFamilies=AF_INET AF_INET6` (so no Unix socket, a broker's included), `IPAddressDeny=` the metadata address, `localhost` and every private range (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `fe80::/10`, `fc00::/7`), with the DNS stub `127.0.0.53` allowed back. The public internet stays open |
+| Limits | `RuntimeMaxSec=` its timeout, `MemoryMax=2G`, `MemorySwapMax=0`, `CPUQuota=100%`, `TasksMax=256`, `LimitFSIZE=5G` |
+| Ending | `KillMode=control-group`: no background process survives. `TimeoutStopSec=10s`: a stop is TERM, then KILL after 10 s |
+| Environment | `env -i` and exactly `PATH`, `HOME`, `LANG`, `CANOPY_AGENT_SLUG`, `CANOPY_TURN_ID`, `CANOPY_JOB_TOKENS` |
+
+`MemoryDenyWriteExecute` is left out on purpose: it breaks some runtimes. `RemoveIPC` acts at uid
+scope whenever a unit of this user stops, a token helper's ending among them; `PrivateIPC` and the
+closed `/dev/shm` and `/dev/mqueue` leave nothing of a running job's for it to take.
+
+Each run gets `/var/lib/canopy-jobs/<turn>/` (`repo/`, `home/`, `tokens/`) and its own 0600 copy
+of each of the agent's staged tokens, refreshed every minute by an atomic rename. A job has the
+run of its own folder, so that write refuses a link at each step down and replaces one rather
+than following it: a planted `tokens -> /run/lock` can't put a token outside the root. `run` stays an argv: separate
+arguments after `--`, no shell, `--expand-environment=no`. Output comes back to the runner in
+frames, so a job can't print its own exit. When a job ends, however it ends, the unit's cgroup
+is gone and the broker empties the jobs root. A non-zero exit, a timeout or a stop is never run
+again, and nor is a job a restart cut short: its runner going away stops it, and it finishes
+FAILED, "This machine restarted during the job."
+
+**One job at a time per box**, by a flock on `/run/canopy/job.lock`: canopy-web checks per runner
+and not atomically, and a box of several runners has several runner processes. A second job
+finishes FAILED, "Another job is running on this machine.", and touches nothing.
+
+**What sets the box up.** `--setup-runners`, which `canopy-runners.service` runs every boot and
+the updater re-runs on a tick that finds the box idle. It makes the system user,
+`/var/lib/canopy-jobs` (0700, root's), the lock, the `CANOPY-JOB` iptables chain and the broker's
+service. The broker goes in only if the rest held. A sensitive-data box gets none of this.
+
+**The owner rule stays beside `IPAddressDeny`**, because that list can't say what it says:
+`CANOPY-JOB` closes all of loopback by uid, which also covers the stub's address on any other port
+(a service bound to `0.0.0.0` answers there) and the box's own addresses even if they're public,
+bar DNS to `127.0.0.53:53`. And `IPAddressDeny` needs cgroup BPF, and applies nothing without it. Everything
+public out is open.
+
+**A box with any egress-locked runner reports no jobs, from any of its runners**, so a job never
+fails on its first network call: a job can't use a runner's proxy, and the lock's own chain
+names runners' uids, so it wouldn't hold one in. The broker reads this at `status` and refuses
+`start` on it as well, since a runner only re-checks at its own start: a lock that arrives after a
+runner reported `jobs` fails its next job with a plain sentence. `CANOPY-JOB` also closes off
+that user entirely within a minute of a lock, so a job already running loses its network.
+
+**The rest of what keeps a job out** (modes per the code that makes them, should the unit
+ever not apply):
+
+| What | Mode and owner |
+|---|---|
+| A runner's home, `~/work`, `~/agents`, `~/.canopy-runner` | 0700, the runner's (`setup_runners`) |
+| `runner-token.json`, `/etc/canopy-runner/<id>.env` | 0600, the runner's |
+| `<id>.gog-secret` | 0400, the runner's |
+| `box.env`, `egress.state.json` | 0600, root's |
+| `/run/canopy/<uid>/` | 0700, the runner's |
+| `/run/canopy-kms/sock`, `/run/canopy-aws/sock`, `/run/canopy-jobs/sock` | 0666, root's; each answers only a uid in `runners.json`, which this one never is |
+
+**What this doesn't do:**
+
+- **Scrubbing is exact values only.** A token's exact value becomes `[token]` in the output before
+  it leaves the box, across chunk boundaries. Base64 or any other encoding can't be recognised, and
+  a job author can print anything the job can read. It's a guard against accidents, not against the
+  author.
+- A job can use the agent's connection for its whole run, as the agent can, and can send what it
+  reads anywhere on the internet.
+- A job that fails because of a signal, or because it hit `MemoryMax`, reads as exit code 1:
+  `systemd-run` says no more without mixing into the job's output. Only one failing at its time
+  limit reads as a timeout.
+- `LimitFSIZE` is per file. A job is stopped when the disk has 2 GB left, not before.
+- No Unix sockets and `ProcSubset=pid` are real limits on what a job can do: anything needing a
+  local socket, or `/proc/meminfo`, won't work.
+- **The same runner uid isn't a boundary.** Turns on one runner can already read every agent's
+  staged files on that runner, a running job's tokens among them. Agents that need isolation from
+  each other need their own runner.
+- Any process of a runner's user can call the broker, so a model turn could start code as
+  `canopy-job`, which has less than the turn has already. It could also take the box's slot and
+  sit on it, holding off jobs for up to 121 minutes: a nuisance, not a way in.
+
+**Manual check on a real box** (none of this can be proved from `_job_can_run`, or from a test
+without systemd). Run this once as root on a new box, and after any change to its setup:
+
+```bash
+sudo bash /opt/canopy-runner/job-broker/job_self_check.sh
+```
+
+It starts real units through the broker, as a runner's uid, and prints PASS or FAIL per line for
+what the job inside them is refused: `/home/*`, each token and secret path, a sibling's token file,
+a helper's `/proc/<pid>/root`, leaving a daemon behind, the metadata address, localhost, the box's own address, each proxy port, `/dev/shm`, each broker's
+socket, and the memory and task limits. It also checks the environment, a background process not
+outliving a job, the slot holding after a job exits, the broker refusing other uids, DNS and the
+rules. A refusal counts only once root has reached the same thing itself (a real listener, for
+loopback); one it can't establish is a FAIL. A path missing from the box is a SKIP with its name, and
+the summary counts them. A client that crashes, or fewer verdicts than expected, is a FAIL. It stops
+at once if a job is running.
+
 ## Several runners on one machine (`Runners`)
 
 The canopy-web half is `docs/architecture/runners.md` § "Several runners on one machine".

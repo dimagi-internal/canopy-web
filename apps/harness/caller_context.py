@@ -36,6 +36,7 @@ from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 
 from . import initiator as who
+from . import sensitivity
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
@@ -379,7 +380,7 @@ def build(turn, *, reader_user=None) -> dict:
         # role the FULL profile takes, and who can give it. Roles only, never people or
         # other callers' data. null on a full profile. Additive: no VERSION bump.
         "access_help": _access_help(turn, agent, rel),
-        "capability": _profile(agent, turn.capability),
+        "capability": _profile(agent, turn.capability, turn),
         # manual | auto for THIS turn, and why (apps/harness/turn_mode.py). What
         # `canopy agent mode --caller <path>` reads in preference to the agent-wide
         # switch, so a rule like "email from beth → auto" reaches the turn
@@ -692,9 +693,16 @@ def _access_help(turn, agent, rel: str) -> dict | None:
     }
 
 
-def _profile(agent, capability: str):
+def _profile(agent, capability: str, turn=None):
     if agent is None or not capability:
         return None
     from apps.agents.interface import profile
 
-    return profile(agent, capability)
+    got = profile(agent, capability)
+    if "default_profile_version" in got and turn is not None and sensitivity.is_sensitive(turn):
+        # A sensitive turn stamped with a read-mode name whose capability has since gone: canopy's
+        # default read profile (curl, Write, mail) is not what it was admitted to. Deny everything,
+        # as an unpublished capability always did.
+        return {"name": capability, "description": "", "entry": None, "tools": [], "bash": [],
+                "read_paths": [], "write_paths": []}
+    return got

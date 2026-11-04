@@ -124,6 +124,14 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     # A reported key sent back UNCHANGED is an echo, not a declaration: the page's
     # Slack & chat toggle round-trips the capabilities it read. Only a value that
     # differs from what the box reported is a hand edit to refuse.
+    # `jobs` ("this box can run plain jobs") is believed only from the cloud box itself,
+    # signed in with its own credential, like a data mode (`runner_protocol.
+    # data_mode_trusted`). From a person it is dropped, and what the box last said
+    # stays: a PATCH can neither grant it to an old box nor take it away.
+    rtok = getattr(request, "runner_token", None)
+    jobs_trusted = (rtok is not None and rtok.runner_id == runner.pk
+                    and runner.kind == Runner.CLOUD)
+    jobs_said = payload.capabilities.pop("jobs", None)
     reported = ("projects", "profiles", "envelope", "midturn", "unprepared", "data_mode",
                 "data_mode_hash", "claude_model", "clis", "clis_unknown")
     payload.capabilities = {k: v for k, v in payload.capabilities.items()
@@ -149,6 +157,15 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     for key in reported:
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
+    if jobs_trusted:
+        if jobs_said is not None:
+            caps["jobs"] = jobs_said
+        else:
+            caps.pop("jobs", None)
+    elif runner.capabilities.get("jobs") is not None:
+        caps["jobs"] = runner.capabilities["jobs"]
+    else:
+        caps.pop("jobs", None)
     # What a runner serves (`capabilities.serves`) is SERVER-OWNED once it is set (`machine_pairing` records it
     # from the invitation a person approved): a write can neither replace nor clear
     # it, or an agent's runner could lift its own restriction. A box-sent value is

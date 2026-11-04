@@ -140,7 +140,12 @@ if ($IfStale) {
     if (-not $checkBin) { Write-Host "$(Stamp) -IfStale: no installed runner to check."; exit 0 }
     if (-not (Test-Path $Config)) { Write-Host "$(Stamp) -IfStale: no config at $Config."; exit 0 }
 
-    $answer = (& $checkBin update-check --config $Config 2>&1 | Select-Object -Last 1)
+    # Stdout only. The answer is printed there, and under "Stop" Windows PowerShell 5.1 turns
+    # any line on a native program's stderr (the device-key INFO log) into a terminating
+    # error, so the merged form killed every update check with nothing in the log to say so.
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $answer = (& $checkBin update-check --config $Config 2>$null | Select-Object -Last 1)
+    $ErrorActionPreference = $prevEap
     $parts  = "$answer".Trim() -split '\s+'
     $status = $parts[0]
     $expected = if ($parts.Count -gt 1) { $parts[1] } else { "" }

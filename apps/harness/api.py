@@ -279,7 +279,10 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
 
 
 #: Capabilities a box REPORTS on heartbeat and never declares at pairing.
-REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "data_mode", "data_mode_hash", "claude_model")
+# `jobs` is the box's own word that it can run plain jobs; only its own credential may say it
+# (`api_runners_fleet.update_runner_capabilities`), so a pairing person cannot declare it.
+REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "data_mode", "data_mode_hash", "claude_model",
+                         "jobs")
 
 
 def declared_capabilities(caps: dict) -> dict:

@@ -20,10 +20,11 @@ export async function listTurns(limit = 20): Promise<Turn[]> {
     .slice(0, limit);
 }
 
-/** The append-only event ledger for one turn (drill-down). */
-export async function listTurnEvents(turnId: string): Promise<TurnEvent[]> {
+/** The append-only event ledger for one turn (drill-down): one page of what follows seq
+ * `after`, oldest first. The server sends at most 500; an empty page is the end. */
+export async function listTurnEvents(turnId: string, after = 0): Promise<TurnEvent[]> {
   const res = await apiV2.GET("/api/harness/turns/{turn_id}/events", {
-    params: { path: { turn_id: turnId } },
+    params: { path: { turn_id: turnId }, query: { after } },
   });
   const data = unwrap(res, "Failed to load turn events");
   return data.events as TurnEvent[];

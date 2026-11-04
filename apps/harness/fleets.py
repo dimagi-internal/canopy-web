@@ -814,7 +814,9 @@ def requeue_lost(turn: Turn) -> bool:
     from .ledger import append_events  # noqa: PLC0415 — ledger imports the services stack
     from .services import _finish_riders  # noqa: PLC0415 — services imports this stack
 
-    if turn.attempts >= MAX_REQUEUES:
+    if turn.attempts >= MAX_REQUEUES or turn.job:
+        # A job is not run a second time on the word of a box that vanished: it may
+        # already have done half of what it does. It ends lost, and the next slot runs.
         return False
     moved = Turn.objects.filter(pk=turn.pk, status__in=list(EXECUTING)).update(
         status=Turn.QUEUED, attempts=F("attempts") + 1, claimed_by=None, claimed_at=None,

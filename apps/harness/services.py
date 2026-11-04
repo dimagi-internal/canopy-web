@@ -144,6 +144,8 @@ def enqueue_turn(
     authserv_id: str | None = None,
     requested_cli: str = "",
     coalesce: bool = True,
+    job: str = "",
+    job_repo: str = "",
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -166,6 +168,9 @@ def enqueue_turn(
     (apps/harness/mail_coalesce.py): folded into the thread's queued turn, or held
     for the trigger's quiet window, and then the answer is that turn and `False`.
     `coalesce=False` is the held batch's own release.
+
+    `job` / `job_repo` (a schedule's fire and "Run now" only) make it a PLAIN JOB: it must
+    be an agent's turn, routes `cloud_only`, and carries no prompt.
     """
     # One chokepoint for the retired spellings, because not every producer comes
     # through a request schema: TurnSpec.from_dict parses origin as a free string
@@ -229,6 +234,10 @@ def enqueue_turn(
         raise ValueError("a turn targets exactly one of agent / project / session")
     if project and workspace is None:
         raise ValueError("a project turn needs a workspace")
+    if job or job_repo:
+        if not (job and job_repo) or agent is None or session is not None or project:
+            raise ValueError("a job turn names its job and repo and targets an agent")
+        routing, prompt = Turn.CLOUD_ONLY, ""
     # Looked up inside the target's workspace: another workspace holding the
     # same key is no business of this one (and cannot pre-claim it).
     scope = Turn.scope_for(agent=agent, session=session, workspace=workspace)
@@ -301,6 +310,8 @@ def enqueue_turn(
                 idempotency_key=idempotency_key,
                 idempotency_scope=scope,
                 prompt=prompt,
+                job=job,
+                job_repo=job_repo,
                 origin_ref=origin_ref or {},
                 routing=routing,
                 enqueued_by=enqueued_by if getattr(enqueued_by, "is_authenticated", False) else None,
@@ -803,6 +814,9 @@ def finish_turn(
     # is an ordinary `api` turn that names its runner.
     if (
         status == Turn.FAILED
+        # A job that failed is a failed job: running it again is not ours to decide, and
+        # a non-zero exit is the job's own answer (it has no session to fail to start).
+        and not turn.job
         and not turn.session_key
         and turn.attempts < MAX_SESSIONLESS_RETRIES
         and not RunnerDrill.objects.filter(turn=turn).exists()
