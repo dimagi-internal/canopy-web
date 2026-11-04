@@ -61,10 +61,11 @@ def test_a_create_and_a_delete(fleet, monkeypatch):
 
     _run(fleet, create, monkeypatch)
     labs = Workspace.objects.get(slug="labs")
-    # The workspace, and what creating one seeds (its admission rules).
+    # The workspace, and what creating one seeds (its admission rules, and the built-in roles of a root).
     changes = SettingChange.objects.get().changes
     [created] = [c for c in changes if c["scope"] == f"workspaces.workspace:{labs.pk}"]
-    assert all(c["scope"].startswith("admission.admissionrule:") for c in changes if c is not created)
+    assert all(c["scope"].startswith(("admission.admissionrule:", "agents.agentrole:"))
+               for c in changes if c is not created)
     assert created["scope"] == f"workspaces.workspace:{labs.pk}" and created["before"] is None
     assert created["after"]["display_name"] == "Labs"
     assert "created_at" not in created["after"]  # the database's own timestamp
