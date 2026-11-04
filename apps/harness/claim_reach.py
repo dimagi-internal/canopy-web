@@ -106,7 +106,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         return False  # likewise above the pin and the binding
     if not ignore_serve and turn_serves_refusal(r, t):
         return False  # what the runner serves on its machine: above the pin and the binding too
-    if not ignore_cli and clis.choose(t, r, ignore_signed_in=True,
+    if not ignore_cli and not t.job and clis.choose(t, r, ignore_signed_in=True,
                                       ignore_requirements=ignore_requirements) is None:
         return False  # the agent CLI: above the pin, as in claim_next_turn
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
@@ -568,9 +568,8 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             reason = clis.blocker(t, [r for r, pks in by_cli.items() if t.pk in pks])
         elif is_job_gated(t) and t.pk not in claimable_ever:
             kind = "config"
-            reason = ("this runs a scheduled job, and only a cloud machine set up to run jobs "
-                      "takes one — none is paired to this workspace, so it will wait until "
-                      "one is set up (or the schedule is changed)")
+            reason = ("No cloud machine that can run jobs serves this agent — set one up "
+                      "and add it to the agent's runners, or change the schedule.")
         elif t.capability and t.pk not in claimable_ever:
             kind = "config"
             reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "

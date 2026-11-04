@@ -227,6 +227,10 @@ def _on_turn_failed(turn: Turn) -> None:
             return
     elif turn.status != Turn.FAILED:
         return
+    if turn.job and turn.status == Turn.FAILED:
+        # A job exiting non-zero is the job's own answer, not a fault in canopy: the
+        # schedule's people are told by its nag, and no debugger turn is started.
+        return
     if is_debug_turn(turn):
         # The debugger's own turn failed. Record it; NEVER start another.
         _debugger_failed(turn)

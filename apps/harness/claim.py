@@ -249,8 +249,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # Per CLI (`harness.clis`): a box with Codex signed in still takes Codex turns
     # while its Claude login is gone, and `clis.choose` below keeps each turn to a
     # CLI the box has signed in. A box with none signed in takes nothing.
+    #
+    # A JOB uses no model, so a box with no login still takes one (and only one):
+    # `jobs_only` narrows the candidates below to jobs, and a job skips the CLI choice.
     reports = clis.reported(runner)
-    if not any(r.signed_in for r in reports.values()):
+    jobs_only = not any(r.signed_in for r in reports.values())
+    if jobs_only and not (runner.kind == Runner.CLOUD and (runner.capabilities or {}).get("jobs") is True):
         return None
     # A computer used in plain Claude Code has no runner app to run a claimed turn;
     # it never heartbeats, so the guard above already stops it — this says so.
@@ -349,6 +353,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=runner))
         .filter(match_q)
         .filter(profile_q(runner))
+        .filter(~Q(job="") if jobs_only else Q())
         .exclude(chat_session_id__in=busy_sessions)
         # A session mid-transfer runs its transfer turn first (`transfer_held_q`).
         .exclude(transfer_held_q())
@@ -439,7 +444,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # The agent CLI it runs on (`clis.choose`), above the pin like the hold: a
         # pin cannot put a turn on a CLI the box lacks, or a caller's turn on one
         # that cannot confine it.
-        cli = clis.choose(turn, runner, reports=reports)
+        # A job runs no model, so there is no CLI to choose or to refuse it for.
+        cli = "" if turn.job else clis.choose(turn, runner, reports=reports)
         if cli is None:
             skips[turn.pk] = ("no agent CLI on this box can run it (not signed in, or it cannot confine "
                               "a caller's turn)")

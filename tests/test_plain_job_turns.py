@@ -194,6 +194,8 @@ def test_refused_trigger_stops_a_job(w):
     sched = _job_schedule(w)
     WorkspaceMembership.objects.filter(user=w["user"], workspace=w["ws"]).update(
         role=WorkspaceMembership.VIEWER)
+    Agent.objects.filter(pk=w["agent"].pk).update(owner=None)   # no longer its owner either
+    sched = AgentSchedule.objects.get(pk=sched.pk)
     assert triggers.refusal(sched) is not None
     with pytest.raises(triggers.TriggerRefused):
         schedule_turns.fire_schedule(sched, SLOT)
@@ -391,17 +393,6 @@ def test_a_capable_box_makes_the_job_not_unclaimable(w):
             if r["turn_id"] == str(turn.pk)] == []
 
 
-def test_a_missed_job_raises_no_rerun_nag(w):
-    """The nag's approval re-runs the schedule as an ordinary turn with its prompt;
-    for a job that would be an empty prompt, so a job raises none."""
-    from apps.agents.models import AgentTask
-
-    sched = _job_schedule(w)
-    turn, _ = schedule_turns.fire_schedule(sched, SLOT)
-    schedule_turns._raise_schedule_nag(sched, turn)
-    assert not AgentTask.objects.filter(origin_ref__schedule_id=sched.pk).exists()
-
-
 def test_a_job_lost_with_its_box_is_not_run_again(w):
     from apps.harness import fleets
 
@@ -410,3 +401,242 @@ def test_a_job_lost_with_its_box_is_not_run_again(w):
     claimed = claim.claim_next_turn(new)
     assert fleets.requeue_lost(Turn.objects.get(pk=claimed.pk)) is False
     assert Turn.objects.get(pk=claimed.pk).status == Turn.CLAIMED
+
+
+# --- review fixes ------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def editor(w):
+    ed = User.objects.create_user("ed", "ed@dimagi.com", "pw")
+    wsvc.ensure_member(w["ws"], ed, WorkspaceMembership.EDITOR)
+    return ed
+
+
+JOB = {"name": "sync", "cron": "0 9 * * *", "job": "nightly-sync", "job_repo": "hal-jobs"}
+
+
+def test_an_editor_cannot_set_up_a_job_but_an_admin_can(w, editor):
+    with pytest.raises(ss.ScheduleForbidden):
+        ss.create_schedule(editor, "hal", dict(JOB))
+    # An editor's ordinary schedule is unchanged.
+    ss.create_schedule(editor, "hal", {"name": "plain", "prompt": "/hal:turn", "cron": "0 9 * * *"})
+    assert ss.create_schedule(w["user"], "hal", dict(JOB)).job == "nightly-sync"
+
+
+def test_an_editor_cannot_change_clear_or_edit_a_job_schedule(w, editor):
+    made = ss.create_schedule(w["user"], "hal", dict(JOB))
+    for fields in ({"job": "other"}, {"job": "", "job_repo": "", "prompt": "/x"},
+                   {"name": "renamed"}, {"cron": "0 10 * * *"}):
+        with pytest.raises(ss.ScheduleForbidden):
+            ss.update_schedule(editor, "hal", made.pk, fields)
+    with pytest.raises(ss.ScheduleForbidden):
+        ss.delete_schedule(editor, "hal", made.pk)
+    # And an editor cannot turn their own plain schedule into a job.
+    plain = ss.create_schedule(editor, "hal", {"name": "p", "prompt": "/x", "cron": "0 9 * * *"})
+    with pytest.raises(ss.ScheduleForbidden):
+        ss.update_schedule(editor, "hal", plain.pk, {"job": "nightly-sync", "job_repo": "hal-jobs"})
+    # An admin may do all of it.
+    assert ss.update_schedule(w["user"], "hal", made.pk, {"name": "renamed"}).name == "renamed"
+
+
+def test_a_demoted_admins_job_stops(w, editor):
+    sched = _job_schedule(w, created_by=editor)
+    # An editor who made it (e.g. before this rule, or demoted since) no longer fires it.
+    assert "admin" in (triggers.refusal(sched) or "")
+    with pytest.raises(triggers.TriggerRefused):
+        schedule_turns.fire_schedule(sched, SLOT)
+    boss = _job_schedule(w, "by-admin", created_by=w["user"])
+    assert triggers.refusal(boss) is None
+    WorkspaceMembership.objects.filter(user=w["user"], workspace=w["ws"]).update(
+        role=WorkspaceMembership.EDITOR)
+    Agent.objects.filter(pk=w["agent"].pk).update(owner=None)
+    assert triggers.refusal(AgentSchedule.objects.get(pk=boss.pk)) is not None
+
+
+def test_an_agents_own_login_cannot_hold_a_job(w):
+    sched = _job_schedule(w, created_by=w["user"])
+    from unittest import mock
+
+    with mock.patch.object(Agent, "is_own_login", return_value=True), \
+            mock.patch.object(Agent, "is_admin", return_value=False):
+        assert triggers.refusal(sched) is not None
+
+
+def _job_nag(sched):
+    from apps.agents.models import AgentTask
+
+    return list(AgentTask.objects.filter(origin_ref__schedule_id=sched.pk, origin_ref__kind="schedule_nag"))
+
+
+def test_a_failed_job_raises_a_review_with_no_rerun_and_the_last_lines(w):
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    sched = _job_schedule(w)
+    schedule_turns.fire_schedule(sched, SLOT)
+    Turn.objects.update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    got = claim.claim_next_turn(new)
+    harness.finish_turn(got, status=Turn.FAILED, result_note="line one\nboom: no such file")
+    nags = _job_nag(sched)
+    assert len(nags) == 1
+    assert not nags[0].on_approve
+    assert "boom: no such file" in nags[0].ask_body and "Run now" in nags[0].ask_body
+    # A later success closes it.
+    schedule_turns.fire_schedule(sched, SLOT + dt.timedelta(days=1))
+    Turn.objects.filter(status=Turn.QUEUED).update(
+        created_at=timezone.now() - dt.timedelta(minutes=5))
+    again = claim.claim_next_turn(new)
+    harness.finish_turn(again, status=Turn.DONE)
+    nags[0].refresh_from_db()
+    assert nags[0].ask_closed_at is not None
+
+
+def test_a_lost_job_and_a_grace_released_job_raise_a_review(w):
+    from apps.harness import turn_close
+
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    sched = _job_schedule(w)
+    schedule_turns.fire_schedule(sched, SLOT)
+    Turn.objects.update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    got = claim.claim_next_turn(new)
+    turn_close.close_turn(got, Turn.LOST, "box gone", from_states=Turn.NON_TERMINAL)
+    assert len(_job_nag(sched)) == 1
+    other = _job_schedule(w, "second")
+    schedule_turns.fire_schedule(other, SLOT)
+    Turn.objects.filter(status=Turn.QUEUED).update(
+        created_at=timezone.now() - dt.timedelta(minutes=5))
+    got2 = claim.claim_next_turn(new)
+    schedule_turns.release_stale_occurrence_turns(
+        other, now=got2.claimed_at + dt.timedelta(minutes=other.grace_minutes + 1))
+    nags = _job_nag(other)
+    assert len(nags) == 1 and not nags[0].on_approve
+
+
+def test_a_job_that_opts_out_of_the_inbox_raises_no_review(w):
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    sched = _job_schedule(w, notify=[])
+    schedule_turns.fire_schedule(sched, SLOT)
+    Turn.objects.update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    harness.finish_turn(claim.claim_next_turn(new), status=Turn.FAILED, result_note="x")
+    assert _job_nag(sched) == []
+
+
+def test_a_failing_job_starts_no_debugger_turn(w, settings):
+    from unittest import mock
+
+    from apps.harness import auto_debug
+
+    settings.CANOPY_AUTO_DEBUG = True
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    _job_turn(w)
+    got = claim.claim_next_turn(new)
+    with mock.patch.object(auto_debug, "_note_for", return_value="exit 3") as looked:
+        harness.finish_turn(got, status=Turn.FAILED, result_note="exit 3: tests failed")
+    # The debugger gets no further than the exemption: it never even reads the note.
+    looked.assert_not_called()
+    # Control: the same failure of an ordinary turn does reach it.
+    ordinary = _ordinary_turn(w)
+    again = claim.claim_next_turn(new)
+    Turn.objects.filter(pk=again.pk).update(attempts=3)        # past the sessionless retries
+    again.refresh_from_db()
+    with mock.patch.object(auto_debug, "_note_for", return_value="boom") as looked:
+        harness.finish_turn(again, status=Turn.FAILED, result_note="boom")
+    assert again.pk == ordinary.pk
+    assert looked.called
+
+
+def test_a_new_slot_never_supersedes_a_running_job(w):
+    new = _box(w, "new-cloud", caps={"jobs": True})
+    sched = _job_schedule(w)
+    first, _ = schedule_turns.fire_schedule(sched, SLOT)
+    Turn.objects.update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    running = claim.claim_next_turn(new)
+    second, _ = schedule_turns.fire_schedule(sched, SLOT + dt.timedelta(days=1))
+    running.refresh_from_db()
+    assert running.status == Turn.CLAIMED                    # the job carries on
+    assert second.status == Turn.MISSED and "still going" in second.result_note
+    manual = schedule_turns.run_schedule_now(sched)
+    assert manual.status == Turn.MISSED and "still going" in manual.result_note
+    # The box still counts as busy, so it takes no other job.
+    _job_turn(w, "other")
+    assert claim.claim_next_turn(new) is None
+    # A queued occurrence is still superseded: nothing runs, so a newer slot replaces it.
+    other_sched = _job_schedule(w, "q")
+    queued, _ = schedule_turns.fire_schedule(other_sched, SLOT)
+    newer, _ = schedule_turns.fire_schedule(other_sched, SLOT + dt.timedelta(days=1))
+    queued.refresh_from_db()
+    assert queued.status == Turn.MISSED and newer.status == Turn.QUEUED
+
+
+def test_a_signed_out_box_still_takes_a_job_but_no_prompt_turn(w):
+    box = _box(w, "no-login", caps={"jobs": True, "clis": {
+        "claude-code": {"signed_in": False, "profiles": 0, "envelope": 0}}})
+    ordinary = _ordinary_turn(w)
+    assert claim.claim_next_turn(box) is None
+    assert Turn.objects.get(pk=ordinary.pk).status == Turn.QUEUED
+    job = _job_turn(w)
+    got = claim.claim_next_turn(box)
+    assert got == job and got.cli == ""
+    # An old box with no login takes neither.
+    old = _box(w, "old-no-login", caps={"clis": {
+        "claude-code": {"signed_in": False, "profiles": 0, "envelope": 0}}})
+    _job_turn(w, "again")
+    assert claim.claim_next_turn(old) is None
+
+
+def test_the_unclaimable_reason_does_not_blame_pairing(w):
+    capable = _box(w, "elsewhere", caps={"jobs": True})
+    RunnerAssignment.objects.filter(runner=capable).delete()      # off the agent's list
+    turn = _job_turn(w)
+    Turn.objects.filter(pk=turn.pk).update(
+        created_at=timezone.now() - claim.UNCLAIMABLE_GRACE - dt.timedelta(seconds=5))
+    rows = [r for r in claim.unclaimable_queued_turns(w["user"]) if r["turn_id"] == str(turn.pk)]
+    assert rows and "No cloud machine that can run jobs serves this agent" in rows[0]["reason"]
+    assert "paired" not in rows[0]["reason"]
+
+
+def test_cloud_only_routing_needs_a_job(w):
+    with pytest.raises(ss.InvalidSchedule):
+        ss.create_schedule(w["user"], "hal", {"name": "x", "prompt": "/x", "cron": "0 9 * * *",
+                                              "routing": "cloud_only"})
+    plain = ss.create_schedule(w["user"], "hal", {"name": "p", "prompt": "/x", "cron": "0 9 * * *"})
+    with pytest.raises(ss.InvalidSchedule):
+        ss.update_schedule(w["user"], "hal", plain.pk, {"routing": "cloud_only"})
+
+
+def _patch(client, runner, caps):
+    return client.patch(f"/api/harness/runners/{runner.id}", data={"capabilities": caps},
+                        content_type="application/json")
+
+
+def test_a_person_cannot_patch_jobs_onto_a_box(w, client):
+    old = _box(w, "old-cloud")
+    client.force_login(w["user"])
+    res = _patch(client, old, {"sessions": True, "jobs": True})
+    assert res.status_code == 200, res.content
+    old.refresh_from_db()
+    assert "jobs" not in old.capabilities
+    # Nor can a person take it away from a box that said it.
+    capable = _box(w, "new-cloud", caps={"jobs": True})
+    assert _patch(client, capable, {"sessions": True}).status_code == 200
+    capable.refresh_from_db()
+    assert capable.capabilities["jobs"] is True
+    assert _patch(client, capable, {"sessions": True, "jobs": False}).status_code == 200
+    capable.refresh_from_db()
+    assert capable.capabilities["jobs"] is True
+
+
+def test_the_box_itself_may_say_it_runs_jobs_and_pairing_cannot(w):
+    from django.test import Client
+
+    from apps.harness.api import declared_capabilities
+    from apps.harness.models import RunnerAccessToken, RunnerDeviceKey
+
+    assert "jobs" not in declared_capabilities({"jobs": True, "sessions": True})
+    box = _box(w, "own")
+    key = RunnerDeviceKey.objects.create(runner=box, kind=RunnerDeviceKey.SOFTWARE,
+                                         status=RunnerDeviceKey.ACTIVE, public_jwk={})
+    raw, _ = RunnerAccessToken.mint(key)
+    res = _patch(Client(HTTP_AUTHORIZATION=f"Bearer {raw}"), box, {"sessions": True, "jobs": True})
+    assert res.status_code == 200, res.content
+    box.refresh_from_db()
+    assert box.capabilities["jobs"] is True

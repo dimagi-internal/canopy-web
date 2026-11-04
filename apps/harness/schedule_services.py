@@ -131,6 +131,8 @@ def _apply_job(fields: dict, *, current: AgentSchedule | None) -> dict:
                     and "routing" not in fields:
                 # It was a job; as an ordinary schedule it goes where the person says.
                 fields["routing"] = Turn.PREFER_LOCAL
+        if fields.get("routing") == Turn.CLOUD_ONLY:
+            raise InvalidSchedule("only a job runs on a cloud machine alone; choose another routing")
         return fields
     if kind != AgentSchedule.CRON:
         raise InvalidSchedule("only a scheduled (cron) trigger can run a job")
@@ -230,13 +232,15 @@ def _apply_kind(fields: dict, *, current: AgentSchedule | None = None) -> dict:
             raise InvalidSchedule("a cron trigger needs a prompt")
     elif fields.get("job") or fields.get("job_repo"):
         raise InvalidSchedule("only a scheduled (cron) trigger can run a job")
+    elif fields.get("routing") == Turn.CLOUD_ONLY:
+        raise InvalidSchedule("only a job runs on a cloud machine alone; choose another routing")
     return _apply_timing(fields, current=current)
 
 
-def _check_may_set_up(user, agent, *, kind: str, turn_mode: str) -> None:
+def _check_may_set_up(user, agent, *, kind: str, turn_mode: str, job: bool = False) -> None:
     """The gate for every trigger write (`triggers.may_set_up`): `agent.work` for a
     cron trigger, an agent admin for an inbound_mail trigger or an auto one."""
-    needed = triggers.may_set_up(user, agent, kind=kind, turn_mode=turn_mode)
+    needed = triggers.may_set_up(user, agent, kind=kind, turn_mode=turn_mode, job=job)
     if needed is not None:
         raise ScheduleForbidden(agent.slug, required=needed)
 
@@ -404,7 +408,8 @@ def create_schedule(
     agent = _resolve_agent(user, agent_slug, workspace_slug=workspace_slug)
     creator = user if getattr(user, "is_authenticated", False) else None
     fields = _apply_kind(fields)
-    _check_may_set_up(user, agent, kind=fields["kind"], turn_mode=fields.get("turn_mode") or "")
+    _check_may_set_up(user, agent, kind=fields["kind"], turn_mode=fields.get("turn_mode") or "",
+                      job=bool(fields.get("job")))
     _check_cli(agent, fields)
     try:
         # Own savepoint: an IntegrityError from uniq_agent_schedule_name must not
@@ -428,10 +433,12 @@ def update_schedule(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=kind
     )
-    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode)
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode,
+                      job=bool(schedule.job))
     fields = _apply_kind(fields, current=schedule)
     _check_may_set_up(user, schedule.agent, kind=schedule.kind,
-                      turn_mode=fields.get("turn_mode", schedule.turn_mode) or "")
+                      turn_mode=fields.get("turn_mode", schedule.turn_mode) or "",
+                      job=bool(fields.get("job", schedule.job)))
     _check_cli(schedule.agent, fields)
     for key, value in fields.items():
         setattr(schedule, key, value)
@@ -455,7 +462,8 @@ def delete_schedule(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=kind
     )
-    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode)
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode,
+                      job=bool(schedule.job))
     schedule_turns.supersede_open_turns(schedule, reason="schedule deleted")
     schedule.delete()
 
