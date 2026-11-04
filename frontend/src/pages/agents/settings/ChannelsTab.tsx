@@ -38,11 +38,11 @@ export function ChannelsTab({ agent, isAdmin, admins }: { agent: AgentOutletCont
         </Setting>
         <Setting
           title="Google account"
-          who={admins}
-          canEdit={isAdmin}
+          who={`people with the editor role on ${agent.name}, and its admins`}
+          canEdit={agent.can_edit_agent ?? false}
           description={`The Google login ${agent.name} uses for Drive, Docs and gog, when it is not the mailbox.`}
         >
-          <AgentGoogleAccountControl agent={agent} canEdit={isAdmin} />
+          <AgentGoogleAccountControl agent={agent} canEdit={agent.can_edit_agent ?? false} />
         </Setting>
       </div>
     </Section>
