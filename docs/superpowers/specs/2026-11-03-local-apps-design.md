@@ -85,7 +85,7 @@ If the trust surface changed, the person is shown the differences and has to acc
 
 ### Building an app
 
-`canopy-runner app dev-install <folder>` runs a folder from your own disk, shown as **unpublished**, with no server involved except for Canopy calls, which it can't make: a dev app gets a local stub unless its author passes `--canopy`, and then only for sessions it opened. It's for the person who wrote the code, not a way to pass an app around.
+`canopy-runner app dev-install <folder>` runs a folder from your own disk, shown as **unpublished**, with no server involved. Its Canopy calls go to a local stub that answers them and writes what would have been sent to a private file, so nothing leaves the computer. It's for the person who wrote the code, not a way to pass an app around.
 
 ## Who may use local apps
 
