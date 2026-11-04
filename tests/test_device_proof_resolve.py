@@ -6,6 +6,7 @@ The contract these pin is the one canopy's CLI/runner half builds against
 """
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -241,6 +242,35 @@ def test_a_stale_proof_is_refused_and_120s_skew_is_allowed(fleet):
                                            now=time.time() - 200)).status_code == 401
     assert _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU,
                                            now=time.time() - 100)).status_code == 200
+
+
+def test_a_stale_proof_from_an_approved_key_says_how_old_and_whose(fleet):
+    from apps.agents.credentials import vault_alerts
+
+    _active_key(fleet)
+    assert _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU,
+                                           now=time.time() - 343)).status_code == 401
+    [alert] = vault_alerts.alerts_for(fleet["agent"])
+    assert re.search(r"the proof is not fresh: signed 34\ds before it arrived \(limit 120s\)", alert["detail"])
+    assert "box\u2019s approved key signed it" in alert["detail"]
+
+
+def test_a_stale_proof_from_an_unknown_key_names_no_machine(fleet):
+    from apps.agents.credentials import vault_alerts
+
+    stranger = ec.generate_private_key(ec.SECP256R1())
+    assert _resolve(fleet, make_dpop_proof(stranger, "GET", HTU, now=time.time() - 343)).status_code == 401
+    [alert] = vault_alerts.alerts_for(fleet["agent"])
+    assert "not fresh" in alert["detail"] and "approved key" not in alert["detail"]
+
+
+def test_a_leftover_alert_of_an_unknown_kind_does_not_break_the_list(fleet):
+    from apps.agents.models import AgentCredentialAlert
+
+    AgentCredentialAlert.objects.create(agent=fleet["agent"], kind="github-expiry", detail="reverted")
+    AgentCredentialAlert.objects.create(agent=fleet["agent"], kind="burst", detail="kept")
+    res = fleet["client"].get("/api/agents/eva/credential-alerts")
+    assert res.status_code == 200 and [a["kind"] for a in res.json()] == ["burst"]
 
 
 @pytest.mark.parametrize("htm,htu", [
