@@ -445,7 +445,7 @@ def test_every_exclusion_names_a_real_route_family():
 
     assert paths
     for prefix in act_as.EXCLUDED_PREFIXES:
-        if prefix in ("/api/embed/",):
+        if prefix in ("/api/embed/", "/api/runner-sessions/"):
             continue  # not a tool family at all; listed so it can never become one quietly
         assert matches(lambda s, p=prefix: s.startswith(p)), prefix
     for pattern in act_as.EXCLUDED_PATTERNS:

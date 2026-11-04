@@ -122,19 +122,10 @@ CREDENTIAL_ROUTES_ON_MCP: dict[str, str] = {
        "(`stepup.require_browser`): a token's call is refused, and the answer is a WebAuthn "
        "challenge, never a credential"),
     "create_capability_uploads": "upload URLs for the caller's own lease, the same as over REST",
-    # Anonymous doors whose authority is a proof bound to the request: as a tool there is
-    # no proof to carry, so the call is refused before anything is minted.
-    "create_runner_session": "anonymous: needs a device-key proof header (DPoP / AWS) an MCP call "
-                             "cannot carry, so it is always refused; the runner token it mints never "
-                             "reaches a tool",
-    "claim_runner_pairing": "anonymous: needs the pairing key's DPoP proof header and the approval's "
-                            "one-time secret; returns a runner id and status, never a token",
-    "pair_runner_by_role": "anonymous: needs an EC2 instance-role proof signed for this URL; returns "
-                           "runner and device-key ids and a status, never a token",
     "request_runner_device_key": "anonymous: lands a PENDING device key its owner or a runner admin must "
                                  "still approve; returns the key's id and approve link, no credential",
     **dict.fromkeys((
-        "box_egress", "kept_conversations",
+        "kept_conversations",
         "post_delegated_checks", "post_google_mint_challenge", "post_handoff_captured",
         "post_handoff_close", "post_handoff_part", "post_handoff_restored", "post_runner_usage",
         "post_session_menu", "post_session_subagents", "post_sign_in_request",
@@ -169,10 +160,11 @@ def test_credential_routes_are_excluded_or_argued(db):
 
 
 def test_routes_a_machine_signs_are_not_tools(db):
-    """A `host` route's credential is a signature made by a site or a cloud service, which an
-    MCP call cannot carry, so as a tool it can only be refused. Worse, the refusal reads as the
-    agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on cloud-ec2-live called
-    `get_site_agents`, got 401 `no_assertion`, and credential_guard aborted the turn."""
+    """These routes' credential is a signature made by a site, a cloud service or a box's own
+    key, which an MCP call cannot carry, so as a tool each can only be refused. Worse, the
+    refusal reads as the agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on
+    cloud-ec2-live called `get_site_agents`, got 401 `no_assertion`, and credential_guard
+    aborted the turn."""
     from apps.api import route_gates
 
     api.get_openapi_schema()  # binds the routers
@@ -180,9 +172,12 @@ def test_routes_a_machine_signs_are_not_tools(db):
              for bound in api._get_bound_routers()
              for path_view in bound.path_operations.values() for op in path_view.operations}
     tools = _tools()
-    hosts = [name for name, g in gates.items() if g is not None and "host" in g.labels]
-    assert "get_site_agents" in hosts  # the label this test keys on still means this
-    assert [name for name in hosts if name in tools] == []
+    signed = {"host", "device-proof", "paired-key", "invited-role"}
+    machines = [name for name, g in gates.items() if g is not None and signed & set(g.labels)]
+    # the labels this test keys on still mean this
+    assert {"get_site_agents", "create_runner_session", "claim_runner_pairing",
+            "pair_runner_by_role"} <= set(machines)
+    assert [name for name in machines if name in tools] == []
 
 
 def test_no_generated_tool_collides_with_a_hand_written_one(db):
