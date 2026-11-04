@@ -7,7 +7,7 @@ import {
   changedEndorser, leftOut as leftOutOf, ShareRefused, trustFor, vouchersToDecide,
   type OpenedAccount, type ShareChoice, type Trust,
 } from '@/vault/connectionShare'
-import { canopyWebKeyChanged, openOwned, promptDismissed, putOwnerShare, wasReconnected } from '@/vault/ownerShare'
+import { canopyWebKeyChanged, openOwned, putOwnerShare, wasReconnected } from '@/vault/ownerShare'
 import { pinPerson, type Endorser } from '@/vault/trust'
 import type { Unlocked } from '@/vault/userKey'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
@@ -27,7 +27,8 @@ export function safeReturnTo(given: string | null | undefined): string {
 }
 
 const NOT_SHARED = 'Not shared yet: no agent or computer can use it.'
-const LOCKED = 'This account is locked in your vault. Your passkey opens it here so you can choose.'
+const LOCKED = 'To choose who can use this account, unlock it with your passkey. '
+  + 'You pick the agents and computers on the next screen. Nothing changes until you press Share.'
 const RECONNECTED = 'This connection was reconnected. If you did not just do that, stop and tell an admin.'
 const CHANGED = 'This connection changed in another tab or computer. Loading it again.'
 const RELOCK = 'Unlock your vault key and try again.'
@@ -81,9 +82,6 @@ export function ShareConnectionPage(): JSX.Element | null {
   const [notYours, setNotYours] = useState(false)
   const [notOwnerKey, setNotOwnerKey] = useState('')
   const [busy, setBusy] = useState(false)
-  // The first try to open it, made on arrival without a click; only a refusal shows the button.
-  const [tried, setTried] = useState(false)
-  const arrived = useRef(false)
   const [agents, setAgents] = useState<Set<string>>(new Set())
   const [computers, setComputers] = useState<Set<string>>(new Set())
   const [canopyWebTicked, setCanopyWebTicked] = useState(false)
@@ -121,14 +119,6 @@ export function ShareConnectionPage(): JSX.Element | null {
   const leftOut = useMemo(() => (state && opened ? leftOutOf(state, choice, opened.trust) : []), [state, opened, choice])
   const changed = useMemo(() => (opened ? changedEndorser(opened.trust, choice) : undefined), [opened, choice])
   const vouchers = useMemo(() => (opened ? vouchersToDecide(opened.trust, choice) : []), [opened, choice])
-
-  // Hooks before any return: open it on arrival when the browser lets it without a click.
-  useEffect(() => {
-    if (!state || arrived.current) return
-    arrived.current = true
-    void unlock(state, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state])
 
   if (notYours) {
     return (
@@ -180,13 +170,15 @@ export function ShareConnectionPage(): JSX.Element | null {
     setOpened({ account, statement, trust })
   }
 
-  async function unlock(s: ShareStateOut, auto = false) {
+  /** The only passkey prompt on this page, and only from the button: a prompt on arrival would
+   *  come before the person can see what it is for, and a refused one would mean asking twice. */
+  async function unlock(s: ShareStateOut) {
     setBusy(true)
     setError('')
     setNotice('')
     setUnsafe(false)
     try {
-      const key = await vault.unlock({ passkeyOnly: auto })
+      const key = await vault.unlock()
       try {
         await openWith(s, key)
       } catch (e) {
@@ -194,11 +186,9 @@ export function ShareConnectionPage(): JSX.Element | null {
         else throw e
       }
     } catch (e) {
-      // On arrival a refused prompt is not an error: the button below asks again.
-      if (!(auto && promptDismissed(e))) setError(e instanceof Error ? e.message : 'Could not unlock your vault key.')
+      setError(e instanceof Error ? e.message : 'Could not unlock your vault key.')
     } finally {
       setBusy(false)
-      if (auto) setTried(true)
     }
   }
 
@@ -280,19 +270,12 @@ export function ShareConnectionPage(): JSX.Element | null {
           </a>
         </div>
       ) : !opened ? (
-        !tried ? (
-          <>
-            <div className="h-16 animate-pulse rounded-lg bg-muted" />
-            {vault.element}
-          </>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">{LOCKED}</p>
-            <Button onClick={() => void unlock(state)} disabled={busy}>Continue with your passkey</Button>
-            {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
-            {vault.element}
-          </div>
-        )
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">{LOCKED}</p>
+          <Button onClick={() => void unlock(state)} disabled={busy}>Unlock with your passkey</Button>
+          {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
+          {vault.element}
+        </div>
       ) : (
         <div className="space-y-4">
           <div>

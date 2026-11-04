@@ -69,9 +69,10 @@ function open(query = '?return_to=%2Fsettings%2Fconnections') {
     </MemoryRouter>,
   )
 }
+const BUTTON = 'Unlock with your passkey'
 const unlocked = async () => {
   open()
-  // It opens on arrival; there is no unlock step to click.
+  fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
   await screen.findByText(/Connected as/)
 }
 
@@ -221,6 +222,7 @@ describe('ShareConnectionPage', () => {
     'says it cannot be opened safely and offers Reconnect, never only the code (%s)', async (code) => {
       openForOwner.mockRejectedValue(new ShareRefused(code, 'detail'))
       open()
+      fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
       expect(await screen.findByText("This connection can't be opened safely. Reconnect it.")).toBeTruthy()
       const link = screen.getByRole('link', { name: 'Reconnect' }) as HTMLAnchorElement
       expect(link.getAttribute('href')).toContain('/auth/connections/salesforce/dimagi/start/')
@@ -238,6 +240,7 @@ describe('ShareConnectionPage', () => {
 
   it('keeps the plaintext out of the page', async () => {
     const { container } = open()
+    fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
     await screen.findByText(/Connected as/)
     expect(container.innerHTML).not.toMatch(/refresh_token|access_token/)
   })
@@ -297,7 +300,7 @@ describe('ShareConnectionPage: fixes', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toBe('Unlock your vault key and try again.')
     expect(screen.queryByRole('link', { name: 'Reconnect' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Continue with your passkey' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: BUTTON })).toBeTruthy()
   })
 
   it('a 404 on load says it is not theirs, with a link back', async () => {
@@ -342,6 +345,7 @@ describe('ShareConnectionPage: a lend with limits', () => {
   const open_ = async (over: object, query: string) => {
     getShareState.mockResolvedValue({ ...STATE, ...over })
     open(query)
+    fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
     await screen.findByText(/Connected as/)
   }
 
@@ -391,6 +395,7 @@ describe('ShareConnectionPage: project screens and apps', () => {
       server: { ...SERVER, provider_calls: false },
     })
     open('?return_to=%2Fsettings&agent=eva')
+    fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
     await screen.findByText(/Connected as/)
     expect(screen.queryByLabelText('Project screens and apps')).toBeNull()
     expect(screen.queryByTestId('canopy-web-unavailable')).toBeNull()
@@ -399,48 +404,39 @@ describe('ShareConnectionPage: project screens and apps', () => {
   })
 
 
-  it("the locked state's copy", async () => {
-    unlock.mockRejectedValue(new DOMException('not allowed', 'NotAllowedError'))
+  it("the locked state says what the button does, and asks for no passkey by itself", async () => {
     open()
-    expect(await screen.findByRole('button', { name: 'Continue with your passkey' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: BUTTON })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Who can use Server Label' })).toBeTruthy()
-    expect(screen.getByText('This account is locked in your vault. Your passkey opens it here so you can choose.')).toBeTruthy()
-    expect(screen.queryByText(/canopy never sees/)).toBeNull()
-    expect(screen.queryByText(/Not shared yet/)).toBeNull()
-    expect(screen.queryByText(/Touch your passkey/)).toBeNull()
-    expect(screen.queryByRole('button', { name: /Unlock with your passkey/ })).toBeNull()
+    expect(screen.getByText('To choose who can use this account, unlock it with your passkey. '
+      + 'You pick the agents and computers on the next screen. Nothing changes until you press Share.')).toBeTruthy()
+    expect(unlock).not.toHaveBeenCalled()
   })
 
   it('names the connection in general when it has no label', async () => {
     getShareState.mockResolvedValue({ ...STATE, account_label: '' })
-    unlock.mockRejectedValue(new DOMException('not allowed', 'NotAllowedError'))
     open()
     expect(await screen.findByRole('heading', { name: 'Who can use this connection' })).toBeTruthy()
   })
 
-  it('no button when it opens without a prompt', async () => {
-    open()
-    await screen.findByText(/Connected as/)
-    expect(unlock).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('button', { name: 'Continue with your passkey' })).toBeNull()
+  it('one click, one passkey prompt, and sharing asks for no other', async () => {
+    await unlocked()
+    expect(screen.queryByRole('button', { name: BUTTON })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Share this connection' })).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Eva'))
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    await waitFor(() => expect(putShare).toHaveBeenCalledTimes(1))
+    expect(unlock).toHaveBeenCalledTimes(1)
   })
 
-  it('a refused prompt shows Continue with your passkey, and the button opens it', async () => {
-    unlock.mockRejectedValueOnce(new DOMException('not allowed', 'NotAllowedError'))
+  it('an unsuccessful passkey shows its sentence beside the button, and the button asks again', async () => {
+    unlock.mockRejectedValueOnce(Object.assign(new Error('The passkey step was unsuccessful.'), { name: 'NotAllowedError' }))
     open()
-    const button = await screen.findByRole('button', { name: 'Continue with your passkey' })
-    expect(screen.queryByRole('alert')).toBeNull()
-    fireEvent.click(button)
+    fireEvent.click(await screen.findByRole('button', { name: BUTTON }))
+    expect((await screen.findByRole('alert')).textContent).toBe('The passkey step was unsuccessful.')
+    fireEvent.click(screen.getByRole('button', { name: BUTTON }))
     await screen.findByText(/Connected as/)
     expect(unlock).toHaveBeenCalledTimes(2)
-  })
-
-  it('a failure other than a refusal shows its sentence beside the button', async () => {
-    unlock.mockRejectedValueOnce(new Error('Your passkey did not open your vault key.'))
-    open()
-    expect((await screen.findByRole('alert')).textContent).toBe('Your passkey did not open your vault key.')
-    expect(screen.getByRole('button', { name: 'Continue with your passkey' })).toBeTruthy()
   })
 
   it('shows the box with its one sentence, unticked when the row is off', async () => {
