@@ -38,6 +38,7 @@ import logging
 from asgiref.sync import sync_to_async
 from canopy_kb.tools import ORIGINAL_TOOL, _base_tools
 from django.db.models import Q
+from apps.common import thread_context as _thread_context
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.base import Provider
@@ -247,6 +248,7 @@ def _build() -> FastMCP:
     from .server import _verifier  # noqa: PLC0415 — would build the main server first
 
     server = FastMCP("canopy-projects", auth=_verifier(), instructions=INSTRUCTIONS)
+    server.middleware.insert(0, _thread_context.mcp_middleware())
 
     @server.tool
     async def projects(query: str = "") -> str:
