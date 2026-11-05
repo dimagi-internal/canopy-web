@@ -529,6 +529,7 @@ jobs:
             tests/test_layered_app_imports.py \
             tests/test_no_test_module_imports.py \
             tests/test_architecture_boundary.py \
+            tests/test_canopy_cli_routes_exist.py \
             $CHANGED
 
   pr-guards:
