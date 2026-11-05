@@ -36,7 +36,7 @@ from apps.tokens.models import AppCredential
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, agent_card, roles, sensitive_data, topology
+from . import access, agent_card, answering, roles, sensitive_data, topology
 from . import interface as iface_mod
 from .models import Agent, AgentGrant, AgentRole
 from .setup import runner_takers
@@ -147,28 +147,6 @@ def _build() -> dict:
 
 # --- what the plain settings count on ---------------------------------------------------------
 
-def _entry_problems(caps: dict) -> list[str]:
-    # One rule per sentence of the spec's section 3.1. Empty: the agent fits the plain forms as it is.
-    out = []
-    by_site: dict[str, list[str]] = {}
-    for name, cap in caps.items():
-        cap = cap or {}
-        sites = cap.get("sites") or []
-        for site in sites:
-            by_site.setdefault(site, []).append(name)
-        if cap.get("pages"):
-            out.append(f"{name}: uses pages")
-        if iface_mod.is_read_mode(name):
-            if sites or cap.get("ceiling") or cap.get("own_login") or cap.get("data"):
-                out.append(f"{name}: read mode names sites, a ceiling, a login or sensitive data")
-        elif not sites:
-            out.append(f"{name}: has no site")
-        elif len(sites) > 1:
-            out.append(f"{name}: names {len(sites)} sites")
-    out += [f"{site}: named by {', '.join(sorted(names))}" for site, names in by_site.items() if len(names) > 1]
-    return sorted(out)
-
-
 def _shape(agents) -> dict:
     # Where else an entry's name is stored: a name in any of these can never be renamed.
     published = {a.pk: set((a.interface or {}).get("capabilities") or {}) for a in agents}
@@ -176,7 +154,7 @@ def _shape(agents) -> dict:
     named_lines = list(AgentGrant.objects.exclude(capability="").values_list("agent_id", "capability"))
     dangling = sorted(f"{slugs[agent_id]}: {name}" for agent_id, name in named_lines
                       if agent_id and not iface_mod.is_read_mode(name) and name not in published[agent_id])
-    problems = {a.slug: _entry_problems((a.interface or {}).get("capabilities") or {}) for a in agents}
+    problems = {a.slug: answering.document_problems((a.interface or {}).get("capabilities") or {}) for a in agents}
     role_names = {p for row in AgentRole.objects.values_list("permissions", flat=True) for p in row or []
                   if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*"}
     return {

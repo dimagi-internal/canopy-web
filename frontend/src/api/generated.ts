@@ -5316,12 +5316,21 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** What this agent offers callers — its declared interface */
+        /**
+         * Deprecated: use get_read_mode and list_connected_sites. What this agent offers callers — its declared interface
+         * @deprecated
+         */
         readonly get: operations["get_interface"];
-        /** Save the agent's declared interface (YAML source, or a parsed mapping) */
+        /**
+         * Deprecated: use put_read_mode and put_connected_site. Save the agent's declared interface (YAML source, or a parsed mapping)
+         * @deprecated
+         */
         readonly put: operations["publish_interface"];
         readonly post?: never;
-        /** Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it */
+        /**
+         * Deprecated: use reset_read_mode and delete_connected_site. Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it
+         * @deprecated
+         */
         readonly delete: operations["reset_interface"];
         readonly options?: never;
         readonly head?: never;
@@ -5337,7 +5346,10 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Check a draft interface with the server's parser, without saving it */
+        /**
+         * Deprecated: use dry_run on put_read_mode or put_connected_site. Check a draft interface with the server's parser, without saving it
+         * @deprecated
+         */
         readonly post: operations["validate_interface"];
         readonly delete?: never;
         readonly options?: never;
@@ -5353,7 +5365,10 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
-        /** Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML */
+        /**
+         * Deprecated: use the sensitive field of put_connected_site. Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML
+         * @deprecated
+         */
         readonly put: operations["set_capability_sensitive"];
         readonly post?: never;
         readonly delete?: never;
@@ -5967,6 +5982,60 @@ export interface paths {
         readonly put: operations["set_inherit_workspace_defaults"];
         readonly post?: never;
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/read-mode": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** What someone who may only read gets from this agent */
+        readonly get: operations["get_read_mode"];
+        /** Customise read mode: only the fields sent change. dry_run checks without saving */
+        readonly put: operations["put_read_mode"];
+        readonly post?: never;
+        /** Put read mode back on canopy's default */
+        readonly delete: operations["reset_read_mode"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/connected-sites": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The sites this agent can be reached from, and the workspace's sites it could add */
+        readonly get: operations["list_connected_sites"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/connected-sites/{site}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Add or change one connected site: only the fields sent change. dry_run checks without saving */
+        readonly put: operations["put_connected_site"];
+        readonly post?: never;
+        /** Remove one connected site from this agent */
+        readonly delete: operations["delete_connected_site"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -28008,6 +28077,12 @@ export interface components {
             readonly slack_enabled: boolean;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
+            readonly read_mode?: components["schemas"]["ReadModeSettingOut"] | null;
+            /**
+             * Connected Sites
+             * @default []
+             */
+            readonly connected_sites: readonly components["schemas"]["ConnectedSiteOut"][];
             /**
              * Cli Models
              * @default {}
@@ -28106,6 +28181,94 @@ export interface components {
             readonly name: string;
             /** Email */
             readonly email: string;
+        };
+        /** AnsweringProfile */
+        readonly AnsweringProfile: {
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Entry */
+            readonly entry?: string | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly string[];
+            /**
+             * Bash
+             * @default []
+             */
+            readonly bash: readonly string[];
+            /**
+             * Read Paths
+             * @default []
+             */
+            readonly read_paths: readonly string[];
+            /**
+             * Write Paths
+             * @default []
+             */
+            readonly write_paths: readonly string[];
+        };
+        /** ConnectedSiteOut */
+        readonly ConnectedSiteOut: {
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Entry */
+            readonly entry?: string | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly string[];
+            /**
+             * Bash
+             * @default []
+             */
+            readonly bash: readonly string[];
+            /**
+             * Read Paths
+             * @default []
+             */
+            readonly read_paths: readonly string[];
+            /**
+             * Write Paths
+             * @default []
+             */
+            readonly write_paths: readonly string[];
+            /** Site */
+            readonly site: string;
+            /** Key */
+            readonly key: string;
+            /**
+             * Ceiling
+             * @default []
+             */
+            readonly ceiling: readonly string[];
+            /**
+             * Own Login
+             * @default []
+             */
+            readonly own_login: readonly string[];
+            /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
+        };
+        /** ReadModeSettingOut */
+        readonly ReadModeSettingOut: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            readonly source: "default" | "custom";
+            readonly profile: components["schemas"]["AnsweringProfile"];
         };
         /** AgentCanopyUserIn */
         readonly AgentCanopyUserIn: {
@@ -29146,6 +29309,105 @@ export interface components {
         readonly AccessInheritIn: {
             /** Inherit */
             readonly inherit: boolean;
+        };
+        /** ReadModeIn */
+        readonly ReadModeIn: {
+            /** Description */
+            readonly description?: string | null;
+            /** Entry */
+            readonly entry?: string | null;
+            /** Tools */
+            readonly tools?: readonly string[] | null;
+            /** Bash */
+            readonly bash?: readonly string[] | null;
+            /** Read Paths */
+            readonly read_paths?: readonly string[] | null;
+            /** Write Paths */
+            readonly write_paths?: readonly string[] | null;
+            /**
+             * Dry Run
+             * @default false
+             */
+            readonly dry_run: boolean;
+        };
+        /** ConnectedSitesOut */
+        readonly ConnectedSitesOut: {
+            /** Sites */
+            readonly sites: readonly components["schemas"]["ConnectedSiteOut"][];
+            /** Available */
+            readonly available: readonly string[];
+            readonly new_site_defaults: components["schemas"]["NewSiteDefaults"];
+        };
+        /** NewSiteDefaults */
+        readonly NewSiteDefaults: {
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Entry */
+            readonly entry?: string | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly string[];
+            /**
+             * Bash
+             * @default []
+             */
+            readonly bash: readonly string[];
+            /**
+             * Read Paths
+             * @default []
+             */
+            readonly read_paths: readonly string[];
+            /**
+             * Write Paths
+             * @default []
+             */
+            readonly write_paths: readonly string[];
+            /**
+             * Ceiling
+             * @default []
+             */
+            readonly ceiling: readonly string[];
+            /**
+             * Own Login
+             * @default []
+             */
+            readonly own_login: readonly string[];
+            /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
+        };
+        /** ConnectedSiteIn */
+        readonly ConnectedSiteIn: {
+            /** Description */
+            readonly description?: string | null;
+            /** Entry */
+            readonly entry?: string | null;
+            /** Tools */
+            readonly tools?: readonly string[] | null;
+            /** Bash */
+            readonly bash?: readonly string[] | null;
+            /** Read Paths */
+            readonly read_paths?: readonly string[] | null;
+            /** Write Paths */
+            readonly write_paths?: readonly string[] | null;
+            /**
+             * Dry Run
+             * @default false
+             */
+            readonly dry_run: boolean;
+            /** Ceiling */
+            readonly ceiling?: readonly string[] | null;
+            /** Own Login */
+            readonly own_login?: readonly string[] | null;
+            /** Sensitive */
+            readonly sensitive?: boolean | null;
         };
         /**
          * AgentDefaultsOut
@@ -56782,6 +57044,148 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AccessListOut"];
+                };
+            };
+        };
+    };
+    readonly get_read_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReadModeSettingOut"];
+                };
+            };
+        };
+    };
+    readonly put_read_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReadModeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReadModeSettingOut"];
+                };
+            };
+        };
+    };
+    readonly reset_read_mode: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReadModeSettingOut"];
+                };
+            };
+        };
+    };
+    readonly list_connected_sites: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedSitesOut"];
+                };
+            };
+        };
+    };
+    readonly put_connected_site: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly site: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConnectedSiteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedSitesOut"];
+                };
+            };
+        };
+    };
+    readonly delete_connected_site: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly site: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ConnectedSitesOut"];
                 };
             };
         };
