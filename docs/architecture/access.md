@@ -371,7 +371,7 @@ scoped permission `use:<capability>`, which opens that capability and nothing el
 * **A line can only open what exists.** It cannot open a door the agent has not published. Read mode
   always exists: a read_only line opens it on an agent that published nothing (canopy's default
   profile) as on one that published its own `ask`. Before putting `read_only` on an agent, know that
-  it is live: `manage.py read_mode_gate` lists agents with such a line and no published `ask`.
+  it is live: `manage.py read_mode_gate` lists agents with such a line and no published `ask`. `manage.py answering_snapshot` prints how every agent answers, read-only and repeatably, so a change to the interface can be diffed.
 * **Default: nobody.** A new agent has no lines of its own; with none inherited either, only its
   owner and agent admins reach it (and anyone with `write` only by being named). Nobody gets in by being in
   the workspace.

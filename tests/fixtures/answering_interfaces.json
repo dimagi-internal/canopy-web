@@ -1,0 +1,810 @@
+{
+ "provenance": "Reconstructed from section 4 of docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md and frontend/src/components/agents/aceInterface.fixture.json, NOT read from production: the shape of each agent is the spec's (which capabilities, sites, ceilings, logins, tool and command counts), but the exact tool and command strings of echo, eva, hal, oolong, trellis and labsdata, and each agent's workspace among the ones the spec names for the eleven with nothing published, are stand-ins. Replace `agents` with a read of get_interface for each agent to make it a live capture.",
+ "agents": [
+  {
+   "slug": "ada",
+   "workspace": "dimagi",
+   "email": "ada@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "budgy",
+   "workspace": "dimagi",
+   "email": "budgy@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "fizzy",
+   "workspace": "connect",
+   "email": "fizzy@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "gshubdesk",
+   "workspace": "global-solutions",
+   "email": "gshubdesk@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "jarvis",
+   "workspace": "dimagi",
+   "email": "jarvis@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   },
+   "lines": [
+    {
+     "kind": "person",
+     "role": "editor"
+    }
+   ]
+  },
+  {
+   "slug": "lex",
+   "workspace": "strategy",
+   "email": "lex@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "muse",
+   "workspace": "strategy",
+   "email": "muse@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "neo",
+   "workspace": "commcare",
+   "email": "neo@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "otto",
+   "workspace": "commcare",
+   "email": "otto@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "sift",
+   "workspace": "connect",
+   "email": "sift@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "bailey",
+   "workspace": "marshellis",
+   "email": "bailey@dimagi-ai.com",
+   "interface": {
+    "capabilities": {}
+   }
+  },
+  {
+   "slug": "echo",
+   "workspace": "dimagi",
+   "email": "echo@dimagi-ai.com",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "Ask Echo about Dimagi's stories.",
+      "entry": "/echo:ask --thread {thread_id}",
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Write",
+       "mcp__*canopy-web__who_is_asking"
+      ],
+      "bash": [
+       "canopy email read --repo . {thread_id}",
+       "canopy email review-receipt --repo . --body-file {cwd}/.echo-ask/*",
+       "bin/echo-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.echo-ask/* --body-file {cwd}/.echo-ask/*"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": [
+       "{cwd}/.echo-ask/*"
+      ],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     }
+    }
+   }
+  },
+  {
+   "slug": "eva",
+   "workspace": "dimagi",
+   "email": "eva@dimagi-ai.com",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "Ask Eva about the office of the CEO.",
+      "entry": "/eva:ask --thread {thread_id}",
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Write",
+       "mcp__*canopy-web__who_is_asking"
+      ],
+      "bash": [
+       "canopy email read --repo . {thread_id}",
+       "canopy email review-receipt --repo . --body-file {cwd}/.eva-ask/*",
+       "bin/eva-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.eva-ask/* --body-file {cwd}/.eva-ask/*"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": [
+       "{cwd}/.eva-ask/*"
+      ],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     }
+    }
+   }
+  },
+  {
+   "slug": "hal",
+   "workspace": "dimagi",
+   "email": "hal@dimagi-ai.com",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "Ask Hal how a fleet agent is built.",
+      "entry": "/hal:ask --thread {thread_id}",
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Write",
+       "mcp__*canopy-web__who_is_asking"
+      ],
+      "bash": [
+       "canopy email read --repo . {thread_id}",
+       "canopy email review-receipt --repo . --body-file {cwd}/.hal-ask/*",
+       "bin/hal-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.hal-ask/* --body-file {cwd}/.hal-ask/*"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": [
+       "{cwd}/.hal-ask/*"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "slug": "oolong",
+   "workspace": "dimagi",
+   "email": "",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "Ask Oolong about Dimagi policy; it answers from the policy pages.",
+      "entry": "/oolong:policy-qa",
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "mcp__*canopy-web__who_is_asking"
+      ],
+      "bash": [
+       "bin/oolong-confluence search *",
+       "bin/oolong-confluence page *"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": [],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     }
+    }
+   }
+  },
+  {
+   "slug": "trellis",
+   "workspace": "dimagi",
+   "email": "trellis@dimagi-ai.com",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "Ask Trellis how canopy works and what each agent offers.",
+      "entry": "/trellis:ask --thread {thread_id}",
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Write",
+       "Skill",
+       "ToolSearch",
+       "mcp__*canopy-web__who_is_asking",
+       "mcp__*canopy-web__current_page",
+       "mcp__*canopy-web__get_interface",
+       "mcp__*canopy-web__get_agent",
+       "mcp__*canopy-web__list_agents",
+       "mcp__*canopy-web__get_access_list",
+       "mcp__*canopy-web__list_workspaces",
+       "mcp__*canopy-web__agent_setup",
+       "mcp__*canopy-web__agent_readiness",
+       "mcp__*canopy-web__list_skills",
+       "mcp__*canopy-web__get_project",
+       "mcp__*canopy-web__list_projects"
+      ],
+      "bash": [
+       "canopy email read --repo . {thread_id}",
+       "canopy email review-receipt --repo . --body-file {cwd}/.trellis-ask/*",
+       "bin/trellis-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.trellis-ask/* --body-file {cwd}/.trellis-ask/*",
+       "canopy agent list",
+       "canopy agent show *",
+       "canopy agent interface get *",
+       "canopy doctor",
+       "gh api repos/dimagi-internal/*/contents/*",
+       "gh api repos/dimagi-internal/*/commits*",
+       "gh api repos/dimagi-internal/*/pulls*",
+       "gh api repos/dimagi-internal/*/issues*",
+       "git log *",
+       "git show *",
+       "git diff *"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": [
+       "{cwd}/.trellis-ask/*"
+      ],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     },
+     "canopy": {
+      "description": "Ask about what you are looking at in canopy.",
+      "entry": null,
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Skill",
+       "ToolSearch",
+       "mcp__*canopy-web__who_is_asking",
+       "mcp__*canopy-web__current_page",
+       "mcp__*canopy-web__get_interface"
+      ],
+      "bash": [
+       "gh api repos/dimagi-internal/*/contents/*"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "canopy-web"
+      ],
+      "ceiling": []
+     }
+    }
+   }
+  },
+  {
+   "slug": "ace",
+   "workspace": "connect",
+   "email": "ace@dimagi-ai.com",
+   "interface": {
+    "version": 1,
+    "capabilities": {
+     "ask": {
+      "bash": [
+       "canopy email read --repo . {thread_id}",
+       "canopy email review-receipt --repo . --body-file {cwd}/.ace-ask/*",
+       "canopy email review-receipt --repo . --body-file {cwd}/.ace-ask/* --verdict fixed --caught *",
+       "bin/ace-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.ace-ask/* --body-file {cwd}/.ace-ask/*",
+       "bin/ace-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.ace-ask/* --body-file {cwd}/.ace-ask/* --no-run-page *"
+      ],
+      "entry": "/ace:ask --thread {thread_id}",
+      "input": {},
+      "pages": [],
+      "sites": [],
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Write",
+       "mcp__*canopy-web__who_is_asking"
+      ],
+      "ceiling": [],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "description": "Ask ACE a question by email. It answers from this thread and points you to the right person; it cannot look up or change your programme.",
+      "write_paths": [
+       "{cwd}/.ace-ask/*"
+      ]
+     },
+     "canopy": {
+      "bash": [],
+      "entry": null,
+      "input": {},
+      "pages": [],
+      "sites": [
+       "canopy-web"
+      ],
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Skill",
+       "ToolSearch",
+       "mcp__*canopy-web__who_is_asking",
+       "mcp__*canopy-web__current_page"
+      ],
+      "ceiling": [
+       "mcp__*canopy-web__list_insights",
+       "mcp__*canopy-web__list_items",
+       "mcp__*canopy-web__skill_history",
+       "mcp__*canopy-web__skill_revision_diff"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "description": "Ask about what you are looking at in canopy.",
+      "write_paths": [
+       "{cwd}/.ace-ask/*"
+      ]
+     },
+     "connect": {
+      "bash": [],
+      "entry": null,
+      "input": {},
+      "pages": [],
+      "sites": [
+       "connect-labs"
+      ],
+      "tools": [
+       "Read",
+       "Grep",
+       "Glob",
+       "Write",
+       "Skill",
+       "ToolSearch",
+       "mcp__*canopy-web__who_is_asking",
+       "mcp__*canopy-web__current_page",
+       "mcp__*ace-gdrive__drive_create_doc_from_markdown",
+       "mcp__*ace-gdrive__drive_create_folder",
+       "mcp__*ace-gdrive__drive_list_folder",
+       "mcp__*ace-gdrive__docs_get",
+       "mcp__*ace-gdrive__docs_batch_update"
+      ],
+      "ceiling": [
+       "mcp__*connect_labs__*"
+      ],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "description": "Ask about what you are looking at on Connect Labs.",
+      "write_paths": [
+       "{cwd}/.ace-ask/*"
+      ],
+      "own_login": {
+       "connect-labs": [
+        "LABS_MCP_TOKEN"
+       ]
+      }
+     }
+    }
+   },
+   "lines": [
+    {
+     "kind": "contact",
+     "capability": "connect",
+     "verified": false
+    },
+    {
+     "kind": "workspace",
+     "capability": "connect"
+    },
+    {
+     "kind": "workspace",
+     "capability": "canopy"
+    }
+   ]
+  },
+  {
+   "slug": "labsdata",
+   "workspace": "connect",
+   "email": "",
+   "interface": {
+    "capabilities": {
+     "data": {
+      "description": "Ask data questions about the workflow you are looking at",
+      "entry": "/labsdata:answer-data",
+      "sites": [
+       "connect-labs"
+      ],
+      "data": "sensitive",
+      "ceiling": [
+       "mcp__*connect_labs__*"
+      ],
+      "pages": [],
+      "tools": [
+       "Read",
+       "Skill",
+       "ToolSearch",
+       "mcp__*canopy-web__who_is_asking",
+       "mcp__*canopy-web__current_page"
+      ],
+      "bash": [],
+      "read_paths": [
+       "{cwd}/**"
+      ],
+      "write_paths": []
+     }
+    }
+   },
+   "published_by": "ada@dimagi-ai.com",
+   "published_at": "2026-10-23T03:10:37+00:00",
+   "lines": [
+    {
+     "kind": "contact",
+     "capability": "data",
+     "verified": false
+    },
+    {
+     "kind": "workspace",
+     "capability": "data"
+    }
+   ]
+  }
+ ],
+ "corner_cases": [
+  {
+   "slug": "corner_pages",
+   "why": "a capability a page selects (`pages`)",
+   "page_resource": "stock://item/1",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     },
+     "stock": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [
+       "stock://*"
+      ],
+      "sites": [],
+      "ceiling": []
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_read_named",
+   "why": "a read-mode override published as `read`, not `ask`",
+   "interface": {
+    "capabilities": {
+     "read": {
+      "description": "own read mode",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_both_names",
+   "why": "both read-mode names published: `ask` wins",
+   "interface": {
+    "capabilities": {
+     "read": {
+      "description": "r",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     },
+     "ask": {
+      "description": "a",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [],
+      "ceiling": []
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_two_sites",
+   "why": "one capability on two sites, a login on each",
+   "interface": {
+    "capabilities": {
+     "door": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a",
+       "site-b"
+      ],
+      "ceiling": [
+       "mcp__a__*"
+      ],
+      "own_login": {
+       "site-a": [
+        "A_TOKEN"
+       ],
+       "site-b": [
+        "B_TOKEN"
+       ]
+      }
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_union",
+   "why": "two capabilities on one site: the ceilings union",
+   "interface": {
+    "capabilities": {
+     "one": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": [
+       "mcp__a__x"
+      ],
+      "own_login": {
+       "site-a": [
+        "Z_TOKEN"
+       ]
+      }
+     },
+     "two": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": [
+       "mcp__a__y"
+      ],
+      "own_login": {
+       "site-a": [
+        "A_TOKEN"
+       ]
+      }
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_unbounded",
+   "why": "two capabilities on one site, one with no ceiling: no ceiling",
+   "interface": {
+    "capabilities": {
+     "one": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": [
+       "mcp__a__x"
+      ]
+     },
+     "two": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": []
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_mixed",
+   "why": "a sensitive and an ordinary capability on one agent",
+   "published_by": "ada@dimagi-ai.com",
+   "published_at": "2026-10-23T03:10:37+00:00",
+   "interface": {
+    "capabilities": {
+     "plain": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": []
+     },
+     "secret": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-b"
+      ],
+      "ceiling": [],
+      "data": "sensitive"
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_sensitive_ask",
+   "why": "a read-mode override that handles sensitive data: naming `read` must not dodge it",
+   "published_by": "ada@dimagi-ai.com",
+   "published_at": "2026-10-23T03:10:37+00:00",
+   "interface": {
+    "capabilities": {
+     "ask": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": [],
+      "data": "sensitive"
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  },
+  {
+   "slug": "corner_no_publisher",
+   "why": "sensitive, with nobody on record as publishing it",
+   "interface": {
+    "capabilities": {
+     "secret": {
+      "description": "",
+      "entry": null,
+      "tools": [
+       "Read"
+      ],
+      "bash": [],
+      "read_paths": [],
+      "write_paths": [],
+      "pages": [],
+      "sites": [
+       "site-a"
+      ],
+      "ceiling": [],
+      "data": "sensitive"
+     }
+    }
+   },
+   "workspace": "connect",
+   "email": ""
+  }
+ ]
+}
