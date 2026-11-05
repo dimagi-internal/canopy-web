@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .. import canopy_release, clis  # noqa: F401  (a test patches `models.canopy_release`)
 
+from .agent_state import AgentStateDocument  # noqa: F401
 from .credentials import (  # noqa: F401
     RunnerAccessToken,
     RunnerCredential,

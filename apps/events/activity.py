@@ -42,9 +42,15 @@ RUNNER_REKEYED = "runner.rekeyed"
 #: canopy-web changed a runner fleet's size (`apps/harness/fleets.py`): `from` and
 #: `to` are the group's desired capacity, so the series is how many members ran.
 RUNNER_FLEET_SCALED = "runner.fleet.scaled"
+#: What a coach did, from its own login inside its running turn
+#: (`apps/canopy_sessions/api_coaching.py`): a note went out, how the person replied, and a
+#: friction pattern was recorded. Ids and closed words only; `finding_routed` names no person.
+COACHING_NOTE_SENT = "coaching.note_sent"
+COACHING_REPLY = "coaching.reply"
+COACHING_FINDING_ROUTED = "coaching.finding_routed"
 KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTING_CHANGED, MCP_CALL,
          RUNNER_INVITED, RUNNER_INVITATION_APPROVED, RUNNER_PAIRED, RUNNER_PAIRING_APPROVED, RUNNER_REKEYED,
-         RUNNER_FLEET_SCALED)
+         RUNNER_FLEET_SCALED, COACHING_NOTE_SENT, COACHING_REPLY, COACHING_FINDING_ROUTED)
 
 
 def _actor_kind(actor, agent=None) -> str:

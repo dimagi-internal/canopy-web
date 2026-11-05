@@ -335,6 +335,8 @@ from apps.harness.api_runner_fleets import router as runner_fleets_router  # noq
 from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
 from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
 from apps.harness.api_runner_sessions import router as runner_sessions_router  # noqa: E402
+from apps.canopy_sessions.api_coaching import router as coaching_facts_router  # noqa: E402
+from apps.harness.api_agent_state import router as agent_state_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.api_turn_agent_token import router as turn_agent_token_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
@@ -454,6 +456,8 @@ api.add_router("/agents", agent_aws_router)  # one hour of a named read-only AWS
 # new agent — the barrier this feature exists to remove.
 api.add_router("/oauth", google_oauth_router)
 api.add_router("/agents", schedules_router)  # recurring turns, under the agents namespace
+api.add_router("/agents", agent_state_router)  # one JSON document an agent backs up here
+api.add_router("/coaching", coaching_facts_router)  # a coach's analytics facts, from its running turn
 api.add_router("/agents", contributors_router)  # ideas + contributor pages on a project (hal T69)
 api.add_router("/agents", agent_capabilities_router)  # what an agent declares it can lease
 api.add_router("/capabilities", capabilities_router)  # grants + leases (cloud capabilities)

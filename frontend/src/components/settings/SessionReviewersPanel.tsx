@@ -32,6 +32,8 @@ export function coachLabel({ agent, name }: CoachNames): string {
 // - deleting: no route deletes a session's messages; `reset` re-ships them, `archive` keeps them.
 // - weekly limit, record, replies, forget: the coach's own repo (config/coach.json,
 //   bin/trellis-coach-ledger, bin/trellis-friction, bin/trellis-email).
+// - the backup's readers: apps/harness/agent_state.py (Agent.is_admin includes a workspace owner).
+// - the records of notes and replies: apps/canopy_sessions/api_coaching.py, kept by Activity.
 const CONSENT: { title: string; body: (name: string) => string }[] = [
   {
     title: 'What it reads',
@@ -61,7 +63,7 @@ const CONSENT: { title: string; body: (name: string) => string }[] = [
   {
     title: 'What it keeps',
     body: (n) =>
-      `A small record per person on the machine that runs ${n}: the date of each note, which habits it was about, where in which session (a session id and message number, never the words), the mail thread, and how you replied (useful, wrong, already knew, pause). Nothing you wrote is copied into it. ${n} may also note, without your name, which kinds of trouble many people run into, such as a step canopy explains badly. Those notes are checked to hold no names, quotes or session ids, and nothing is proposed to anyone from fewer than three different people.`,
+      `A small record per person on the machine that runs ${n}, with a backup copy on canopy so it survives a move to another machine. Only ${n} itself, its owner and admins, and the owner of its workspace can read the backup. It holds your email address and the date of each note, which habits it was about, where in which session (a session id and message number, never the words), the mail thread, and how you replied (useful, wrong, already knew, pause). Nothing you wrote is copied into it. ${n} may also note, without your name, which kinds of trouble many people run into, such as a step canopy explains badly. Those notes are checked to hold no names, quotes or session ids, and nothing is proposed to anyone from fewer than three different people. Canopy also records, as ids against your account and with none of your words, that a note went to you and which of those replies you gave.`,
   },
 ]
 
@@ -73,7 +75,7 @@ const CONSENT_ACTIONS: ((name: string) => string)[] = [
   () =>
     'Sessions already uploaded stay on canopy. You cannot delete one yourself today: archiving only takes it off your active list, and it stays stored and readable. Only a workspace retention rule, where one is on, can remove them.',
   (n) =>
-    `Have ${n} forget you ("forget my coaching record") in a full session with it, not read mode, or ask one of its admins: that deletes your record and the pattern notes that came from you. It cannot unsend email, clear its logs or mailbox, or delete your sessions from canopy.`,
+    `Have ${n} forget you ("forget my coaching record") in a full session with it, not read mode, or ask one of its admins: that deletes your record, its backup copy (at once, or at its next full run if the backup cannot be reached then) and the pattern notes that came from you. It cannot unsend email, clear its logs or mailbox, remove canopy's records that a note went out and how you replied, or delete your sessions from canopy.`,
 ]
 
 /** "What does this mean?" beside the box. Outside the box's `<label>`, so opening

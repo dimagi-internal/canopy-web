@@ -331,6 +331,17 @@ projects)** (an agent's repo, or any repo URL); and **Add repo** on `/ide`.
 - A repo that is not an agent's also needs the owner's opt-in (above) before repo
   work routes to it.
 
+## An agent's state document
+
+What an agent keeps on its box is lost when it moves to another. `AgentStateDocument` is one JSON document per agent, a backup on canopy-web that the agent writes after each change and reads only when its local copy is missing (`apps/harness/agent_state.py`, routes in `api-surface.md`). The box's copy stays the working one. It lives in a framework app, so it is named for what it is and canopy-web never looks inside it; it is not an analytics input and no fact is recorded about it. Rules:
+
+- **Write:** the agent's own login, inside a running, unconfined turn of that agent (`turn_asker.serving_turn`). A person's own full turn may write, so their request to be forgotten reaches the backup.
+- **Read:** the agent's owner and admins (`Agent.is_admin`, which includes a workspace owner); and that same login only when its turn answers to nobody or to one of them (`turn_asker.standing`, the rule of `access.review_grantors`), because a read returns everyone's records. A colleague's turn can write and cannot read. Everyone else gets the 404 of a missing agent.
+- **Refused always:** a stored token of the agent's login, a session-scoped login on a laptop, a finished or confined turn, a caller token. So an agent on a laptop runner has no backup.
+- **Version:** every write names the version it read; a stale one gets 409 and changes nothing. The agent reconciles and writes again. The cap is 1 MiB of compact JSON.
+
+MCP serves these like any route, and the call log records argument names, never the document. An agent keeping people's records should deny-rail the tools for its model, so only its script reads the document (the coach's `config/gating.json`).
+
 ## Which agents a box may hold
 
 `apps/agents/holding.py::runner_may_hold_agent(runner, agent)` (re-exported as `agents.services.runner_may_hold_agent`) — true only when
