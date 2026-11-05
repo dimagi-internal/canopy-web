@@ -273,8 +273,9 @@ def commands(request: HttpRequest) -> HttpResponse:
     if word in ("", "help", "agents"):
         return _ephemeral(services.agent_list(installation)
                           + " Add `--history` before your ask to give the agent this channel's recent"
-                          " messages: `/canopy hal --history --min 30 pick this up`, `--history --msgs 5`"
-                          " or `--history 9am` (your Slack timezone)."
+                          " messages: `/canopy hal --history --min 30 pick this up`, `--history --msgs 5`,"
+                          " `--history --threads 3` or `--history 9am` (your Slack timezone)."
+                          " Or paste a link to a thread in your ask, and the agent gets that thread."
                           " `/hal read-channel <ask>` reads everything in this channel since hal's last read"
                           " (a channel a workspace admin allow-listed for it)."
                           " `/canopy cloud` sends anything of yours stuck behind an offline"
@@ -296,8 +297,9 @@ def commands(request: HttpRequest) -> HttpResponse:
         usage = f"/{agent.slug}" if command == agent.slug else f"/canopy {agent.slug}"
         return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>` — or"
                           f" `{usage} --history --min 30 <ask>` to include the channel's last 30 minutes"
-                          " (or `--history --msgs 5` for its last 5 messages, or `--history 9am` for"
-                          " everything since 9 on your clock). Start it with `--codex` or `--claude`"
+                          " (or `--history --msgs 5` for its last 5 messages, `--history --threads 3` for"
+                          " its 3 most recently active threads, or `--history 9am` for everything since 9"
+                          " on your clock), or paste a link to a thread. Start it with `--codex` or `--claude`"
                           " to choose the agent CLI the thread runs on.")
     # A slash command always starts a new thread, so only the agent can refuse its
     # CLI — asked before the public anchor, which would otherwise announce an ask
