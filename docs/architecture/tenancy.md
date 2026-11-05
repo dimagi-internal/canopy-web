@@ -709,8 +709,8 @@ THE predicate; every surface below asks it, one test each in
   other per-turn state under `~/.canopy` are denied by name (`sensitive_data_settings`). A
   member's `who_is_asking` is gated like its REST twin (`can_read_turn_content`), so a
   sensitive turn is "turn not found".
-- **No route around the gate** (`tests/test_sensitive_read_doors.py`,
-  `tests/test_sealed_server_doors.py`): a session minted from a
+- **No route around the gate** (`tests/test_sensitive_read_routes.py`,
+  `tests/test_sealed_server_routes.py`): a session minted from a
   token is refused by the app-view routes (`app_views_api.browser_only`) and the panel's
   own token (`embed_api.embed_self_token`), both via `is_machine`, and by the chat socket
   (`auth_method="minted"`); every page route — its state and actions, declared, listed,
