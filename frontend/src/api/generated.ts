@@ -41101,6 +41101,11 @@ export interface components {
              * @default false
              */
             readonly internal: boolean;
+            /**
+             * Plugin Updated At
+             * @default
+             */
+            readonly plugin_updated_at: string;
         };
         /** SlashCommandsIn */
         readonly SlashCommandsIn: {

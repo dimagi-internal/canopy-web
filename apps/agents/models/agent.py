@@ -686,9 +686,9 @@ class AgentSkill(models.Model):
     internal = models.BooleanField(
         default=False, help_text="Claude loads this skill; a person is not offered it as a command."
     )
-    # Who wrote the row: the agent itself (`PUT …/skills/`, authoritative) or
-    # canopy-web from what a runner reports it can run (`skill_catalog`, a
-    # fallback that never overwrites a published catalog).
+    # Who wrote the row: the agent itself (`PUT …/skills/`) or canopy-web from what
+    # a runner reports it can run (`skill_catalog`, which merges a report into the
+    # catalog and keeps what a published row alone can say).
     PUBLISHED, FROM_RUNNER = "published", "runner"
     source = models.CharField(max_length=16, default="published")
     created_at = models.DateTimeField(auto_now_add=True)

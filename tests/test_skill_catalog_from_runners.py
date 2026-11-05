@@ -33,8 +33,10 @@ def w(monkeypatch):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     trellis = Agent.objects.create(slug="trellis", name="Trellis", workspace=ws, owner=jj,
                                    repo_url="https://github.com/dimagi-internal/trellis")
-    box = Runner.objects.create(name="cloud", kind=Runner.CLOUD, owner=jj, workspace=ws)
-    other = Runner.objects.create(name="theirs", kind=Runner.EMDASH, owner=stranger, workspace=ws)
+    box = Runner.objects.create(name="cloud", kind=Runner.CLOUD, owner=jj, workspace=ws,
+                                status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+    other = Runner.objects.create(name="theirs", kind=Runner.EMDASH, owner=stranger, workspace=ws,
+                                  status=Runner.ONLINE, last_heartbeat_at=timezone.now())
     monkeypatch.setattr(alerts, "SOURCES", ["apps.agents.alerts_skill_catalog"])
     monkeypatch.setattr(alerts, "send_to_user", lambda user, title, body, url: False)
     return {"jj": jj, "ws": ws, "trellis": trellis, "box": box, "other": other}
@@ -73,7 +75,8 @@ def test_it_follows_the_repo_and_keeps_what_a_row_already_says(w):
     assert rows["turn"].description == "new words"
 
 
-def test_a_published_catalog_is_never_touched(w):
+def test_a_report_that_cannot_date_its_copy_leaves_a_published_catalog_alone(w):
+    # An older runner's report, which could be older than what was published.
     AgentSkill.objects.create(agent=w["trellis"], name="mine", description="published")
     _report(w["box"], [_cmd("trellis:turn")])
     assert skill_catalog.refresh(w["trellis"]) is None
@@ -104,9 +107,148 @@ def test_the_mark_follows_the_report_and_a_report_without_it_means_not_internal(
     assert _catalog(w["jj"], w["trellis"])["shipping"]["internal"] is False
 
 
-def test_a_published_catalog_keeps_its_rows_and_takes_only_the_mark(w):
-    # A publish cannot say a skill is internal, so only a report can mark it. ACE's
-    # catalog is published and goes stale: rows the report does not name are left be.
+def _dated(name, description="d", installed="2026-11-04T10:00:00.000Z", **kw):
+    return {**_cmd(name, description, **kw), "plugin_updated_at": installed}
+
+
+def _published(agent, name, *, at="2026-07-20T00:00:00Z", **kw):
+    row = AgentSkill.objects.create(agent=agent, name=name, **kw)
+    AgentSkill.objects.filter(pk=row.pk).update(created_at=at)
+    return row
+
+
+def test_a_published_catalog_stays_fresh_and_keeps_what_was_published(w):
+    agent = w["trellis"]
+    _published(agent, "turn", description="old words", url="https://x/turn", improvement_note="n",
+               launchable=True, args_hint="scope")
+    _published(agent, "gone-from-the-repo", improvement_note="n")
+    _report(w["box"], [_dated("trellis:turn", "new words", args="other"), _dated("trellis:added", "added"),
+                       {**_dated("trellis:shipping"), "internal": True}])
+
+    assert skill_catalog.refresh(agent) == 3
+
+    rows = _catalog(w["jj"], agent)
+    assert set(rows) == {"turn", "added", "shipping"}
+    turn = rows["turn"]
+    assert (turn["url"], turn["improvement_note"], turn["launchable"], turn["args_hint"]) == (
+        "https://x/turn", "n", True, "scope")
+    assert turn["description"] == "new words"
+    assert rows["added"]["launchable"] is False and rows["shipping"]["internal"] is True
+    sources = dict(agent.skills.values_list("name", "source"))
+    assert sources == {"turn": "published", "added": "runner", "shipping": "runner"}
+
+
+def test_a_description_cut_at_the_boxs_limit_does_not_replace_a_published_one(w):
+    agent = w["trellis"]
+    _published(agent, "turn", description="the whole published description")
+    _report(w["box"], [_dated("trellis:turn", "x" * skill_catalog.DESCRIPTION_LIMIT)])
+    skill_catalog.refresh(agent)
+    assert _catalog(w["jj"], agent)["turn"]["description"] == "the whole published description"
+
+
+def test_acps_label_is_not_part_of_a_description(w):
+    _report(w["box"], [_cmd("trellis:turn", "(trellis) Do a turn.", source="acp")])
+    skill_catalog.refresh(w["trellis"])
+    assert _catalog(w["jj"], w["trellis"])["turn"]["description"] == "Do a turn."
+
+
+def test_a_copy_installed_before_the_publish_changes_only_the_mark(w):
+    agent = w["trellis"]
+    _published(agent, "published-today", description="words", at="2026-11-04T12:00:00Z")
+    _report(w["box"], [{**_dated("trellis:published-today", "older"), "internal": True},
+                       _dated("trellis:older-skill")])
+    assert skill_catalog.refresh(agent) is None
+    rows = _catalog(w["jj"], agent)
+    assert set(rows) == {"published-today"}
+    assert rows["published-today"]["description"] == "words" and rows["published-today"]["internal"] is True
+
+
+def test_the_box_with_the_newest_copy_wins_whichever_reported_last(w):
+    agent = w["trellis"]
+    laptop = Runner.objects.create(name="laptop", kind=Runner.EMDASH, owner=w["jj"], workspace=w["ws"],
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+    _report(w["box"], [_dated("trellis:current", installed="2026-11-04T10:00:00Z")])
+    # The stale box restarted, so its unchanged list is the most recent report.
+    _report(laptop, [_dated("trellis:old", installed="2026-08-01T10:00:00Z")])
+    assert skill_catalog.refresh(agent) == 1
+    assert set(_catalog(w["jj"], agent)) == {"current"}
+
+
+def test_a_box_that_has_gone_is_not_asked(w):
+    _report(w["box"], [_cmd("trellis:turn")])
+    Runner.objects.filter(pk=w["box"].pk).update(last_heartbeat_at=timezone.now() - timedelta(days=30))
+    assert skill_catalog.refresh(w["trellis"]) is None
+    assert w["trellis"].skills.count() == 0
+
+
+def test_a_box_reporting_none_of_the_agents_skills_wipes_nothing(w):
+    agent = w["trellis"]
+    _published(agent, "turn")
+    _report(w["box"], [_dated("ace:run"), _cmd("compact", source="acp")])
+    assert skill_catalog.refresh(agent) is None
+    assert set(_catalog(w["jj"], agent)) == {"turn"}
+
+
+def test_a_report_at_its_size_limit_adds_but_removes_nothing(w):
+    agent = w["trellis"]
+    _published(agent, "zebra", improvement_note="n")
+    padding = [_cmd(f"other:{i}") for i in range(skill_catalog.REPORT_LIMIT - 1)]
+    _report(w["box"], [*padding, _dated("trellis:added")])
+    assert skill_catalog.refresh(agent) == 2
+    assert set(_catalog(w["jj"], agent)) == {"zebra", "added"}
+
+
+def test_a_report_that_would_remove_most_of_a_catalog_removes_nothing(w, caplog):
+    agent = w["trellis"]
+    for i in range(10):
+        _published(agent, f"skill-{i}")
+    _report(w["box"], [_dated("trellis:skill-0"), _dated("trellis:skill-1"), _dated("trellis:added")])
+    assert skill_catalog.refresh(agent) == 11
+    assert "kept 8 of 10" in caplog.text
+
+
+def test_removing_up_to_half_of_a_catalog_is_an_ordinary_change(w):
+    agent = w["trellis"]
+    for i in range(10):
+        _published(agent, f"skill-{i}")
+    _report(w["box"], [_dated(f"trellis:skill-{i}") for i in range(5)])
+    assert skill_catalog.refresh(agent) == 5
+
+
+def test_a_skill_only_acp_remembers_is_not_a_skill_in_a_dated_report(w):
+    agent = w["trellis"]
+    _published(agent, "deleted-last-week")
+    _report(w["box"], [_dated("trellis:turn"), _cmd("trellis:deleted-last-week", source="acp")])
+    assert skill_catalog.refresh(agent) == 1
+    assert set(_catalog(w["jj"], agent)) == {"turn"}
+
+
+def test_a_publish_still_replaces_the_merged_catalog_and_an_older_copy_cannot_undo_it(w):
+    agent = w["trellis"]
+    _published(agent, "turn")
+    _report(w["box"], [_dated("trellis:turn"), _dated("trellis:added")])
+    skill_catalog.refresh(agent)
+    c = Client()
+    c.force_login(w["jj"])
+    resp = c.put(f"/api/agents/{agent.slug}/skills/", {"skills": [{"name": "only-this", "launchable": True}]},
+                 content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert skill_catalog.refresh(agent) is None  # the copy on the box predates that publish
+    assert set(_catalog(w["jj"], agent)) == {"only-this"}
+
+
+def test_the_tick_reads_the_reports_once_however_many_agents(w, monkeypatch):
+    Agent.objects.create(slug="second", name="Second", workspace=w["ws"], owner=w["jj"])
+    _report(w["box"], [_dated("trellis:turn"), _dated("second:turn")])
+    calls, real = [], skill_catalog._reports
+    monkeypatch.setattr(skill_catalog, "_reports", lambda: calls.append(1) or real())
+    assert skill_catalog.refresh_all() == {"trellis": 1, "second": 1}
+    assert calls == [1]
+
+
+def test_an_older_report_can_still_mark_a_published_catalog(w):
+    # A publish cannot say a skill is internal, so only a report can mark it, even
+    # one too old or undated to change the rows.
     AgentSkill.objects.create(agent=w["trellis"], name="shipping", description="published words")
     AgentSkill.objects.create(agent=w["trellis"], name="turn", launchable=True)
     AgentSkill.objects.create(agent=w["trellis"], name="gone-from-the-repo")
