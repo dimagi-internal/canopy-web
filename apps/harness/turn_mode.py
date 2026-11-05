@@ -140,9 +140,9 @@ def editor_cap(turn, agent) -> Resolved | None:
 
     if turn.initiator_kind == who.SYSTEM:
         return _accountable_cap(turn, agent)
-    from apps.agents import access
+    from apps.agents import turn_context
 
-    if not access.decide_for_turn(turn, agent).manual_only:
+    if not turn_context.for_turn(turn, agent).review.manual_only:
         return None
     email = turn.initiator_user.email if turn.initiator_user is not None else "a member"
     return Resolved(MANUAL, f"editor {email}: manual — outbound needs an admin of {agent.slug}")

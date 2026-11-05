@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.agents import access, grants, roles
+from apps.agents import access, grants, roles, turn_context
 from apps.agents.interface import _held_permissions
 from apps.agents.models import Agent, AgentGrant
 from apps.workspaces.models import Workspace
@@ -73,8 +73,8 @@ def test_editing_a_role_changes_its_holders_from_the_next_read(w):
 def test_the_envelope_role_is_the_key_and_permissions_are_the_contract(w):
     make_role(w["root"], "connector", {roles.use("connect")})
     _line(w["agent"], w["door"], "connector")
-    d = access.decide(w["agent"], w["door"], verified=True, capability="connect")
-    assert d.agent_role == "connector"
+    d = turn_context.for_asker(w["agent"], w["door"], verified=True, requested="connect")
+    assert d.standing.agent_role == "connector"
     assert "use:connect" in _held_permissions(d, "connect")
 
 

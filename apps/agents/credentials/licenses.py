@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.harness.models import Turn
 
-from .. import access
+from .. import access, turn_context
 from ..models import AgentLicense
 
 
@@ -36,7 +36,7 @@ class LicenseRefusedError(Exception):
 
 def _decision(agent, user):
 
-    return access.decide(agent, user, verified=True, origin=Turn.ORIGIN_LOCAL)
+    return turn_context.for_asker(agent, user, verified=True, channel=Turn.ORIGIN_LOCAL)
 
 
 def _row(agent, user) -> AgentLicense:
@@ -61,8 +61,8 @@ def request(agent, user) -> AgentLicense:
             + f"; ask an admin of {agent.slug} to approve it again")
     decision = _decision(agent, user)
     if decision.access != access.FULL:
-        why = decision.reason or (f"{agent.slug}'s caller list gives you "
-                                  f"{decision.capability or 'no'} access, not the whole agent")
+        why = decision.refusal.why if decision.refused else (f"{agent.slug}'s caller list gives you "
+                                                             f"{decision.stamped} access, not the whole agent")
         AgentLicense.objects.filter(pk=lic.pk, status=AgentLicense.REQUESTED).update(note=why[:300])
         raise LicenseRefusedError(
             f"you may not use {agent.slug} directly: {why}. Your request is recorded for "

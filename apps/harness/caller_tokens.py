@@ -83,15 +83,15 @@ def is_caller_scoped(turn: Turn) -> bool:
     answering a colleague it had given the whole agent). A turn with no agent (a project
     turn or project chat) has no agent to act as, so it acts as its verified
     asker (`_project_asker`); with no such person it gets no token at all."""
-    from apps.agents import access
+    from apps.agents import turn_context
 
     if turn.capability:
         return False            # confined: has its own token
     agent = turn.acting_agent
     if agent is None:
         return _project_asker(turn) is not None
-    d = access.decide_for_turn(turn, agent)
-    return d.access == access.FULL and d.basis not in _OPERATORS
+    d = turn_context.for_turn(turn, agent)
+    return d.access == turn_context.FULL and d.basis not in _OPERATORS
 
 
 @dataclass

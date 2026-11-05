@@ -23,7 +23,7 @@ import uuid
 from django.db import transaction
 from django.utils import timezone
 
-from apps.agents import access as agent_access
+from apps.agents import turn_context
 from apps.agents import interface as agent_iface
 from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.canopy_sessions import access, control, doors, lifecycle, services
@@ -63,9 +63,9 @@ def _reason(agent, user, session) -> str:
     if not wsvc.is_member(user, agent.workspace_id):
         return (f"{name} is in the {agent.workspace_id} workspace, which you are not in, "
                 "so you could not read its reply.")
-    decision = agent_access.decide(agent, user, verified=True, origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
-    if decision.access == agent_access.NONE:
-        return decision.reason or f"{name} does not take work from you."
+    decision = turn_context.for_asker(agent, user, verified=True, channel=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    if decision.refused:
+        return decision.refusal.why
     if not session.messages.exists():
         return (f"canopy does not hold this session's messages, so {name} would have nothing to read. "
                 "Load its full history on this page first.")

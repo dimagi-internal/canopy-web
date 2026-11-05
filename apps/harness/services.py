@@ -59,19 +59,19 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     in the turn log). Every door that makes an agent work — the harness API, a
     chat send, Slack, email — comes through here.
     """
-    from apps.agents import access
+    from apps.agents import turn_context
 
     agent = turn.acting_agent
     if agent is None:
         return
-    decision = access.decide_for_turn(turn, agent, requested)
-    cap = decision.stamp
+    resolved = turn_context.for_turn(turn, agent, requested)
+    cap = resolved.stamped
     if cap == "":
         return
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
-        turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
+        turn.result_note = f"not run: {resolved.refusal.why}"
         fields = ["status", "finished_at", "result_note"]
         if sensitivity.is_sensitive(turn):
             # Ended before it began, so `turn_close.close_turn` — where a sensitive

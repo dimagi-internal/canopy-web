@@ -47,7 +47,7 @@ from apps.harness.runners import can_administer_runner
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import grants, roles
+from . import grants, roles, turn_context
 from . import interface as iface_mod
 from .standings import Standing, Standings, standing_of
 
@@ -56,6 +56,8 @@ from .standings import Standing, Standings, standing_of
 OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = cc.OWNER, cc.ADMIN, cc.MEMBER, cc.CONTACT, cc.SYSTEM
 #: What a turn may reach.
 FULL, CONFINED, NONE = "full", "confined", "none"
+#: What a roster row says of someone refused.
+ROSTER_REFUSED = "none"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -361,9 +363,9 @@ def may_edit_agent(user, agent, *, standing: Standing | None = None, lines=None)
     if ob is not None:
         user = ob.user
         standing = lines = None
-    d = decide(agent, user, verified=True, origin="canopy_web", standing=standing, lines=lines)
-    allowed = d.access == FULL and (d.agent_role in (roles.OWNER, roles.ADMIN, roles.SYSTEM)
-                                    or roles.holds(d.permissions, roles.AGENT_EDIT))
+    d = turn_context.for_asker(agent, user, verified=True, channel="canopy_web", standing=standing, lines=lines)
+    allowed = d.access == FULL and (d.standing.agent_role in (roles.OWNER, roles.ADMIN, roles.SYSTEM)
+                                    or roles.holds(d.standing.permissions, roles.AGENT_EDIT))
     if ob is not None and allowed:
         turn_asker.note(ob, f"edit {agent.slug}")
     return allowed
@@ -463,12 +465,13 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
         else:
             held, basis = MEMBER, "Workspace member"
         if held == MEMBER:
-            d = decide(agent, user, verified=True, origin="canopy_web", standing=standings.of(user, agent),
-                       lines=lines)
-            caps = iface_mod.reachable(d.permissions, iface) if d.access == CONFINED else []
-            access, manual_only, may_auto = d.access, d.manual_only, False
-            role, source, via = d.agent_role, d.source, d.via
-            if d.source == "system":
+            d = turn_context.for_asker(agent, user, verified=True, channel="canopy_web",
+                                       standing=standings.of(user, agent), lines=lines)
+            caps = iface_mod.reachable(d.standing.permissions, iface) if d.access == CONFINED else []
+            # The roster's own word for a refusal, which its readers (the API, the vault, topology) know.
+            access, manual_only, may_auto = ROSTER_REFUSED if d.refused else d.access, d.review.manual_only, False
+            role, source, via = d.standing.agent_role, d.standing.source, d.standing.via
+            if d.standing.source == "system":
                 via = "The agent's own login: it acts as the agent itself"
         else:
             access, caps, manual_only, may_auto = FULL, [], False, True

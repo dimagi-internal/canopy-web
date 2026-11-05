@@ -39,9 +39,9 @@ def _on_a_runner(available) -> str:
 
 def statement(context, agent, turn, *, runner=None) -> tuple[CredentialLine, ...]:
     from apps.harness import caller_tokens, turn_agent_tokens  # noqa: PLC0415 — they ask the rule
-    from apps.harness.models import Turn  # noqa: PLC0415
+    from apps.harness.models import Turn  # noqa: PLC0415 — harness imports this package
 
-    from . import delegations  # noqa: PLC0415
+    from . import delegations  # noqa: PLC0415 — it reads harness modules that ask the rule
 
     if context.refused:
         return tuple(CredentialLine(name, kind, NO, "a refused turn does not run")

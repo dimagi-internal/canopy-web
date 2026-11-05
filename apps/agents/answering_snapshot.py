@@ -14,7 +14,6 @@ never from a row it writes.
 """
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -36,7 +35,7 @@ from apps.tokens.models import AppCredential
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, agent_card, answering, roles, sensitive_data, topology
+from . import access, agent_card, answering, roles, sensitive_data, topology, turn_context
 from . import interface as iface_mod
 from .models import Agent, AgentGrant, AgentRole
 from .setup import runner_takers
@@ -272,15 +271,11 @@ def _matrix(agent, caps, sites, members, roster, standings) -> dict:
                 turn = probe_turn(user=who if is_user else None, contact=None if is_user else who,
                                   site=site, sensitive=sensitive)
             by_context[context] = {
-                ask or "(free-form)": _decision(access.decide(
-                    agent, who, verified=isinstance(who, get_user_model()), capability=ask, turn=turn,
+                ask or "(free-form)": answer_of(turn_context.for_asker(
+                    agent, who, verified=isinstance(who, get_user_model()), requested=ask, turn=turn,
                     standing=standing, lines=lines))
                 for ask in asks}
     return out
-
-
-def _decision(d) -> dict:
-    return {**dataclasses.asdict(d), "permissions": sorted(d.permissions), "stamp": d.stamp}
 
 
 def answer_of(ctx) -> dict:

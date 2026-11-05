@@ -30,7 +30,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access
+from . import access, turn_context
 from . import interface as iface_mod
 from .models import Agent
 from .tree import agents_in_tree
@@ -67,12 +67,12 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
     elif explicit:
         out.update(access="full", basis=ADMIN, can_revoke=may_manage)
     else:
-        d = access.decide(dst, login, verified=True, standing=st)
+        d = turn_context.for_asker(dst, login, verified=True, standing=st)
         iface = dst.interface or {}
-        if d.access == access.FULL:
+        if d.access == turn_context.FULL:
             out.update(access="full", basis=EDITOR)
-        elif d.access == access.CONFINED:
-            caps = iface_mod.reachable(d.permissions, iface)
+        elif d.access == turn_context.CONFINED:
+            caps = iface_mod.reachable(d.standing.permissions, iface)
             out.update(access="confined", basis=CAPABILITIES, capabilities=caps)
         else:
             out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE

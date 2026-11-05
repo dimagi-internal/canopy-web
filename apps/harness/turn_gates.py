@@ -10,7 +10,7 @@ from __future__ import annotations
 from django.http import HttpRequest
 from ninja.errors import HttpError
 
-from apps.agents import access
+from apps.agents import access, turn_context
 from apps.agents.gates import agent_for_work
 from apps.agents.services import runner_may_hold_agent
 from apps.workspaces import permissions as perms
@@ -241,7 +241,7 @@ def check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> Non
     # An agent acting on behalf of the person in its turn (turn_asker) asks as THEM — and
     # the claim re-checks the requester, so they are recorded as it.
     requester = turn_asker.subject(request.user)
-    if access.decide(agent, requester, verified=verified, origin=payload.origin).may_request_auto:
+    if turn_context.for_asker(agent, requester, verified=verified, channel=payload.origin).review.may_request_auto:
         ob = turn_asker.of(request.user)
         if ob is not None:
             turn_asker.note(ob, f"run {agent.slug}'s turn auto")
@@ -262,7 +262,7 @@ def check_access(request, payload: TurnIn, agent, initiator) -> None:
     editor or above and is refused only by a future tightening; it is asked here
     anyway so this door can never disagree with the others."""
     user = request.user if getattr(request.user, "is_authenticated", False) else None
-    d = access.decide(agent, user, verified=initiator.kind == who.USER
-                      and initiator.assurance in TURN_MODE_VERIFIED, origin=payload.origin)
-    if d.access == access.NONE:
-        raise HttpError(403, d.reason or f"{agent.slug} does not take work from you")
+    d = turn_context.for_asker(agent, user, verified=initiator.kind == who.USER
+                               and initiator.assurance in TURN_MODE_VERIFIED, channel=payload.origin)
+    if d.refused:
+        raise HttpError(403, d.refusal.why)

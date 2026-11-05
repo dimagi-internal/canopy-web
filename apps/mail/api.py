@@ -22,7 +22,7 @@ from ninja import File, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
-from apps.agents import access
+from apps.agents import turn_context
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
@@ -413,9 +413,9 @@ def _agent_full(user, route) -> None:
         raise HttpError(409, "this address no longer exists")
     if not route.agent_id:
         raise HttpError(409, "this address is not an agent mailbox")
-    d = access.decide(route.agent, user, verified=True, origin="email")
-    if d.access != access.FULL:
-        raise HttpError(403, d.reason or f"you may not act as {route.agent.slug}")
+    d = turn_context.for_asker(route.agent, user, verified=True, channel="email")
+    if d.access != turn_context.FULL:
+        raise HttpError(403, d.refusal.why if d.refused else f"you may not act as {route.agent.slug}")
 
 
 def _presign(a) -> str:

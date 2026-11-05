@@ -93,7 +93,7 @@ class SessionContext:
     @cached_property
     def sensitive_requirement(self) -> str:
         """The requirement that makes this conversation sensitive, "" when it is not."""
-        from apps.harness import runner_requirements as rr  # noqa: PLC0415
+        from apps.harness import runner_requirements as rr  # noqa: PLC0415 — only a screen asks this
 
         if not self.sensitive:
             return ""
@@ -182,7 +182,7 @@ def _slug(agent) -> str | None:
 
 
 def _reviewed_session(session):
-    from apps.canopy_sessions.models import REVIEW_METADATA_KEY  # noqa: PLC0415
+    from apps.canopy_sessions.models import REVIEW_METADATA_KEY  # noqa: PLC0415 — models read this app
 
     return (getattr(session, "metadata", None) or {}).get(REVIEW_METADATA_KEY)
 

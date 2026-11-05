@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import access, interface
+from apps.agents import access, interface, roles, turn_context
 from apps.agents.models import Agent, AgentGrant, AgentRole
 from apps.events.models import SettingChange
 from apps.passkeys.testing import grant_step_up
@@ -295,9 +295,12 @@ def test_adding_agent_edit_to_a_write_role_is_refused_while_an_address_line_hold
 
 def test_a_session_writers_envelope_stops_at_write():
     """They drive this conversation, not the agent: the own-repo rail reads `agent_edit` from this list."""
-    d = access.Decision(relationship="member", access=access.FULL, capability=None, may_request_auto=False,
-                        may_pin_runner=False, manual_only=False, basis="session:writer")
-    held = interface._held_permissions(access._stamp(d), None)
+    d = turn_context.TurnContext(
+        standing=turn_context.Standing(relationship="member", agent_role=roles.EDITOR, source="session",
+                                       permissions=roles.ROLES.close({roles.WRITE})),
+        access=turn_context.FULL, profile=turn_context.Profile(kind=turn_context.WHOLE_AGENT), basis="session:editor",
+        session_key_suffix="", review=turn_context.Review(), stamped="", refusal=None, trace=())
+    held = interface._held_permissions(d, None)
     assert "write" in held and "agent_edit" not in held
 
 

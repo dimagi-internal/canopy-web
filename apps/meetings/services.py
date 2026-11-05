@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
 
-from apps.agents import access as agent_access
+from apps.agents import turn_context
 from apps.agents.models import Agent, AgentProject
 from apps.agents.services import projects as project_services
 from apps.canopy_sessions import access as session_access
@@ -148,7 +148,7 @@ def usable_agent(slug: str, user) -> Agent:
     if (
         agent is None
         or not perms.can(user, agent.workspace, perms.READ)
-        or agent_access.decide(agent, user, verified=True).access == "none"
+        or turn_context.for_asker(agent, user, verified=True).refused
     ):
         raise Refused(f"you can't use the agent '{slug}'", 403)
     return agent
