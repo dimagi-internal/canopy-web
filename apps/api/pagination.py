@@ -26,6 +26,10 @@ class Page(BaseModel, Generic[T]):
 #: dictated by ``Page.limit``'s ``ge=1`` (see ``clamp_limit``).
 DEFAULT_LIMIT_CAP = 500
 
+#: Highest ``?offset=`` passed to the database. Leaves room for ``offset + limit``
+#: inside a signed 64-bit integer (Postgres ``bigint``, SQLite ``INTEGER``).
+MAX_OFFSET = 2**62
+
 
 def clamp_limit(limit: int, *, cap: int = DEFAULT_LIMIT_CAP) -> int:
     """Clamp a caller-supplied ``?limit=`` into ``Page.limit``'s valid range.
@@ -48,8 +52,12 @@ def clamp_offset(offset: int) -> int:
     Same failure mode as ``clamp_limit``: ``Page.offset`` is ``Field(ge=0)``, so a
     negative offset 500s inside the response model. It would also silently slice
     from the *end* of the list on the way there.
+
+    The ceiling is the other end of the same failure: an offset past a 64-bit
+    integer overflows the database's ``OFFSET`` and 500s. Any offset at the
+    ceiling is already past every row, so the page is simply empty.
     """
-    return max(0, offset)
+    return max(0, min(offset, MAX_OFFSET))
 
 
 def paginate(

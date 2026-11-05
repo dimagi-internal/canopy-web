@@ -19523,7 +19523,7 @@ export interface components {
             readonly label: string;
             /**
              * Ttl Days
-             * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. There is no upper bound — with 0 available, a cap would only hand a caller a shorter token than they asked for without telling them.
+             * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. At most 36500 (100 years); a larger value is refused, not shortened.
              */
             readonly ttl_days?: number | null;
         };
@@ -31873,6 +31873,35 @@ export interface components {
              * @enum {string}
              */
             readonly reason: "not_routed" | "no_valid_proof";
+        };
+        /**
+         * Problem
+         * @description RFC 7807 application/problem+json body.
+         *
+         *     `type` is a stable URI identifying the error class.
+         *     `title` is human-readable, stable per `type`.
+         *     `status` mirrors the HTTP status.
+         *     `detail` is the per-occurrence message.
+         *     `instance` is the request path (optional).
+         */
+        readonly Problem: {
+            /**
+             * Type
+             * @default about:blank
+             */
+            readonly type: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: number;
+            /** Detail */
+            readonly detail?: string | null;
+            /** Instance */
+            readonly instance?: string | null;
+            /** Extras */
+            readonly extras?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * ZkWrapMissingOut
@@ -58781,7 +58810,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["DeviceProofRequiredOut"];
+                    readonly "application/json": components["schemas"]["DeviceProofRequiredOut"] | components["schemas"]["Problem"];
                 };
             };
             /** @description Conflict */
