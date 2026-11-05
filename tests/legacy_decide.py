@@ -394,3 +394,17 @@ def _held_permissions(d, stamped: str | None) -> list[str]:
     if name:
         kept.add(roles.use(name))
     return sorted(kept)
+
+
+def envelope_profile(agent, capability: str, turn=None):
+    """`caller_context._profile`, as it was before the envelope read the Turn Context."""
+    from apps.agents.interface import profile
+    from apps.harness import sensitivity
+
+    if agent is None or not capability:
+        return None
+    got = profile(agent, capability)
+    if "default_profile_version" in got and turn is not None and sensitivity.is_sensitive(turn):
+        return {"name": capability, "description": "", "entry": None, "tools": [], "bash": [],
+                "read_paths": [], "write_paths": []}
+    return got

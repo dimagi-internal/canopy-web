@@ -299,8 +299,9 @@ def test_a_session_writers_envelope_stops_at_write():
         standing=turn_context.Standing(relationship="member", agent_role=roles.EDITOR, source="session",
                                        permissions=roles.ROLES.close({roles.WRITE})),
         access=turn_context.FULL, profile=turn_context.Profile(kind=turn_context.WHOLE_AGENT), basis="session:editor",
-        session_key_suffix="", review=turn_context.Review(), stamped="", refusal=None, trace=())
-    held = interface._held_permissions(d, None)
+        session_key_suffix="", review=turn_context.Review(), stamped="", refusal=None, trace=(),
+        _reach=turn_context._Reach(relationship="member", access=turn_context.FULL))
+    held = d.held_permissions
     assert "write" in held and "agent_edit" not in held
 
 

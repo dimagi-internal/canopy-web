@@ -235,7 +235,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
 VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `role` and `source`
-(below), `relationship`, `profile` (`full` | `confined`), `permissions`, `manual_only`, `granted_by`, `capability` (the confined
+(below), `relationship`, `profile` (`full` | `confined`), `access` (`full` | `confined` | `refused`, the Turn Context's word; `profile` says `full` on a turn refused before it ran, and stays for the runners and plugins that read it), `permissions`, `manual_only`, `granted_by`, `capability` (the confined
 profile), `turn_mode` (`{mode, basis}`), and:
 
 * **`role`** — the asker's named role on the agent: `owner` | `admin` | `editor` |

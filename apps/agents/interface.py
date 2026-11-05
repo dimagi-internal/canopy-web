@@ -542,50 +542,17 @@ def session_writers(session, agent) -> list[tuple[int, str]]:
     return list(rows)
 
 
-def grant_facts(turn, agent) -> dict:
-    """The envelope's account of the asker's standing, from ONE decision: `granted_by`
+def grant_facts(turn, agent, *, context=None) -> dict:
+    """The envelope's account of the asker's standing, from the Turn Context: `granted_by`
     (one word: owner | admin | system | session:<role> | grant:<line> | capability:<name> | refused), `role` (where they stand on the agent's role ladder, None
     when refused), `source` (what put them there: owner | admin | system |
     capability:<name> | session | list:<access-list line>), `permissions` (what they hold on
-    THIS turn, sorted; see `_held_permissions`) and `manual_only`."""
+    THIS turn, sorted) and `manual_only`. `context`: the turn's, when the caller already holds it."""
     from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
 
-    d = turn_context.for_turn(turn, agent, turn.capability or None)
-    if d.refused and turn.capability:
-        d = turn_context.for_turn(turn, agent)   # the stamped capability no longer admits them: as before
-    # The capability the turn was STAMPED with at enqueue (a requested one may differ from
-    # the free-form one the rule falls back to).
-    why = f"capability:{turn.capability or d.stamped}" if d.access == turn_context.CONFINED else d.basis
-    return {"granted_by": why, "role": d.standing.agent_role, "source": d.standing.source,
-            "permissions": _held_permissions(d, turn.capability or None),
-            "manual_only": bool(d.review.manual_only)}
-
-
-def _held_permissions(d, stamped: str | None) -> list[str]:
-    # What the asker holds on this agent for THIS turn, from the one decision `d`. A full turn
-    # holds everything their role or lines give (closed under the dependency rule, so `write`
-    # is in it exactly when the turn is full). A confined turn holds `read` and its
-    # capability's `use:<name>` only, even for an owner a sensitive conversation confined.
-    # A refusal holds nothing.
-    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
-
-    if d.refused:
-        return []
-    # `system` is not in the role table: it may do what an admin may.
-    role = roles.ADMIN if d.standing.agent_role == roles.SYSTEM else d.standing.agent_role
-    held = d.standing.permissions or roles.permissions_of(role)
-    # `profile` in the envelope is "confined" iff the turn carries a capability stamp, so the
-    # stamp confines here too: `profile == full` iff `write` is in the list.
-    if d.access == turn_context.FULL and not stamped:
-        return sorted(held)
-    name = stamped or d.stamped
-    if is_read_mode(name):
-        # Read mode is `read`, not a door: nothing is named after it (no `use:read`, no `use:ask`).
-        return [roles.READ]
-    kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
-    if name:
-        kept.add(roles.use(name))
-    return sorted(kept)
+    d = context if context is not None else turn_context.of_turn(turn, agent)
+    return {"granted_by": d.basis, "role": d.standing.agent_role, "source": d.standing.source,
+            "permissions": d.held_permissions, "manual_only": bool(d.review.manual_only)}
 
 
 def reachable(permissions, iface: dict | None) -> list[str]:

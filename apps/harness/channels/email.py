@@ -431,6 +431,11 @@ def refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
             return replay_email(replay, agent), False
         raise
     logger.info("email turn %s refused: contact %s is blocked", turn.pk, contact.pk)
+    from apps.agents import turn_context  # noqa: PLC0415 — it reads this package
+
+    from .. import turn_snapshot  # noqa: PLC0415 — as above
+
+    turn_snapshot.record(turn, turn_snapshot.ENQUEUE, context=turn_context.blocked_sender(turn, agent))
     # Refused whatever the rules say; the workspace's `blocked-sender` rule
     # decides what is recorded and who is told (canopy-web#1416).
     from apps.admission import evaluate as admission

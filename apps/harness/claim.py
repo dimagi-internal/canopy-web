@@ -42,6 +42,7 @@ from .claim_reach import (  # noqa: F401  (the diagnostics live in claim_reach; 
     turn_workspace_slug,
     unclaimable_queued_turns,
 )
+from . import turn_snapshot
 from .ledger import append_events
 from .models import (
     FleetHold,
@@ -548,6 +549,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             turn.refresh_from_db()
             if auto is not None:
                 admission.record_auto(turn, auto, runner)
+            # After the stamp above: what it records is this run. It cannot stop the claim.
+            turn.claimed_by = runner
+            turn_snapshot.record(turn, turn_snapshot.CLAIM, runner=runner,
+                                 admission=turn_snapshot.raised_to_auto(auto) if auto is not None else None)
             append_events(turn, [{"kind": "status", "payload": {
                 "status": Turn.CLAIMED, "runner": runner.name, "cli": cli,
                 **_routing_basis(turn, runner, priorities),

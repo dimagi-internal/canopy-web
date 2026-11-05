@@ -100,6 +100,18 @@ def test_an_editor_opens_a_running_manual_local_turn_with_an_envelope(world):
     assert env["trigger"]["runner"] is None
 
 
+def test_a_direct_turn_records_what_it_ran_as_when_it_opens(world):
+    # Never claimed: opening it is when it starts to run, and a resume does not rewrite it.
+    c = _client(world["editor"])
+    ws_id = _register(c)
+    turn = Turn.objects.get(pk=_open(c, ws_id).json()["turn_id"])
+    assert turn.resolved_context["moment"] == "open" and turn.resolved_context["access"] == "full"
+    assert turn.resolved_context["profile"]["kind"] == "whole_agent"
+    assert {line["name"]: line["gets"] for line in turn.resolved_context["credentials"]}["canopy_login"] == "no"
+    _open(c, ws_id)
+    assert Turn.objects.get(pk=turn.pk).resolved_context == turn.resolved_context
+
+
 def test_a_resumed_session_reopens_the_same_turn(world):
     c = _client(world["editor"])
     ws_id = _register(c)

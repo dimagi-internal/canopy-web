@@ -156,6 +156,7 @@ def build(session, turn=None, *, agent=None) -> SessionContext:
     return SessionContext(
         session_id=session.pk, agent=_slug(agent), workspace=session.workspace_id,
         channel=_where_it_lives(session),
+        runner_requested=(session.metadata or {}).get("requested_runner_id"),
         site=iface_mod.session_site(session), page=iface_mod.session_resource(session),
         sensitive=sensitivity.any_sensitive(session),
         is_review=session_access.is_review_conversation(session),
