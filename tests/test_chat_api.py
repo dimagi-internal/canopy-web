@@ -462,7 +462,7 @@ def test_send_normalizes_a_legacy_origin_to_api(client):
 
 def test_send_client_id_over_100_chars_is_truncated(client):
     """Capped the same way the WS path caps it (consumers.py's `chat.send`
-    handler does `str(data.get("client_id") or "")[:100]`) — a client_id this
+    handler does `str(data.get("client_id") or "")[:CLIENT_ID_MAX]`) — a client_id this
     long is not a real nonce, and an unbounded one becoming the turn's
     idempotency_key is the one place it would actually matter."""
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
@@ -473,9 +473,12 @@ def test_send_client_id_over_100_chars_is_truncated(client):
                     content_type="application/json")
     assert r.status_code == 200, r.content
 
+    from apps.canopy_sessions.doors import CLIENT_ID_MAX
+
     turn = Turn.objects.get(pk=r.json()["turn_id"])
-    assert turn.idempotency_key.endswith(f":{long_id[:100]}")
-    assert not turn.idempotency_key.endswith(f":{long_id}")
+    assert turn.idempotency_key.endswith(f":{long_id[:CLIENT_ID_MAX]}")
+    # SQLite ignores the column's length; PostgreSQL 500s on it.
+    assert len(turn.idempotency_key) <= Turn._meta.get_field("idempotency_key").max_length
 
 
 # ---- ledger-path peer visibility (spec 2026-09-26 Deviations) ----
