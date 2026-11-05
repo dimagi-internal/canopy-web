@@ -16,7 +16,7 @@ from tests.fixtures.sensitive import vault_key
 
 pytestmark = pytest.mark.django_db
 
-# A sensitive-data box holds only an agent with a `data: sensitive` capability (dedicated box).
+# A sensitive-data box holds only an agent with a `data: sensitive` profile (dedicated box).
 SENSITIVE_IFACE = {"data": {"sites": ["connect-labs"],
                              "data": "sensitive", "tools": ["Read"]}}
 

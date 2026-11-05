@@ -2,7 +2,7 @@
 included (access-confinement-and-act-as.md → "A chat on a page reaches its site only as the person").
 
 The agent's owner (or an admin) chatting with it on a connect-labs page used to run in
-the agent's full profile with no capability, so the gateway refused it ("site tools
+the agent's full profile with no connected site, so the gateway refused it ("site tools
 exist only in a visitor's session") and the agent fell back to its OWN labs login —
 reading whatever that account could, not what the person on the page may see. Now:
 
@@ -222,7 +222,7 @@ def test_own_login_parses_and_answers_per_site(w):
     assert "own_login" not in parse(plain)["capabilities"]["connect"]
 
 
-def test_a_site_any_capability_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
+def test_a_site_any_profile_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
     agent = Agent(interface=parse({"capabilities": {
         "a": {"sites": ["connect-labs"], "ceiling": ["x_*"]},
         "b": {"sites": ["connect-labs"]}}}))

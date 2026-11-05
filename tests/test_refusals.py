@@ -1,7 +1,7 @@
 """Stage 4 of the Turn Context: every refusal says why and how to fix it, from one closed set of codes.
 
 Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 7. One test per code, each reached the way a real
-person reaches it (the rule, a door, the mail channel), then the set itself: closed, every code worded, no banned word.
+person reaches it (the rule, a route, the mail channel), then the set itself: closed, every code worded, no banned word.
 """
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ def test_not_on_access_list_names_the_list_the_fix_and_who_makes_it(w):
     assert "add you to its access list as read only" in ctx.refusal.how_to_fix
     assert ctx.refusal.who_can_fix == "owner@dimagi.com or an admin of agent"
     assert "inbound-mail trigger" not in ctx.refusal.how_to_fix
-    # A turn refused at the door carries the same words as its note.
+    # A turn refused on arrival carries the same words as its note.
     turn = _chat_turn(w.member, _chat(w, creator=w.member))
     assert turn.status == Turn.CANCELLED
     assert turn.result_note == f"not run: {ctx.refusal.why}. {ctx.refusal.how_to_fix}"
@@ -103,7 +103,7 @@ def test_sender_not_proven_is_a_line_that_names_them_only_for_proven_mail(w):
     assert turn_context.for_asker(w.agent, contact, verified=True).access == turn_context.CONFINED
     other = Contact.objects.create(email="bo@elsewhere.org", workspace=w.ws)
     assert turn_context.for_asker(w.agent, other, verified=False).refusal.code == Code.NOT_ON_ACCESS_LIST
-    # The mail door says it on the turn.
+    # The mail channel says it on the turn.
     turn, _ = services.enqueue_turn(agent=w.agent, origin=Turn.ORIGIN_EMAIL, prompt="hello", idempotency_key="unproven",
                                     initiator=who.for_contact(contact, via="email"))
     assert turn.status == Turn.CANCELLED and turn.result_note == unproven.refusal.result_note
@@ -152,7 +152,7 @@ def test_sender_blocked_says_so_and_never_why(w):
     assert refusal.who_can_fix == "an editor or owner of connect"
 
 
-def test_content_deleted_says_exactly_what_the_send_doors_always_said(w):
+def test_content_deleted_says_exactly_what_the_send_paths_always_said(w):
     session = _chat(w)
     Session.objects.filter(pk=session.pk).update(content_deleted_at=timezone.now())
     session.refresh_from_db()

@@ -5,7 +5,7 @@ card's heading — so an agent handed "read session 1f33…" asked
 `GET /api/canopy-sessions/<that uuid>`, which treated it as the primary key and
 404'd. The by-id read now falls back to the key; the list filters on it too.
 
-Neither door widens anything: both read through `access.readable_sessions`, so a
+Neither route widens anything: both read through `access.readable_sessions`, so a
 key finds exactly the sessions the caller could already open by id.
 """
 

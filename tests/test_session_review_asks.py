@@ -1,6 +1,6 @@
-"""Asking a coach to review ONE session (`SessionReviewAsk`, the `session_review` door).
+"""Asking a coach to review ONE session (`SessionReviewAsk`, the `session_review` profile).
 
-Through the real doors: the person presses the button (the REST route), the turn it starts is
+Through the real routes: the person presses the button (the REST route), the turn it starts is
 claimed for its real credentials (`claim_payload.issue_credentials`), and those credentials go
 through REST and the MOUNTED MCP server. The transcript is hostile on purpose.
 """
@@ -74,7 +74,7 @@ def w(settings):
     login = User.objects.create_user("trellis-login", "trellis@dimagi-ai.com", "pw")
     wsvc.ensure_member(ws, login, WorkspaceMembership.EDITOR)
     trellis = Agent.objects.create(slug="trellis", name="Trellis", workspace=ws, owner=owner, user=login)
-    # As on the live agent: a line lets people drive the agent, which makes the door's narrowing real.
+    # As on the live agent: a line lets people drive the agent, which makes the profile's narrowing real.
     for name in ("lili", "bo"):
         AgentGrant.objects.create(agent=trellis, kind=G.PERSON, user=people[name], role="editor")
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner, workspace=ws,
@@ -144,9 +144,9 @@ def _rest(raw, method, path, **kw):
     return getattr(Client(), method)(path, HTTP_AUTHORIZATION=f"Bearer {raw}", **kw)
 
 
-# -- the door ---------------------------------------------------------------------------
+# -- the profile ---------------------------------------------------------------------------
 
-def test_pressing_starts_a_turn_asked_by_the_person_in_the_door(w):
+def test_pressing_starts_a_turn_asked_by_the_person_in_the_review_profile(w):
     ask, turn, raw = _pressed(w)
     assert ask.agent == w["trellis"] and ask.review_session.created_by == w["lili"]
     assert ask.review_session.agent == w["trellis"]
@@ -159,7 +159,7 @@ def test_pressing_starts_a_turn_asked_by_the_person_in_the_door(w):
     assert caller_context.build(turn)["capability"]["bash"] == []
 
 
-def test_the_door_is_for_everyone_who_has_any_access_and_nobody_else(w):
+def test_the_review_profile_is_for_everyone_who_has_any_access_and_nobody_else(w):
     ask, *_ = _pressed(w)
     conv = ask.review_session
 
@@ -177,7 +177,7 @@ def test_the_door_is_for_everyone_who_has_any_access_and_nobody_else(w):
     assert stamp(stranger) is None
 
 
-def test_every_later_message_in_that_chat_stays_in_the_door(w):
+def test_every_later_message_in_that_chat_stays_in_the_review_profile(w):
     """Its context holds the transcript, so no follow-up picks up the whole profile."""
     ask, turn, _raw = _pressed(w)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
@@ -189,10 +189,10 @@ def test_every_later_message_in_that_chat_stays_in_the_door(w):
         Turn.objects.filter(pk=later.pk).update(status=Turn.DONE)
 
 
-def test_nobody_can_publish_or_widen_the_door(w):
+def test_nobody_can_publish_or_widen_the_review_profile(w):
     with pytest.raises(interface.InterfaceError):
         interface.parse({"capabilities": {interface.SESSION_REVIEW: {"description": "x", "tools": ["Bash"]}}})
-    # Whatever a stored interface says, the door's tools are canopy's.
+    # Whatever a stored interface says, the profile's tools are canopy's.
     Agent.objects.filter(pk=w["trellis"].pk).update(
         interface={"capabilities": {interface.SESSION_REVIEW: {"tools": ["Bash"], "bash": ["*"]}}})
     w["trellis"].refresh_from_db()
@@ -201,7 +201,7 @@ def test_nobody_can_publish_or_widen_the_door(w):
     assert built["write_paths"] == []
 
 
-def test_naming_the_door_elsewhere_opens_nothing(w):
+def test_naming_the_review_profile_elsewhere_opens_nothing(w):
     """It is only for a review chat: no one asks their way into it, or out of read mode."""
     AgentGrant.objects.filter(user=w["bo"]).delete()
     AgentGrant.objects.create(agent=w["trellis"], kind=G.PERSON, user=w["bo"], role="read_only")
@@ -327,7 +327,7 @@ def _ordinary(w, who="lili", agent=None):
 
 def test_an_ordinary_agent_turns_token_stops_at_that_agents_sessions(w):
     """An editor's Trellis turn used to read every session of the person with this token, with
-    only Trellis's own rails in the way. Both doors now stop at the agent's part in them."""
+    only Trellis's own rails in the way. Both routes now stop at the agent's part in them."""
     chat, turn, _ = _ordinary(w)
     raw = claim_payload.issue_credentials(turn).mcp_token
     assert raw and not turn.capability

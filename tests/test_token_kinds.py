@@ -3,7 +3,7 @@
 The questions asked of a credential — may it mint another, may it act on someone's
 behalf, is it a turn speaking for the person who asked — read that table. These tests
 hold the code to it: a comparison against a kind's name written anywhere else fails,
-a kind a door records that the table does not know fails, and each question answers
+a kind an entry point records that the table does not know fails, and each question answers
 what the table says for every kind.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from apps.tokens.middleware import MINTING_CREDENTIALS, minting_refusal
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 KIND_NAMES = frozenset(kinds.KINDS)
-#: Where a kind's name may be written as a string: the table, and the doors that
+#: Where a kind's name may be written as a string: the table, and the entry points that
 #: record which kind authenticated a request.
 RECORDERS = {"apps/tokens/kinds.py"}
 
@@ -65,7 +65,7 @@ def test_no_check_compares_a_credential_against_a_kind_written_out():
     assert not found, "Compare against apps/tokens/kinds.py, not a string:\n" + "\n".join(found)
 
 
-def test_every_kind_the_bearer_door_resolves_is_in_the_table():
+def test_every_kind_the_bearer_entry_point_resolves_is_in_the_table():
     # `principal` names its kinds; a PAT minted for an OAuth grant records `oauth`.
     assert principal.ALL_KINDS <= KIND_NAMES
     assert kinds.OAUTH in KIND_NAMES

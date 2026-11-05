@@ -60,7 +60,7 @@ def test_a_delegated_token_resolves_with_its_assurance(user, delegated):
 
 
 def test_only_the_accepted_kinds_are_looked_up(delegated):
-    """A door that takes one kind pays for one query, and never accepts another."""
+    """An entry point that takes one kind pays for one query, and never accepts another."""
     raw, _ = delegated
     assert P.resolve_bearer(raw, accept={P.PAT}) is None
     with CaptureQueriesContext(connection) as q:
@@ -112,14 +112,14 @@ def test_a_delegated_socket_looks_its_token_up_once(user, delegated):
     assert seen["via_widget"] is True
 
 
-def test_the_three_doors_resolve_bearers_only_through_the_resolver():
-    """Token lookups live in `principal.py`; a door that calls `.lookup(` on a
+def test_the_three_entry_points_resolve_bearers_only_through_the_resolver():
+    """Token lookups live in `principal.py`; an entry point that calls `.lookup(` on a
     token model has started its own resolution order again."""
-    doors = ["apps/tokens/middleware.py", "apps/mcp/auth.py", "apps/realtime/channels_auth.py"]
-    for door in doors:
-        text = (ROOT / door).read_text()
+    entry_points = ["apps/tokens/middleware.py", "apps/mcp/auth.py", "apps/realtime/channels_auth.py"]
+    for path in entry_points:
+        text = (ROOT / path).read_text()
         assert not re.search(r"(PersonalToken|DelegatedToken|ContactToken|RunnerAccessToken)\.lookup\(",
-                             text), door
+                             text), path
 
 
 def test_token_secrets_are_hashed_by_the_one_helper():

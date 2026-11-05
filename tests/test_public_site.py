@@ -73,7 +73,7 @@ def test_signed_in_root_is_the_site_too(dists, member):
 
 
 @pytest.mark.usefixtures("login_required")
-def test_app_is_the_door_into_the_app(dists, member):
+def test_app_is_the_way_into_the_app(dists, member):
     c = Client()
     c.force_login(member)
     assert _body(c.get("/app")) == SPA

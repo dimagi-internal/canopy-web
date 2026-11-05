@@ -99,8 +99,8 @@ def test_the_resolver_writes_nothing_whoever_is_asking_and_however_it_is_asked(w
     with connection.execute_wrapper(answering_snapshot._refuse_writes):
         for turn in turns:
             agent = turn.acting_agent
-            for ask in (None, "ask", "connect", "data", "retired"):
-                _every_fact(turn_context.for_turn(turn, agent, ask))
+            for requested in (None, "ask", "connect", "data", "retired"):
+                _every_fact(turn_context.for_turn(turn, agent, requested))
                 asked += 1
             for stamp in ("", "ask", "connect", "retired"):
                 ctx = turn_context.resolve_turn_context(session_context.build(None, turn, agent=agent),
@@ -128,8 +128,8 @@ def test_the_only_way_to_the_whole_agent_is_an_explicit_kind(w):
     for user in (w.owner, w.editor, w.reader, w.door, w.stranger):
         for session in (chat, sensitive):
             turn = _turn(w, user, session)
-            for ask in (None, "ask", "connect", "data", "retired"):
-                ctx = turn_context.for_turn(turn, w.agent, ask)
+            for requested in (None, "ask", "connect", "data", "retired"):
+                ctx = turn_context.for_turn(turn, w.agent, requested)
                 seen.add((ctx.access, ctx.profile.kind if ctx.profile else None))
                 if ctx.access == turn_context.FULL:
                     assert ctx.profile.kind == turn_context.WHOLE_AGENT and ctx.stamped == ""
@@ -205,9 +205,9 @@ def test_a_whole_agent_turn_stays_whole_at_claim_though_its_asker_has_since_lost
 def test_only_an_explicit_kind_has_no_lists_and_an_absent_list_elsewhere_denies(w):
     whole = turn_context.for_asker(w.agent, w.owner, verified=True).profile
     assert whole.kind == turn_context.WHOLE_AGENT and whole.tools is None and whole.as_envelope() is None
-    door = turn_context.for_asker(w.agent, w.door, verified=True, requested="connect").profile
-    assert door.kind == turn_context.CONNECTED_SITE and door.site == "connect-labs" and door.bash in (None, [])
-    assert "mcp__*canopy-web__site_call" in door.tools
+    site = turn_context.for_asker(w.agent, w.door, verified=True, requested="connect").profile
+    assert site.kind == turn_context.CONNECTED_SITE and site.site == "connect-labs" and site.bash in (None, [])
+    assert "mcp__*canopy-web__site_call" in site.tools
 
 
 # --- each kind and each stage ---------------------------------------------------------------------
@@ -248,7 +248,7 @@ def test_a_read_mode_profile_says_which_default_it_ran_under(w):
 def test_a_review_chat_refuses_what_it_would_refuse_and_narrows_the_rest(w):
     review = _chat(w, **{REVIEW_METADATA_KEY: "x"})
     assert turn_context.for_turn(_turn(w, w.stranger, review), w.agent).refused
-    assert turn_context.for_turn(_turn(w, w.door, review), w.agent).refused    # `read` opens it; a door line does not
+    assert turn_context.for_turn(_turn(w, w.door, review), w.agent).refused    # `read` opens it; a connected-site line does not
     ctx = turn_context.for_turn(_turn(w, w.owner, review), w.agent)
     assert ctx.review.may_request_auto is False and ctx.review.may_pin_runner is False
 
@@ -427,7 +427,7 @@ def test_a_cli_the_agent_no_longer_runs_refuses_as_the_send_route_does(w):
     assert response.status_code == 422 and response.json()["detail"] == ctx.refusal.message
 
 
-def test_a_sensitive_conversation_refuses_a_door_that_is_not_its_chat_surface_as_the_send_route_does(w):
+def test_a_sensitive_conversation_refuses_a_route_that_is_not_its_chat_surface_as_the_send_route_does(w):
     session = _chat(w, embed_app="data-site", **{rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
     assert not _preview(w, w.owner, session).refused      # its own person, at its own chat surface
     ctx = turn_context.resolve_turn_context(session_context.build(session),
@@ -439,7 +439,7 @@ def test_a_sensitive_conversation_refuses_a_door_that_is_not_its_chat_surface_as
     assert response.status_code == 403 and response.json()["detail"] == ctx.refusal.message
 
 
-def test_a_real_turn_is_past_its_door_so_stage_0_never_refuses_it(w):
+def test_a_real_turn_is_past_its_entry_point_so_stage_0_never_refuses_it(w):
     # An email or a schedule reaches a session these routes would refuse. They run today, and still do.
     session = _chat(w)
     turn = _turn(w, w.owner, session)

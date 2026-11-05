@@ -1,7 +1,7 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
 """Reply buttons on a post in a bound thread (`apps/slack/choices.py`).
 
-Driven through the real signed `/api/slack/interactions` door and the real share
+Driven through the real signed `/api/slack/interactions` route and the real share
 route, with Slack's Web API faked at the `requests` boundary (as in test_slack.py).
 """
 from __future__ import annotations

@@ -129,7 +129,7 @@ WRITES = [_upload_walkthrough, _open_review, _post_shareout, _share_session]
 
 @pytest.mark.parametrize("write", WRITES, ids=lambda w: w.__name__)
 def test_a_caller_in_two_workspaces_who_names_neither_is_refused(write, dimagi, connect):
-    """The chlorine misfile, at each door it went through."""
+    """The chlorine misfile, at each entry point it went through."""
     ace = _agent("ace@dimagi-ai.com", {dimagi: M.EDITOR, connect: M.EDITOR})
     resp = write(ace)
     assert resp.status_code == 422, resp.content

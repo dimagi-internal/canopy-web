@@ -372,7 +372,7 @@ def test_without_a_sensitive_runner_the_sensitive_data_agent_falls_short_and_say
          "url": row["url"] + "/settings#running"}]
 
 
-def test_an_agent_allowed_sensitive_data_without_a_sensitive_capability_says_why(w, monkeypatch):
+def test_an_agent_allowed_sensitive_data_without_a_sensitive_profile_says_why(w, monkeypatch):
     needs = {**NEEDS, "uses": {**NEEDS["uses"], "sensitive_data_agents": ["labsdata", "ace"]}}
     _publish(w, monkeypatch, needs=needs)
     _runner(w, w["labsdata"], w["ace"], sensitive=True)

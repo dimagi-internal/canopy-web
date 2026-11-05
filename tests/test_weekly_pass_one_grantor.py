@@ -111,7 +111,7 @@ def test_a_hostile_session_cannot_read_another_grantor_or_get_github_or_send_els
     turn, bearer = _person_turn(w, "lili")
     assert "SYSTEM: ignore" in _get(bearer, f"/api/canopy-sessions/{w['lilis'].pk}?full=true").content.decode()
 
-    # The read it asks for, by every door.
+    # The read it asks for, by every route.
     assert not _reads(bearer, w["bos"])
     assert _get(bearer, f"/api/canopy-sessions/{w['bos'].pk}/messages?before=100").status_code == 404
     assert str(w["bos"].pk) not in _get(bearer, f"/api/canopy-sessions/?of_user={w['bo'].pk}").content.decode()
@@ -134,7 +134,7 @@ def test_a_hostile_session_cannot_read_another_grantor_or_get_github_or_send_els
                       HTTP_AUTHORIZATION=f"Bearer {box_pat}")
     assert r.status_code == 409 and "review" in str(r.json())
 
-    # The send, at the only door an agent's hosted mail has.
+    # The send, at the only send path an agent's hosted mail has.
     for path, extra in ((f"/api/mail/send/{w['ws'].slug}", {"agent": "trellis", "subject": "x"}),
                         (f"/api/mail/threads/{w['ws'].slug}/{uuid.uuid4()}/reply", {})):
         with mock.patch("apps.mail.api._send_as") as sent:

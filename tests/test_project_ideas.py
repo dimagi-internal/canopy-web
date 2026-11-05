@@ -10,7 +10,7 @@ Pinned here:
   and finishing them does not ship it — marking the idea done does, by its
   owner or its person;
 * any member adds their own idea in their own words, and the agent and owner
-  are told; an agent cannot use that door;
+  are told; an agent cannot use that route;
 * the team view's decisions are one line each, from open asks, tasks parked on a
   person and decision links — and every tally on it agrees with every other.
 """
@@ -109,7 +109,7 @@ def test_a_member_adds_their_own_idea_and_the_agent_and_owner_are_told(world):
     assert len(mail.outbox) == 1 and mail.outbox[0].to == ["jj@dimagi.com"]
 
 
-def test_the_agent_cannot_use_the_members_door(world):
+def test_the_agent_cannot_use_the_members_route(world):
     r = _hal(world).post(f"{BASE}/ideas/", data={"quote": "mine"}, content_type="application/json")
     assert r.status_code == 422 and not AgentTask.objects.filter(kind="idea").exists()
 
