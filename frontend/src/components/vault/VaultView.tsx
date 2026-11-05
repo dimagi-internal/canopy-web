@@ -11,7 +11,9 @@ import { VaultSection, type VaultTone } from '@/components/vault/VaultSection'
 //   Storage & key      — its key and recovery (rarely touched)
 //
 // The page that owns the vault supplies each section's body and a one-line summary
-// (its adapter); this decides the frame, the order and what opens by itself. Anything
+// (its adapter); this decides the frame, the order and what opens by itself. A step
+// that must come before anything else (a new vault's key) goes in `firstStep`, above
+// the sections, rather than at the bottom of the one it belongs to. Anything
 // else about the object (an agent's canopy login, a workspace vault's agents) goes in
 // `children`, as more `VaultSection`s, or beside the vault, not inside it.
 
@@ -58,18 +60,22 @@ export function VaultView({
   secrets,
   access,
   storage,
+  firstStep,
   children,
 }: {
   facts: VaultFacts
   secrets: VaultPart
   access: VaultPart
   storage: VaultPart
+  /** What the reader must do before anything else, shown above the sections. */
+  firstStep?: ReactNode
   /** More sections after these, still about this vault. */
   children?: ReactNode
 }) {
   return (
     <div data-testid="vault-view">
       <VaultSummary facts={facts} />
+      {firstStep && <div className="mt-3" data-testid="vault-first-step">{firstStep}</div>}
       <div className="mt-2">
         <VaultSection id="secrets" title="Secrets" {...sectionProps(secrets)}>{secrets.body}</VaultSection>
         <VaultSection id="access-to-secrets" title="Who can open them" {...sectionProps(access)}>{access.body}</VaultSection>

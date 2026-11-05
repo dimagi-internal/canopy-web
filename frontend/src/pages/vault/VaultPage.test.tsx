@@ -69,11 +69,20 @@ describe('workspace vault page', () => {
     expect([open('secrets'), open('access-to-secrets'), open('vault-storage')]).toEqual([false, false, true])
   })
 
-  it('says it has no key, and opens Storage & key to make one', async () => {
+  it('puts making its key first, above the sections, when it has none', async () => {
     show('/w/dimagi/vaults/v1', { ...VAULT, kv: 0 })
-    expect((await screen.findByTestId('vault-attention')).textContent).toContain('no key yet')
-    expect(open('vault-storage')).toBe(true)
+    const step = await screen.findByTestId('vault-first-step')
+    expect(step.textContent).toContain('First, make this vault’s key')
+    expect(step.compareDocumentPosition(screen.getByTestId('vault-section-secrets-summary'))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByTestId('vault-attention')).toBeNull()
     expect(screen.getByTestId('vault-section-vault-storage-summary').textContent).toBe('no key yet')
+  })
+
+  it('shows no first step once it has a key', async () => {
+    show('/w/dimagi/vaults/v1')
+    await screen.findByTestId('vault-view')
+    expect(screen.queryByTestId('vault-first-step')).toBeNull()
   })
 
   it('says who is waiting for the key', async () => {

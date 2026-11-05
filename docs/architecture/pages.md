@@ -79,7 +79,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`vaults/:vaultId`** (`/:tab` kept for old links) — a workspace vault's one page
   (`pages/vault/`), drawn by the shared **`VaultView`**
   (`components/vault/VaultView.tsx`, the same frame as an agent's vault): a summary
-  line (where it lives, secrets / people / machines, what needs you), then
+  line (where it lives, secrets / people / machines, what needs you), then, for a
+  vault with no key yet, its first step above everything else: make its key (who
+  gets a copy now, and who only once they set up a vault key), then
   collapsible sections — **Secrets** (names only; a value is sealed in the browser),
   **Who can open them** (people with why each can, and the runners that read it) and
   **Storage & key** (its key, made with a passkey touch, copies for whoever waits,
