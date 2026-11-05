@@ -19,6 +19,11 @@ elif docker info >/dev/null 2>&1; then
 else
   export DATABASE_URL="sqlite:///$(pwd)/e2e.sqlite3"
 fi
+# As production's database (RDS has jit off). The session list's query has hundreds of
+# expressions, and on a fresh database's stale statistics its estimated cost passes JIT's
+# thresholds: compiling takes 3-10s to run a query that needs 10ms, which outlasts what a
+# test waits for. Read by libpq, so a SQLite run ignores it.
+export PGOPTIONS="-c jit=off"
 export REQUIRE_AUTH=False
 export DEBUG=True
 export SECRET_KEY="e2e-secret-key"
